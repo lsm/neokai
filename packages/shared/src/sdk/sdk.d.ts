@@ -66,6 +66,10 @@ export declare type AgentDefinition = {
      */
     skills?: string[];
     /**
+     * Auto-submitted as the first user turn when this agent is the main thread agent. Slash commands are processed. Prepended to any user-provided prompt.
+     */
+    initialPrompt?: string;
+    /**
      * Maximum number of agentic turns (API round-trips) before stopping
      */
     maxTurns?: number;
@@ -210,12 +214,16 @@ declare namespace coreTypes {
         BaseOutputFormat,
         ConfigChangeHookInput,
         ConfigScope,
+        CwdChangedHookInput,
+        CwdChangedHookSpecificOutput,
         ElicitationHookInput,
         ElicitationHookSpecificOutput,
         ElicitationResultHookInput,
         ElicitationResultHookSpecificOutput,
         ExitReason,
         FastModeState,
+        FileChangedHookInput,
+        FileChangedHookSpecificOutput,
         HookEvent,
         HookInput,
         HookJSONOutput,
@@ -237,6 +245,7 @@ declare namespace coreTypes {
         OutputFormat,
         OutputFormatType,
         PermissionBehavior,
+        PermissionDecisionClassification,
         PermissionMode,
         PermissionRequestHookInput,
         PermissionRequestHookSpecificOutput,
@@ -277,6 +286,7 @@ declare namespace coreTypes {
         SDKResultMessage,
         SDKResultSuccess,
         SDKSessionInfo,
+        SDKSessionStateChangedMessage,
         SDKStatusMessage,
         SDKStatus,
         SDKSystemMessage,
@@ -303,6 +313,7 @@ declare namespace coreTypes {
         SubagentStopHookInput,
         SyncHookJSONOutput,
         TaskCompletedHookInput,
+        TaskCreatedHookInput,
         TeammateIdleHookInput,
         ThinkingAdaptive,
         ThinkingConfig,
@@ -311,6 +322,7 @@ declare namespace coreTypes {
         UserPromptSubmitHookInput,
         UserPromptSubmitHookSpecificOutput,
         WorktreeCreateHookInput,
+        WorktreeCreateHookSpecificOutput,
         WorktreeRemoveHookInput
     }
 }
@@ -328,6 +340,27 @@ declare type CreateSdkMcpServerOptions = {
     version?: string;
     tools?: Array<SdkMcpToolDefinition<any>>;
 };
+
+export declare type CwdChangedHookInput = BaseHookInput & {
+    hook_event_name: 'CwdChanged';
+    old_cwd: string;
+    new_cwd: string;
+};
+
+export declare type CwdChangedHookSpecificOutput = {
+    hookEventName: 'CwdChanged';
+    watchPaths?: string[];
+};
+
+/**
+ * Effort level for controlling how much thinking/reasoning Claude applies.
+ *
+ * - `'low'` — Minimal thinking, fastest responses
+ * - `'medium'` — Moderate thinking
+ * - `'high'` — Deep reasoning (default)
+ * - `'max'` — Maximum effort (select models only)
+ */
+export declare type EffortLevel = 'low' | 'medium' | 'high' | 'max';
 
 /**
  * Hook input for the Elicitation event. Fired when an MCP server requests user input. Hooks can auto-respond (accept/decline) instead of showing the dialog.
@@ -404,6 +437,17 @@ export declare type ExitReason = 'clear' | 'resume' | 'logout' | 'prompt_input_e
  * Fast mode state: off, in cooldown after rate limit, or actively enabled.
  */
 export declare type FastModeState = 'off' | 'cooldown' | 'on';
+
+export declare type FileChangedHookInput = BaseHookInput & {
+    hook_event_name: 'FileChanged';
+    file_path: string;
+    event: 'change' | 'add' | 'unlink';
+};
+
+export declare type FileChangedHookSpecificOutput = {
+    hookEventName: 'FileChanged';
+    watchPaths?: string[];
+};
 
 /**
  * Fork a session into a new branch with fresh UUIDs.
@@ -485,7 +529,7 @@ export declare type GetSessionMessagesOptions = {
     offset?: number;
 };
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded"];
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded", "CwdChanged", "FileChanged"];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -504,9 +548,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -651,6 +695,7 @@ export declare type McpServerStatus = {
             openWorld?: boolean;
         };
     }[];
+
 };
 
 export declare type McpServerStatusConfig = McpServerConfigForProcessTransport | McpClaudeAIProxyServerConfig;
@@ -983,7 +1028,7 @@ export declare type Options = {
      *
      * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
      */
-    effort?: 'low' | 'medium' | 'high' | 'max';
+    effort?: EffortLevel;
     /**
      * Maximum number of tokens the model can use for its thinking/reasoning process.
      * Helps control cost and latency for complex tasks.
@@ -1003,6 +1048,16 @@ export declare type Options = {
      * budget is exceeded, returning an `error_max_budget_usd` result.
      */
     maxBudgetUsd?: number;
+    /**
+     * API-side task budget in tokens. When set, the model is made aware of
+     * its remaining token budget so it can pace tool use and wrap up before
+     * the limit. Sent as `output_config.task_budget` with the
+     * `task-budgets-2026-03-13` beta header.
+     * @alpha
+     */
+    taskBudget?: {
+        total: number;
+    };
     /**
      * MCP (Model Context Protocol) server configurations.
      * Keys are server names, values are server configurations.
@@ -1074,6 +1129,7 @@ export declare type Options = {
      * ```
      */
     plugins?: SdkPluginConfig[];
+
 
 
 
@@ -1253,6 +1309,11 @@ export declare type OutputFormatType = 'json_schema';
 export declare type PermissionBehavior = 'allow' | 'deny' | 'ask';
 
 /**
+ * Classification of this permission decision for telemetry. SDK hosts that prompt users (desktop apps, IDEs) should set this to reflect what actually happened: user_temporary for allow-once, user_permanent for always-allow (both the click and later cache hits), user_reject for deny. If unset, the CLI infers conservatively (temporary for allow, reject for deny). The vocabulary matches tool_decision OTel events (monitoring-usage docs).
+ */
+export declare type PermissionDecisionClassification = 'user_temporary' | 'user_permanent' | 'user_reject';
+
+/**
  * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
  */
 export declare type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';
@@ -1282,11 +1343,13 @@ export declare type PermissionResult = {
     updatedInput?: Record<string, unknown>;
     updatedPermissions?: PermissionUpdate[];
     toolUseID?: string;
+    decisionClassification?: PermissionDecisionClassification;
 } | {
     behavior: 'deny';
     message: string;
     interrupt?: boolean;
     toolUseID?: string;
+    decisionClassification?: PermissionDecisionClassification;
 };
 
 export declare type PermissionRuleValue = {
@@ -1377,7 +1440,7 @@ export declare type PreToolUseHookInput = BaseHookInput & {
 
 export declare type PreToolUseHookSpecificOutput = {
     hookEventName: 'PreToolUse';
-    permissionDecision?: 'allow' | 'deny' | 'ask';
+    permissionDecision?: PermissionBehavior;
     permissionDecisionReason?: string;
     updatedInput?: Record<string, unknown>;
     additionalContext?: string;
@@ -1531,6 +1594,17 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
     rewindFiles(userMessageId: string, options?: {
         dryRun?: boolean;
     }): Promise<RewindFilesResult>;
+    /**
+     * Seed the CLI's readFileState cache with a path+mtime entry. Use when
+     * the client observed a Read that has since been removed from context
+     * (e.g. by snip), so a subsequent Edit won't fail "file not read yet".
+     * If the file changed on disk since the given mtime, the seed is skipped
+     * and Edit will correctly require a fresh Read.
+     *
+     * @param path - Path to the file that was previously Read
+     * @param mtime - File mtime (floored ms) at the time of the observed Read
+     */
+    seedReadState(path: string, mtime: number): Promise<void>;
 
 
 
@@ -1655,6 +1729,7 @@ export declare type SandboxSettings = z.infer<ReturnType<typeof SandboxSettingsS
  */
 declare const SandboxSettingsSchema: () => z.ZodObject<{
     enabled: z.ZodOptional<z.ZodBoolean>;
+    failIfUnavailable: z.ZodOptional<z.ZodBoolean>;
     autoAllowBashIfSandboxed: z.ZodOptional<z.ZodBoolean>;
     allowUnsandboxedCommands: z.ZodOptional<z.ZodBoolean>;
     network: z.ZodOptional<z.ZodObject<{
@@ -1886,7 +1961,7 @@ export declare type SDKControlRequest = {
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlSetProactiveRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlSetProactiveRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest;
 
 export declare type SDKControlResponse = {
     type: 'control_response';
@@ -1900,6 +1975,15 @@ declare type SDKControlRewindFilesRequest = {
     subtype: 'rewind_files';
     user_message_id: string;
     dry_run?: boolean;
+};
+
+/**
+ * Seeds the readFileState cache with a path+mtime entry. Use when a prior Read was removed from context (e.g. by snip) so Edit validation would fail despite the client having observed the Read. The mtime lets the CLI detect if the file changed since the seeded Read — same staleness check as the normal path.
+ */
+declare type SDKControlSeedReadStateRequest = {
+    subtype: 'seed_read_state';
+    path: string;
+    mtime: number;
 };
 
 /**
@@ -1927,6 +2011,7 @@ declare type SDKControlSetPermissionModeRequest = {
      * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
      */
     mode: coreTypes.PermissionMode;
+
 };
 
 /**
@@ -2050,10 +2135,11 @@ export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodR
     description: string;
     inputSchema: Schema;
     annotations?: ToolAnnotations;
+    _meta?: Record<string, unknown>;
     handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskProgressMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskProgressMessage | SDKSessionStateChangedMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
 
 export declare type SDKPartialAssistantMessage = {
     type: 'stream_event';
@@ -2282,6 +2368,17 @@ export declare type SDKSessionOptions = {
     permissionMode?: PermissionMode;
 };
 
+/**
+ * Mirrors notifySessionStateChanged. 'idle' fires after heldBackResult flushes and the bg-agent do-while exits — authoritative turn-over signal.
+ */
+export declare type SDKSessionStateChangedMessage = {
+    type: 'system';
+    subtype: 'session_state_changed';
+    state: 'idle' | 'running' | 'requires_action';
+    uuid: UUID;
+    session_id: string;
+};
+
 export declare type SDKStatus = 'compacting' | null;
 
 export declare type SDKStatusMessage = {
@@ -2317,6 +2414,7 @@ export declare type SDKSystemMessage = {
     plugins: {
         name: string;
         path: string;
+
     }[];
     fast_mode_state?: FastModeState;
     uuid: UUID;
@@ -2365,6 +2463,10 @@ export declare type SDKTaskStartedMessage = {
     tool_use_id?: string;
     description: string;
     task_type?: string;
+    /**
+     * meta.name from the workflow script (e.g. 'spec'). Only set when task_type is 'local_workflow'.
+     */
+    workflow_name?: string;
     prompt?: string;
     uuid: UUID;
     session_id: string;
@@ -2460,6 +2562,7 @@ export declare type SessionStartHookSpecificOutput = {
     hookEventName: 'SessionStart';
     additionalContext?: string;
     initialUserMessage?: string;
+    watchPaths?: string[];
 };
 
 /**
@@ -3434,6 +3537,10 @@ export declare interface Settings {
     skipWebFetchPreflight?: boolean;
     sandbox?: {
         enabled?: boolean;
+        /**
+         * Exit with an error at startup if sandbox.enabled is true but the sandbox cannot start (missing dependencies, unsupported platform, or platform not in enabledPlatforms). When false (default), a warning is shown and commands run unsandboxed. Intended for managed-settings deployments that require sandboxing as a hard gate.
+         */
+        failIfUnavailable?: boolean;
         autoAllowBashIfSandboxed?: boolean;
         /**
          * Allow commands to run outside the sandbox via the dangerouslyDisableSandbox parameter. When false, the dangerouslyDisableSandbox parameter is completely ignored and all commands must run sandboxed. Default: true.
@@ -3536,6 +3643,10 @@ export declare interface Settings {
      */
     effortLevel?: 'low' | 'medium' | 'high';
     /**
+     * Advisor model for the server-side advisor tool.
+     */
+    advisorModel?: string;
+    /**
      * When true, fast mode is enabled. When absent or false, fast mode is off.
      */
     fastMode?: boolean;
@@ -3601,6 +3712,17 @@ export declare interface Settings {
      * Custom directory for plan files, relative to project root. If not set, defaults to ~/.claude/plans/
      */
     plansDirectory?: string;
+    /**
+     * Teams/Enterprise opt-in for channel notifications (MCP servers with the claude/channel capability pushing inbound messages). Default off. Set true to allow; users then select servers via --channels.
+     */
+    channelsEnabled?: boolean;
+    /**
+     * Teams/Enterprise allowlist of channel plugins. When set, replaces the default Anthropic allowlist — admins decide which plugins may push inbound messages. Undefined falls back to the default. Requires channelsEnabled: true.
+     */
+    allowedChannelPlugins?: {
+        marketplace: string;
+        plugin: string;
+    }[];
     /**
      * Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.)
      */
@@ -3812,7 +3934,7 @@ export declare type SyncHookJSONOutput = {
     systemMessage?: string;
     reason?: string;
 
-    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput;
+    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput | CwdChangedHookSpecificOutput | FileChangedHookSpecificOutput | WorktreeCreateHookSpecificOutput;
 };
 
 /**
@@ -3825,6 +3947,15 @@ export declare function tagSession(_sessionId: string, _tag: string | null, _opt
 
 export declare type TaskCompletedHookInput = BaseHookInput & {
     hook_event_name: 'TaskCompleted';
+    task_id: string;
+    task_subject: string;
+    task_description?: string;
+    teammate_name?: string;
+    team_name?: string;
+};
+
+export declare type TaskCreatedHookInput = BaseHookInput & {
+    hook_event_name: 'TaskCreated';
     task_id: string;
     task_subject: string;
     task_description?: string;
@@ -3867,6 +3998,7 @@ export declare type ThinkingEnabled = {
 
 export declare function tool<Schema extends AnyZodRawShape>(_name: string, _description: string, _inputSchema: Schema, _handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>, _extras?: {
     annotations?: ToolAnnotations;
+    searchHint?: string;
 }): SdkMcpToolDefinition<Schema>;
 
 /**
@@ -3960,6 +4092,14 @@ export declare type UserPromptSubmitHookSpecificOutput = {
 export declare type WorktreeCreateHookInput = BaseHookInput & {
     hook_event_name: 'WorktreeCreate';
     name: string;
+};
+
+/**
+ * Hook-specific output for the WorktreeCreate event. Provides the absolute path to the created worktree directory. Command hooks print the path on stdout instead.
+ */
+export declare type WorktreeCreateHookSpecificOutput = {
+    hookEventName: 'WorktreeCreate';
+    worktreePath: string;
 };
 
 export declare type WorktreeRemoveHookInput = BaseHookInput & {
