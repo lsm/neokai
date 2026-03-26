@@ -26,16 +26,12 @@ describe('RoomRuntime - leader terminal error detection', () => {
 		return { id: 'msg-1', text, toolCallNames: [] };
 	}
 
-	/** Shared mock messageHub that returns current model info for session.model.get requests. */
-	function createMockMessageHub() {
-		return {
-			request: async (method: string) => {
-				if (method === 'session.model.get') {
-					return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
-				}
-				return undefined;
-			},
-		};
+	/** Shared getCurrentModel impl that returns current model info for trySwitchToFallbackModel. */
+	function makeGetCurrentModel() {
+		return async (_sessionId: string) => ({
+			currentModel: 'claude-opus-4-5',
+			provider: 'anthropic',
+		});
 	}
 
 	/**
@@ -268,7 +264,7 @@ describe('RoomRuntime - leader terminal error detection', () => {
 					({
 						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
 					}) as never,
-				messageHub: createMockMessageHub(),
+				getCurrentModelImpl: makeGetCurrentModel(),
 			});
 
 			const { task } = await createGoalAndTask(ctx);
@@ -339,7 +335,7 @@ describe('RoomRuntime - leader terminal error detection', () => {
 					({
 						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
 					}) as never,
-				messageHub: createMockMessageHub(),
+				getCurrentModelImpl: makeGetCurrentModel(),
 			});
 
 			const { task } = await createGoalAndTask(ctx);
@@ -407,7 +403,7 @@ describe('RoomRuntime - leader terminal error detection', () => {
 					({
 						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
 					}) as never,
-				messageHub: createMockMessageHub(),
+				getCurrentModelImpl: makeGetCurrentModel(),
 			});
 
 			const { task } = await createGoalAndTask(ctx);

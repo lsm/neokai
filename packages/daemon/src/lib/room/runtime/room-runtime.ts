@@ -106,12 +106,6 @@ export interface WorkerMessage {
 	toolCallNames: string[];
 }
 
-/** Response from session.model.get RPC */
-interface SessionModelGetResult {
-	currentModel: string;
-	modelInfo?: { provider?: string };
-}
-
 export interface RoomRuntimeConfig {
 	room: Room;
 	groupRepo: SessionGroupRepository;
@@ -353,19 +347,17 @@ export class RoomRuntime {
 	): Promise<boolean> {
 		const settings = this.getGlobalSettings();
 
-		// Get current model info from the session
+		// Get current model info from the session (DB-first, no RPC over WebSocket)
 		let currentModel: string;
 		let currentProvider: string;
 		try {
-			const modelInfo = (await this.messageHub?.request('session.model.get', { sessionId })) as
-				| SessionModelGetResult
-				| undefined;
+			const modelInfo = await this.sessionFactory.getCurrentModel(sessionId);
 			if (!modelInfo || !modelInfo.currentModel) {
 				log.warn(`Could not get current model for session ${sessionId}`);
 				return false;
 			}
 			currentModel = modelInfo.currentModel;
-			currentProvider = modelInfo.modelInfo?.provider ?? 'anthropic';
+			currentProvider = modelInfo.provider ?? 'anthropic';
 		} catch (err) {
 			log.warn(`Error getting current model for session ${sessionId}:`, err);
 			return false;

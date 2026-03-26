@@ -651,7 +651,7 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 		/**
 		 * Creates a context where trySwitchToFallbackModel succeeds:
 		 * - getGlobalSettings returns a fallback model chain
-		 * - messageHub.request('session.model.get') returns a current model not in the chain
+		 * - sessionFactory.getCurrentModel returns a current model not in the chain
 		 *   (so the first fallback is selected)
 		 * - sessionFactory.switchModel returns success
 		 */
@@ -667,17 +667,10 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 					({
 						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
 					}) as never,
-				messageHub: {
-					async request(method: string, _params: unknown) {
-						if (method === 'session.model.get') {
-							return {
-								currentModel: 'claude-sonnet-4-6',
-								modelInfo: { provider: 'anthropic' },
-							};
-						}
-						return undefined;
-					},
-				},
+				getCurrentModelImpl: async () => ({
+					currentModel: 'claude-sonnet-4-6',
+					provider: 'anthropic',
+				}),
 			});
 		}
 
