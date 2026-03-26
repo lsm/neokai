@@ -1073,9 +1073,11 @@ export function setupTaskHandlers(
 		// review tasks: transition to in_progress before routing the human message.
 		// The group is still active (sessions running), so no revival is needed — just
 		// update the status so the task reflects that work is ongoing again.
+		let wasInReview = false;
 		if (task.status === 'review') {
 			try {
 				await taskManager.setTaskStatus(taskId, 'in_progress');
+				wasInReview = true;
 			} catch (err) {
 				throw new Error(
 					`Failed to transition task ${taskId} from review to in_progress: ${String(err)}`
@@ -1092,13 +1094,20 @@ export function setupTaskHandlers(
 			await runtime.clearGroupRateLimit(taskId);
 		}
 
+		// When the task was in review, prepend a context note so the leader knows to
+		// re-submit for review after addressing the human's feedback.
+		const reviewReminder = wasInReview
+			? `[Context: This task was in \`review\` status. The message below is human feedback. After addressing the feedback, call \`submit_for_review\` to re-submit for human approval.]\n\n`
+			: '';
+		const messageToRoute = reviewReminder + params.message.trim();
+
 		const groupRepo = makeGroupRepo();
 		const result = await routeHumanMessageToGroup(
 			runtime,
 			groupRepo,
 			taskManager,
 			taskId,
-			params.message.trim(),
+			messageToRoute,
 			target
 		);
 

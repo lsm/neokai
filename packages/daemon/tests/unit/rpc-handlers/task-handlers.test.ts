@@ -555,7 +555,10 @@ describe('task.sendHumanMessage RPC Handler', () => {
 
 			expect(result).toEqual({ success: true });
 			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
-			expect(runtime.injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'add error handling');
+			// Message should include review reminder prepended
+			const injectedMsg = (runtime.injectMessageToWorker.mock.calls[0] as [string, string])[1];
+			expect(injectedMsg).toContain('add error handling');
+			expect(injectedMsg).toContain('[Context: This task was in `review` status.');
 		});
 
 		it('transitions to in_progress and routes message to leader', async () => {
@@ -568,7 +571,10 @@ describe('task.sendHumanMessage RPC Handler', () => {
 
 			expect(result).toEqual({ success: true });
 			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
-			expect(runtime.injectMessageToLeader).toHaveBeenCalledWith(TASK_UUID, 'approve and merge');
+			// Message should include review reminder prepended
+			const injectedMsg = (runtime.injectMessageToLeader.mock.calls[0] as [string, string])[1];
+			expect(injectedMsg).toContain('approve and merge');
+			expect(injectedMsg).toContain('[Context: This task was in `review` status.');
 		});
 
 		it('throws when status transition from review to in_progress fails', async () => {
