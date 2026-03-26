@@ -52,7 +52,7 @@ describe('RoomRuntimeService', () => {
 			daemonHub: {} as never,
 			getApiKey: async () => null,
 			roomManager: mockRoomManager,
-			sessionManager: {} as never,
+			sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
 			defaultWorkspacePath: '/tmp',
 			defaultModel: 'global-default-model',
 			getGlobalSettings: () => ({}) as never,
@@ -205,6 +205,9 @@ describe('RoomRuntimeService', () => {
 			const sessionManager = {
 				getSessionAsync: mock(async () => mockAgentSession),
 				updateSession: mock(async () => {}),
+
+				registerSession: () => {},
+				unregisterSession: () => {},
 			};
 
 			// Mock settingsManager with project MCP servers
@@ -519,7 +522,7 @@ describe('RoomRuntimeService restart recovery', () => {
 			roomManager: {
 				getRoom: () => null,
 			} as unknown as RoomManager,
-			sessionManager: {} as never,
+			sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
 			defaultWorkspacePath: '/workspace',
 			defaultModel: 'test-model',
 			getGlobalSettings: () => ({}) as never,

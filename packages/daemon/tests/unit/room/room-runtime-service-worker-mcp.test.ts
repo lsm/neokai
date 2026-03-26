@@ -118,7 +118,7 @@ async function buildSessionFactory(opts: {
 			getRoom: () => null,
 			updateRoom: () => null,
 		} as never,
-		sessionManager: {} as never,
+		sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
 		defaultWorkspacePath: '/tmp',
 		defaultModel: 'test-model',
 		getGlobalSettings: () => ({}) as never,

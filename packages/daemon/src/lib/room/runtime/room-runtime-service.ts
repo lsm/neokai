@@ -231,6 +231,9 @@ export class RoomRuntimeService {
 		}
 		this.runtimes.clear();
 		this.observers.clear();
+		for (const sessionId of this.agentSessions.keys()) {
+			this.ctx.sessionManager.unregisterSession(sessionId);
+		}
 		this.agentSessions.clear();
 		this.roomAgentMcpServers.clear();
 
@@ -279,6 +282,7 @@ export class RoomRuntimeService {
 					ctx.defaultModel
 				);
 				agentSessions.set(init.sessionId, session);
+				ctx.sessionManager.registerSession(session);
 
 				// Inject merged MCP servers for worker sessions (coder / general).
 				//
@@ -409,6 +413,7 @@ export class RoomRuntimeService {
 				if (!session) return false;
 
 				agentSessions.set(sessionId, session);
+				ctx.sessionManager.registerSession(session);
 				// Don't call startStreamingQuery() here — the SDK query will be
 				// started lazily when injectMessage() is called. Eagerly starting
 				// without a queued message causes a 15s startup timeout because the
@@ -471,6 +476,7 @@ export class RoomRuntimeService {
 					log.warn(`Failed to cleanup session ${sessionId}:`, error);
 				} finally {
 					agentSessions.delete(sessionId);
+					ctx.sessionManager.unregisterSession(sessionId);
 				}
 			},
 			removeWorktree: async (workspacePath: string): Promise<boolean> => {
