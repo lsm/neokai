@@ -873,10 +873,9 @@ describe('step-agent-tools: list_reachable_agents', () => {
 
 	test('returns cross-node targets for channels to roles not in current group', async () => {
 		// 'tester' is not a member of the session group — cross-node target
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester'),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -890,10 +889,9 @@ describe('step-agent-tools: list_reachable_agents', () => {
 
 	test('within-node peer with a channel does not appear in cross-node targets', async () => {
 		// 'reviewer' is in the session group — stays in withinNodePeers, not crossNodeTargets
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -904,10 +902,9 @@ describe('step-agent-tools: list_reachable_agents', () => {
 	});
 
 	test('gate type none when no gate on cross-node channel', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester'), // no gate
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -917,10 +914,11 @@ describe('step-agent-tools: list_reachable_agents', () => {
 	});
 
 	test('gate type human: isGated true', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester', false, { gate: { type: 'human' } }),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'tester', false, { gate: { type: 'human' } }),
+			]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -930,12 +928,13 @@ describe('step-agent-tools: list_reachable_agents', () => {
 	});
 
 	test('gate type condition: isGated true', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester', false, {
-				gate: { type: 'condition', expression: 'test -f pr.txt' },
-			}),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'tester', false, {
+					gate: { type: 'condition', expression: 'test -f pr.txt' },
+				}),
+			]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -945,12 +944,13 @@ describe('step-agent-tools: list_reachable_agents', () => {
 	});
 
 	test('gate type task_result: isGated true', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester', false, {
-				gate: { type: 'task_result', expression: 'passed' },
-			}),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'tester', false, {
+					gate: { type: 'task_result', expression: 'passed' },
+				}),
+			]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -960,10 +960,11 @@ describe('step-agent-tools: list_reachable_agents', () => {
 	});
 
 	test('gate type always: isGated false (always passes)', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester', false, { gate: { type: 'always' } }),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'tester', false, { gate: { type: 'always' } }),
+			]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -973,12 +974,13 @@ describe('step-agent-tools: list_reachable_agents', () => {
 	});
 
 	test('gate description propagated when present', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester', false, {
-				gate: { type: 'human', description: 'Needs tech lead approval' },
-			}),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'tester', false, {
+					gate: { type: 'human', description: 'Needs tech lead approval' },
+				}),
+			]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -987,10 +989,11 @@ describe('step-agent-tools: list_reachable_agents', () => {
 	});
 
 	test('fan-out target marked as isFanOut true', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'qa-node', false, { isFanOut: true }),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'qa-node', false, { isFanOut: true }),
+			]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -1002,11 +1005,12 @@ describe('step-agent-tools: list_reachable_agents', () => {
 
 	test('deduplicates cross-node targets from multiple channels to same role', async () => {
 		// Two channels to 'tester' (e.g. from bidirectional expansion) — should appear once
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester'),
-			makeResolvedChannel('coder', 'tester'), // duplicate
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'tester'),
+				makeResolvedChannel('coder', 'tester'), // duplicate
+			]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
@@ -1016,10 +1020,9 @@ describe('step-agent-tools: list_reachable_agents', () => {
 
 	test('only includes outgoing channels (fromRole matches myRole)', async () => {
 		// Channel from 'tester' → 'coder' should NOT appear as a cross-node target for coder
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('tester', 'coder'),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('tester', 'coder')]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
