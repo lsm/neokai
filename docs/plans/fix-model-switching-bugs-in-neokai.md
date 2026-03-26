@@ -20,15 +20,15 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
 
 **Fix — two registration paths**: Room sessions enter `RoomRuntimeService.agentSessions` through two distinct code paths, both of which must register in `SessionCache`:
 
-1. **New session creation** (`createAndStartSession` at line ~250): After `agentSessions.set(init.sessionId, session)`, call `ctx.sessionManager.registerSession(session)`.
+1. **New session creation** (`createAndStartSession` at line 272): After `agentSessions.set(init.sessionId, session)` (line 281), call `ctx.sessionManager.registerSession(session)`.
 
-2. **Session restoration after daemon restart** (`restoreSession` at line ~380): After `agentSessions.set(sessionId, session)`, call `ctx.sessionManager.registerSession(session)`. This is critical -- without it, the fix would only work until the first daemon restart.
+2. **Session restoration after daemon restart** (`restoreSession` at line 398): After `agentSessions.set(sessionId, session)` (line 411), call `ctx.sessionManager.registerSession(session)`. This is critical -- without it, the fix would only work until the first daemon restart.
 
 **Cleanup — all teardown paths**: Room sessions are removed from `agentSessions` through multiple code paths, each of which must unregister from `SessionCache`:
 
-1. **`stopSession()`** (line ~442, `finally` block): Called during task cancellation/completion. Add `ctx.sessionManager.unregisterSession(sessionId)`.
+1. **`stopSession()`** (line 458, `finally` block): Called during task cancellation/completion. After `agentSessions.delete(sessionId)` (line 473), add `ctx.sessionManager.unregisterSession(sessionId)`.
 
-2. **`RoomRuntimeService.stop()`** (line ~197): Called during daemon shutdown. After `this.agentSessions.clear()`, iterate the previously-cleared entries and call `ctx.sessionManager.unregisterSession()` for each. Alternatively, refactor to iterate and unregister before clearing.
+2. **`RoomRuntimeService.stop()`** (line 228): Called during daemon shutdown. Before `this.agentSessions.clear()` (line 234), iterate all entries and call `ctx.sessionManager.unregisterSession()` for each.
 
 **Why add `unregisterSession` to `SessionManager`**: `SessionManager.sessionCache` is `private`. Adding `unregisterSession(sessionId: string): void` as a thin wrapper over `this.sessionCache.remove(sessionId)` mirrors the existing `registerSession()` which wraps `this.sessionCache.set()`, maintaining API symmetry.
 
@@ -200,23 +200,23 @@ The fix requires three coordinated changes:
 
 1. Add `unregisterSession(sessionId: string): void` to `SessionManager` that delegates to `this.sessionCache.remove(sessionId)`. This mirrors `registerSession()` which delegates to `this.sessionCache.set()`.
 
-2. **Registration path 1 — new session creation**: In `createSessionFactory().createAndStartSession()` (line ~250), after `agentSessions.set(init.sessionId, session)`, add:
+2. **Registration path 1 — new session creation**: In `createSessionFactory().createAndStartSession()` (line 272), after `agentSessions.set(init.sessionId, session)` (line 281), add:
    ```ts
    ctx.sessionManager.registerSession(session);
    ```
 
-3. **Registration path 2 — daemon restart restoration**: In `createSessionFactory().restoreSession()` (line ~380), after `agentSessions.set(sessionId, session)`, add:
+3. **Registration path 2 — daemon restart restoration**: In `createSessionFactory().restoreSession()` (line 398), after `agentSessions.set(sessionId, session)` (line 411), add:
    ```ts
    ctx.sessionManager.registerSession(session);
    ```
    This is critical. Without this, sessions restored after a daemon restart would NOT be in SessionCache, and Bug 1 would reoccur on every restart. The `restoreSession()` path uses `AgentSession.restore()` instead of `AgentSession.fromInit()`, but the result is the same `AgentSession` instance that needs to be findable via `sessionManager.getSessionAsync()`.
 
-4. **Teardown path 1 — individual session stop**: In `stopSession()` (line ~442, in the `finally` block after `agentSessions.delete(sessionId)`), add:
+4. **Teardown path 1 — individual session stop**: In `stopSession()` (line 458, in the `finally` block after `agentSessions.delete(sessionId)` at line 473), add:
    ```ts
    ctx.sessionManager.unregisterSession(sessionId);
    ```
 
-5. **Teardown path 2 — service shutdown**: In `RoomRuntimeService.stop()` (line ~197), before `this.agentSessions.clear()`, iterate all entries and unregister each:
+5. **Teardown path 2 — service shutdown**: In `RoomRuntimeService.stop()` (line 228), before `this.agentSessions.clear()` (line 234), iterate all entries and unregister each:
    ```ts
    for (const sessionId of this.agentSessions.keys()) {
        ctx.sessionManager.unregisterSession(sessionId);
@@ -225,7 +225,7 @@ The fix requires three coordinated changes:
    ```
    This prevents stale room session references from remaining in SessionCache after daemon shutdown.
 
-6. Verify that the `SessionCache.getAsync()` guard (line ~100 of `session-cache.ts`) correctly prefers the registered instance if a concurrent `getAsync()` call is in-flight during registration.
+6. Verify that the `SessionCache.getAsync()` guard (line 99 of `session-cache.ts`) correctly prefers the registered instance if a concurrent `getAsync()` call is in-flight during registration.
 7. Document the namespace invariant: room role strings must never equal `"space"` (add a comment in the role definition code where roles are enumerated).
 
 **Acceptance criteria**:
