@@ -1116,7 +1116,7 @@ describe('list_peers — completion state', () => {
 
 	test('list_peers includes completionState for each peer based on space_tasks', async () => {
 		const workflowNodeId = 'node-abc';
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+		const workflowRunId = 'run-test-abc';
 
 		// Seed a completed task for the reviewer peer
 		seedSpaceTask(
@@ -1149,7 +1149,7 @@ describe('list_peers — completion state', () => {
 
 	test('list_peers shows nodeCompletionState for all tasks on the node', async () => {
 		const workflowNodeId = 'node-xyz';
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+		const workflowRunId = 'run-test-xyz';
 
 		// Seed tasks for both coder and reviewer on the same node
 		seedSpaceTask(ctx.db, ctx.spaceId, workflowRunId, workflowNodeId, 'coder', 'in_progress', null);
@@ -1192,7 +1192,7 @@ describe('list_peers — completion state', () => {
 
 	test('list_peers works without space_tasks (no tasks on node)', async () => {
 		const workflowNodeId = 'node-empty';
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+		const workflowRunId = 'run-test-empty';
 
 		// No tasks seeded for this node
 		const config = makeConfig(ctx, {

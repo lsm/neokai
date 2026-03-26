@@ -1417,7 +1417,6 @@ export class TaskAgentManager {
 			run?.config as Record<string, unknown> | undefined
 		);
 
-
 		return createStepAgentMcpServer({
 			mySessionId: subSessionId,
 			myRole: role,
