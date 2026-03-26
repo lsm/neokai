@@ -84,6 +84,7 @@ import type {
 	SystemPromptConfig,
 	McpServerConfig,
 	Provider,
+	RoomSkillOverride,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';
@@ -138,6 +139,12 @@ export interface AgentSessionInit {
 
 	/** Disable automatic /context queuing after each turn (default: true) */
 	contextAutoQueue?: boolean;
+	/**
+	 * Room-level skill overrides applied on top of the global skills registry.
+	 * Skills with enabled=false in this list are excluded from injection even if
+	 * globally enabled. Populated by the room runtime when spawning sessions.
+	 */
+	roomSkillOverrides?: RoomSkillOverride[];
 }
 
 // Extracted components
@@ -242,7 +249,8 @@ export class AgentSession
 		readonly daemonHub: DaemonHub,
 		private getApiKey: () => Promise<string | null>,
 		readonly skillsManager?: import('../skills-manager').SkillsManager,
-		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
+		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+		readonly roomSkillOverrides?: RoomSkillOverride[]
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);
@@ -351,7 +359,9 @@ export class AgentSession
 		messageHub: MessageHub,
 		daemonHub: DaemonHub,
 		getApiKey: () => Promise<string | null>,
-		defaultModel: string
+		defaultModel: string,
+		skillsManager?: import('../skills-manager').SkillsManager,
+		appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
 	): AgentSession {
 		// Check if session already exists in DB
 		let session = db.getSession(init.sessionId);
@@ -431,7 +441,16 @@ export class AgentSession
 			};
 		}
 
-		const agentSession = new AgentSession(session, db, messageHub, daemonHub, getApiKey);
+		const agentSession = new AgentSession(
+			session,
+			db,
+			messageHub,
+			daemonHub,
+			getApiKey,
+			skillsManager,
+			appMcpServerRepo,
+			init.roomSkillOverrides
+		);
 		if (init.contextAutoQueue === false) {
 			agentSession.contextAutoQueueEnabled = false;
 		}

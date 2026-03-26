@@ -1159,4 +1159,162 @@ describe('QueryOptionsBuilder', () => {
 			);
 		});
 	});
+
+	describe('room skill overrides', () => {
+		const pluginSkill = {
+			id: 'skill-plugin-room-1',
+			name: 'room-plugin',
+			displayName: 'Room Plugin',
+			description: 'Plugin skill used in room override tests',
+			sourceType: 'plugin' as const,
+			config: { type: 'plugin' as const, pluginPath: '/plugins/room-plugin' },
+			enabled: true,
+			builtIn: false,
+			validationStatus: 'valid' as const,
+			createdAt: Date.now(),
+		};
+
+		const mcpSkill = {
+			id: 'skill-mcp-room-1',
+			name: 'room-mcp',
+			displayName: 'Room MCP',
+			description: 'MCP skill used in room override tests',
+			sourceType: 'mcp_server' as const,
+			config: { type: 'mcp_server' as const, appMcpServerId: 'mcp-room-uuid' },
+			enabled: true,
+			builtIn: false,
+			validationStatus: 'valid' as const,
+			createdAt: Date.now(),
+		};
+
+		const mockRoomMcpServer = {
+			id: 'mcp-room-uuid',
+			name: 'room-mcp-server',
+			sourceType: 'stdio' as const,
+			command: 'npx',
+			args: ['-y', 'room-mcp'],
+			enabled: true,
+		};
+
+		it('should exclude a plugin skill disabled by a room override', async () => {
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				roomSkillOverrides: [{ skillId: pluginSkill.id, roomId: 'room-1', enabled: false }],
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Room override disables the skill — must not appear in plugins
+			expect(options.plugins).toBeUndefined();
+		});
+
+		it('should exclude an MCP server skill disabled by a room override', async () => {
+			const mockAppMcpServerRepo = {
+				get: mock(() => mockRoomMcpServer),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [mcpSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+				roomSkillOverrides: [{ skillId: mcpSkill.id, roomId: 'room-1', enabled: false }],
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Room override disables the MCP skill — must not appear in mcpServers
+			expect(options.mcpServers).toBeUndefined();
+		});
+
+		it('should still include a plugin skill when room override has enabled=true', async () => {
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				roomSkillOverrides: [{ skillId: pluginSkill.id, roomId: 'room-1', enabled: true }],
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/room-plugin' }]);
+		});
+
+		it('should apply room override only to the matching skill ID', async () => {
+			const anotherPlugin = {
+				id: 'skill-plugin-other',
+				name: 'other-plugin',
+				displayName: 'Other Plugin',
+				description: 'Another plugin not targeted by the override',
+				sourceType: 'plugin' as const,
+				config: { type: 'plugin' as const, pluginPath: '/plugins/other-plugin' },
+				enabled: true,
+				builtIn: false,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill, anotherPlugin]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				// Disable only pluginSkill; anotherPlugin should still appear
+				roomSkillOverrides: [{ skillId: pluginSkill.id, roomId: 'room-1', enabled: false }],
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/other-plugin' }]);
+		});
+
+		it('should include all skills when roomSkillOverrides is empty', async () => {
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				roomSkillOverrides: [],
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/room-plugin' }]);
+		});
+
+		it('should include all skills when roomSkillOverrides is not provided', async () => {
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/room-plugin' }]);
+		});
+	});
 });

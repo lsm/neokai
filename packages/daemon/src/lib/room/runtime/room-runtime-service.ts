@@ -8,7 +8,13 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
+import type {
+	Room,
+	McpServerConfig,
+	RuntimeState,
+	GlobalSettings,
+	RoomSkillOverride,
+} from '@neokai/shared';
 import type { SettingsManager } from '../../settings-manager';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
@@ -38,6 +44,9 @@ import type { RoomManager } from '../managers/room-manager';
 import { WorktreeManager } from '../../worktree-manager';
 import { inferProviderForModel, getProviderRegistry } from '../../providers/registry';
 import { Logger } from '../../logger';
+import type { SkillsManager } from '../../skills-manager';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
+import type { RoomSkillOverrideRepository } from '../../../storage/repositories/room-skill-override-repository';
 
 const log = new Logger('room-runtime-service');
 
@@ -68,6 +77,12 @@ export interface RoomRuntimeServiceConfig {
 	 * Must be provided for the job-queue-based tick loop to function.
 	 */
 	jobProcessor?: JobQueueProcessor;
+	/** Application-level skills manager for injecting skills into session SDK options. Optional for backwards compatibility. */
+	skillsManager?: SkillsManager;
+	/** App MCP server repository for resolving mcp_server skill configs. Optional for backwards compatibility. */
+	appMcpServerRepo?: AppMcpServerRepository;
+	/** Room skill override repository for fetching per-room skill enablement overrides. Optional for backwards compatibility. */
+	roomSkillOverrideRepo?: RoomSkillOverrideRepository;
 }
 
 export class RoomRuntimeService {
@@ -266,6 +281,24 @@ export class RoomRuntimeService {
 		});
 	}
 
+	/**
+	 * Resolve the roomId from a session ID.
+	 * Handles the two ID formats used by room sessions:
+	 *   - `room:chat:{roomId}` — room chat coordinator session
+	 *   - `{role}:{roomId}:{taskId}:{uuid8}` — worker/leader sessions
+	 * Returns null if the format is not recognized.
+	 */
+	private static extractRoomId(sessionId: string): string | null {
+		const parts = sessionId.split(':');
+		if (parts.length >= 3 && parts[0] === 'room' && parts[1] === 'chat') {
+			return parts[2];
+		}
+		if (parts.length >= 4) {
+			return parts[1];
+		}
+		return null;
+	}
+
 	private createSessionFactory(): SessionFactory {
 		const ctx = this.ctx;
 		const agentSessions = this.agentSessions;
@@ -273,13 +306,26 @@ export class RoomRuntimeService {
 
 		return {
 			createAndStartSession: async (init, role) => {
+				// Resolve room-level skill overrides for this session.
+				// The override list is merged with the global skills registry in
+				// QueryOptionsBuilder so that room-disabled skills are excluded.
+				let roomSkillOverrides: RoomSkillOverride[] | undefined;
+				if (ctx.roomSkillOverrideRepo) {
+					const roomId = RoomRuntimeService.extractRoomId(init.sessionId);
+					if (roomId) {
+						roomSkillOverrides = ctx.roomSkillOverrideRepo.getOverrides(roomId);
+					}
+				}
+
 				const session = AgentSession.fromInit(
-					init,
+					{ ...init, roomSkillOverrides },
 					ctx.db,
 					ctx.messageHub,
 					ctx.daemonHub,
 					ctx.getApiKey,
-					ctx.defaultModel
+					ctx.defaultModel,
+					ctx.skillsManager,
+					ctx.appMcpServerRepo
 				);
 				agentSessions.set(init.sessionId, session);
 				ctx.sessionManager.registerSession(session);
