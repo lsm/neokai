@@ -97,7 +97,6 @@ function makeWorkflow(id: string): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: `Workflow ${id}`,
 		nodes: [],
-		transitions: [],
 		startNodeId: '',
 		rules: [],
 		tags: [],

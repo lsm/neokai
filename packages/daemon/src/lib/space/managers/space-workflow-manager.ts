@@ -4,7 +4,7 @@
  * Business logic layer for SpaceWorkflow operations within a Space.
  *
  * Responsibilities:
- * - Validate workflow integrity (unique name, node agent refs, transition graph validity)
+ * - Validate workflow integrity (unique name, node agent refs, channel graph validity)
  * - Protect custom agents that are referenced by nodes
  *
  * Workflow selection: either explicit workflowId provided by the caller, or
@@ -16,7 +16,6 @@ import type {
 	SpaceWorkflow,
 	WorkflowCondition,
 	WorkflowNodeInput,
-	WorkflowTransitionInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 	WorkflowChannel,
@@ -66,7 +65,6 @@ export class SpaceWorkflowManager {
 		this.validateName(params.spaceId, trimmedName, null);
 		const nodes = params.nodes ?? [];
 		this.validateNodes(params.spaceId, nodes);
-		this.validateTransitions(nodes, params.transitions ?? [], params.startNodeId);
 		if (params.channels && params.channels.length > 0) {
 			this.validateChannels(params.channels);
 		}
@@ -109,23 +107,6 @@ export class SpaceWorkflowManager {
 				})
 			);
 			this.validateNodes(existing.spaceId, inputs);
-			if (params.transitions !== undefined) {
-				this.validateTransitions(inputs, params.transitions ?? [], params.startNodeId ?? null);
-			}
-		} else if (params.transitions !== undefined) {
-			// Validate transitions against existing nodes
-			const existingNodeInputs: WorkflowNodeInput[] = existing.nodes.map((n) => ({
-				id: n.id,
-				name: n.name,
-				agentId: n.agentId,
-				agents: n.agents,
-				instructions: n.instructions,
-			}));
-			this.validateTransitions(
-				existingNodeInputs,
-				params.transitions ?? [],
-				params.startNodeId ?? null
-			);
 		}
 
 		if (params.channels && params.channels.length > 0) {
@@ -286,53 +267,6 @@ export class SpaceWorkflowManager {
 			if (ch.gate) {
 				this.validateCondition(ch.gate, `${loc}.gate`);
 			}
-		}
-	}
-
-	private validateTransitions(
-		nodes: WorkflowNodeInput[],
-		transitions: WorkflowTransitionInput[],
-		startNodeId: string | null | undefined
-	): void {
-		const knownNodeIds = new Set<string>(nodes.filter((n) => n.id).map((n) => n.id as string));
-
-		// When transitions reference node IDs but some nodes have no explicit id, we cannot
-		// validate the references at all — an invalid transition would only surface at runtime.
-		// Require all nodes to have explicit IDs when transitions are provided.
-		if (transitions.length > 0 && knownNodeIds.size < nodes.length) {
-			throw new WorkflowValidationError(
-				'All nodes must have explicit id values when transitions are specified'
-			);
-		}
-
-		for (let i = 0; i < transitions.length; i++) {
-			const t = transitions[i];
-			if (!t.from || !t.from.trim()) {
-				throw new WorkflowValidationError(`transition[${i}]: 'from' node ID must not be empty`);
-			}
-			if (!t.to || !t.to.trim()) {
-				throw new WorkflowValidationError(`transition[${i}]: 'to' node ID must not be empty`);
-			}
-			if (!knownNodeIds.has(t.from)) {
-				throw new WorkflowValidationError(
-					`transition[${i}]: 'from' node ID "${t.from}" does not match any node in this workflow`
-				);
-			}
-			if (!knownNodeIds.has(t.to)) {
-				throw new WorkflowValidationError(
-					`transition[${i}]: 'to' node ID "${t.to}" does not match any node in this workflow`
-				);
-			}
-			if (t.condition) {
-				this.validateCondition(t.condition, `transition[${i}].condition`);
-			}
-		}
-
-		// Validate startNodeId if provided
-		if (startNodeId && knownNodeIds.size > 0 && !knownNodeIds.has(startNodeId)) {
-			throw new WorkflowValidationError(
-				`startNodeId "${startNodeId}" does not match any node in this workflow`
-			);
 		}
 	}
 

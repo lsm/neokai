@@ -134,10 +134,6 @@ describe('CODING_WORKFLOW template', () => {
 		expect(verifyToDone?.isCyclic).toBeUndefined();
 	});
 
-	test('has no transitions (routing is channel-based)', () => {
-		expect(CODING_WORKFLOW.transitions).toHaveLength(0);
-	});
-
 	test('all channels have direction one-way', () => {
 		for (const ch of CODING_WORKFLOW.channels!) {
 			expect(ch.direction).toBe('one-way');
@@ -190,10 +186,6 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.nodes[1].agentId).toBe('general');
 	});
 
-	test('has no transitions (routing is channel-based)', () => {
-		expect(RESEARCH_WORKFLOW.transitions).toHaveLength(0);
-	});
-
 	test('has one channel (Plan Research → Research) with always gate', () => {
 		expect(RESEARCH_WORKFLOW.channels).toHaveLength(1);
 		const ch = RESEARCH_WORKFLOW.channels![0];
@@ -237,10 +229,6 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 
 	test('step agentId placeholder is coder', () => {
 		expect(REVIEW_ONLY_WORKFLOW.nodes[0].agentId).toBe('coder');
-	});
-
-	test('has no transitions (terminal step — run completes immediately on advance)', () => {
-		expect(REVIEW_ONLY_WORKFLOW.transitions).toHaveLength(0);
 	});
 
 	test('has no channels (single-node workflow needs no inter-agent channels)', () => {
@@ -377,12 +365,6 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[3].agentId).toBe(GENERAL_ID);
 	});
 
-	test('CODING_WORKFLOW seeded with no transitions (routing is channel-based)', async () => {
-		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
-		expect(wf!.transitions).toHaveLength(0);
-	});
-
 	test('CODING_WORKFLOW seeded with four channels and correct gate types', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -458,14 +440,13 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(ch.gate?.type).toBe('always');
 	});
 
-	test('RESEARCH_WORKFLOW seeded correctly — planner + general, no transitions', async () => {
+	test('RESEARCH_WORKFLOW seeded correctly — planner + general', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.nodes).toHaveLength(2);
 		expect(wf!.nodes[0].agentId).toBe(PLANNER_ID);
 		expect(wf!.nodes[1].agentId).toBe(GENERAL_ID);
-		expect(wf!.transitions).toHaveLength(0);
 	});
 
 	test('RESEARCH_WORKFLOW seeded channel direction is one-way and from/to are node names', async () => {
@@ -484,13 +465,12 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf.channels ?? []).toHaveLength(0);
 	});
 
-	test('REVIEW_ONLY_WORKFLOW seeded correctly — single coder step, no transitions', async () => {
+	test('REVIEW_ONLY_WORKFLOW seeded correctly — single coder step', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.nodes).toHaveLength(1);
 		expect(wf!.nodes[0].agentId).toBe(CODER_ID);
-		expect(wf!.transitions).toHaveLength(0);
 	});
 
 	test('all seeded workflows have the real spaceId assigned', async () => {
@@ -668,14 +648,6 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(result.ok).toBe(true);
 	});
 
-	test('exported Coding Workflow has no transitions (routing is channel-based)', () => {
-		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-
-		const exported = exportWorkflow(wf, mockAgents);
-		expect(exported.transitions).toHaveLength(0);
-	});
-
 	test('exported Coding Workflow preserves isCyclic on Verify→Plan channel', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -755,7 +727,6 @@ describe('Coding Workflow export/import round-trip', () => {
 			.find((w) => w.name === CODING_WORKFLOW.name)!;
 		expect(reimported).toBeDefined();
 		expect(reimported.nodes).toHaveLength(4);
-		expect(reimported.transitions).toHaveLength(0);
 		expect(reimported.channels).toHaveLength(4);
 
 		// isCyclic preserved on Verify→Plan channel
@@ -775,57 +746,5 @@ describe('Coding Workflow export/import round-trip', () => {
 		);
 		expect(verifyToDone).toBeDefined();
 		expect(verifyToDone!.isCyclic).toBeUndefined();
-	});
-
-	test('Zod schema accepts task_result condition type with expression', () => {
-		// Construct a minimal exported workflow with task_result and validate
-		const minimal = {
-			version: 1,
-			type: 'workflow',
-			name: 'Test Workflow',
-			nodes: [
-				{ agentRef: 'Planner', name: 'Plan' },
-				{ agentRef: 'General', name: 'Verify' },
-			],
-			transitions: [
-				{
-					fromNode: 'Verify',
-					toNode: 'Plan',
-					condition: { type: 'task_result', expression: 'failed' },
-					order: 0,
-					isCyclic: true,
-				},
-			],
-			startNode: 'Plan',
-			rules: [],
-			tags: ['test'],
-		};
-		const result = validateExportedWorkflow(minimal);
-		expect(result.ok).toBe(true);
-	});
-
-	test('Zod schema rejects task_result condition without expression', () => {
-		const invalid = {
-			version: 1,
-			type: 'workflow',
-			name: 'Test Workflow',
-			nodes: [
-				{ agentRef: 'Planner', name: 'Plan' },
-				{ agentRef: 'General', name: 'Verify' },
-			],
-			transitions: [
-				{
-					fromNode: 'Verify',
-					toNode: 'Plan',
-					condition: { type: 'task_result' },
-					order: 0,
-				},
-			],
-			startNode: 'Plan',
-			rules: [],
-			tags: ['test'],
-		};
-		const result = validateExportedWorkflow(invalid);
-		expect(result.ok).toBe(false);
 	});
 });

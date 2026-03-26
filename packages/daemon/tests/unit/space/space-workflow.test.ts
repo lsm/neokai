@@ -24,7 +24,7 @@ import {
 	WorkflowValidationError,
 } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceAgentLookup } from '../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { WorkflowNodeInput, WorkflowTransitionInput } from '@neokai/shared';
+import type { WorkflowNodeInput } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,7 +116,6 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.nodes[1].name).toBe('Plan');
 		expect(wf.tags).toEqual([]);
 		expect(wf.rules).toEqual([]);
-		expect(wf.transitions).toEqual([]);
 	});
 
 	test('createWorkflow stores tags and config', () => {
@@ -150,25 +149,6 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.startNodeId).toBe(plannerNode.id);
 	});
 
-	test('createWorkflow stores transitions', () => {
-		const transition: WorkflowTransitionInput = {
-			from: coderNode.id!,
-			to: plannerNode.id!,
-			condition: { type: 'always' },
-			order: 0,
-		};
-		const wf = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'With Transitions',
-			nodes: [coderNode, plannerNode],
-			transitions: [transition],
-		});
-		expect(wf.transitions).toHaveLength(1);
-		expect(wf.transitions[0].from).toBe(coderNode.id);
-		expect(wf.transitions[0].to).toBe(plannerNode.id);
-		expect(wf.transitions[0].condition?.type).toBe('always');
-	});
-
 	test('getWorkflow returns null for missing id', () => {
 		expect(repo.getWorkflow('no-such-id')).toBeNull();
 	});
@@ -179,7 +159,6 @@ describe('SpaceWorkflowRepository', () => {
 			name: 'Full',
 			description: 'A full workflow',
 			nodes: [coderNode, plannerNode],
-			transitions: [{ from: coderNode.id!, to: plannerNode.id!, condition: { type: 'human' } }],
 			startNodeId: coderNode.id,
 			rules: [{ name: 'Rule1', content: 'Follow TDD', appliesTo: [] }],
 			tags: ['a', 'b'],
@@ -195,8 +174,6 @@ describe('SpaceWorkflowRepository', () => {
 		expect(fetched.rules[0].id).toBeTruthy();
 		expect(fetched.config).toEqual({ key: 'value' });
 		expect(fetched.startNodeId).toBe(coderNode.id);
-		expect(fetched.transitions).toHaveLength(1);
-		expect(fetched.transitions[0].condition?.type).toBe('human');
 	});
 
 	test('listWorkflows returns all workflows for a space', () => {
@@ -248,21 +225,6 @@ describe('SpaceWorkflowRepository', () => {
 		expect(updated?.nodes[0].agentId).toBe('agent-general');
 	});
 
-	test('updateWorkflow replaces transitions when provided', () => {
-		const wf = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF',
-			nodes: [coderNode, plannerNode],
-			transitions: [{ from: coderNode.id!, to: plannerNode.id!, condition: { type: 'always' } }],
-		});
-		expect(wf.transitions).toHaveLength(1);
-
-		const updated = repo.updateWorkflow(wf.id, {
-			transitions: [],
-		});
-		expect(updated?.transitions).toHaveLength(0);
-	});
-
 	test('updateWorkflow returns null for missing id', () => {
 		expect(repo.updateWorkflow('missing', { name: 'X' })).toBeNull();
 	});
@@ -274,21 +236,6 @@ describe('SpaceWorkflowRepository', () => {
 
 		// Nodes should be gone (CASCADE)
 		const rows = db.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ?`).all(wf.id);
-		expect(rows).toHaveLength(0);
-	});
-
-	test('deleteWorkflow removes transitions (CASCADE)', () => {
-		const wf = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF',
-			nodes: [coderNode, plannerNode],
-			transitions: [{ from: coderNode.id!, to: plannerNode.id! }],
-		});
-		expect(repo.deleteWorkflow(wf.id)).toBe(true);
-
-		const rows = db
-			.prepare(`SELECT * FROM space_workflow_transitions WHERE workflow_id = ?`)
-			.all(wf.id);
 		expect(rows).toHaveLength(0);
 	});
 
@@ -453,61 +400,6 @@ describe('SpaceWorkflowRepository', () => {
 	// -------------------------------------------------------------------------
 	// JSON round-trips
 	// -------------------------------------------------------------------------
-
-	test('JSON round-trip: condition with expression', () => {
-		const wf = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Condition WF',
-			nodes: [coderNode, plannerNode],
-			transitions: [
-				{
-					from: coderNode.id!,
-					to: plannerNode.id!,
-					condition: {
-						type: 'condition',
-						expression: 'bun test',
-						timeoutMs: 30000,
-						maxRetries: 2,
-					},
-				},
-			],
-		});
-		const fetched = repo.getWorkflow(wf.id)!;
-		const t = fetched.transitions[0];
-		expect(t.condition?.type).toBe('condition');
-		expect(t.condition?.expression).toBe('bun test');
-		expect(t.condition?.timeoutMs).toBe(30000);
-		expect(t.condition?.maxRetries).toBe(2);
-	});
-
-	test('JSON round-trip: human condition', () => {
-		const wf = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Human WF',
-			nodes: [coderNode, plannerNode],
-			transitions: [
-				{
-					from: coderNode.id!,
-					to: plannerNode.id!,
-					condition: { type: 'human', description: 'Please review' },
-				},
-			],
-		});
-		const fetched = repo.getWorkflow(wf.id)!;
-		expect(fetched.transitions[0].condition?.type).toBe('human');
-		expect(fetched.transitions[0].condition?.description).toBe('Please review');
-	});
-
-	test('JSON round-trip: transition with no condition (unconditional)', () => {
-		const wf = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'No Cond WF',
-			nodes: [coderNode, plannerNode],
-			transitions: [{ from: coderNode.id!, to: plannerNode.id! }],
-		});
-		const fetched = repo.getWorkflow(wf.id)!;
-		expect(fetched.transitions[0].condition).toBeUndefined();
-	});
 
 	test('JSON round-trip: rules with appliesTo', () => {
 		const wf = repo.createWorkflow({
@@ -861,161 +753,6 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [{ id: 'step-x', name: 'Step', agentId: 'non-existent' }],
 			})
 		).toThrow(WorkflowValidationError);
-	});
-
-	// -------------------------------------------------------------------------
-	// Transition validation
-	// -------------------------------------------------------------------------
-
-	test('createWorkflow accepts valid transitions referencing step IDs', () => {
-		const wf = manager.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Trans WF',
-			nodes: [coderNode, plannerNode],
-			transitions: [{ from: coderNode.id!, to: plannerNode.id!, condition: { type: 'always' } }],
-		});
-		expect(wf.transitions).toHaveLength(1);
-	});
-
-	test('createWorkflow rejects transition with empty from', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Bad Trans',
-				nodes: [coderNode, plannerNode],
-				transitions: [{ from: '', to: plannerNode.id! }],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('createWorkflow rejects transition with empty to', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Bad Trans2',
-				nodes: [coderNode, plannerNode],
-				transitions: [{ from: coderNode.id!, to: '' }],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('createWorkflow rejects transition referencing non-existent from step', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Bad Trans From',
-				nodes: [coderNode, plannerNode],
-				transitions: [{ from: 'no-such-step', to: plannerNode.id! }],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('createWorkflow rejects transition referencing non-existent to step', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Bad Trans To',
-				nodes: [coderNode, plannerNode],
-				transitions: [{ from: coderNode.id!, to: 'no-such-step' }],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('createWorkflow rejects transitions when any step lacks an explicit id', () => {
-		// Nodes without explicit IDs cannot be referenced in transitions at validation time.
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Anon Nodes Trans',
-				// Neither step has an explicit id — backend would assign UUIDs at persist time
-				nodes: [
-					{ name: 'Plan', agentId: 'agent-planner' },
-					{ name: 'Code', agentId: 'agent-coder' },
-				],
-				transitions: [{ from: 'anything', to: 'anything-else' }],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('createWorkflow allows transitions when all steps have explicit ids', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Explicit IDs',
-				nodes: [coderNode, plannerNode],
-				transitions: [{ from: coderNode.id!, to: plannerNode.id! }],
-			})
-		).not.toThrow();
-	});
-
-	// -------------------------------------------------------------------------
-	// Condition validation
-	// -------------------------------------------------------------------------
-
-	test('createWorkflow rejects condition type with empty expression', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Empty Expr',
-				nodes: [coderNode, plannerNode],
-				transitions: [
-					{
-						from: coderNode.id!,
-						to: plannerNode.id!,
-						condition: { type: 'condition', expression: '' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('createWorkflow accepts condition type with non-empty expression', () => {
-		const wf = manager.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Good Expr',
-			nodes: [coderNode, plannerNode],
-			transitions: [
-				{
-					from: coderNode.id!,
-					to: plannerNode.id!,
-					condition: { type: 'condition', expression: 'bun test' },
-				},
-			],
-		});
-		expect(wf.transitions[0].condition?.expression).toBe('bun test');
-	});
-
-	test('createWorkflow accepts any expression (no allowlist)', () => {
-		// No allowlist — any expression is accepted at storage time
-		const wf = manager.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Any Expr',
-			nodes: [coderNode, plannerNode],
-			transitions: [
-				{
-					from: coderNode.id!,
-					to: plannerNode.id!,
-					condition: { type: 'condition', expression: 'rm -rf /tmp' },
-				},
-			],
-		});
-		expect(wf.transitions[0].condition?.expression).toBe('rm -rf /tmp');
-	});
-
-	test('createWorkflow accepts human condition without expression', () => {
-		const wf = manager.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Human WF',
-			nodes: [coderNode, plannerNode],
-			transitions: [
-				{
-					from: coderNode.id!,
-					to: plannerNode.id!,
-					condition: { type: 'human', description: 'Please review' },
-				},
-			],
-		});
-		expect(wf.transitions[0].condition?.type).toBe('human');
 	});
 
 	// -------------------------------------------------------------------------

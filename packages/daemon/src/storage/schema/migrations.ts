@@ -238,6 +238,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Mirrors the room_mcp_enablement pattern (migration 52) but references skills(id).
 	// Idempotent via CREATE TABLE IF NOT EXISTS.
 	runMigration58(db);
+
+	// Migration 59: Drop space_workflow_transitions table (replaced by channels).
+	// Idempotent via DROP TABLE IF EXISTS.
+	runMigration59(db);
 }
 
 /**
@@ -3753,4 +3757,13 @@ export function runMigration58(db: BunDatabase): void {
       PRIMARY KEY (skill_id, room_id)
     )
   `);
+}
+
+/**
+ * Migration 59: Drop space_workflow_transitions table (replaced by channels).
+ * Transitions have been removed in favor of the channel-based topology.
+ * Idempotent via DROP TABLE IF EXISTS.
+ */
+export function runMigration59(db: BunDatabase): void {
+	db.exec(`DROP TABLE IF EXISTS space_workflow_transitions`);
 }

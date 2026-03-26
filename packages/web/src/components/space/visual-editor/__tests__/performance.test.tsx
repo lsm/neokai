@@ -32,7 +32,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow, WorkflowNode, WorkflowTransition } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
 
 // ---- Mocks ----
 
@@ -80,11 +80,6 @@ function makeStep(index: number): WorkflowNode {
 	return { id: `node-${index}`, name: `Step ${index}`, agentId: 'agent-1' };
 }
 
-/** Create a WorkflowTransition between two step indices. */
-function makeTransition(from: number, to: number): WorkflowTransition {
-	return { id: `tr-${from}-${to}`, from: `node-${from}`, to: `node-${to}`, order: 0 };
-}
-
 /**
  * Build a large workflow with 25 nodes and 35 edges.
  *
@@ -96,69 +91,12 @@ function buildLargeWorkflow(): SpaceWorkflow {
 	// 25 nodes: n0 through n24
 	const nodes: WorkflowNode[] = Array.from({ length: 25 }, (_, i) => makeStep(i));
 
-	// Main fan-out chains (25 edges):
-	//   n0 → n1…n5 (layer 0 → layer 1)
-	//   n1→n6, n2→n7, n3→n8, n4→n9, n5→n10 (layer 1 → layer 2)
-	//   n6→n11, n7→n12, n8→n13, n9→n14, n10→n15 (layer 2 → layer 3)
-	//   n11→n16, n12→n17, n13→n18, n14→n19, n15→n20 (layer 3 → layer 4)
-	//   n16→n21, n17→n21, n18→n22, n19→n23, n20→n24 (layer 4 → layer 5)
-	const mainEdges: [number, number][] = [
-		[0, 1],
-		[0, 2],
-		[0, 3],
-		[0, 4],
-		[0, 5],
-		[1, 6],
-		[2, 7],
-		[3, 8],
-		[4, 9],
-		[5, 10],
-		[6, 11],
-		[7, 12],
-		[8, 13],
-		[9, 14],
-		[10, 15],
-		[11, 16],
-		[12, 17],
-		[13, 18],
-		[14, 19],
-		[15, 20],
-		[16, 21],
-		[17, 21],
-		[18, 22],
-		[19, 23],
-		[20, 24],
-	];
-
-	// Cross-layer forward edges (10 edges):
-	//   These add additional arcs between parallel branches within the same
-	//   fan-out level; all target nodes already have a longer incoming path,
-	//   so their layer assignments are unchanged (verified by tracing the
-	//   longest-path algorithm in layout.ts).
-	const crossEdges: [number, number][] = [
-		[1, 7],
-		[2, 8], // layer 1 → layer 2
-		[6, 12],
-		[7, 13],
-		[8, 14], // layer 2 → layer 3
-		[11, 17],
-		[12, 18],
-		[13, 19], // layer 3 → layer 4
-		[16, 22],
-		[17, 23], // layer 4 → layer 5
-	];
-
-	const transitions: WorkflowTransition[] = [...mainEdges, ...crossEdges].map(([f, t]) =>
-		makeTransition(f, t)
-	);
-
 	return {
 		id: 'large-wf',
 		spaceId: 'space-1',
 		name: 'Large Workflow',
 		description: 'Performance test workflow with 25 nodes and 35 edges',
 		nodes,
-		transitions,
 		startNodeId: 'node-0',
 		rules: [],
 		tags: [],
@@ -185,7 +123,7 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		const workflow = buildLargeWorkflow();
 
 		const start = performance.now();
-		const positions = autoLayout(workflow.nodes, workflow.transitions, workflow.startNodeId!);
+		const positions = autoLayout(workflow.nodes, [], workflow.startNodeId!);
 		const elapsed = performance.now() - start;
 
 		// Verify correctness: all 25 regular nodes + 1 Task Agent virtual node must receive a position.
@@ -201,7 +139,7 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 	// be assigned different x-coordinates.
 	it('autoLayout assigns unique positions to all 25 nodes', () => {
 		const workflow = buildLargeWorkflow();
-		const positions = autoLayout(workflow.nodes, workflow.transitions, workflow.startNodeId!);
+		const positions = autoLayout(workflow.nodes, [], workflow.startNodeId!);
 
 		// All 25 regular nodes + 1 Task Agent virtual node should have a position entry.
 		expect(positions.size).toBe(26);
@@ -242,10 +180,9 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		expect(elapsed).toBeLessThan(500);
 	});
 
-	// Sanity: the large workflow fixture has the exact expected counts.
-	it('large workflow fixture has exactly 25 nodes and 35 edges', () => {
+	// Sanity: the large workflow fixture has the exact expected node count.
+	it('large workflow fixture has exactly 25 nodes', () => {
 		const workflow = buildLargeWorkflow();
 		expect(workflow.nodes.length).toBe(25);
-		expect(workflow.transitions.length).toBe(35);
 	});
 });

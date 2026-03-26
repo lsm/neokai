@@ -514,21 +514,21 @@ export interface UpdateSpaceAgentParams {
 // ============================================================================
 
 /**
- * Primitive condition type for workflow transitions.
+ * Primitive condition type for workflow channel gates.
  *
- * - `always`: The transition fires unconditionally.
+ * - `always`: The gate opens unconditionally.
  * - `human`: Blocks until a human explicitly approves (via a signal / run config update).
- * - `condition`: A user-supplied shell expression; the transition fires when it exits with code 0.
+ * - `condition`: A user-supplied shell expression; the gate opens when it exits with code 0.
  *   NeoKai is a framework — no allowlist is applied. Users are responsible for what they run.
  * - `task_result`: Matches against the `result` field of the most recently completed task on the
- *   current node. The transition fires when the task result starts with or equals the condition's
+ *   current node. The gate opens when the task result starts with or equals the condition's
  *   `expression` value (e.g., `'passed'`, `'failed'`).
  */
 export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
 /**
- * A condition that guards a workflow transition.
- * Conditions determine whether a transition may fire when advance() is called.
+ * A condition that guards a workflow channel gate.
+ * Conditions determine whether a channel may deliver a message.
  */
 export interface WorkflowCondition {
 	/** Condition type. */
@@ -536,10 +536,10 @@ export interface WorkflowCondition {
 	/**
 	 * Expression to evaluate for the `condition` and `task_result` types.
 	 *
-	 * - For `condition`: a shell expression; the transition fires when it exits with code 0.
+	 * - For `condition`: a shell expression; the gate opens when it exits with code 0.
 	 *   No allowlist is applied — users are responsible for the expression content.
 	 * - For `task_result`: the match value to compare against the completed task's `result`
-	 *   field (e.g., `'passed'`, `'failed'`). The transition fires when the task result
+	 *   field (e.g., `'passed'`, `'failed'`). The gate opens when the task result
 	 *   starts with or equals this value.
 	 */
 	expression?: string;
@@ -553,41 +553,6 @@ export interface WorkflowCondition {
 	/** Timeout for condition evaluation in milliseconds (0 = use default) */
 	timeoutMs?: number;
 }
-
-/**
- * A directed edge in the workflow graph.
- * Transitions connect nodes and carry optional conditions that determine
- * whether the edge may be followed during advance().
- *
- * advance() evaluates transitions from the current node in ascending `order`
- * and follows the first one whose condition passes.
- * A node with no outgoing transitions is a terminal node — advance() marks the
- * run as 'completed' when reached.
- */
-export interface WorkflowTransition {
-	/** Unique identifier */
-	id: string;
-	/** Source node ID */
-	from: string;
-	/** Target node ID */
-	to: string;
-	/** Optional condition guarding this transition. Absent = 'always' (unconditional). */
-	condition?: WorkflowCondition;
-	/** Sort order among transitions with the same `from` node. Lower = evaluated first. */
-	order?: number;
-	/**
-	 * When `true`, following this transition increments `iterationCount` on the run.
-	 * Used for cycle detection in iterative workflows — avoids heuristic-based detection
-	 * that would misfire on DAG merge paths.
-	 */
-	isCyclic?: boolean;
-}
-
-/**
- * Input shape for a transition at creation time.
- * `id` is backend-assigned.
- */
-export type WorkflowTransitionInput = Omit<WorkflowTransition, 'id'>;
 
 /**
  * A single agent entry within a multi-agent workflow node.
@@ -690,7 +655,7 @@ export interface WorkflowChannel {
 /**
  * A single node in the workflow graph.
  * Nodes run one or more agents (in parallel when multiple are specified).
- * Nodes are connected by WorkflowTransitions.
+ * Nodes are connected by WorkflowChannels.
  *
  * All agents are referenced by ID — there is no separate builtin/custom distinction.
  * Preset agents (coder, general, planner, reviewer) seeded at Space creation time
@@ -744,7 +709,7 @@ export interface WorkflowRule {
 /**
  * Input shape for a workflow node at creation time.
  * `id` is optional — if provided the backend uses it, otherwise a UUID is generated.
- * Providing an explicit `id` allows transitions in the same CreateSpaceWorkflowParams
+ * Providing an explicit `id` allows channels in the same CreateSpaceWorkflowParams
  * call to reference the node before it has been persisted.
  *
  * At least one of `agentId` or `agents` must be provided.
@@ -776,7 +741,7 @@ export type WorkflowRuleInput = Omit<WorkflowRule, 'id'>;
 
 /**
  * A named, reusable workflow definition within a Space.
- * Workflows are directed graphs: steps are nodes, transitions are edges.
+ * Workflows are collaboration graphs: nodes are agent groups, channels are communication paths.
  * The SpaceRuntime executes workflows by creating SpaceWorkflowRun instances.
  */
 export interface SpaceWorkflow {
@@ -790,8 +755,6 @@ export interface SpaceWorkflow {
 	description?: string;
 	/** Nodes in the workflow graph */
 	nodes: WorkflowNode[];
-	/** Directed edges in the workflow graph */
-	transitions: WorkflowTransition[];
 	/** ID of the node where execution begins */
 	startNodeId: string;
 	/** Rules that govern agent behavior during this workflow */
@@ -833,14 +796,9 @@ export interface CreateSpaceWorkflowParams {
 	description?: string;
 	/**
 	 * Workflow nodes. Nodes may include an optional `id` field — if provided, the backend
-	 * uses it as the node's UUID so that `transitions` in the same call can reference it.
+	 * uses it as the node's UUID so that `channels` in the same call can reference it.
 	 */
 	nodes?: WorkflowNodeInput[];
-	/**
-	 * Directed edges connecting nodes. `from` and `to` must reference node IDs
-	 * (either pre-assigned via `WorkflowNodeInput.id` or backend-generated UUIDs).
-	 */
-	transitions?: WorkflowTransitionInput[];
 	/**
 	 * ID of the node where execution begins.
 	 * Defaults to the first node in the `nodes` array when omitted.
@@ -871,7 +829,7 @@ export interface CreateSpaceWorkflowParams {
  * Parameters for updating an existing SpaceWorkflow.
  * All fields are optional — only provided fields are updated.
  *
- * For array fields (`nodes`, `transitions`, `rules`, `tags`):
+ * For array fields (`nodes`, `channels`, `rules`, `tags`):
  * - Pass a new array to replace the entire collection.
  * - Pass `null` to explicitly clear the field to an empty collection.
  * - Pass `[]` to clear all entries (equivalent to null for arrays).
@@ -883,10 +841,6 @@ export interface UpdateSpaceWorkflowParams {
 	 * Replaces the entire node list. Pass `[]` or `null` to clear all nodes.
 	 */
 	nodes?: WorkflowNode[] | null;
-	/**
-	 * Replaces the entire transition list. Pass `[]` or `null` to clear all transitions.
-	 */
-	transitions?: WorkflowTransitionInput[] | null;
 	/**
 	 * Updates the workflow entry point. Pass `null` to reset to first node.
 	 */
@@ -976,8 +930,7 @@ export interface ExportedWorkflowNodeAgent {
  * - `channels[]` have moved to `ExportedSpaceWorkflow.channels` (workflow-level).
  *
  * Node names are used as cross-references throughout the exported format
- * (in `ExportedWorkflowTransition.fromNode`/`toNode`,
- * `ExportedSpaceWorkflow.startNode`, and `ExportedWorkflowRule.appliesTo`).
+ * (in `ExportedSpaceWorkflow.startNode`, and `ExportedWorkflowRule.appliesTo`).
  * Node names must therefore be unique within an exported workflow.
  *
  * At least one of `agentRef` or `agents` (non-empty) must be present:
@@ -1003,29 +956,6 @@ export interface ExportedWorkflowNode {
 	name: string;
 	/** Node-specific instructions appended to the agent's system prompt */
 	instructions?: string;
-}
-
-/**
- * A directed edge in the exported workflow graph.
- *
- * Differences from `WorkflowTransition`:
- * - `id` is stripped (space-specific, regenerated on import)
- * - `from`/`to` node UUIDs are replaced by node **names** for portability
- */
-export interface ExportedWorkflowTransition {
-	/** Name of the source node */
-	fromNode: string;
-	/** Name of the target node */
-	toNode: string;
-	/** Optional condition guarding this transition. Absent = unconditional. */
-	condition?: WorkflowCondition;
-	/** Sort order among transitions with the same source node. Lower = evaluated first. */
-	order?: number;
-	/**
-	 * When `true`, following this transition increments `iterationCount` on the run.
-	 * Used for cycle detection in iterative workflows.
-	 */
-	isCyclic?: boolean;
 }
 
 /**
@@ -1099,7 +1029,7 @@ export interface ExportedSpaceAgent {
  * A Space workflow in the portable export format.
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
  * Node IDs are stripped; cross-references use node names.
- * Transition IDs are stripped; `from`/`to` use node names.
+ * Channel IDs are stripped; `from`/`to` use node/agent names.
  */
 export interface ExportedSpaceWorkflow {
 	/** Format version — always 1 for this revision */
@@ -1112,8 +1042,6 @@ export interface ExportedSpaceWorkflow {
 	description?: string;
 	/** Graph nodes — node order in this array is not significant */
 	nodes: ExportedWorkflowNode[];
-	/** Graph edges — directed transitions between nodes */
-	transitions: ExportedWorkflowTransition[];
 	/** Name of the node where execution begins */
 	startNode: string;
 	/** Rules governing agent behavior; `appliesTo` uses node names */

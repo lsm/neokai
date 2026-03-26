@@ -117,7 +117,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 			{ id: STEP_1_ID, name: 'Plan', agentId: 'agent-1', instructions: 'Plan it' },
 			{ id: STEP_2_ID, name: 'Code', agentId: 'agent-2', instructions: '' },
 		],
-		transitions: [{ id: 'tr-1', from: STEP_1_ID, to: STEP_2_ID, order: 0 }],
 		startNodeId: STEP_1_ID,
 		rules: [],
 		tags: [],
@@ -146,8 +145,8 @@ beforeEach(() => {
 		makeAgent('agent-2', 'Coder', 'coder'),
 	];
 	mockWorkflows.value = [];
-	mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], transitions: [], tags: [] });
-	mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], transitions: [], tags: [] });
+	mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], tags: [] });
+	mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
 	mockCreateWorkflow.mockClear();
 	mockUpdateWorkflow.mockClear();
 });
@@ -567,33 +566,6 @@ describe('VisualWorkflowEditor', () => {
 				fireEvent.click(getByTestId('save-button'));
 			});
 			await waitFor(() => expect(getByText('Step 1 requires an agent.')).toBeTruthy());
-		});
-
-		it('shows error when condition-type edge has empty expression', async () => {
-			// Load a workflow that has a condition-type edge with no expression
-			const wf = makeWorkflow({
-				transitions: [
-					{
-						id: 'tr-1',
-						from: STEP_1_ID,
-						to: STEP_2_ID,
-						order: 0,
-						condition: { type: 'condition', expression: '' },
-					},
-				],
-			});
-			const { getByTestId, getByText } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: wf })} />
-			);
-
-			await act(async () => {
-				fireEvent.click(getByTestId('save-button'));
-			});
-			await waitFor(() =>
-				expect(
-					getByText('A transition using "Expression" condition requires a non-empty expression.')
-				).toBeTruthy()
-			);
 		});
 	});
 

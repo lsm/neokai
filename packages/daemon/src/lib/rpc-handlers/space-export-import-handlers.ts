@@ -49,7 +49,6 @@ import type {
 	CreateSpaceAgentParams,
 	CreateSpaceWorkflowParams,
 	WorkflowNodeInput,
-	WorkflowTransitionInput,
 	WorkflowRuleInput,
 	SpaceExportBundle,
 	ExportedSpaceAgent,
@@ -220,18 +219,6 @@ export function buildWorkflowCreateParams(
 		return node;
 	});
 
-	// Build WorkflowTransitionInput list — remap node names → new node UUIDs
-	const transitions: WorkflowTransitionInput[] = exported.transitions.map((t) => {
-		const tr: WorkflowTransitionInput = {
-			from: nodeNameToId.get(t.fromNode) ?? t.fromNode,
-			to: nodeNameToId.get(t.toNode) ?? t.toNode,
-		};
-		if (t.condition !== undefined) tr.condition = t.condition;
-		if (t.order !== undefined) tr.order = t.order;
-		if (t.isCyclic !== undefined) tr.isCyclic = t.isCyclic;
-		return tr;
-	});
-
 	// Resolve startNode name → new UUID
 	const startNodeId = nodeNameToId.get(exported.startNode);
 
@@ -251,7 +238,6 @@ export function buildWorkflowCreateParams(
 		spaceId,
 		name,
 		nodes,
-		transitions,
 		rules,
 		tags: exported.tags,
 	};

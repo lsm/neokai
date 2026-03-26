@@ -82,16 +82,6 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 			{ id: 'step-code', name: 'Code', agentId: 'agent-1', instructions: 'Write tests too.' },
 			{ id: 'step-review', name: 'Review', agentId: 'agent-reviewer' },
 		],
-		transitions: [
-			{ id: 't1', from: 'step-plan', to: 'step-code', order: 0 },
-			{
-				id: 't2',
-				from: 'step-code',
-				to: 'step-review',
-				order: 0,
-				condition: { type: 'human', description: 'Approve code before review' },
-			},
-		],
 		startNodeId: 'step-plan',
 		rules: [
 			{
@@ -405,11 +395,6 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('Write tests too.');
 	});
 
-	test('includes human gate transition label', () => {
-		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('HUMAN GATE');
-	});
-
 	test('includes workflow rules', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
 		expect(msg).toContain('No console.log');
@@ -443,21 +428,6 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('all steps');
 	});
 
-	test('always condition transition produces no extra label', () => {
-		const ctx = makeContext({
-			workflow: makeWorkflow({
-				transitions: [
-					{ id: 't-always', from: 'step-plan', to: 'step-code', condition: { type: 'always' } },
-				],
-			}),
-		});
-		const msg = buildTaskAgentInitialMessage(ctx);
-		// The arrow line should appear without a bracketed condition label
-		expect(msg).toContain('`step-plan` → `step-code`');
-		expect(msg).not.toContain('[HUMAN GATE]');
-		expect(msg).not.toContain('[condition:');
-	});
-
 	test('includes workflow run details when present', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
 		expect(msg).toContain('run-1');
@@ -479,7 +449,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 
 	test('handles workflow with no steps — body shows no steps message', () => {
 		const ctx = makeContext({
-			workflow: makeWorkflow({ nodes: [], transitions: [], startNodeId: 'none' }),
+			workflow: makeWorkflow({ nodes: [], startNodeId: 'none' }),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('no steps defined');
@@ -490,7 +460,6 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 			workflow: makeWorkflow({
 				name: 'Empty Workflow',
 				nodes: [],
-				transitions: [],
 				startNodeId: 'none',
 			}),
 		});
@@ -504,7 +473,6 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
 				nodes: [{ id: 'step-orphan', name: 'Orphan Step', agentId: 'agent-missing' }],
-				transitions: [],
 				startNodeId: 'step-orphan',
 			}),
 			availableAgents: [],
@@ -517,12 +485,6 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		const ctx = makeContext({ workflow: makeWorkflow({ rules: [] }) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).not.toContain('Workflow Rules');
-	});
-
-	test('handles workflow with no transitions', () => {
-		const ctx = makeContext({ workflow: makeWorkflow({ transitions: [] }) });
-		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).not.toContain('→');
 	});
 });
 
@@ -625,39 +587,6 @@ describe('buildTaskAgentInitialMessage — start instruction', () => {
 		const ctx = makeContext({ workflow: undefined, workflowRun: undefined });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('spawn_node_agent');
-	});
-});
-
-describe('buildTaskAgentInitialMessage — formatTransition task_result', () => {
-	test('formatTransition labels task_result transitions with result matches expression', () => {
-		// Create a workflow with a task_result transition
-		const wf: SpaceWorkflow = {
-			id: 'wf-task-result',
-			spaceId: 'space-1',
-			name: 'Task Result WF',
-			description: 'Test workflow',
-			nodes: [
-				{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner' },
-				{ id: 'step-code', name: 'Code', agentId: 'agent-1' },
-			],
-			transitions: [
-				{
-					id: 't1',
-					from: 'step-plan',
-					to: 'step-code',
-					condition: { type: 'task_result', expression: 'passed' },
-				},
-			],
-			startNodeId: 'step-plan',
-			rules: [],
-			isDefault: false,
-			tags: [],
-			createdAt: 1000,
-			updatedAt: 2000,
-		};
-		const ctx = makeContext({ workflow: wf });
-		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('[result matches "passed"]');
 	});
 });
 

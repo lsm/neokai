@@ -28,8 +28,8 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks';
-import type { WorkflowTransition, WorkflowConditionType } from '@neokai/shared';
-import type { NodePosition } from './types';
+import type { WorkflowConditionType } from '@neokai/shared';
+import type { NodePosition, VisualTransition } from './types';
 
 // Module-level counter -- increments on each EdgeRenderer mount, giving every
 // instance a unique marker ID prefix even when multiple instances are on the
@@ -93,7 +93,7 @@ const CHANNEL_CP_OFFSET = 80;
 // ---------------------------------------------------------------------------
 
 export interface EdgeRendererProps {
-	transitions: WorkflowTransition[];
+	transitions: VisualTransition[];
 	nodePositions: NodePosition;
 	selectedEdgeId?: string | null;
 	onEdgeSelect?: (transitionId: string) => void;
@@ -126,7 +126,7 @@ export interface EdgePoints {
  * Returns null when either node position is missing.
  */
 export function computeEdgePoints(
-	transition: WorkflowTransition,
+	transition: VisualTransition,
 	nodePositions: NodePosition
 ): EdgePoints | null {
 	const fromPos = nodePositions[transition.from];
