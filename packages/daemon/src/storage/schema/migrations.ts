@@ -233,6 +233,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 57: Create skills table for application-level Skills registry.
 	// Idempotent via CREATE TABLE IF NOT EXISTS.
 	runMigration57(db);
+
+	// Migration 58: Create room_skill_overrides table for per-room skill enablement.
+	// Mirrors the room_mcp_enablement pattern (migration 52) but references skills(id).
+	// Idempotent via CREATE TABLE IF NOT EXISTS.
+	runMigration58(db);
 }
 
 /**
@@ -3730,6 +3735,22 @@ export function runMigration57(db: BunDatabase): void {
       built_in INTEGER NOT NULL DEFAULT 0,
       validation_status TEXT NOT NULL DEFAULT 'pending',
       created_at INTEGER NOT NULL
+    )
+  `);
+}
+
+/**
+ * Migration 58: Create room_skill_overrides table for per-room skill enablement.
+ * Mirrors the room_mcp_enablement pattern (migration 52) but references skills(id).
+ * Idempotent via CREATE TABLE IF NOT EXISTS.
+ */
+export function runMigration58(db: BunDatabase): void {
+	db.exec(`
+    CREATE TABLE IF NOT EXISTS room_skill_overrides (
+      skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (skill_id, room_id)
     )
   `);
 }

@@ -31,6 +31,8 @@ export { runMigration55 } from './migrations';
 export { runMigration56 } from './migrations';
 // knip-ignore-next-line
 export { runMigration57 } from './migrations';
+// knip-ignore-next-line
+export { runMigration58 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -381,6 +383,16 @@ export function createTables(db: BunDatabase): void {
         built_in INTEGER NOT NULL DEFAULT 0,
         validation_status TEXT NOT NULL DEFAULT 'pending',
         created_at INTEGER NOT NULL
+      )
+    `);
+
+	// Per-room skill enablement overrides
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_skill_overrides (
+        skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (skill_id, room_id)
       )
     `);
 

@@ -398,6 +398,35 @@ export interface McpRoomResetToGlobalResponse {
 	ok: boolean;
 }
 
+// --- Per-Room Skill Enablement ---
+
+export interface SkillRoomGetOverridesRequest {
+	roomId: string;
+}
+
+export interface SkillRoomGetOverridesResponse {
+	overrides: Array<{ skillId: string; roomId: string; enabled: boolean }>;
+}
+
+export interface SkillRoomSetOverrideRequest {
+	roomId: string;
+	skillId: string;
+	enabled: boolean;
+}
+
+export interface SkillRoomSetOverrideResponse {
+	success: boolean;
+}
+
+export interface SkillRoomClearOverrideRequest {
+	roomId: string;
+	skillId: string;
+}
+
+export interface SkillRoomClearOverrideResponse {
+	success: boolean;
+}
+
 // --- Output Format ---
 
 export interface GetOutputFormatRequest {

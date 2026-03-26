@@ -185,7 +185,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.daemonHub,
 		deps.config.workspaceRoot,
 		deps.sessionManager,
-		deps.jobQueue
+		deps.jobQueue,
+		deps.db
 	);
 
 	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
