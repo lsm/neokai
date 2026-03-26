@@ -138,6 +138,26 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.transitions).toHaveLength(0);
 	});
 
+	test('all channels have direction one-way', () => {
+		for (const ch of CODING_WORKFLOW.channels!) {
+			expect(ch.direction).toBe('one-way');
+		}
+	});
+
+	test('all channel from/to fields reference valid node names', () => {
+		const nodeNames = new Set(CODING_WORKFLOW.nodes.map((n) => n.name));
+		for (const ch of CODING_WORKFLOW.channels!) {
+			expect(nodeNames.has(ch.from as string)).toBe(true);
+			expect(nodeNames.has(ch.to as string)).toBe(true);
+		}
+	});
+
+	test('all channels have gate descriptions', () => {
+		for (const ch of CODING_WORKFLOW.channels!) {
+			expect(ch.gate?.description).toBeTruthy();
+		}
+	});
+
 	test('maxIterations is set to 3', () => {
 		expect(CODING_WORKFLOW.maxIterations).toBe(3);
 	});
@@ -181,6 +201,18 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(ch.to).toBe('Research');
 		expect(ch.direction).toBe('one-way');
 		expect(ch.gate?.type).toBe('always');
+	});
+
+	test('channel from/to references match node names', () => {
+		const nodeNames = new Set(RESEARCH_WORKFLOW.nodes.map((n) => n.name));
+		const ch = RESEARCH_WORKFLOW.channels![0];
+		expect(nodeNames.has(ch.from as string)).toBe(true);
+		expect(nodeNames.has(ch.to as string)).toBe(true);
+	});
+
+	test('channel has a gate description', () => {
+		const ch = RESEARCH_WORKFLOW.channels![0];
+		expect(ch.gate?.description).toBeTruthy();
 	});
 
 	test('startNodeId points to the planner step', () => {
@@ -383,6 +415,25 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(passedChannel!.isCyclic).toBeUndefined();
 	});
 
+	test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		for (const ch of wf.channels!) {
+			expect(ch.direction).toBe('one-way');
+		}
+	});
+
+	test('CODING_WORKFLOW seeded channels from/to fields are node names (not UUIDs)', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const nodeNames = new Set(wf.nodes.map((n) => n.name));
+		for (const ch of wf.channels!) {
+			// Channels use node names for routing (resolved at runtime, not seeding time)
+			expect(nodeNames.has(ch.from as string)).toBe(true);
+			expect(nodeNames.has(ch.to as string)).toBe(true);
+		}
+	});
+
 	test('CODING_WORKFLOW seeded with maxIterations', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
@@ -415,6 +466,16 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[0].agentId).toBe(PLANNER_ID);
 		expect(wf!.nodes[1].agentId).toBe(GENERAL_ID);
 		expect(wf!.transitions).toHaveLength(0);
+	});
+
+	test('RESEARCH_WORKFLOW seeded channel direction is one-way and from/to are node names', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		const ch = wf.channels![0];
+		expect(ch.direction).toBe('one-way');
+		const nodeNames = new Set(wf.nodes.map((n) => n.name));
+		expect(nodeNames.has(ch.from as string)).toBe(true);
+		expect(nodeNames.has(ch.to as string)).toBe(true);
 	});
 
 	test('REVIEW_ONLY_WORKFLOW seeded with no channels', async () => {
