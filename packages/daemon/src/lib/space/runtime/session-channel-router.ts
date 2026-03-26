@@ -92,9 +92,7 @@ export class SessionChannelRouter {
 	 * Authorization is checked against the declared channel topology before delivery.
 	 * Returns a structured result — never throws.
 	 */
-	async deliverMessage(
-		params: SessionDeliverMessageParams
-	): Promise<SessionDeliverMessageResult> {
+	async deliverMessage(params: SessionDeliverMessageParams): Promise<SessionDeliverMessageResult> {
 		const { fromRole, fromSessionId, target, message } = params;
 		const {
 			sessionGroupRepo,
