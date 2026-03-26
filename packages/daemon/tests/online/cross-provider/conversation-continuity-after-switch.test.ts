@@ -267,17 +267,26 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Verify the pre-switch user message is still in the message history.
 		// This is a structural check: if the SDK session was recreated from scratch,
 		// the message history would be empty. A resumed session preserves all prior messages.
+		// SDK user message content is MessageParam: string | ContentBlockParam[].
 		const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 			minCount: countBeforeSwitch + 1,
 			timeout: 10000,
 		});
 
-		const preSwitchUserMsg = sdkMessages.find(
-			(msg) =>
-				msg.type === 'user' &&
-				typeof msg.message?.content === 'string' &&
-				msg.message.content.includes(preSwitchMarker)
-		);
+		const preSwitchUserMsg = sdkMessages.find((msg) => {
+			if (msg.type !== 'user') return false;
+			const content = msg.message?.content;
+			if (typeof content === 'string') return content.includes(preSwitchMarker);
+			if (Array.isArray(content)) {
+				return content.some(
+					(block) =>
+						block.type === 'text' &&
+						typeof block.text === 'string' &&
+						block.text.includes(preSwitchMarker)
+				);
+			}
+			return false;
+		});
 
 		expect(preSwitchUserMsg).toBeTruthy();
 	}, 90000);
