@@ -22,9 +22,10 @@ Add the `AppSkill` type family and related interfaces to `packages/shared/src/` 
    - `SkillSourceType = 'builtin' | 'plugin' | 'mcp_server'`
    - `BuiltinSkillConfig = { commandName: string }` — references a `.claude/commands/` slash command
    - `PluginSkillConfig = { pluginPath: string }` — absolute path to a local plugin directory
-   - `McpServerSkillConfig = { command: string; args?: string[]; env?: Record<string, string> }` — an MCP server used as a skill source
+   - `McpServerSkillConfig = { appMcpServerId: string }` — references an existing `app_mcp_servers` entry by ID; avoids duplicating MCP server config that is already managed by the app-level MCP registry (`app-mcp-handlers.ts` / `AppMcpServersSettings.tsx`)
    - `AppSkillConfig = BuiltinSkillConfig | PluginSkillConfig | McpServerSkillConfig`
-   - `AppSkill` interface: `{ id: string; name: string; displayName: string; description: string; sourceType: SkillSourceType; config: AppSkillConfig; enabled: boolean; builtIn: boolean; createdAt: string }`
+   - `SkillValidationStatus = 'pending' | 'valid' | 'invalid' | 'unknown'`
+   - `AppSkill` interface: `{ id: string; name: string; displayName: string; description: string; sourceType: SkillSourceType; config: AppSkillConfig; enabled: boolean; builtIn: boolean; validationStatus: SkillValidationStatus; createdAt: string }`
    - `CreateSkillParams` (omit id, createdAt, builtIn)
    - `UpdateSkillParams` (partial of CreateSkillParams fields)
 3. Export `AppSkill`, `SkillSourceType`, `CreateSkillParams`, `UpdateSkillParams` and all config types from `packages/shared/src/types/skills.ts`.
@@ -145,28 +146,29 @@ Wire the `skills` and `room_skill_overrides` tables into the ReactiveDatabase an
 **Subtasks (ordered):**
 
 1. Run `bun install` at the worktree root.
-2. Update `packages/daemon/src/storage/reactive-database.ts` — add entries to `METHOD_TABLE_MAP` for every `SkillRepository` write method:
-   - `insertSkill: 'skills'`
-   - `updateSkill: 'skills'`
-   - `deleteSkill: 'skills'`
-   - `upsertRoomSkillOverride: 'room_skill_overrides'`
-   - `deleteRoomSkillOverride: 'room_skill_overrides'`
-3. Add named queries to `NAMED_QUERY_REGISTRY` in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`:
+2. **Reactive notifications** — do NOT modify `reactive-database.ts` or `METHOD_TABLE_MAP`. That map is only for `Database` facade methods. Instead, follow the exact pattern in `packages/daemon/src/storage/repositories/app-mcp-server-repository.ts`:
+   - In `SkillRepository` constructor: accept `reactiveDb: ReactiveDatabase`; call `this.reactiveDb.notifyChange('skills')` at the end of every write method (`insert`, `update`, `delete`, `setEnabled`, `setValidationStatus`)
+   - In `RoomSkillOverrideRepository` constructor: same — call `this.reactiveDb.notifyChange('room_skill_overrides')` after every write (`upsert`, `delete`, `deleteAllForRoom`)
+3. Add named queries to `NAMED_QUERY_REGISTRY` in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`.
+
+   Use the existing `mcpServers.global` (0-param at line ~209) and `mcpEnablement.byRoom` (1-param at line ~257) as structural templates — they demonstrate the SELECT aliases, row mapper pattern, and ORDER BY convention.
 
    **`skills.list`** (0 params) — all global skills, ordered by `built_in DESC, created_at ASC`:
    ```sql
    SELECT id, name, display_name AS displayName, description,
           source_type AS sourceType, config, enabled, built_in AS builtIn,
+          validation_status AS validationStatus,
           created_at AS createdAt
    FROM skills
    ORDER BY built_in DESC, created_at ASC
    ```
-   Row mapper: parse `config` JSON field; coerce `enabled` and `builtIn` from integer to boolean.
+   Row mapper (`mapSkillRow`): parse `config` JSON (omit if NULL, same as `mapMcpServerRow` for `args`/`env`); coerce `enabled` and `builtIn` (integer → boolean).
 
-   **`skills.byRoom`** (1 param: `roomId`) — all global skills with per-room override applied:
+   **`skills.byRoom`** (1 param: `roomId`) — all global skills with per-room override applied via LEFT JOIN:
    ```sql
    SELECT s.id, s.name, s.display_name AS displayName, s.description,
           s.source_type AS sourceType, s.config, s.built_in AS builtIn,
+          s.validation_status AS validationStatus,
           s.created_at AS createdAt,
           CASE WHEN rso.enabled IS NOT NULL THEN rso.enabled ELSE s.enabled END AS enabled,
           CASE WHEN rso.skill_id IS NOT NULL THEN 1 ELSE 0 END AS overriddenByRoom
@@ -176,18 +178,19 @@ Wire the `skills` and `room_skill_overrides` tables into the ReactiveDatabase an
    ```
    Row mapper: parse `config` JSON; coerce `enabled`, `builtIn`, `overriddenByRoom` to booleans.
 
-4. Add authorization guard in `liveQuery.subscribe` handler for `skills.byRoom`: verify the requesting client has access to `roomId` (same pattern as `goals.byRoom`).
+4. **Authorization guard**: in the `liveQuery.subscribe` handler, add `queryName === 'skills.byRoom'` to the allow-list alongside `'tasks.byRoom'`, `'goals.byRoom'`, and `'mcpEnablement.byRoom'` (currently around line 453 in `live-query-handlers.ts`). The room-membership check uses the same `stmtRoom` prepared statement already compiled at handler setup time.
 5. Run `bun run typecheck`.
 6. Write unit tests:
    - Test `skills.list` query returns correct rows for a seeded DB
-   - Test `skills.byRoom` returns global `enabled` when no room override exists
-   - Test `skills.byRoom` returns room override `enabled` when override exists
-   - Test ReactiveDatabase emits `change:skills` when a skill is inserted/updated/deleted
+   - Test `skills.byRoom` returns global `enabled` when no room override row exists
+   - Test `skills.byRoom` returns room override `enabled` when override row exists
+   - Test `SkillRepository` calls `reactiveDb.notifyChange('skills')` on insert/update/delete
+   - Test `RoomSkillOverrideRepository` calls `reactiveDb.notifyChange('room_skill_overrides')` on upsert/delete
 
 **Acceptance criteria:**
-- `skills` and `room_skill_overrides` in `METHOD_TABLE_MAP`
+- `SkillRepository` and `RoomSkillOverrideRepository` call `reactiveDb.notifyChange()` after every write (same pattern as `AppMcpServerRepository`); `reactive-database.ts` is NOT modified
 - `skills.list` and `skills.byRoom` registered in `NAMED_QUERY_REGISTRY` with correct SQL and row mappers
-- `skills.byRoom` authorization guard matches existing room query guards
+- `skills.byRoom` added to the auth guard allow-list alongside existing room queries
 - Unit tests pass
 - `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
@@ -214,7 +217,7 @@ Implement a `SKILL_VALIDATE` job queue so that when a skill is added or updated,
    - Payload: `{ skillId: string }`
    - Fetch the skill from `SkillsManager`; throw if not found
    - For `plugin` skills: check `fs.access(pluginPath)` — fail job if path is inaccessible
-   - For `mcp_server` skills: check that `command` resolves via `which`/`Bun.which()` — fail job if not found; skip if command is an absolute path that exists
+   - For `mcp_server` skills: check that the referenced `app_mcp_servers` entry (by `config.appMcpServerId`) exists and is enabled via `AppMcpServerRepository.findById()`; fail job if not found
    - For `builtin` skills: no-op (always valid)
    - On success: return `{ valid: true, skillId }`
    - On failure: throw descriptive error (job processor will retry then mark dead)
