@@ -53,6 +53,7 @@ ROOM_FILES=(
   room-chat-constraints.test.ts
   room-mcp-enablement.test.ts
   room-multi-agent-flow.test.ts
+  planner-websearch.test.ts
   room-planner-two-phase.test.ts
   room-replan-recovery.test.ts
   room-reviewer-flow.test.ts
