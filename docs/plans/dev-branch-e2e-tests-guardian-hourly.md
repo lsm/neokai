@@ -153,15 +153,29 @@ After applying fixes in the worktree, validate locally, cherry-pick commits to d
    ```bash
    NEOKAI_USE_DEV_PROXY=1 make run-e2e TEST=tests/<path>.e2e.ts
    ```
-2. Check if CI is currently running on dev (to avoid disrupting a recent merge):
+2. Check if CI is currently running on dev. If so, defer the push to avoid cancellation:
    ```bash
-   gh run list --repo lsm/neokai --branch dev --limit 1 --json status --jq '.[0].status'
+   CI_STATUS=$(gh run list --repo lsm/neokai --branch dev --limit 1 --json status --jq '.[0].status')
+   if [ "$CI_STATUS" = "in_progress" ]; then
+     # Retry up to 2 times, 5 minutes apart
+     for i in 1 2; do
+       echo "CI still in progress, waiting 5 minutes (attempt $i/2)..."
+       sleep 300
+       CI_STATUS=$(gh run list --repo lsm/neokai --branch dev --limit 1 --json status --jq '.[0].status')
+       [ "$CI_STATUS" != "in_progress" ] && break
+     done
+     if [ "$CI_STATUS" = "in_progress" ]; then
+       echo "CI still running after retries. Deferring push to next hourly run."
+       exit 0  # Clean exit, will retry next hour
+     fi
+   fi
    ```
-   - If status is `in_progress`, wait 5 minutes and recheck, or accept the cancellation risk
-3. Commit changes in the worktree:
+3. Commit changes in the worktree. Stage only the actual changed test files:
    ```bash
-   # Stage only the changed test files
-   git add packages/e2e/tests/<affected-test-files>.ts
+   # Stage specific changed files (examples for multiple files)
+   git add packages/e2e/tests/features/mission-terminology.e2e.ts
+   git add packages/e2e/tests/features/mission-creation.e2e.ts
+   # Add more files as needed...
    git commit -m "fix(e2e): <description of fix>"
    ```
 4. Cherry-pick to dev and push:
@@ -170,25 +184,46 @@ After applying fixes in the worktree, validate locally, cherry-pick commits to d
    WORKTREE_BRANCH="guardian/$WORKTREE_NAME"
    # Get the commit hash from the worktree
    COMMIT_HASH=$(git rev-parse HEAD)
-   # Switch to dev and cherry-pick
+   # Switch to dev, pull latest, rebase worktree branch onto dev
    cd $REPO_ROOT
    git checkout dev
    git pull origin dev
+   # Rebase the worktree branch onto latest dev (resolves conflicts early)
+   git checkout "guardian/$WORKTREE_NAME"
+   git rebase origin/dev
+   # Get the rebased commit hash
+   COMMIT_HASH=$(git rev-parse HEAD)
+   # Switch to dev and cherry-pick
+   git checkout dev
    git cherry-pick $COMMIT_HASH
-   # Push directly to dev (this will cancel in-progress CI)
+   # Push directly to dev
    git push origin dev
    ```
-5. Do NOT re-trigger the full CI run -- local verification is sufficient.
-6. Clean up worktree after successful push:
+5. Handle cherry-pick conflicts (if any):
+   - If `git cherry-pick` or `git rebase` fails with conflicts:
+     ```bash
+     git cherry-pick --abort  # or git rebase --abort
+     # Resolve conflicts in the worktree, then:
+     git add <resolved-files>
+     git cherry-pick --continue  # or git rebase --continue
+     ```
+   - If conflicts are too complex, create a PR instead:
+     ```bash
+     git push origin "guardian/$WORKTREE_NAME"
+     gh pr create --base dev --head "guardian/$WORKTREE_NAME"
+     ```
+6. Do NOT re-trigger the full CI run -- local verification is sufficient.
+7. Clean up worktree after successful push:
    ```bash
    git worktree remove "$WORKTREE_PATH"
-   git branch -d "guardian/$WORKTREE_NAME"
+   git branch -D "guardian/$WORKTREE_NAME"
    ```
+   - If push failed, still clean up the worktree before exiting.
 
 **Acceptance Criteria:**
 - All fixes pass locally.
 - Changes cherry-picked and pushed to dev.
-- Worktree cleaned up.
+- Worktree cleaned up (success or failure path).
 - No full CI re-trigger.
 
 **Dependencies:** Task 3
@@ -200,31 +235,42 @@ After applying fixes in the worktree, validate locally, cherry-pick commits to d
 **Type:** general
 
 **Description:**
-Report what was checked, what failed, and what was fixed. If nothing was broken, report "All green". Append to `docs/e2e-health-check-log.md` following the existing format.
+Report what was checked, what failed, and what was fixed. If nothing was broken, report "All green". Append to `docs/e2e-health-check-log.md` following the existing format exactly.
 
 **Subtasks:**
-1. Record execution summary in `docs/e2e-health-check-log.md`:
+1. Record execution summary in `docs/e2e-health-check-log.md` matching the existing format:
    ```markdown
    ## $(date +%Y-%m-%d) — Check Run #<run-id>
 
    ### CI Run Overview
    - **Run ID**: <run-id>
-   - **Branch**: dev
+   - **Branch**: dev (commit <hash> — <description>)
+   - **Event**: push / scheduled
    - **Status**: Completed with e2e failures / All green
+
+   ### Build/Discover Jobs
+   - `Discover Tests`: **PASSED** / <status>
+   - `Build Binary (linux-x64)`: **PASSED** / <status>
+   - `Lint, Knip, Format & Type Check`: **PASSED** / **SKIPPED** / <status>
+   - All unit test jobs: **PASSED** / **SKIPPED** / <status>
 
    ### E2E Test Failures at #<run-id>
 
    **N failing tests** — categorized and root causes identified.
 
-   #### <Failure Category 1>: <Short Description>
-   **Test**: <test-name> (<file>:line)
+   **Failure 1**: <test-name> — <short description>
+   **Test**: <suite> (e.g., `E2E LLM (features-mission-terminology)`)
    **Problem**: <what went wrong>
+   **Root cause**: <categorization: test-bug | product-bug | flaky | env>
    **Fix**: <what was changed> (commit: <hash>)
 
    ... (repeat for each failure)
 
+   ### Flaky Tests (if any)
+   - <test-name>: <count> consecutive failures -- needs investigation
+
    ### Previous Failures (if any, now fixed)
-   - <test-name>: <status update>
+   - <test-name>: Fixed in <commit>
 
    ---
    ```
@@ -242,37 +288,44 @@ Report what was checked, what failed, and what was fixed. If nothing was broken,
 
 **Acceptance Criteria:**
 - Run documented following the existing format in `docs/e2e-health-check-log.md`.
-- Failures include root causes, affected files, and fix commits.
+- Includes Build/Discover Jobs section, root causes, affected files, and fix commits.
 - Report is accessible for human review.
 
 **Dependencies:** Task 4 (or Task 1 if all green)
 
 ---
 
-## Task 6: CI Improvement -- Enable E2E on PR Branches (One-time)
+## Task 6: CI Improvement -- Verify E2E on PR Branches (One-time)
 
 **Type:** general
 
 **Description:**
-Check if the CI workflow can be updated to support manual triggering of e2e tests on PR branches. Note: The CI already has `workflow_dispatch` in the trigger, but the `e2e-no-llm` and `e2e-llm` job conditions only depend on `needs.build.result` and `needs.discover.result` succeeding. This means `workflow_dispatch` works for `main`/`dev` refs, but NOT for PR branch refs because the discover job likely filters to known branches. This task is to investigate and fix this.
+Verify whether e2e tests can be triggered on PR branches via `workflow_dispatch`. The CI workflow already has `workflow_dispatch` in its trigger, but we need to empirically verify it works for arbitrary refs.
 
 **Subtasks:**
-1. Review the current CI workflow (`main.yml`):
-   - Check `workflow_dispatch` trigger configuration
-   - Review `discover` job conditions
-   - Review `e2e-no-llm` and `e2e-llm` job conditions
-2. Identify why PR branch refs don't work with `workflow_dispatch`:
-   - The discover job may filter to known branches only
-   - E2e job conditions may need explicit `workflow_dispatch` handling
-3. Update the CI YAML to enable manual e2e on PR branches:
-   - Add a condition to skip the discover gate for `workflow_dispatch` events
-   - Or add a separate e2e job for manual triggers
-4. Test with: `gh workflow run main.yml --repo lsm/neokai --ref <pr-branch>`
-5. Document the new workflow usage.
+1. Test `workflow_dispatch` on a PR branch:
+   ```bash
+   # Find a recent PR branch
+   PR_BRANCH=$(gh pr list --repo lsm/neokai --state open --limit 1 --json headRefName --jq '.[0].headRefName')
+   # Trigger CI manually
+   gh workflow run main.yml --repo lsm/neokai --ref "$PR_BRANCH"
+   ```
+2. Monitor the triggered run:
+   ```bash
+   gh run list --repo lsm/neokai --branch "$PR_BRANCH" --limit 1 --json databaseId,status
+   ```
+3. If the workflow runs successfully with e2e jobs:
+   - Document the usage: `gh workflow run main.yml --repo lsm/neokai --ref <pr-branch>`
+   - No CI YAML changes needed
+4. If the workflow fails or skips e2e jobs:
+   - Investigate the actual blocking condition in `main.yml`
+   - Update job conditions to enable e2e on `workflow_dispatch` events
+   - Test again until successful
+5. Document findings and any changes made.
 
 **Acceptance Criteria:**
-- CI workflow can be manually triggered on PR branches with e2e tests enabled.
-- Documentation of the new workflow usage added.
+- Empirical verification of `workflow_dispatch` behavior on PR branches.
+- Documentation of usage or CI changes made.
 
 **Dependencies:** None (background improvement task)
 
@@ -329,7 +382,7 @@ The CI workflow has an `EXCLUDED_TESTS` array. Failures from excluded tests shou
 ### Repository
 
 - Owner: `lsm/neokai`
-- Local root: `/Users/lsm/focus/dev-neokai`
+- Local root: `/Users/lsm/focus/dev-neokai` (adapt to your local setup)
 
 ---
 
@@ -345,25 +398,34 @@ Create a recurring mission in the NeoKai mission system with cron schedule `0 * 
 
 ## Reporting Template
 
-Append entries to `docs/e2e-health-check-log.md` following this format:
+Append entries to `docs/e2e-health-check-log.md` matching the existing format exactly:
 
 ```markdown
 ## $(date +%Y-%m-%d) — Check Run #<run-id>
 
 ### CI Run Overview
 - **Run ID**: <run-id>
-- **Branch**: dev
+- **Branch**: dev (commit <hash> — <description>)
+- **Event**: push / scheduled
 - **Status**: Completed with e2e failures / All green ✓
+
+### Build/Discover Jobs
+- `Discover Tests`: **PASSED** / <status>
+- `Build Binary (linux-x64)`: **PASSED** / <status>
+- `Lint, Knip, Format & Type Check`: **PASSED** / **SKIPPED** / <status>
+- All unit test jobs: **PASSED** / **SKIPPED** / <status>
 
 ### E2E Test Failures at #<run-id>
 
-**N failing tests**:
+**N failing tests** — categorized and root causes identified.
 
-#### <Failure Type>: <Short Description>
-**Test**: <test-name> (<file>:line)
+**Failure 1**: <test-name> — <short description>
+**Test**: <suite> (e.g., `E2E LLM (features-mission-terminology)`)
 **Problem**: <what went wrong>
 **Root cause**: <categorization: test-bug | product-bug | flaky | env>
-**Fix**: <what was changed>
+**Fix**: <what was changed> (commit: <hash>)
+
+... (repeat for each failure)
 
 ### Flaky Tests (if any)
 - <test-name>: <count> consecutive failures -- needs investigation
