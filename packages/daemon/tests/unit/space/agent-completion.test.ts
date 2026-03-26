@@ -13,7 +13,6 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { runMigration51 } from '../../../src/storage/schema/migrations.ts';
-import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -60,20 +59,6 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
      allowed_models, session_ids, status, created_at, updated_at)
      VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', 'active', ?, ?)`
 	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
-}
-
-function seedAgentRow(
-	db: BunDatabase,
-	agentId: string,
-	spaceId: string,
-	name: string,
-	role: string
-): void {
-	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, name, role, Date.now(), Date.now());
 }
 
 function seedSpaceTask(
@@ -242,12 +227,9 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 	let db: BunDatabase;
 	let dir: string;
 	let spaceId: string;
-	let sessionGroupRepo: SpaceSessionGroupRepository;
 	let spaceTaskRepo: SpaceTaskRepository;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
-	let groupId: string;
 	const coderSessionId = 'session-coder-cs';
-	const reviewerSessionId = 'session-reviewer-cs';
 
 	beforeEach(() => {
 		const result = makeDb();
@@ -256,31 +238,8 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		spaceId = 'space-lp-cs-test';
 		seedSpaceRow(db, spaceId);
 
-		sessionGroupRepo = new SpaceSessionGroupRepository(db);
 		spaceTaskRepo = new SpaceTaskRepository(db);
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId,
-			name: 'task:lp-cs-task',
-			taskId: 'lp-cs-task',
-		});
-		groupId = group.id;
-
-		sessionGroupRepo.addMember(groupId, 'session-ta-cs', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		sessionGroupRepo.addMember(groupId, coderSessionId, {
-			role: 'coder',
-			status: 'active',
-			agentId: 'agent-coder',
-		});
-		sessionGroupRepo.addMember(groupId, reviewerSessionId, {
-			role: 'reviewer',
-			status: 'active',
-			agentId: 'agent-reviewer',
-		});
 	});
 
 	afterEach(() => {
@@ -298,34 +257,12 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 			channelResolver: new ChannelResolver([]),
 			workflowRunId: '',
 			workflowNodeId: '',
-			sessionGroupRepo,
 			spaceTaskRepo,
-			getGroupId: () => groupId,
 			messageInjector: async () => {},
 			taskManager: new SpaceTaskManager(db, spaceId),
 			...overrides,
 		};
 	}
-
-	test('list_peers includes completionState for peer with matching agentName task', async () => {
-		const nodeId = 'node-lp-cs';
-		const workflowRunId = seedWorkflowRun(db, spaceId);
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'completed', 'Review passed');
-
-		const handlers = createNodeAgentToolHandlers(
-			makeConfig({ workflowRunId, workflowNodeId: nodeId })
-		);
-		const result = await handlers.list_peers({});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		const reviewerPeer = data.peers.find((p: { role: string }) => p.role === 'reviewer');
-		expect(reviewerPeer).toBeDefined();
-		expect(reviewerPeer.completionState).not.toBeNull();
-		expect(reviewerPeer.completionState.taskStatus).toBe('completed');
-		expect(reviewerPeer.completionState.completionSummary).toBe('Review passed');
-		expect(reviewerPeer.completionState.agentName).toBe('reviewer');
-	});
 
 	test('list_peers shows nodeCompletionState for all tasks on the node', async () => {
 		const nodeId = 'node-ncs';
@@ -348,7 +285,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		expect(reviewerState?.completionSummary).toBe('Done');
 	});
 
-	test('list_peers returns null completionState when no tasks on node', async () => {
+	test('list_peers returns empty nodeCompletionState when no tasks on node', async () => {
 		const workflowRunId = seedWorkflowRun(db, spaceId);
 
 		const handlers = createNodeAgentToolHandlers(
@@ -359,16 +296,28 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.nodeCompletionState).toHaveLength(0);
-		for (const peer of data.peers) {
-			expect(peer.completionState).toBeNull();
-		}
+		expect(data.peers).toHaveLength(0);
 	});
 
-	test('list_peers returns null completionState when task agentName does not match any peer role', async () => {
-		// Seed a task with an agentName that doesn't match 'coder' or 'reviewer' group members
-		const nodeId = 'node-unmatched';
+	test('list_peers includes peers from tasks with active sub-sessions', async () => {
+		const nodeId = 'node-lp-cs';
 		const workflowRunId = seedWorkflowRun(db, spaceId);
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'unknown-role', 'completed', 'Done');
+		// Seed a task with a taskAgentSessionId so it appears as a peer
+		const taskId = seedSpaceTask(
+			db,
+			spaceId,
+			workflowRunId,
+			nodeId,
+			'reviewer',
+			'completed',
+			'Review passed'
+		);
+		db.exec('PRAGMA foreign_keys = OFF');
+		db.prepare(`UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?`).run(
+			'session-reviewer-cs',
+			taskId
+		);
+		db.exec('PRAGMA foreign_keys = ON');
 
 		const handlers = createNodeAgentToolHandlers(
 			makeConfig({ workflowRunId, workflowNodeId: nodeId })
@@ -377,13 +326,11 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		// nodeCompletionState includes the task even if it has no matching group member
-		expect(data.nodeCompletionState).toHaveLength(1);
-		expect(data.nodeCompletionState[0].agentName).toBe('unknown-role');
-		// But peers (coder, reviewer) get null completionState since no task matches their role
-		for (const peer of data.peers) {
-			expect(peer.completionState).toBeNull();
-		}
+		const reviewerPeer = data.peers.find((p: { role: string }) => p.role === 'reviewer');
+		expect(reviewerPeer).toBeDefined();
+		expect(reviewerPeer.completionState.taskStatus).toBe('completed');
+		expect(reviewerPeer.completionState.completionSummary).toBe('Review passed');
+		expect(reviewerPeer.completionState.agentName).toBe('reviewer');
 	});
 });
 
@@ -395,14 +342,8 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 	let db: BunDatabase;
 	let dir: string;
 	let spaceId: string;
-	let sessionGroupRepo: SpaceSessionGroupRepository;
-	let spaceTaskRepo: SpaceTaskRepository;
-	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
-	let groupId: string;
-	const taskAgentSessionId = 'session-ta-lgm';
-	const coderSessionId = 'session-coder-lgm';
-	const reviewerSessionId = 'session-reviewer-lgm';
+	let workflowRunRepo: SpaceWorkflowRunRepository;
 	const mainTaskId = 'main-task-lgm';
 
 	beforeEach(() => {
@@ -411,33 +352,9 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 		dir = result.dir;
 		spaceId = 'space-lgm-cs-test';
 		seedSpaceRow(db, spaceId);
-		seedAgentRow(db, 'agent-coder-lgm', spaceId, 'Coder', 'coder');
 
-		sessionGroupRepo = new SpaceSessionGroupRepository(db);
-		spaceTaskRepo = new SpaceTaskRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId,
-			name: `task:${mainTaskId}`,
-			taskId: mainTaskId,
-		});
-		groupId = group.id;
-
-		sessionGroupRepo.addMember(groupId, taskAgentSessionId, {
-			role: 'task-agent',
-			status: 'active',
-		});
-		sessionGroupRepo.addMember(groupId, coderSessionId, {
-			role: 'coder',
-			status: 'active',
-			agentId: 'agent-coder-lgm',
-		});
-		sessionGroupRepo.addMember(groupId, reviewerSessionId, {
-			role: 'reviewer',
-			status: 'active',
-		});
 	});
 
 	afterEach(() => {
@@ -478,35 +395,13 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 			sessionFactory: makeMockSessionFactory(),
 			messageInjector: async () => {},
 			onSubSessionComplete: async () => {},
-			sessionGroupRepo,
-			getGroupId: () => groupId,
 			...overrides,
 		};
 	}
 
-	test('list_group_members includes completionState per member from space_tasks', async () => {
-		const nodeId = 'node-lgm-cs';
-		const workflowRunId = seedWorkflowRun(db, spaceId);
-		// Set the run's currentNodeId so list_group_members can find tasks for this node
-		workflowRunRepo.updateRun(workflowRunId, { currentNodeId: nodeId });
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'completed', 'Approved');
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(workflowRunId));
-		const result = await handlers.list_group_members({});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		const reviewerMember = data.members.find((m: { role: string }) => m.role === 'reviewer');
-		expect(reviewerMember).toBeDefined();
-		expect(reviewerMember.completionState).not.toBeNull();
-		expect(reviewerMember.completionState.taskStatus).toBe('completed');
-		expect(reviewerMember.completionState.completionSummary).toBe('Approved');
-	});
-
-	test('list_group_members includes nodeCompletionState', async () => {
+	test('list_group_members includes nodeCompletionState for all tasks in run', async () => {
 		const nodeId = 'node-lgm-ncs';
 		const workflowRunId = seedWorkflowRun(db, spaceId);
-		workflowRunRepo.updateRun(workflowRunId, { currentNodeId: nodeId });
 		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
 		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'completed', 'Done');
 
@@ -519,7 +414,7 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 		expect(data.nodeCompletionState).toHaveLength(2);
 	});
 
-	test('list_group_members returns null completionState when no tasks match', async () => {
+	test('list_group_members returns empty members when no tasks have active sub-sessions', async () => {
 		const workflowRunId = seedWorkflowRun(db, spaceId);
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(workflowRunId));
@@ -527,8 +422,38 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		for (const member of data.members) {
-			expect(member.completionState).toBeNull();
-		}
+		expect(data.members).toHaveLength(0);
+	});
+
+	test('list_group_members includes completionState for tasks with active sub-sessions', async () => {
+		const nodeId = 'node-lgm-cs';
+		const workflowRunId = seedWorkflowRun(db, spaceId);
+		const taskId = seedSpaceTask(
+			db,
+			spaceId,
+			workflowRunId,
+			nodeId,
+			'reviewer',
+			'completed',
+			'Approved'
+		);
+		// Give the task a sub-session so it shows up as a member
+		db.exec('PRAGMA foreign_keys = OFF');
+		db.prepare(`UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?`).run(
+			'session-reviewer-lgm',
+			taskId
+		);
+		db.exec('PRAGMA foreign_keys = ON');
+
+		const handlers = createTaskAgentToolHandlers(makeConfig(workflowRunId));
+		const result = await handlers.list_group_members({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		const reviewerMember = data.members.find((m: { role: string }) => m.role === 'reviewer');
+		expect(reviewerMember).toBeDefined();
+		expect(reviewerMember.completionState).not.toBeNull();
+		expect(reviewerMember.completionState.taskStatus).toBe('completed');
+		expect(reviewerMember.completionState.completionSummary).toBe('Approved');
 	});
 });

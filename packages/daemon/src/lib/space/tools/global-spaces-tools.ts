@@ -251,15 +251,8 @@ export function createGlobalSpacesToolHandlers(
 			if (!run) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
-			let currentStep = null;
-			if (run.currentNodeId) {
-				const workflow = workflowManager.getWorkflow(run.workflowId);
-				if (workflow) {
-					currentStep = workflow.nodes.find((s) => s.id === run.currentNodeId) ?? null;
-				}
-			}
 			const tasks = taskRepo.listByWorkflowRun(run.id);
-			return jsonResult({ success: true, run, currentStep, tasks });
+			return jsonResult({ success: true, run, tasks });
 		},
 
 		async list_tasks(args?: {

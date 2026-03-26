@@ -323,7 +323,6 @@ export class SpaceRuntime {
 			workflowId,
 			title,
 			description,
-			currentNodeId: workflow.startNodeId,
 			goalId,
 			maxIterations: workflow.maxIterations,
 		});
@@ -602,41 +601,17 @@ export class SpaceRuntime {
 			return;
 		}
 
-		// Recreate the executor with the fresh run from DB so getCurrentStep()
-		// reflects the latest persisted state. The executor is stateless beyond
-		// this.run (all workflow state is in the DB), so recreation is safe and cheap.
+		// In the agent-centric model, agents activate nodes themselves via activateNode().
+		// The tick loop processes ALL active tasks across all nodes — not just one "current step".
 		const meta = this.executorMeta.get(runId);
 		if (!meta) return;
 
-		const freshExecutor = this.buildExecutor(meta.workflow, run, meta.spaceId, meta.workspacePath);
-		this.executors.set(runId, freshExecutor);
-
-		const currentStep = freshExecutor.getCurrentStep();
-		if (!currentStep) {
-			// Run is in_progress but currentNodeId references a node that doesn't exist in
-			// the workflow. This is a data inconsistency — cancel the run and clean up maps
-			// so it is not rehydrated on every subsequent restart into the same throw loop.
-			this.executors.delete(runId);
-			this.executorMeta.delete(runId);
-			this.config.workflowRunRepo.updateStatus(runId, 'cancelled');
-			throw new Error(
-				`Run "${runId}" has currentNodeId "${run.currentNodeId}" not found in workflow "${run.workflowId}"`
-			);
-		}
-
-		// Find tasks that belong to the current step
-		const stepTasks = this.config.taskRepo
-			.listByWorkflowRun(runId)
-			.filter((t) => t.workflowNodeId === currentStep.id);
-
-		// Only advance when there is at least one task and ALL are completed.
-		// stepTasks.length === 0 is the normal "waiting" state — the task for this
-		// step has not been spawned yet (session group creation is async and handled
-		// by a separate layer). Silently returning here is intentional.
-		if (stepTasks.length === 0) return;
+		// Get ALL tasks for this run. Each task may belong to a different workflow node.
+		const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
+		if (allRunTasks.length === 0) return;
 
 		// Refresh dedup entries: clear keys for tasks that have left their flagged state.
-		for (const task of stepTasks) {
+		for (const task of allRunTasks) {
 			if (task.status !== 'needs_attention') {
 				this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
 			}
@@ -647,8 +622,8 @@ export class SpaceRuntime {
 
 		// Detect task-level needs_attention BEFORE the all-completed guard.
 		// This is an explicit check — not inferred from WorkflowTransitionError.
-		if (stepTasks.some((t) => t.status === 'needs_attention')) {
-			for (const task of stepTasks) {
+		if (allRunTasks.some((t) => t.status === 'needs_attention')) {
+			for (const task of allRunTasks) {
 				if (task.status !== 'needs_attention') continue;
 				const dedupKey = `${task.id}:needs_attention`;
 				if (!this.notifiedTaskSet.has(dedupKey)) {
@@ -663,23 +638,17 @@ export class SpaceRuntime {
 				}
 			}
 
-			// Partial failure gate: applies only to multi-agent steps (stepTasks.length > 1).
-			// For single-task steps the existing per-task notification is sufficient —
-			// a human can reset just the task without also needing to reset the run.
-			// For multi-agent parallel steps, wait until ALL sibling tasks reach a
-			// terminal state before escalating the run. This prevents premature
-			// escalation when one task has failed but siblings are still running.
-			if (stepTasks.length > 1) {
-				if (this.areAllStepTasksTerminal(stepTasks)) {
-					this.config.workflowRunRepo.updateStatus(runId, 'needs_attention');
-					await this.safeNotify({
-						kind: 'workflow_run_needs_attention',
-						spaceId: meta.spaceId,
-						runId,
-						reason: `One or more parallel tasks on step "${currentStep.name}" require attention`,
-						timestamp: new Date().toISOString(),
-					});
-				}
+			// Escalate the run to needs_attention for multi-agent steps when ALL tasks are terminal.
+			// Single-task steps: only task_needs_attention is emitted (backward compat).
+			if (allRunTasks.length > 1 && this.areAllStepTasksTerminal(allRunTasks)) {
+				this.config.workflowRunRepo.updateStatus(runId, 'needs_attention');
+				await this.safeNotify({
+					kind: 'workflow_run_needs_attention',
+					spaceId: meta.spaceId,
+					runId,
+					reason: 'One or more tasks require attention',
+					timestamp: new Date().toISOString(),
+				});
 			}
 
 			return;
@@ -690,7 +659,7 @@ export class SpaceRuntime {
 		const taskTimeoutMs = space?.config?.taskTimeoutMs;
 		if (taskTimeoutMs !== undefined) {
 			const now = Date.now();
-			for (const task of stepTasks) {
+			for (const task of allRunTasks) {
 				if (task.status !== 'in_progress' || !task.startedAt) continue;
 				const elapsedMs = now - task.startedAt;
 				if (elapsedMs > taskTimeoutMs) {
@@ -722,12 +691,10 @@ export class SpaceRuntime {
 			// tasks before deciding whether to skip.
 			//
 			// NOTE: we intentionally do NOT return early when alive agents are found.
-			// For multi-agent parallel steps, some tasks may have alive agents while
-			// siblings are still pending (e.g. a spawn failure on a prior tick). An
-			// early return here would permanently skip spawning those unspawned tasks.
-			// Always proceed to Step 2 so pending tasks are always re-examined.
-			// The final `return` at the end of the TAM block still prevents advance().
-			for (const task of stepTasks) {
+			// Some tasks may have alive agents while siblings are still pending (e.g. a
+			// spawn failure on a prior tick). An early return here would permanently skip
+			// spawning those unspawned tasks.
+			for (const task of allRunTasks) {
 				if (!task.taskAgentSessionId) continue;
 
 				if (tam.isTaskAgentAlive(task.id)) {
@@ -748,11 +715,9 @@ export class SpaceRuntime {
 			// Step 1.5: Auto-complete stuck agents — alive but never called report_done.
 			// Must run after dead-agent resets (Step 1) so we only process truly alive agents.
 			// Re-reads tasks from DB to pick up any status resets from Step 1.
-			const freshStepTasksForLiveness = this.config.taskRepo
-				.listByWorkflowRun(runId)
-				.filter((t) => t.workflowNodeId === currentStep.id);
+			const freshRunTasksForLiveness = this.config.taskRepo.listByWorkflowRun(runId);
 			const autoCompleted = await autoCompleteStuckAgents(
-				freshStepTasksForLiveness,
+				freshRunTasksForLiveness,
 				meta.spaceId,
 				this.config.taskRepo,
 				tam,
@@ -780,10 +745,7 @@ export class SpaceRuntime {
 			// Re-read from DB to pick up status resets applied in Step 1.
 			const pendingTasksNeedingAgent = this.config.taskRepo
 				.listByWorkflowRun(runId)
-				.filter(
-					(t) =>
-						t.workflowNodeId === currentStep.id && t.status === 'pending' && !t.taskAgentSessionId
-				);
+				.filter((t) => t.status === 'pending' && !t.taskAgentSessionId);
 
 			if (pendingTasksNeedingAgent.length > 0) {
 				if (!space) {

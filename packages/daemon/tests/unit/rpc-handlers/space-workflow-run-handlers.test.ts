@@ -62,8 +62,9 @@ const mockRun: SpaceWorkflowRun = {
 	spaceId: 'space-1',
 	workflowId: 'workflow-1',
 	title: 'Test Run',
-	currentNodeId: 'step-1',
 	status: 'in_progress',
+	iterationCount: 0,
+	maxIterations: 5,
 	createdAt: NOW,
 	updatedAt: NOW,
 };

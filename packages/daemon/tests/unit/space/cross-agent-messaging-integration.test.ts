@@ -10,13 +10,14 @@
  *              role names in different groups are never confused.
  *   - Suite 3: Multi-turn coder↔reviewer exchange (3 rounds) — exercises the full protocol.
  *   - Suite 5: Full hub-spoke assign→reply→follow-up exchange across multiple turns.
- *   - Suite 7: Fresh repository instances over the same DB — verifies group/channel resolution
+ *   - Suite 7: Fresh repository instances over the same DB — verifies channel resolution
  *              survives daemon restart (the only suite that cannot be replaced by unit tests).
- *   - Suite 8: getGroupId() → undefined edge case not covered in existing tests.
- *   - Suite 9: Task Agent participation in channel topology — via list_group_members and
+ *   - Suite 8: Missing workflowRunId edge case: when no workflowRunId is set, list_peers
+ *              returns empty peers and send_message fails with no-active-sessions.
+ *   - Suite 9: Task Agent participation in channel topology — via list_peers and
  *              send_message to 'task-agent' target. By design, send_message to task-agent
  *              fails with "no active sessions" even when channel is declared (task-agent is
- *              filtered from delivery targets). list_group_members correctly shows the
+ *              filtered from delivery targets). list_peers correctly shows the
  *              channel in permittedTargets for both the sender and Task Agent.
  *
  * Suites 2–6 provide complementary coverage for the direction-enforcement and topology
@@ -29,8 +30,8 @@
  *   4. Fan-out one-way A→[B,C,D] — all targets receive; no reverse permitted
  *   5. Hub-spoke A↔[B,C,D]       — hub broadcasts, spokes reply to hub only, spoke isolation
  *   6. Concurrent injection       — both messages delivered when two agents inject simultaneously
- *   7. Data reload                — group/channel resolution survives DB re-fetch
- *   8. Error paths                — missing group ID returns structured error
+ *   7. Data reload                — channel resolution survives DB re-fetch
+ *   8. Error paths                — missing workflowRunId returns empty peers / no active sessions
  *   9. Task Agent in topology     — channel to/from task-agent is reflected in permittedTargets
  *                                  but send_message to task-agent fails (delivery target filtered)
  *
@@ -43,15 +44,23 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
+import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import {
 	createNodeAgentToolHandlers,
 	type NodeAgentToolsConfig,
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import type { ResolvedChannel } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Workflow node ID shared across all step-scoped tests in this file. */
+const STEP_NODE_ID = 'node-integration-step';
 
 // ---------------------------------------------------------------------------
 // DB / seed helpers
@@ -79,6 +88,43 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
 }
 
+/**
+ * Seed a space_tasks row that represents a node agent sub-session.
+ * Uses PRAGMA foreign_keys = OFF to bypass the FK constraint on workflow_node_id
+ * (which references space_workflow_nodes) — nodes are not seeded in these tests.
+ */
+function seedTask(
+	db: BunDatabase,
+	spaceId: string,
+	workflowRunId: string,
+	agentName: string,
+	sessionId: string | null,
+	nodeId: string = STEP_NODE_ID,
+	status: string = 'in_progress'
+): void {
+	db.exec('PRAGMA foreign_keys = OFF');
+	const now = Date.now();
+	const id = `task-int-${Math.random().toString(36).slice(2)}`;
+	db.prepare(
+		`INSERT INTO space_tasks
+       (id, space_id, title, description, status, priority, agent_name,
+        workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
+	).run(
+		id,
+		spaceId,
+		`Task for ${agentName}`,
+		status,
+		agentName,
+		workflowRunId,
+		nodeId,
+		sessionId,
+		now,
+		now
+	);
+	db.exec('PRAGMA foreign_keys = ON');
+}
+
 function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
@@ -100,7 +146,6 @@ function seedWorkflowRunWithChannels(
 		spaceId,
 		workflowId: workflow.id,
 		title: 'Integration Test Run',
-		triggeredBy: 'test',
 	});
 
 	if (channels.length > 0) {
@@ -133,20 +178,45 @@ interface TestDb {
 	db: BunDatabase;
 	dir: string;
 	spaceId: string;
-	sessionGroupRepo: SpaceSessionGroupRepository;
+	spaceTaskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	workflowRunId: string;
+	taskManager: SpaceTaskManager;
 }
 
 function makeTestDb(): TestDb {
 	const { db, dir } = makeDb();
 	const spaceId = `space-${Math.random().toString(36).slice(2)}`;
 	seedSpaceRow(db, spaceId);
+	const spaceTaskRepo = new SpaceTaskRepository(db);
+	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+	const taskManager = new SpaceTaskManager(db, spaceId);
+
+	// Create a workflow run for this test DB
+	const workflowRepo = new SpaceWorkflowRepository(db);
+	const workflow = workflowRepo.createWorkflow({
+		spaceId,
+		name: 'Integration Test Workflow',
+		description: '',
+		nodes: [],
+		transitions: [],
+		startNodeId: '',
+		rules: [],
+	});
+	const run = workflowRunRepo.createRun({
+		spaceId,
+		workflowId: workflow.id,
+		title: 'Integration Test Run',
+	});
+
 	return {
 		db,
 		dir,
 		spaceId,
-		sessionGroupRepo: new SpaceSessionGroupRepository(db),
-		workflowRunRepo: new SpaceWorkflowRunRepository(db),
+		spaceTaskRepo,
+		workflowRunRepo,
+		workflowRunId: run.id,
+		taskManager,
 	};
 }
 
@@ -176,7 +246,6 @@ function makeStepConfig(
 	tdb: TestDb,
 	sessionId: string,
 	role: string,
-	groupId: string,
 	channelResolver: ChannelResolver,
 	injector: (sessionId: string, message: string) => Promise<void>
 ): NodeAgentToolsConfig {
@@ -184,10 +253,14 @@ function makeStepConfig(
 		mySessionId: sessionId,
 		myRole: role,
 		taskId: 'task-integration-test',
+		stepTaskId: '',
+		spaceId: tdb.spaceId,
 		channelResolver,
-		sessionGroupRepo: tdb.sessionGroupRepo,
-		getGroupId: () => groupId,
+		workflowRunId: tdb.workflowRunId,
+		spaceTaskRepo: tdb.spaceTaskRepo,
+		workflowNodeId: STEP_NODE_ID,
 		messageInjector: injector,
+		taskManager: tdb.taskManager,
 	};
 }
 
@@ -208,63 +281,46 @@ describe('cross-group isolation', () => {
 	});
 
 	test('send_message never reaches group B members (group scoping)', async () => {
-		const { sessionGroupRepo } = tdb;
+		// Two independent test DBs represent isolated groups
+		const tdbA = makeTestDb();
+		const tdbB = makeTestDb();
 
-		// Group A: coder ↔ reviewer (bidirectional)
-		const groupA = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-d',
-			taskId: 'task-d',
-		});
-		sessionGroupRepo.addMember(groupA.id, 'session-coder-d', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(groupA.id, 'session-reviewer-d', {
-			role: 'reviewer',
-			status: 'active',
-			orderIndex: 1,
-		});
+		try {
+			// Group A: coder ↔ reviewer (bidirectional)
+			seedTask(tdbA.db, tdbA.spaceId, tdbA.workflowRunId, 'coder', 'session-coder-d');
+			seedTask(tdbA.db, tdbA.spaceId, tdbA.workflowRunId, 'reviewer', 'session-reviewer-d');
 
-		// Group B: different sessions with overlapping roles
-		const groupB = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-e',
-			taskId: 'task-e',
-		});
-		sessionGroupRepo.addMember(groupB.id, 'session-coder-e', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(groupB.id, 'session-reviewer-e', {
-			role: 'reviewer',
-			status: 'active',
-			orderIndex: 1,
-		});
+			// Group B: different DB, overlapping roles
+			seedTask(tdbB.db, tdbB.spaceId, tdbB.workflowRunId, 'coder', 'session-coder-e');
+			seedTask(tdbB.db, tdbB.spaceId, tdbB.workflowRunId, 'reviewer', 'session-reviewer-e');
 
-		const { messages, injector } = makeMessageCapture();
+			const { messages, injector } = makeMessageCapture();
 
-		// Bidirectional channel for group A
-		const resolver = new ChannelResolver([
-			makeResolvedChannel('coder', 'reviewer'),
-			makeResolvedChannel('reviewer', 'coder'),
-		]);
+			// Bidirectional channel for group A
+			const resolver = new ChannelResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				makeResolvedChannel('reviewer', 'coder'),
+			]);
 
-		// Coder in group A sends to reviewer (group A's reviewer only)
-		const config = makeStepConfig(tdb, 'session-coder-d', 'coder', groupA.id, resolver, injector);
-		const handlers = createNodeAgentToolHandlers(config);
+			// Coder in group A sends to reviewer (group A's reviewer only)
+			const config = makeStepConfig(tdbA, 'session-coder-d', 'coder', resolver, injector);
+			const handlers = createNodeAgentToolHandlers(config);
 
-		const result = await handlers.send_message({ target: 'reviewer', message: 'review this' });
-		const data = JSON.parse(result.content[0].text);
+			const result = await handlers.send_message({ target: 'reviewer', message: 'review this' });
+			const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(true);
-		// Only group A's reviewer received it — NOT group B's reviewer
-		const deliveredIds = messages.map((m) => m.sessionId);
-		expect(deliveredIds).toContain('session-reviewer-d');
-		expect(deliveredIds).not.toContain('session-reviewer-e');
-		expect(deliveredIds).not.toContain('session-coder-e');
+			expect(data.success).toBe(true);
+			// Only group A's reviewer received it — NOT group B's reviewer (different DB)
+			const deliveredIds = messages.map((m) => m.sessionId);
+			expect(deliveredIds).toContain('session-reviewer-d');
+			expect(deliveredIds).not.toContain('session-reviewer-e');
+			expect(deliveredIds).not.toContain('session-coder-e');
+		} finally {
+			tdbA.db.close();
+			rmSync(tdbA.dir, { recursive: true, force: true });
+			tdbB.db.close();
+			rmSync(tdbB.dir, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -285,28 +341,14 @@ describe('channel direction enforcement', () => {
 	});
 
 	test('send on declared one-way channel succeeds', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-dir-fwd',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-reviewer', {
-			role: 'reviewer',
-			status: 'active',
-			orderIndex: 1,
-		});
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer');
 
 		// Only coder → reviewer declared
 		const resolver = new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]);
 
 		const { messages, injector } = makeMessageCapture();
-		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector);
+		const config = makeStepConfig(tdb, 'session-coder', 'coder', resolver, injector);
 		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'reviewer', message: 'please review' });
@@ -320,36 +362,15 @@ describe('channel direction enforcement', () => {
 	});
 
 	test('reverse direction is rejected when only one-way channel declared', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-dir-rev',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-reviewer', {
-			role: 'reviewer',
-			status: 'active',
-			orderIndex: 1,
-		});
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer');
 
 		// Only coder → reviewer, NOT reviewer → coder
 		const resolver = new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]);
 
 		const { messages, injector } = makeMessageCapture();
 		// Reviewer attempts reverse send
-		const config = makeStepConfig(
-			tdb,
-			'session-reviewer',
-			'reviewer',
-			group.id,
-			resolver,
-			injector
-		);
+		const config = makeStepConfig(tdb, 'session-reviewer', 'reviewer', resolver, injector);
 		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'coder', message: 'feedback' });
@@ -361,28 +382,14 @@ describe('channel direction enforcement', () => {
 	});
 
 	test('no channels declared blocks all send_message calls', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-no-channels',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-reviewer', {
-			role: 'reviewer',
-			status: 'active',
-			orderIndex: 1,
-		});
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer');
 
 		// Empty topology — no channels
 		const resolver = new ChannelResolver([]);
 
 		const { messages, injector } = makeMessageCapture();
-		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector);
+		const config = makeStepConfig(tdb, 'session-coder', 'coder', resolver, injector);
 		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hi' });
@@ -411,22 +418,8 @@ describe('bidirectional point-to-point A↔B', () => {
 	});
 
 	test('both directions of bidirectional channel deliver correctly', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-bidir',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-alice', {
-			role: 'alice',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-bob', {
-			role: 'bob',
-			status: 'active',
-			orderIndex: 1,
-		});
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'alice', 'session-alice');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'bob', 'session-bob');
 
 		// Bidirectional: alice↔bob expanded to two one-way entries
 		const resolver = new ChannelResolver([
@@ -437,7 +430,7 @@ describe('bidirectional point-to-point A↔B', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		// Alice → Bob
-		const aliceConfig = makeStepConfig(tdb, 'session-alice', 'alice', group.id, resolver, injector);
+		const aliceConfig = makeStepConfig(tdb, 'session-alice', 'alice', resolver, injector);
 		const aliceHandlers = createNodeAgentToolHandlers(aliceConfig);
 
 		const r1 = await aliceHandlers.send_message({ target: 'bob', message: 'hello bob' });
@@ -445,7 +438,7 @@ describe('bidirectional point-to-point A↔B', () => {
 		expect(d1.success).toBe(true);
 
 		// Bob → Alice
-		const bobConfig = makeStepConfig(tdb, 'session-bob', 'bob', group.id, resolver, injector);
+		const bobConfig = makeStepConfig(tdb, 'session-bob', 'bob', resolver, injector);
 		const bobHandlers = createNodeAgentToolHandlers(bobConfig);
 
 		const r2 = await bobHandlers.send_message({ target: 'alice', message: 'hello alice' });
@@ -466,22 +459,8 @@ describe('bidirectional point-to-point A↔B', () => {
 	});
 
 	test('full A↔B exchange with message attribution', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-bidir-2',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-reviewer', {
-			role: 'reviewer',
-			status: 'active',
-			orderIndex: 1,
-		});
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer');
 
 		const resolver = new ChannelResolver([
 			makeResolvedChannel('coder', 'reviewer'),
@@ -492,13 +471,13 @@ describe('bidirectional point-to-point A↔B', () => {
 
 		// Round 1: coder submits PR
 		const coderHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-coder', 'coder', resolver, injector)
 		);
 		await coderHandlers.send_message({ target: 'reviewer', message: 'PR ready for review' });
 
 		// Round 2: reviewer gives feedback
 		const reviewerHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-reviewer', 'reviewer', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-reviewer', 'reviewer', resolver, injector)
 		);
 		await reviewerHandlers.send_message({
 			target: 'coder',
@@ -537,40 +516,15 @@ describe('fan-out one-way A→[B,C,D]', () => {
 		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
-	function setupFanOutGroup(tdb: TestDb) {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-fan-out',
-		});
-
-		sessionGroupRepo.addMember(group.id, 'session-hub', {
-			role: 'hub',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-spoke-b', {
-			role: 'spoke-b',
-			status: 'active',
-			orderIndex: 1,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-spoke-c', {
-			role: 'spoke-c',
-			status: 'active',
-			orderIndex: 2,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-spoke-d', {
-			role: 'spoke-d',
-			status: 'active',
-			orderIndex: 3,
-		});
-
-		return group;
+	function setupFanOutTasks(tdb: TestDb) {
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'hub', 'session-hub');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'spoke-b', 'session-spoke-b');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'spoke-c', 'session-spoke-c');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'spoke-d', 'session-spoke-d');
 	}
 
 	test('hub broadcasts to all spokes via wildcard target', async () => {
-		const group = setupFanOutGroup(tdb);
+		setupFanOutTasks(tdb);
 
 		// hub → spoke-b, spoke-c, spoke-d (one-way fan-out)
 		const resolver = new ChannelResolver([
@@ -581,7 +535,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 
 		const { messages, injector } = makeMessageCapture();
 		const hubHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-hub', 'hub', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-hub', 'hub', resolver, injector)
 		);
 
 		const result = await hubHandlers.send_message({ target: '*', message: 'broadcast task' });
@@ -603,7 +557,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 	});
 
 	test('spokes cannot reply to hub when channel is one-way only', async () => {
-		const group = setupFanOutGroup(tdb);
+		setupFanOutTasks(tdb);
 
 		// One-way only: hub → spokes (no return channels)
 		const resolver = new ChannelResolver([
@@ -616,7 +570,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 
 		// Spoke B tries to send to hub — should be rejected
 		const spokeBHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-spoke-b', 'spoke-b', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-spoke-b', 'spoke-b', resolver, injector)
 		);
 
 		const result = await spokeBHandlers.send_message({ target: 'hub', message: 'reply' });
@@ -628,7 +582,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 	});
 
 	test('spoke cannot send to sibling spoke in one-way fan-out', async () => {
-		const group = setupFanOutGroup(tdb);
+		setupFanOutTasks(tdb);
 
 		const resolver = new ChannelResolver([
 			makeResolvedChannel('hub', 'spoke-b'),
@@ -640,7 +594,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 
 		// Spoke B tries to send to spoke C — should be rejected (no such channel)
 		const spokeBHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-spoke-b', 'spoke-b', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-spoke-b', 'spoke-b', resolver, injector)
 		);
 
 		const result = await spokeBHandlers.send_message({
@@ -655,7 +609,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 	});
 
 	test('explicit multicast to subset of spokes', async () => {
-		const group = setupFanOutGroup(tdb);
+		setupFanOutTasks(tdb);
 
 		const resolver = new ChannelResolver([
 			makeResolvedChannel('hub', 'spoke-b'),
@@ -665,7 +619,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 
 		const { messages, injector } = makeMessageCapture();
 		const hubHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-hub', 'hub', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-hub', 'hub', resolver, injector)
 		);
 
 		// Send to only B and C (not D)
@@ -699,40 +653,15 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
-	function setupHubSpokeGroup(tdb: TestDb) {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-hub-spoke',
-		});
-
-		sessionGroupRepo.addMember(group.id, 'session-lead', {
-			role: 'lead',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-worker-b', {
-			role: 'worker-b',
-			status: 'active',
-			orderIndex: 1,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-worker-c', {
-			role: 'worker-c',
-			status: 'active',
-			orderIndex: 2,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-worker-d', {
-			role: 'worker-d',
-			status: 'active',
-			orderIndex: 3,
-		});
-
-		return group;
+	function setupHubSpokeTasks(tdb: TestDb) {
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'lead', 'session-lead');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'worker-b', 'session-worker-b');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'worker-c', 'session-worker-c');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'worker-d', 'session-worker-d');
 	}
 
 	test('(a) hub broadcasts to all spokes', async () => {
-		const group = setupHubSpokeGroup(tdb);
+		setupHubSpokeTasks(tdb);
 
 		// Hub-spoke bidirectional: lead↔[worker-b, worker-c, worker-d]
 		// Expanded: lead→worker-b, lead→worker-c, lead→worker-d,
@@ -748,7 +677,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 
 		const { messages, injector } = makeMessageCapture();
 		const leadHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-lead', 'lead', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-lead', 'lead', resolver, injector)
 		);
 
 		const result = await leadHandlers.send_message({
@@ -767,7 +696,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 	});
 
 	test('(b) each spoke independently replies to hub', async () => {
-		const group = setupHubSpokeGroup(tdb);
+		setupHubSpokeTasks(tdb);
 
 		const resolver = new ChannelResolver([
 			makeResolvedChannel('lead', 'worker-b', true),
@@ -782,21 +711,21 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 
 		// Worker B replies
 		const workerBHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-worker-b', 'worker-b', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-worker-b', 'worker-b', resolver, injector)
 		);
 		const r1 = await workerBHandlers.send_message({ target: 'lead', message: 'worker-b done' });
 		expect(JSON.parse(r1.content[0].text).success).toBe(true);
 
 		// Worker C replies
 		const workerCHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-worker-c', 'worker-c', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-worker-c', 'worker-c', resolver, injector)
 		);
 		const r2 = await workerCHandlers.send_message({ target: 'lead', message: 'worker-c done' });
 		expect(JSON.parse(r2.content[0].text).success).toBe(true);
 
 		// Worker D replies
 		const workerDHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-worker-d', 'worker-d', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-worker-d', 'worker-d', resolver, injector)
 		);
 		const r3 = await workerDHandlers.send_message({ target: 'lead', message: 'worker-d done' });
 		expect(JSON.parse(r3.content[0].text).success).toBe(true);
@@ -812,7 +741,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 	});
 
 	test('(c) spoke B→spoke C is rejected (spoke isolation)', async () => {
-		const group = setupHubSpokeGroup(tdb);
+		setupHubSpokeTasks(tdb);
 
 		const resolver = new ChannelResolver([
 			makeResolvedChannel('lead', 'worker-b', true),
@@ -827,7 +756,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 
 		// Worker B attempts to message Worker C (cross-spoke)
 		const workerBHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-worker-b', 'worker-b', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-worker-b', 'worker-b', resolver, injector)
 		);
 
 		const result = await workerBHandlers.send_message({
@@ -842,7 +771,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 	});
 
 	test('hub ↔ spokes complete exchange: assign → reply → follow-up', async () => {
-		const group = setupHubSpokeGroup(tdb);
+		setupHubSpokeTasks(tdb);
 
 		const resolver = new ChannelResolver([
 			makeResolvedChannel('lead', 'worker-b', true),
@@ -856,10 +785,10 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		const leadHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-lead', 'lead', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-lead', 'lead', resolver, injector)
 		);
 		const workerBHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-worker-b', 'worker-b', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-worker-b', 'worker-b', resolver, injector)
 		);
 
 		// Lead assigns to all
@@ -906,27 +835,9 @@ describe('concurrent message injection — both messages delivered', () => {
 	});
 
 	test('two agents injecting to same target simultaneously delivers both messages', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-concurrent',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-sender-a', {
-			role: 'sender-a',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-sender-b', {
-			role: 'sender-b',
-			status: 'active',
-			orderIndex: 1,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-target', {
-			role: 'target',
-			status: 'active',
-			orderIndex: 2,
-		});
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'sender-a', 'session-sender-a');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'sender-b', 'session-sender-b');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'target', 'session-target');
 
 		const resolver = new ChannelResolver([
 			makeResolvedChannel('sender-a', 'target'),
@@ -936,10 +847,10 @@ describe('concurrent message injection — both messages delivered', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		const senderAHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-sender-a', 'sender-a', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-sender-a', 'sender-a', resolver, injector)
 		);
 		const senderBHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-sender-b', 'sender-b', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-sender-b', 'sender-b', resolver, injector)
 		);
 
 		// Fire both simultaneously
@@ -961,27 +872,9 @@ describe('concurrent message injection — both messages delivered', () => {
 	});
 
 	test('concurrent injections into different targets do not interfere', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-concurrent-multi',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-hub-c', {
-			role: 'hub-c',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-spoke-x', {
-			role: 'spoke-x',
-			status: 'active',
-			orderIndex: 1,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-spoke-y', {
-			role: 'spoke-y',
-			status: 'active',
-			orderIndex: 2,
-		});
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'hub-c', 'session-hub-c');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'spoke-x', 'session-spoke-x');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'spoke-y', 'session-spoke-y');
 
 		const resolver = new ChannelResolver([
 			makeResolvedChannel('hub-c', 'spoke-x'),
@@ -991,7 +884,7 @@ describe('concurrent message injection — both messages delivered', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		const hubHandlers = createNodeAgentToolHandlers(
-			makeStepConfig(tdb, 'session-hub-c', 'hub-c', group.id, resolver, injector)
+			makeStepConfig(tdb, 'session-hub-c', 'hub-c', resolver, injector)
 		);
 
 		// Two sends in parallel to different targets
@@ -1030,52 +923,6 @@ describe('data reload and DB-based validation', () => {
 		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
-	test('group and members are correctly resolved after DB re-fetch (simulated restart)', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		// Create group and members
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-reload',
-			taskId: 'task-reload',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-ta-reload', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder-reload', {
-			role: 'coder',
-			status: 'active',
-			agentId: 'agent-coder-id',
-			orderIndex: 1,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-reviewer-reload', {
-			role: 'reviewer',
-			status: 'active',
-			agentId: 'agent-reviewer-id',
-			orderIndex: 2,
-		});
-
-		// Simulate data reload: create a fresh repository instance over same DB
-		const freshRepo = new SpaceSessionGroupRepository(tdb.db);
-		const reloaded = freshRepo.getGroup(group.id);
-
-		expect(reloaded).not.toBeNull();
-		expect(reloaded!.id).toBe(group.id);
-		expect(reloaded!.taskId).toBe('task-reload');
-		expect(reloaded!.members).toHaveLength(3);
-
-		const roles = reloaded!.members.map((m) => m.role);
-		expect(roles).toContain('task-agent');
-		expect(roles).toContain('coder');
-		expect(roles).toContain('reviewer');
-
-		const coderMember = reloaded!.members.find((m) => m.role === 'coder');
-		expect(coderMember?.agentId).toBe('agent-coder-id');
-		expect(coderMember?.status).toBe('active');
-	});
-
 	test('channel topology resolves correctly after workflow run re-fetch', async () => {
 		// Store channels in workflow run
 		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
@@ -1090,7 +937,6 @@ describe('data reload and DB-based validation', () => {
 		expect(reloadedRun).not.toBeNull();
 
 		// ChannelResolver can reconstruct topology from reloaded run config
-		const { ChannelResolver } = await import('../../../src/lib/space/runtime/channel-resolver.ts');
 		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		expect(resolver.isEmpty()).toBe(false);
@@ -1100,47 +946,40 @@ describe('data reload and DB-based validation', () => {
 	});
 
 	test('send_message works correctly with a resolver built from re-fetched DB data', async () => {
-		const { sessionGroupRepo } = tdb;
+		// Seed tasks for this test's workflowRunId
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder-rs');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer-rs');
 
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-reload-send',
+		// Store channels in the test's workflow run
+		tdb.workflowRunRepo.updateRun(tdb.workflowRunId, {
+			config: {
+				_resolvedChannels: [makeResolvedChannel('coder', 'reviewer')],
+			},
 		});
-		sessionGroupRepo.addMember(group.id, 'session-coder-rs', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-reviewer-rs', {
-			role: 'reviewer',
-			status: 'active',
-			orderIndex: 1,
-		});
-
-		// Store channels in workflow run so we can reconstruct the resolver from DB
-		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
 
 		const { messages, injector } = makeMessageCapture();
 
 		// Simulate post-restart: fresh repo instances over same DB
-		const freshGroupRepo = new SpaceSessionGroupRepository(tdb.db);
 		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
-		const reloadedRun = freshRunRepo.getRun(workflowRunId);
+		const reloadedRun = freshRunRepo.getRun(tdb.workflowRunId);
 		// Build resolver from the reloaded run config (as daemon would do at session spawn)
 		const channelResolver = ChannelResolver.fromRunConfig(
 			reloadedRun!.config as Record<string, unknown>
 		);
 
+		const freshTaskRepo = new SpaceTaskRepository(tdb.db);
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-rs',
 			myRole: 'coder',
 			taskId: 'task-reload-send',
+			stepTaskId: '',
+			spaceId: tdb.spaceId,
 			channelResolver,
-			sessionGroupRepo: freshGroupRepo,
-			getGroupId: () => group.id,
+			workflowRunId: tdb.workflowRunId,
+			spaceTaskRepo: freshTaskRepo,
+			workflowNodeId: STEP_NODE_ID,
 			messageInjector: injector,
+			taskManager: tdb.taskManager,
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1156,57 +995,31 @@ describe('data reload and DB-based validation', () => {
 		expect(messages[0].message).toContain('post-reload check');
 	});
 
-	test('getGroupsByTask resolves correct group after lookup by taskId', async () => {
-		const { sessionGroupRepo } = tdb;
+	test('tasks are still accessible after fresh SpaceTaskRepository over same DB', async () => {
+		// Seed a task, then query via a fresh repository instance
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder-reload');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer-reload');
 
-		// Create multiple groups for different tasks
-		const group1 = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'task-group-1',
-			taskId: 'task-001',
-		});
-		sessionGroupRepo.addMember(group1.id, 'session-m1', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
+		// Simulate post-restart: fresh repo over same DB
+		const freshRepo = new SpaceTaskRepository(tdb.db);
+		const tasks = freshRepo
+			.listByWorkflowRun(tdb.workflowRunId)
+			.filter((t) => t.workflowNodeId === STEP_NODE_ID && t.taskAgentSessionId);
 
-		const group2 = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'task-group-2',
-			taskId: 'task-002',
-		});
-		sessionGroupRepo.addMember(group2.id, 'session-m2', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-
-		// Fresh repo (simulates post-restart)
-		const freshRepo = new SpaceSessionGroupRepository(tdb.db);
-
-		// Lookup by taskId should return correct group
-		const groups1 = freshRepo.getGroupsByTask(tdb.spaceId, 'task-001');
-		const groups2 = freshRepo.getGroupsByTask(tdb.spaceId, 'task-002');
-
-		expect(groups1).toHaveLength(1);
-		expect(groups1[0].id).toBe(group1.id);
-		expect(groups1[0].members[0].sessionId).toBe('session-m1');
-
-		expect(groups2).toHaveLength(1);
-		expect(groups2[0].id).toBe(group2.id);
-		expect(groups2[0].members[0].sessionId).toBe('session-m2');
+		expect(tasks.length).toBe(2);
+		const sessionIds = tasks.map((t) => t.taskAgentSessionId);
+		expect(sessionIds).toContain('session-coder-reload');
+		expect(sessionIds).toContain('session-reviewer-reload');
 	});
 });
 
 // ===========================================================================
-// Test Suite 8: Error Paths — Missing Group ID
+// Test Suite 8: Error Paths — Missing workflowRunId
 // ===========================================================================
-// Covers node-agent-tools.ts lines 124–133 (loadGroupAndResolver error path)
-// where getGroupId() returns undefined — a race condition that can occur before
-// the TaskAgentManager has finished persisting the group to DB.
+// Covers the edge case where workflowRunId is empty — list_peers returns empty
+// peers and send_message fails with no-active-sessions.
 
-describe('error paths — missing group ID', () => {
+describe('error paths — missing workflowRunId', () => {
 	let tdb: TestDb;
 
 	beforeEach(() => {
@@ -1218,18 +1031,22 @@ describe('error paths — missing group ID', () => {
 		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
-	test('send_message returns structured error when getGroupId returns undefined', async () => {
+	test('send_message returns no-active-sessions when workflowRunId is empty', async () => {
 		const { messages, injector } = makeMessageCapture();
 
-		// getGroupId returns undefined — simulates race before group is created
+		// workflowRunId is empty — no peers can be found
 		const config: NodeAgentToolsConfig = {
-			mySessionId: 'session-coder-nogroup',
+			mySessionId: 'session-coder-norun',
 			myRole: 'coder',
-			taskId: 'task-nogroup',
-			channelResolver: new ChannelResolver([]),
-			sessionGroupRepo: tdb.sessionGroupRepo,
-			getGroupId: () => undefined,
+			taskId: 'task-norun',
+			stepTaskId: '',
+			spaceId: tdb.spaceId,
+			channelResolver: new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]),
+			workflowRunId: '',
+			spaceTaskRepo: tdb.spaceTaskRepo,
+			workflowNodeId: STEP_NODE_ID,
 			messageInjector: injector,
+			taskManager: tdb.taskManager,
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1237,27 +1054,31 @@ describe('error paths — missing group ID', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.error).toContain('No session group found');
+		expect((data.error as string).toLowerCase()).toContain('no active sessions');
 		expect(messages).toHaveLength(0);
 	});
 
-	test('list_peers returns structured error when getGroupId returns undefined', async () => {
+	test('list_peers returns empty peers when workflowRunId is empty', async () => {
 		const config: NodeAgentToolsConfig = {
-			mySessionId: 'session-coder-nogroup',
+			mySessionId: 'session-coder-norun',
 			myRole: 'coder',
-			taskId: 'task-nogroup',
+			taskId: 'task-norun',
+			stepTaskId: '',
+			spaceId: tdb.spaceId,
 			channelResolver: new ChannelResolver([]),
-			sessionGroupRepo: tdb.sessionGroupRepo,
-			getGroupId: () => undefined,
+			workflowRunId: '',
+			spaceTaskRepo: tdb.spaceTaskRepo,
+			workflowNodeId: STEP_NODE_ID,
 			messageInjector: async () => {},
+			taskManager: tdb.taskManager,
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('No session group found');
+		expect(data.success).toBe(true);
+		expect((data.peers as unknown[]).length).toBe(0);
 	});
 });
 
@@ -1269,7 +1090,7 @@ describe('error paths — missing group ID', () => {
 //   - ChannelResolver.getPermittedTargets correctly returns task-agent when channel declared
 //   - send_message to 'task-agent' fails with "no active sessions" even when channel declared
 //     (task-agent is filtered from delivery targets — this is the known gap)
-//   - list_group_members via Task Agent correctly shows permittedTargets involving task-agent
+//   - list_peers correctly shows the channel in permittedTargets involving task-agent
 
 describe('Task Agent channel participation', () => {
 	let tdb: TestDb;
@@ -1339,24 +1160,14 @@ describe('Task Agent channel participation', () => {
 	});
 
 	test('send_message to task-agent fails with "no active sessions" even when channel declared', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-task-agent-send',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		// Note: NO task-agent member added — send_message filters out task-agent anyway
+		// Seed coder task (no task-agent task — send_message filters task-agent anyway)
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
 
 		// Channel coder→task-agent is declared
 		const resolver = new ChannelResolver([makeResolvedChannel('coder', 'task-agent')]);
 
 		const { messages, injector } = makeMessageCapture();
-		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector);
+		const config = makeStepConfig(tdb, 'session-coder', 'coder', resolver, injector);
 		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'task-agent', message: 'Hello TA' });
@@ -1370,62 +1181,29 @@ describe('Task Agent channel participation', () => {
 		expect(messages).toHaveLength(0);
 	});
 
-	test('send_message to task-agent fails even when task-agent member is in group (filter exercised)', async () => {
-		// This test exercises the explicit filter in send_message that removes task-agent
-		// from delivery targets, even when task-agent IS a group member with an active session.
-		const { sessionGroupRepo } = tdb;
+	test('list_peers excludes task-agent even when task-agent task is seeded', async () => {
+		// list_peers explicitly filters task-agent from the peers list.
+		// send_message in the legacy path does NOT filter task-agent from delivery.
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
+		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'task-agent', 'session-task-agent');
 
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-task-agent-filter',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-task-agent', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 1,
-		});
-
-		// Channel coder→task-agent is declared
 		const resolver = new ChannelResolver([makeResolvedChannel('coder', 'task-agent')]);
 
-		const { messages, injector } = makeMessageCapture();
-		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector);
+		const config = makeStepConfig(tdb, 'session-coder', 'coder', resolver, async () => {});
 		const handlers = createNodeAgentToolHandlers(config);
 
-		const result = await handlers.send_message({ target: 'task-agent', message: 'Hello TA' });
+		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
-		// The channel resolver check passes (channel is declared), but send_message
-		// explicitly filters out task-agent from delivery targets, so no message is delivered.
-		// This exercises the filter at node-agent-tools.ts: .filter((m) => m.role !== 'task-agent')
-		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain('no active sessions');
-		expect(messages).toHaveLength(0);
+		// list_peers filters out task-agent
+		expect(data.success).toBe(true);
+		const peers = data.peers as Array<{ sessionId: string; role: string }>;
+		const peerIds = peers.map((p: { sessionId: string }) => p.sessionId);
+		expect(peerIds).not.toContain('session-task-agent');
+		expect(peerIds).not.toContain('session-coder'); // self excluded
 	});
 
 	test('removing channel to task-agent updates getPermittedTargets', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-remove-ta',
-		});
-		sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 1,
-		});
-
 		// Initially: coder → task-agent
 		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
 			makeResolvedChannel('coder', 'task-agent'),

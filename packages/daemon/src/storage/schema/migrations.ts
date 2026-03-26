@@ -242,6 +242,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 59: Drop space_workflow_transitions table (replaced by channels).
 	// Idempotent via DROP TABLE IF EXISTS.
 	runMigration59(db);
+
+	// Migration 60: Drop space_session_groups and space_session_group_members tables,
+	// and drop current_node_id column from space_workflow_runs.
+	// Session groups are replaced by direct space_tasks queries.
+	// currentNodeId is replaced by the agent-centric model where tasks track state.
+	runMigration60(db);
 }
 
 /**
@@ -3766,4 +3772,84 @@ export function runMigration58(db: BunDatabase): void {
  */
 export function runMigration59(db: BunDatabase): void {
 	db.exec(`DROP TABLE IF EXISTS space_workflow_transitions`);
+}
+
+/**
+ * Migration 60: Drop space_session_groups and space_session_group_members tables,
+ * and drop current_node_id column from space_workflow_runs.
+ *
+ * Session groups are replaced by direct space_tasks queries:
+ *   task.taskAgentSessionId = the session ID of the sub-session
+ *   task.agentName           = the role/name of the agent
+ *   task.workflowNodeId      = used to filter to the same node
+ *
+ * currentNodeId is replaced by the agent-centric model where tasks track state.
+ */
+export function runMigration60(db: BunDatabase): void {
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	db.exec(`BEGIN`);
+	try {
+		// Drop member table first (FK constraint)
+		db.exec(`DROP TABLE IF EXISTS space_session_group_members`);
+		db.exec(`DROP TABLE IF EXISTS space_session_groups`);
+
+		// Drop indexes that may exist on those tables
+		// (SQLite drops indexes with the table, but be explicit for safety)
+		db.exec(`DROP INDEX IF EXISTS idx_space_session_groups_task_id`);
+		db.exec(`DROP INDEX IF EXISTS idx_space_session_group_members_group`);
+		db.exec(`DROP INDEX IF EXISTS idx_space_session_group_members_session`);
+
+		// Drop current_node_id from space_workflow_runs using table rebuild (SQLite compatibility)
+		// Check if column exists first — idempotent guard.
+		if (tableExists(db, 'space_workflow_runs')) {
+			const runTableInfo = db.prepare('PRAGMA table_info(space_workflow_runs)').all() as Array<{
+				name: string;
+			}>;
+			if (runTableInfo.some((col) => col.name === 'current_node_id')) {
+				db.exec(`DROP TABLE IF EXISTS space_workflow_runs_m60_new`);
+				db.exec(`
+					CREATE TABLE space_workflow_runs_m60_new (
+						id TEXT PRIMARY KEY,
+						space_id TEXT NOT NULL,
+						workflow_id TEXT NOT NULL,
+						title TEXT NOT NULL,
+						description TEXT,
+						status TEXT NOT NULL DEFAULT 'pending'
+							CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
+						config TEXT,
+						iteration_count INTEGER NOT NULL DEFAULT 0,
+						max_iterations INTEGER NOT NULL DEFAULT 10,
+						goal_id TEXT,
+						created_at INTEGER NOT NULL,
+						updated_at INTEGER NOT NULL,
+						completed_at INTEGER,
+						FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+					)
+				`);
+				db.exec(`
+					INSERT INTO space_workflow_runs_m60_new (id, space_id, workflow_id, title, description, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at, completed_at)
+					SELECT id, space_id, workflow_id, title, description, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at, completed_at
+					FROM space_workflow_runs
+				`);
+				db.exec(`DROP TABLE space_workflow_runs`);
+				db.exec(`ALTER TABLE space_workflow_runs_m60_new RENAME TO space_workflow_runs`);
+				db.exec(
+					`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_space ON space_workflow_runs(space_id)`
+				);
+				db.exec(
+					`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow ON space_workflow_runs(workflow_id)`
+				);
+				db.exec(
+					`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_status ON space_workflow_runs(status)`
+				);
+			}
+		}
+
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
 }

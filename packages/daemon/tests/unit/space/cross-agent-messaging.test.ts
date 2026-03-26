@@ -30,7 +30,6 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
@@ -94,6 +93,25 @@ function seedAgent(
 	).run(agentId, spaceId, name, role, Date.now(), Date.now());
 }
 
+function seedRunTask(
+	db: BunDatabase,
+	spaceId: string,
+	workflowRunId: string,
+	agentName: string,
+	sessionId: string
+): void {
+	db.exec('PRAGMA foreign_keys = OFF');
+	const now = Date.now();
+	const id = `task-cam-${Math.random().toString(36).slice(2)}`;
+	db.prepare(
+		`INSERT INTO space_tasks
+       (id, space_id, title, description, status, priority, agent_name,
+        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, '', 'in_progress', 'normal', ?, ?, '[]', ?, ?, ?)`
+	).run(id, spaceId, `Task for ${agentName}`, agentName, workflowRunId, sessionId, now, now);
+	db.exec('PRAGMA foreign_keys = ON');
+}
+
 // ===========================================================================
 // ResolvedChannel builder helper
 // ===========================================================================
@@ -114,14 +132,47 @@ function ch(fromRole: string, toRole: string, isHubSpoke = false): ResolvedChann
 // Each call creates its own isolated SQLite DB so tests never share state.
 // ===========================================================================
 
+const STEP_NODE_ID = 'node-cam-step';
+
 interface StepCtx {
 	db: BunDatabase;
 	dir: string;
 	spaceId: string;
-	sessionGroupRepo: SpaceSessionGroupRepository;
-	groupId: string;
+	spaceTaskRepo: SpaceTaskRepository;
+	workflowRunId: string;
 	/** Channel resolver used by makeStepConfig when no override is provided. Defaults to empty. */
 	channelResolver: ChannelResolver;
+}
+
+function seedStepTask(
+	db: BunDatabase,
+	spaceId: string,
+	workflowRunId: string,
+	agentName: string,
+	sessionId: string,
+	status = 'in_progress'
+): void {
+	db.exec('PRAGMA foreign_keys = OFF');
+	const now = Date.now();
+	const id = `task-cam-${Math.random().toString(36).slice(2)}`;
+	db.prepare(
+		`INSERT INTO space_tasks
+       (id, space_id, title, description, status, priority, agent_name,
+        workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
+	).run(
+		id,
+		spaceId,
+		`Task for ${agentName}`,
+		status,
+		agentName,
+		workflowRunId,
+		STEP_NODE_ID,
+		sessionId,
+		now,
+		now
+	);
+	db.exec('PRAGMA foreign_keys = ON');
 }
 
 function makeStepCtx(
@@ -132,24 +183,36 @@ function makeStepCtx(
 	const spaceId = 'space-cam-step';
 	seedSpace(db, spaceId);
 
-	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
-	const group = sessionGroupRepo.createGroup({ spaceId, name: 'task:cam-1', taskId: 'cam-task-1' });
+	// Create a minimal workflow run so we can attach tasks
+	const workflowRepo = new SpaceWorkflowRepository(db);
+	const workflow = workflowRepo.createWorkflow({
+		spaceId,
+		name: 'Step Test WF',
+		description: '',
+		nodes: [],
+		transitions: [],
+		startNodeId: '',
+		rules: [],
+	});
+	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+	const run = workflowRunRepo.createRun({
+		spaceId,
+		workflowId: workflow.id,
+		title: 'Step Test Run',
+	});
 
-	for (let i = 0; i < members.length; i++) {
-		const m = members[i];
-		sessionGroupRepo.addMember(group.id, m.sessionId, {
-			role: m.role,
-			status: (m.status as 'active' | 'completed' | 'failed') ?? 'active',
-			orderIndex: i,
-		});
+	const spaceTaskRepo = new SpaceTaskRepository(db);
+
+	for (const m of members) {
+		seedStepTask(db, spaceId, run.id, m.role, m.sessionId, m.status ?? 'in_progress');
 	}
 
 	return {
 		db,
 		dir,
 		spaceId,
-		sessionGroupRepo,
-		groupId: group.id,
+		spaceTaskRepo,
+		workflowRunId: run.id,
 		channelResolver: new ChannelResolver([]),
 	};
 }
@@ -168,12 +231,16 @@ function makeStepConfig(
 		mySessionId,
 		myRole,
 		taskId: 'cam-task-1',
+		stepTaskId: '',
+		spaceId: ctx.spaceId,
 		channelResolver: ctx.channelResolver,
-		sessionGroupRepo: ctx.sessionGroupRepo,
-		getGroupId: () => ctx.groupId,
+		workflowRunId: ctx.workflowRunId,
+		spaceTaskRepo: ctx.spaceTaskRepo,
+		workflowNodeId: STEP_NODE_ID,
 		messageInjector: async (sessionId: string, message: string) => {
 			injectedMessages.push({ sessionId, message });
 		},
+		taskManager: new SpaceTaskManager(ctx.db, ctx.spaceId),
 		...overrides,
 	};
 
@@ -196,7 +263,6 @@ interface TaskCtx {
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
-	sessionGroupRepo: SpaceSessionGroupRepository;
 }
 
 function makeTaskCtx(): TaskCtx {
@@ -218,8 +284,6 @@ function makeTaskCtx(): TaskCtx {
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
-	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
-
 	const runtime = new SpaceRuntime({
 		db,
 		spaceManager,
@@ -254,7 +318,6 @@ function makeTaskCtx(): TaskCtx {
 		taskManager,
 		agentManager,
 		runtime,
-		sessionGroupRepo,
 	};
 }
 
@@ -281,7 +344,6 @@ async function startRun(ctx: TaskCtx, wf: SpaceWorkflow) {
 		spaceId: ctx.spaceId,
 		workflowId: wf.id,
 		title: 'cam run',
-		triggeredBy: 'test',
 	});
 	const mainTask = ctx.taskManager.createTask({
 		spaceId: ctx.spaceId,
@@ -299,7 +361,6 @@ function makeTaskConfig(
 	runId: string,
 	factory: SubSessionFactory,
 	overrides: {
-		groupId?: string;
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
 	} = {}
 ): TaskAgentToolsConfig {
@@ -308,7 +369,6 @@ function makeTaskConfig(
 		space: ctx.space,
 		workflowRunId: runId,
 		workspacePath: '/tmp/workspace',
-		runtime: ctx.runtime,
 		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
 		workflowRunRepo: ctx.workflowRunRepo,
@@ -317,8 +377,6 @@ function makeTaskConfig(
 		sessionFactory: factory,
 		messageInjector: overrides.messageInjector ?? (async () => {}),
 		onSubSessionComplete: async () => {},
-		sessionGroupRepo: ctx.sessionGroupRepo,
-		getGroupId: () => overrides.groupId,
 	};
 }
 
@@ -715,15 +773,14 @@ describe('list_peers — peer discovery with channel info', () => {
 		expect(result.permittedTargets as string[]).toHaveLength(0);
 	});
 
-	test('returns error when group not found', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
-			getGroupId: () => undefined,
-		});
+	test('returns empty peers when no tasks with sessions exist', async () => {
+		ctx = makeStepCtx([]);
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
 		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
+		expect((result.peers as unknown[]).length).toBe(0);
 	});
 });
 
@@ -743,32 +800,16 @@ describe('list_group_members — Task Agent group view', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
-			role: 'reviewer',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'reviewer', 'reviewer-session');
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
 		expect(result.success).toBe(true);
-		expect(result.groupId).toBe(group.id);
 		const members = result.members as Array<{
 			sessionId: string;
 			role: string;
@@ -780,7 +821,6 @@ describe('list_group_members — Task Agent group view', () => {
 
 		const coder = members.find((m) => m.role === 'coder');
 		expect(coder?.sessionId).toBe('coder-session');
-		expect(coder?.agentId).toBe(ctx.agentId);
 		expect(Array.isArray(coder?.permittedTargets)).toBe(true);
 	});
 
@@ -789,15 +829,7 @@ describe('list_group_members — Task Agent group view', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		// Store channels in run config
 		ctx.workflowRunRepo.updateRun(run.id, {
@@ -807,26 +839,25 @@ describe('list_group_members — Task Agent group view', () => {
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
 		expect(result.channelTopologyDeclared).toBe(true);
 	});
 
-	test('returns error when no group exists for task', async () => {
+	test('returns empty members when no tasks have sessions', async () => {
 		ctx = makeTaskCtx();
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
-			// no groupId — getGroupId() returns undefined
 		);
 
 		const result = parse(await handlers.list_group_members({}));
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('No session group found');
+		expect(result.success).toBe(true);
+		expect((result.members as unknown[]).length).toBe(0);
 	});
 });
 
@@ -857,19 +888,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		// Declare channel: coder → task-agent
 		ctx.workflowRunRepo.updateRun(run.id, {
@@ -877,7 +897,7 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
@@ -896,19 +916,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
-			role: 'reviewer',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'reviewer', 'reviewer-session');
 
 		// Declare channel: reviewer → task-agent
 		ctx.workflowRunRepo.updateRun(run.id, {
@@ -916,7 +925,7 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
@@ -935,19 +944,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		// Declare channel between coder and reviewer — NOT involving task-agent
 		ctx.workflowRunRepo.updateRun(run.id, {
@@ -955,7 +953,7 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
@@ -974,19 +972,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		// Declare channel: task-agent → coder (Task Agent can send to coder)
 		ctx.workflowRunRepo.updateRun(run.id, {
@@ -994,7 +981,7 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
@@ -1013,19 +1000,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		// Initially: channel coder → task-agent
 		ctx.workflowRunRepo.updateRun(run.id, {
@@ -1033,7 +1009,7 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		let result = parse(await handlers.list_group_members({}));
@@ -1230,25 +1206,11 @@ describe('Task Agent send_message — point-to-point (target: role)', () => {
 			},
 		});
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
 				messageInjector: async (sessionId, message) => {
 					injectedMessages.push({ sessionId, message });
 				},
@@ -1275,25 +1237,10 @@ describe('Task Agent send_message — point-to-point (target: role)', () => {
 			},
 		});
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-			})
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.send_message({ target: 'coder', message: 'Should fail' }));
@@ -1307,25 +1254,10 @@ describe('Task Agent send_message — point-to-point (target: role)', () => {
 		const { run, mainTask } = await startRun(ctx, wf);
 
 		// No channels declared
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-			})
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.send_message({ target: 'coder', message: 'Should fail' }));
@@ -1353,29 +1285,12 @@ describe('Task Agent send_message — broadcast (target: "*")', () => {
 			},
 		});
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
-			role: 'reviewer',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'reviewer', 'reviewer-session');
 
 		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
 				messageInjector: async (sessionId, message) => {
 					injectedMessages.push({ sessionId, message });
 				},
@@ -1402,25 +1317,10 @@ describe('Task Agent send_message — broadcast (target: "*")', () => {
 			},
 		});
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-			})
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
@@ -1468,25 +1368,11 @@ describe('Task Agent send_message — default task-agent channels', () => {
 			},
 		});
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
 				messageInjector: async (sessionId, message) => {
 					injectedMessages.push({ sessionId, message });
 				},
@@ -1525,25 +1411,10 @@ describe('Task Agent send_message — default task-agent channels', () => {
 			},
 		});
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-			})
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		// Task Agent cannot send to coder because the channel was removed
@@ -1562,18 +1433,24 @@ describe('Task Agent send_message — error cases', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('returns error when no group exists for task', async () => {
+	test('returns error when no active sessions found for target', async () => {
 		ctx = makeTaskCtx();
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// No groupId - getGroupId returns undefined
+		// Set up a channel but no sessions for coder
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder')],
+			},
+		});
+
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.send_message({ target: 'coder', message: 'Hello' }));
 		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('No session group found');
+		expect(result.error as string).toContain('No active sessions found');
 	});
 });

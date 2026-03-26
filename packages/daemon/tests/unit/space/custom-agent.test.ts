@@ -71,6 +71,8 @@ function makeWorkflowRun(overrides?: Partial<SpaceWorkflowRun>): SpaceWorkflowRu
 		workflowId: 'wf-1',
 		title: 'Deploy v1.0',
 		status: 'in_progress',
+		iterationCount: 0,
+		maxIterations: 5,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
@@ -775,7 +777,7 @@ describe('resolveAgentInit', () => {
 	it('accepts workflow field in ResolveAgentInitConfig and does not throw', () => {
 		const agent = makeAgent({ id: 'agent-1', injectWorkflowContext: true });
 		const manager = makeMockAgentManager(agent);
-		const run = makeWorkflowRun({ currentNodeId: 'step-plan' });
+		const run = makeWorkflowRun();
 		const wf = makeWorkflow();
 
 		const config = makeResolveConfig({
@@ -801,7 +803,7 @@ describe('resolveAgentInit', () => {
 		// longer driven by a hardcoded role check.
 		const workflowAgent = makeAgent({ id: 'agent-1', injectWorkflowContext: true });
 		const manager = makeMockAgentManager(workflowAgent);
-		const run = makeWorkflowRun({ currentNodeId: 'step-plan' });
+		const run = makeWorkflowRun();
 		const wf = makeWorkflow();
 
 		// Step 1+2: resolve session init — workflow is now a field on ResolveAgentInitConfig
@@ -930,7 +932,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('includes workflow structure when injectWorkflowContext is true and workflow is provided', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -944,7 +946,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('includes step names in workflow structure', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -957,7 +959,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('marks the current step', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -970,7 +972,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('includes workflow rules', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -985,7 +987,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 		// Role is not checked; only the injectWorkflowContext flag matters.
 		const config = makeConfig({
 			customAgent: makeAgent({ role: 'coder', injectWorkflowContext: false }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-code' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -1033,7 +1035,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('includes workflow guidance to focus on current step first', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -1042,22 +1044,10 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 		expect(msg).toContain('current step first');
 	});
 
-	it('includes currentNodeId from workflowRun when available', () => {
-		const config = makeConfig({
-			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-code' }),
-			workflow: makeWorkflow(),
-		});
-
-		const msg = buildCustomAgentTaskMessage(config);
-
-		expect(msg).toContain('step-code');
-	});
-
 	it('handles workflow with no description gracefully', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow({ description: undefined }),
 		});
 
@@ -1067,7 +1057,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('handles workflow with no rules gracefully', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow({ rules: [] }),
 		});
 
@@ -1079,7 +1069,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('handles workflow with no steps gracefully', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: undefined }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow({ nodes: [] }),
 		});
 
@@ -1091,7 +1081,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 		// receives the same workflow structure as a 'planner' would.
 		const config = makeConfig({
 			customAgent: makeAgent({ role: 'reviewer', injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentNodeId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 

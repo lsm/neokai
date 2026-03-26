@@ -324,8 +324,6 @@ export interface SpaceWorkflowRun {
 	title: string;
 	/** Optional description or goal for this run */
 	description?: string;
-	/** ID of the node currently being executed; undefined when the run has not yet been assigned a node */
-	currentNodeId?: string;
 	/** Current execution status */
 	status: WorkflowRunStatus;
 	/** Optional runtime configuration for this run */
@@ -352,75 +350,10 @@ export interface CreateWorkflowRunParams {
 	workflowId: string;
 	title: string;
 	description?: string;
-	/**
-	 * ID of the node to start execution from — should be set to workflow.startNodeId.
-	 * Omit to leave the run without an initial node; the executor must call
-	 * updateCurrentNode() before calling advance().
-	 */
-	currentNodeId?: string;
 	/** Maximum iterations before escalating to needs_attention (overrides workflow default) */
 	maxIterations?: number;
 	/** Optional goal/mission ID to associate with this run */
 	goalId?: string;
-}
-
-// ============================================================================
-// Space Session Group Types
-// ============================================================================
-
-/**
- * A member of a SpaceSessionGroup
- */
-export interface SpaceSessionGroupMember {
-	/** Unique identifier of this membership record */
-	id: string;
-	/** Session group this member belongs to */
-	groupId: string;
-	/** ID of the session */
-	sessionId: string;
-	/**
-	 * Role of this session within the group — freeform string matching SpaceAgent.role
-	 * (e.g. 'coder', 'reviewer', 'security-auditor', or any user-defined role).
-	 */
-	role: string;
-	/** ID of the SpaceAgent config this session uses (nullable for system agents) */
-	agentId?: string;
-	/** Current state of this member's session */
-	status: 'active' | 'completed' | 'failed';
-	/** Display order within the group */
-	orderIndex: number;
-	/** Creation timestamp (milliseconds since epoch) */
-	createdAt: number;
-}
-
-/**
- * A named group of sessions within a Space.
- * Session groups allow organizing related sessions (e.g., a workflow run's
- * agents) under a single logical unit for display and management.
- */
-export interface SpaceSessionGroup {
-	/** Unique identifier */
-	id: string;
-	/** Space this group belongs to */
-	spaceId: string;
-	/** Human-readable label for the group */
-	name: string;
-	/** Optional description of the group's purpose */
-	description?: string;
-	/** ID of the workflow run (SpaceWorkflowRun) this group is associated with (for UI display) */
-	workflowRunId?: string;
-	/** ID of the current workflow node being executed by this group */
-	currentNodeId?: string;
-	/** ID of the SpaceTask this group serves */
-	taskId?: string;
-	/** Lifecycle status of this group */
-	status: 'active' | 'completed' | 'failed';
-	/** Members of this group */
-	members: SpaceSessionGroupMember[];
-	/** Creation timestamp (milliseconds since epoch) */
-	createdAt: number;
-	/** Last update timestamp (milliseconds since epoch) */
-	updatedAt: number;
 }
 
 // ============================================================================

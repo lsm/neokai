@@ -32,7 +32,6 @@ import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
 import { resolveAgentInit, buildCustomAgentTaskMessage } from '../agents/custom-agent';
 import { ChannelResolver } from '../runtime/channel-resolver';
 import type { ChannelRouter } from '../runtime/channel-router';
@@ -165,18 +164,6 @@ export interface TaskAgentToolsConfig {
 	 */
 	onSubSessionComplete: (stepId: string, sessionId: string) => Promise<void>;
 	/**
-	 * Session group repository for looking up group members.
-	 * Required by list_group_members tool.
-	 * The fast in-memory taskGroupIds map in TaskAgentManager is used to find the group ID,
-	 * then the repo provides the member list.
-	 */
-	sessionGroupRepo: SpaceSessionGroupRepository;
-	/**
-	 * Returns the group ID for this task from the in-memory map.
-	 * Provided by TaskAgentManager so tools can locate the group without a DB scan.
-	 */
-	getGroupId: () => string | undefined;
-	/**
 	 * DaemonHub instance for emitting task completion/failure events.
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
@@ -234,8 +221,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		sessionFactory,
 		messageInjector,
 		onSubSessionComplete,
-		sessionGroupRepo,
-		getGroupId,
 		daemonHub,
 		buildNodeAgentMcpServer,
 		completionDetector,
@@ -501,23 +486,13 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * (which happens via the completion callback registered in spawn_node_agent).
 		 */
 		async check_node_status(args: CheckNodeStatusInput): Promise<ToolResult> {
-			// Resolve step ID — use provided step_id or fall back to current step on run
-			let stepId = args.step_id;
+			// step_id is required — no fallback to currentNodeId (field removed in migration 59)
+			const stepId = args.step_id;
 			if (!stepId) {
-				const run = workflowRunRepo.getRun(workflowRunId);
-				if (!run) {
-					return jsonResult({
-						success: false,
-						error: `Workflow run not found: ${workflowRunId}`,
-					});
-				}
-				if (!run.currentNodeId) {
-					return jsonResult({
-						success: false,
-						error: 'No current step on the workflow run. Call spawn_node_agent first.',
-					});
-				}
-				stepId = run.currentNodeId;
+				return jsonResult({
+					success: false,
+					error: 'step_id is required. Call spawn_node_agent first and pass the step_id.',
+				});
 			}
 
 			// Find task(s) for this step
@@ -776,61 +751,40 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * The Task Agent itself is listed as a member (role: 'task-agent').
 		 */
 		async list_group_members(_args: ListGroupMembersInput): Promise<ToolResult> {
-			const groupId = getGroupId();
-			if (!groupId) {
-				return jsonResult({
-					success: false,
-					error:
-						`No session group found for task ${taskId}. ` +
-						`The group may not have been created yet — try after spawn_node_agent.`,
-				});
-			}
-
-			const group = sessionGroupRepo.getGroup(groupId);
-			if (!group) {
-				return jsonResult({
-					success: false,
-					error: `Session group ${groupId} not found in the database.`,
-				});
-			}
-
 			// Build ChannelResolver from the active workflow run's config
 			const run = workflowRunRepo.getRun(workflowRunId);
 			const resolver = ChannelResolver.fromRunConfig(
 				run?.config as Record<string, unknown> | undefined
 			);
 
-			// Build completion state map from tasks on the current workflow node
-			const currentNodeId = run?.currentNodeId;
-			const nodeTasks = workflowRunId
-				? taskRepo
-						.listByWorkflowRun(workflowRunId)
-						.filter((t) => t.workflowNodeId === currentNodeId)
-				: [];
-			const completionByAgentName = new Map(
-				nodeTasks.filter((t) => t.agentName != null).map((t) => [t.agentName as string, t])
-			);
+			// Get all tasks for this workflow run with active sub-sessions
+			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
+			const activeTasks = allRunTasks.filter((t) => t.taskAgentSessionId);
 
-			const members = group.members.map((m) => {
-				const nodeTask = completionByAgentName.get(m.role) ?? null;
+			const members = activeTasks.map((t) => {
+				const ts = t.status;
+				const memberStatus =
+					ts === 'completed'
+						? 'completed'
+						: ts === 'needs_attention' || ts === 'cancelled'
+							? 'failed'
+							: 'active';
 				return {
-					sessionId: m.sessionId,
-					role: m.role,
-					agentId: m.agentId ?? null,
-					status: m.status,
-					permittedTargets: resolver.getPermittedTargets(m.role),
-					completionState: nodeTask
-						? {
-								agentName: nodeTask.agentName ?? null,
-								taskStatus: nodeTask.status,
-								completionSummary: nodeTask.completionSummary ?? null,
-								completedAt: nodeTask.completedAt ?? null,
-							}
-						: null,
+					sessionId: t.taskAgentSessionId!,
+					role: t.agentName ?? 'agent',
+					agentId: t.customAgentId ?? null,
+					status: memberStatus,
+					permittedTargets: resolver.getPermittedTargets(t.agentName ?? 'agent'),
+					completionState: {
+						agentName: t.agentName ?? null,
+						taskStatus: t.status,
+						completionSummary: t.completionSummary ?? null,
+						completedAt: t.completedAt ?? null,
+					},
 				};
 			});
 
-			const nodeCompletionState = nodeTasks.map((t) => ({
+			const nodeCompletionState = allRunTasks.map((t) => ({
 				agentName: t.agentName ?? null,
 				taskStatus: t.status,
 				completionSummary: t.completionSummary ?? null,
@@ -839,12 +793,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			return jsonResult({
 				success: true,
-				groupId,
 				members,
 				nodeCompletionState,
 				channelTopologyDeclared: !resolver.isEmpty(),
 				message:
-					`Group has ${members.length} member(s). ` +
+					`Run has ${members.length} active member(s). ` +
 					(resolver.isEmpty()
 						? 'No channel topology declared.'
 						: `Channel topology is active and enforced.`),
@@ -869,24 +822,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 */
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message } = args;
-
-			const groupId = getGroupId();
-			if (!groupId) {
-				return jsonResult({
-					success: false,
-					error:
-						`No session group found for task ${taskId}. ` +
-						`The group may not have been created yet — try after spawn_node_agent.`,
-				});
-			}
-
-			const group = sessionGroupRepo.getGroup(groupId);
-			if (!group) {
-				return jsonResult({
-					success: false,
-					error: `Session group ${groupId} not found in the database.`,
-				});
-			}
 
 			const run = workflowRunRepo.getRun(workflowRunId);
 			const resolver = ChannelResolver.fromRunConfig(
@@ -941,21 +876,18 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Find the Task Agent's own session ID from the group (to exclude from delivery)
-			const taskAgentMember = group.members.find((m) => m.role === 'task-agent');
-			const mySessionId = taskAgentMember?.sessionId;
-
-			// Find peer sessions for each target role (exclude self and task-agent)
-			const peers = group.members.filter(
-				(m) => m.sessionId !== mySessionId && m.role !== 'task-agent'
-			);
+			// Find peer sessions via task repo (exclude tasks without sessions)
+			const sendPeers = taskRepo
+				.listByWorkflowRun(workflowRunId)
+				.filter((t) => t.taskAgentSessionId)
+				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.agentName ?? 'agent' }));
 			const delivered: Array<{ role: string; sessionId: string }> = [];
 			const notFound: string[] = [];
 			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
 
 			// Best-effort delivery: attempt all targets, aggregate errors.
 			for (const targetRole of targetRoles) {
-				const targetSessions = peers.filter((m) => m.role === targetRole);
+				const targetSessions = sendPeers.filter((m) => m.role === targetRole);
 				if (targetSessions.length === 0) {
 					notFound.push(targetRole);
 					continue;

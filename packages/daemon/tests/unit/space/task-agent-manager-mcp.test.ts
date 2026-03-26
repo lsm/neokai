@@ -24,7 +24,6 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
@@ -169,7 +168,6 @@ function buildManager(opts: {
 
 	const agentRepo = new SpaceAgentRepository(bunDb);
 	const agentManager = new SpaceAgentManager(agentRepo);
-	const sessionGroupRepo = new SpaceSessionGroupRepository(bunDb);
 	const workflowRepo = new SpaceWorkflowRepository(bunDb);
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(bunDb);
@@ -240,7 +238,6 @@ function buildManager(opts: {
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
-		sessionGroupRepo,
 		appMcpManager: appMcpManager as never,
 	});
 
@@ -495,7 +492,6 @@ function seedWorkflowRunWithChannels(
 		spaceId,
 		workflowId: workflow.id,
 		title: 'Test Run',
-		triggeredBy: 'test',
 	});
 	if (channels.length > 0) {
 		runRepo.updateRun(run.id, { config: { _resolvedChannels: channels } });

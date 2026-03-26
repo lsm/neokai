@@ -62,7 +62,6 @@ import { SpaceWorkflowRepository } from '../../storage/repositories/space-workfl
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
-import { SpaceSessionGroupRepository } from '../../storage/repositories/space-session-group-repository';
 import { enqueueRoomTick } from '../job-handlers/room-tick.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
@@ -71,7 +70,6 @@ import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
-import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
 import { setupLiveQueryHandlers } from './live-query-handlers';
 import { setupReferenceHandlers } from './reference-handlers';
 import { FileIndex } from '../file-index';
@@ -370,10 +368,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 	});
 
-	// SpaceSessionGroupRepository — persists session groups for Task Agents and sub-sessions.
-	// Constructed once here and injected into TaskAgentManager.
-	const spaceSessionGroupRepo = new SpaceSessionGroupRepository(deps.db.getDatabase());
-
 	// Task Agent Manager — manages Task Agent session lifecycle and message injection.
 	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
 	// spaceRuntimeService.createOrGetRuntime(spaceId).
@@ -391,7 +385,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		messageHub: deps.messageHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		defaultModel: deps.config.defaultModel,
-		sessionGroupRepo: spaceSessionGroupRepo,
 		appMcpManager: deps.appMcpManager,
 	});
 
@@ -428,14 +421,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceRuntimeService,
 		spaceWorkflowRunTaskManagerFactory,
 		deps.daemonHub
-	);
-
-	// Space session group admin handlers
-	setupSpaceSessionGroupHandlers(
-		deps.messageHub,
-		deps.daemonHub,
-		deps.spaceManager,
-		spaceSessionGroupRepo
 	);
 
 	// Provision the Global Spaces Agent session (spaces:global)

@@ -264,7 +264,7 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('returns run with current step and tasks', async () => {
+	test('returns run with tasks', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Get WF');
 
 		const startResult = await makeHandlers(ctx).start_workflow_run({
@@ -279,7 +279,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.run.id).toBe(runId);
 		expect(parsed.run.status).toBe('in_progress');
-		expect(parsed.currentStep).toBeDefined();
 		expect(parsed.tasks).toHaveLength(1);
 	});
 
@@ -290,20 +289,17 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		expect(parsed.error).toContain('run-missing');
 	});
 
-	test('returns run with no currentStep when currentNodeId is absent', async () => {
-		// Create a run directly in the DB without a currentNodeId
+	test('returns run with empty tasks when no tasks have been created', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'NoStep WF');
 		const rawRun = ctx.workflowRunRepo.createRun({
 			spaceId: ctx.spaceId,
 			workflowId: wf.id,
 			title: 'no-step run',
 		});
-		// Leave currentNodeId null (pending run — no step assigned)
 
 		const result = await makeHandlers(ctx).get_workflow_run({ run_id: rawRun.id });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.currentStep).toBeNull();
 		expect(parsed.tasks).toHaveLength(0);
 	});
 });

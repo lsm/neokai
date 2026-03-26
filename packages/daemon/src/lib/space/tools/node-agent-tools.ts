@@ -29,7 +29,6 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
@@ -78,10 +77,6 @@ export interface NodeAgentToolsConfig {
 	 * An empty resolver (no channels) means send_message is unavailable for this session.
 	 */
 	channelResolver: ChannelResolver;
-	/** Session group repository for looking up group members. */
-	sessionGroupRepo: SpaceSessionGroupRepository;
-	/** Returns the group ID for this task from the in-memory map. */
-	getGroupId: () => string | undefined;
 	/** Workflow run ID — used with spaceTaskRepo to query node completion state. */
 	workflowRunId: string;
 	/** Space task repository for querying completion state. */
@@ -125,8 +120,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		stepTaskId,
 		spaceId,
 		channelResolver,
-		sessionGroupRepo,
-		getGroupId,
 		workflowRunId,
 		spaceTaskRepo,
 		workflowNodeId,
@@ -135,46 +128,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		daemonHub,
 		agentMessageRouter,
 	} = config;
-
-	type GroupLoaded = {
-		ok: true;
-		group: NonNullable<ReturnType<typeof sessionGroupRepo.getGroup>>;
-		resolver: ChannelResolver;
-		groupId: string;
-	};
-	type GroupError = { ok: false; error: ToolResult };
-
-	/**
-	 * Helper: load the session group and return the pre-built channel resolver.
-	 * Returns a discriminated union — callers check `result.ok` before accessing `group`.
-	 */
-	function loadGroupAndResolver(): GroupLoaded | GroupError {
-		const groupId = getGroupId();
-		if (!groupId) {
-			return {
-				ok: false,
-				error: jsonResult({
-					success: false,
-					error:
-						`No session group found for task ${taskId}. ` +
-						`The group may not have been created yet.`,
-				}),
-			};
-		}
-
-		const group = sessionGroupRepo.getGroup(groupId);
-		if (!group) {
-			return {
-				ok: false,
-				error: jsonResult({
-					success: false,
-					error: `Session group ${groupId} not found in the database.`,
-				}),
-			};
-		}
-
-		return { ok: true, group, resolver: channelResolver, groupId };
-	}
 
 	return {
 		/**
@@ -189,39 +142,40 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Returns nodeCompletionState: all tasks on this workflow node with their completion state.
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
-			const loaded = loadGroupAndResolver();
-			if (!loaded.ok) return loaded.error;
-			const { group, resolver } = loaded;
-
-			// Build completion state map from tasks on the current workflow node
+			// Load all tasks on this workflow node from the DB
 			const nodeTasks =
 				workflowRunId && workflowNodeId
 					? spaceTaskRepo
 							.listByWorkflowRun(workflowRunId)
 							.filter((t) => t.workflowNodeId === workflowNodeId)
 					: [];
-			const completionByAgentName = new Map(
-				nodeTasks.filter((t) => t.agentName != null).map((t) => [t.agentName as string, t])
-			);
 
-			// Filter out self and task-agent (coordinator)
-			const peers = group.members
-				.filter((m) => m.sessionId !== mySessionId && m.role !== 'task-agent')
-				.map((m) => {
-					const nodeTask = completionByAgentName.get(m.role) ?? null;
+			const resolver = channelResolver;
+
+			// Build peers from all node tasks, excluding self and task-agent.
+			// Includes completed tasks (taskAgentSessionId may be null) so callers
+			// can see completion state even after the peer session has ended.
+			const peers = nodeTasks
+				.filter((t) => t.agentName !== 'task-agent' && t.taskAgentSessionId !== mySessionId)
+				.map((t) => {
+					const taskStatus = t.status;
+					const memberStatus =
+						taskStatus === 'completed'
+							? ('completed' as const)
+							: taskStatus === 'needs_attention' || taskStatus === 'cancelled'
+								? ('failed' as const)
+								: ('active' as const);
 					return {
-						sessionId: m.sessionId,
-						role: m.role,
-						agentId: m.agentId ?? null,
-						status: m.status,
-						completionState: nodeTask
-							? {
-									agentName: nodeTask.agentName ?? null,
-									taskStatus: nodeTask.status,
-									completionSummary: nodeTask.completionSummary ?? null,
-									completedAt: nodeTask.completedAt ?? null,
-								}
-							: null,
+						sessionId: t.taskAgentSessionId!,
+						role: t.agentName ?? 'agent',
+						agentId: t.customAgentId ?? null,
+						status: memberStatus,
+						completionState: {
+							agentName: t.agentName ?? null,
+							taskStatus: t.status,
+							completionSummary: t.completionSummary ?? null,
+							completedAt: t.completedAt ?? null,
+						},
 					};
 				});
 
@@ -306,9 +260,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 
 			// --- Legacy path: direct topology-based routing (no ChannelRouter injected) ---
-			const loaded = loadGroupAndResolver();
-			if (!loaded.ok) return loaded.error;
-			const { group, resolver } = loaded;
+			const resolver = channelResolver;
 
 			if (resolver.isEmpty()) {
 				return jsonResult({
@@ -354,10 +306,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				});
 			}
 
-			// Find peer sessions
-			const peers = group.members.filter(
-				(m) => m.sessionId !== mySessionId && m.role !== 'task-agent'
-			);
+			// Find peer sessions via task repo
+			const legacyNodeTasks =
+				workflowRunId && workflowNodeId
+					? spaceTaskRepo
+							.listByWorkflowRun(workflowRunId)
+							.filter((t) => t.workflowNodeId === workflowNodeId && t.taskAgentSessionId)
+					: [];
+			const peers = legacyNodeTasks
+				.filter((t) => t.taskAgentSessionId !== mySessionId)
+				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.agentName ?? 'agent' }));
 			const delivered: Array<{ role: string; sessionId: string }> = [];
 			const notFound: string[] = [];
 			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
@@ -426,23 +384,37 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Does NOT include self or the task-agent coordinator.
 		 */
 		async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
-			const loaded = loadGroupAndResolver();
-			if (!loaded.ok) return loaded.error;
-			const { group, resolver } = loaded;
+			const resolver = channelResolver;
 
-			// Within-node peers: group members excluding self and the task-agent coordinator
-			const withinNodePeers = group.members
-				.filter((m) => m.sessionId !== mySessionId && m.role !== 'task-agent')
-				.map((m) => ({
-					agentName: m.role,
-					status: m.status,
-				}));
+			// Load peer tasks from DB
+			const reachableNodeTasks =
+				workflowRunId && workflowNodeId
+					? spaceTaskRepo
+							.listByWorkflowRun(workflowRunId)
+							.filter((t) => t.workflowNodeId === workflowNodeId && t.taskAgentSessionId)
+					: [];
+
+			// Within-node peers: tasks on this node excluding self
+			const withinNodePeers = reachableNodeTasks
+				.filter((t) => t.taskAgentSessionId !== mySessionId)
+				.map((t) => {
+					const ts = t.status;
+					return {
+						agentName: t.agentName ?? 'agent',
+						status:
+							ts === 'completed'
+								? ('completed' as const)
+								: ts === 'needs_attention' || ts === 'cancelled'
+									? ('failed' as const)
+									: ('active' as const),
+					};
+				});
 
 			const reachabilityDeclared = !resolver.isEmpty();
 
 			// Cross-node targets: outgoing channel entries where the target role is NOT
-			// already in the current session group (i.e., it lives on a different node).
-			const withinNodeRoles = new Set(group.members.map((m) => m.role));
+			// already in the current node tasks (i.e., it lives on a different node).
+			const withinNodeRoles = new Set(reachableNodeTasks.map((t) => t.agentName ?? 'agent'));
 
 			type CrossNodeTarget = {
 				agentName: string;

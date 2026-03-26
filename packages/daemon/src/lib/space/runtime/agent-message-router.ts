@@ -14,19 +14,17 @@
  * Note: This is distinct from ChannelRouter (channel-router.ts), which handles
  * workflow-level orchestration (lazy node activation, gate evaluation). This class
  * is used by node-agent-tools to deliver messages between live sessions at runtime.
- * TODO: Remove once TaskAgentManager wires up the workflow-level ChannelRouter for
- *   all sub-sessions and node-agent-tools can delegate to it directly.
  */
 
-import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { ChannelResolver } from './channel-resolver';
 
 export interface AgentMessageRouterConfig {
-	/** Session group repository for looking up group members. */
-	sessionGroupRepo: SpaceSessionGroupRepository;
-	/** Returns the group ID for the current task. */
-	getGroupId: () => string | undefined;
+	/** Task repository for looking up peer sessions by workflow run and node. */
+	spaceTaskRepo: SpaceTaskRepository;
+	/** Workflow node ID — used to filter peer tasks. */
+	workflowNodeId: string;
 	/** Workflow run repository for loading channel topology. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Workflow run ID for loading channel topology from run config. */
@@ -71,7 +69,7 @@ export interface AgentMessageResult {
 	 */
 	permittedTargets?: string[];
 	/**
-	 * Target roles that had no active sessions in the group.
+	 * Target roles that had no active sessions.
 	 * Populated when delivery was attempted but no sessions were found.
 	 */
 	notFoundRoles?: string[];
@@ -85,7 +83,7 @@ export class AgentMessageRouter {
 	 *
 	 * Resolution order:
 	 *   1. '*' → broadcast to all topology-permitted targets
-	 *   2. Agent name match → DM/fan-out to all sessions with that role in the group
+	 *   2. Agent name match → DM/fan-out to all sessions with that role in the node
 	 *   3. Node name match → fan-out to all agents mapped to that node (via nodeGroups)
 	 *   4. No match → error with list of known reachable agents
 	 *
@@ -95,33 +93,13 @@ export class AgentMessageRouter {
 	async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
 		const { fromRole, fromSessionId, target, message } = params;
 		const {
-			sessionGroupRepo,
-			getGroupId,
+			spaceTaskRepo,
+			workflowNodeId,
 			workflowRunRepo,
 			workflowRunId,
 			messageInjector,
 			nodeGroups,
 		} = this.config;
-
-		// --- Load group ---
-		const groupId = getGroupId();
-		if (!groupId) {
-			return {
-				success: false,
-				delivered: [],
-				failed: [],
-				reason: 'No session group found. The group may not have been created yet.',
-			};
-		}
-		const group = sessionGroupRepo.getGroup(groupId);
-		if (!group) {
-			return {
-				success: false,
-				delivered: [],
-				failed: [],
-				reason: `Session group ${groupId} not found.`,
-			};
-		}
 
 		// --- Build channel resolver ---
 		const run = workflowRunRepo.getRun(workflowRunId);
@@ -141,10 +119,13 @@ export class AgentMessageRouter {
 			};
 		}
 
-		// Peers: exclude self and task-agent
-		const peers = group.members.filter(
-			(m) => m.sessionId !== fromSessionId && m.role !== 'task-agent'
-		);
+		// --- Load peers from space_tasks ---
+		const allNodeTasks = spaceTaskRepo
+			.listByWorkflowRun(workflowRunId)
+			.filter((t) => t.workflowNodeId === workflowNodeId && t.taskAgentSessionId);
+		const peers = allNodeTasks
+			.filter((t) => t.taskAgentSessionId !== fromSessionId)
+			.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.agentName ?? 'agent' }));
 
 		// --- Resolve target roles ---
 		let targetRoles: string[];
@@ -165,7 +146,7 @@ export class AgentMessageRouter {
 			// Multicast: explicit list of role names
 			targetRoles = target;
 		} else {
-			// Try agent name match first (role string within the group)
+			// Try agent name match first (role string within the node peers)
 			const agentMatchRoles = peers.filter((m) => m.role === target).map((m) => m.role);
 
 			if (agentMatchRoles.length > 0) {

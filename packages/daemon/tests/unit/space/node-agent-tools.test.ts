@@ -15,7 +15,6 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import {
@@ -115,11 +114,13 @@ interface TestCtx {
 	db: BunDatabase;
 	dir: string;
 	spaceId: string;
-	sessionGroupRepo: SpaceSessionGroupRepository;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
 	spaceTaskRepo: SpaceTaskRepository;
-	groupId: string;
+	/** Workflow run ID for peer task seeding. */
+	workflowRunId: string;
+	/** Workflow node ID for peer task seeding. */
+	nodeId: string;
 	coderSessionId: string;
 	reviewerSessionId: string;
 	taskAgentSessionId: string;
@@ -135,10 +136,34 @@ function makeCtx(): TestCtx {
 
 	seedSpaceRow(db, spaceId);
 
-	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceTaskRepo = taskRepo;
 	const taskManager = new SpaceTaskManager(db, spaceId);
+
+	// Session IDs for peers
+	const taskAgentSessionId = 'session-task-agent';
+	const coderSessionId = 'session-coder';
+	const reviewerSessionId = 'session-reviewer';
+
+	// Workflow run/node IDs for peer task seeding
+	const workflowRunId = 'run-node-tools-default';
+	const nodeId = 'node-node-tools-default';
+
+	// Seed peer tasks: coder and reviewer on the default node
+	seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
+	// Set coder task's session ID
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.prepare(
+		'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_run_id = ?'
+	).run(coderSessionId, 'coder', workflowRunId);
+	db.exec('PRAGMA foreign_keys = ON');
+
+	seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'in_progress', null);
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.prepare(
+		'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_run_id = ?'
+	).run(reviewerSessionId, 'reviewer', workflowRunId);
+	db.exec('PRAGMA foreign_keys = ON');
 
 	// Seed a parent task and a step task in the DB
 	const parentTask = taskRepo.createTask({
@@ -154,45 +179,15 @@ function makeCtx(): TestCtx {
 		status: 'in_progress',
 	});
 
-	// Create a session group for the task
-	const group = sessionGroupRepo.createGroup({
-		spaceId,
-		name: 'task:test-task-1',
-		taskId: parentTask.id,
-	});
-
-	// Add members: task-agent, coder, reviewer
-	const taskAgentSessionId = 'session-task-agent';
-	const coderSessionId = 'session-coder';
-	const reviewerSessionId = 'session-reviewer';
-
-	sessionGroupRepo.addMember(group.id, taskAgentSessionId, {
-		role: 'task-agent',
-		status: 'active',
-		orderIndex: 0,
-	});
-	sessionGroupRepo.addMember(group.id, coderSessionId, {
-		role: 'coder',
-		status: 'active',
-		agentId: 'agent-coder',
-		orderIndex: 1,
-	});
-	sessionGroupRepo.addMember(group.id, reviewerSessionId, {
-		role: 'reviewer',
-		status: 'active',
-		agentId: 'agent-reviewer',
-		orderIndex: 2,
-	});
-
 	return {
 		db,
 		dir,
 		spaceId,
-		sessionGroupRepo,
 		taskRepo,
 		taskManager,
 		spaceTaskRepo,
-		groupId: group.id,
+		workflowRunId,
+		nodeId,
 		coderSessionId,
 		reviewerSessionId,
 		taskAgentSessionId,
@@ -214,11 +209,9 @@ function makeConfig(
 		stepTaskId: ctx.stepTaskId,
 		spaceId: ctx.spaceId,
 		channelResolver: new ChannelResolver([]),
-		workflowRunId: '',
-		workflowNodeId: '',
-		sessionGroupRepo: ctx.sessionGroupRepo,
+		workflowRunId: ctx.workflowRunId,
+		workflowNodeId: ctx.nodeId,
 		spaceTaskRepo: ctx.spaceTaskRepo,
-		getGroupId: () => ctx.groupId,
 		messageInjector: async (sessionId, message) => {
 			injectedMessages.push({ sessionId, message });
 		},
@@ -286,33 +279,27 @@ describe('node-agent-tools: list_peers', () => {
 		expect(data.permittedTargets).toEqual(['reviewer']);
 	});
 
-	test('returns error when group not found', async () => {
-		const config = makeConfig(ctx, { getGroupId: () => undefined });
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.list_peers({});
-		const data = JSON.parse(result.content[0].text);
+	test('returns empty peer list when no peers in the node', async () => {
+		// Use a different nodeId that has no seeded tasks - only coder (self) but no reviewer
+		const isolatedNodeId = 'node-isolated';
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			isolatedNodeId,
+			'coder',
+			'in_progress',
+			null
+		);
+		ctx.db.exec('PRAGMA foreign_keys = OFF');
+		ctx.db
+			.prepare(
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+			)
+			.run(ctx.coderSessionId, 'coder', isolatedNodeId);
+		ctx.db.exec('PRAGMA foreign_keys = ON');
 
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('No session group found');
-	});
-
-	test('returns empty peer list when only self and task-agent in group', async () => {
-		// Create a group with just task-agent and coder (no reviewer)
-		const isolatedGroup = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: 'task:isolated',
-			taskId: 'isolated-task',
-		});
-		ctx.sessionGroupRepo.addMember(isolatedGroup.id, 'session-isolated-ta', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(isolatedGroup.id, ctx.coderSessionId, {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const config = makeConfig(ctx, { getGroupId: () => isolatedGroup.id });
+		const config = makeConfig(ctx, { workflowNodeId: isolatedNodeId });
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
@@ -423,11 +410,23 @@ describe('node-agent-tools: send_message', () => {
 	});
 
 	test('multicast delivers to all specified target roles', async () => {
-		// Add a third member (security) to the group
-		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
-			role: 'security',
-			status: 'active',
-		});
+		// Add a security peer task
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'security',
+			'in_progress',
+			null
+		);
+		ctx.db.exec('PRAGMA foreign_keys = OFF');
+		ctx.db
+			.prepare(
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+			)
+			.run('session-security', 'security', ctx.nodeId);
+		ctx.db.exec('PRAGMA foreign_keys = ON');
 
 		const injected: string[] = [];
 		const config = makeConfig(ctx, {
@@ -453,11 +452,23 @@ describe('node-agent-tools: send_message', () => {
 	});
 
 	test('multicast partial authorization fails with full error', async () => {
-		// Add security member
-		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
-			role: 'security',
-			status: 'active',
-		});
+		// Add security peer task
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'security',
+			'in_progress',
+			null
+		);
+		ctx.db.exec('PRAGMA foreign_keys = OFF');
+		ctx.db
+			.prepare(
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+			)
+			.run('session-security', 'security', ctx.nodeId);
+		ctx.db.exec('PRAGMA foreign_keys = ON');
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([
 				makeResolvedChannel('coder', 'reviewer'),
@@ -494,11 +505,15 @@ describe('node-agent-tools: send_message', () => {
 	});
 
 	test('hub-spoke: spoke can reply to hub', async () => {
-		// Add hub member to group
-		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-hub', {
-			role: 'hub',
-			status: 'active',
-		});
+		// Add hub peer task
+		seedSpaceTask(ctx.db, ctx.spaceId, ctx.workflowRunId, ctx.nodeId, 'hub', 'in_progress', null);
+		ctx.db.exec('PRAGMA foreign_keys = OFF');
+		ctx.db
+			.prepare(
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+			)
+			.run('session-hub', 'hub', ctx.nodeId);
+		ctx.db.exec('PRAGMA foreign_keys = ON');
 		const injected: string[] = [];
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([
@@ -563,14 +578,30 @@ describe('node-agent-tools: send_message', () => {
 	});
 
 	test('handles partial injection failures gracefully (partial success)', async () => {
-		// Add second reviewer to group
-		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-reviewer-2', {
-			role: 'reviewer',
-			status: 'active',
-		});
+		// In the new task-centric model, agent_name is unique per (run, node).
+		// Partial success is tested via multicast to two different roles: reviewer + security.
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'security',
+			'in_progress',
+			null
+		);
+		ctx.db.exec('PRAGMA foreign_keys = OFF');
+		ctx.db
+			.prepare(
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+			)
+			.run('session-security', 'security', ctx.nodeId);
+		ctx.db.exec('PRAGMA foreign_keys = ON');
 		let callCount = 0;
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				makeResolvedChannel('coder', 'security'),
+			]),
 			messageInjector: async (_sid) => {
 				callCount++;
 				if (callCount === 1) throw new Error('injection failed');
@@ -578,7 +609,10 @@ describe('node-agent-tools: send_message', () => {
 			},
 		});
 		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
+		const result = await handlers.send_message({
+			target: ['reviewer', 'security'],
+			message: 'hello',
+		});
 		const data = JSON.parse(result.content[0].text);
 
 		// Partial success — one delivered, one failed
@@ -605,34 +639,24 @@ describe('node-agent-tools: send_message', () => {
 		expect(data.delivered).toHaveLength(0);
 	});
 
-	test('returns error when group not found', async () => {
-		const config = makeConfig(ctx, { getGroupId: () => undefined });
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('No session group found');
-	});
-
-	test('returns error when group ID returned but not in DB', async () => {
-		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
-			getGroupId: () => 'nonexistent-group-id',
-		});
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.send_message({ target: 'reviewer', message: 'Hello' });
-		const data = JSON.parse(result.content[0].text);
-		expect(data.success).toBe(false);
-		expect(data.error).toMatch(/not found/);
-	});
-
 	test('best-effort multicast: first delivery succeeds, second fails — partial success', async () => {
-		// Add security member so we can send to two different non-task-agent roles
-		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
-			role: 'security',
-			status: 'active',
-		});
+		// Add security peer task so we can send to two different non-task-agent roles
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'security',
+			'in_progress',
+			null
+		);
+		ctx.db.exec('PRAGMA foreign_keys = OFF');
+		ctx.db
+			.prepare(
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+			)
+			.run('session-security', 'security', ctx.nodeId);
+		ctx.db.exec('PRAGMA foreign_keys = ON');
 
 		let callCount = 0;
 		const config = makeConfig(ctx, {
@@ -1026,16 +1050,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.crossNodeTargets).toHaveLength(0);
-	});
-
-	test('returns error when group not found', async () => {
-		const config = makeConfig(ctx, { getGroupId: () => undefined });
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.list_reachable_agents({});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('No session group found');
 	});
 });
 
