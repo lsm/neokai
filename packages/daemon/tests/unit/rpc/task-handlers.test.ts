@@ -70,6 +70,19 @@ const mockTaskManager = {
 				updatedAt: Date.now(),
 			}) as NeoTask
 	),
+	setTaskStatus: mock(
+		async () =>
+			({
+				id: TASK_UUID,
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test description',
+				status: 'in_progress' as TaskStatus,
+				priority: 'medium' as TaskPriority,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}) as NeoTask
+	),
 };
 
 const createMockTaskManager = (): TaskManagerLike => mockTaskManager as unknown as TaskManagerLike;
@@ -245,6 +258,7 @@ describe('Task RPC Handlers', () => {
 		mockTaskManager.getTask.mockClear();
 		mockTaskManager.listTasks.mockClear();
 		mockTaskManager.failTask.mockClear();
+		mockTaskManager.setTaskStatus.mockClear();
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -725,5 +739,79 @@ describe('task.sendHumanMessage handler', () => {
 
 		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, maxMessage);
 		expect(result.success).toBe(true);
+	});
+
+	it('prepends review reminder when task was in review status', async () => {
+		const { runtimeService, injectMessageToLeader } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_leader');
+
+		// Override getTask to return a task in 'review' status
+		mockTaskManager.getTask.mockResolvedValueOnce({
+			id: TASK_UUID,
+			roomId: 'room-123',
+			title: 'Test Task',
+			description: 'Test description',
+			status: 'review' as TaskStatus,
+			priority: 'medium' as TaskPriority,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		} as NeoTask);
+		// Second call (for emitTaskUpdate after routing) returns in_progress
+		mockTaskManager.getTask.mockResolvedValueOnce({
+			id: TASK_UUID,
+			roomId: 'room-123',
+			title: 'Test Task',
+			description: 'Test description',
+			status: 'in_progress' as TaskStatus,
+			priority: 'medium' as TaskPriority,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		} as NeoTask);
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		const result = (await handler!(
+			{ roomId: 'room-123', taskId: TASK_UUID, message: 'Please fix the typo', target: 'leader' },
+			{}
+		)) as { success: boolean };
+
+		expect(result.success).toBe(true);
+		// setTaskStatus should have been called to transition review → in_progress
+		expect(mockTaskManager.setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
+		// The injected message should include the review reminder
+		const injectedMessage = (injectMessageToLeader.mock.calls[0] as [string, string])[1];
+		expect(injectedMessage).toContain('[Context: This task was in `review` status.');
+		expect(injectedMessage).toContain('set_task_status');
+		expect(injectedMessage).toContain('Please fix the typo');
+	});
+
+	it('does not prepend review reminder for non-review tasks', async () => {
+		const { runtimeService, injectMessageToWorker } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_leader');
+
+		// Default getTask returns status 'pending'
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await handler!({ roomId: 'room-123', taskId: TASK_UUID, message: 'hello there' }, {});
+
+		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'hello there');
 	});
 });
