@@ -124,6 +124,26 @@ export const ListGroupMembersSchema = z.object({});
 export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 
 // ---------------------------------------------------------------------------
+// report_workflow_done
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `report_workflow_done` input.
+ * Explicitly marks the entire workflow run as completed, bypassing the
+ * automatic all-agents-done detector. Use this when all node agents have
+ * finished and you are certain the run is complete.
+ */
+export const ReportWorkflowDoneSchema = z.object({
+	/** Optional summary of what the workflow accomplished overall. */
+	summary: z
+		.string()
+		.describe('Optional human-readable summary of what the workflow accomplished')
+		.optional(),
+});
+
+export type ReportWorkflowDoneInput = z.infer<typeof ReportWorkflowDoneSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export for MCP server factory (Milestone 3)
 // ---------------------------------------------------------------------------
 
@@ -135,6 +155,7 @@ export const TASK_AGENT_TOOL_SCHEMAS = {
 	spawn_node_agent: SpawnNodeAgentSchema,
 	check_node_status: CheckNodeStatusSchema,
 	report_result: ReportResultSchema,
+	report_workflow_done: ReportWorkflowDoneSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,
 } as const;
