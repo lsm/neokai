@@ -322,6 +322,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// was created with its own agentName, so the lookup is unambiguous.
 			// For tasks created before migration 51 (no agentName), fall back to find-by-agentId,
 			// which always returns the first matching slot — acceptable for legacy data.
+
 			const agentSlot = effectiveTask.agentName
 				? nodeAgents.find((a) => a.name === effectiveTask.agentName)
 				: nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
@@ -789,6 +790,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * Returns every member (including the Task Agent itself) with:
 		 *   - sessionId, role, agentId, status
 		 *   - permittedTargets: roles this member can send to per channel topology
+		 *   - completionState: task status and completion summary for this member's slot task
+		 *
+		 * Also returns nodeCompletionState — all tasks on the current node with their completion state.
 		 *
 		 * The channel topology is read from the active workflow run's config
 		 * (`run.config._resolvedChannels` — stored by SpaceRuntime at step-start).
@@ -821,18 +825,48 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				run?.config as Record<string, unknown> | undefined
 			);
 
-			const members = group.members.map((m) => ({
-				sessionId: m.sessionId,
-				role: m.role,
-				agentId: m.agentId ?? null,
-				status: m.status,
-				permittedTargets: resolver.getPermittedTargets(m.role),
+			// Build completion state map from tasks on the current workflow node
+			const currentNodeId = run?.currentNodeId;
+			const nodeTasks = workflowRunId
+				? taskRepo
+						.listByWorkflowRun(workflowRunId)
+						.filter((t) => t.workflowNodeId === currentNodeId)
+				: [];
+			const completionByAgentName = new Map(
+				nodeTasks.filter((t) => t.agentName != null).map((t) => [t.agentName as string, t])
+			);
+
+			const members = group.members.map((m) => {
+				const nodeTask = completionByAgentName.get(m.role) ?? null;
+				return {
+					sessionId: m.sessionId,
+					role: m.role,
+					agentId: m.agentId ?? null,
+					status: m.status,
+					permittedTargets: resolver.getPermittedTargets(m.role),
+					completionState: nodeTask
+						? {
+								agentName: nodeTask.agentName ?? null,
+								taskStatus: nodeTask.status,
+								completionSummary: nodeTask.completionSummary ?? null,
+								completedAt: nodeTask.completedAt ?? null,
+							}
+						: null,
+				};
+			});
+
+			const nodeCompletionState = nodeTasks.map((t) => ({
+				agentName: t.agentName ?? null,
+				taskStatus: t.status,
+				completionSummary: t.completionSummary ?? null,
+				completedAt: t.completedAt ?? null,
 			}));
 
 			return jsonResult({
 				success: true,
 				groupId,
 				members,
+				nodeCompletionState,
 				channelTopologyDeclared: !resolver.isEmpty(),
 				message:
 					`Group has ${members.length} member(s). ` +

@@ -31,6 +31,7 @@ import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
@@ -79,6 +80,10 @@ export interface StepAgentToolsConfig {
 	getGroupId: () => string | undefined;
 	/** Workflow run repository for reading run config (channel topology). */
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** Space task repository for querying completion state. */
+	spaceTaskRepo: SpaceTaskRepository;
+	/** Workflow node ID — used to query peer tasks on the same node. */
+	workflowNodeId: string;
 	/**
 	 * Injects a message into a peer sub-session as a user turn.
 	 * Used by `send_message` to deliver messages to target sessions.
@@ -112,6 +117,8 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		sessionGroupRepo,
 		getGroupId,
 		workflowRunRepo,
+		spaceTaskRepo,
+		workflowNodeId,
 		messageInjector,
 		taskManager,
 		daemonHub,
@@ -166,27 +173,58 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 	return {
 		/**
 		 * List all peers (other group members) with their roles, statuses, session IDs,
-		 * and permitted channel connections.
+		 * permitted channel connections, and completion state from space_tasks.
 		 *
 		 * Does NOT include self (filtered by `mySessionId`).
 		 * Does NOT include the Task Agent (filtered by role 'task-agent').
 		 *
 		 * Returns permittedTargets: roles this agent can directly send to via send_message.
+		 * Returns completionState per peer: task status, completion summary, and completedAt.
+		 * Returns nodeCompletionState: all tasks on this workflow node with their completion state.
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
 			const loaded = loadGroupAndResolver();
 			if (!loaded.ok) return loaded.error;
 			const { group, resolver } = loaded;
 
+			// Build completion state map from tasks on the current workflow node
+			const nodeTasks =
+				workflowRunId && workflowNodeId
+					? spaceTaskRepo
+							.listByWorkflowRun(workflowRunId)
+							.filter((t) => t.workflowNodeId === workflowNodeId)
+					: [];
+			const completionByAgentName = new Map(
+				nodeTasks.filter((t) => t.agentName != null).map((t) => [t.agentName as string, t])
+			);
+
 			// Filter out self and task-agent (coordinator)
 			const peers = group.members
 				.filter((m) => m.sessionId !== mySessionId && m.role !== 'task-agent')
-				.map((m) => ({
-					sessionId: m.sessionId,
-					role: m.role,
-					agentId: m.agentId ?? null,
-					status: m.status,
-				}));
+				.map((m) => {
+					const nodeTask = completionByAgentName.get(m.role) ?? null;
+					return {
+						sessionId: m.sessionId,
+						role: m.role,
+						agentId: m.agentId ?? null,
+						status: m.status,
+						completionState: nodeTask
+							? {
+									agentName: nodeTask.agentName ?? null,
+									taskStatus: nodeTask.status,
+									completionSummary: nodeTask.completionSummary ?? null,
+									completedAt: nodeTask.completedAt ?? null,
+								}
+							: null,
+					};
+				});
+
+			const nodeCompletionState = nodeTasks.map((t) => ({
+				agentName: t.agentName ?? null,
+				taskStatus: t.status,
+				completionSummary: t.completionSummary ?? null,
+				completedAt: t.completedAt ?? null,
+			}));
 
 			const permittedTargets = resolver.getPermittedTargets(myRole);
 			const channelTopologyDeclared = !resolver.isEmpty();
@@ -195,6 +233,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 				success: true,
 				myRole,
 				peers,
+				nodeCompletionState,
 				permittedTargets,
 				channelTopologyDeclared,
 				message:
@@ -487,8 +526,9 @@ export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
 		tool(
 			'list_peers',
 			'List all other agents in this workflow step group with their roles, statuses, session IDs, ' +
-				'and permitted channel connections. ' +
-				'Use this to discover which peers are active and what direct messaging channels are available.',
+				'permitted channel connections, and completion state from space_tasks. ' +
+				'Use this to discover which peers are active, what direct messaging channels are available, ' +
+				'and whether peer tasks have completed (including their completion summaries).',
 			ListPeersSchema.shape,
 			(args) => handlers.list_peers(args)
 		),

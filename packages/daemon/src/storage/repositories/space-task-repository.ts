@@ -25,8 +25,8 @@ export class SpaceTaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, agent_name, workflow_run_id, workflow_node_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, agent_name, completion_summary, workflow_run_id, workflow_node_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -40,6 +40,7 @@ export class SpaceTaskRepository {
 			params.assignedAgent ?? 'coder',
 			params.customAgentId ?? null,
 			params.agentName ?? null,
+			null,
 			params.workflowRunId ?? null,
 			params.workflowNodeId ?? null,
 			params.createdByTaskId ?? null,
@@ -201,6 +202,10 @@ export class SpaceTaskRepository {
 			fields.push('result = ?');
 			values.push(params.result ?? null);
 		}
+		if (params.completionSummary !== undefined) {
+			fields.push('completion_summary = ?');
+			values.push(params.completionSummary ?? null);
+		}
 		if (params.error !== undefined) {
 			fields.push('error = ?');
 			values.push(params.error ?? null);
@@ -247,10 +252,6 @@ export class SpaceTaskRepository {
 		if (params.goalId !== undefined) {
 			fields.push('goal_id = ?');
 			values.push(params.goalId ?? null);
-		}
-		if (params.completionSummary !== undefined) {
-			fields.push('completion_summary = ?');
-			values.push(params.completionSummary ?? null);
 		}
 
 		if (fields.length > 0) {
@@ -366,6 +367,7 @@ export class SpaceTaskRepository {
 			progress: (row.progress as number | null) ?? undefined,
 			currentStep: (row.current_step as string | null) ?? undefined,
 			result: (row.result as string | null) ?? undefined,
+			completionSummary: (row.completion_summary as string | null) ?? undefined,
 			error: (row.error as string | null) ?? undefined,
 			dependsOn: JSON.parse(row.depends_on as string) as string[],
 			inputDraft: (row.input_draft as string | null) ?? undefined,
@@ -375,7 +377,6 @@ export class SpaceTaskRepository {
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
 			archivedAt: (row.archived_at as number | null) ?? undefined,
-			completionSummary: (row.completion_summary as string | null) ?? undefined,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,

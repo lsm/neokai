@@ -1402,6 +1402,7 @@ export class TaskAgentManager {
 		stepTaskId: string,
 		taskManager: SpaceTaskManager
 	) {
+		const workflowNodeId = this.config.taskRepo.getTask(taskId)?.workflowNodeId ?? '';
 		return createStepAgentMcpServer({
 			mySessionId: subSessionId,
 			myRole: role,
@@ -1412,6 +1413,8 @@ export class TaskAgentManager {
 			sessionGroupRepo: this.config.sessionGroupRepo,
 			getGroupId: () => this.taskGroupIds.get(taskId),
 			workflowRunRepo: this.config.workflowRunRepo,
+			spaceTaskRepo: this.config.taskRepo,
+			workflowNodeId,
 			messageInjector: (targetSessionId, message) =>
 				this.injectSubSessionMessage(targetSessionId, message),
 			taskManager,
