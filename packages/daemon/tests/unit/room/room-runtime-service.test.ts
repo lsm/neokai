@@ -368,6 +368,12 @@ describe('RoomRuntimeService restart recovery', () => {
 			async removeWorktree() {
 				return false;
 			},
+			async switchModel(_sessionId: string, model: string, _provider: string) {
+				return { success: true, model };
+			},
+			async getCurrentModel(_sessionId: string) {
+				return { currentModel: 'sonnet', provider: 'anthropic' };
+			},
 		} satisfies SessionFactory;
 	}
 

@@ -102,6 +102,12 @@ function createMockSessionFactory(
 		setSessionMcpServers(_sessionId: string, _mcpServers: Record<string, unknown>) {
 			return true;
 		},
+		async switchModel(_sessionId: string, model: string, _provider: string) {
+			return { success: true, model };
+		},
+		async getCurrentModel(_sessionId: string) {
+			return { currentModel: 'sonnet', provider: 'anthropic' };
+		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
 		liveSessions: Set<string>;
