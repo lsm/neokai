@@ -267,6 +267,9 @@ export class SessionManager {
 	 *
 	 * Also clears any in-flight load lock via SessionCache.remove(), preventing
 	 * a concurrent getAsync() from re-inserting the stale session after removal.
+	 *
+	 * Currently called by TaskAgentManager when a task agent session is torn down.
+	 * Space runtime callers will be added as that subsystem is wired up.
 	 */
 	unregisterSession(sessionId: string): void {
 		this.sessionCache.remove(sessionId);

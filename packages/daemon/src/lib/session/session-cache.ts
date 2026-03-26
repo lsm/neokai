@@ -28,6 +28,13 @@ export class SessionCache {
 	// which would create duplicate Claude API connections
 	private sessionLoadLocks = new Map<string, Promise<AgentSession | null>>();
 
+	// FIX: remove() race condition
+	// Tracks sessions that were explicitly removed while a load was in flight.
+	// Without this, the in-flight load would re-insert the session into `sessions`
+	// after remove() cleared it (the guard at getAsync line 99 only blocks set()
+	// races, not remove() races).
+	private removedWhileLoading = new Set<string>();
+
 	constructor(
 		private createAgentSession: AgentSessionFactory,
 		private loadFromDB: SessionLoader
@@ -92,11 +99,16 @@ export class SessionCache {
 		try {
 			const agentSession = await loadPromise;
 			if (agentSession) {
-				// Guard: if set() was called while we were loading (e.g. via registerSession),
-				// prefer the registered live instance (which has MCP tools attached) over the
-				// bare DB-loaded duplicate. Without this check, the load would overwrite the
-				// registered session with a duplicate that creates competing event subscriptions.
-				if (!this.sessions.has(sessionId)) {
+				// Guard 1 (set race): if set() was called while we were loading (e.g. via
+				// registerSession), prefer the registered live instance (which has MCP tools
+				// attached) over the bare DB-loaded duplicate. Without this check, the load
+				// would overwrite the registered session with a duplicate that creates competing
+				// event subscriptions.
+				//
+				// Guard 2 (remove race): if remove() was called while we were loading, skip
+				// re-insertion — the caller explicitly evicted this session and we must not
+				// silently resurrect it.
+				if (!this.sessions.has(sessionId) && !this.removedWhileLoading.has(sessionId)) {
 					this.sessions.set(sessionId, agentSession);
 				}
 			}
@@ -106,6 +118,7 @@ export class SessionCache {
 			return null;
 		} finally {
 			this.sessionLoadLocks.delete(sessionId);
+			this.removedWhileLoading.delete(sessionId);
 		}
 	}
 
@@ -138,12 +151,19 @@ export class SessionCache {
 	/**
 	 * Remove a session from the cache.
 	 *
-	 * Also clears any in-flight load lock for this session ID so that a
-	 * concurrent getAsync() that has already started loading does NOT
-	 * re-insert a stale session into the cache after the remove completes.
+	 * - Clears `sessions` so subsequent synchronous `get()` calls see no entry.
+	 * - Clears `sessionLoadLocks` so NEW `getAsync()` callers are not blocked on
+	 *   a stale in-flight load (they will start a fresh load instead).
+	 * - Marks `removedWhileLoading` so the ORIGINAL in-flight `getAsync()` caller
+	 *   (already past the lock check) skips re-inserting the stale session when
+	 *   its load completes.
 	 */
 	remove(sessionId: string): void {
 		this.sessions.delete(sessionId);
+		// If a load is in flight, mark the session so the load cannot re-insert it.
+		if (this.sessionLoadLocks.has(sessionId)) {
+			this.removedWhileLoading.add(sessionId);
+		}
 		this.sessionLoadLocks.delete(sessionId);
 	}
 

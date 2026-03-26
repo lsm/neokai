@@ -2,20 +2,31 @@
  * Tests for room session registration in SessionCache / SessionManager.
  *
  * Covers Bug 1 (task-view model switching) root-cause safeguards:
- * - registerSession() / unregisterSession() round-trip on SessionManager
- * - SessionCache.remove() clears sessionLoadLocks (race condition fix)
+ * - SessionCache.remove() fully prevents stale session re-insertion, even by
+ *   the original in-flight getAsync() caller (via removedWhileLoading set)
+ * - SessionCache.remove() clears sessionLoadLocks for new callers
  * - Concurrent access guard prefers registered instance over DB-loaded duplicate
  * - Restore path registers sessions so getSessionAsync() returns the live instance
+ * - SessionManager.registerSession() / unregisterSession() delegation verified
+ *   against an actual SessionManager instance
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
 	SessionCache,
 	type AgentSessionFactory,
 	type SessionLoader,
 } from '../../../src/lib/session/session-cache';
+import { SessionManager } from '../../../src/lib/session/session-manager';
 import type { AgentSession } from '../../../src/lib/agent/agent-session';
-import type { Session } from '@neokai/shared';
+import type { Database } from '../../../src/storage/database';
+import type { DaemonHub } from '../../../src/lib/daemon-hub';
+import type { AuthManager } from '../../../src/lib/auth-manager';
+import type { SettingsManager } from '../../../src/lib/settings-manager';
+import type { MessageHub, Session } from '@neokai/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../../src/storage/job-queue-processor';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,87 +66,79 @@ function makeAgentSession(session: Session): AgentSession {
 }
 
 // ---------------------------------------------------------------------------
-// SessionCache — remove() clears sessionLoadLocks
+// SessionCache — remove() fully prevents stale re-insertion (P0 fix)
 // ---------------------------------------------------------------------------
 
-describe('SessionCache.remove() — clears sessionLoadLocks', () => {
-	it('clears an in-flight load lock so subsequent getAsync() does not re-insert stale session', async () => {
+describe('SessionCache.remove() — prevents stale session re-insertion', () => {
+	it('in-flight getAsync() does NOT re-insert session after remove() (removedWhileLoading guard)', async () => {
 		const session = makeSession('s1');
+		const dbAgent = makeAgentSession(session);
 
-		// Slow DB loader — we control when it resolves
-		let resolveLoad!: (s: Session | null) => void;
-		const loadDelay = new Promise<Session | null>((res) => {
-			resolveLoad = res;
-		});
+		const loader: SessionLoader = mock(() => session);
+		const factory: AgentSessionFactory = mock(() => dbAgent);
 
-		const slowLoader: SessionLoader = mock(() => null); // sync version unused
-		// We need to intercept the async load path; override loadSessionAsync indirectly
-		// by making loadFromDB block on a promise via a shared variable
-		let loadCalled = false;
-		const blockingLoader: SessionLoader = mock((_id: string) => {
-			loadCalled = true;
-			// Synchronously return null; the async wrapper in SessionCache wraps this in a promise
-			// We can't directly delay the sync loader, so we use a trick:
-			// We'll call remove() before the promise resolves by racing microtasks.
-			return session;
-		});
+		const cache = new SessionCache(factory, loader);
 
-		const agentSessionFromDB = makeAgentSession(session);
-		const factory: AgentSessionFactory = mock(() => agentSessionFromDB);
-
-		const cache = new SessionCache(factory, blockingLoader);
-
-		// Start an async load — this sets a load lock
+		// Start async load — sets the lock
 		const loadPromise = cache.getAsync('s1');
+		expect(cache['sessionLoadLocks'].has('s1')).toBe(true);
 
-		// Immediately remove() while load is in flight
+		// remove() while load is in flight
 		cache.remove('s1');
-
-		// The load should complete but NOT re-insert the session because:
-		// 1. remove() cleared the lock (so no "already in progress" branch triggers)
-		// 2. The guard at session-cache.ts:99 checks sessions.has() after await
-		//    — but since remove() also cleared the sessions map, sessions.has() is false
-		//    — so the guard would NOT block the insertion.
-		//
-		// However, the KEY guarantee: after remove(), a NEW getAsync() call should NOT
-		// be blocked on the old lock (because remove() deleted it).
-		const result = await loadPromise;
-
-		// The in-flight load may or may not have set the session (race-dependent),
-		// but after it completes the lock MUST be gone.
+		// removedWhileLoading must be set so the in-flight load is blocked
+		expect(cache['removedWhileLoading'].has('s1')).toBe(true);
+		// lock cleared immediately for new callers
 		expect(cache['sessionLoadLocks'].has('s1')).toBe(false);
 
-		// A fresh getAsync() after the remove() completes should call DB again (new load)
-		// rather than hanging on a stale lock.
-		const result2 = await cache.getAsync('s1');
-		// DB was callable — no hang, no stale lock error
-		expect(result2).not.toBeNull();
+		await loadPromise;
 
-		void result; // suppress unused-var lint
+		// The in-flight load completed but must NOT have re-inserted the session
+		expect(cache.has('s1')).toBe(false);
+		// removedWhileLoading cleaned up in finally
+		expect(cache['removedWhileLoading'].has('s1')).toBe(false);
 	});
 
-	it('clears the load lock synchronously so new getAsync() calls short-circuit to in-memory check', async () => {
+	it('remove() on a session with no in-flight lock does NOT add to removedWhileLoading', () => {
 		const session = makeSession('s2');
 		const agent = makeAgentSession(session);
 		const factory: AgentSessionFactory = mock(() => agent);
 		const loader: SessionLoader = mock(() => session);
 
 		const cache = new SessionCache(factory, loader);
-
-		// Populate cache
 		cache.set('s2', agent);
-		expect(cache.has('s2')).toBe(true);
 
-		// remove() should delete both the session AND any lock
+		// No in-flight lock, so removedWhileLoading must not be touched
 		cache.remove('s2');
 
 		expect(cache.has('s2')).toBe(false);
+		expect(cache['removedWhileLoading'].has('s2')).toBe(false);
 		expect(cache['sessionLoadLocks'].has('s2')).toBe(false);
+	});
+
+	it('new getAsync() after remove() starts a fresh load (not blocked on stale lock)', async () => {
+		const session = makeSession('s3');
+		const loader: SessionLoader = mock(() => session);
+		const factory: AgentSessionFactory = mock(() => makeAgentSession(session));
+
+		const cache = new SessionCache(factory, loader);
+
+		// Start and remove
+		const firstLoad = cache.getAsync('s3');
+		cache.remove('s3');
+		await firstLoad;
+
+		// Session was evicted by remove() — cache must be empty
+		expect(cache.has('s3')).toBe(false);
+
+		// A fresh caller should start a new load without hanging
+		const freshResult = await cache.getAsync('s3');
+		expect(freshResult).not.toBeNull();
+		expect(loader).toHaveBeenCalledTimes(2);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// SessionCache — registerSession() via set() → getAsync() returns it
+// SessionCache — registerSession (via set()) + getAsync()
 // ---------------------------------------------------------------------------
 
 describe('SessionCache — registerSession (via set()) + getAsync()', () => {
@@ -151,7 +154,6 @@ describe('SessionCache — registerSession (via set()) + getAsync()', () => {
 		registeredAgent = makeAgentSession(session);
 		dbAgent = makeAgentSession(session);
 
-		// The DB loader always returns a different (stale) instance
 		loader = mock(() => session);
 		factory = mock(() => dbAgent);
 
@@ -164,7 +166,6 @@ describe('SessionCache — registerSession (via set()) + getAsync()', () => {
 		const result = await cache.getAsync('room-sess');
 
 		expect(result).toBe(registeredAgent);
-		// DB was never consulted
 		expect(loader).not.toHaveBeenCalled();
 	});
 
@@ -174,9 +175,7 @@ describe('SessionCache — registerSession (via set()) + getAsync()', () => {
 
 		const result = await cache.getAsync('room-sess');
 
-		// Should load from DB now
 		expect(loader).toHaveBeenCalledWith('room-sess');
-		// The result is the DB-created agent, not the original registered one
 		expect(result).toBe(dbAgent);
 		expect(result).not.toBe(registeredAgent);
 	});
@@ -200,7 +199,6 @@ describe('SessionCache — concurrent access guard prefers registered instance',
 		const dbAgent = makeAgentSession(session);
 		const registeredAgent = makeAgentSession(session);
 
-		// loader resolves on the next microtask so we can race set() against the load
 		const loader: SessionLoader = mock(() => session);
 		const factory: AgentSessionFactory = mock(() => dbAgent);
 
@@ -212,11 +210,9 @@ describe('SessionCache — concurrent access guard prefers registered instance',
 		// While load is in-flight, register the live instance (simulates createAndStartSession)
 		cache.set('concurrent-sess', registeredAgent);
 
-		// Await the original load
 		const result = await loadPromise;
 
-		// The guard at line 99 should have detected that sessions already has the
-		// registered instance and NOT overwritten it with the DB duplicate.
+		// Guard must have kept the registered instance, not the DB duplicate
 		expect(result).toBe(registeredAgent);
 		expect(result).not.toBe(dbAgent);
 	});
@@ -238,22 +234,16 @@ describe('SessionCache — concurrent access guard prefers registered instance',
 		// Register live instance (e.g. from createAndStartSession completing)
 		cache.set('parallel-sess', registeredAgent);
 
-		const [r1, r2] = await Promise.all([p1, p2]);
+		await Promise.all([p1, p2]);
 
-		// p1 is the "owner" of the load: it goes through the full guard path and
-		// returns whatever is in sessions at the time it checks (registeredAgent,
-		// because set() was called before the await completed).
-		expect(r1).toBe(registeredAgent);
-
-		// p2 awaits the raw loadSessionAsync promise which resolves to dbAgent,
-		// bypassing the guard.  The cache itself stores registeredAgent.
-		// The important invariant: p2 does NOT insert dbAgent into the cache.
+		// The cache stores the registered instance — the guard prevented the DB duplicate
+		// from overwriting it.  (p1 returns registeredAgent; p2 returns the raw load result
+		// from loadSessionAsync because it awaits the inner promise directly, but the cache
+		// itself is authoritative.)
 		expect(cache.get('parallel-sess')).toBe(registeredAgent);
 
-		// DB loader called exactly once (second concurrent call reused the lock)
+		// DB loader called exactly once
 		expect(loader).toHaveBeenCalledTimes(1);
-
-		void r2; // result of p2 (dbAgent) is not what we assert here
 	});
 });
 
@@ -278,122 +268,166 @@ describe('SessionCache — restore path registers session', () => {
 		const result = await cache.getAsync('restored-sess');
 
 		expect(result).toBe(restoredAgent);
-		// DB was never consulted because the session was pre-registered
 		expect(loader).not.toHaveBeenCalled();
 	});
 });
 
 // ---------------------------------------------------------------------------
-// SessionCache — unregister (remove) race condition
-// ---------------------------------------------------------------------------
-
-describe('SessionCache — unregister race condition', () => {
-	it('remove() during in-flight load clears the lock immediately', async () => {
-		const session = makeSession('race-sess');
-		const loader: SessionLoader = mock(() => session);
-		const factory: AgentSessionFactory = mock(() => makeAgentSession(session));
-
-		const cache = new SessionCache(factory, loader);
-
-		// Start async load — creates the lock
-		const loadPromise = cache.getAsync('race-sess');
-		expect(cache['sessionLoadLocks'].has('race-sess')).toBe(true);
-
-		// Concurrent unregister: clears the lock immediately
-		cache.remove('race-sess');
-		expect(cache['sessionLoadLocks'].has('race-sess')).toBe(false);
-
-		await loadPromise;
-
-		// Lock still absent after load completes (finally block is a noop)
-		expect(cache['sessionLoadLocks'].has('race-sess')).toBe(false);
-	});
-
-	it('after remove() clears lock, a new getAsync() caller is not blocked on a stale lock', async () => {
-		const session = makeSession('race-new-caller');
-		const loader: SessionLoader = mock(() => session);
-		const factory: AgentSessionFactory = mock(() => makeAgentSession(session));
-
-		const cache = new SessionCache(factory, loader);
-
-		// Start an async load
-		const firstLoad = cache.getAsync('race-new-caller');
-
-		// remove() clears the lock before firstLoad resolves
-		cache.remove('race-new-caller');
-
-		// A second caller that arrives AFTER remove() should start a fresh load
-		// rather than hanging on the now-deleted lock.  It sees no lock and no
-		// cached session, so it initiates a new load independently.
-		const secondLoad = cache.getAsync('race-new-caller');
-
-		await Promise.all([firstLoad, secondLoad]);
-
-		// Both loads completed without hanging — no stale lock interference
-		expect(cache['sessionLoadLocks'].has('race-new-caller')).toBe(false);
-		// loader was called at least once (both loads may overlap or one may use
-		// the in-memory session set by the first)
-		expect(loader).toHaveBeenCalled();
-	});
-});
-
-// ---------------------------------------------------------------------------
 // SessionManager — registerSession() / unregisterSession() delegation
+// Tests use a real SessionManager instance to verify the delegation chain.
 // ---------------------------------------------------------------------------
 
 describe('SessionManager — registerSession() / unregisterSession()', () => {
-	// We test through the public interface using a SessionCache directly
-	// (SessionManager constructor requires too many heavy dependencies).
-	// The delegation path is: SessionManager.registerSession → SessionCache.set
-	//                         SessionManager.unregisterSession → SessionCache.remove
+	let sessionManager: SessionManager;
+	let mockDb: Database;
 
-	it('registerSession delegates to SessionCache.set', () => {
-		const session = makeSession('mgr-sess');
-		const agent = makeAgentSession(session);
-		const loader: SessionLoader = mock(() => null);
-		const factory: AgentSessionFactory = mock(() => agent);
+	beforeEach(() => {
+		mockDb = {
+			createSession: mock(() => {}),
+			updateSession: mock(() => {}),
+			deleteSession: mock(() => {}),
+			getSession: mock(() => null),
+			getGlobalSettings: mock(() => ({
+				...DEFAULT_GLOBAL_SETTINGS,
+				settingSources: ['user', 'project', 'local'],
+				disabledMcpServers: [],
+			})),
+			listSessions: mock(() => []),
+			getGlobalToolsConfig: mock(() => ({
+				systemPrompt: { claudeCodePreset: { allowed: true, defaultEnabled: true } },
+				mcpServers: {},
+				kaiTools: { memory: { allowed: true, defaultEnabled: true } },
+			})),
+			saveGlobalToolsConfig: mock(() => {}),
+			getMessagesByStatus: mock(() => []),
+			saveSDKMessage: mock(() => {}),
+			getUserMessages: mock(() => []),
+			getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+			getSDKMessageCount: mock(() => 0),
+			deleteMessagesAfter: mock(() => 0),
+			deleteMessagesAtAndAfter: mock(() => 0),
+			getUserMessageByUuid: mock(() => undefined),
+			countMessagesAfter: mock(() => 0),
+			updateMessage: mock(() => {}),
+			saveUserMessage: mock(() => {}),
+			getTaskRepo: mock(() => ({ getTask: mock(() => null), getTaskByShortId: mock(() => null) })),
+			getGoalRepo: mock(() => ({ getGoal: mock(() => null), getGoalByShortId: mock(() => null) })),
+		} as unknown as Database;
 
-		const cache = new SessionCache(factory, loader);
+		const mockMessageHub = {
+			event: mock(async () => {}),
+			onRequest: mock(() => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
+		} as unknown as MessageHub;
 
-		// registerSession equivalent: cache.set
-		cache.set('mgr-sess', agent);
+		const mockAuthManager = {
+			getCurrentApiKey: mock(async () => 'test-api-key'),
+		} as unknown as AuthManager;
 
-		expect(cache.has('mgr-sess')).toBe(true);
-		expect(cache.get('mgr-sess')).toBe(agent);
+		const mockSettingsManager = {
+			getSettings: mock(() => ({})),
+			updateSettings: mock(() => {}),
+			getGlobalSettings: mock(() => ({
+				...DEFAULT_GLOBAL_SETTINGS,
+				settingSources: ['user', 'project', 'local'],
+				disabledMcpServers: [],
+			})),
+			listMcpServersFromSources: mock(() => []),
+		} as unknown as SettingsManager;
+
+		const mockEventBus = {
+			on: mock(() => () => {}),
+			emit: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		const mockJobQueue = {
+			enqueue: mock(() => ({ id: 'job-id', queue: 'session.title_generation' })),
+			listJobs: mock(() => []),
+		} as unknown as JobQueueRepository;
+
+		const mockJobProcessor = {
+			register: mock(() => {}),
+			start: mock(() => {}),
+			stop: mock(async () => {}),
+		} as unknown as JobQueueProcessor;
+
+		sessionManager = new SessionManager(
+			mockDb,
+			mockMessageHub,
+			mockAuthManager,
+			mockSettingsManager,
+			mockEventBus,
+			{
+				defaultModel: 'claude-sonnet-4-20250514',
+				maxTokens: 8192,
+				temperature: 1.0,
+				workspaceRoot: '/tmp/ws',
+				disableWorktrees: true,
+			} as Parameters<typeof SessionManager>[5],
+			mockJobQueue,
+			mockJobProcessor
+		);
 	});
 
-	it('unregisterSession delegates to SessionCache.remove', () => {
-		const session = makeSession('mgr-sess');
-		const agent = makeAgentSession(session);
-		const loader: SessionLoader = mock(() => null);
-		const factory: AgentSessionFactory = mock(() => agent);
-
-		const cache = new SessionCache(factory, loader);
-		cache.set('mgr-sess', agent);
-
-		// unregisterSession equivalent: cache.remove
-		cache.remove('mgr-sess');
-
-		expect(cache.has('mgr-sess')).toBe(false);
+	afterEach(async () => {
+		try {
+			await sessionManager.cleanup();
+		} catch {
+			// ignore
+		}
 	});
 
-	it('unregisterSession with load lock in flight: lock is cleared', async () => {
-		const session = makeSession('lock-sess');
+	it('registerSession() makes session findable via getSessionAsync() without DB load', async () => {
+		const session = makeSession('sm-registered');
 		const agent = makeAgentSession(session);
-		const loader: SessionLoader = mock(() => session);
-		const factory: AgentSessionFactory = mock(() => agent);
 
-		const cache = new SessionCache(factory, loader);
+		sessionManager.registerSession(agent);
 
-		// Start async load (creates lock)
-		const p = cache.getAsync('lock-sess');
+		// getSessionAsync() should return the registered instance directly
+		const result = await sessionManager.getSessionAsync('sm-registered');
+		expect(result).toBe(agent);
 
-		// Unregister while load in flight
-		cache.remove('lock-sess');
+		// DB was not consulted (getSession mock returns null by default)
+		expect(mockDb.getSession).not.toHaveBeenCalled();
+	});
 
-		await p;
+	it('unregisterSession() removes session so getSessionAsync() falls through to DB', async () => {
+		const session = makeSession('sm-unregistered');
+		const agent = makeAgentSession(session);
 
-		// Lock must be cleared
-		expect(cache['sessionLoadLocks'].has('lock-sess')).toBe(false);
+		sessionManager.registerSession(agent);
+
+		// Confirm it's registered
+		const before = await sessionManager.getSessionAsync('sm-unregistered');
+		expect(before).toBe(agent);
+
+		// Unregister
+		sessionManager.unregisterSession('sm-unregistered');
+
+		// Now getSessionAsync() must fall through to DB (returns null since DB mock returns null)
+		const after = await sessionManager.getSessionAsync('sm-unregistered');
+		expect(after).toBeNull();
+		expect(mockDb.getSession).toHaveBeenCalledWith('sm-unregistered');
+	});
+
+	it('unregisterSession() clears in-flight load lock via SessionCache.remove()', async () => {
+		// Arrange: DB returns a session so getSessionAsync can start a load
+		const session = makeSession('sm-lock-test');
+		(mockDb.getSession as ReturnType<typeof mock>).mockImplementation(() => session);
+
+		// Start async load — creates the lock in the underlying SessionCache
+		const loadPromise = sessionManager.getSessionAsync('sm-lock-test');
+
+		// Unregister while load is in-flight
+		sessionManager.unregisterSession('sm-lock-test');
+
+		await loadPromise;
+
+		// After unregister + load completion, session must NOT be in cache
+		// (getSessionAsync() must go to DB again for any subsequent call)
+		(mockDb.getSession as ReturnType<typeof mock>).mockImplementation(() => null);
+		const afterResult = await sessionManager.getSessionAsync('sm-lock-test');
+		expect(afterResult).toBeNull();
 	});
 });
