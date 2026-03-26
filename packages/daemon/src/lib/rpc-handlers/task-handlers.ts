@@ -1097,7 +1097,7 @@ export function setupTaskHandlers(
 		// When the task was in review, prepend a context note so the leader knows to
 		// re-submit for review after addressing the human's feedback.
 		const reviewReminder = wasInReview
-			? `[Context: This task was in \`review\` status. The message below is human feedback. After addressing the feedback, call \`set_task_status\` with status \`review\` to re-submit for human approval.]\n\n`
+			? `[Context: This task was in \`review\` status. The message below is human feedback. After addressing the feedback, call \`submit_for_review\` to re-submit for human approval.]\n\n`
 			: '';
 		const messageToRoute = reviewReminder + params.message.trim();
 

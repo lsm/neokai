@@ -790,7 +790,7 @@ describe('task.sendHumanMessage handler', () => {
 		// The injected message should include the review reminder
 		const injectedMessage = (injectMessageToLeader.mock.calls[0] as [string, string])[1];
 		expect(injectedMessage).toContain('[Context: This task was in `review` status.');
-		expect(injectedMessage).toContain('set_task_status');
+		expect(injectedMessage).toContain('submit_for_review');
 		expect(injectedMessage).toContain('Please fix the typo');
 	});
 
