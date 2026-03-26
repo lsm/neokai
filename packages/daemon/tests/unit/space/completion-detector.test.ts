@@ -437,4 +437,277 @@ describe('CompletionDetector', () => {
 			expect(detector.isComplete(RUN)).toBe(false);
 		});
 	});
+
+	describe('mixed terminal statuses (all done / some failed)', () => {
+		test('28. mixed completed + cancelled across multiple nodes → true', () => {
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-a',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-b',
+				status: 'cancelled',
+			});
+			expect(detector.isComplete(RUN)).toBe(true);
+		});
+
+		test('29. mixed completed + needs_attention across multiple nodes → true', () => {
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-a',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-b',
+				status: 'needs_attention',
+			});
+			expect(detector.isComplete(RUN)).toBe(true);
+		});
+
+		test('30. all five terminal statuses in one run → true', () => {
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-a',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-b',
+				status: 'needs_attention',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-c',
+				status: 'cancelled',
+			});
+			// rate_limited and usage_limited cannot be seeded via DB CHECK constraint
+			// (space_tasks does not allow them), but the TERMINAL_TASK_STATUSES set
+			// already covers them in tests 24-25. We verify the guard logic here:
+			// even with three different terminal statuses, isComplete returns true.
+			expect(detector.isComplete(RUN)).toBe(true);
+		});
+
+		test('31. completed + in_progress across nodes → false', () => {
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-a',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-b',
+				status: 'in_progress',
+			});
+			expect(detector.isComplete(RUN)).toBe(false);
+		});
+
+		test('32. one non-terminal task blocks completion regardless of how many terminal tasks exist', () => {
+			for (let i = 0; i < 5; i++) {
+				seedTask(db, SPACE, {
+					workflowRunId: RUN,
+					workflowNodeId: `node-done-${i}`,
+					status: 'completed',
+				});
+			}
+			// One pending task blocks the entire run
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-pending',
+				status: 'pending',
+			});
+			expect(detector.isComplete(RUN)).toBe(false);
+		});
+	});
+
+	describe('multiple workflow runs (cross-contamination)', () => {
+		test('33. tasks from different runs do not interfere — each run evaluated independently', () => {
+			const RUN_A = 'run-a';
+			const RUN_B = 'run-b';
+
+			// Run A: all terminal
+			seedTask(db, SPACE, {
+				workflowRunId: RUN_A,
+				workflowNodeId: 'node-a1',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN_A,
+				workflowNodeId: 'node-a2',
+				status: 'cancelled',
+			});
+
+			// Run B: one non-terminal
+			seedTask(db, SPACE, {
+				workflowRunId: RUN_B,
+				workflowNodeId: 'node-b1',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN_B,
+				workflowNodeId: 'node-b2',
+				status: 'in_progress',
+			});
+
+			expect(detector.isComplete(RUN_A)).toBe(true);
+			expect(detector.isComplete(RUN_B)).toBe(false);
+		});
+
+		test('34. one run has no tasks while the other has tasks — no cross-contamination', () => {
+			const RUN_A = 'run-empty';
+			const RUN_B = 'run-with-tasks';
+
+			seedTask(db, SPACE, {
+				workflowRunId: RUN_B,
+				workflowNodeId: 'node-x',
+				status: 'completed',
+			});
+
+			expect(detector.isComplete(RUN_A)).toBe(false);
+			expect(detector.isComplete(RUN_B)).toBe(true);
+		});
+	});
+
+	describe('pending-but-blocked with real channel topology', () => {
+		test('35. workflow with channel to unactivated node — not complete despite all current tasks being terminal', () => {
+			// Simulates a 3-node workflow: Plan → Code → Review
+			// Plan and Code are done, but Review node was never activated.
+			// A channel from Code to Review means the run is not complete.
+			const nodes: WorkflowNode[] = [
+				makeNode('node-plan', 'planner', ['planner']),
+				makeNode('node-code', 'coder', ['coder']),
+				makeNode('node-review', 'reviewer', ['reviewer']),
+			];
+			const channels: WorkflowChannel[] = [
+				{ from: 'planner', to: 'coder', direction: 'one-way' },
+				{ from: 'coder', to: 'reviewer', direction: 'one-way' },
+			];
+
+			// Only plan and code nodes have tasks, both terminal
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-plan',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-code',
+				status: 'completed',
+			});
+
+			// Review node never activated — channel points to it → not complete
+			expect(detector.isComplete(RUN, channels, nodes)).toBe(false);
+		});
+
+		test('36. workflow with all channels satisfied — all nodes activated and terminal → complete', () => {
+			const nodes: WorkflowNode[] = [
+				makeNode('node-plan', 'planner', ['planner']),
+				makeNode('node-code', 'coder', ['coder']),
+				makeNode('node-review', 'reviewer', ['reviewer']),
+			];
+			const channels: WorkflowChannel[] = [
+				{ from: 'planner', to: 'coder', direction: 'one-way' },
+				{ from: 'coder', to: 'reviewer', direction: 'one-way' },
+			];
+
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-plan',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-code',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-review',
+				status: 'completed',
+			});
+
+			expect(detector.isComplete(RUN, channels, nodes)).toBe(true);
+		});
+
+		test('37. channel with array target — one activated, one not → not complete', () => {
+			const nodes: WorkflowNode[] = [
+				makeNode('node-a', 'planner', ['planner']),
+				makeNode('node-b', 'reviewer-1', ['reviewer-1']),
+				makeNode('node-c', 'reviewer-2', ['reviewer-2']),
+			];
+			// Fan-out: planner sends to both reviewers
+			const channels: WorkflowChannel[] = [
+				{ from: 'planner', to: ['reviewer-1', 'reviewer-2'], direction: 'one-way' },
+			];
+
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-a',
+				status: 'completed',
+			});
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-b',
+				status: 'completed',
+			});
+			// node-c never activated
+
+			expect(detector.isComplete(RUN, channels, nodes)).toBe(false);
+
+			// Activate node-c
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-c',
+				status: 'completed',
+			});
+			expect(detector.isComplete(RUN, channels, nodes)).toBe(true);
+		});
+
+		test('38. bidirectional channel — both nodes must be activated', () => {
+			const nodes: WorkflowNode[] = [
+				makeNode('node-a', 'coder', ['coder']),
+				makeNode('node-b', 'reviewer', ['reviewer']),
+			];
+			// Bidirectional: coder ↔ reviewer
+			const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'two-way' }];
+
+			// Only node-a activated
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-a',
+				status: 'completed',
+			});
+			expect(detector.isComplete(RUN, channels, nodes)).toBe(false);
+
+			// Both activated
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-b',
+				status: 'completed',
+			});
+			expect(detector.isComplete(RUN, channels, nodes)).toBe(true);
+		});
+
+		test('39. wildcard channel does NOT unblock a downstream channel to unactivated node', () => {
+			const nodes: WorkflowNode[] = [
+				makeNode('node-a', 'broadcaster', ['broadcaster']),
+				makeNode('node-b', 'target', ['target']),
+			];
+			const channels: WorkflowChannel[] = [
+				{ from: 'broadcaster', to: '*', direction: 'one-way' },
+				{ from: 'broadcaster', to: 'target', direction: 'one-way' },
+			];
+
+			// Only node-a activated
+			seedTask(db, SPACE, {
+				workflowRunId: RUN,
+				workflowNodeId: 'node-a',
+				status: 'completed',
+			});
+			// The second channel points to 'target' (node-b) which is unactivated
+			expect(detector.isComplete(RUN, channels, nodes)).toBe(false);
+		});
+	});
 });
