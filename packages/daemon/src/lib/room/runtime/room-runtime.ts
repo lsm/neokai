@@ -3871,7 +3871,9 @@ export class RoomRuntime {
 		const isRecurringExecution = activeExecution != null;
 
 		// reviewContext determines the leader's review guidelines — planner gets plan_review, others get code_review.
-		const reviewContext = (agentType === 'planner' ? 'plan_review' : 'code_review') as ReviewContext;
+		const reviewContext = (
+			agentType === 'planner' ? 'plan_review' : 'code_review'
+		) as ReviewContext;
 
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
 		const leaderContextConfig = {
@@ -3884,7 +3886,7 @@ export class RoomRuntime {
 			model: leaderModel,
 			provider: leaderProvider,
 			// Dynamically set so general/coder agents get 'code_review' and planner gets 'plan_review'.
-			reviewContext: (agentType === 'planner' ? 'plan_review' : 'code_review') as ReviewContext,
+			reviewContext,
 		};
 
 		if (agentType === 'general') {
@@ -3914,11 +3916,6 @@ export class RoomRuntime {
 				return;
 			}
 
-			// workerModel/workerProvider already resolve to planner values when agentType === 'planner'
-			// (workerRole === 'planner' in the model resolution above) — no need to re-resolve.
-			const plannerModel = workerModel;
-			const plannerProvider = workerProvider;
-
 			// workerModel/workerProvider are already the planner's model/provider
 			// (workerRole === 'planner' when agentType === 'planner').
 			// Build create_draft_task callback — mirrors spawnPlanningGroup pattern
@@ -3936,12 +3933,10 @@ export class RoomRuntime {
 					assignedAgent: params.agent,
 				});
 				// Link the draft task to the goal (or execution for recurring missions)
-				if (goal) {
-					if (isRecurringExecution && activeExecution) {
-						await this.goalManager.linkTaskToExecution(goal.id, activeExecution.id, draftTask.id);
-					} else {
-						await this.goalManager.linkTaskToGoal(goal.id, draftTask.id);
-					}
+				if (isRecurringExecution && activeExecution) {
+					await this.goalManager.linkTaskToExecution(goal.id, activeExecution.id, draftTask.id);
+				} else {
+					await this.goalManager.linkTaskToGoal(goal.id, draftTask.id);
 				}
 				log.info(`Planner created draft task: ${draftTask.id} (${draftTask.title})`);
 				return { id: draftTask.id, title: draftTask.title };

@@ -9,10 +9,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import {
-	createRuntimeTestContext,
-	type RuntimeTestContext,
-} from './room-runtime-test-helpers';
+import { createRuntimeTestContext, type RuntimeTestContext } from './room-runtime-test-helpers';
 
 describe('planner agent branch in _spawnGroupForTaskInner', () => {
 	let ctx: RuntimeTestContext;
@@ -99,9 +96,7 @@ describe('planner agent branch in _spawnGroupForTaskInner', () => {
 		await (ctx.runtime as any).spawnGroupForTask(task);
 
 		// Verify createAndStartSession was called for the planner (role = 'planner')
-		const startCalls = ctx.sessionFactory.calls.filter(
-			(c) => c.method === 'createAndStartSession'
-		);
+		const startCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'createAndStartSession');
 		expect(startCalls.length).toBeGreaterThan(0);
 
 		// The worker role in createAndStartSession should be 'planner'

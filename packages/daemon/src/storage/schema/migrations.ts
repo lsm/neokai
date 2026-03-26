@@ -3466,14 +3466,16 @@ export function runMigration54(db: BunDatabase): void {
 }
 
 /**
-<<<<<<< HEAD
  * Migration 55: Rename slot_role → agent_name on space_tasks.
  *
  * Aligns with the "no role" naming convention from the agent-centric refactor.
- * completion_summary was already added by Migration 51.
+ * Note: completion_summary was already added and slot_role → agent_name was already renamed
+ * by Migration 51 (which runs before this migration). This migration is kept for recovery:
+ * if a prior migration left the table in a partially migrated state (e.g. crash between
+ * M51's table rebuild and index recreation), this migration's idempotency check will detect
+ * a pre-existing agent_name column and skip, or rebuild to restore indexes.
  *
  * Uses a table rebuild pattern because SQLite does not support DROP COLUMN on all versions.
- * The new table schema drops slot_role and preserves all other columns including completion_summary.
  * Idempotent: checks for agent_name column before rebuilding.
  */
 export function runMigration55(db: BunDatabase): void {
