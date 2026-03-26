@@ -2814,6 +2814,10 @@ export class RoomRuntime {
 			// When recovering after rate/usage limit expiry, clear the task restriction
 			// so the task status returns to in_progress.  Without this the task stays stuck
 			// in rate_limited/usage_limited even though the work has resumed.
+			// Note: groupRepo.clearRateLimit is intentionally NOT called here — the expired
+			// but non-null rateLimit acts as a re-detection sentinel so that the re-triggered
+			// onWorkerTerminalState does not re-classify the stale error and re-apply the backoff.
+			// The sentinel is only cleared when send_to_worker starts a genuinely new iteration.
 			if (hasExpiredRateLimit) {
 				void this.clearTaskRestriction(group.taskId).catch((err) => {
 					log.error(`[StuckWorker] Group ${group.id}: clearTaskRestriction threw:`, err);
