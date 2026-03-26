@@ -196,19 +196,25 @@ the new API.
 1. In `packages/web/src/lib/room-store.ts`:
    a. Import `EntityStore` from `./entity-store`.
    b. Replace `readonly tasks = signal<TaskSummary[]>([])` with
-      `readonly taskStore = new EntityStore<TaskSummary>()`.
+      `readonly taskStore = new EntityStore<NeoTask>()`.
+      Use `NeoTask` (not `TaskSummary`) — Task 1 establishes that the LiveQuery SQL returns
+      all `NeoTask` fields, so the store must reflect the full type.
    c. Replace `readonly goals = signal<RoomGoal[]>([])` with
       `readonly goalStore = new EntityStore<RoomGoal>()`.
    d. Keep `tasks` and `goals` as `computed` pass-through getters so existing consumers
       outside `room-store.ts` continue to work without changes:
       ```typescript
-      readonly tasks = computed(() => this.taskStore.toArray());
+      readonly taskStore = new EntityStore<NeoTask>();
+      readonly tasks = computed(() => this.taskStore.toArray()); // returns NeoTask[]
+      readonly goalStore = new EntityStore<RoomGoal>();
       readonly goals = computed(() => this.goalStore.toArray());
       ```
       This is a non-breaking migration — all existing computed signals (`pendingTasks`,
       `activeTasks`, `tasksByGoalId`, etc.) continue to read from `.tasks.value`.
+      If any of those computed signals were typed against `TaskSummary`, update their type
+      annotations to `NeoTask` to match.
    e. In `subscribeRoom`: replace the inline snapshot/delta handlers for tasks with calls to
-      `this.taskStore.applySnapshot(event.rows as TaskSummary[])` and
+      `this.taskStore.applySnapshot(event.rows as NeoTask[])` and
       `this.taskStore.applyDelta(event)`. Remove the toast side-effect from the delta handler
       only if it's cleanly separable; otherwise keep it as a wrapper around `applyDelta`.
    f. In `subscribeRoom`: same migration for goals — replace inline handlers with
@@ -225,9 +231,11 @@ the new API.
    reference the internal `tasks`/`goals` signal shape — ensure they still pass.
 
 **Acceptance criteria:**
-- `roomStore.tasks.value` and `roomStore.goals.value` return arrays as before (no consumer
-  breakage).
+- `roomStore.tasks` is typed `computed<NeoTask[]>` (backed by `EntityStore<NeoTask>`), consistent
+  with the type fix in Task 1. No `TaskSummary` type remains on the tasks signal or its store.
+- `roomStore.goals.value` returns `RoomGoal[]` as before (no consumer breakage).
 - `subscribeRoom` delegates snapshot/delta to `EntityStore` methods.
+- All computed signals that previously read `TaskSummary` fields are updated to `NeoTask`.
 - All existing room-store tests pass.
 - TypeScript build is clean.
 - The toast side-effect on task status transitions (review / rate_limited / usage_limited)
