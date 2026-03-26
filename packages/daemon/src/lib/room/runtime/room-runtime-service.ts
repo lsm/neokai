@@ -518,6 +518,23 @@ export class RoomRuntimeService {
 				}
 				return session.handleModelSwitch(model, provider);
 			},
+			// Reads from DB (source of truth), not the in-memory agentSessions cache.
+			// This avoids stale model info when switchModel() updates the DB but the
+			// cache entry has been evicted (e.g., after daemon restart).
+			//
+			// Note: the DB stores the raw model value from session.config.model, which
+			// may be an alias (e.g., "sonnet") or a resolved ID (e.g.,
+			// "claude-sonnet-4-20250514") depending on what was passed to switchModel().
+			// modelFallbackMap keys use resolved IDs (e.g., "anthropic/claude-sonnet-4-20250514"),
+			// so callers building a fallback key should resolve aliases before lookup.
+			getCurrentModel: async (sessionId) => {
+				const session = ctx.db.getSession(sessionId);
+				if (!session) return null;
+				return {
+					currentModel: session.config.model,
+					currentProvider: session.config.provider ?? 'anthropic',
+				};
+			},
 		};
 	}
 
