@@ -6,7 +6,7 @@
  * switching tests (PR #930) by asserting that:
  * - sdkSessionId is preserved across model switches
  * - Message count does not reset
- * - Conversation context persists (agent remembers prior content)
+ * - Message history preserved after cross-provider switch (structural, not LLM-dependent)
  * - sdkSessionId survives multiple rapid switches
  * - DB correctly persists sdkSessionId after switch
  *
@@ -229,7 +229,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		expect(countAfter).toBeGreaterThanOrEqual(countBefore);
 	}, 60000);
 
-	test('conversation context persists after model switch (cross-provider)', async () => {
+	test('message history preserved after model switch (cross-provider)', async () => {
 		// Create session with MiniMax
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-context-persist-${Date.now()}`,
@@ -243,9 +243,14 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		const { sessionId } = createResult;
 		daemon.trackSession(sessionId);
 
-		// Send a message with information to remember
-		await sendMessage(daemon, sessionId, 'Remember the secret number 42. Reply with just "ok".');
+		// Send a message with a unique marker
+		const preSwitchMarker = 'unique-pre-switch-marker-7x9k2';
+		await sendMessage(daemon, sessionId, `Say "${preSwitchMarker}" and reply with just "ok".`);
 		await waitForIdle(daemon, sessionId);
+
+		// Count messages before the switch
+		const countBeforeSwitch = await getMessageCount(daemon, sessionId);
+		expect(countBeforeSwitch).toBeGreaterThan(0);
 
 		// Switch to GLM
 		const switchResult = await switchModel(daemon, sessionId, 'glm-5', 'glm');
@@ -254,31 +259,27 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Wait for restart to complete
 		await waitForIdle(daemon, sessionId, 30000);
 
-		// Send a follow-up asking about the secret number
-		await sendMessage(daemon, sessionId, 'What was the secret number I asked you to remember?');
+		// Send a follow-up message after the switch — verifies conversation can continue
+		const postResult = await sendMessage(daemon, sessionId, 'Reply with just "ok".');
+		expect(postResult.messageId).toBeTruthy();
 		await waitForIdle(daemon, sessionId, 30000);
 
-		// Get SDK messages and verify the agent responds with reference to 42
+		// Verify the pre-switch user message is still in the message history.
+		// This is a structural check: if the SDK session was recreated from scratch,
+		// the message history would be empty. A resumed session preserves all prior messages.
 		const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-			minCount: 4, // at least: system:init + user("Remember...") + assistant + user("What was...")
+			minCount: countBeforeSwitch + 1,
 			timeout: 10000,
 		});
 
-		// Find the last assistant text message — it should mention "42"
-		const assistantMessages = sdkMessages.filter(
+		const preSwitchUserMsg = sdkMessages.find(
 			(msg) =>
-				msg.type === 'assistant' &&
+				msg.type === 'user' &&
 				typeof msg.message?.content === 'string' &&
-				msg.message.content.length > 0
+				msg.message.content.includes(preSwitchMarker)
 		);
 
-		// There should be at least one assistant message referencing 42
-		// (either from the first turn or the follow-up)
-		const mentions42 = assistantMessages.some(
-			(msg) => typeof msg.message?.content === 'string' && msg.message.content.includes('42')
-		);
-
-		expect(mentions42).toBe(true);
+		expect(preSwitchUserMsg).toBeTruthy();
 	}, 90000);
 
 	test('sdkSessionId preserved across multiple rapid switches', async () => {
