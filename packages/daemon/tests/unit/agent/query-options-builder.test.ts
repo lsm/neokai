@@ -758,4 +758,347 @@ describe('QueryOptionsBuilder', () => {
 			expect('enableFileCheckpointing' in options).toBe(true);
 		});
 	});
+
+	describe('skills injection', () => {
+		const enabledSkills = [
+			{
+				id: 'skill-plugin-1',
+				name: 'my-plugin',
+				displayName: 'My Plugin',
+				description: 'A plugin skill',
+				sourceType: 'plugin' as const,
+				config: { type: 'plugin' as const, pluginPath: '/path/to/plugin' },
+				enabled: true,
+				builtIn: false,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			},
+			{
+				id: 'skill-mcp-1',
+				name: 'brave-search',
+				displayName: 'Brave Search',
+				description: 'Web search via Brave',
+				sourceType: 'mcp_server' as const,
+				config: { type: 'mcp_server' as const, appMcpServerId: 'mcp-server-uuid' },
+				enabled: true,
+				builtIn: false,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			},
+			{
+				id: 'skill-disabled-1',
+				name: 'disabled-skill',
+				displayName: 'Disabled Skill',
+				description: 'A disabled skill',
+				sourceType: 'plugin' as const,
+				config: { type: 'plugin' as const, pluginPath: '/path/to/disabled' },
+				enabled: false,
+				builtIn: false,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			},
+		];
+
+		const mockAppMcpServer = {
+			id: 'mcp-server-uuid',
+			name: 'brave-search-server',
+			description: 'Brave Search MCP',
+			sourceType: 'stdio' as const,
+			command: 'npx',
+			args: ['-y', 'brave-mcp'],
+			env: { BRAVE_API_KEY: 'test-key' },
+			enabled: true,
+		};
+
+		it('should inject plugin skills as plugins option', async () => {
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [enabledSkills[0]]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.plugins).toEqual([{ type: 'local', path: '/path/to/plugin' }]);
+		});
+
+		it('should inject MCP server skills as mcpServers entries', async () => {
+			const mockAppMcpServerRepo = {
+				get: mock(() => mockAppMcpServer),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [enabledSkills[1]]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.mcpServers).toBeDefined();
+			expect(options.mcpServers!['brave-search']).toEqual({
+				command: 'npx',
+				args: ['-y', 'brave-mcp'],
+				env: { BRAVE_API_KEY: 'test-key' },
+			});
+		});
+
+		it('should exclude disabled skills', async () => {
+			// getEnabledSkills() only returns enabled skills — simulate that
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [enabledSkills[0]]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Only the enabled plugin skill should appear
+			expect(options.plugins).toEqual([{ type: 'local', path: '/path/to/plugin' }]);
+		});
+
+		it('should not inject anything when skillsManager is not provided', async () => {
+			const builder = new QueryOptionsBuilder(mockContext);
+			const options = await builder.build();
+
+			expect(options.plugins).toBeUndefined();
+		});
+
+		it('should merge skill plugins with existing config plugins', async () => {
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [enabledSkills[0]]),
+			};
+			mockSession.config.plugins = [{ type: 'local', path: '/existing/plugin' }];
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.plugins).toEqual([
+				{ type: 'local', path: '/existing/plugin' },
+				{ type: 'local', path: '/path/to/plugin' },
+			]);
+		});
+
+		it('should merge skill MCP servers with existing config mcpServers', async () => {
+			const mockAppMcpServerRepo = {
+				get: mock(() => mockAppMcpServer),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [enabledSkills[1]]),
+			};
+			mockSession.config.mcpServers = {
+				'existing-server': { command: 'existing-cmd' },
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.mcpServers!['existing-server']).toEqual({ command: 'existing-cmd' });
+			expect(options.mcpServers!['brave-search']).toEqual({
+				command: 'npx',
+				args: ['-y', 'brave-mcp'],
+				env: { BRAVE_API_KEY: 'test-key' },
+			});
+		});
+
+		it('should skip MCP server skills when referenced app_mcp_servers entry is deleted', async () => {
+			const mockAppMcpServerRepo = {
+				get: mock(() => null), // Simulates deleted entry
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [enabledSkills[1]]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// MCP server skill should be silently skipped
+			expect(options.mcpServers).toBeUndefined();
+		});
+
+		it('should make skill-injected MCP servers available in strictMcpConfig sessions', async () => {
+			const mockAppMcpServerRepo = {
+				get: mock(() => mockAppMcpServer),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [enabledSkills[1]]),
+			};
+			mockSession.type = 'room_chat';
+			mockSession.config.mcpServers = {
+				'room-agent-tools': { command: 'room-cmd' },
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// strictMcpConfig should be true for room_chat
+			expect(options.strictMcpConfig).toBe(true);
+			// Skill-injected server must be present in mcpServers so strictMcpConfig doesn't block it
+			expect(options.mcpServers!['brave-search']).toEqual({
+				command: 'npx',
+				args: ['-y', 'brave-mcp'],
+				env: { BRAVE_API_KEY: 'test-key' },
+			});
+			// Original room server must still be present
+			expect(options.mcpServers!['room-agent-tools']).toEqual({ command: 'room-cmd' });
+			// Skill MCP server wildcard should be auto-allowed
+			expect(options.allowedTools).toContain('brave-search__*');
+		});
+
+		it('should skip builtin skills (they are not injected as plugins/MCP servers)', async () => {
+			const builtinSkill = {
+				id: 'skill-builtin-1',
+				name: 'update-config',
+				displayName: 'Update Config',
+				description: 'A builtin skill',
+				sourceType: 'builtin' as const,
+				config: { type: 'builtin' as const, commandName: 'update-config' },
+				enabled: true,
+				builtIn: true,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [builtinSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Builtin skills should not produce plugins or mcpServers
+			expect(options.plugins).toBeUndefined();
+		});
+
+		it('should handle SSE MCP server skills', async () => {
+			const sseAppMcpServer = {
+				id: 'sse-server-uuid',
+				name: 'sse-server',
+				sourceType: 'sse' as const,
+				url: 'http://localhost:3001/sse',
+				headers: { Authorization: 'Bearer token' },
+				enabled: true,
+			};
+			const sseSkill = {
+				id: 'skill-sse-1',
+				name: 'sse-skill',
+				displayName: 'SSE Skill',
+				description: 'An SSE MCP skill',
+				sourceType: 'mcp_server' as const,
+				config: { type: 'mcp_server' as const, appMcpServerId: 'sse-server-uuid' },
+				enabled: true,
+				builtIn: false,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			};
+			const mockAppMcpServerRepo = {
+				get: mock(() => sseAppMcpServer),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [sseSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.mcpServers!['sse-skill']).toEqual({
+				type: 'sse',
+				url: 'http://localhost:3001/sse',
+				headers: { Authorization: 'Bearer token' },
+			});
+		});
+
+		it('should handle HTTP MCP server skills', async () => {
+			const httpAppMcpServer = {
+				id: 'http-server-uuid',
+				name: 'http-server',
+				sourceType: 'http' as const,
+				url: 'http://localhost:3002/mcp',
+				enabled: true,
+			};
+			const httpSkill = {
+				id: 'skill-http-1',
+				name: 'http-skill',
+				displayName: 'HTTP Skill',
+				description: 'An HTTP MCP skill',
+				sourceType: 'mcp_server' as const,
+				config: { type: 'mcp_server' as const, appMcpServerId: 'http-server-uuid' },
+				enabled: true,
+				builtIn: false,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			};
+			const mockAppMcpServerRepo = {
+				get: mock(() => httpAppMcpServer),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [httpSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.mcpServers!['http-skill']).toEqual({
+				type: 'http',
+				url: 'http://localhost:3002/mcp',
+			});
+		});
+	});
 });

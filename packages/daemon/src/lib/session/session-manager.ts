@@ -20,6 +20,8 @@ import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
+import type { SkillsManager } from '../skills-manager';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SESSION_TITLE_GENERATION } from '../job-queue-constants';
@@ -75,7 +77,9 @@ export class SessionManager {
 		private eventBus: DaemonHub,
 		private config: SessionLifecycleConfig,
 		private jobQueue: JobQueueRepository,
-		private jobProcessor: JobQueueProcessor
+		private jobProcessor: JobQueueProcessor,
+		private skillsManager?: SkillsManager,
+		private appMcpServerRepo?: AppMcpServerRepository
 	) {
 		this.logger = new Logger('SessionManager');
 		this.worktreeManager = new WorktreeManager();
@@ -85,8 +89,14 @@ export class SessionManager {
 
 		// Factory function for creating AgentSession instances
 		const createAgentSession = (session: Session): AgentSession => {
-			return new AgentSession(session, db, messageHub, eventBus, () =>
-				this.authManager.getCurrentApiKey()
+			return new AgentSession(
+				session,
+				db,
+				messageHub,
+				eventBus,
+				() => this.authManager.getCurrentApiKey(),
+				this.skillsManager,
+				this.appMcpServerRepo
 			);
 		};
 

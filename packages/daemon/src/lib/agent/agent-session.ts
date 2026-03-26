@@ -241,7 +241,9 @@ export class AgentSession
 		readonly db: Database,
 		readonly messageHub: MessageHub,
 		readonly daemonHub: DaemonHub,
-		private getApiKey: () => Promise<string | null>
+		private getApiKey: () => Promise<string | null>,
+		readonly skillsManager?: import('../skills-manager').SkillsManager,
+		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);

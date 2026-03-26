@@ -30,7 +30,11 @@ import type {
 import { getCoordinatorAgents } from './coordinator-agents';
 import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
+import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
+import type { AppMcpServerSourceType } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
+import type { SkillsManager } from '../skills-manager';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { homedir } from 'os';
@@ -43,6 +47,10 @@ import { join } from 'path';
 export interface QueryOptionsBuilderContext {
 	readonly session: Session;
 	readonly settingsManager: SettingsManager;
+	/** Skills manager for injecting plugin/MCP server skills into SDK options. Optional for backwards compatibility. */
+	readonly skillsManager?: SkillsManager;
+	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
+	readonly appMcpServerRepo?: AppMcpServerRepository;
 }
 
 export class QueryOptionsBuilder {
@@ -98,6 +106,8 @@ export class QueryOptionsBuilder {
 		const hooks = this.buildHooks();
 		const permissionMode = this.getPermissionMode();
 		const mcpServers = this.getMcpServers();
+		const pluginsFromSkills = this.buildPluginsFromSkills();
+		const mcpServersFromSkills = this.getMcpServersFromSkills();
 		const mergedEnv = this.getMergedEnvironmentVars();
 		const sdkCliPath = this.getSDKCliPath();
 
@@ -141,15 +151,19 @@ export class QueryOptionsBuilder {
 			sandbox: config.sandbox as Options['sandbox'],
 
 			// ============ MCP Servers ============
-			// Cast to SDK type - mcpServers uses compatible structure
-			mcpServers: mcpServers as Options['mcpServers'],
+			// Skill-injected MCP servers: must appear in mcpServers map for
+			// strictMcpConfig sessions to accept them. When strictMcpConfig is true
+			// (e.g. room_chat sessions), the SDK only allows servers present in this
+			// map — user settings are ignored. By merging skill servers here, they
+			// are always available regardless of strictMcpConfig setting.
+			mcpServers: this.mergeMcpServers(mcpServers, mcpServersFromSkills) as Options['mcpServers'],
 			strictMcpConfig: config.strictMcpConfig,
 
 			// ============ Output Format ============
 			outputFormat: config.outputFormat,
 
 			// ============ Plugins ============
-			plugins: config.plugins,
+			plugins: this.mergePlugins(config.plugins, pluginsFromSkills),
 
 			// ============ Beta Features ============
 			betas: config.betas,
@@ -554,6 +568,31 @@ CRITICAL RULES:
 	}
 
 	/**
+	 * Merge config MCP servers with skill-injected MCP servers.
+	 * Returns undefined when neither source has servers (preserves auto-load behavior).
+	 */
+	private mergeMcpServers(
+		configServers: Record<string, unknown> | undefined,
+		skillServers: Record<string, McpServerConfig>
+	): Record<string, unknown> | undefined {
+		const hasSkillServers = Object.keys(skillServers).length > 0;
+		if (!configServers && !hasSkillServers) return undefined;
+		return { ...skillServers, ...configServers };
+	}
+
+	/**
+	 * Merge config plugins with skill-injected plugins.
+	 * Returns undefined when neither source has plugins.
+	 */
+	private mergePlugins(
+		configPlugins: Options['plugins'],
+		skillPlugins: Array<{ type: 'local'; path: string }>
+	): Options['plugins'] {
+		if (!configPlugins && skillPlugins.length === 0) return undefined;
+		return [...(configPlugins ?? []), ...skillPlugins];
+	}
+
+	/**
 	 * Get setting sources configuration
 	 *
 	 * Controls CLAUDE.md and .claude/settings.json loading
@@ -749,5 +788,88 @@ CRITICAL RULES:
 
 		// Priority 3: Let SDK use its default resolution
 		return undefined;
+	}
+
+	/**
+	 * Build plugin entries from enabled skills with sourceType === 'plugin'.
+	 * Returns an array of SdkPluginConfig objects for injection into options.plugins.
+	 */
+	private buildPluginsFromSkills(): Array<{ type: 'local'; path: string }> {
+		if (!this.ctx.skillsManager) return [];
+
+		const skills = this.ctx.skillsManager.getEnabledSkills();
+		const plugins: Array<{ type: 'local'; path: string }> = [];
+
+		for (const skill of skills) {
+			if (skill.sourceType === 'plugin' && skill.config.type === 'plugin') {
+				plugins.push({ type: 'local', path: skill.config.pluginPath });
+			}
+		}
+
+		return plugins;
+	}
+
+	/**
+	 * Build MCP server entries from enabled skills with sourceType === 'mcp_server'.
+	 * Resolves each skill's appMcpServerId to an AppMcpServer entry and maps it
+	 * to an McpServerConfig keyed by skill.name.
+	 *
+	 * Skill-injected MCP servers: must appear in mcpServers map for
+	 * strictMcpConfig sessions to accept them.
+	 */
+	private getMcpServersFromSkills(): Record<string, McpServerConfig> {
+		if (!this.ctx.skillsManager || !this.ctx.appMcpServerRepo) return {};
+
+		const skills = this.ctx.skillsManager.getEnabledSkills();
+		const servers: Record<string, McpServerConfig> = {};
+
+		for (const skill of skills) {
+			if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') continue;
+
+			const appServer = this.ctx.appMcpServerRepo.get(skill.config.appMcpServerId);
+			// Skip silently if the referenced app_mcp_servers entry was deleted or no longer exists
+			if (!appServer) continue;
+
+			servers[skill.name] = this.appMcpServerToSdkConfig(appServer);
+		}
+
+		return servers;
+	}
+
+	/**
+	 * Convert an AppMcpServer to the SDK's McpServerConfig format.
+	 */
+	private appMcpServerToSdkConfig(server: {
+		sourceType: AppMcpServerSourceType;
+		command?: string;
+		args?: string[];
+		env?: Record<string, string>;
+		url?: string;
+		headers?: Record<string, string>;
+	}): McpServerConfig {
+		switch (server.sourceType) {
+			case 'stdio':
+				return {
+					command: server.command!,
+					...(server.args ? { args: server.args } : {}),
+					...(server.env ? { env: server.env } : {}),
+				};
+			case 'sse':
+				return {
+					type: 'sse',
+					url: server.url!,
+					...(server.headers ? { headers: server.headers } : {}),
+				};
+			case 'http':
+				return {
+					type: 'http',
+					url: server.url!,
+					...(server.headers ? { headers: server.headers } : {}),
+				};
+			default: {
+				const _exhaustive: never = server.sourceType;
+				throw new Error(`Unknown MCP server source type: ${_exhaustive}`);
+			}
+		}
 	}
 }
