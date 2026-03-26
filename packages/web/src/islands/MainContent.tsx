@@ -18,6 +18,7 @@ import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
 import { ProvidersSettings } from '../components/settings/ProvidersSettings.tsx';
 import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
 import { AppMcpServersSettings } from '../components/settings/AppMcpServersSettings.tsx';
+import { SkillsRegistry } from '../components/settings/SkillsRegistry.tsx';
 import { FallbackModelsSettings } from '../components/settings/FallbackModelsSettings.tsx';
 import { UsageAnalytics } from '../components/settings/UsageAnalytics.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
@@ -108,6 +109,7 @@ export default function MainContent() {
 						{settingsSection === 'providers' && <ProvidersSettings />}
 						{settingsSection === 'mcp-servers' && <McpServersSettings />}
 						{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
+						{settingsSection === 'skills' && <SkillsRegistry />}
 						{settingsSection === 'fallback-models' && <FallbackModelsSettings />}
 						{settingsSection === 'usage' && <UsageAnalytics />}
 						{settingsSection === 'about' && <AboutSection />}
