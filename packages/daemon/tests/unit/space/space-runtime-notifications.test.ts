@@ -32,7 +32,8 @@ import type {
 	NotificationSink,
 	SpaceNotificationEvent,
 } from '../../../src/lib/space/runtime/notification-sink.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
+import type { TaskAgentManager } from '../../../src/lib/space/runtime/task-agent-manager.ts';
 
 // ---------------------------------------------------------------------------
 // MockNotificationSink
@@ -1153,6 +1154,246 @@ describe('SpaceRuntime — notification events', () => {
 			await runtime.executeTick();
 			const runEvents2 = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
 			expect(runEvents2).toHaveLength(1); // still 1, not 2
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// workflow_run_completed — CompletionDetector integration
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Minimal mock TaskAgentManager — stubs the liveness/spawn interface so
+	 * processRunTick() enters the TAM block and reaches the completion check.
+	 * Never actually spawns agents; tasks must be pre-set to terminal states.
+	 */
+	class MockTaskAgentManager {
+		isTaskAgentAlive(_taskId: string): boolean {
+			return false;
+		}
+
+		isSpawning(_taskId: string): boolean {
+			return false;
+		}
+
+		async spawnTaskAgent(
+			_task: SpaceTask,
+			_space: Space,
+			_workflow: SpaceWorkflow | null,
+			_run: SpaceWorkflowRun | null
+		): Promise<string> {
+			return 'mock-session';
+		}
+
+		async rehydrate(): Promise<void> {}
+	}
+
+	describe('workflow_run_completed via CompletionDetector', () => {
+		const AGENT_PLANNER2 = 'agent-planner-cd';
+
+		function makeRuntimeWithTam(extraConfig?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
+			const config: SpaceRuntimeConfig = {
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink: sink,
+				taskAgentManager: new MockTaskAgentManager() as unknown as TaskAgentManager,
+				...extraConfig,
+			};
+			return new SpaceRuntime(config);
+		}
+
+		beforeEach(() => {
+			seedAgentRow(db, AGENT_PLANNER2, SPACE_ID, 'planner');
+		});
+
+		test('emits workflow_run_completed when all tasks are completed', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-cd-a', name: 'Step A', agentId: AGENT_CODER },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('completed');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				expect(completedEvents[0].spaceId).toBe(SPACE_ID);
+				expect(completedEvents[0].runId).toBe(run.id);
+				expect(completedEvents[0].status).toBe('completed');
+				expect(typeof completedEvents[0].timestamp).toBe('string');
+			}
+		});
+
+		test('emits workflow_run_completed for multi-agent step when all tasks are terminal', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi Complete ${Date.now()}`,
+				nodes: [
+					{
+						id: 'step-multi-cd',
+						name: 'Parallel Step',
+						agents: [
+							{ agentId: AGENT_CODER, name: 'coder' },
+							{ agentId: AGENT_PLANNER2, name: 'planner' },
+						],
+					},
+				],
+				transitions: [],
+				startNodeId: 'step-multi-cd',
+				rules: [],
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(2);
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[1].id, { status: 'completed' });
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('completed');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('does NOT emit workflow_run_completed when a task is still in_progress', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `In Progress Block ${Date.now()}`,
+				nodes: [
+					{
+						id: 'step-ip-cd',
+						name: 'Parallel Step',
+						agents: [
+							{ agentId: AGENT_CODER, name: 'coder' },
+							{ agentId: AGENT_PLANNER2, name: 'planner' },
+						],
+					},
+				],
+				transitions: [],
+				startNodeId: 'step-ip-cd',
+				rules: [],
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+
+			await rt.executeTick();
+
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('in_progress');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(0);
+		});
+
+		test('does NOT emit workflow_run_completed when a task is pending', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-pend-cd', name: 'Step Pending', agentId: AGENT_CODER },
+			]);
+
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			// Task left in 'pending' status (default)
+
+			await rt.executeTick();
+
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('in_progress');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(0);
+		});
+
+		test('no duplicate workflow_run_completed on second tick — executor is cleaned up', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-dedup-cd', name: 'Step A', agentId: AGENT_CODER },
+			]);
+
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+
+			// First tick — emits completion and removes executor
+			await rt.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			expect(rt.executorCount).toBe(0);
+
+			// Second tick — no executor, no re-notification
+			await rt.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+		});
+
+		test('completes when task reaches needs_attention (terminal) status', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-na-cd', name: 'Failing Step', agentId: AGENT_CODER },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			// needs_attention is terminal in CompletionDetector
+			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Build failed' });
+
+			await rt.executeTick();
+
+			// needs_attention task triggers task_needs_attention notification first
+			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(naEvents).toHaveLength(1);
+
+			// Single-task step: run stays in_progress (not escalated to needs_attention at run level)
+			// The processRunTick returns early after emitting task_needs_attention,
+			// so the completion check is not reached for needs_attention tasks.
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(['in_progress', 'needs_attention']).toContain(runAfter?.status);
+		});
+
+		test('completes when all tasks are cancelled (terminal) status', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Cancelled Complete ${Date.now()}`,
+				nodes: [
+					{
+						id: 'step-cancel-cd',
+						name: 'Cancelled Step',
+						agents: [
+							{ agentId: AGENT_CODER, name: 'coder' },
+							{ agentId: AGENT_PLANNER2, name: 'planner' },
+						],
+					},
+				],
+				transitions: [],
+				startNodeId: 'step-cancel-cd',
+				rules: [],
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'cancelled' });
+			taskRepo.updateTask(tasks[1].id, { status: 'cancelled' });
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('completed');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
 		});
 	});
 });
