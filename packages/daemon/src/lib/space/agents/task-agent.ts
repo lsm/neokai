@@ -1,16 +1,16 @@
 /**
  * Task Agent — System prompt builder for Task Agent sessions.
  *
- * The Task Agent is a workflow orchestrator that manages the execution of a
- * specific Space task. It spawns sub-sessions for each workflow step, monitors
- * their completion, and surfaces human gates to the user. In the agent-centric
- * model, agents drive workflow progression themselves via send_message and
- * report_done — the Task Agent no longer calls advance_workflow.
+ * The Task Agent is a collaboration manager that coordinates autonomous agents
+ * working together on a specific Space task. It spawns sub-sessions for each
+ * workflow node, monitors their completion via list_group_members (which queries
+ * space_tasks for live completion state), and surfaces human gates to the user.
+ * Agents drive workflow progression themselves via send_message and report_done.
  *
  * ## Behavioral contract
  * - The Task Agent does NOT execute code directly — it delegates to node agents.
- * - It does NOT bypass human gates — it surfaces them and waits.
- * - It does NOT make architectural decisions — the workflow defines the process.
+ * - It does NOT bypass human gates — it surfaces them via request_human_input and waits.
+ * - It does NOT make architectural decisions — the workflow defines the collaboration graph.
  *
  * ## Tool contract
  * The prompt references the following MCP tools by name. They must be registered
@@ -20,8 +20,15 @@
  *   - check_node_status     — Poll the status/output of a running node agent session
  *   - report_result         — Mark the task complete/failed and record the result summary
  *   - request_human_input   — Surface a human gate and block until the user responds
- *   - list_group_members    — List all group members with session IDs and permitted channels
- *   - send_message          — Send a message to peer node agents via channel topology
+ *   - list_group_members    — List all group members with completion state from space_tasks
+ *   - send_message          — Send a message to peer node agents (string-based target)
+ *
+ * ## Node agent tools (for reference)
+ * Node agents have their own peer communication tools:
+ *   - list_peers            — Discover peers and their completion state (queries space_tasks)
+ *   - send_message          — Channel-validated messaging (agent name→DM, node name→fan-out)
+ *   - report_done           — Signal task completion with an optional summary
+ *   - list_reachable_agents — Discover which agents/nodes are reachable and gate status
  *
  * ## Content interpolation
  * All operator-supplied content (space.backgroundContext, space.instructions,
@@ -45,6 +52,8 @@ import type {
 	Space,
 	SpaceAgent,
 	WorkflowNode,
+	WorkflowChannel,
+	WorkflowCondition,
 	WorkflowTransition,
 	WorkflowRule,
 	SessionFeatures,
@@ -128,6 +137,23 @@ function formatRule(rule: WorkflowRule): string {
 	return `- **${rule.name}**${scope}: ${rule.content}`;
 }
 
+function formatGateCondition(gate: WorkflowCondition): string {
+	if (gate.type === 'always') return '';
+	if (gate.type === 'human') return ' **[HUMAN GATE — call request_human_input]**';
+	if (gate.type === 'condition') return ` [condition gate: ${gate.expression ?? '?'}]`;
+	if (gate.type === 'task_result')
+		return ` [task_result gate: matches "${gate.expression ?? '?'}"]`;
+	return '';
+}
+
+function formatChannel(ch: WorkflowChannel): string {
+	const to = Array.isArray(ch.to) ? ch.to.join(', ') : ch.to;
+	const dir = ch.direction === 'bidirectional' ? '↔' : '→';
+	const gateLabel = ch.gate ? formatGateCondition(ch.gate) : '';
+	const label = ch.label ? ` (${ch.label})` : '';
+	return `- \`${ch.from}\` ${dir} \`${to}\`${label}${gateLabel}`;
+}
+
 // ---------------------------------------------------------------------------
 // System prompt builder
 // ---------------------------------------------------------------------------
@@ -148,14 +174,14 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 
 	// ---- Role ----------------------------------------------------------------
 	sections.push(
-		`You are a Task Agent — a workflow orchestrator that manages the execution of a ` +
-			`specific task within NeoKai, an autonomous AI software development tool.\n` +
+		`You are a Task Agent — a collaboration manager that coordinates autonomous agents ` +
+			`working together on a task within NeoKai, an autonomous AI software development tool.\n` +
 			`\n` +
-			`Your job is to drive the assigned task to completion by:\n` +
-			`1. Running the task's workflow — spawning sub-sessions for each step's assigned agent\n` +
-			`2. Monitoring step completion and advancing the workflow to the next step\n` +
-			`3. Surfacing human gates when encountered and waiting for approval before continuing\n` +
-			`4. Reporting the final result when the workflow reaches a terminal step`
+			`Your job is to enable the collaboration to succeed by:\n` +
+			`1. Spawning node agents for each workflow node and providing them with the collaboration context\n` +
+			`2. Monitoring agent completion via \`list_group_members\` (queries space_tasks for live completion state)\n` +
+			`3. Surfacing human gates encountered during agent communication and waiting for approval via \`request_human_input\`\n` +
+			`4. Reporting the final result when all agents have completed their work`
 	);
 
 	// ---- Space context -------------------------------------------------------
@@ -199,39 +225,53 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`- **list_group_members** — List all members of the current task's session group. ` +
-			`Returns each member's \`sessionId\`, \`role\`, \`agentId\`, \`status\`, and ` +
-			`\`permittedTargets\` (which roles they can message per the declared channel topology). ` +
-			`Use this to discover active sub-sessions and their communication permissions.`
+			`Returns each member's \`sessionId\`, \`agentName\`, \`status\`, \`completionState\`, and ` +
+			`\`permittedTargets\`. Completion state is read from \`space_tasks\` — use this to monitor ` +
+			`when all agents have called \`report_done\`. Poll this after each check_node_status to detect ` +
+			`overall collaboration completion.`
 	);
 	sections.push(
-		`- **send_message** — Send a message directly to one or more peer node agents via declared channel topology. ` +
-			`Supports point-to-point (\`coder\`), broadcast (\`*\`), and multicast (\`[coder, reviewer]\`). ` +
-			`The Task Agent has default bidirectional channels to all node agents, so it can always ` +
-			`message any peer node agent. Use \`list_group_members\` to see permitted targets.`
+		`- **send_message** — Send a message to a peer node agent using a plain string target. ` +
+			`Target resolution: agent name (e.g. \`"coder"\`) → DM to that agent; ` +
+			`node name (e.g. \`"review-node"\`) → fan-out to all agents in that node; ` +
+			`\`"*"\` → broadcast to all permitted targets. ` +
+			`The Task Agent has default bidirectional channels to all node agents. ` +
+			`Use \`list_group_members\` to see permitted targets before sending.`
+	);
+	sections.push(
+		`**Node agent tools (for reference):** Each spawned node agent also has access to: ` +
+			`\`list_peers\` (discover peers with completion state from space_tasks), ` +
+			`\`send_message\` (same string-based targeting), ` +
+			`\`report_done\` (signal task completion), and ` +
+			`\`list_reachable_agents\` (discover reachable agents and cross-node gate status). ` +
+			`Node agents drive their own progression — you do not need to manually route messages between them.`
 	);
 
 	// ---- Workflow execution instructions ------------------------------------
-	sections.push(`\n## Workflow Execution Instructions\n`);
+	sections.push(`\n## Collaboration Execution Instructions\n`);
 	sections.push(
-		`In the agent-centric model, node agents drive workflow progression themselves ` +
-			`via \`send_message\` and \`report_done\`. Your role is to spawn agents and monitor ` +
-			`their completion — you do not manually advance the workflow.\n`
+		`In the agent-centric model, node agents are self-directing participants that communicate ` +
+			`via declared channels and signal completion via \`report_done\`. Your role is to spawn agents, ` +
+			`monitor the collaboration, and handle gate events — you do not manually route messages between agents.\n`
 	);
 	sections.push(`Follow this loop until all agents have completed:\n`);
 	sections.push(
 		`1. **Spawn pending node agents** — Call \`spawn_node_agent\` for each pending step task ` +
 			`(visible in the task list). Multiple agents may run concurrently in the same node.\n` +
-			`2. **Monitor completion** — Call \`check_node_status\` periodically until agents reach ` +
-			`a terminal state (\`completed\` or \`error\`).\n` +
+			`2. **Monitor completion** — Call \`check_node_status\` periodically, then call ` +
+			`\`list_group_members\` to check each member's \`completionState\` (read from space_tasks). ` +
+			`A member is done when its \`completionState.status\` is \`completed\` or \`error\`.\n` +
 			`3. **Agents drive their own progression** — When a node agent sends a message to another ` +
-			`agent role via \`send_message\`, the target node is activated automatically. ` +
-			`New pending tasks will appear — spawn agents for them (return to step 1).\n` +
-			`4. **Detect completion** — When all agents have completed (no more pending or ` +
-			`in-progress tasks), call \`report_result\` to complete the task.\n` +
-			`5. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
-			`\`status: "cancelled"\` and the error details.\n` +
-			`6. **Handle human gates** — If a node agent pauses for human input, call ` +
-			`\`request_human_input\` to surface the question, then wait for the human's response.`
+			`agent via \`send_message\` (using an agent name for DM or a node name for fan-out), ` +
+			`the target node is activated automatically. New pending tasks will appear — spawn their agents (return to step 1).\n` +
+			`4. **Handle gate-blocked messages** — Channels may have gate conditions that block delivery: ` +
+			`a \`human\` gate requires explicit approval (call \`request_human_input\`); ` +
+			`\`condition\` and \`task_result\` gates are evaluated automatically by the system. ` +
+			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
+			`5. **Detect completion** — When \`list_group_members\` shows all members have completed, ` +
+			`call \`report_result\` to close the task.\n` +
+			`6. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
+			`\`status: "cancelled"\` and the error details.`
 	);
 
 	// ---- Human gate handling -------------------------------------------------
@@ -277,20 +317,29 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 
 	// ---- Channel topology ----------------------------------------------------
-	sections.push(`\n## Channel Topology\n`);
+	sections.push(`\n## Channel-Based Messaging\n`);
 	sections.push(
-		`Workflow steps may declare a channel topology that governs which agent roles can communicate ` +
-			`with each other. Use \`list_group_members\` to see the active members and their ` +
-			`\`permittedTargets\` — roles they are allowed to message per the declared topology.\n`
+		`The workflow declares a channel topology — a graph of permitted communication paths between agents. ` +
+			`Channels enforce collaboration policies: only agents with a declared channel between them can exchange messages.\n`
 	);
 	sections.push(
-		`Channel topology is enforced uniformly across all agents. ` +
-			`The Task Agent uses \`send_message\` for all inter-agent communication with node agents.\n`
+		`**String-based target addressing** — \`send_message\` uses a plain string \`target\`:\n` +
+			`- Agent name (e.g. \`"coder"\`) → direct message to that specific agent\n` +
+			`- Node name (e.g. \`"review-node"\`) → fan-out to all agents in that node\n` +
+			`- \`"*"\` → broadcast to all permitted targets\n` +
+			`Use \`list_group_members\` to see permitted targets, or node agents can use ` +
+			`\`list_reachable_agents\` to discover their full reachability graph including cross-node targets and gate status.\n`
 	);
 	sections.push(
-		`Default channels: the Task Agent has default bidirectional channels to all node agent roles, ` +
-			`so it can always reach any peer node agent. If a user removes a Task Agent channel, ` +
-			`the Task Agent can no longer message that node until the channel is restored.\n`
+		`**Gate conditions** — Channels may declare a gate that blocks message delivery until a condition is met:\n` +
+			`- \`human\` gate: requires explicit human approval — call \`request_human_input\` with the gate context\n` +
+			`- \`condition\` gate: system evaluates the expression automatically\n` +
+			`- \`task_result\` gate: system checks whether the prior task result matches the expression\n` +
+			`- No gate (or \`always\`): message is delivered immediately\n`
+	);
+	sections.push(
+		`The Task Agent has default bidirectional channels to all node agent roles. ` +
+			`Node agents use \`list_reachable_agents\` to discover their full reachability graph.`
 	);
 
 	// ---- Task context -------------------------------------------------------
@@ -397,6 +446,31 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 				`No workflow is assigned to this task. Execute the task directly using the ` +
 				`most appropriate agent from the available agents list below.`
 		);
+	}
+
+	// ---- Collaboration context: channel map ---------------------------------
+	if (context.workflow) {
+		const channels = context.workflow.channels;
+		if (channels && channels.length > 0) {
+			parts.push(`\n## Collaboration Channel Map\n`);
+			parts.push(
+				`The following channels define how agents may communicate in this workflow. ` +
+					`Channels with gates enforce delivery policies — messages are held until the gate condition passes.\n` +
+					`\n` +
+					`**Target addressing:** use an agent name for a direct message (DM) or a node name for ` +
+					`fan-out to all agents in that node. Node agents can call \`list_reachable_agents\` to ` +
+					`discover their full reachability graph.\n`
+			);
+			for (const ch of channels) {
+				parts.push(formatChannel(ch));
+			}
+		} else {
+			parts.push(`\n## Collaboration Channel Map\n`);
+			parts.push(
+				`No channels are declared for this workflow. ` +
+					`Agents are fully isolated — \`send_message\` is unavailable unless channels are added.`
+			);
+		}
 	}
 
 	// ---- Available agents ---------------------------------------------------
