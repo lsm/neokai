@@ -203,7 +203,7 @@ describe('InboxStore', () => {
 	});
 
 	describe('approveTask()', () => {
-		it('should call room.task.approve, refresh, and return true on success', async () => {
+		it('should call task.approve, refresh, and return true on success', async () => {
 			const room = makeRoom('r', 'R');
 			mockRoomsSignal.value = [room];
 
@@ -218,7 +218,7 @@ describe('InboxStore', () => {
 			const result = await inboxStore.approveTask('task-1', 'r');
 
 			expect(result).toBe(true);
-			expect(mockHub.request).toHaveBeenCalledWith('room.task.approve', {
+			expect(mockHub.request).toHaveBeenCalledWith('task.approve', {
 				roomId: 'r',
 				taskId: 'task-1',
 			});
@@ -238,7 +238,7 @@ describe('InboxStore', () => {
 	});
 
 	describe('rejectTask()', () => {
-		it('should call room.task.reject with feedback, refresh, and return true on success', async () => {
+		it('should call task.reject with feedback, refresh, and return true on success', async () => {
 			const room = makeRoom('r', 'R');
 			mockRoomsSignal.value = [room];
 
@@ -253,7 +253,7 @@ describe('InboxStore', () => {
 			const result = await inboxStore.rejectTask('task-1', 'r', 'needs more work');
 
 			expect(result).toBe(true);
-			expect(mockHub.request).toHaveBeenCalledWith('room.task.reject', {
+			expect(mockHub.request).toHaveBeenCalledWith('task.reject', {
 				roomId: 'r',
 				taskId: 'task-1',
 				feedback: 'needs more work',
