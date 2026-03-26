@@ -15,6 +15,8 @@ import { useEffect } from 'preact/hooks';
 import { signal } from '@preact/signals';
 // Static import gives access to vi.mocked(useAutoScroll) for call assertions
 import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
+import type { NeoTask } from '@neokai/shared';
+import { roomStore } from '../../lib/room-store.ts';
 
 // -------------------------------------------------------
 // Mocks
@@ -160,6 +162,12 @@ vi.mock('../InputTextarea.tsx', () => ({
 }));
 
 // -------------------------------------------------------
+// File-level setup: reset roomStore.tasks after each test
+afterEach(() => {
+	roomStore.tasks.value = [];
+});
+
+// -------------------------------------------------------
 // Helpers
 // -------------------------------------------------------
 
@@ -214,8 +222,8 @@ describe('TaskView — awaiting_human badge', () => {
 	});
 
 	it('shows pulsing "Awaiting your review" badge when group.state === awaiting_human', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -232,8 +240,8 @@ describe('TaskView — awaiting_human badge', () => {
 	});
 
 	it('does NOT show pulsing badge when group.state is not awaiting_human', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -248,8 +256,8 @@ describe('TaskView — awaiting_human badge', () => {
 	});
 
 	it('does NOT show pulsing badge when group is null', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'pending') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -264,8 +272,8 @@ describe('TaskView — awaiting_human badge', () => {
 	});
 
 	it('does not show review bar when group is not submitted for review', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
 			return {};
 		});
@@ -298,8 +306,8 @@ describe('TaskView — autoscroll / ScrollToBottomButton', () => {
 	it('does NOT render scroll-to-bottom button when showScrollButton is false', async () => {
 		mockShowScrollButton.value = false;
 		mockMessageCount.value = 0;
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -313,8 +321,8 @@ describe('TaskView — autoscroll / ScrollToBottomButton', () => {
 
 	it('renders scroll-to-bottom button when showScrollButton is true', async () => {
 		mockShowScrollButton.value = true;
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -328,8 +336,8 @@ describe('TaskView — autoscroll / ScrollToBottomButton', () => {
 
 	it('calls scrollToBottom when scroll-to-bottom button is clicked', async () => {
 		mockShowScrollButton.value = true;
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -367,8 +375,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('renders InputTextarea in awaiting_human state', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -381,8 +389,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('renders InputTextarea in awaiting_leader state', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
 			return {};
 		});
@@ -395,8 +403,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('renders InputTextarea in awaiting_worker state', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -412,8 +420,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('sends feedback via task.sendHumanMessage in awaiting_human state (default target: leader)', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -441,8 +449,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('approves task via task.approve in awaiting_human state', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			if (method === 'task.approve') return {};
 			return {};
@@ -472,8 +480,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('shows feedback textarea in bottom area (not in header) when awaiting_human', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -493,8 +501,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('sends message to leader via task.sendHumanMessage in awaiting_leader state', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -527,8 +535,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('sends message to worker in awaiting_worker state when worker is explicitly selected', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -560,8 +568,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('shows target dropdown with both options always available', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -580,8 +588,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('default target is leader', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -598,8 +606,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('shows pending queue overlay for the selected target session', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method, payload) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'session.messages.byStatus') {
 				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
@@ -654,8 +662,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('refreshes pending queue overlay when target switches to worker', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method, payload) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'session.messages.byStatus') {
 				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
@@ -723,8 +731,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 			resolveLeaderEnqueued = resolve;
 		});
 
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method, payload) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'session.messages.byStatus') {
 				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
@@ -789,8 +797,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('sends message when Enter is pressed (desktop)', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -819,8 +827,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('does NOT send when Shift+Enter is pressed', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -847,8 +855,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('sends message when Cmd+Enter is pressed', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -877,8 +885,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('sends message when Ctrl+Enter is pressed', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -907,8 +915,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('placeholder text reflects Enter-to-send UX', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -942,8 +950,8 @@ describe('TaskView — useAutoScroll call args', () => {
 	});
 
 	it('calls useAutoScroll with enabled:true and isInitialLoad:true on initial render', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -977,8 +985,8 @@ describe('TaskView — InputTextarea maxChars forwarding', () => {
 	});
 
 	it('passes maxChars=50000 to InputTextarea in awaiting_human state', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -994,8 +1002,8 @@ describe('TaskView — InputTextarea maxChars forwarding', () => {
 	});
 
 	it('passes maxChars=50000 to InputTextarea in awaiting_leader state', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
 			return {};
 		});
@@ -1030,8 +1038,8 @@ describe('TaskView — isFirstLoad state transitions', () => {
 	it('flips isFirstLoad to false after first messages arrive via onMessageCountChange', async () => {
 		// Simulate TaskConversationRenderer reporting 3 messages on mount
 		mockMessageCount.value = 3;
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1048,8 +1056,8 @@ describe('TaskView — isFirstLoad state transitions', () => {
 
 	it('starts with isInitialLoad:true when no messages have arrived yet', async () => {
 		// mockMessageCount.value = 0 (default) — mock never calls onMessageCountChange with > 0
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1082,8 +1090,8 @@ describe('TaskView — ScrollToBottomButton bottomClass', () => {
 	});
 
 	it('passes bottomClass="bottom-0" to ScrollToBottomButton', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1115,52 +1123,57 @@ describe('TaskView — cancelled flag prevents post-unmount state updates', () =
 	});
 
 	it('does not call task.getGroup after unmount mid-fetch', async () => {
-		// Defer task.get so we can unmount before it resolves
-		let resolveTaskGet!: (value: { task: ReturnType<typeof makeTask> }) => void;
+		// Task is available from store; defer task.getGroup so we can unmount before it resolves
+		let resolveTaskGetGroup!: (value: { group: null }) => void;
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation((method: unknown) =>
-			method === 'task.get'
-				? new Promise<{ task: ReturnType<typeof makeTask> }>((resolve) => {
-						resolveTaskGet = resolve;
+			method === 'task.getGroup'
+				? new Promise<{ group: null }>((resolve) => {
+						resolveTaskGetGroup = resolve;
 					})
-				: Promise.resolve({ group: null })
+				: Promise.resolve({})
 		);
 
 		const { unmount } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
-		// Unmount before task.get resolves
+		// Unmount before task.getGroup resolves
 		act(() => {
 			unmount();
 		});
 
-		// Resolve task.get after unmount — cancelled flag should block fetchGroup call
+		// Clear call count to check what happens after unmount
+		mockRequest.mockClear();
+
+		// Resolve task.getGroup after unmount — cancelled flag should block state updates
 		await act(async () => {
-			resolveTaskGet({ task: makeTask('task-1') });
+			resolveTaskGetGroup({ group: null });
 		});
 
-		// task.getGroup must NOT have been called since the component was cancelled
+		// No further task.getGroup calls should have been made after unmount
 		expect(mockRequest).not.toHaveBeenCalledWith('task.getGroup', expect.anything());
 		// leaveRoom should have been called (cleanup ran)
 		expect(mockLeaveRoom).toHaveBeenCalledWith(`room:room-1`);
 	});
 
-	it('does not call task.getGroup when room.task.update fires after unmount', async () => {
-		// Capture the room.task.update event handler so we can fire it manually
-		let taskUpdateHandler: ((event: unknown) => void) | null = null;
+	it('does not call task.getGroup after unmount when session.updated fires', async () => {
+		// Capture the session.updated event handler so we can fire it manually
+		let sessionUpdateHandler: ((event: unknown) => void) | null = null;
 		mockOnEvent.mockImplementation((eventName: string, handler: (event: unknown) => void) => {
-			if (eventName === 'room.task.update') taskUpdateHandler = handler;
+			if (eventName === 'session.updated') sessionUpdateHandler = handler;
 			return () => {};
 		});
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method: unknown) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'session.get') return { session: null };
 			return {};
 		});
 
 		const { unmount } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
-		// Wait for initial load to complete
+		// Wait for initial load to complete (group fetched)
 		await waitFor(() => {
-			expect(taskUpdateHandler).not.toBeNull();
+			expect(mockRequest).toHaveBeenCalledWith('task.getGroup', expect.anything());
 		});
 
 		// Reset call count to track only post-unmount calls
@@ -1171,12 +1184,12 @@ describe('TaskView — cancelled flag prevents post-unmount state updates', () =
 			unmount();
 		});
 
-		// Fire room.task.update event after unmount
+		// Fire session.updated event after unmount
 		await act(async () => {
-			taskUpdateHandler?.({ task: makeTask('task-1', 'completed'), roomId: 'room-1' });
+			sessionUpdateHandler?.({ sessionId: 'sess-w', model: 'claude-opus-4-5' });
 		});
 
-		// The event fired after unmount must not trigger a task.getGroup request
+		// No task.getGroup calls after unmount
 		expect(mockRequest).not.toHaveBeenCalledWith('task.getGroup', expect.anything());
 	});
 });
@@ -1200,8 +1213,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('shows cancel button for pending tasks (cancel only)', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'pending') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1225,8 +1238,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('shows cancel button and dropdown with complete action for in_progress tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1250,8 +1263,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('shows cancel button for review tasks (no complete button — review status)', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -1275,8 +1288,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('does NOT show action buttons for completed tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1299,8 +1312,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('does NOT show cancel button for needs_attention tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'needs_attention') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'needs_attention') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1322,8 +1335,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('does NOT show action buttons for cancelled tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'cancelled') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1345,8 +1358,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('shows both cancel and complete buttons for in_progress task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1362,8 +1375,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('shows only cancel button (no complete) for pending task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'pending') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1379,8 +1392,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('opens cancel dialog when cancel button is clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1410,8 +1423,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('opens complete dialog when complete button is clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1443,8 +1456,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('calls task.cancel RPC and navigates away on cancel confirmation', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.cancel') return {};
 			return {};
@@ -1489,8 +1502,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('calls task.setStatus RPC and navigates away on complete confirmation', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.setStatus') return { task: makeTask('task-1', 'completed') };
 			return {};
@@ -1539,8 +1552,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('closes info panel when Complete action is clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1567,8 +1580,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('closes info panel when Cancel action is clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1595,8 +1608,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('closes info panel when Archive action is clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1623,8 +1636,8 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('closes info panel when Escape key is pressed', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1667,8 +1680,8 @@ describe('TaskView — Interrupt button', () => {
 	});
 
 	it('shows interrupt button for in_progress tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1686,8 +1699,8 @@ describe('TaskView — Interrupt button', () => {
 	});
 
 	it('shows interrupt button for review tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -1705,8 +1718,8 @@ describe('TaskView — Interrupt button', () => {
 	});
 
 	it('does NOT show interrupt button for pending tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'pending') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1724,8 +1737,8 @@ describe('TaskView — Interrupt button', () => {
 	});
 
 	it('does NOT show interrupt button for failed tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'failed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'failed') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1743,8 +1756,8 @@ describe('TaskView — Interrupt button', () => {
 	});
 
 	it('does NOT show interrupt button for cancelled tasks', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'cancelled') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -1781,8 +1794,8 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 	});
 
 	it('shows reject button when group.state === awaiting_human', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -1798,8 +1811,8 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 	});
 
 	it('does NOT show reject button when group.state is not awaiting_human', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1816,8 +1829,8 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 	});
 
 	it('calls task.reject RPC when reject button is clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			if (method === 'task.reject') return { success: true };
 			return {};
@@ -1885,8 +1898,8 @@ describe('TaskView — draft-restored banner', () => {
 	});
 
 	it('shows draft-restored banner when draftRestored is true', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -1910,8 +1923,8 @@ describe('TaskView — draft-restored banner', () => {
 	});
 
 	it('hides draft-restored banner when draftRestored is false', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -1936,8 +1949,8 @@ describe('TaskView — draft-restored banner', () => {
 	});
 
 	it('calls clearDraft when "Discard draft" button is clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -1975,15 +1988,8 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header for in_progress task with prUrl', async () => {
+		roomStore.tasks.value = [{ ...makeTask('task-1', 'in_progress'), prUrl: 'https://github.com/org/repo/pull/42', prNumber: 42 } as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get')
-				return {
-					task: {
-						...makeTask('task-1', 'in_progress'),
-						prUrl: 'https://github.com/org/repo/pull/42',
-						prNumber: 42,
-					},
-				};
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -1999,8 +2005,8 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('does not show PR link in header for in_progress task without prUrl', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -2015,15 +2021,8 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header AND in review bar for review task (both render)', async () => {
+		roomStore.tasks.value = [{ ...makeTask('task-1', 'review'), prUrl: 'https://github.com/org/repo/pull/99', prNumber: 99 } as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get')
-				return {
-					task: {
-						...makeTask('task-1', 'review'),
-						prUrl: 'https://github.com/org/repo/pull/99',
-						prNumber: 99,
-					},
-				};
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
 		});
@@ -2040,15 +2039,8 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header for needs_attention task with prUrl', async () => {
+		roomStore.tasks.value = [{ ...makeTask('task-1', 'needs_attention'), prUrl: 'https://github.com/org/repo/pull/7', prNumber: 7 } as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get')
-				return {
-					task: {
-						...makeTask('task-1', 'needs_attention'),
-						prUrl: 'https://github.com/org/repo/pull/7',
-						prNumber: 7,
-					},
-				};
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2064,15 +2056,8 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header for review task even without submittedForReview (no review bar)', async () => {
+		roomStore.tasks.value = [{ ...makeTask('task-1', 'review'), prUrl: 'https://github.com/org/repo/pull/55', prNumber: 55 } as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get')
-				return {
-					task: {
-						...makeTask('task-1', 'review'),
-						prUrl: 'https://github.com/org/repo/pull/55',
-						prNumber: 55,
-					},
-				};
 			// group not awaiting_human, so submittedForReview is false → review bar hidden
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
@@ -2090,15 +2075,8 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header for completed task with prUrl', async () => {
+		roomStore.tasks.value = [{ ...makeTask('task-1', 'completed'), prUrl: 'https://github.com/org/repo/pull/101', prNumber: 101 } as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get')
-				return {
-					task: {
-						...makeTask('task-1', 'completed'),
-						prUrl: 'https://github.com/org/repo/pull/101',
-						prNumber: 101,
-					},
-				};
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2137,8 +2115,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('shows Reactivate button for completed task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2153,8 +2131,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('shows Archive action in dropdown for completed task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2175,8 +2153,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('shows Reactivate button for cancelled task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'cancelled') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2191,8 +2169,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('shows "Sending a message will reactivate this task" hint for completed task without group', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2207,8 +2185,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('input is disabled for archived task (no group)', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'archived') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2226,8 +2204,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('calls task.setStatus with in_progress when Reactivate button is clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			if (method === 'task.setStatus') return { task: makeTask('task-1', 'in_progress') };
 			return {};
@@ -2259,8 +2237,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('shows Archive action in dropdown for needs_attention task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'needs_attention') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'needs_attention') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2281,8 +2259,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('calls task.setStatus with archived when Archive dialog is confirmed', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			if (method === 'task.setStatus') return {};
 			return {};
@@ -2330,8 +2308,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('does NOT show reactivation hint when completed task has an active group', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -2346,8 +2324,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('shows Archive action in dropdown for cancelled task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'cancelled') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2368,8 +2346,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('does NOT show Reactivate button for in_progress task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -2384,8 +2362,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('does NOT show Reactivate button for archived task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'archived') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2400,8 +2378,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('does NOT show Archive action in dropdown for in_progress task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
 		});
@@ -2422,8 +2400,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('does NOT show Archive action in dropdown for archived task', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'archived') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2444,8 +2422,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('archived status badge has text-gray-600 class', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'archived') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2463,8 +2441,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('input is enabled for completed task (no group)', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2482,8 +2460,8 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('input is enabled for cancelled task (no group)', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'cancelled') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2505,8 +2483,8 @@ describe('TaskView — SetStatusModal', () => {
 	beforeEach(() => {
 		mockRequest.mockReset();
 		mockOnEvent.mockReset();
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: null };
 			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
 			return {};
@@ -2586,8 +2564,8 @@ describe('TaskView — SetStatusModal', () => {
 	});
 
 	it('shows destructive warning when transitioning from archived', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'archived') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
 			if (method === 'task.getGroup') return { group: null };
 			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
 			return {};
@@ -2612,8 +2590,8 @@ describe('TaskView — SetStatusModal', () => {
 	});
 
 	it('shows destructive warning for completed→pending transition', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'completed') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
 			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
 			return {};
@@ -2652,8 +2630,7 @@ describe('TaskView — SetStatusModal', () => {
 	});
 });
 
-// Import roomStore to set up goal associations for goal badge tests
-import { roomStore } from '../../lib/room-store.ts';
+
 import { currentRoomTabSignal } from '../../lib/signals.ts';
 
 describe('TaskView — goal badge', () => {
@@ -2678,8 +2655,8 @@ describe('TaskView — goal badge', () => {
 	});
 
 	it('shows goal badge when task is linked to a goal', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2711,8 +2688,8 @@ describe('TaskView — goal badge', () => {
 	});
 
 	it('does NOT show goal badge when task has no linked goal', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2729,8 +2706,8 @@ describe('TaskView — goal badge', () => {
 	});
 
 	it('sets currentRoomTabSignal to "goals" and navigates to room when goal badge clicked', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2766,8 +2743,8 @@ describe('TaskView — goal badge', () => {
 	});
 
 	it('shows goal title as tooltip on badge', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2822,8 +2799,8 @@ describe('TaskView — task.getGroup retry on failure', () => {
 
 	it('retries task.getGroup once after 1s if first attempt throws', async () => {
 		let getGroupCallCount = 0;
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') {
 				getGroupCallCount++;
 				if (getGroupCallCount === 1) throw new Error('daemon not ready');
@@ -2860,8 +2837,8 @@ describe('TaskView — task.getGroup retry on failure', () => {
 
 	it('shows "Loading conversation history" for review task while group is null', async () => {
 		// task.getGroup always returns null (daemon just restarted, group not yet returned).
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});
@@ -2908,8 +2885,8 @@ describe('TaskView — no reload on message send (bug regression)', () => {
 	});
 
 	it('TaskConversationRenderer DOM node is NOT replaced after a successful message send', async () => {
+		roomStore.tasks.value = [makeTask('task-1', 'in_progress') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			if (method === 'task.sendHumanMessage') return {};
 			return {};
@@ -2943,8 +2920,8 @@ describe('TaskView — no reload on message send (bug regression)', () => {
 	it('conversationKey bumps only for approve (not for normal message send)', async () => {
 		// This test verifies that approve still causes a remount (intentional),
 		// while a normal message send does not.
+		roomStore.tasks.value = [makeTask('task-1', 'review') as unknown as NeoTask];
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			if (method === 'task.approve') return {};
 			if (method === 'task.sendHumanMessage') return {};

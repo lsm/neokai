@@ -6,6 +6,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act, cleanup } from '@testing-library/preact';
+import { signal } from '@preact/signals';
+import type { NeoTask } from '@neokai/shared';
 import { useTaskViewData } from '../useTaskViewData';
 import { navigateToRoom } from '../../lib/router';
 import { toast } from '../../lib/toast';
@@ -37,8 +39,14 @@ vi.mock('../useMessageHub.ts', () => ({
 	}),
 }));
 
+// roomStore mock — tasks is a signal<NeoTask[]> so useComputed can subscribe reactively.
+const mockTasksSignal = signal<NeoTask[]>([]);
+
 vi.mock('../../lib/room-store.ts', () => ({
 	roomStore: {
+		get tasks() {
+			return mockTasksSignal;
+		},
 		goalByTaskId: { value: new Map() },
 	},
 }));
@@ -60,22 +68,17 @@ vi.mock('../../lib/toast.ts', () => ({
 // Helpers
 // -------------------------------------------------------
 
-function makeTask(status = 'in_progress') {
+function makeTask(status = 'in_progress'): NeoTask {
 	return {
 		id: 'task-1',
 		roomId: 'room-1',
 		title: 'Test Task',
-		status,
+		status: status as NeoTask['status'],
+		priority: 'normal',
+		description: '',
+		dependsOn: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
-		taskType: null,
-		description: null,
-		dependsOn: [],
-		progress: null,
-		result: null,
-		prUrl: null,
-		prNumber: null,
-		activeSession: null,
 	};
 }
 
@@ -106,10 +109,10 @@ describe('useTaskViewData — tab resume behavior', () => {
 		mockOnEvent.mockClear();
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
+		mockTasksSignal.value = [makeTask('in_progress')];
 
 		mockRequest.mockImplementation(async (method: string) => {
 			if (mockMessageHubState.requestThrows) throw new Error('Connection lost');
-			if (method === 'task.get') return { task: makeTask('in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup() };
 			if (method === 'session.get') return { session: null };
 			return {};
@@ -144,8 +147,9 @@ describe('useTaskViewData — tab resume behavior', () => {
 	});
 
 	it('clears stale error and loads task when isConnected becomes true', async () => {
-		// Start with isConnected = false
+		// Start with isConnected = false, no tasks in store
 		mockMessageHubState.isConnected = false;
+		mockTasksSignal.value = [];
 
 		const { result, rerender } = renderHook(() => useTaskViewData('room-1', 'task-1'));
 
@@ -155,10 +159,12 @@ describe('useTaskViewData — tab resume behavior', () => {
 
 		// Error should be null because load() returned early
 		expect(result.current.error).toBeNull();
+		// Task is null because roomStore.tasks is empty
 		expect(result.current.task).toBeNull();
 
-		// Now simulate reconnection - isConnected becomes true
+		// Now simulate reconnection - isConnected becomes true and tasks are populated
 		mockMessageHubState.isConnected = true;
+		mockTasksSignal.value = [makeTask('in_progress')];
 
 		// Rerender to trigger effect (isConnected changed from false to true)
 		rerender();
@@ -172,95 +178,116 @@ describe('useTaskViewData — tab resume behavior', () => {
 		expect(result.current.task).not.toBeNull();
 	});
 
-	it('does not permanently show error when isConnected transitions during reconnection', async () => {
-		// Simulate the bug scenario: same hook, isConnected transitions
-		// isConnected=true -> isConnected=false -> isConnected=true
-		// (what happens when connectionState goes disconnected -> reconnecting -> connected)
-
-		// Start with isConnected = true but request will fail
-		mockMessageHubState.requestThrows = true;
-
-		const { result, rerender } = renderHook(() => useTaskViewData('room-1', 'task-1'));
-
-		await waitFor(() => {
-			expect(result.current.isLoading).toBe(false);
-		});
-
-		// Error is set because request failed (simulating mid-resume failure)
-		expect(result.current.error).toBe('Connection lost');
-
-		// Simulate reconnection: isConnected goes false (reconnecting)
+	it('skips group fetch when isConnected is false and returns early with no error', async () => {
+		// When disconnected, load() exits early — no RPC calls, no error
 		mockMessageHubState.isConnected = false;
-		mockMessageHubState.requestThrows = false; // Will succeed when reconnected
 
-		// Rerender to trigger effect (isConnected changed from true to false)
-		rerender();
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
 		});
 
-		// Error should be cleared because load() returned early due to !isConnected
+		// No group fetch attempted while disconnected
+		expect(result.current.group).toBeNull();
 		expect(result.current.error).toBeNull();
-
-		// Simulate reconnection complete: isConnected goes true
-		mockMessageHubState.isConnected = true;
-
-		// Rerender to trigger effect (isConnected changed from false to true)
-		rerender();
-
-		await waitFor(() => {
-			expect(result.current.isLoading).toBe(false);
-		});
-
-		// Task should be loaded, error should remain cleared
-		expect(result.current.error).toBeNull();
+		// Task is still reactive from store
 		expect(result.current.task).not.toBeNull();
+
+		// No task.getGroup call should have been made
+		expect(mockRequest).not.toHaveBeenCalledWith('task.getGroup', expect.anything());
 	});
 });
 
 describe('useTaskViewData', () => {
 	beforeEach(() => {
+		mockMessageHubState.isConnected = true;
 		mockRequest.mockReset();
 		mockOnEvent.mockClear();
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
+		mockTasksSignal.value = [makeTask('in_progress')];
 
 		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') return { task: makeTask('in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup() };
 			if (method === 'session.get') return { session: null };
 			return {};
 		});
 	});
 
-	it('loads task and group on mount', async () => {
+	it('loads task from roomStore.tasks and group on mount', async () => {
 		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
 
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
 		});
 
+		// Task is derived from roomStore.tasks signal
 		expect(result.current.task).not.toBeNull();
 		expect(result.current.task?.id).toBe('task-1');
+		// Group is fetched via RPC
 		expect(result.current.group).not.toBeNull();
 		expect(result.current.group?.id).toBe('group-1');
 	});
 
-	it('sets error when task.get fails', async () => {
+	it('task is null when taskId is not in roomStore.tasks', async () => {
+		mockTasksSignal.value = [];
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		expect(result.current.task).toBeNull();
+	});
+
+	it('task updates reactively when roomStore.tasks changes', async () => {
+		mockTasksSignal.value = [makeTask('pending')];
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		expect(result.current.task?.status).toBe('pending');
+
+		// Simulate LiveQuery delta: task transitions to in_progress
+		act(() => {
+			mockTasksSignal.value = [makeTask('in_progress')];
+		});
+
+		expect(result.current.task?.status).toBe('in_progress');
+	});
+
+	it('does not subscribe to room.task.update events', async () => {
+		renderHook(() => useTaskViewData('room-1', 'task-1'));
+
+		await waitFor(() => {
+			expect(mockJoinRoom).toHaveBeenCalledWith('room:room-1');
+		});
+
+		expect(mockOnEvent).not.toHaveBeenCalledWith('room.task.update', expect.any(Function));
+	});
+
+	it('fetchGroup failure is swallowed: isLoading becomes false, group stays null', async () => {
 		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') throw new Error('Not found');
+			if (method === 'task.getGroup') throw new Error('Group fetch failed');
 			return {};
 		});
 
 		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
 
+		// fetchGroup retries once after 1s; wait up to 5s for isLoading to clear
 		await waitFor(() => {
 			expect(result.current.isLoading).toBe(false);
-		});
+		}, { timeout: 5000 });
 
-		expect(result.current.error).toBe('Not found');
-		expect(result.current.task).toBeNull();
+		// Group stays null; task is available from store; no error surfaced
+		expect(result.current.group).toBeNull();
+		expect(result.current.task).not.toBeNull();
+		expect(result.current.error).toBeNull();
 	});
 
 	it('derives canComplete true when task is in_progress', async () => {
@@ -272,11 +299,7 @@ describe('useTaskViewData', () => {
 	});
 
 	it('derives canComplete false when task is pending', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') return { task: makeTask('pending') };
-			if (method === 'task.getGroup') return { group: null };
-			return {};
-		});
+		mockTasksSignal.value = [makeTask('pending')];
 
 		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
 
@@ -302,11 +325,7 @@ describe('useTaskViewData', () => {
 	});
 
 	it('derives canReactivate true for completed task', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') return { task: makeTask('completed') };
-			if (method === 'task.getGroup') return { group: null };
-			return {};
-		});
+		mockTasksSignal.value = [makeTask('completed')];
 
 		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
 
@@ -316,11 +335,7 @@ describe('useTaskViewData', () => {
 	});
 
 	it('derives canArchive true for completed task', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') return { task: makeTask('completed') };
-			if (method === 'task.getGroup') return { group: null };
-			return {};
-		});
+		mockTasksSignal.value = [makeTask('completed')];
 
 		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
 
@@ -361,19 +376,20 @@ describe('useTaskViewData', () => {
 		expect(result.current.completeModal.isOpen).toBe(true);
 	});
 
-	it('joins the room channel and subscribes to task updates', async () => {
+	it('joins the room channel and subscribes to session.updated', async () => {
 		renderHook(() => useTaskViewData('room-1', 'task-1'));
 
 		await waitFor(() => {
 			expect(mockJoinRoom).toHaveBeenCalledWith('room:room-1');
 		});
 
-		expect(mockOnEvent).toHaveBeenCalledWith('room.task.update', expect.any(Function));
+		expect(mockOnEvent).toHaveBeenCalledWith('session.updated', expect.any(Function));
 	});
 });
 
 describe('useTaskViewData — action handlers', () => {
 	beforeEach(() => {
+		mockMessageHubState.isConnected = true;
 		mockRequest.mockReset();
 		mockOnEvent.mockClear();
 		mockJoinRoom.mockReset();
@@ -382,9 +398,9 @@ describe('useTaskViewData — action handlers', () => {
 		vi.mocked(toast.success).mockClear();
 		vi.mocked(toast.info).mockClear();
 		vi.mocked(toast.error).mockClear();
+		mockTasksSignal.value = [makeTask('in_progress')];
 
 		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') return { task: makeTask('in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup() };
 			if (method === 'session.get') return { session: null };
 			return {};
@@ -508,8 +524,8 @@ describe('useTaskViewData — action handlers', () => {
 	});
 
 	it('reactivateTask shows error toast on failure', async () => {
+		mockTasksSignal.value = [makeTask('completed')];
 		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') return { task: makeTask('completed') };
 			if (method === 'task.getGroup') return { group: null };
 			if (method === 'task.setStatus') throw new Error('Server error');
 			return {};
@@ -558,7 +574,6 @@ describe('useTaskViewData — action handlers', () => {
 
 	it('approveReviewedTask sets reviewError on failure', async () => {
 		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') return { task: makeTask() };
 			if (method === 'task.getGroup') return { group: makeGroup() };
 			if (method === 'task.approve') throw new Error('Approve failed');
 			return {};
@@ -597,7 +612,6 @@ describe('useTaskViewData — action handlers', () => {
 		// Use an object property to avoid TypeScript control-flow narrowing to `never`.
 		const resolveRef: { current: (() => void) | null } = { current: null };
 		mockRequest.mockImplementation(async (method: string) => {
-			if (method === 'task.get') return { task: makeTask() };
 			if (method === 'task.getGroup') return { group: makeGroup() };
 			if (method === 'task.reject') {
 				return new Promise<void>((resolve) => {
