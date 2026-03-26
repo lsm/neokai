@@ -172,6 +172,45 @@ describe('RoomManager', () => {
 			expect(overview?.sessions[1].title).toBe('Test Session 2');
 		});
 
+		it('should exclude archived (deleted) sessions from overview', () => {
+			const room = roomManager.createRoom({ name: 'Room With Archived Session' });
+			const dbRaw = db.getDatabase();
+			const now = new Date().toISOString();
+
+			// Create one active and one archived session
+			dbRaw
+				.prepare(
+					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run('session-active', 'Active Session', '/workspace', now, now, 'active', '{}', '{}');
+			dbRaw
+				.prepare(
+					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'session-archived',
+					'Archived Session',
+					'/workspace',
+					now,
+					now,
+					'archived',
+					'{}',
+					'{}'
+				);
+
+			roomManager.assignSession(room.id, 'session-active');
+			roomManager.assignSession(room.id, 'session-archived');
+
+			const overview = roomManager.getRoomOverview(room.id);
+
+			// Only the active session should appear
+			expect(overview?.sessions).toHaveLength(1);
+			expect(overview?.sessions[0].id).toBe('session-active');
+			expect(overview?.sessions[0].status).toBe('active');
+		});
+
 		it('should return ended status for non-existent sessions', () => {
 			const room = roomManager.createRoom({ name: 'Room With Missing Sessions' });
 			// Assign sessions that don't exist in the database

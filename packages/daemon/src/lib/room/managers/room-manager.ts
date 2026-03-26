@@ -151,7 +151,7 @@ export class RoomManager {
 		const allTaskSummaries = allTasks.map(toSummary);
 
 		// Build session summaries from actual session data
-		// Filter out room-specific sessions (chat, craft, lead)
+		// Filter out room-specific sessions (chat, craft, lead) and archived (deleted) sessions
 		const sessions = room.sessionIds
 			.filter(
 				(id) =>
@@ -160,22 +160,29 @@ export class RoomManager {
 					!id.startsWith('room:craft:') &&
 					!id.startsWith('room:lead:')
 			)
-			.map((id) => {
+			.flatMap((id) => {
 				const session = this.sessionRepo.getSession(id);
 				if (!session) {
-					return {
-						id,
-						title: `Session ${id.slice(0, 8)}`,
-						status: 'ended' as const,
-						lastActiveAt: 0,
-					};
+					return [
+						{
+							id,
+							title: `Session ${id.slice(0, 8)}`,
+							status: 'ended' as const,
+							lastActiveAt: 0,
+						},
+					];
 				}
-				return {
-					id: session.id,
-					title: session.title,
-					status: session.status,
-					lastActiveAt: new Date(session.lastActiveAt).getTime(),
-				};
+				if (session.status === 'archived') {
+					return [];
+				}
+				return [
+					{
+						id: session.id,
+						title: session.title,
+						status: session.status,
+						lastActiveAt: new Date(session.lastActiveAt).getTime(),
+					},
+				];
 			});
 
 		return {
