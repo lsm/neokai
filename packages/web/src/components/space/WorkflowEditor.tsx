@@ -16,7 +16,7 @@ import type { SpaceWorkflow, SpaceAgent, WorkflowChannel } from '@neokai/shared'
 import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { WorkflowNodeCard } from './WorkflowNodeCard';
-import type { NodeDraft, ConditionDraft } from './WorkflowNodeCard';
+import type { NodeDraft, ConditionDraft, AgentTaskState } from './WorkflowNodeCard';
 import { WorkflowRulesEditor } from './WorkflowRulesEditor';
 import type { RuleDraft } from './WorkflowRulesEditor';
 import { rulesToDrafts } from './WorkflowRulesEditor';
@@ -190,6 +190,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [showTemplates, setShowTemplates] = useState(false);
 
 	const agents = filterAgents(spaceStore.agents.value);
+	const tasksByNodeId = spaceStore.tasksByNodeId.value;
 
 	// ---- Step operations ----
 
@@ -525,27 +526,39 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					)}
 
 					<div class="space-y-2">
-						{steps.map((step, i) => (
-							<WorkflowNodeCard
-								key={step.localId}
-								node={step}
-								nodeIndex={i}
-								isFirst={i === 0}
-								isLast={i === steps.length - 1}
-								expanded={expandedIndex === i}
-								entryCondition={i > 0 ? (transitions[i - 1] ?? { type: 'always' }) : null}
-								exitCondition={i < steps.length - 1 ? (transitions[i] ?? { type: 'always' }) : null}
-								agents={agents}
-								onToggleExpand={() => setExpandedIndex((prev) => (prev === i ? null : i))}
-								onUpdate={(s) => updateStep(i, s)}
-								onUpdateEntryCondition={(c) => updateEntryCondition(i, c)}
-								onUpdateExitCondition={(c) => updateExitCondition(i, c)}
-								onMoveUp={() => moveStep(i, 'up')}
-								onMoveDown={() => moveStep(i, 'down')}
-								onRemove={() => removeStep(i)}
-								disableRemove={steps.length === 1}
-							/>
-						))}
+						{steps.map((step, i) => {
+							// Derive per-agent completion states from live task data for this node.
+							const nodeTasks = step.id ? (tasksByNodeId.get(step.id) ?? []) : [];
+							const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
+								agentName: t.agentName ?? null,
+								status: t.status,
+								completionSummary: t.completionSummary,
+							}));
+							return (
+								<WorkflowNodeCard
+									key={step.localId}
+									node={step}
+									nodeIndex={i}
+									isFirst={i === 0}
+									isLast={i === steps.length - 1}
+									expanded={expandedIndex === i}
+									entryCondition={i > 0 ? (transitions[i - 1] ?? { type: 'always' }) : null}
+									exitCondition={
+										i < steps.length - 1 ? (transitions[i] ?? { type: 'always' }) : null
+									}
+									agents={agents}
+									onToggleExpand={() => setExpandedIndex((prev) => (prev === i ? null : i))}
+									onUpdate={(s) => updateStep(i, s)}
+									onUpdateEntryCondition={(c) => updateEntryCondition(i, c)}
+									onUpdateExitCondition={(c) => updateExitCondition(i, c)}
+									onMoveUp={() => moveStep(i, 'up')}
+									onMoveDown={() => moveStep(i, 'down')}
+									onRemove={() => removeStep(i)}
+									disableRemove={steps.length === 1}
+									nodeTaskStates={nodeTaskStates.length > 0 ? nodeTaskStates : undefined}
+								/>
+							);
+						})}
 					</div>
 
 					<button

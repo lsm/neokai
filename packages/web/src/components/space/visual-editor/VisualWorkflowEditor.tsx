@@ -34,7 +34,7 @@ import { filterAgents, TEMPLATES } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import type { RuleDraft } from '../WorkflowRulesEditor';
-import type { NodeDraft } from '../WorkflowNodeCard';
+import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import type { ConditionDraft } from './GateConfig';
 import type { ViewportState, Point } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
@@ -141,6 +141,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
 	const agents = filterAgents(spaceStore.agents.value);
+	const tasksByNodeId = spaceStore.tasksByNodeId.value;
 
 	// Collect all agent slot names from nodes for ChannelEditor from/to suggestions
 	const agentRoles = useMemo(() => {
@@ -301,14 +302,24 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	const nodeData = useMemo<WorkflowNodeData[]>(() => {
-		return nodes.map((node, i) => ({
-			stepIndex: i,
-			step: node.step,
-			position: node.position,
-			agents,
-			isStartNode: nodeIsStart(node),
-		}));
-	}, [nodes, agents, nodeIsStart]);
+		return nodes.map((node, i) => {
+			const nodeId = node.step.id;
+			const nodeTasks = nodeId ? (tasksByNodeId.get(nodeId) ?? []) : [];
+			const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
+				agentName: t.agentName ?? null,
+				status: t.status,
+				completionSummary: t.completionSummary,
+			}));
+			return {
+				stepIndex: i,
+				step: node.step,
+				position: node.position,
+				agents,
+				isStartNode: nodeIsStart(node),
+				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
+			};
+		});
+	}, [nodes, agents, nodeIsStart, tasksByNodeId]);
 
 	// ------------------------------------------------------------------
 	// Derived: selected node / edge

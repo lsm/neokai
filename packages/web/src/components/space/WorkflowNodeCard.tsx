@@ -9,7 +9,12 @@
  */
 
 import { useState, useCallback } from 'preact/hooks';
-import type { SpaceAgent, WorkflowNodeAgent, WorkflowChannel } from '@neokai/shared';
+import type {
+	SpaceAgent,
+	WorkflowNodeAgent,
+	WorkflowChannel,
+	SpaceTaskStatus,
+} from '@neokai/shared';
 import type { WorkflowConditionType } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { GateConfig, CONDITION_LABELS } from './visual-editor/GateConfig';
@@ -45,6 +50,26 @@ export function isMultiAgentNode(node: NodeDraft): boolean {
 
 // Re-export ConditionDraft so existing importers don't break
 export type { ConditionDraft } from './visual-editor/GateConfig';
+
+// ============================================================================
+// Agent Completion State
+// ============================================================================
+
+/**
+ * Runtime completion state for a single agent slot within a workflow node.
+ * Derived from SpaceTask records filtered by workflowNodeId.
+ */
+export interface AgentTaskState {
+	/** Matches WorkflowNodeAgent.name; null means single-agent node */
+	agentName: string | null;
+	status: SpaceTaskStatus;
+	completionSummary?: string | null;
+}
+
+/** Returns true when all provided agent states have status === 'completed'. */
+export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
+	return states.length > 0 && states.every((s) => s.status === 'completed');
+}
 
 // ============================================================================
 // Icon Components
@@ -97,6 +122,97 @@ function GateIcon({ type }: { type: WorkflowConditionType }) {
 				d="M13 5l7 7-7 7M5 5l7 7-7 7"
 			/>
 		</svg>
+	);
+}
+
+/** Animated spinner for in-progress agents */
+function SpinnerIcon({ title }: { title?: string }) {
+	return (
+		<svg
+			class="w-3 h-3 animate-spin"
+			fill="none"
+			viewBox="0 0 24 24"
+			aria-label={title}
+			data-testid="agent-status-spinner"
+		>
+			<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+			<path
+				class="opacity-75"
+				fill="currentColor"
+				d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+			/>
+		</svg>
+	);
+}
+
+/** Green checkmark for completed agents */
+function CheckIcon({ title }: { title?: string }) {
+	return (
+		<svg
+			class="w-3 h-3"
+			fill="none"
+			viewBox="0 0 24 24"
+			stroke="currentColor"
+			aria-label={title}
+			data-testid="agent-status-check"
+		>
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M5 13l4 4L19 7" />
+		</svg>
+	);
+}
+
+/** Red/gray X for failed/cancelled agents */
+function FailIcon({ title }: { title?: string }) {
+	return (
+		<svg
+			class="w-3 h-3"
+			fill="none"
+			viewBox="0 0 24 24"
+			stroke="currentColor"
+			aria-label={title}
+			data-testid="agent-status-fail"
+		>
+			<path
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width={2.5}
+				d="M6 18L18 6M6 6l12 12"
+			/>
+		</svg>
+	);
+}
+
+/** Renders the appropriate icon for an agent's task status. */
+export function AgentStatusIcon({ state }: { state: AgentTaskState }) {
+	const summary = state.completionSummary ?? undefined;
+	if (state.status === 'completed') {
+		return (
+			<span class="text-green-400 flex-shrink-0" title={summary ?? 'Done'}>
+				<CheckIcon title={summary ?? 'Done'} />
+			</span>
+		);
+	}
+	if (state.status === 'in_progress') {
+		return (
+			<span class="text-blue-400 flex-shrink-0" title="In progress">
+				<SpinnerIcon title="In progress" />
+			</span>
+		);
+	}
+	if (state.status === 'needs_attention' || state.status === 'cancelled') {
+		return (
+			<span class="text-red-400 flex-shrink-0" title={summary ?? state.status}>
+				<FailIcon title={summary ?? state.status} />
+			</span>
+		);
+	}
+	// pending/draft/review/rate_limited/usage_limited — faint dot
+	return (
+		<span
+			class="w-1.5 h-1.5 rounded-full bg-gray-500 flex-shrink-0"
+			title={state.status}
+			data-testid="agent-status-pending"
+		/>
 	);
 }
 
@@ -593,6 +709,12 @@ interface WorkflowNodeCardProps {
 	onRemove: () => void;
 	/** When true, the Remove button is disabled (e.g. only one node remains) */
 	disableRemove?: boolean;
+	/**
+	 * Runtime agent completion states for this node.
+	 * Derived from SpaceTask records filtered by the node's ID.
+	 * When provided, per-agent status indicators are shown in the collapsed header.
+	 */
+	nodeTaskStates?: AgentTaskState[];
 }
 
 export function WorkflowNodeCard({
@@ -612,12 +734,24 @@ export function WorkflowNodeCard({
 	onMoveDown,
 	onRemove,
 	disableRemove = false,
+	nodeTaskStates,
 }: WorkflowNodeCardProps) {
 	const multi = isMultiAgentNode(node);
 	const agentName = agents.find((a) => a.id === node.agentId)?.name ?? node.agentId;
 
+	// Build a lookup: agentName → AgentTaskState (for multi-agent) or the first entry (for single-agent)
+	const taskStateByAgent = new Map<string | null, AgentTaskState>(
+		(nodeTaskStates ?? []).map((s) => [s.agentName, s])
+	);
+	const allDone = isNodeFullyCompleted(nodeTaskStates ?? []);
+
 	return (
-		<div class="border border-dark-700 rounded-lg overflow-hidden">
+		<div
+			class={cn(
+				'border rounded-lg overflow-hidden',
+				allDone ? 'border-green-700/60' : 'border-dark-700'
+			)}
+		>
 			{/* Collapsed header — always visible */}
 			<div
 				class={cn(
@@ -626,8 +760,14 @@ export function WorkflowNodeCard({
 				)}
 				onClick={onToggleExpand}
 			>
-				{/* Step number */}
-				<span class="w-5 h-5 flex items-center justify-center rounded-full bg-dark-700 text-xs font-semibold text-gray-400 flex-shrink-0">
+				{/* Step number — turns green when all agents done */}
+				<span
+					class={cn(
+						'w-5 h-5 flex items-center justify-center rounded-full text-xs font-semibold flex-shrink-0',
+						allDone ? 'bg-green-800 text-green-300' : 'bg-dark-700 text-gray-400'
+					)}
+					data-testid="node-step-badge"
+				>
 					{nodeIndex + 1}
 				</span>
 
@@ -643,27 +783,45 @@ export function WorkflowNodeCard({
 								{node.agents!.map((a) => {
 									const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId;
 									const hasOverrides = !!(a.model || a.systemPrompt);
+									const taskState = taskStateByAgent.get(a.name);
 									return (
 										<span
 											key={a.name}
-											class={`text-xs border rounded px-1 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-amber-950/30 border-amber-700/50 text-amber-300' : 'bg-dark-700 border-dark-600 text-gray-300'}`}
+											class={cn(
+												'text-xs border rounded px-1 py-0.5 flex items-center gap-0.5',
+												hasOverrides
+													? 'bg-amber-950/30 border-amber-700/50 text-amber-300'
+													: 'bg-dark-700 border-dark-600 text-gray-300'
+											)}
 											title={`${name} — slot: ${a.name}${hasOverrides ? ' (has overrides)' : ''}`}
 										>
 											<span>{a.name}</span>
-											{hasOverrides && (
+											{hasOverrides && !taskState && (
 												<span
 													data-testid="override-dot"
 													class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
 												/>
 											)}
+											{taskState && <AgentStatusIcon state={taskState} />}
 										</span>
 									);
 								})}
 							</span>
 						) : (
-							<span class="text-xs text-gray-500 truncate flex-shrink-0">{agentName || '—'}</span>
+							<span class="flex items-center gap-1 text-xs text-gray-500 truncate flex-shrink-0">
+								<span>{agentName || '—'}</span>
+								{taskStateByAgent.get(null) && (
+									<AgentStatusIcon state={taskStateByAgent.get(null)!} />
+								)}
+							</span>
 						)}
 					</div>
+					{/* Completion summary — shown when the single-agent or any agent has a summary */}
+					{nodeTaskStates && nodeTaskStates.some((s) => s.completionSummary) && (
+						<p class="text-xs text-gray-500 truncate mt-0.5" data-testid="node-completion-summary">
+							{nodeTaskStates.find((s) => s.completionSummary)?.completionSummary}
+						</p>
+					)}
 				</div>
 
 				{/* Gate icons */}

@@ -69,6 +69,7 @@ import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 
 const mockAgents: Signal<SpaceAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
+const mockTasksByNodeId = signal(new Map<string, unknown[]>());
 
 const mockCreateWorkflow = vi.fn();
 const mockUpdateWorkflow = vi.fn();
@@ -78,6 +79,7 @@ vi.mock('../../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			tasksByNodeId: mockTasksByNodeId,
 			createWorkflow: mockCreateWorkflow,
 			updateWorkflow: mockUpdateWorkflow,
 		};

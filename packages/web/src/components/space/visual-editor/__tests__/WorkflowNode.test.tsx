@@ -25,6 +25,7 @@ import { WorkflowNode } from '../WorkflowNode';
 import type { WorkflowNodeProps } from '../WorkflowNode';
 import type { SpaceAgent } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
+import type { AgentTaskState } from '../../WorkflowNodeCard';
 import type { Point } from '../types';
 
 afterEach(() => cleanup());
@@ -640,5 +641,83 @@ describe('WorkflowNode Task Agent rendering', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
 		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
 		expect(node.style.cursor).toBe('default');
+	});
+});
+
+// ============================================================================
+// Agent completion state
+// ============================================================================
+
+describe('WorkflowNode — agent completion state', () => {
+	const MULTI_STEP = {
+		localId: 'step-multi',
+		id: 'node-multi',
+		name: 'Multi Agent Step',
+		agentId: '',
+		instructions: '',
+		agents: [
+			{ agentId: 'agent-1', name: 'coder' },
+			{ agentId: 'agent-2', name: 'reviewer' },
+		],
+	};
+
+	it('shows spinner for in_progress single-agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'in_progress' }];
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-spinner')).toBeTruthy();
+	});
+
+	it('shows checkmark for completed single-agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'completed' }];
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-check')).toBeTruthy();
+	});
+
+	it('shows fail icon for needs_attention single-agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'needs_attention' }];
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-fail')).toBeTruthy();
+	});
+
+	it('shows per-agent status icons for multi-agent node', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: 'coder', status: 'completed' },
+			{ agentName: 'reviewer', status: 'in_progress' },
+		];
+		const { getAllByTestId } = render(
+			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
+		);
+		expect(getAllByTestId('agent-status-check')).toHaveLength(1);
+		expect(getAllByTestId('agent-status-spinner')).toHaveLength(1);
+	});
+
+	it('applies green border when all agents completed', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: 'coder', status: 'completed' },
+			{ agentName: 'reviewer', status: 'completed' },
+		];
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
+		);
+		const node = getByTestId('workflow-node-step-multi');
+		expect(node.className).toContain('green');
+	});
+
+	it('does not apply green border when not all done', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: 'coder', status: 'completed' },
+			{ agentName: 'reviewer', status: 'in_progress' },
+		];
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
+		);
+		const node = getByTestId('workflow-node-step-multi');
+		expect(node.className).not.toContain('green');
+	});
+
+	it('does not show status icons without nodeTaskStates', () => {
+		const { container } = render(<WorkflowNode {...makeProps()} />);
+		expect(container.querySelector('[data-testid="agent-status-check"]')).toBeNull();
+		expect(container.querySelector('[data-testid="agent-status-spinner"]')).toBeNull();
 	});
 });
