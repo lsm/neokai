@@ -64,7 +64,7 @@ interface AgentsSectionProps {
 
 function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const multi = isMultiAgentNode(step);
-	const stepAgents = step.agents ?? [];
+	const nodeAgents = step.agents ?? [];
 
 	// Track which slots have their override fields expanded (keyed by role)
 	const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
@@ -89,18 +89,18 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		const baseRole = agentInfo?.role?.trim() || agentId;
 		// Ensure the slot role is unique within this node. When the same agent is added
 		// multiple times, append a numeric suffix to distinguish the slots.
-		const usedRoles = new Set(stepAgents.map((a) => a.name));
+		const usedRoles = new Set(nodeAgents.map((a) => a.name));
 		let role = baseRole;
 		for (let i = 2; usedRoles.has(role); i++) {
 			role = `${baseRole}-${i}`;
 		}
-		const next = [...stepAgents, { agentId, name: role }];
+		const next = [...nodeAgents, { agentId, name: role }];
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
 	function removeAgent(role: string) {
-		const removed = stepAgents.find((a) => a.name === role);
-		const next = stepAgents.filter((a) => a.name !== role);
+		const removed = nodeAgents.find((a) => a.name === role);
+		const next = nodeAgents.filter((a) => a.name !== role);
 		if (next.length === 0) {
 			// Switch back to single-agent mode: restore agentId from the removed agent and
 			// clear channels (orphaned channels on a single-agent step are semantically invalid)
@@ -117,7 +117,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 
 	function updateAgentInstructions(role: string, instructions: string) {
 		updateAgents(
-			stepAgents.map((a) =>
+			nodeAgents.map((a) =>
 				a.name === role ? { ...a, instructions: instructions || undefined } : a
 			)
 		);
@@ -125,13 +125,13 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 
 	function updateAgentModel(role: string, model: string) {
 		updateAgents(
-			stepAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
+			nodeAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
 		);
 	}
 
 	function updateAgentSystemPrompt(role: string, systemPrompt: string) {
 		updateAgents(
-			stepAgents.map((a) =>
+			nodeAgents.map((a) =>
 				a.name === role ? { ...a, systemPrompt: systemPrompt || undefined } : a
 			)
 		);
@@ -190,9 +190,9 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		<div class="space-y-2">
 			<div class="flex items-center justify-between">
 				<label class="text-xs font-medium text-gray-400">
-					Agents <span class="text-gray-600">({stepAgents.length})</span>
+					Agents <span class="text-gray-600">({nodeAgents.length})</span>
 				</label>
-				{stepAgents.length === 1 && (
+				{nodeAgents.length === 1 && (
 					<button
 						type="button"
 						data-testid="switch-to-single-button"
@@ -200,7 +200,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 							onUpdate({
 								...step,
 								agents: undefined,
-								agentId: stepAgents[0]?.agentId ?? '',
+								agentId: nodeAgents[0]?.agentId ?? '',
 								channels: undefined,
 							})
 						}
@@ -212,7 +212,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 			</div>
 
 			<div class="space-y-1.5" data-testid="agents-list">
-				{stepAgents.map((sa) => {
+				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
 					const hasOverrides = !!(sa.model || sa.systemPrompt);
 					const isExpanded = expandedSlots.has(sa.name);
@@ -241,7 +241,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 											return next;
 										});
 										updateAgents(
-											stepAgents.map((a) => (a.name === oldRole ? { ...a, name: newRole } : a))
+											nodeAgents.map((a) => (a.name === oldRole ? { ...a, name: newRole } : a))
 										);
 									}}
 									placeholder="slot role"

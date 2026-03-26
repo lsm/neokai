@@ -1,6 +1,6 @@
 /**
- * Step Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 3
- * peer communication tools available to step agent sub-sessions.
+ * Node Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 3
+ * peer communication tools available to node agent sub-sessions.
  *
  * Tools:
  *   list_peers   — list other group members with their roles, statuses, and permitted channels
@@ -23,7 +23,7 @@ import { z } from 'zod';
 /**
  * Schema for `list_peers` input.
  * Lists all other members of the current workflow step group.
- * No arguments — the group and self are inferred from the step agent context.
+ * No arguments — the group and self are inferred from the node agent context.
  */
 export const ListPeersSchema = z.object({});
 
@@ -36,7 +36,7 @@ export type ListPeersInput = z.infer<typeof ListPeersSchema>;
 /**
  * Schema for `send_message` input.
  *
- * Primary direct messaging tool for step agents. Validates against declared channel
+ * Primary direct messaging tool for node agents. Validates against declared channel
  * topology before routing. Supports four target forms:
  *   - Agent name (role): `target: 'coder'` — DM to the named agent
  *   - Node name: `target: 'node-name'` — fan-out to all agents in the named node
@@ -70,7 +70,7 @@ export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 /**
  * Schema for `report_done` input.
  *
- * Signals that this step agent has completed its work. Marks the step's SpaceTask
+ * Signals that this node agent has completed its work. Marks the step's SpaceTask
  * as 'completed' and persists an optional summary as the task result.
  */
 export const ReportDoneSchema = z.object({
@@ -104,13 +104,13 @@ export type ListReachableAgentsInput = z.infer<typeof ListReachableAgentsSchema>
 // ---------------------------------------------------------------------------
 
 /**
- * All step agent tool schemas keyed by tool name.
+ * All node agent tool schemas keyed by tool name.
  */
-export const STEP_AGENT_TOOL_SCHEMAS = {
+export const NODE_AGENT_TOOL_SCHEMAS = {
 	list_peers: ListPeersSchema,
 	send_message: SendMessageSchema,
 	report_done: ReportDoneSchema,
 	list_reachable_agents: ListReachableAgentsSchema,
 } as const;
 
-export type StepAgentToolName = keyof typeof STEP_AGENT_TOOL_SCHEMAS;
+export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;

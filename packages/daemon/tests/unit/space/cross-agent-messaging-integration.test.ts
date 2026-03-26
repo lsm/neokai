@@ -4,7 +4,7 @@
  * Tests use a real file-based SQLite database (via runMigrations) — not mocks and not
  * `:memory:` — to verify security boundaries that unit tests with mocks cannot fully cover.
  *
- * What is genuinely new here (beyond existing step-agent-tools.test.ts / task-agent-tools.test.ts):
+ * What is genuinely new here (beyond existing node-agent-tools.test.ts / task-agent-tools.test.ts):
  *   - Suite 1: Two simultaneous groups in the same DB — verifies group-scoped isolation
  *              holistically rather than per-tool. send_message test confirms that overlapping
  *              role names in different groups are never confused.
@@ -20,7 +20,7 @@
  *              channel in permittedTargets for both the sender and Task Agent.
  *
  * Suites 2–6 provide complementary coverage for the direction-enforcement and topology
- * patterns that also exist in step-agent-tools.test.ts, exercised here end-to-end through
+ * patterns that also exist in node-agent-tools.test.ts, exercised here end-to-end through
  * the full tool handler + repository + resolver stack.
  *
  *   1. Cross-group isolation     — messages never cross group boundaries
@@ -47,9 +47,9 @@ import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/s
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import {
-	createStepAgentToolHandlers,
-	type StepAgentToolsConfig,
-} from '../../../src/lib/space/tools/step-agent-tools.ts';
+	createNodeAgentToolHandlers,
+	type NodeAgentToolsConfig,
+} from '../../../src/lib/space/tools/node-agent-tools.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
@@ -179,7 +179,7 @@ function makeStepConfig(
 	groupId: string,
 	channelResolver: ChannelResolver,
 	injector: (sessionId: string, message: string) => Promise<void>
-): StepAgentToolsConfig {
+): NodeAgentToolsConfig {
 	return {
 		mySessionId: sessionId,
 		myRole: role,
@@ -254,7 +254,7 @@ describe('cross-group isolation', () => {
 
 		// Coder in group A sends to reviewer (group A's reviewer only)
 		const config = makeStepConfig(tdb, 'session-coder-d', 'coder', groupA.id, resolver, injector);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'reviewer', message: 'review this' });
 		const data = JSON.parse(result.content[0].text);
@@ -307,7 +307,7 @@ describe('channel direction enforcement', () => {
 
 		const { messages, injector } = makeMessageCapture();
 		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'reviewer', message: 'please review' });
 		const data = JSON.parse(result.content[0].text);
@@ -350,7 +350,7 @@ describe('channel direction enforcement', () => {
 			resolver,
 			injector
 		);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'coder', message: 'feedback' });
 		const data = JSON.parse(result.content[0].text);
@@ -383,7 +383,7 @@ describe('channel direction enforcement', () => {
 
 		const { messages, injector } = makeMessageCapture();
 		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hi' });
 		const data = JSON.parse(result.content[0].text);
@@ -438,7 +438,7 @@ describe('bidirectional point-to-point A↔B', () => {
 
 		// Alice → Bob
 		const aliceConfig = makeStepConfig(tdb, 'session-alice', 'alice', group.id, resolver, injector);
-		const aliceHandlers = createStepAgentToolHandlers(aliceConfig);
+		const aliceHandlers = createNodeAgentToolHandlers(aliceConfig);
 
 		const r1 = await aliceHandlers.send_message({ target: 'bob', message: 'hello bob' });
 		const d1 = JSON.parse(r1.content[0].text);
@@ -446,7 +446,7 @@ describe('bidirectional point-to-point A↔B', () => {
 
 		// Bob → Alice
 		const bobConfig = makeStepConfig(tdb, 'session-bob', 'bob', group.id, resolver, injector);
-		const bobHandlers = createStepAgentToolHandlers(bobConfig);
+		const bobHandlers = createNodeAgentToolHandlers(bobConfig);
 
 		const r2 = await bobHandlers.send_message({ target: 'alice', message: 'hello alice' });
 		const d2 = JSON.parse(r2.content[0].text);
@@ -491,13 +491,13 @@ describe('bidirectional point-to-point A↔B', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		// Round 1: coder submits PR
-		const coderHandlers = createStepAgentToolHandlers(
+		const coderHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector)
 		);
 		await coderHandlers.send_message({ target: 'reviewer', message: 'PR ready for review' });
 
 		// Round 2: reviewer gives feedback
-		const reviewerHandlers = createStepAgentToolHandlers(
+		const reviewerHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-reviewer', 'reviewer', group.id, resolver, injector)
 		);
 		await reviewerHandlers.send_message({
@@ -580,7 +580,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 		]);
 
 		const { messages, injector } = makeMessageCapture();
-		const hubHandlers = createStepAgentToolHandlers(
+		const hubHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-hub', 'hub', group.id, resolver, injector)
 		);
 
@@ -615,7 +615,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		// Spoke B tries to send to hub — should be rejected
-		const spokeBHandlers = createStepAgentToolHandlers(
+		const spokeBHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-spoke-b', 'spoke-b', group.id, resolver, injector)
 		);
 
@@ -639,7 +639,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		// Spoke B tries to send to spoke C — should be rejected (no such channel)
-		const spokeBHandlers = createStepAgentToolHandlers(
+		const spokeBHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-spoke-b', 'spoke-b', group.id, resolver, injector)
 		);
 
@@ -664,7 +664,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 		]);
 
 		const { messages, injector } = makeMessageCapture();
-		const hubHandlers = createStepAgentToolHandlers(
+		const hubHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-hub', 'hub', group.id, resolver, injector)
 		);
 
@@ -747,7 +747,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 		]);
 
 		const { messages, injector } = makeMessageCapture();
-		const leadHandlers = createStepAgentToolHandlers(
+		const leadHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-lead', 'lead', group.id, resolver, injector)
 		);
 
@@ -781,21 +781,21 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		// Worker B replies
-		const workerBHandlers = createStepAgentToolHandlers(
+		const workerBHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-worker-b', 'worker-b', group.id, resolver, injector)
 		);
 		const r1 = await workerBHandlers.send_message({ target: 'lead', message: 'worker-b done' });
 		expect(JSON.parse(r1.content[0].text).success).toBe(true);
 
 		// Worker C replies
-		const workerCHandlers = createStepAgentToolHandlers(
+		const workerCHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-worker-c', 'worker-c', group.id, resolver, injector)
 		);
 		const r2 = await workerCHandlers.send_message({ target: 'lead', message: 'worker-c done' });
 		expect(JSON.parse(r2.content[0].text).success).toBe(true);
 
 		// Worker D replies
-		const workerDHandlers = createStepAgentToolHandlers(
+		const workerDHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-worker-d', 'worker-d', group.id, resolver, injector)
 		);
 		const r3 = await workerDHandlers.send_message({ target: 'lead', message: 'worker-d done' });
@@ -826,7 +826,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		// Worker B attempts to message Worker C (cross-spoke)
-		const workerBHandlers = createStepAgentToolHandlers(
+		const workerBHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-worker-b', 'worker-b', group.id, resolver, injector)
 		);
 
@@ -855,10 +855,10 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 
 		const { messages, injector } = makeMessageCapture();
 
-		const leadHandlers = createStepAgentToolHandlers(
+		const leadHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-lead', 'lead', group.id, resolver, injector)
 		);
-		const workerBHandlers = createStepAgentToolHandlers(
+		const workerBHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-worker-b', 'worker-b', group.id, resolver, injector)
 		);
 
@@ -935,10 +935,10 @@ describe('concurrent message injection — both messages delivered', () => {
 
 		const { messages, injector } = makeMessageCapture();
 
-		const senderAHandlers = createStepAgentToolHandlers(
+		const senderAHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-sender-a', 'sender-a', group.id, resolver, injector)
 		);
-		const senderBHandlers = createStepAgentToolHandlers(
+		const senderBHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-sender-b', 'sender-b', group.id, resolver, injector)
 		);
 
@@ -990,7 +990,7 @@ describe('concurrent message injection — both messages delivered', () => {
 
 		const { messages, injector } = makeMessageCapture();
 
-		const hubHandlers = createStepAgentToolHandlers(
+		const hubHandlers = createNodeAgentToolHandlers(
 			makeStepConfig(tdb, 'session-hub-c', 'hub-c', group.id, resolver, injector)
 		);
 
@@ -1133,7 +1133,7 @@ describe('data reload and DB-based validation', () => {
 			reloadedRun!.config as Record<string, unknown>
 		);
 
-		const config: StepAgentToolsConfig = {
+		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-rs',
 			myRole: 'coder',
 			taskId: 'task-reload-send',
@@ -1143,7 +1143,7 @@ describe('data reload and DB-based validation', () => {
 			messageInjector: injector,
 		};
 
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({
 			target: 'reviewer',
 			message: 'post-reload check',
@@ -1202,7 +1202,7 @@ describe('data reload and DB-based validation', () => {
 // ===========================================================================
 // Test Suite 8: Error Paths — Missing Group ID
 // ===========================================================================
-// Covers step-agent-tools.ts lines 124–133 (loadGroupAndResolver error path)
+// Covers node-agent-tools.ts lines 124–133 (loadGroupAndResolver error path)
 // where getGroupId() returns undefined — a race condition that can occur before
 // the TaskAgentManager has finished persisting the group to DB.
 
@@ -1222,7 +1222,7 @@ describe('error paths — missing group ID', () => {
 		const { messages, injector } = makeMessageCapture();
 
 		// getGroupId returns undefined — simulates race before group is created
-		const config: StepAgentToolsConfig = {
+		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-nogroup',
 			myRole: 'coder',
 			taskId: 'task-nogroup',
@@ -1232,7 +1232,7 @@ describe('error paths — missing group ID', () => {
 			messageInjector: injector,
 		};
 
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -1242,7 +1242,7 @@ describe('error paths — missing group ID', () => {
 	});
 
 	test('list_peers returns structured error when getGroupId returns undefined', async () => {
-		const config: StepAgentToolsConfig = {
+		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-nogroup',
 			myRole: 'coder',
 			taskId: 'task-nogroup',
@@ -1252,7 +1252,7 @@ describe('error paths — missing group ID', () => {
 			messageInjector: async () => {},
 		};
 
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -1357,7 +1357,7 @@ describe('Task Agent channel participation', () => {
 
 		const { messages, injector } = makeMessageCapture();
 		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'task-agent', message: 'Hello TA' });
 		const data = JSON.parse(result.content[0].text);
@@ -1395,14 +1395,14 @@ describe('Task Agent channel participation', () => {
 
 		const { messages, injector } = makeMessageCapture();
 		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, resolver, injector);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'task-agent', message: 'Hello TA' });
 		const data = JSON.parse(result.content[0].text);
 
 		// The channel resolver check passes (channel is declared), but send_message
 		// explicitly filters out task-agent from delivery targets, so no message is delivered.
-		// This exercises the filter at step-agent-tools.ts: .filter((m) => m.role !== 'task-agent')
+		// This exercises the filter at node-agent-tools.ts: .filter((m) => m.role !== 'task-agent')
 		expect(data.success).toBe(false);
 		expect((data.error as string).toLowerCase()).toContain('no active sessions');
 		expect(messages).toHaveLength(0);

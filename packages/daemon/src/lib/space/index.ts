@@ -90,15 +90,15 @@ export type {
 
 export {
 	TASK_AGENT_TOOL_SCHEMAS,
-	SpawnStepAgentSchema,
-	CheckStepStatusSchema,
+	SpawnNodeAgentSchema,
+	CheckNodeStatusSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
 } from './tools/task-agent-tool-schemas';
 export type {
-	SpawnStepAgentInput,
-	CheckStepStatusInput,
+	SpawnNodeAgentInput,
+	CheckNodeStatusInput,
 	ReportResultInput,
 	RequestHumanInputInput,
 	TaskResultStatus,

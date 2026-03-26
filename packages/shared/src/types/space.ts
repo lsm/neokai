@@ -164,7 +164,7 @@ export interface SpaceTask {
 	customAgentId?: string;
 	/**
 	 * The `WorkflowNodeAgent.name` of the specific agent slot that spawned this task.
-	 * Stored at task creation time so `spawn_step_agent` can unambiguously map the task
+	 * Stored at task creation time so `spawn_node_agent` can unambiguously map the task
 	 * back to the correct slot even when the same `agentId` appears multiple times in the node.
 	 */
 	agentName?: string;

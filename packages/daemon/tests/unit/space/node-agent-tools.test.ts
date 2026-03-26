@@ -1,7 +1,7 @@
 /**
- * Unit tests for createStepAgentToolHandlers()
+ * Unit tests for createNodeAgentToolHandlers()
  *
- * Covers all step agent peer communication tools:
+ * Covers all node agent peer communication tools:
  *   list_peers   — list peers excluding self and task-agent
  *   send_message — channel-validated direct messaging
  *   report_done  — signal agent completion, persist summary, emit event
@@ -19,10 +19,10 @@ import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/s
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import {
-	createStepAgentToolHandlers,
-	createStepAgentMcpServer,
-	type StepAgentToolsConfig,
-} from '../../../src/lib/space/tools/step-agent-tools.ts';
+	createNodeAgentToolHandlers,
+	createNodeAgentMcpServer,
+	type NodeAgentToolsConfig,
+} from '../../../src/lib/space/tools/node-agent-tools.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
@@ -34,7 +34,7 @@ function makeDb(): { db: BunDatabase; dir: string } {
 	const dir = join(
 		process.cwd(),
 		'tmp',
-		'test-step-agent-tools',
+		'test-node-agent-tools',
 		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
 	);
 	mkdirSync(dir, { recursive: true });
@@ -131,7 +131,7 @@ interface TestCtx {
 
 function makeCtx(): TestCtx {
 	const { db, dir } = makeDb();
-	const spaceId = 'space-step-tools-test';
+	const spaceId = 'space-node-tools-test';
 
 	seedSpaceRow(db, spaceId);
 
@@ -203,8 +203,8 @@ function makeCtx(): TestCtx {
 
 function makeConfig(
 	ctx: TestCtx,
-	overrides: Partial<StepAgentToolsConfig> = {}
-): StepAgentToolsConfig {
+	overrides: Partial<NodeAgentToolsConfig> = {}
+): NodeAgentToolsConfig {
 	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
 
 	return {
@@ -239,7 +239,7 @@ function makeResolver(channels: ResolvedChannel[]): ChannelResolver {
 // Tests: list_peers
 // ---------------------------------------------------------------------------
 
-describe('step-agent-tools: list_peers', () => {
+describe('node-agent-tools: list_peers', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -253,7 +253,7 @@ describe('step-agent-tools: list_peers', () => {
 
 	test('returns peers excluding self and task-agent', async () => {
 		const config = makeConfig(ctx);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -266,7 +266,7 @@ describe('step-agent-tools: list_peers', () => {
 
 	test('reports no channel topology when none declared', async () => {
 		const config = makeConfig(ctx);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -278,7 +278,7 @@ describe('step-agent-tools: list_peers', () => {
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -288,7 +288,7 @@ describe('step-agent-tools: list_peers', () => {
 
 	test('returns error when group not found', async () => {
 		const config = makeConfig(ctx, { getGroupId: () => undefined });
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -313,7 +313,7 @@ describe('step-agent-tools: list_peers', () => {
 		});
 
 		const config = makeConfig(ctx, { getGroupId: () => isolatedGroup.id });
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -326,7 +326,7 @@ describe('step-agent-tools: list_peers', () => {
 // Tests: send_message
 // ---------------------------------------------------------------------------
 
-describe('step-agent-tools: send_message', () => {
+describe('node-agent-tools: send_message', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -346,7 +346,7 @@ describe('step-agent-tools: send_message', () => {
 				injected.push({ sessionId: sid, message: msg });
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'LGTM!' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -362,7 +362,7 @@ describe('step-agent-tools: send_message', () => {
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]), // reverse direction only
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -373,7 +373,7 @@ describe('step-agent-tools: send_message', () => {
 
 	test('returns error when no channels declared at all (empty topology blocks send_message)', async () => {
 		const config = makeConfig(ctx); // no workflowRunId, no channels
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -390,7 +390,7 @@ describe('step-agent-tools: send_message', () => {
 				injected.push(sid);
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: '*', message: 'broadcast!' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -403,7 +403,7 @@ describe('step-agent-tools: send_message', () => {
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]), // coder has no outgoing channels
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: '*', message: 'broadcast' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -414,7 +414,7 @@ describe('step-agent-tools: send_message', () => {
 	test('broadcast (*) with empty topology returns error', async () => {
 		// No channels declared at all
 		const config = makeConfig(ctx);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: '*', message: 'broadcast' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -439,7 +439,7 @@ describe('step-agent-tools: send_message', () => {
 				injected.push(sid);
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({
 			target: ['reviewer', 'security'],
 			message: 'multicast!',
@@ -464,7 +464,7 @@ describe('step-agent-tools: send_message', () => {
 				// no coder → security channel
 			]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({
 			target: ['reviewer', 'security'],
 			message: 'msg',
@@ -485,7 +485,7 @@ describe('step-agent-tools: send_message', () => {
 				makeResolvedChannel('reviewer', 'hub', true),
 			]),
 		}); // myRole='coder'
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -509,7 +509,7 @@ describe('step-agent-tools: send_message', () => {
 				injected.push(sid);
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'hub', message: 'done!' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -530,7 +530,7 @@ describe('step-agent-tools: send_message', () => {
 				injectedToReviewer.push(sid);
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		// coder → reviewer
 		const r1 = await handlers.send_message({ target: 'reviewer', message: 'code ready' });
@@ -545,7 +545,7 @@ describe('step-agent-tools: send_message', () => {
 				injectedToReviewer.push(sid);
 			},
 		});
-		const handlersAsReviewer = createStepAgentToolHandlers(configAsReviewer);
+		const handlersAsReviewer = createNodeAgentToolHandlers(configAsReviewer);
 		const r2 = await handlersAsReviewer.send_message({ target: 'coder', message: 'approved' });
 		expect(JSON.parse(r2.content[0].text).success).toBe(true);
 	});
@@ -554,7 +554,7 @@ describe('step-agent-tools: send_message', () => {
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]), // 'tester' role not in group
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'tester', message: 'test pls' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -577,7 +577,7 @@ describe('step-agent-tools: send_message', () => {
 				// second call succeeds
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -596,7 +596,7 @@ describe('step-agent-tools: send_message', () => {
 				throw new Error('always fails');
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -607,7 +607,7 @@ describe('step-agent-tools: send_message', () => {
 
 	test('returns error when group not found', async () => {
 		const config = makeConfig(ctx, { getGroupId: () => undefined });
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -620,7 +620,7 @@ describe('step-agent-tools: send_message', () => {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
 			getGroupId: () => 'nonexistent-group-id',
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'Hello' });
 		const data = JSON.parse(result.content[0].text);
 		expect(data.success).toBe(false);
@@ -645,7 +645,7 @@ describe('step-agent-tools: send_message', () => {
 				if (callCount === 2) throw new Error('session not available');
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({
 			target: ['reviewer', 'security'],
@@ -669,7 +669,7 @@ describe('step-agent-tools: send_message', () => {
 				throw new Error('all sessions unavailable');
 			},
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 
 		const result = await handlers.send_message({ target: 'reviewer', message: 'Hello' });
 		const data = JSON.parse(result.content[0].text);
@@ -684,7 +684,7 @@ describe('step-agent-tools: send_message', () => {
 // Tests: report_done
 // ---------------------------------------------------------------------------
 
-describe('step-agent-tools: report_done', () => {
+describe('node-agent-tools: report_done', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -698,7 +698,7 @@ describe('step-agent-tools: report_done', () => {
 
 	test('marks step task as completed without summary', async () => {
 		const config = makeConfig(ctx);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.report_done({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -713,7 +713,7 @@ describe('step-agent-tools: report_done', () => {
 
 	test('persists summary as result field', async () => {
 		const config = makeConfig(ctx);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.report_done({ summary: 'PR #42 merged successfully.' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -733,9 +733,9 @@ describe('step-agent-tools: report_done', () => {
 		};
 
 		const config = makeConfig(ctx, {
-			daemonHub: fakeDaemonHub as unknown as StepAgentToolsConfig['daemonHub'],
+			daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		await handlers.report_done({ summary: 'done' });
 
 		expect(emitted).toHaveLength(1);
@@ -750,7 +750,7 @@ describe('step-agent-tools: report_done', () => {
 
 	test('does not emit event when daemonHub is absent', async () => {
 		const config = makeConfig(ctx); // no daemonHub
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		// Should not throw
 		const result = await handlers.report_done({});
 		const data = JSON.parse(result.content[0].text);
@@ -759,7 +759,7 @@ describe('step-agent-tools: report_done', () => {
 
 	test('returns error when step task not found', async () => {
 		const config = makeConfig(ctx, { stepTaskId: 'nonexistent-step-task' });
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.report_done({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -772,7 +772,7 @@ describe('step-agent-tools: report_done', () => {
 		await ctx.taskManager.setTaskStatus(ctx.stepTaskId, 'completed');
 
 		const config = makeConfig(ctx);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.report_done({ summary: 'already done' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -791,9 +791,9 @@ describe('step-agent-tools: report_done', () => {
 		};
 
 		const config = makeConfig(ctx, {
-			daemonHub: throwingHub as unknown as StepAgentToolsConfig['daemonHub'],
+			daemonHub: throwingHub as unknown as NodeAgentToolsConfig['daemonHub'],
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.report_done({ summary: 'done despite hub error' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -817,9 +817,9 @@ describe('step-agent-tools: report_done', () => {
 
 		const config = makeConfig(ctx, {
 			stepTaskId: 'nonexistent-step-task',
-			daemonHub: trackingHub as unknown as StepAgentToolsConfig['daemonHub'],
+			daemonHub: trackingHub as unknown as NodeAgentToolsConfig['daemonHub'],
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.report_done({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -833,7 +833,7 @@ describe('step-agent-tools: report_done', () => {
 // Tests: list_reachable_agents
 // ---------------------------------------------------------------------------
 
-describe('step-agent-tools: list_reachable_agents', () => {
+describe('node-agent-tools: list_reachable_agents', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -847,7 +847,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 
 	test('returns within-node peers excluding self and task-agent', async () => {
 		const config = makeConfig(ctx);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -860,7 +860,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 
 	test('returns empty cross-node targets when no channels declared', async () => {
 		const config = makeConfig(ctx);
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -874,7 +874,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -890,7 +890,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -903,7 +903,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -917,7 +917,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 				makeResolvedChannel('coder', 'tester', false, { gate: { type: 'human' } }),
 			]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -933,7 +933,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 				}),
 			]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -949,7 +949,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 				}),
 			]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -963,7 +963,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 				makeResolvedChannel('coder', 'tester', false, { gate: { type: 'always' } }),
 			]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -979,7 +979,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 				}),
 			]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -992,7 +992,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 				makeResolvedChannel('coder', 'qa-node', false, { isFanOut: true }),
 			]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -1009,7 +1009,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 				makeResolvedChannel('coder', 'tester'), // duplicate
 			]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -1021,7 +1021,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('tester', 'coder')]),
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -1030,7 +1030,7 @@ describe('step-agent-tools: list_reachable_agents', () => {
 
 	test('returns error when group not found', async () => {
 		const config = makeConfig(ctx, { getGroupId: () => undefined });
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -1040,10 +1040,10 @@ describe('step-agent-tools: list_reachable_agents', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: createStepAgentMcpServer (factory)
+// Tests: createNodeAgentMcpServer (factory)
 // ---------------------------------------------------------------------------
 
-describe('step-agent-tools: createStepAgentMcpServer', () => {
+describe('node-agent-tools: createNodeAgentMcpServer', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -1057,7 +1057,7 @@ describe('step-agent-tools: createStepAgentMcpServer', () => {
 
 	test('creates an MCP server with expected tools', () => {
 		const config = makeConfig(ctx);
-		const server = createStepAgentMcpServer(config);
+		const server = createNodeAgentMcpServer(config);
 
 		// Server should be an object with a server property (MCP SDK server)
 		expect(server).toBeDefined();
@@ -1066,10 +1066,10 @@ describe('step-agent-tools: createStepAgentMcpServer', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: step agent system prompt
+// Tests: node agent system prompt
 // ---------------------------------------------------------------------------
 
-describe('step-agent-tools: system prompt includes peer communication section', () => {
+describe('node-agent-tools: system prompt includes peer communication section', () => {
 	test('buildCustomAgentSystemPrompt includes Peer Communication section', async () => {
 		const { buildCustomAgentSystemPrompt } = await import(
 			'../../../src/lib/space/agents/custom-agent.ts'
@@ -1132,7 +1132,7 @@ describe('list_peers — completion state', () => {
 			workflowNodeId,
 			spaceTaskRepo: ctx.spaceTaskRepo,
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -1166,7 +1166,7 @@ describe('list_peers — completion state', () => {
 			workflowNodeId,
 			spaceTaskRepo: ctx.spaceTaskRepo,
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -1198,7 +1198,7 @@ describe('list_peers — completion state', () => {
 			workflowNodeId,
 			spaceTaskRepo: ctx.spaceTaskRepo,
 		});
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 

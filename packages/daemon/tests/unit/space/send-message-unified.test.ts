@@ -21,9 +21,9 @@ import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/s
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import {
-	createStepAgentToolHandlers,
-	type StepAgentToolsConfig,
-} from '../../../src/lib/space/tools/step-agent-tools.ts';
+	createNodeAgentToolHandlers,
+	type NodeAgentToolsConfig,
+} from '../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
@@ -168,7 +168,7 @@ function makeBaseConfig(
 	workflowRunId: string,
 	injected: Array<{ sessionId: string; message: string }>,
 	channelResolver: ChannelResolver = new ChannelResolver([])
-): StepAgentToolsConfig {
+): NodeAgentToolsConfig {
 	return {
 		mySessionId: ctx.coderSessionId,
 		myRole: 'coder',
@@ -219,7 +219,7 @@ describe('send_message with ChannelRouter injected', () => {
 			messageInjector: baseConfig.messageInjector,
 		});
 
-		const handlers = createStepAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello via router' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -244,7 +244,7 @@ describe('send_message with ChannelRouter injected', () => {
 			messageInjector: baseConfig.messageInjector,
 		});
 
-		const handlers = createStepAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
 		const result = await handlers.send_message({ target: 'ghost-agent', message: 'knock knock' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -267,7 +267,7 @@ describe('send_message with ChannelRouter injected', () => {
 			messageInjector: baseConfig.messageInjector,
 		});
 
-		const handlers = createStepAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
 		const result = await handlers.send_message({ target: 'reviewer', message: 'unauthorized' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -290,7 +290,7 @@ describe('send_message with ChannelRouter injected', () => {
 			messageInjector: baseConfig.messageInjector,
 		});
 
-		const handlers = createStepAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
 		const result = await handlers.send_message({ target: '*', message: 'broadcast via router' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -330,7 +330,7 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 		);
 		// No agentMessageRouter — uses legacy path
 
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'legacy DM' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -345,7 +345,7 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		const injected: string[] = [];
-		const config: StepAgentToolsConfig = {
+		const config: NodeAgentToolsConfig = {
 			...makeBaseConfig(
 				ctx,
 				workflowRunId,
@@ -357,7 +357,7 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 			},
 		};
 
-		const handlers = createStepAgentToolHandlers(config);
+		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: '*', message: 'broadcast legacy' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -396,7 +396,7 @@ describe('both paths produce same behavior for role-based DM', () => {
 			injectedLegacy,
 			new ChannelResolver([makeResolvedChannel('coder', 'reviewer')])
 		);
-		const legacyHandlers = createStepAgentToolHandlers(legacyConfig);
+		const legacyHandlers = createNodeAgentToolHandlers(legacyConfig);
 		const legacyResult = await legacyHandlers.send_message({
 			target: 'reviewer',
 			message: 'test message',
@@ -413,7 +413,7 @@ describe('both paths produce same behavior for role-based DM', () => {
 			workflowRunId,
 			messageInjector: routerBaseConfig.messageInjector,
 		});
-		const routerHandlers = createStepAgentToolHandlers({ ...routerBaseConfig, agentMessageRouter });
+		const routerHandlers = createNodeAgentToolHandlers({ ...routerBaseConfig, agentMessageRouter });
 		const routerResult = await routerHandlers.send_message({
 			target: 'reviewer',
 			message: 'test message',

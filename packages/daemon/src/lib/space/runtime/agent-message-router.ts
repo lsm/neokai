@@ -1,5 +1,5 @@
 /**
- * AgentMessageRouter — unified message delivery for step agents.
+ * AgentMessageRouter — unified message delivery for node agents.
  *
  * Handles all message routing through a single code path — no separate within-node
  * vs cross-node logic. Target resolution:
@@ -13,9 +13,9 @@
  *
  * Note: This is distinct from ChannelRouter (channel-router.ts), which handles
  * workflow-level orchestration (lazy node activation, gate evaluation). This class
- * is used by step-agent-tools to deliver messages between live sessions at runtime.
+ * is used by node-agent-tools to deliver messages between live sessions at runtime.
  * TODO: Remove once TaskAgentManager wires up the workflow-level ChannelRouter for
- *   all sub-sessions and step-agent-tools can delegate to it directly.
+ *   all sub-sessions and node-agent-tools can delegate to it directly.
  */
 
 import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
