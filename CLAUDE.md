@@ -127,6 +127,30 @@ Three-layer architecture:
 
 Initialization order matters: Router → MessageHub, then Transport → MessageHub.
 
+### Skills System
+
+The Skills system extends agent capabilities with slash commands, plugins, and MCP servers. Skills are configured globally at the application level and can be selectively enabled per room via room-level overrides.
+
+**Data flow:**
+```
+Skills registry (SQLite) → SkillsManager → QueryOptionsBuilder → SDK session options
+```
+
+At session init, `QueryOptionsBuilder.build()` calls `SkillsManager.getEnabledSkills()` and injects enabled skills:
+- `builtin` sourceType → adds `commandName` to `session.availableCommands`
+- `plugin` sourceType → adds `{ type: 'local', path }` to `SDKConfig.plugins`
+- `mcp_server` sourceType → merges into `Options.mcpServers` (stdio/sse/http variants)
+
+**Key files:**
+- `packages/shared/src/types/skills.ts` — `AppSkill`, discriminated union configs (`BuiltinSkillConfig` / `PluginSkillConfig` / `McpServerSkillConfig`), `SkillValidationStatus`
+- `packages/daemon/src/lib/skills-manager.ts` — `SkillsManager`: CRUD, validation, built-in initialization (seeds `web-search-mcp` on startup)
+- `packages/daemon/src/lib/rpc-handlers/skill-handlers.ts` — RPC handlers: `skill.list`, `skill.get`, `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`
+- `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` — `skills.list` and `skills.byRoom` named queries for reactive frontend sync
+- `packages/daemon/src/lib/agent/query-options-builder.ts` — `buildPluginsFromSkills()`, `getMcpServersFromSkills()` methods
+- `packages/web/src/lib/skills-store.ts` — `SkillsStore`: signal-based frontend store with LiveQuery subscription (`skills.list`)
+
+See [`docs/features/skills.md`](docs/features/skills.md) for user-facing documentation.
+
 ### Test Organization
 
 - `packages/daemon/tests/unit/` — Unit tests
