@@ -865,3 +865,144 @@ describe('GoalManager ShortIdAllocator wiring', () => {
 		expect(g2.shortId).toBe('g-2');
 	});
 });
+
+describe('GoalManager.patchGoal — schedule nextRunAt auto-computation', () => {
+	let db: Database;
+	let goalManager: GoalManager;
+	let roomId: string;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createTables(db);
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS goals (
+				id TEXT PRIMARY KEY, room_id TEXT NOT NULL, title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+				priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER DEFAULT 0,
+				linked_task_ids TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}',
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT, autonomy_level TEXT, structured_metrics TEXT, schedule TEXT,
+				schedule_paused INTEGER DEFAULT 0, next_run_at INTEGER,
+				max_consecutive_failures INTEGER, max_planning_attempts INTEGER,
+				consecutive_failures INTEGER DEFAULT 0, replan_count INTEGER DEFAULT 0,
+				short_id TEXT,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			);
+		`);
+
+		const roomManager = new RoomManager(db, noOpReactiveDb);
+		const room = roomManager.createRoom({ name: 'Test Room', allowedPaths: [] });
+		roomId = room.id;
+		goalManager = new GoalManager(db, roomId, noOpReactiveDb);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it('auto-computes nextRunAt when updating schedule on a recurring mission', async () => {
+		const goal = await goalManager.createGoal({
+			title: 'Recurring',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+		expect(goal.nextRunAt).toBeDefined();
+		const originalNextRunAt = goal.nextRunAt!;
+
+		// Patch the schedule to a new expression
+		const before = Math.floor(Date.now() / 1000);
+		const patched = await goalManager.patchGoal(goal.id, {
+			schedule: { expression: '@hourly', timezone: 'UTC' },
+		});
+		const after = Math.floor(Date.now() / 1000) + 3700; // up to 1 hour + buffer
+
+		expect(patched.schedule?.expression).toBe('@hourly');
+		expect(patched.nextRunAt).toBeDefined();
+		expect(patched.nextRunAt!).toBeGreaterThan(before);
+		// @hourly fires within the next hour
+		expect(patched.nextRunAt!).toBeLessThanOrEqual(after);
+		// nextRunAt should change when the cron expression changes
+		expect(patched.nextRunAt!).not.toBe(originalNextRunAt);
+	});
+
+	it('auto-computes nextRunAt when changing missionType to recurring with a schedule', async () => {
+		const goal = await goalManager.createGoal({
+			title: 'One-shot',
+			missionType: 'one_shot',
+		});
+		expect(goal.nextRunAt).toBeUndefined();
+
+		const before = Math.floor(Date.now() / 1000);
+		const patched = await goalManager.patchGoal(goal.id, {
+			missionType: 'recurring',
+			schedule: { expression: '@weekly', timezone: 'UTC' },
+		});
+		const after = Math.floor(Date.now() / 1000) + 7 * 24 * 3600 + 100;
+
+		expect(patched.missionType).toBe('recurring');
+		expect(patched.schedule?.expression).toBe('@weekly');
+		expect(patched.nextRunAt).toBeDefined();
+		expect(patched.nextRunAt!).toBeGreaterThan(before);
+		expect(patched.nextRunAt!).toBeLessThanOrEqual(after);
+	});
+
+	it('does NOT overwrite nextRunAt when caller explicitly passes it', async () => {
+		const goal = await goalManager.createGoal({
+			title: 'Recurring',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+
+		const explicitNextRunAt = Math.floor(Date.now() / 1000) + 9999;
+		const patched = await goalManager.patchGoal(goal.id, {
+			schedule: { expression: '@daily', timezone: 'UTC' },
+			nextRunAt: explicitNextRunAt,
+		});
+
+		expect(patched.nextRunAt).toBe(explicitNextRunAt);
+	});
+
+	it('does NOT compute nextRunAt when setting schedule on a non-recurring goal', async () => {
+		const goal = await goalManager.createGoal({
+			title: 'One-shot',
+			missionType: 'one_shot',
+		});
+
+		// Patching schedule on a one_shot goal should NOT compute nextRunAt
+		const patched = await goalManager.patchGoal(goal.id, {
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+
+		expect(patched.nextRunAt).toBeUndefined();
+	});
+
+	it('throws on invalid cron expression during patchGoal', async () => {
+		const goal = await goalManager.createGoal({
+			title: 'Recurring',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+
+		await expect(
+			goalManager.patchGoal(goal.id, {
+				schedule: { expression: 'not-a-cron', timezone: 'UTC' },
+			})
+		).rejects.toThrow(/Invalid cron expression/);
+	});
+
+	it('preserves existing nextRunAt when patching non-schedule fields', async () => {
+		const goal = await goalManager.createGoal({
+			title: 'Recurring',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+		const originalNextRunAt = goal.nextRunAt!;
+		expect(originalNextRunAt).toBeDefined();
+
+		const patched = await goalManager.patchGoal(goal.id, { title: 'Updated Title' });
+
+		expect(patched.title).toBe('Updated Title');
+		expect(patched.nextRunAt).toBe(originalNextRunAt);
+	});
+});
