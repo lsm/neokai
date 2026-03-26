@@ -310,3 +310,178 @@ describe('ChannelEditor', () => {
 		expect(currentChannels[1].from).toBe('planner');
 	});
 });
+
+// -------------------------------------------------------------------------
+// Gate config — condition types
+// -------------------------------------------------------------------------
+
+describe('ChannelEditor — gate config', () => {
+	beforeEach(() => {
+		cleanup();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('shows gate select with all 4 condition types when channel is expanded', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		const gateSelect = getByTestId('channel-gate-select-0') as HTMLSelectElement;
+		const values = Array.from(gateSelect.options).map((o) => o.value);
+		expect(values).toContain('always');
+		expect(values).toContain('human');
+		expect(values).toContain('condition');
+		expect(values).toContain('task_result');
+	});
+
+	it('shows "fires automatically" hint for "always" gate (default)', () => {
+		const onChange = vi.fn();
+		// No gate = always (default ungated channel)
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByText } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		expect(getByText('Transition fires automatically.')).toBeTruthy();
+	});
+
+	it('shows "human approval" hint when gate type is "human"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gate: { type: 'human' } })];
+		const { getAllByTestId, getByText } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		expect(getByText('Transition requires explicit human approval.')).toBeTruthy();
+	});
+
+	it('shows shell expression input for "condition" gate type', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gate: { type: 'condition', expression: '' } })];
+		const { getAllByTestId, getByPlaceholderText } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		expect(getByPlaceholderText('e.g. bun test && git diff --quiet')).toBeTruthy();
+	});
+
+	it('shows "fires when task result matches" hint for "condition" gate type', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gate: { type: 'condition', expression: '' } })];
+		const { getAllByTestId, getByText } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		expect(getByText('Transition fires when the shell command exits with code 0.')).toBeTruthy();
+	});
+
+	it('shows task-result expression input for "task_result" gate type', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gate: { type: 'task_result', expression: '' } })];
+		const { getAllByTestId, getByPlaceholderText } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		expect(getByPlaceholderText('e.g. passed, failed')).toBeTruthy();
+	});
+
+	it('shows "fires when task result matches" hint for "task_result" gate type', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gate: { type: 'task_result', expression: '' } })];
+		const { getAllByTestId, getByText } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		expect(getByText('Fires when the task result matches this value.')).toBeTruthy();
+	});
+
+	it('changing gate to "human" calls onChange with gate.type="human"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'human' } });
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gate?.type).toBe('human');
+	});
+
+	it('changing gate to "condition" calls onChange with gate.type="condition" and empty expression', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'condition' } });
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gate?.type).toBe('condition');
+		expect(result[0].gate?.expression).toBe('');
+	});
+
+	it('changing gate to "task_result" calls onChange with gate.type="task_result" and empty expression', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'task_result' } });
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gate?.type).toBe('task_result');
+		expect(result[0].gate?.expression).toBe('');
+	});
+
+	it('changing gate to "always" removes the gate from the channel', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gate: { type: 'human' } })];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'always' } });
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		// "always" gate is stored as undefined (no gate restriction)
+		expect(result[0].gate).toBeUndefined();
+	});
+
+	it('expression input for "condition" gate updates channel expression via onChange', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gate: { type: 'condition', expression: '' } })];
+		const { getAllByTestId, getByPlaceholderText } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.input(getByPlaceholderText('e.g. bun test && git diff --quiet'), {
+			target: { value: 'bun test' },
+		});
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gate?.expression).toBe('bun test');
+	});
+
+	it('expression input for "task_result" gate updates channel expression via onChange', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gate: { type: 'task_result', expression: '' } })];
+		const { getAllByTestId, getByPlaceholderText } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.input(getByPlaceholderText('e.g. passed, failed'), {
+			target: { value: 'passed' },
+		});
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gate?.expression).toBe('passed');
+	});
+});

@@ -164,6 +164,20 @@ describe('WorkflowNodeCard', () => {
 			expect(getByTitle('Exit: Shell Condition')).toBeTruthy();
 		});
 
+		it('shows task_result gate icon when entry condition is task_result', () => {
+			const { getByTitle } = render(
+				<WorkflowNodeCard {...makeProps({ entryCondition: { type: 'task_result' } })} />
+			);
+			expect(getByTitle('Entry: Task Result')).toBeTruthy();
+		});
+
+		it('shows task_result gate icon when exit condition is task_result', () => {
+			const { getByTitle } = render(
+				<WorkflowNodeCard {...makeProps({ exitCondition: { type: 'task_result' } })} />
+			);
+			expect(getByTitle('Exit: Task Result')).toBeTruthy();
+		});
+
 		it('does not show gate icons for always conditions', () => {
 			const { container } = render(
 				<WorkflowNodeCard
@@ -345,6 +359,50 @@ describe('WorkflowNodeCard', () => {
 					/>
 				);
 				expect(getAllByText('Transition fires automatically.').length).toBeGreaterThan(0);
+			});
+
+			it('shows task_result expression input when entry gate is "task_result"', () => {
+				const { getByPlaceholderText } = render(
+					<WorkflowNodeCard
+						{...makeProps({
+							expanded: true,
+							entryCondition: { type: 'task_result', expression: '' },
+						})}
+					/>
+				);
+				expect(getByPlaceholderText('e.g. passed, failed')).toBeTruthy();
+			});
+
+			it('shows "fires when task result matches" hint for task_result type', () => {
+				const { getByText } = render(
+					<WorkflowNodeCard
+						{...makeProps({
+							expanded: true,
+							entryCondition: { type: 'task_result', expression: '' },
+						})}
+					/>
+				);
+				expect(getByText('Fires when the task result matches this value.')).toBeTruthy();
+			});
+
+			it('calls onUpdateEntryCondition with task_result type when entry gate changed', () => {
+				const onUpdateEntryCondition = vi.fn();
+				const { container } = render(
+					<WorkflowNodeCard
+						{...makeProps({
+							expanded: true,
+							entryCondition: { type: 'always' },
+							onUpdateEntryCondition,
+						})}
+					/>
+				);
+				const selects = container.querySelectorAll('select');
+				// selects[1] = entry gate
+				fireEvent.change(selects[1], { target: { value: 'task_result' } });
+				expect(onUpdateEntryCondition).toHaveBeenCalledWith({
+					type: 'task_result',
+					expression: '',
+				});
 			});
 		});
 	});

@@ -272,6 +272,22 @@ describe('WorkflowEditor', () => {
 			const { steps } = initFromWorkflow(wf);
 			expect(steps.map((s) => s.name)).toEqual(['Plan', 'Code', 'Orphan']);
 		});
+
+		it('loads channels from existing workflow', () => {
+			const wf = makeWorkflow({
+				channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+			});
+			const { channels } = initFromWorkflow(wf);
+			expect(channels).toHaveLength(1);
+			expect(channels[0].from).toBe('task-agent');
+			expect(channels[0].to).toBe('coder');
+		});
+
+		it('returns empty channels array when workflow has none', () => {
+			const wf = makeWorkflow();
+			const { channels } = initFromWorkflow(wf);
+			expect(channels).toHaveLength(0);
+		});
 	});
 
 	describe('template selection', () => {
@@ -538,6 +554,49 @@ describe('WorkflowEditor', () => {
 					expect(scopedId).toBe(savedStepId);
 				}
 			}
+		});
+	});
+
+	describe('channels', () => {
+		it('renders the Channels section header', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			expect(getByText('Channels')).toBeTruthy();
+		});
+
+		it('renders the ChannelEditor inside the workflow editor', () => {
+			const { getByTestId } = render(<WorkflowEditor {...defaultProps} />);
+			expect(getByTestId('channel-editor')).toBeTruthy();
+		});
+
+		it('channels are included in createWorkflow call when empty', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			selectAgent(container, 'agent-1');
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(
+					expect.objectContaining({ channels: undefined })
+				);
+			});
+		});
+
+		it('channels from existing workflow are included in updateWorkflow call', async () => {
+			const wf = makeWorkflow({
+				channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+					'wf-1',
+					expect.objectContaining({
+						channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+					})
+				);
+			});
 		});
 	});
 
