@@ -8,6 +8,11 @@ eliminate the dual-channel pattern (LiveQuery + `room.task.update` events) by in
 generic `EntityStore<T>` class that makes LiveQuery the single authoritative update channel for
 all entity types.
 
+> **Scope note — Inbox Approve fix is explicitly out of scope.**
+> The goal title references only the dual-channel bug and EntityStore architecture. There is no
+> "Inbox Approve 修复" requirement in the goal description. If a separate Inbox Approve fix is
+> needed it must be filed as a distinct goal.
+
 ## Root Cause
 
 `useTaskViewData` fetches the task once on mount and then listens to `room.task.update` events
@@ -83,35 +88,47 @@ it independently via `task.get` and then listening to `room.task.update`. This m
 detail view automatically reactive to LiveQuery deltas that already update `roomStore.tasks`.
 
 **Subtasks (ordered implementation steps):**
-1. In `packages/web/src/hooks/useTaskViewData.ts`, import `computed` from `@preact/signals` and
-   `roomStore` (already imported).
-2. Replace the `useState<NeoTask | null>` for `task` and the `task.get` RPC call inside `load()`
-   with a `computed` signal derived from `roomStore.tasks`:
+1. **Fix the `roomStore.tasks` type annotation.** Inspect `TASKS_BY_ROOM_SQL` in
+   `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` — it selects all `NeoTask`
+   fields (`description`, `result`, `inputDraft`, `createdAt`, `startedAt`, `completedAt`,
+   `taskType`, `assignedAgent`, `createdByTaskId`, `archivedAt`, `activeSession`, `prUrl`,
+   `prNumber`, `prCreatedAt`, `shortId`). The signal is currently typed `signal<TaskSummary[]>`
+   which is narrower than the actual payload. Change it to `signal<NeoTask[]>` in
+   `packages/web/src/lib/room-store.ts`. This makes the type accurate and eliminates any need
+   for unsafe casts downstream.
+2. In `packages/web/src/hooks/useTaskViewData.ts`, import `useComputed` from `@preact/signals`
+   and `roomStore` (already imported).
+3. Replace the `useState<NeoTask | null>` for `task` and the `task.get` RPC call inside `load()`
+   with a `useComputed` hook that derives `task` from `roomStore.tasks`:
    ```typescript
-   // Outside the hook or as a hook-level computed:
-   const task = computed(() =>
-     (roomStore.tasks.value as NeoTask[]).find((t) => t.id === taskId) ?? null
+   // Inside the hook body — useComputed creates a stable computed with automatic cleanup:
+   const task = useComputed(() =>
+     roomStore.tasks.value.find((t) => t.id === taskId) ?? null
    );
    ```
-   Expose `.value` to the rest of the hook and return it as-is (Preact signals integrate
-   cleanly with `useSignal`/`useComputed` for reactive rendering).
-3. Remove the `setTask` state setter and its usage in `load()`.
-4. Remove the `room.task.update` event listener (`unsubTaskUpdate`) from the `useEffect`. Keep
+   Use `task.value` to read the current task in the hook body and in the return value.
+   Note: do NOT use bare `computed()` inside a hook — it creates a new computed signal on every
+   render without cleanup. Always use `useComputed` from `@preact/signals` inside hook bodies.
+4. Remove the `setTask` state setter and its usage in `load()`.
+5. Remove the `room.task.update` event listener (`unsubTaskUpdate`) from the `useEffect`. Keep
    the `session.updated` listener (it handles model label updates, not task state).
-5. Simplify `load()` to only fetch the group (`fetchGroup()`) — no longer needs `task.get`.
+6. Simplify `load()` to only fetch the group (`fetchGroup()`) — no longer needs `task.get`.
    Keep the `isLoading` state but scope it to the group fetch.
-6. Re-evaluate `isLoading`: the task data is now immediately available from the store; loading
+7. Re-evaluate `isLoading`: the task data is now immediately available from the store; loading
    only applies to the group/session fetch. Update the hook's loading semantics accordingly.
-7. Update `useTaskViewData.test.ts`:
+8. Update `useTaskViewData.test.ts`:
    - Remove test cases that assert `room.task.update` drives task state.
    - Add test cases asserting the task is derived from `roomStore.tasks.value`.
-   - Mock `roomStore.tasks` as a signal with `{ value: [mockTask] }`.
+   - Mock `roomStore.tasks` as a signal with `{ value: [mockTask] }` where `mockTask`
+     is typed as `NeoTask`.
 
 **Acceptance criteria:**
 - When Runtime autonomously starts a task (`pending` → `in_progress`), the task detail page
   reflects the new status without a page refresh.
 - Task list and task detail views always show consistent status.
+- `roomStore.tasks` is typed `signal<NeoTask[]>` (not `TaskSummary[]`).
 - `room.task.update` is no longer subscribed to in `useTaskViewData`.
+- No `as NeoTask[]` or similar unsafe casts exist in the hook.
 - All existing unit tests in `useTaskViewData.test.ts` pass (updated as needed).
 - TypeScript build is clean (`bun run typecheck`).
 
@@ -265,21 +282,48 @@ metadata + session list, so retain calls that serve those purposes).
 
 **Subtasks (ordered implementation steps):**
 1. In `packages/daemon/src/lib/rpc-handlers/task-handlers.ts`:
-   a. Remove the `emitTaskUpdate` helper function entirely.
-   b. Remove all call sites: `task.cancel`, `task.archive`, `task.setStatus`, `task.reject`,
-      `task.approve`.
-   c. Audit `emitRoomOverview` call sites. The `room.overview` event delivers `room`,
-      `sessions`, and task arrays. `roomStore.startSubscriptions` listens to `room.overview`
-      for `room` and `sessions` only (tasks and goals come from LiveQuery). Determine if any
-      consumer still needs `room.overview` for task data — if not, remove the calls that only
-      fire due to task status changes. Calls on `task.create` (session-list-affecting) can
-      remain.
-   d. Remove the `emitRoomOverview` helper if it has no remaining call sites; otherwise
-      keep it for the remaining use cases.
-2. Verify that the daemon still compiles (`bun run typecheck` from the repo root or
-   `cd packages/daemon && bun build main.ts --target bun`).
-3. Check for any existing daemon unit tests that assert `room.task.update` is emitted — update
-   them to remove that assertion (since the event is no longer emitted).
+
+   **a. Remove `emitTaskUpdate` entirely** — delete the helper function (lines ~67–80) and every
+   call site listed below. All these handlers mutate tasks via `taskManager` which triggers
+   `reactiveDb.notifyChange('tasks')` → LiveQuery → `roomStore.tasks` signal. The dedicated
+   event is therefore redundant.
+
+   | Handler | Lines (approx) | Action |
+   |---------|----------------|--------|
+   | `task.cancel` — with runtime path | ~265 | Remove `emitTaskUpdate` |
+   | `task.cancel` — no-runtime path | ~274 | Remove `emitTaskUpdate` |
+   | `task.archive` — direct archive | ~363 | Remove `emitTaskUpdate` |
+   | `task.setStatus` — archive branch | ~426 | Remove `emitTaskUpdate` |
+   | `task.setStatus` — cancel with runtime | ~452 | Remove `emitTaskUpdate` |
+   | `task.setStatus` — apply status change | ~510 | Remove `emitTaskUpdate` |
+   | `task.sendHumanMessage` — after routing | ~1121 | Remove `emitTaskUpdate` |
+
+   **b. Enumerate and decide each `emitRoomOverview` call site.** The `room.overview` event
+   carries `room`, `sessions`, and task arrays. Since task arrays are now delivered exclusively
+   via LiveQuery, the only valid reason to keep an `emitRoomOverview` call is if the handler
+   also changes the **session list** or **room metadata** (which the session/room LiveQuery may
+   not yet propagate promptly).
+
+   | Handler | Lines (approx) | Verdict | Rationale |
+   |---------|----------------|---------|-----------|
+   | `task.create` | ~125 | **REMOVE** | New task does not create a session; LiveQuery covers it |
+   | `task.fail` | ~225 | **REMOVE** | Fails a task only; no session/room change |
+   | `task.cancel` — with runtime | ~266 | **KEEP temporarily** | Runtime may terminate a session group; session list changes |
+   | `task.cancel` — no-runtime | ~275 | **REMOVE** | No session involved |
+   | `task.archive` | ~364 | **REMOVE** | No session change |
+   | `task.setStatus` — archive branch | ~427 | **REMOVE** | No session change |
+   | `task.setStatus` — cancel with runtime | ~453 | **KEEP temporarily** | Runtime cancels active session group |
+   | `task.setStatus` — apply status | ~511 | **REMOVE** | Pure status change; LiveQuery covers task data |
+   | `session_group.stop` | ~1155 | **KEEP temporarily** | Force-stops a session; session list changes |
+
+   "Keep temporarily" calls should add a `// TODO: remove once session LiveQuery covers list` comment.
+
+   **c.** Remove the `emitRoomOverview` helper definition only if all call sites are removed;
+   otherwise leave it in place with remaining callers.
+
+2. Verify that the daemon still compiles: `cd packages/daemon && bun build main.ts --target bun`.
+3. Check for any existing daemon unit tests that assert `room.task.update` is emitted — remove
+   those assertions (the event is no longer emitted from task-handlers).
 4. Run `bun run lint` and fix any unused-variable warnings from the removed helpers.
 
 **Acceptance criteria:**
