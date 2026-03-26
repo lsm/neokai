@@ -351,11 +351,6 @@ export class RoomRuntime {
 		sessionRole: 'worker' | 'leader'
 	): Promise<boolean> {
 		const settings = this.getGlobalSettings();
-		const fallbackModels = settings.fallbackModels ?? [];
-
-		if (fallbackModels.length === 0) {
-			return false;
-		}
 
 		// Get current model info from the session
 		let currentModel: string;
@@ -375,10 +370,24 @@ export class RoomRuntime {
 			return false;
 		}
 
-		// Find the index of the current model in the fallback chain
-		const currentIndex = fallbackModels.findIndex(
-			(f) => f.model === currentModel && f.provider === currentProvider
-		);
+		// Resolve fallback chain: model-specific map takes priority over default list
+		const modelKey = `${currentProvider}/${currentModel}`;
+		const fallbackModels =
+			(settings.modelFallbackMap && settings.modelFallbackMap[modelKey]) ??
+			settings.fallbackModels ??
+			[];
+
+		if (fallbackModels.length === 0) {
+			return false;
+		}
+
+		// When using a model-specific mapping, always start from index 0 (the whole list
+		// is already the tailored chain for this model). When using the default list,
+		// advance past the current model's position so we don't re-try it.
+		const usingModelMap = Boolean(settings.modelFallbackMap && settings.modelFallbackMap[modelKey]);
+		const currentIndex = usingModelMap
+			? -1
+			: fallbackModels.findIndex((f) => f.model === currentModel && f.provider === currentProvider);
 
 		// Determine the starting index for the search
 		const startIndex = currentIndex === -1 ? 0 : currentIndex + 1;

@@ -150,6 +150,14 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
 	/** Ordered fallback model chain for automatic model switching on rate/usage limits */
 	fallbackModels?: FallbackModelEntry[];
+
+	/**
+	 * Model-specific fallback mappings. When a model hits a rate/usage limit,
+	 * its entry here takes priority over the default `fallbackModels` list.
+	 * Keys are `"provider/model"` strings (e.g. `"anthropic/claude-sonnet-4-20250514"`).
+	 * Values are ordered fallback chains, same format as `fallbackModels`.
+	 */
+	modelFallbackMap?: Record<string, FallbackModelEntry[]>;
 }
 
 /**
