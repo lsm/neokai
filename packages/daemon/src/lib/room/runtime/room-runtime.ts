@@ -63,6 +63,7 @@ import {
 } from './message-routing';
 import { createRateLimitBackoff } from './rate-limit-utils';
 import { classifyError } from './error-classifier';
+import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import { Logger } from '../../logger';
 import {
 	runWorkerExitGate,
@@ -2346,6 +2347,11 @@ export class RoomRuntime {
 					const uuid = 'uuid' in event.message ? (event.message.uuid as string) : null;
 					if (uuid && mirroredUuids.has(uuid)) return;
 					if (uuid) mirroredUuids.add(uuid);
+
+					// Skip tool results — they contain arbitrary file content that can match error
+					// patterns (e.g. test fixtures like "You've hit your limit · resets 11pm") but
+					// are not actual errors from the model
+					if (isSDKUserMessage(event.message)) return;
 
 					// Check for rate limit errors in real-time for both Worker and Leader sessions
 					const messageContent = JSON.stringify(event.message);
