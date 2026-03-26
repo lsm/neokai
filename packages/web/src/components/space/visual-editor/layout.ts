@@ -8,8 +8,9 @@
  * 4. Orphaned nodes (unreachable from start) are appended below the main graph
  */
 
-import type { WorkflowNode, WorkflowTransition } from '@neokai/shared';
+import type { WorkflowNode } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
+import type { VisualTransition } from './types';
 
 /** A 2D point in canvas coordinates */
 export interface Point {
@@ -49,7 +50,7 @@ export const TASK_AGENT_INITIAL_POSITION: Point = { x: START_X, y: TASK_AGENT_Y 
  */
 export function autoLayout(
 	nodes: WorkflowNode[],
-	transitions: WorkflowTransition[],
+	transitions: VisualTransition[],
 	startNodeId: string
 ): Map<string, Point> {
 	if (nodes.length === 0) {

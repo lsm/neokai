@@ -76,12 +76,6 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
 		expect(columnExists(db, 'space_workflows', 'start_step_id')).toBe(false);
 
-		// space_workflow_transitions has from_node_id and to_node_id
-		expect(columnExists(db, 'space_workflow_transitions', 'from_node_id')).toBe(true);
-		expect(columnExists(db, 'space_workflow_transitions', 'to_node_id')).toBe(true);
-		expect(columnExists(db, 'space_workflow_transitions', 'from_step_id')).toBe(false);
-		expect(columnExists(db, 'space_workflow_transitions', 'to_step_id')).toBe(false);
-
 		// space_tasks has workflow_node_id
 		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(true);
 		expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
@@ -310,25 +304,6 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		};
 		expect(wf.start_node_id).toBe('step-1');
 
-		// Verify column renames in space_workflow_transitions
-		expect(columnExists(db, 'space_workflow_transitions', 'from_node_id')).toBe(true);
-		expect(columnExists(db, 'space_workflow_transitions', 'to_node_id')).toBe(true);
-		expect(columnExists(db, 'space_workflow_transitions', 'from_step_id')).toBe(false);
-		expect(columnExists(db, 'space_workflow_transitions', 'to_step_id')).toBe(false);
-
-		// Verify data preserved in space_workflow_transitions
-		const trans = db
-			.prepare(
-				`SELECT id, from_node_id, to_node_id FROM space_workflow_transitions WHERE id='trans-1'`
-			)
-			.get() as {
-			id: string;
-			from_node_id: string;
-			to_node_id: string;
-		};
-		expect(trans.from_node_id).toBe('step-1');
-		expect(trans.to_node_id).toBe('step-2');
-
 		// Verify column rename in space_workflow_runs
 		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(true);
 		expect(columnExists(db, 'space_workflow_runs', 'current_step_id')).toBe(false);
@@ -542,7 +517,6 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		// Should still have node columns
 		expect(tableExists(db, 'space_workflow_nodes')).toBe(true);
 		expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
-		expect(columnExists(db, 'space_workflow_transitions', 'from_node_id')).toBe(true);
 		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(true);
 
 		// Data should still be intact
@@ -712,12 +686,6 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			workflow_node_id: string | null;
 		};
 		expect(task.workflow_node_id).toBe('step-1');
-
-		// FK from space_workflow_transitions to space_workflow_nodes should work
-		const transExists = db
-			.prepare(`SELECT id FROM space_workflow_transitions WHERE id='trans-1'`)
-			.get();
-		expect(transExists).toBeNull(); // No transition inserted, so should not exist
 	});
 
 	test('preserves columns added by earlier migrations', () => {
@@ -912,17 +880,6 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		expect(run.iteration_count).toBe(3);
 		expect(run.max_iterations).toBe(10);
 		expect(run.goal_id).toBe('goal-1');
-
-		// Verify M38 column (is_cyclic) preserved
-		db.prepare(
-			`INSERT INTO space_workflow_transitions (id, workflow_id, from_node_id, to_node_id, is_cyclic, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('trans-1', 'wf-1', 'step-1', 'step-1', 1, 0, now, now);
-		const trans = db
-			.prepare(`SELECT is_cyclic FROM space_workflow_transitions WHERE id='trans-1'`)
-			.get() as {
-			is_cyclic: number | null;
-		};
-		expect(trans.is_cyclic).toBe(1);
 
 		// Verify M40 column (status) preserved
 		db.prepare(

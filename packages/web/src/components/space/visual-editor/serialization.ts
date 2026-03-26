@@ -13,11 +13,8 @@
  * - `WorkflowCondition` is stored verbatim on `VisualEdge` (including `description`,
  *   `maxRetries`, `timeoutMs`). Fields that the visual editor UI does not expose are
  *   preserved through load/save so they are not silently stripped.
- * - `WorkflowTransition.id` is intentionally not stored on `VisualEdge`. The update
- *   API uses `WorkflowTransitionInput` (which omits `id`) and replaces the entire
- *   transition list, so per-transition IDs are backend-assigned on every save.
- *   If the backend API ever changes to patch individual transitions by ID, this
- *   code will need to be revisited.
+ * - `VisualEdge` represents a canvas-only directed edge for the visual editor.
+ *   Transitions have been removed from the backend; edges are visual-only.
  * - Blank rules (name and content both empty/whitespace) are silently filtered out
  *   before submission, matching the behaviour of `WorkflowEditor.tsx`.
  * - New steps (no `step.id`) receive a generated UUID inside `buildWorkflowFields`.
@@ -112,7 +109,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 
 	// Lazily compute auto-layout only when at least one step lacks a stored position
 	const layoutFallback = needsAutoLayout
-		? autoLayout(workflow.nodes, workflow.transitions, workflow.startNodeId)
+		? autoLayout(workflow.nodes, [], workflow.startNodeId)
 		: new Map<string, Point>();
 
 	const nodes: VisualNode[] = workflow.nodes.map((s) => {
@@ -147,12 +144,8 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		position: taskAgentPosition,
 	};
 
-	// Preserve the full WorkflowCondition (all fields) to avoid silent data loss
-	const edges: VisualEdge[] = workflow.transitions.map((t) => ({
-		fromStepKey: t.from,
-		toStepKey: t.to,
-		condition: t.condition ? { ...t.condition } : undefined,
-	}));
+	// Transitions have been removed from SpaceWorkflow; edges start empty.
+	const edges: VisualEdge[] = [];
 
 	// startNodeId: use the step.id directly (matches the edge keys).
 	// Fall back to the first step's id if the workflow's startNodeId is missing.
@@ -234,12 +227,6 @@ interface BuiltWorkflowFields {
 		agentId?: string;
 		agents?: WorkflowNodeAgent[];
 		instructions?: string;
-	}>;
-	transitions: Array<{
-		from: string;
-		to: string;
-		condition?: WorkflowCondition;
-		order: number;
 	}>;
 	startNodeId: string;
 	rules: Array<{ id?: string; name: string; content: string; appliesTo?: string[] }>;
@@ -323,53 +310,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 		};
 	});
 
-	// Build a position lookup for target nodes (used to compute transition order)
-	const positionByKey = new Map<string, Point>();
-	for (const node of persistableNodes) {
-		const key = node.step.id ?? node.step.localId;
-		positionByKey.set(key, node.position);
-	}
-
-	// Group outgoing edges by source key to compute order
-	const outgoingBySource = new Map<string, VisualEdge[]>();
-	for (const edge of state.edges) {
-		const list = outgoingBySource.get(edge.fromStepKey) ?? [];
-		list.push(edge);
-		outgoingBySource.set(edge.fromStepKey, list);
-	}
-
-	// Build transitions with computed order (left-to-right by target x-position).
-	// Edges whose fromStepKey or toStepKey does not resolve to a known node are
-	// silently dropped — this is the correct behaviour when a node has been deleted
-	// while an edge still references it.
-	const transitions: BuiltWorkflowFields['transitions'] = [];
-	for (const [sourceKey, edgeGroup] of outgoingBySource) {
-		const fromId = keyToPersistedId.get(sourceKey);
-		if (!fromId) continue; // dangling source — drop
-
-		// Sort by target node x-position (ascending = left-to-right)
-		const sorted = [...edgeGroup].sort((a, b) => {
-			const xA = positionByKey.get(a.toStepKey)?.x ?? 0;
-			const xB = positionByKey.get(b.toStepKey)?.x ?? 0;
-			return xA - xB;
-		});
-
-		for (let i = 0; i < sorted.length; i++) {
-			const edge = sorted[i];
-			const toId = keyToPersistedId.get(edge.toStepKey);
-			if (!toId) continue; // dangling target — drop
-
-			transitions.push({
-				from: fromId,
-				to: toId,
-				// Preserve full WorkflowCondition (including backend-only fields).
-				// undefined condition means unconditional ("always").
-				condition: edge.condition ? { ...edge.condition } : undefined,
-				order: i,
-			});
-		}
-	}
-
 	// Build layout (Task Agent virtual node excluded — not persisted)
 	const layout: Record<string, { x: number; y: number }> = {};
 	for (const node of persistableNodes) {
@@ -403,7 +343,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 	return {
 		fields: {
 			nodes,
-			transitions,
 			startNodeId,
 			rules,
 			layout,
@@ -435,7 +374,6 @@ export function visualStateToCreateParams(
 		name,
 		description,
 		nodes: fields.nodes,
-		transitions: fields.transitions,
 		startNodeId: fields.startNodeId || undefined,
 		// WorkflowRuleInput omits `id` — strip it from each rule
 		rules: fields.rules.map(({ id: _id, ...rest }) => rest),
@@ -460,7 +398,6 @@ export function visualStateToUpdateParams(
 	return {
 		...overrides,
 		nodes: fields.nodes,
-		transitions: fields.transitions,
 		startNodeId: fields.startNodeId || null,
 		// WorkflowRule requires `id` — generate one for new rules that lack a persisted id
 		rules: fields.rules.map((r) => ({

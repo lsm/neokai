@@ -59,22 +59,17 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
 		return <span class="text-xs text-gray-700 italic">No steps</span>;
 	}
 
-	// Build ordered step list following startNodeId
+	// Build ordered step list: startNode first, then remaining nodes in order
 	const stepMap = new Map(workflow.nodes.map((s) => [s.id, s]));
 	const ordered: string[] = [];
 	const visited = new Set<string>();
-	let currentId: string | undefined = workflow.startNodeId;
 
-	while (currentId && !visited.has(currentId)) {
-		visited.add(currentId);
-		ordered.push(currentId);
-		const outgoing = workflow.transitions
-			.filter((t) => t.from === currentId)
-			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-		currentId = outgoing[0]?.to;
+	const startNode = stepMap.get(workflow.startNodeId);
+	if (startNode) {
+		visited.add(startNode.id);
+		ordered.push(startNode.id);
 	}
 
-	// Append orphaned steps (not reachable from startNodeId)
 	for (const s of workflow.nodes) {
 		if (!visited.has(s.id)) {
 			ordered.push(s.id);
@@ -90,14 +85,11 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
 			{display.map((id, i) => {
 				const step = stepMap.get(id);
 				const nextId = i + 1 < display.length ? display[i + 1] : undefined;
-				const transition = nextId
-					? workflow.transitions.find((t) => t.from === id && t.to === nextId)
-					: undefined;
 
 				return (
 					<div key={id} class="flex items-center" title={step?.name ?? id}>
 						<MiniStepDot isStart={i === 0} />
-						{nextId && <MiniConnector conditionType={transition?.condition?.type} />}
+						{nextId && <MiniConnector conditionType={undefined} />}
 					</div>
 				);
 			})}

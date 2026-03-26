@@ -1,17 +1,15 @@
 /**
  * SpaceWorkflowRepository
  *
- * Data access layer for SpaceWorkflow, SpaceWorkflowNode, and SpaceWorkflowTransition records.
+ * Data access layer for SpaceWorkflow and SpaceWorkflowNode records.
  *
  * Storage layout:
  *   space_workflows             — id, space_id, name, description, start_node_id, config (JSON), channels (JSON), layout (JSON), created_at, updated_at
  *   space_workflow_nodes        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
- *   space_workflow_transitions  — id, workflow_id, from_node_id, to_node_id, condition (JSON), order_index, is_cyclic, created_at, updated_at
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
  * The `channels` column on space_workflows stores: WorkflowChannel[] JSON (unified channel topology)
  * The `config` column on space_workflow_nodes stores: { instructions? }
- * The `condition` column on space_workflow_transitions stores: WorkflowCondition JSON or null
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -20,10 +18,7 @@ import type {
 	SpaceWorkflow,
 	WorkflowNode,
 	WorkflowRule,
-	WorkflowCondition,
-	WorkflowTransition,
 	WorkflowNodeInput,
-	WorkflowTransitionInput,
 	WorkflowRuleInput,
 	WorkflowNodeAgent,
 	WorkflowChannel,
@@ -56,18 +51,6 @@ interface NodeRow {
 	agent_id: string | null;
 	order_index: number;
 	config: string | null;
-	created_at: number;
-	updated_at: number;
-}
-
-interface TransitionRow {
-	id: string;
-	workflow_id: string;
-	from_node_id: string;
-	to_node_id: string;
-	condition: string | null;
-	order_index: number;
-	is_cyclic: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -123,23 +106,7 @@ function rowToNode(row: NodeRow): WorkflowNode {
 	return node;
 }
 
-function rowToTransition(row: TransitionRow): WorkflowTransition {
-	const condition = parseJson<WorkflowCondition | null>(row.condition, null);
-	return {
-		id: row.id,
-		from: row.from_node_id,
-		to: row.to_node_id,
-		condition: condition ?? undefined,
-		order: row.order_index,
-		isCyclic: row.is_cyclic !== null ? Boolean(row.is_cyclic) : undefined,
-	};
-}
-
-function rowToWorkflow(
-	row: WorkflowRow,
-	nodes: WorkflowNode[],
-	transitions: WorkflowTransition[]
-): SpaceWorkflow {
+function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 	const cfg = parseJson<WorkflowConfigJson>(row.config, {});
 	// Derive startNodeId: use explicit column, fall back to first node
 	const startNodeId = row.start_node_id ?? nodes[0]?.id ?? '';
@@ -152,7 +119,6 @@ function rowToWorkflow(
 		name: row.name,
 		description: row.description || undefined,
 		nodes,
-		transitions,
 		startNodeId,
 		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
@@ -227,12 +193,6 @@ export class SpaceWorkflowRepository {
 			this.insertNode(workflowId, input, id, i, now);
 		}
 
-		// Insert transition rows
-		const transitionInputs = params.transitions ?? [];
-		for (let i = 0; i < transitionInputs.length; i++) {
-			this.insertTransition(workflowId, transitionInputs[i], i, now);
-		}
-
 		return this.getWorkflow(workflowId)!;
 	}
 
@@ -246,15 +206,14 @@ export class SpaceWorkflowRepository {
 			| undefined;
 		if (!row) return null;
 		const nodes = this.fetchNodes(id);
-		const transitions = this.fetchTransitions(id);
-		return rowToWorkflow(row, nodes, transitions);
+		return rowToWorkflow(row, nodes);
 	}
 
 	listWorkflows(spaceId: string): SpaceWorkflow[] {
 		const rows = this.db
 			.prepare(`SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC`)
 			.all(spaceId) as WorkflowRow[];
-		return rows.map((r) => rowToWorkflow(r, this.fetchNodes(r.id), this.fetchTransitions(r.id)));
+		return rows.map((r) => rowToWorkflow(r, this.fetchNodes(r.id)));
 	}
 
 	// -------------------------------------------------------------------------
@@ -325,9 +284,8 @@ export class SpaceWorkflowRepository {
 		}
 
 		const hasNodeReplacement = params.nodes !== undefined;
-		const hasTransitionReplacement = params.transitions !== undefined;
 
-		if (fields.length > 0 || hasNodeReplacement || hasTransitionReplacement) {
+		if (fields.length > 0 || hasNodeReplacement) {
 			fields.push('updated_at = ?');
 			values.push(now, id);
 			if (fields.length > 0) {
@@ -338,26 +296,11 @@ export class SpaceWorkflowRepository {
 		}
 
 		if (hasNodeReplacement) {
-			// Must delete transitions before nodes (FK constraint)
-			this.db.prepare(`DELETE FROM space_workflow_transitions WHERE workflow_id = ?`).run(id);
 			this.db.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ?`).run(id);
 			const nodes = params.nodes ?? [];
 			for (let i = 0; i < nodes.length; i++) {
 				const node = nodes[i];
 				this.insertNode(id, node as WorkflowNodeInput, node.id ?? generateUUID(), i, now);
-			}
-			// After replacing nodes, also replace transitions if provided
-			if (hasTransitionReplacement) {
-				const transitions = params.transitions ?? [];
-				for (let i = 0; i < transitions.length; i++) {
-					this.insertTransition(id, transitions[i], i, now);
-				}
-			}
-		} else if (hasTransitionReplacement) {
-			this.db.prepare(`DELETE FROM space_workflow_transitions WHERE workflow_id = ?`).run(id);
-			const transitions = params.transitions ?? [];
-			for (let i = 0; i < transitions.length; i++) {
-				this.insertTransition(id, transitions[i], i, now);
 			}
 		}
 
@@ -418,15 +361,6 @@ export class SpaceWorkflowRepository {
 		return rows.map(rowToNode);
 	}
 
-	private fetchTransitions(workflowId: string): WorkflowTransition[] {
-		const rows = this.db
-			.prepare(
-				`SELECT * FROM space_workflow_transitions WHERE workflow_id = ? ORDER BY order_index ASC, rowid ASC`
-			)
-			.all(workflowId) as TransitionRow[];
-		return rows.map(rowToTransition);
-	}
-
 	private insertNode(
 		workflowId: string,
 		input: WorkflowNodeInput,
@@ -460,35 +394,6 @@ export class SpaceWorkflowRepository {
 				agentIdValue,
 				index,
 				JSON.stringify(nodeCfg),
-				now,
-				now
-			);
-	}
-
-	private insertTransition(
-		workflowId: string,
-		input: WorkflowTransitionInput,
-		index: number,
-		now: number
-	): void {
-		const transitionId = generateUUID();
-		const conditionJson = input.condition ? JSON.stringify(input.condition) : null;
-		const isCyclicValue = input.isCyclic !== undefined ? (input.isCyclic ? 1 : 0) : null;
-
-		this.db
-			.prepare(
-				`INSERT INTO space_workflow_transitions
-           (id, workflow_id, from_node_id, to_node_id, condition, order_index, is_cyclic, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-			)
-			.run(
-				transitionId,
-				workflowId,
-				input.from,
-				input.to,
-				conditionJson,
-				input.order ?? index,
-				isCyclicValue,
 				now,
 				now
 			);

@@ -27,7 +27,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import type { WorkflowTransition } from '@neokai/shared';
+import type { VisualTransition } from '../types';
 import {
 	EdgeRenderer,
 	computeEdgePoints,
@@ -62,7 +62,7 @@ function makeTransition(
 	from: string,
 	to: string,
 	conditionType?: 'always' | 'human' | 'condition'
-): WorkflowTransition {
+): VisualTransition {
 	return {
 		id,
 		from,

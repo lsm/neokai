@@ -2,6 +2,21 @@
  * Shared types for the visual editor canvas and nodes.
  */
 
+import type { WorkflowCondition } from '@neokai/shared';
+
+/**
+ * A directed edge used internally by the visual editor canvas.
+ * This replaces the removed backend `WorkflowTransition` type for UI-only use.
+ */
+export interface VisualTransition {
+	id: string;
+	from: string;
+	to: string;
+	condition?: WorkflowCondition;
+	order?: number;
+	isCyclic?: boolean;
+}
+
 export interface Point {
 	x: number;
 	y: number;

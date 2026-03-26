@@ -8,8 +8,9 @@
 
 import { describe, it, expect } from 'vitest';
 import { autoLayout } from '../layout.ts';
-import type { WorkflowNode, WorkflowTransition } from '@neokai/shared';
+import type { WorkflowNode } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
+import type { VisualTransition } from '../types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -19,7 +20,7 @@ function makeStep(id: string): WorkflowNode {
 	return { id, name: id, agentId: 'agent-1' };
 }
 
-function makeTransition(from: string, to: string): WorkflowTransition {
+function makeTransition(from: string, to: string): VisualTransition {
 	return { id: `${from}->${to}`, from, to };
 }
 
@@ -179,7 +180,7 @@ describe('autoLayout', () => {
 
 		it('all orphans are placed on the same row', () => {
 			const steps = ['a', 'orphan1', 'orphan2', 'orphan3'].map(makeStep);
-			const transitions: WorkflowTransition[] = [];
+			const transitions: VisualTransition[] = [];
 			const result = autoLayout(steps, transitions, 'a');
 
 			// 'a' is reachable (it's the start), orphan1/2/3 are not

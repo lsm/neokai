@@ -454,27 +454,6 @@ describe('Space Export/Import RPC Handlers', () => {
 			expect(bundle.workflows).toHaveLength(1);
 			expect(bundle.workflows[0].name).toBe('WF1');
 		});
-
-		it('exports transition step names instead of UUIDs', async () => {
-			const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
-			workflowManager.createWorkflow({
-				spaceId: SPACE_ID,
-				name: 'TwoStep',
-				nodes: [
-					{ id: 'step-1', name: 'First', agentId: agent.id },
-					{ id: 'step-2', name: 'Second', agentId: agent.id },
-				],
-				transitions: [{ from: 'step-1', to: 'step-2' }],
-			});
-
-			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
-				spaceId: SPACE_ID,
-			});
-
-			const wf = bundle.workflows[0];
-			expect(wf.transitions[0].fromNode).toBe('First');
-			expect(wf.transitions[0].toNode).toBe('Second');
-		});
 	});
 
 	// ─── spaceExport.bundle ───────────────────────────────────────────────────
@@ -626,18 +605,6 @@ describe('Space Export/Import RPC Handlers', () => {
 			});
 
 			expect(result.validationErrors).toHaveLength(0);
-		});
-
-		it('flags condition transition without expression as error', async () => {
-			const bundle = makeBundleWithCondition('condition', ''); // empty expression
-
-			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
-				spaceId: SPACE_ID,
-				bundle,
-			});
-
-			expect(result.validationErrors.length).toBeGreaterThan(0);
-			expect(result.validationErrors[0]).toContain('non-empty expression');
 		});
 
 		it('passes validation for always condition', async () => {
@@ -954,7 +921,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 		// ─── Multi-agent workflow ──────────────────────────────────────────
 
-		it('imports workflow with multiple steps and transitions', async () => {
+		it('imports workflow with multiple steps', async () => {
 			const bundle = makeTwoStepBundle();
 
 			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -965,104 +932,8 @@ describe('Space Export/Import RPC Handlers', () => {
 			expect(result.agents).toHaveLength(2);
 			const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
 			expect(wf.nodes).toHaveLength(2);
-			expect(wf.transitions).toHaveLength(1);
-
-			// Transition should reference correct step UUIDs
-			const step1 = wf.nodes.find((s) => s.name === 'Code')!;
-			const step2 = wf.nodes.find((s) => s.name === 'Review')!;
-			expect(wf.transitions[0].from).toBe(step1.id);
-			expect(wf.transitions[0].to).toBe(step2.id);
-		});
-
-		it('imports workflow with isCyclic transition preserved through buildWorkflowCreateParams', async () => {
-			const bundle = {
-				version: 1,
-				type: 'bundle',
-				name: 'Cyclic Bundle',
-				agents: [
-					{ version: 1, type: 'agent', name: 'Planner', role: 'planner' },
-					{ version: 1, type: 'agent', name: 'Coder', role: 'coder' },
-					{ version: 1, type: 'agent', name: 'Verifier', role: 'general' },
-				],
-				workflows: [
-					{
-						version: 1,
-						type: 'workflow',
-						name: 'CyclicWorkflow',
-						nodes: [
-							{ agentRef: 'Planner', name: 'Plan' },
-							{ agentRef: 'Coder', name: 'Code' },
-							{ agentRef: 'Verifier', name: 'Verify' },
-						],
-						transitions: [
-							{
-								fromNode: 'Plan',
-								toNode: 'Code',
-								condition: { type: 'human', description: 'Approve plan' },
-								order: 0,
-							},
-							{
-								fromNode: 'Code',
-								toNode: 'Verify',
-								condition: { type: 'always' },
-								order: 0,
-							},
-							{
-								fromNode: 'Verify',
-								toNode: 'Plan',
-								condition: {
-									type: 'task_result',
-									expression: 'failed',
-									description: 'Loop back on failure',
-								},
-								order: 0,
-								isCyclic: true,
-							},
-							{
-								fromNode: 'Verify',
-								toNode: 'Code',
-								condition: {
-									type: 'task_result',
-									expression: 'passed',
-									description: 'Done on success',
-								},
-								order: 1,
-							},
-						],
-						startNode: 'Plan',
-						rules: [],
-						tags: ['cyclic'],
-					},
-				],
-				exportedAt: Date.now(),
-			};
-
-			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
-				spaceId: SPACE_ID,
-				bundle,
-			});
-
-			expect(result.workflows).toHaveLength(1);
-			const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-			expect(wf.transitions).toHaveLength(4);
-
-			// Find the cyclic Verify→Plan transition
-			const planStep = wf.nodes.find((s) => s.name === 'Plan')!;
-			const verifyStep = wf.nodes.find((s) => s.name === 'Verify')!;
-			const cyclicTransition = wf.transitions.find(
-				(t) => t.from === verifyStep.id && t.to === planStep.id
-			)!;
-			expect(cyclicTransition.isCyclic).toBe(true);
-			expect(cyclicTransition.condition?.type).toBe('task_result');
-			expect(cyclicTransition.condition?.expression).toBe('failed');
-
-			// Non-cyclic transitions should not have isCyclic set
-			const nonCyclicTransitions = wf.transitions.filter(
-				(t) => !(t.from === verifyStep.id && t.to === planStep.id)
-			);
-			for (const t of nonCyclicTransitions) {
-				expect(t.isCyclic).toBeUndefined();
-			}
+			expect(wf.nodes.find((s) => s.name === 'Code')).toBeTruthy();
+			expect(wf.nodes.find((s) => s.name === 'Review')).toBeTruthy();
 		});
 
 		it('returns empty warnings array on clean import', async () => {
@@ -2413,7 +2284,6 @@ describe('full export→import round-trip', () => {
 					],
 				},
 			],
-			transitions: [{ id: 'trans-1', from: 'step-plan', to: 'step-collab' }],
 			startNodeId: 'step-plan',
 			rules: [],
 			tags: ['mixed'],
@@ -2448,11 +2318,6 @@ describe('full export→import round-trip', () => {
 		expect(importedWf.channels).toHaveLength(1);
 		expect(importedWf.channels![0].direction).toBe('one-way');
 
-		// Transition preserved with remapped step UUID endpoints
-		expect(importedWf.transitions).toHaveLength(1);
-		const transition = importedWf.transitions[0];
-		expect(transition.from).toBe(planStep.id);
-		expect(transition.to).toBe(collabStep.id);
 		expect(importedWf.startNodeId).toBe(planStep.id);
 
 		// Tags preserved

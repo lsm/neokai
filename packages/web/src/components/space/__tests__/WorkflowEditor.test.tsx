@@ -74,7 +74,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 			{ id: step1Id, name: 'Plan', agentId: 'agent-1', instructions: 'Plan things' },
 			{ id: step2Id, name: 'Code', agentId: 'agent-2', instructions: '' },
 		],
-		transitions: [{ id: 'tr-1', from: step1Id, to: step2Id, order: 0 }],
 		startNodeId: step1Id,
 		rules: [],
 		tags: [],
@@ -105,8 +104,8 @@ describe('WorkflowEditor', () => {
 			makeAgent('agent-leader', 'leader', 'leader'),
 		];
 		mockWorkflows.value = [];
-		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], transitions: [], tags: [] });
-		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], transitions: [], tags: [] });
+		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], tags: [] });
+		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
 		mockCreateWorkflow.mockClear();
 		mockUpdateWorkflow.mockClear();
 		defaultProps.onSave.mockClear();
@@ -242,31 +241,20 @@ describe('WorkflowEditor', () => {
 			expect(steps.map((s) => s.name)).toEqual(['Plan', 'Code']);
 		});
 
-		it('returns transitions between sequential steps', () => {
+		it('returns transitions (always) between sequential steps', () => {
 			const wf = makeWorkflow();
 			const { transitions } = initFromWorkflow(wf);
 			expect(transitions).toHaveLength(1);
 			expect(transitions[0].type).toBe('always');
 		});
 
-		it('preserves transition condition type', () => {
-			const s1 = 'step-1';
-			const s2 = 'step-2';
-			const wf = makeWorkflow({
-				transitions: [{ id: 'tr-1', from: s1, to: s2, condition: { type: 'human' }, order: 0 }],
-			});
-			const { transitions } = initFromWorkflow(wf);
-			expect(transitions[0].type).toBe('human');
-		});
-
-		it('appends orphaned steps not reachable from startNodeId', () => {
+		it('appends nodes not matching startNodeId after the start node', () => {
 			const wf = makeWorkflow({
 				nodes: [
 					{ id: 'step-1', name: 'Plan', agentId: 'a1' },
 					{ id: 'step-2', name: 'Code', agentId: 'a2' },
 					{ id: 'orphan', name: 'Orphan', agentId: 'a3' },
 				],
-				transitions: [{ id: 'tr-1', from: 'step-1', to: 'step-2', order: 0 }],
 				startNodeId: 'step-1',
 			});
 			const { steps } = initFromWorkflow(wf);
@@ -470,7 +458,7 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
-		it('sends steps with generated IDs and transitions', async () => {
+		it('sends steps with generated IDs', async () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector(
 				'input[placeholder="e.g. Feature Development"]'
@@ -484,9 +472,6 @@ describe('WorkflowEditor', () => {
 				expect(mockCreateWorkflow).toHaveBeenCalledWith(
 					expect.objectContaining({
 						nodes: expect.arrayContaining([expect.objectContaining({ name: expect.any(String) })]),
-						transitions: expect.arrayContaining([
-							expect.objectContaining({ from: expect.any(String), to: expect.any(String) }),
-						]),
 					})
 				);
 			});

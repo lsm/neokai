@@ -46,7 +46,7 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
  * Coding Workflow
  *
  * Four-node graph: Plan → Code → Verify → Done (with cycle).
- * Routing is channel-based (agent-centric model); transitions are empty.
+ * Routing is channel-based (agent-centric model); routing is channel-based.
  * - Plan → Code: `human` gate — a human must approve the plan.
  * - Code → Verify: `always` gate — automatically verify after coding.
  * - Verify → Plan: `task_result` gate on 'failed' — loops back (cyclic).
@@ -85,7 +85,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			agentId: 'general',
 		},
 	],
-	transitions: [],
 	startNodeId: CODING_PLANNER_STEP,
 	rules: [],
 	tags: ['coding', 'default'],
@@ -142,7 +141,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  * Research Workflow
  *
  * Two-node graph: Planner → General.
- * Routing is channel-based (agent-centric model); transitions are empty.
+ * Routing is channel-based (agent-centric model); routing is channel-based.
  * - Plan Research → Research: `always` gate — advances without human intervention.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
@@ -163,7 +162,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 			agentId: 'general',
 		},
 	],
-	transitions: [],
 	startNodeId: RESEARCH_PLANNER_STEP,
 	rules: [],
 	tags: ['research'],
@@ -204,7 +202,6 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 			agentId: 'coder',
 		},
 	],
-	transitions: [],
 	startNodeId: REVIEW_CODER_STEP,
 	rules: [],
 	tags: ['coding', 'review'],
@@ -295,14 +292,6 @@ export function seedBuiltInWorkflows(
 			instructions: s.instructions,
 		}));
 
-		const transitions = template.transitions.map((t) => ({
-			from: nodeIdMap.get(t.from)!,
-			to: nodeIdMap.get(t.to)!,
-			condition: t.condition,
-			order: t.order,
-			isCyclic: t.isCyclic,
-		}));
-
 		const startNodeId = nodeIdMap.get(template.startNodeId)!;
 
 		workflowManager.createWorkflow({
@@ -310,7 +299,6 @@ export function seedBuiltInWorkflows(
 			name: template.name,
 			description: template.description,
 			nodes,
-			transitions,
 			startNodeId,
 			rules: [],
 			tags: [...template.tags],

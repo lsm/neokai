@@ -26,7 +26,6 @@ import type {
 	ExportedWorkflowChannel,
 	ExportedWorkflowNode,
 	ExportedWorkflowNodeAgent,
-	ExportedWorkflowTransition,
 	ExportedWorkflowRule,
 	SpaceExportBundle,
 } from '@neokai/shared';
@@ -100,14 +99,6 @@ const exportedWorkflowNodeSchema = z
 		}
 	});
 
-const exportedWorkflowTransitionSchema = z.object({
-	fromNode: z.string().min(1),
-	toNode: z.string().min(1),
-	condition: workflowConditionSchema.optional(),
-	order: z.number().int().optional(),
-	isCyclic: z.boolean().optional(),
-});
-
 const exportedWorkflowRuleSchema = z.object({
 	name: z.string().min(1),
 	content: z.string().min(1),
@@ -143,7 +134,6 @@ const exportedWorkflowBaseSchema = z.object({
 	name: z.string().min(1),
 	description: z.string().optional(),
 	nodes: z.array(exportedWorkflowNodeSchema),
-	transitions: z.array(exportedWorkflowTransitionSchema),
 	startNode: z.string().min(1),
 	rules: z.array(exportedWorkflowRuleSchema),
 	tags: z.array(z.string()),
@@ -265,17 +255,6 @@ export function exportWorkflow(
 		return exported;
 	});
 
-	// Export transitions — strip `id`, remap from/to node UUIDs → node names
-	const exportedTransitions: ExportedWorkflowTransition[] = workflow.transitions.map((t) => {
-		const fromNode = nodeIdToName.get(t.from) ?? t.from;
-		const toNode = nodeIdToName.get(t.to) ?? t.to;
-		const exported: ExportedWorkflowTransition = { fromNode, toNode };
-		if (t.condition !== undefined) exported.condition = t.condition;
-		if (t.order !== undefined) exported.order = t.order;
-		if (t.isCyclic !== undefined) exported.isCyclic = t.isCyclic;
-		return exported;
-	});
-
 	// Export startNodeId UUID → node name
 	const startId = workflow.startNodeId;
 	const startNode = nodeIdToName.get(startId) ?? startId;
@@ -304,7 +283,6 @@ export function exportWorkflow(
 		type: 'workflow',
 		name: workflow.name,
 		nodes: exportedNodes,
-		transitions: exportedTransitions,
 		startNode,
 		rules: exportedRules,
 		tags: workflow.tags,
@@ -411,22 +389,6 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
 			ok: false,
 			error: `invalid: startNode "${result.data.startNode}" does not reference a known node name`,
 		};
-	}
-	// Transition endpoints must reference known node names
-	for (let i = 0; i < result.data.transitions.length; i++) {
-		const t = result.data.transitions[i];
-		if (!nodeNameSet.has(t.fromNode)) {
-			return {
-				ok: false,
-				error: `invalid: transitions[${i}].fromNode "${t.fromNode}" does not reference a known node name`,
-			};
-		}
-		if (!nodeNameSet.has(t.toNode)) {
-			return {
-				ok: false,
-				error: `invalid: transitions[${i}].toNode "${t.toNode}" does not reference a known node name`,
-			};
-		}
 	}
 
 	// Channel from/to must reference known node names, agent slot names, or '*' wildcard.

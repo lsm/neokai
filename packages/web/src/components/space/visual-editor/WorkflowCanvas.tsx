@@ -21,13 +21,13 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import type { ComponentChildren, JSX, RefObject } from 'preact';
-import type { WorkflowTransition } from '@neokai/shared';
+
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { VisualCanvas } from './VisualCanvas';
 import { WorkflowNode } from './WorkflowNode';
 import type { WorkflowNodeProps, PortType } from './WorkflowNode';
 import { EdgeRenderer, type ResolvedWorkflowChannel } from './EdgeRenderer';
-import type { ViewportState, Point, NodePosition } from './types';
+import type { ViewportState, Point, NodePosition, VisualTransition } from './types';
 import { useConnectionDrag } from './useConnectionDrag';
 
 /** Default node dimensions used when deriving NodePosition from WorkflowNodeData. */
@@ -56,7 +56,7 @@ export interface WorkflowCanvasProps {
 	viewportState: ViewportState;
 	onViewportChange: (state: ViewportState) => void;
 	/** Edges to render between nodes. Also used for duplicate detection during connection drag. */
-	transitions?: WorkflowTransition[];
+	transitions?: VisualTransition[];
 	/** Channel edges to render between nodes (Task Agent channels and regular channels). */
 	channels?: ResolvedWorkflowChannel[];
 	/**

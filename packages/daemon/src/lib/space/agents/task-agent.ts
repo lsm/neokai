@@ -54,7 +54,6 @@ import type {
 	WorkflowNode,
 	WorkflowChannel,
 	WorkflowCondition,
-	WorkflowTransition,
 	WorkflowRule,
 	SessionFeatures,
 } from '@neokai/shared';
@@ -109,24 +108,6 @@ function formatStep(step: WorkflowNode, agents: SpaceAgent[]): string {
 	}
 	const instructions = step.instructions ? `\n    Instructions: ${step.instructions}` : '';
 	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})${instructions}`;
-}
-
-function formatTransition(t: WorkflowTransition): string {
-	let conditionLabel = '';
-	if (t.condition) {
-		if (t.condition.type === 'human') {
-			conditionLabel = ' [HUMAN GATE]';
-		} else if (t.condition.type === 'condition') {
-			conditionLabel = ` [condition: ${t.condition.expression ?? '?'}]`;
-		} else if (t.condition.type === 'task_result') {
-			conditionLabel = ` [result matches "${t.condition.expression ?? '?'}"]`;
-		}
-		// 'always' transitions produce no label — they are unconditional, semantically
-		// identical to a transition with no condition object. Any future WorkflowConditionType
-		// values not handled here will also produce no label; add a branch above when new
-		// types are introduced.
-	}
-	return `- \`${t.from}\` → \`${t.to}\`${conditionLabel}`;
 }
 
 function formatRule(rule: WorkflowRule): string {
@@ -417,13 +398,6 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 			}
 		} else {
 			parts.push(`\n_This workflow has no steps defined._`);
-		}
-
-		if (wf.transitions.length > 0) {
-			parts.push(`\n### Transitions\n`);
-			for (const t of wf.transitions) {
-				parts.push(formatTransition(t));
-			}
 		}
 
 		if (wf.rules && wf.rules.length > 0) {

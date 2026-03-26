@@ -3,9 +3,9 @@
  *
  * Coverage:
  * - workflowToVisualState: position restoration from layout, auto-layout fallback,
- *   edge mapping, startNodeId pass-through, WorkflowCondition field preservation
- * - visualStateToCreateParams / visualStateToUpdateParams: round-trip, transition
- *   ordering, layout output, rules remapping, dangling edge handling
+ *   empty edge initialization, startNodeId pass-through
+ * - visualStateToCreateParams / visualStateToUpdateParams: round-trip,
+ *   layout output, rules remapping
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -15,9 +15,8 @@ import {
 	visualStateToUpdateParams,
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
-import type { SpaceWorkflow, WorkflowNode, WorkflowTransition, WorkflowRule } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowNode, WorkflowRule } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
-
 // ---------------------------------------------------------------------------
 // Stable UUID counter so tests are deterministic
 // ---------------------------------------------------------------------------
@@ -43,16 +42,6 @@ function makeStep(id: string, name?: string, agentId?: string): WorkflowNode {
 	return { id, name: name ?? id, agentId: agentId ?? 'agent-1' };
 }
 
-function makeTransition(
-	from: string,
-	to: string,
-	id?: string,
-	order?: number,
-	condition?: WorkflowTransition['condition']
-): WorkflowTransition {
-	return { id: id ?? `${from}->${to}`, from, to, order, condition };
-}
-
 function makeRule(id: string, name: string, content: string, appliesTo?: string[]): WorkflowRule {
 	return { id, name, content, appliesTo };
 }
@@ -63,7 +52,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'Test Workflow',
 		nodes: [],
-		transitions: [],
 		startNodeId: '',
 		rules: [],
 		tags: [],
@@ -81,7 +69,6 @@ describe('workflowToVisualState', () => {
 	it('creates one node per step (plus Task Agent virtual node)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -92,22 +79,18 @@ describe('workflowToVisualState', () => {
 		expect(state.nodes.find((n) => n.step.id === 's2')?.step.id).toBe('s2');
 	});
 
-	it('creates one edge per transition', () => {
+	it('starts with empty edges (transitions removed from backend)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2'), makeStep('s3')],
-			transitions: [makeTransition('s1', 's2'), makeTransition('s2', 's3')],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
-		expect(state.edges).toHaveLength(2);
-		expect(state.edges[0]).toMatchObject({ fromStepKey: 's1', toStepKey: 's2' });
-		expect(state.edges[1]).toMatchObject({ fromStepKey: 's2', toStepKey: 's3' });
+		expect(state.edges).toHaveLength(0);
 	});
 
 	it('passes startNodeId through unchanged', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's2',
 		});
 		const state = workflowToVisualState(wf);
@@ -117,7 +100,6 @@ describe('workflowToVisualState', () => {
 	it('falls back to first step when startNodeId does not match any step', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1')],
-			transitions: [],
 			startNodeId: 'nonexistent',
 		});
 		const state = workflowToVisualState(wf);
@@ -127,7 +109,6 @@ describe('workflowToVisualState', () => {
 	it('restores positions from workflow.layout', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 			layout: { s1: { x: 100, y: 200 }, s2: { x: 350, y: 200 } },
 		});
@@ -141,7 +122,6 @@ describe('workflowToVisualState', () => {
 		// If autoLayout ran, it would produce different values (50, 170) not (999, 888).
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 			layout: { s1: { x: 999, y: 888 }, s2: { x: 777, y: 666 } },
 		});
@@ -153,7 +133,6 @@ describe('workflowToVisualState', () => {
 	it('uses autoLayout when no layout is provided', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -166,7 +145,6 @@ describe('workflowToVisualState', () => {
 	it('uses autoLayout only for steps missing from partial layout', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 			layout: { s1: { x: 999, y: 888 } }, // s2 not in layout
 		});
@@ -178,58 +156,19 @@ describe('workflowToVisualState', () => {
 		expect(s2?.position).toBeDefined();
 	});
 
-	it('preserves full WorkflowCondition fields (description, maxRetries, timeoutMs)', () => {
+	it('starts with empty edges (WorkflowCondition not loaded from transitions)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [
-				makeTransition('s1', 's2', 't1', 0, {
-					type: 'condition',
-					expression: 'exit 0',
-					description: 'Check output file',
-					maxRetries: 3,
-					timeoutMs: 5000,
-				}),
-			],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
-		expect(state.edges[0].condition).toEqual({
-			type: 'condition',
-			expression: 'exit 0',
-			description: 'Check output file',
-			maxRetries: 3,
-			timeoutMs: 5000,
-		});
-	});
-
-	it('maps condition types correctly', () => {
-		const wf = makeWorkflow({
-			nodes: [makeStep('s1'), makeStep('s2'), makeStep('s3')],
-			transitions: [
-				makeTransition('s1', 's2', 't1', 0, { type: 'human' }),
-				makeTransition('s2', 's3', 't2', 1, { type: 'condition', expression: 'exit 0' }),
-			],
-			startNodeId: 's1',
-		});
-		const state = workflowToVisualState(wf);
-		expect(state.edges[0].condition).toMatchObject({ type: 'human' });
-		expect(state.edges[1].condition).toMatchObject({ type: 'condition', expression: 'exit 0' });
-	});
-
-	it('maps transitions without condition to undefined (unconditional)', () => {
-		const wf = makeWorkflow({
-			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
-			startNodeId: 's1',
-		});
-		const state = workflowToVisualState(wf);
-		expect(state.edges[0].condition).toBeUndefined();
+		// Transitions removed from SpaceWorkflow; visual state starts with no edges
+		expect(state.edges).toHaveLength(0);
 	});
 
 	it('converts rules to drafts', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1')],
-			transitions: [],
 			startNodeId: 's1',
 			rules: [makeRule('r1', 'Rule 1', 'Content 1', ['s1'])],
 		});
@@ -243,7 +182,6 @@ describe('workflowToVisualState', () => {
 	it('passes tags through', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1')],
-			transitions: [],
 			startNodeId: 's1',
 			tags: ['coding', 'review'],
 		});
@@ -254,7 +192,6 @@ describe('workflowToVisualState', () => {
 	it('assigns fresh localIds to each node (including Task Agent)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -317,51 +254,6 @@ describe('visualStateToCreateParams', () => {
 	it('omits empty instructions', () => {
 		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
 		expect(params.nodes![0].instructions).toBeUndefined();
-	});
-
-	it('produces correct transitions array', () => {
-		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
-		expect(params.transitions).toHaveLength(1);
-		expect(params.transitions![0]).toMatchObject({ from: 's1', to: 's2', order: 0 });
-	});
-
-	it('omits condition when undefined (unconditional transition)', () => {
-		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
-		expect(params.transitions![0].condition).toBeUndefined();
-	});
-
-	it('includes condition when type is not always', () => {
-		const state = makeState({
-			edges: [{ fromStepKey: 's1', toStepKey: 's2', condition: { type: 'human' } }],
-		});
-		const params = visualStateToCreateParams(state, 'space-1', 'My Workflow');
-		expect(params.transitions![0].condition).toMatchObject({ type: 'human' });
-	});
-
-	it('preserves full condition fields (description, maxRetries, timeoutMs)', () => {
-		const state = makeState({
-			edges: [
-				{
-					fromStepKey: 's1',
-					toStepKey: 's2',
-					condition: {
-						type: 'condition',
-						expression: 'exit 0',
-						description: 'Check',
-						maxRetries: 2,
-						timeoutMs: 3000,
-					},
-				},
-			],
-		});
-		const params = visualStateToCreateParams(state, 'space-1', 'My Workflow');
-		expect(params.transitions![0].condition).toEqual({
-			type: 'condition',
-			expression: 'exit 0',
-			description: 'Check',
-			maxRetries: 2,
-			timeoutMs: 3000,
-		});
 	});
 
 	it('passes startNodeId through', () => {
@@ -457,129 +349,7 @@ describe('visualStateToCreateParams', () => {
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.nodes).toHaveLength(0);
-		expect(params.transitions).toHaveLength(0);
 		expect(params.startNodeId).toBeUndefined();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Dangling edge handling
-// ---------------------------------------------------------------------------
-
-describe('dangling edge handling', () => {
-	it('drops edges whose fromStepKey does not resolve to a known node', () => {
-		const state: VisualEditorState = {
-			nodes: [
-				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
-					position: { x: 0, y: 0 },
-				},
-				{
-					step: { localId: 'l2', id: 's2', name: 'S2', agentId: 'a', instructions: '' },
-					position: { x: 0, y: 150 },
-				},
-			],
-			edges: [
-				// Valid edge
-				{ fromStepKey: 's1', toStepKey: 's2', condition: undefined },
-				// Dangling: 'deleted-node' not in nodes
-				{ fromStepKey: 'deleted-node', toStepKey: 's2', condition: undefined },
-			],
-			startNodeId: 's1',
-			rules: [],
-			tags: [],
-			channels: [],
-		};
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.transitions).toHaveLength(1);
-		expect(params.transitions![0]).toMatchObject({ from: 's1', to: 's2' });
-	});
-
-	it('drops edges whose toStepKey does not resolve to a known node', () => {
-		const state: VisualEditorState = {
-			nodes: [
-				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
-					position: { x: 0, y: 0 },
-				},
-			],
-			edges: [{ fromStepKey: 's1', toStepKey: 'deleted-target', condition: undefined }],
-			startNodeId: 's1',
-			rules: [],
-			tags: [],
-			channels: [],
-		};
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.transitions).toHaveLength(0);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Transition order: left-to-right by target x-position
-// ---------------------------------------------------------------------------
-
-describe('transition ordering', () => {
-	it('orders multiple outgoing transitions by target x-position', () => {
-		// Source node s1 has two outgoing edges: to s2 (x=400) and s3 (x=100)
-		// s3 is to the LEFT of s2 so should get order=0
-		const state: VisualEditorState = {
-			nodes: [
-				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
-					position: { x: 200, y: 0 },
-				},
-				{
-					step: { localId: 'l2', id: 's2', name: 'S2', agentId: 'a', instructions: '' },
-					position: { x: 400, y: 150 },
-				},
-				{
-					step: { localId: 'l3', id: 's3', name: 'S3', agentId: 'a', instructions: '' },
-					position: { x: 100, y: 150 },
-				},
-			],
-			edges: [
-				{ fromStepKey: 's1', toStepKey: 's2', condition: undefined },
-				{ fromStepKey: 's1', toStepKey: 's3', condition: undefined },
-			],
-			startNodeId: 's1',
-			rules: [],
-			tags: [],
-			channels: [],
-		};
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		const t = params.transitions!;
-		// Find transitions from s1
-		const fromS1 = t
-			.filter((tr) => tr.from === 's1')
-			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-		expect(fromS1).toHaveLength(2);
-		// order=0 should go to s3 (leftmost), order=1 to s2
-		expect(fromS1[0].to).toBe('s3');
-		expect(fromS1[0].order).toBe(0);
-		expect(fromS1[1].to).toBe('s2');
-		expect(fromS1[1].order).toBe(1);
-	});
-
-	it('preserves single outgoing edge with order=0', () => {
-		const state: VisualEditorState = {
-			nodes: [
-				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
-					position: { x: 0, y: 0 },
-				},
-				{
-					step: { localId: 'l2', id: 's2', name: 'S2', agentId: 'a', instructions: '' },
-					position: { x: 250, y: 150 },
-				},
-			],
-			edges: [{ fromStepKey: 's1', toStepKey: 's2', condition: undefined }],
-			startNodeId: 's1',
-			rules: [],
-			tags: [],
-			channels: [],
-		};
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.transitions![0].order).toBe(0);
 	});
 });
 
@@ -591,7 +361,6 @@ describe('round-trip serialization', () => {
 	it('produces equivalent steps after round-trip', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1', 'Plan', 'agent-p'), makeStep('s2', 'Code', 'agent-c')],
-			transitions: [makeTransition('s1', 's2', 't1', 0)],
 			startNodeId: 's1',
 			layout: { s1: { x: 50, y: 50 }, s2: { x: 50, y: 200 } },
 			tags: ['coding'],
@@ -608,7 +377,6 @@ describe('round-trip serialization', () => {
 	it('preserves startNodeId after round-trip', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's2',
 		});
 		const params = visualStateToUpdateParams(workflowToVisualState(original));
@@ -618,7 +386,6 @@ describe('round-trip serialization', () => {
 	it('preserves layout positions after round-trip', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 			layout: { s1: { x: 111, y: 222 }, s2: { x: 333, y: 444 } },
 		});
@@ -629,34 +396,19 @@ describe('round-trip serialization', () => {
 		});
 	});
 
-	it('preserves full WorkflowCondition fields after round-trip', () => {
+	it('produces empty transitions after round-trip (transitions removed from backend)', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [
-				makeTransition('s1', 's2', 't1', 0, {
-					type: 'condition',
-					expression: 'test -f output.txt',
-					description: 'Verify output',
-					maxRetries: 2,
-					timeoutMs: 10000,
-				}),
-			],
 			startNodeId: 's1',
 		});
-		const params = visualStateToUpdateParams(workflowToVisualState(original));
-		expect(params.transitions![0].condition).toEqual({
-			type: 'condition',
-			expression: 'test -f output.txt',
-			description: 'Verify output',
-			maxRetries: 2,
-			timeoutMs: 10000,
-		});
+		const visualState = workflowToVisualState(original);
+		// Edges start empty since backend no longer stores transitions
+		expect(visualState.edges).toHaveLength(0);
 	});
 
 	it('preserves tags after round-trip', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1')],
-			transitions: [],
 			startNodeId: 's1',
 			tags: ['research', 'review'],
 		});
@@ -667,7 +419,6 @@ describe('round-trip serialization', () => {
 	it('preserves rules after round-trip', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 			rules: [makeRule('r1', 'Security Rule', 'No secrets in output', ['s1'])],
 		});
@@ -681,14 +432,14 @@ describe('round-trip serialization', () => {
 		expect(params.rules![0].appliesTo).toContain('s1');
 	});
 
-	it('unconditional transitions round-trip with undefined condition', () => {
+	it('edges are empty after round-trip (transitions removed from backend)', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2', 't1', 0)], // no condition
 			startNodeId: 's1',
 		});
-		const params = visualStateToUpdateParams(workflowToVisualState(original));
-		expect(params.transitions![0].condition).toBeUndefined();
+		const visualState = workflowToVisualState(original);
+		// Transitions have been removed; edges always start empty
+		expect(visualState.edges).toHaveLength(0);
 	});
 
 	it('is lossless for a 3-step workflow with all features', () => {
@@ -697,10 +448,6 @@ describe('round-trip serialization', () => {
 				makeStep('s1', 'Plan', 'agent-p'),
 				makeStep('s2', 'Code', 'agent-c'),
 				makeStep('s3', 'Review', 'agent-r'),
-			],
-			transitions: [
-				makeTransition('s1', 's2', 't1', 0, { type: 'human' }),
-				makeTransition('s2', 's3', 't2', 0),
 			],
 			startNodeId: 's1',
 			layout: { s1: { x: 50, y: 50 }, s2: { x: 50, y: 200 }, s3: { x: 50, y: 350 } },
@@ -717,13 +464,6 @@ describe('round-trip serialization', () => {
 		expect(stepIds).toContain('s1');
 		expect(stepIds).toContain('s2');
 		expect(stepIds).toContain('s3');
-
-		// Transitions
-		expect(params.transitions).toHaveLength(2);
-		const t1 = params.transitions!.find((t) => t.from === 's1' && t.to === 's2')!;
-		expect(t1.condition).toMatchObject({ type: 'human' });
-		const t2 = params.transitions!.find((t) => t.from === 's2' && t.to === 's3')!;
-		expect(t2.condition).toBeUndefined();
 
 		// startNodeId
 		expect(params.startNodeId).toBe('s1');
@@ -988,7 +728,6 @@ describe('Task Agent virtual node', () => {
 	it('Task Agent is positioned above regular nodes (lower y value)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 			layout: { s1: { x: 300, y: 200 }, s2: { x: 300, y: 400 } },
 		});
@@ -1031,7 +770,6 @@ describe('Task Agent virtual node', () => {
 	it('serialization round-trip preserves regular nodes and excludes Task Agent', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1', 'Coder', 'agent-coder'), makeStep('s2', 'Reviewer', 'agent-reviewer')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -1062,17 +800,17 @@ describe('Task Agent virtual node', () => {
 		expect(params.startNodeId).toBe('s2');
 	});
 
-	it('Task Agent node in state does not corrupt transitions', () => {
+	it('Task Agent node in state does not appear in serialized nodes', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
-			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 
-		expect(params.transitions).toHaveLength(1);
-		expect(params.transitions![0]).toMatchObject({ from: 's1', to: 's2' });
+		// Task Agent virtual node must not be serialized to the backend
+		expect(params.nodes!.some((n) => n.id === TASK_AGENT_NODE_ID)).toBe(false);
+		expect(params.nodes).toHaveLength(2);
 	});
 });
 
@@ -1093,7 +831,6 @@ describe('per-slot agent overrides round-trip', () => {
 					],
 				},
 			],
-			transitions: [],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -1122,7 +859,6 @@ describe('per-slot agent overrides round-trip', () => {
 					],
 				},
 			],
-			transitions: [],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -1147,7 +883,6 @@ describe('per-slot agent overrides round-trip', () => {
 					],
 				},
 			],
-			transitions: [],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -1187,7 +922,6 @@ describe('per-slot agent overrides round-trip', () => {
 					],
 				},
 			],
-			transitions: [],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -1216,7 +950,6 @@ describe('per-slot agent overrides round-trip', () => {
 					],
 				},
 			],
-			transitions: [],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -1243,7 +976,6 @@ describe('per-slot agent overrides round-trip', () => {
 					agents: [{ agentId: 'a1', name: 'coder', model: 'claude-haiku-4-5-20251001' }],
 				},
 			],
-			transitions: [],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);

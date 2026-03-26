@@ -77,7 +77,6 @@ function makeWorkflow(): SpaceWorkflow {
 			{ id: 'step-1', name: 'Plan', agentId: 'agent-1', instructions: '' },
 			{ id: 'step-2', name: 'Code', agentId: 'agent-2', instructions: '' },
 		],
-		transitions: [],
 		startNodeId: 'step-1',
 		rules: [],
 		tags: [],

@@ -531,7 +531,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		expect(parsed.workflow.description).toBe('Detailed description');
 		expect(parsed.workflow.nodes).toHaveLength(1);
 		expect(parsed.workflow.nodes[0].agentId).toBe(ctx.agentId);
-		expect(parsed.workflow.transitions).toEqual([]);
 		expect(parsed.workflow.rules).toEqual([]);
 	});
 

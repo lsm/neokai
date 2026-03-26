@@ -86,16 +86,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 			},
 			{ id: 'node-uuid-3', agentId: 'agent-uuid-2', name: 'Plan step' },
 		],
-		transitions: [
-			{ id: 'trans-uuid-1', from: 'node-uuid-1', to: 'node-uuid-2' },
-			{
-				id: 'trans-uuid-2',
-				from: 'node-uuid-2',
-				to: 'node-uuid-3',
-				condition: { type: 'human' },
-				order: 0,
-			},
-		],
 		startNodeId: 'node-uuid-1',
 		rules: [
 			{
@@ -249,37 +239,6 @@ describe('exportWorkflow', () => {
 		expect(exported.nodes[2].agentRef).toBe('agent-uuid-2');
 	});
 
-	test('exports transitions with step names replacing UUIDs', () => {
-		const workflow = makeWorkflow();
-		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
-		const exported = exportWorkflow(workflow, agents);
-
-		expect(exported.transitions).toHaveLength(2);
-		expect(exported.transitions[0].fromNode).toBe('Code step');
-		expect(exported.transitions[0].toNode).toBe('Review step');
-		expect(exported.transitions[1].fromNode).toBe('Review step');
-		expect(exported.transitions[1].toNode).toBe('Plan step');
-		expect(exported.transitions[1].condition).toEqual({ type: 'human' });
-		expect(exported.transitions[1].order).toBe(0);
-	});
-
-	test('strips transition IDs', () => {
-		const workflow = makeWorkflow();
-		const exported = exportWorkflow(workflow, []);
-		for (const t of exported.transitions) {
-			expect('id' in t).toBe(false);
-		}
-	});
-
-	test('falls back to UUID when transition step not found', () => {
-		const workflow = makeWorkflow({
-			transitions: [{ id: 'trans-uuid-1', from: 'node-uuid-UNKNOWN', to: 'node-uuid-1' }],
-		});
-		const exported = exportWorkflow(workflow, []);
-		expect(exported.transitions[0].fromNode).toBe('node-uuid-UNKNOWN');
-		expect(exported.transitions[0].toNode).toBe('Code step');
-	});
-
 	test('exports startStep as step name', () => {
 		const workflow = makeWorkflow();
 		const exported = exportWorkflow(workflow, []);
@@ -374,29 +333,6 @@ describe('exportWorkflow', () => {
 		const exported = exportWorkflow(makeWorkflow(), []);
 		expect(exported.version).toBe(1);
 		expect(exported.type).toBe('workflow');
-	});
-
-	test('includes isCyclic in exported transitions', () => {
-		const workflow = makeWorkflow({
-			nodes: [
-				{ id: 'node-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' },
-				{ id: 'node-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
-			],
-			transitions: [
-				{
-					id: 'trans-uuid-1',
-					from: 'node-uuid-1',
-					to: 'node-uuid-2',
-					isCyclic: true,
-				},
-			],
-			startNodeId: 'node-uuid-1',
-			rules: [],
-		});
-		const exported = exportWorkflow(workflow, []);
-
-		expect(exported.transitions).toHaveLength(1);
-		expect(exported.transitions[0].isCyclic).toBe(true);
 	});
 });
 
@@ -548,7 +484,6 @@ describe('validateExportedWorkflow', () => {
 		if (result.ok) {
 			expect(result.value.name).toBe('CI Workflow');
 			expect(result.value.version).toBe(1);
-			expect(result.value.transitions).toHaveLength(2);
 			expect(result.value.startNode).toBe('Code step');
 		}
 	});
@@ -614,158 +549,6 @@ describe('validateExportedWorkflow', () => {
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
-	});
-
-	test('accepts valid transition', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'W',
-			nodes: [
-				{ agentRef: 'Agent A', name: 'Step A' },
-				{ agentRef: 'Agent B', name: 'Step B' },
-			],
-			transitions: [
-				{ fromNode: 'Step A', toNode: 'Step B', condition: { type: 'human' }, order: 0 },
-			],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.value.transitions[0].fromNode).toBe('Step A');
-			expect(result.value.transitions[0].condition).toEqual({ type: 'human' });
-		}
-	});
-
-	test('accepts condition type with expression', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'W',
-			nodes: [
-				{ agentRef: 'Agent A', name: 'Step A' },
-				{ agentRef: 'Agent B', name: 'Step B' },
-			],
-			transitions: [
-				{
-					fromNode: 'Step A',
-					toNode: 'Step B',
-					condition: { type: 'condition', expression: 'bun test --exit-zero' },
-				},
-			],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.value.transitions[0].condition).toEqual({
-				type: 'condition',
-				expression: 'bun test --exit-zero',
-			});
-		}
-	});
-
-	test('rejects condition type without expression', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'W',
-			nodes: [
-				{ agentRef: 'Agent A', name: 'Step A' },
-				{ agentRef: 'Agent B', name: 'Step B' },
-			],
-			transitions: [{ fromNode: 'Step A', toNode: 'Step B', condition: { type: 'condition' } }],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-		if (!result.ok) {
-			expect(result.error).toContain('expression');
-		}
-	});
-
-	test('rejects condition type with blank expression', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'W',
-			nodes: [
-				{ agentRef: 'Agent A', name: 'Step A' },
-				{ agentRef: 'Agent B', name: 'Step B' },
-			],
-			transitions: [
-				{
-					fromNode: 'Step A',
-					toNode: 'Step B',
-					condition: { type: 'condition', expression: '   ' },
-				},
-			],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-	});
-
-	test('rejects transition with empty fromNode', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'Bad',
-			nodes: [{ agentRef: 'Agent B', name: 'Step B' }],
-			transitions: [{ fromNode: '', toNode: 'Step B' }],
-			startNode: 'Step B',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-	});
-
-	test('rejects transition whose fromNode does not match any step name', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'Bad',
-			nodes: [{ agentRef: 'Agent A', name: 'Step A' }],
-			transitions: [{ fromNode: 'ghost', toNode: 'Step A' }],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-		if (!result.ok) {
-			expect(result.error).toContain('fromNode');
-			expect(result.error).toContain('ghost');
-		}
-	});
-
-	test('rejects transition whose toNode does not match any step name', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'Bad',
-			nodes: [{ agentRef: 'Agent A', name: 'Step A' }],
-			transitions: [{ fromNode: 'Step A', toNode: 'phantom' }],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-		if (!result.ok) {
-			expect(result.error).toContain('toNode');
-			expect(result.error).toContain('phantom');
-		}
 	});
 
 	test('rejects workflow with duplicate node names', () => {
@@ -854,113 +637,6 @@ describe('validateExportedWorkflow', () => {
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
-	});
-
-	test('accepts transition with isCyclic: true', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'W',
-			nodes: [
-				{ agentRef: 'Agent A', name: 'Step A' },
-				{ agentRef: 'Agent B', name: 'Step B' },
-			],
-			transitions: [{ fromNode: 'Step A', toNode: 'Step B', isCyclic: true }],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.value.transitions[0].isCyclic).toBe(true);
-		}
-	});
-
-	test('accepts transition with task_result condition type', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'W',
-			nodes: [
-				{ agentRef: 'Agent A', name: 'Step A' },
-				{ agentRef: 'Agent B', name: 'Step B' },
-			],
-			transitions: [
-				{
-					fromNode: 'Step A',
-					toNode: 'Step B',
-					condition: { type: 'task_result', expression: 'passed' },
-				},
-			],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.value.transitions[0].condition).toEqual({
-				type: 'task_result',
-				expression: 'passed',
-			});
-		}
-	});
-
-	test('strips unknown fields but preserves isCyclic', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'W',
-			nodes: [
-				{ agentRef: 'Agent A', name: 'Step A' },
-				{ agentRef: 'Agent B', name: 'Step B' },
-			],
-			transitions: [
-				{
-					fromNode: 'Step A',
-					toNode: 'Step B',
-					isCyclic: true,
-					unknownField: 'should be stripped',
-				},
-			],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.value.transitions[0].isCyclic).toBe(true);
-			expect('unknownField' in result.value.transitions[0]).toBe(false);
-		}
-	});
-
-	test('rejects task_result condition without expression', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'W',
-			nodes: [
-				{ agentRef: 'Agent A', name: 'Step A' },
-				{ agentRef: 'Agent B', name: 'Step B' },
-			],
-			transitions: [
-				{
-					fromNode: 'Step A',
-					toNode: 'Step B',
-					condition: { type: 'task_result' },
-				},
-			],
-			startNode: 'Step A',
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-		if (!result.ok) {
-			expect(result.error).toContain('expression');
-		}
 	});
 });
 
@@ -1090,42 +766,8 @@ describe('round-trip: export → JSON → validate', () => {
 			expect(result.value.nodes[0].agentRef).toBe('My Coder');
 			expect(result.value.nodes[1].agentRef).toBe('Reviewer');
 			expect(result.value.nodes[2].agentRef).toBe('Simple Agent');
-			// transitions preserved with node names
-			expect(result.value.transitions).toHaveLength(2);
-			expect(result.value.transitions[0].fromNode).toBe('Code step');
-			expect(result.value.transitions[0].toNode).toBe('Review step');
 			// startNode preserved as node name
 			expect(result.value.startNode).toBe('Code step');
-		}
-	});
-
-	test('condition type with expression round-trip', () => {
-		const workflow = makeWorkflow({
-			nodes: [
-				{ id: 'node-uuid-1', agentId: 'agent-uuid-1', name: 'Build' },
-				{ id: 'node-uuid-2', agentId: 'agent-uuid-2', name: 'Deploy' },
-			],
-			transitions: [
-				{
-					id: 'trans-uuid-1',
-					from: 'node-uuid-1',
-					to: 'node-uuid-2',
-					condition: { type: 'condition', expression: 'bun test --exit-zero' },
-				},
-			],
-			startNodeId: 'node-uuid-1',
-			rules: [],
-		});
-		const exported = exportWorkflow(workflow, []);
-		const json = JSON.stringify(exported);
-		const parsed = JSON.parse(json) as unknown;
-		const result = validateExportedWorkflow(parsed);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.value.transitions[0].condition).toEqual({
-				type: 'condition',
-				expression: 'bun test --exit-zero',
-			});
 		}
 	});
 

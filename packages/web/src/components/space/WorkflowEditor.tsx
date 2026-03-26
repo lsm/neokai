@@ -104,29 +104,25 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 	tags: string[];
 	channels: WorkflowChannel[];
 } {
+	// Use node order from wf.nodes, placing startNodeId first if possible.
 	const stepMap = new Map(wf.nodes.map((s) => [s.id, s]));
 	const ordered: NodeDraft[] = [];
 	const visited = new Set<string>();
-	let currentId: string | undefined = wf.startNodeId;
 
-	while (currentId && !visited.has(currentId)) {
-		visited.add(currentId);
-		const s = stepMap.get(currentId);
-		if (s) {
-			ordered.push({
-				localId: makeLocalId(),
-				id: s.id,
-				name: s.name,
-				agentId: s.agentId ?? '',
-				instructions: s.instructions ?? '',
-			});
-		}
-		const outgoing = wf.transitions
-			.filter((t) => t.from === currentId)
-			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-		currentId = outgoing[0]?.to;
+	// Place startNode first
+	const startNode = stepMap.get(wf.startNodeId);
+	if (startNode) {
+		visited.add(startNode.id);
+		ordered.push({
+			localId: makeLocalId(),
+			id: startNode.id,
+			name: startNode.name,
+			agentId: startNode.agentId ?? '',
+			instructions: startNode.instructions ?? '',
+		});
 	}
 
+	// Append remaining nodes in original order
 	for (const s of wf.nodes) {
 		if (!visited.has(s.id)) {
 			ordered.push({
@@ -139,17 +135,8 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 		}
 	}
 
-	const conditions: ConditionDraft[] = [];
-	for (let i = 0; i < ordered.length - 1; i++) {
-		const fromId = ordered[i].id;
-		const toId = ordered[i + 1].id;
-		const t = wf.transitions.find((tr) => tr.from === fromId && tr.to === toId);
-		conditions.push(
-			t?.condition
-				? { type: t.condition.type, expression: t.condition.expression }
-				: { type: 'always' }
-		);
-	}
+	// Default all inter-step conditions to 'always' (transitions removed)
+	const conditions: ConditionDraft[] = ordered.slice(0, -1).map(() => ({ type: 'always' }));
 
 	return {
 		steps: ordered,
@@ -361,19 +348,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				instructions: s.instructions || undefined,
 			}));
 
-			const builtTransitions = transitions.map((cond, i) => ({
-				from: stepIds[i],
-				to: stepIds[i + 1],
-				condition:
-					cond.type === 'always'
-						? undefined
-						: {
-								type: cond.type,
-								expression: cond.expression,
-							},
-				order: i,
-			}));
-
 			// Build rules — filter out completely blank drafts
 			const filteredRuleDrafts = rules.filter((r) => r.name.trim() || r.content.trim());
 
@@ -390,7 +364,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					name: name.trim(),
 					description: description.trim() || null,
 					nodes: builtNodes,
-					transitions: builtTransitions,
 					startNodeId: stepIds[0],
 					rules: updateRules,
 					tags,
@@ -408,7 +381,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					name: name.trim(),
 					description: description.trim() || undefined,
 					nodes: builtNodes,
-					transitions: builtTransitions,
 					startNodeId: stepIds[0],
 					rules: createRules,
 					tags,

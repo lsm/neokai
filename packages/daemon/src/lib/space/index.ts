@@ -122,8 +122,6 @@ export type {
 	WorkflowRule,
 	WorkflowCondition,
 	WorkflowConditionType,
-	WorkflowTransition,
-	WorkflowTransitionInput,
 	WorkflowNodeInput,
 	WorkflowRuleInput,
 	CreateSpaceWorkflowParams,

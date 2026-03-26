@@ -24,7 +24,6 @@ import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
 import type {
 	SpaceWorkflow,
 	WorkflowNode,
-	WorkflowTransition,
 	WorkflowConditionType,
 	WorkflowChannel,
 } from '@neokai/shared';
@@ -36,7 +35,7 @@ import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import type { ConditionDraft } from './GateConfig';
-import type { ViewportState, Point } from './types';
+import type { ViewportState, Point, VisualTransition } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
 import {
 	workflowToVisualState,
@@ -623,7 +622,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			agentId: n.step.agentId,
 			instructions: n.step.instructions || undefined,
 		}));
-		const layoutTransitions: WorkflowTransition[] = newEdges.map((e, i) => ({
+		const layoutTransitions: VisualTransition[] = newEdges.map((e, i) => ({
 			id: `t-${i}`,
 			from: e.fromStepKey,
 			to: e.toStepKey,

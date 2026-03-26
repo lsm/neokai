@@ -19,7 +19,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceAgent, WorkflowTransition } from '@neokai/shared';
+import type { SpaceAgent } from '@neokai/shared';
+import type { VisualTransition } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
 import type { NodeDraft } from '../../WorkflowNodeCard';
@@ -273,7 +274,7 @@ describe('WorkflowNode — isSelected prop via WorkflowCanvas', () => {
 
 // ---- Transitions / edge integration ----
 
-const TRANSITIONS: WorkflowTransition[] = [
+const TRANSITIONS: VisualTransition[] = [
 	{ id: 'tr1', from: 'step-1', to: 'step-2' },
 	{ id: 'tr2', from: 'step-2', to: 'step-1', condition: { type: 'human' } },
 ];
