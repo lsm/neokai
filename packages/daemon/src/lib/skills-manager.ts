@@ -130,9 +130,45 @@ export class SkillsManager {
 	 * For mcp_server type built-ins, ensures backing app_mcp_servers entries exist.
 	 */
 	initializeBuiltins(): void {
-		// No default built-in skills defined yet — reserved for future use.
-		// Implementors: call this.repo.findAll() to check for existing entries,
-		// then this.repo.insert() for any that are missing.
+		this.initWebSearchBraveMcp();
+	}
+
+	/**
+	 * Ensure the Brave Search MCP built-in skill is registered.
+	 * Step 1: upsert the backing app_mcp_servers entry.
+	 * Step 2: upsert the skill referencing that entry.
+	 * Both are idempotent — safe to call on every startup.
+	 */
+	private initWebSearchBraveMcp(): void {
+		// Step 1: ensure app MCP server entry exists (upsert by name)
+		const appMcpEntry =
+			this.appMcpServerRepo.getByName('web-search-brave') ??
+			this.appMcpServerRepo.create({
+				name: 'web-search-brave',
+				description: 'Brave Search MCP server for web search capability',
+				sourceType: 'stdio',
+				command: 'npx',
+				args: ['-y', '@modelcontextprotocol/server-brave-search'],
+				enabled: true,
+			});
+
+		// Step 2: upsert the skill referencing the app MCP entry
+		const existing = this.repo.getByName('web-search-mcp');
+		if (!existing) {
+			const skill: AppSkill = {
+				id: generateUUID(),
+				name: 'web-search-mcp',
+				displayName: 'Web Search (MCP)',
+				description: 'Web search capability via Brave Search MCP. Requires BRAVE_API_KEY env var.',
+				sourceType: 'mcp_server',
+				config: { type: 'mcp_server', appMcpServerId: appMcpEntry.id },
+				enabled: false, // opt-in, not default
+				builtIn: true,
+				validationStatus: 'valid',
+				createdAt: Date.now(),
+			};
+			this.repo.insert(skill);
+		}
 	}
 
 	// ---------------------------------------------------------------------------
