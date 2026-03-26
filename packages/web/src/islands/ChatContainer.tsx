@@ -30,7 +30,7 @@ import {
 } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ChatHeader } from '../components/ChatHeader.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
@@ -527,8 +527,10 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		};
 	}, [sessionId]);
 
-	// Restore scroll position after older messages are loaded and DOM has updated
-	useEffect(() => {
+	// Restore scroll position after older messages are loaded and DOM has updated.
+	// Uses useLayoutEffect (synchronous, before paint) to restore scroll before any
+	// useEffect-based auto-scroll can race and override the position.
+	useLayoutEffect(() => {
 		if (!scrollPositionRestoreRef.current?.shouldRestore) return;
 
 		const { oldScrollHeight, oldScrollTop } = scrollPositionRestoreRef.current;
@@ -536,20 +538,13 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 		if (!container) return;
 
-		// Use multiple requestAnimationFrame calls to ensure DOM has fully updated
-		// This is necessary because Preact's signal updates and DOM reflows are asynchronous
-		requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				if (container) {
-					// Calculate the new scroll position to maintain visual position
-					// The scrollHeight has increased by the height of prepended messages
-					const newScrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
-					container.scrollTop = newScrollTop;
-				}
-				// Clear the restore flag
-				scrollPositionRestoreRef.current = null;
-			});
-		});
+		// Calculate the new scroll position to maintain visual position.
+		// The scrollHeight has increased by the height of prepended messages.
+		const newScrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
+		container.scrollTop = newScrollTop;
+
+		// Clear the restore flag
+		scrollPositionRestoreRef.current = null;
 	}, [messages.length, loadingOlder]);
 
 	useEffect(() => {

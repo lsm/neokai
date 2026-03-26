@@ -226,9 +226,7 @@ test.describe('TaskView — Message Pagination', () => {
 			// Verify newest messages are still present (they should not have disappeared)
 			await expect(page.getByText('Message number 55', { exact: true })).toBeVisible();
 
-			// Wait for the requestAnimationFrame-based scroll restoration to complete.
-			// The component restores scrollTop inside rAF, so we must let one frame pass
-			// before reading the scroll position; otherwise we capture the pre-restore value.
+			// Wait for any pending microtask/flush to settle before reading scroll state.
 			await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
 
 			// Verify scroll position was preserved (not jumped to top).
