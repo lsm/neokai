@@ -239,8 +239,8 @@ test.describe('Agent-Centric Workflow', () => {
 		const node = nodes.first();
 		const agentBadges = node.getByTestId('agent-badges');
 		await expect(agentBadges).toBeVisible({ timeout: 3000 });
-		await expect(agentBadges.locator(`text=${AGENT_A_NAME}`)).toBeVisible({ timeout: 2000 });
-		await expect(agentBadges.locator(`text=${AGENT_B_NAME}`)).toBeVisible({ timeout: 2000 });
+		await expect(agentBadges.locator(`text=${ROLE_A}`)).toBeVisible({ timeout: 2000 });
+		await expect(agentBadges.locator(`text=${ROLE_B}`)).toBeVisible({ timeout: 2000 });
 
 		// Without an active workflow run, no completion state icons should be visible
 		// (no agent-status-spinner, agent-status-check, or agent-status-fail)
@@ -268,8 +268,8 @@ test.describe('Agent-Centric Workflow', () => {
 		const reopenedNode = reopenedNodes.first();
 		const reopenedBadges = reopenedNode.getByTestId('agent-badges');
 		await expect(reopenedBadges).toBeVisible({ timeout: 3000 });
-		await expect(reopenedBadges.locator(`text=${AGENT_A_NAME}`)).toBeVisible({ timeout: 2000 });
-		await expect(reopenedBadges.locator(`text=${AGENT_B_NAME}`)).toBeVisible({ timeout: 2000 });
+		await expect(reopenedBadges.locator(`text=${ROLE_A}`)).toBeVisible({ timeout: 2000 });
+		await expect(reopenedBadges.locator(`text=${ROLE_B}`)).toBeVisible({ timeout: 2000 });
 
 		// Still no completion state icons (no active run)
 		await expect(reopenedNode.getByTestId('agent-status-spinner')).toHaveCount(0);
