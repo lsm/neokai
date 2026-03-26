@@ -88,7 +88,7 @@ Build the `SkillsRegistry` component that allows users to view, add, edit, enabl
 - Component tests pass
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 5.1: Skills Store and Hook"]
+**depends_on:** ["Task 5.1: Global Skills LiveQuery Store and Hook"]
 
 ---
 

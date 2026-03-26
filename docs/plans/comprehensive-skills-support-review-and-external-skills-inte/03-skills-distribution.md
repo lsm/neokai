@@ -75,30 +75,57 @@ The LiveQuery engine tracks changes at the table level. If overrides were stored
 1. Run `bun install` at the worktree root.
 2. Add `RoomSkillOverride = { skillId: string; roomId: string; enabled: boolean }` type to `packages/shared/src/types/skills.ts`.
 3. Create `packages/daemon/src/storage/repositories/room-skill-override-repository.ts` with:
+   - Constructor accepts `reactiveDb: ReactiveDatabase`
    - `ensureTable()` — creates `room_skill_overrides` table: `skill_id TEXT`, `room_id TEXT`, `enabled INTEGER NOT NULL`, `PRIMARY KEY (skill_id, room_id)`, `FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE`, `FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE`
-   - `getOverrides(roomId): Promise<RoomSkillOverride[]>`
-   - `upsertOverride(roomId, skillId, enabled): Promise<void>` — INSERT OR REPLACE
-   - `deleteOverride(roomId, skillId): Promise<void>`
-   - `deleteAllForRoom(roomId): Promise<void>`
+   - `getOverrides(roomId): RoomSkillOverride[]` — synchronous
+   - `upsertOverride(roomId, skillId, enabled): void` — INSERT OR REPLACE; calls `reactiveDb.notifyChange('room_skill_overrides')`
+   - `deleteOverride(roomId, skillId): void` — calls `reactiveDb.notifyChange('room_skill_overrides')`
+   - `deleteAllForRoom(roomId): void` — calls `reactiveDb.notifyChange('room_skill_overrides')`
 4. Register `RoomSkillOverrideRepository` in `packages/daemon/src/app.ts` and call `ensureTable()` on startup.
 5. Add RPC handlers to `packages/daemon/src/lib/rpc-handlers/room-handlers.ts`:
    - `room.getSkillOverrides` → `{ roomId: string }` → `{ overrides: RoomSkillOverride[] }`
    - `room.setSkillOverride` → `{ roomId: string; skillId: string; enabled: boolean }` → `{ success: boolean }` (single upsert)
    - `room.clearSkillOverride` → `{ roomId: string; skillId: string }` → `{ success: boolean }` (remove override, revert to global)
 6. Update `packages/shared/src/api.ts` with the three new RPC types.
-7. Run `bun run typecheck`.
-8. Write unit tests for `RoomSkillOverrideRepository` and the new RPC handlers.
+7. **Add `skills.byRoom` named query** to `NAMED_QUERY_REGISTRY` in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` — this belongs here (not Task 2.4) because the query JOINs `room_skill_overrides`, which is created in this task.
+
+   Use `mcpEnablement.byRoom` (1-param at line ~257) as the structural template.
+
+   **`skills.byRoom`** (1 param: `roomId`) — all global skills with per-room override applied via LEFT JOIN:
+   ```sql
+   SELECT s.id, s.name, s.display_name AS displayName, s.description,
+          s.source_type AS sourceType, s.config, s.built_in AS builtIn,
+          s.validation_status AS validationStatus,
+          s.created_at AS createdAt,
+          CASE WHEN rso.enabled IS NOT NULL THEN rso.enabled ELSE s.enabled END AS enabled,
+          CASE WHEN rso.skill_id IS NOT NULL THEN 1 ELSE 0 END AS overriddenByRoom
+   FROM skills s
+   LEFT JOIN room_skill_overrides rso ON rso.skill_id = s.id AND rso.room_id = ?
+   ORDER BY s.built_in DESC, s.created_at ASC
+   ```
+   Row mapper: parse `config` JSON; coerce `enabled`, `builtIn`, `overriddenByRoom` to booleans.
+
+8. **Authorization guard**: add `queryName === 'skills.byRoom'` to the allow-list in `liveQuery.subscribe` alongside `'tasks.byRoom'`, `'goals.byRoom'`, and `'mcpEnablement.byRoom'` (~line 453 in `live-query-handlers.ts`).
+9. Run `bun run typecheck`.
+10. Write unit tests for `RoomSkillOverrideRepository`, the new RPC handlers, and the `skills.byRoom` query:
+    - Test `skills.byRoom` returns global `enabled` when no room override row exists
+    - Test `skills.byRoom` returns room override `enabled` when override row exists
+    - Test `RoomSkillOverrideRepository` calls `reactiveDb.notifyChange('room_skill_overrides')` on upsert/delete
+    - Test cascade deletes work: deleting a room or skill removes its overrides
 
 **Acceptance criteria:**
 - `room_skill_overrides` table created via `RoomSkillOverrideRepository.ensureTable()`
+- `RoomSkillOverrideRepository` calls `reactiveDb.notifyChange('room_skill_overrides')` after every write
 - `RoomSkillOverride` type in shared package
 - Three new RPC handlers exposed and registered
+- `skills.byRoom` registered in `NAMED_QUERY_REGISTRY` with correct SQL and row mapper
+- `skills.byRoom` added to the auth guard allow-list
 - Cascade deletes work: deleting a room or skill removes its overrides
 - Unit tests pass
 - `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 2.1: AppSkill Types in Shared Package", "Task 2.4: LiveQuery Integration for Skills Tables"]
+**depends_on:** ["Task 2.2: SkillRepository (SQLite) and SkillsManager"]
 
 ---
 

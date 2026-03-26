@@ -140,22 +140,23 @@ Add RPC handlers for Skills CRUD operations so the web UI can manage skills via 
 
 ---
 
-### Task 2.4: LiveQuery Integration for Skills Tables
+### Task 2.4: LiveQuery Integration for the skills Table
 
 **Agent type:** coder
 
 **Description:**
-Wire the `skills` and `room_skill_overrides` tables into the ReactiveDatabase and LiveQuery systems so that any mutation automatically pushes real-time updates to subscribed frontend clients. This implements ADR 0001: "The database is the message bus."
+Wire the `skills` table into the ReactiveDatabase and LiveQuery systems so that any mutation to global skills automatically pushes real-time updates to subscribed frontend clients. Covers only the `skills` table and the `skills.list` named query.
+
+**Note on scope split**: The `skills.byRoom` named query (which JOINs `room_skill_overrides`) and the `RoomSkillOverrideRepository` reactive wiring are handled in Task 3.2, which creates that table. This prevents a circular dependency: Task 3.2 depends on Task 2.2 (which creates `skills`), so `room_skill_overrides` wiring must live in Task 3.2 or later — not here.
 
 **Subtasks (ordered):**
 
 1. Run `bun install` at the worktree root.
-2. **Reactive notifications** — do NOT modify `reactive-database.ts` or `METHOD_TABLE_MAP`. That map is only for `Database` facade methods. Instead, follow the exact pattern in `packages/daemon/src/storage/repositories/app-mcp-server-repository.ts`:
+2. **Reactive notifications for `SkillRepository`** — do NOT modify `reactive-database.ts` or `METHOD_TABLE_MAP`. Follow the exact pattern in `packages/daemon/src/storage/repositories/app-mcp-server-repository.ts`:
    - In `SkillRepository` constructor: accept `reactiveDb: ReactiveDatabase`; call `this.reactiveDb.notifyChange('skills')` at the end of every write method (`insert`, `update`, `delete`, `setEnabled`, `setValidationStatus`)
-   - In `RoomSkillOverrideRepository` constructor: same — call `this.reactiveDb.notifyChange('room_skill_overrides')` after every write (`upsert`, `delete`, `deleteAllForRoom`)
-3. Add named queries to `NAMED_QUERY_REGISTRY` in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`.
+3. Add `skills.list` named query to `NAMED_QUERY_REGISTRY` in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`.
 
-   Use the existing `mcpServers.global` (0-param at line ~209) and `mcpEnablement.byRoom` (1-param at line ~257) as structural templates — they demonstrate the SELECT aliases, row mapper pattern, and ORDER BY convention.
+   Use the existing `mcpServers.global` (0-param at line ~209) as the structural template — same SELECT alias style, row mapper pattern, and ORDER BY convention.
 
    **`skills.list`** (0 params) — all global skills, ordered by `built_in DESC, created_at ASC`:
    ```sql
@@ -168,33 +169,14 @@ Wire the `skills` and `room_skill_overrides` tables into the ReactiveDatabase an
    ```
    Row mapper (`mapSkillRow`): parse `config` JSON blob (omit if NULL, same as `mapMcpServerRow` — spread into result only when non-null); coerce `enabled` and `builtIn` (integer → boolean).
 
-   **`skills.byRoom`** (1 param: `roomId`) — all global skills with per-room override applied via LEFT JOIN:
-   ```sql
-   SELECT s.id, s.name, s.display_name AS displayName, s.description,
-          s.source_type AS sourceType, s.config, s.built_in AS builtIn,
-          s.validation_status AS validationStatus,
-          s.created_at AS createdAt,
-          CASE WHEN rso.enabled IS NOT NULL THEN rso.enabled ELSE s.enabled END AS enabled,
-          CASE WHEN rso.skill_id IS NOT NULL THEN 1 ELSE 0 END AS overriddenByRoom
-   FROM skills s
-   LEFT JOIN room_skill_overrides rso ON rso.skill_id = s.id AND rso.room_id = ?
-   ORDER BY s.built_in DESC, s.created_at ASC
-   ```
-   Row mapper: parse `config` JSON; coerce `enabled`, `builtIn`, `overriddenByRoom` to booleans.
-
-4. **Authorization guard**: in the `liveQuery.subscribe` handler, add `queryName === 'skills.byRoom'` to the allow-list alongside `'tasks.byRoom'`, `'goals.byRoom'`, and `'mcpEnablement.byRoom'` (currently around line 453 in `live-query-handlers.ts`). The room-membership check uses the same `stmtRoom` prepared statement already compiled at handler setup time.
-5. Run `bun run typecheck`.
-6. Write unit tests:
+4. Run `bun run typecheck`.
+5. Write unit tests:
    - Test `skills.list` query returns correct rows for a seeded DB
-   - Test `skills.byRoom` returns global `enabled` when no room override row exists
-   - Test `skills.byRoom` returns room override `enabled` when override row exists
-   - Test `SkillRepository` calls `reactiveDb.notifyChange('skills')` on insert/update/delete
-   - Test `RoomSkillOverrideRepository` calls `reactiveDb.notifyChange('room_skill_overrides')` on upsert/delete
+   - Test `SkillRepository` calls `reactiveDb.notifyChange('skills')` on insert/update/delete/setEnabled/setValidationStatus
 
 **Acceptance criteria:**
-- `SkillRepository` and `RoomSkillOverrideRepository` call `reactiveDb.notifyChange()` after every write (same pattern as `AppMcpServerRepository`); `reactive-database.ts` is NOT modified
-- `skills.list` and `skills.byRoom` registered in `NAMED_QUERY_REGISTRY` with correct SQL and row mappers
-- `skills.byRoom` added to the auth guard allow-list alongside existing room queries
+- `SkillRepository` calls `reactiveDb.notifyChange('skills')` after every write; `reactive-database.ts` is NOT modified
+- `skills.list` registered in `NAMED_QUERY_REGISTRY` with correct SQL and row mapper
 - Unit tests pass
 - `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`

@@ -149,4 +149,4 @@ Create a built-in `McpServerSkillConfig` entry for a web search MCP server (e.g.
 - Unit test verifies registration and injection
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 3.1: Skills Injection in QueryOptionsBuilder", "Task 6.1: Verify Planner WebSearch Wiring"]
+**depends_on:** ["Task 3.1: Skills Injection in QueryOptionsBuilder (with strictMcpConfig handling)", "Task 6.1: Verify Planner WebSearch Wiring"]
