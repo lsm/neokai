@@ -354,6 +354,99 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		});
 	});
 
+	describe('tool result messages (user type) should not trigger false positives', () => {
+		it('does not detect usage_limit in user message (tool result content)', async () => {
+			ctx = createRuntimeTestContext({
+				getGlobalSettings: () => ({}) as GlobalSettings,
+			});
+
+			const { group } = await spawnGroup();
+
+			// Simulate a tool result containing the usage_limit text as fixture data
+			// This should NOT trigger the usage_limit detection because user messages
+			// are tool results, not actual model error output
+			ctx.hub.fire('sdk.message', {
+				sessionId: group.workerSessionId,
+				message: {
+					uuid: 'tool-result-1',
+					type: 'user',
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'tool_123',
+							content: `File content: const USAGE_LIMIT_MSG = "${USAGE_LIMIT_MSG}"`,
+						},
+					],
+				},
+			});
+
+			await new Promise((r) => setTimeout(r, 10));
+
+			// Should NOT be rate limited — tool result content is not an actual error
+			expect(ctx.groupRepo.isRateLimited(group.id)).toBe(false);
+		});
+
+		it('does not detect usage_limit in user message for leader session', async () => {
+			ctx = createRuntimeTestContext({
+				getGlobalSettings: () => ({}) as GlobalSettings,
+			});
+
+			const { group } = await spawnGroup();
+
+			ctx.hub.fire('sdk.message', {
+				sessionId: group.leaderSessionId,
+				message: {
+					uuid: 'tool-result-leader-1',
+					type: 'user',
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'tool_456',
+							content: `Reading test fixture: "${USAGE_LIMIT_MSG}"`,
+						},
+					],
+				},
+			});
+
+			await new Promise((r) => setTimeout(r, 10));
+
+			expect(ctx.groupRepo.isRateLimited(group.id)).toBe(false);
+		});
+
+		it('does not trigger fallback switch for user message with usage_limit text', async () => {
+			ctx = createRuntimeTestContext({
+				getGlobalSettings: withFallbackModel(),
+				messageHub: makeMessageHubMock({}),
+			});
+
+			const { group } = await spawnGroup();
+
+			ctx.hub.fire('sdk.message', {
+				sessionId: group.workerSessionId,
+				message: {
+					uuid: 'tool-result-2',
+					type: 'user',
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'tool_789',
+							content: `"You've hit your limit · resets 11pm (America/New_York)"`,
+						},
+					],
+				},
+			});
+
+			await new Promise((r) => setTimeout(r, 10));
+
+			// Should NOT have attempted any model switch
+			const switchCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchCalls).toHaveLength(0);
+		});
+	});
+
 	describe('leader session mirroring', () => {
 		it('detects usage_limit in leader messages when no fallback', async () => {
 			ctx = createRuntimeTestContext({
