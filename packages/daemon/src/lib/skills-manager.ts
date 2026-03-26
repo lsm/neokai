@@ -16,12 +16,19 @@ import type {
 } from '@neokai/shared';
 import type { SkillRepository } from '../storage/repositories/skill-repository';
 import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-server-repository';
+import type { JobQueueRepository } from '../storage/repositories/job-queue-repository';
+import { SKILL_VALIDATE } from './job-queue-constants';
 
 export class SkillsManager {
+	private jobQueue: JobQueueRepository | null = null;
+
 	constructor(
 		private repo: SkillRepository,
-		private appMcpServerRepo: AppMcpServerRepository
-	) {}
+		private appMcpServerRepo: AppMcpServerRepository,
+		jobQueue?: JobQueueRepository
+	) {
+		if (jobQueue) this.jobQueue = jobQueue;
+	}
 
 	listSkills(): AppSkill[] {
 		return this.repo.findAll();
@@ -55,6 +62,7 @@ export class SkillsManager {
 		};
 
 		this.repo.insert(skill);
+		this.enqueueValidation(skill.id);
 		const inserted = this.repo.get(skill.id);
 		if (!inserted) {
 			throw new Error(`Failed to insert skill "${params.name}"`);
@@ -73,6 +81,10 @@ export class SkillsManager {
 		}
 
 		this.repo.update(id, params);
+		if (params.config !== undefined) {
+			this.repo.setValidationStatus(id, 'pending');
+			this.enqueueValidation(id);
+		}
 		return this.repo.get(id)!;
 	}
 
@@ -126,6 +138,15 @@ export class SkillsManager {
 	// ---------------------------------------------------------------------------
 	// Private helpers
 	// ---------------------------------------------------------------------------
+
+	/**
+	 * Enqueue an async validation job for a skill.
+	 * No-op if jobQueue is not set (e.g. during tests or before full app init).
+	 */
+	private enqueueValidation(skillId: string): void {
+		if (!this.jobQueue) return;
+		this.jobQueue.enqueue({ queue: SKILL_VALIDATE, payload: { skillId } });
+	}
 
 	/**
 	 * Validate source-type-specific config fields for security.

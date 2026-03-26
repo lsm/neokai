@@ -23,7 +23,8 @@ import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
-import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
+import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
+import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE } from './lib/job-queue-constants';
 import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
@@ -276,7 +277,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	seedDefaultMcpEntries(db);
 
 	// Instantiate Skills manager and initialize built-in skills
-	const skillsManager = new SkillsManager(db.skills, db.appMcpServers);
+	const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
 	skillsManager.initializeBuiltins();
 
 	// Initialize workspace file index (non-blocking — init runs in the background)
@@ -423,6 +424,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Register job handlers BEFORE starting the processor so no pending job
 	// from a previous run is dequeued without a handler available.
+	jobProcessor.register(
+		SKILL_VALIDATE,
+		createSkillValidateHandler(skillsManager, db.appMcpServers)
+	);
 	jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
 
 	// Enqueue the initial cleanup job if none is already pending.
