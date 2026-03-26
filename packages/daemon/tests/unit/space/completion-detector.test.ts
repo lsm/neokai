@@ -40,7 +40,7 @@
  *   36. Pending-but-blocked: channel with array target, one unactivated member
  *   37. Bidirectional channel — both nodes must be activated
  *   38. Wildcard + downstream channel: wildcard satisfied, downstream blocks
- *   39. Node with agents that have no tasks excluded from pending-but-blocked guard
+ *   39. Wildcard + downstream channel: wildcard satisfied, downstream blocks
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -685,7 +685,9 @@ describe('CompletionDetector', () => {
 				makeNode('node-b', 'reviewer', ['reviewer']),
 			];
 			// Bidirectional: coder ↔ reviewer
-			const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'two-way' }];
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
+			];
 
 			// Only node-a activated
 			seedTask(db, SPACE, {
