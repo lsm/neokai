@@ -204,6 +204,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const eventBus = createDaemonHub('daemon');
 	await eventBus.initialize();
 
+	// Initialize application-level MCP and Skills managers before SessionManager
+	// so AgentSession can inject skills into SDK query options.
+	const appMcpManager = new AppMcpLifecycleManager(db);
+	seedDefaultMcpEntries(db);
+	const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
+	skillsManager.initializeBuiltins();
+
 	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
 	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
 	// trigger LiveQuery invalidation immediately.
@@ -220,7 +227,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			workspaceRoot: config.workspaceRoot,
 		},
 		jobQueue,
-		jobProcessor
+		jobProcessor,
+		skillsManager,
+		db.appMcpServers
 	);
 
 	// Register session title generation handler before jobProcessor starts
@@ -269,16 +278,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	} else if (shouldEnableGitHub) {
 		logInfo('[Daemon] GitHub integration disabled - authentication required');
 	}
-
-	// Instantiate application-level MCP lifecycle manager
-	const appMcpManager = new AppMcpLifecycleManager(db);
-
-	// Seed default MCP entries (idempotent — skips entries that already exist)
-	seedDefaultMcpEntries(db);
-
-	// Instantiate Skills manager and initialize built-in skills
-	const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
-	skillsManager.initializeBuiltins();
 
 	// Initialize workspace file index (non-blocking — init runs in the background)
 	const fileIndex = new FileIndex(config.workspaceRoot);
