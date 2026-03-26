@@ -61,7 +61,7 @@ jobs:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && !github.event.inputs.run_e2e_only
+    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -120,7 +120,7 @@ jobs:
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag' && (github.event_name != 'push' || github.ref != 'refs/heads/dev') && !github.event.inputs.run_e2e_only
+    if: github.ref_type != 'tag' && (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
     timeout-minutes: ${{ matrix.timeout || 5 }}
 
     strategy:
@@ -377,7 +377,7 @@ jobs:
     name: Daemon + Shared Unit Tests (Coverage)
     runs-on: ubuntu-latest
     timeout-minutes: 6
-    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && !github.event.inputs.run_e2e_only
+    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -430,7 +430,7 @@ jobs:
     name: Web Tests
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && !github.event.inputs.run_e2e_only
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -484,7 +484,7 @@ jobs:
     name: CLI Tests
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && !github.event.inputs.run_e2e_only
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -523,7 +523,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-web, test-daemon-online]
     timeout-minutes: 1
-    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && !github.event.inputs.run_e2e_only
+    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - name: Finalize Coveralls parallel build
@@ -544,7 +544,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [coveralls-finalize]
     timeout-minutes: 3
-    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && !github.event.inputs.run_e2e_only
+    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - name: Check coverage thresholds via Coveralls API
@@ -635,12 +635,12 @@ jobs:
       (github.event_name == 'pull_request' && github.base_ref == 'main' ||
        github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') ||
        github.event_name == 'workflow_dispatch') &&
-      (github.event.inputs.run_e2e_only ||
-       needs.discover.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
-       contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
-       contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
-       contains(fromJSON('["success", "skipped"]'), needs.test-web.result) &&
-       contains(fromJSON('["success", "skipped"]'), needs.test-cli.result))
+      (github.event.inputs.run_e2e_only == 'true' ||
+       (needs.discover.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
+        contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
+        contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
+        contains(fromJSON('["success", "skipped"]'), needs.test-web.result) &&
+        contains(fromJSON('["success", "skipped"]'), needs.test-cli.result)))
     timeout-minutes: 10
 
     steps:
