@@ -2007,6 +2007,44 @@ describe('Room Agent Tools', () => {
 				expect(task.priority).toBe('urgent');
 			});
 
+			it('should create a task with assigned_agent', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Research task',
+						description: 'Investigate options',
+						assigned_agent: 'general',
+					})
+				);
+				expect(result.success).toBe(true);
+				const task = result.task as { assignedAgent: string };
+				expect(task.assignedAgent).toBe('general');
+			});
+
+			it('should default assigned_agent to planner for goal_review tasks', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Review goal',
+						description: 'Review progress on goal',
+						task_type: 'goal_review',
+					})
+				);
+				expect(result.success).toBe(true);
+				const task = result.task as { assignedAgent: string };
+				expect(task.assignedAgent).toBe('planner');
+			});
+
 			it('should reject planning task type', async () => {
 				const leaderHandlers = createRoomAgentToolHandlers({
 					roomId,
