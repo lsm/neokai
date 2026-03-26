@@ -34,7 +34,7 @@ import { filterAgents, TEMPLATES } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import type { RuleDraft } from '../WorkflowRulesEditor';
-import type { NodeDraft } from '../WorkflowNodeCard';
+import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import type { ConditionDraft } from './GateConfig';
 import type { ViewportState, Point } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
@@ -141,6 +141,18 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
 	const agents = filterAgents(spaceStore.agents.value);
+	const tasksByNodeId = spaceStore.tasksByNodeId.value;
+
+	// Determine which workflow run to use for completion indicators.
+	// Prefer an active run; fall back to the most recently updated run.
+	const relevantRunId = (() => {
+		if (!workflow?.id) return null;
+		const runs = spaceStore.workflowRuns.value.filter((r) => r.workflowId === workflow.id);
+		if (!runs.length) return null;
+		const active = runs.find((r) => r.status === 'pending' || r.status === 'in_progress');
+		if (active) return active.id;
+		return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
+	})();
 
 	// Collect all agent slot names from nodes for ChannelEditor from/to suggestions
 	const agentRoles = useMemo(() => {
@@ -301,14 +313,28 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	const nodeData = useMemo<WorkflowNodeData[]>(() => {
-		return nodes.map((node, i) => ({
-			stepIndex: i,
-			step: node.step,
-			position: node.position,
-			agents,
-			isStartNode: nodeIsStart(node),
-		}));
-	}, [nodes, agents, nodeIsStart]);
+		return nodes.map((node, i) => {
+			const nodeId = node.step.id;
+			const allNodeTasks = nodeId ? (tasksByNodeId.get(nodeId) ?? []) : [];
+			// Filter to the most relevant run to avoid mixing state from past runs.
+			const nodeTasks = relevantRunId
+				? allNodeTasks.filter((t) => t.workflowRunId === relevantRunId)
+				: allNodeTasks;
+			const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
+				agentName: t.agentName ?? null,
+				status: t.status,
+				completionSummary: t.completionSummary,
+			}));
+			return {
+				stepIndex: i,
+				step: node.step,
+				position: node.position,
+				agents,
+				isStartNode: nodeIsStart(node),
+				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
+			};
+		});
+	}, [nodes, agents, nodeIsStart, tasksByNodeId, relevantRunId]);
 
 	// ------------------------------------------------------------------
 	// Derived: selected node / edge

@@ -123,6 +123,22 @@ class SpaceStore {
 	/** Tasks not associated with any workflow run */
 	readonly standaloneTasks = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
 
+	/** Tasks grouped by workflow node ID — used to show per-node agent completion state */
+	readonly tasksByNodeId = computed(() => {
+		const map = new Map<string, SpaceTask[]>();
+		for (const task of this.tasks.value) {
+			if (task.workflowNodeId) {
+				let arr = map.get(task.workflowNodeId);
+				if (!arr) {
+					arr = [];
+					map.set(task.workflowNodeId, arr);
+				}
+				arr.push(task);
+			}
+		}
+		return map;
+	});
+
 	/** Session groups indexed by taskId for O(1) lookup */
 	readonly sessionGroupsByTask = computed(() => {
 		const map = new Map<string, SpaceSessionGroup[]>();

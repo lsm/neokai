@@ -17,7 +17,7 @@ import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 import { WorkflowNodeCard } from '../WorkflowNodeCard';
-import type { NodeDraft, ConditionDraft } from '../WorkflowNodeCard';
+import type { NodeDraft, ConditionDraft, AgentTaskState } from '../WorkflowNodeCard';
 
 vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -501,5 +501,114 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 		expect(onUpdate).toHaveBeenCalled();
 		const updated = onUpdate.mock.calls[0][0] as NodeDraft;
 		expect(updated.agents?.[0].model).toBe('claude-opus-4-6');
+	});
+});
+
+// ============================================================================
+// Agent completion state
+// ============================================================================
+
+describe('WorkflowNodeCard — agent completion state', () => {
+	afterEach(() => {
+		cleanup();
+	});
+
+	function makeMultiAgentStep(): NodeDraft {
+		return {
+			localId: 'local-multi',
+			id: 'node-multi',
+			name: 'Multi Step',
+			agentId: '',
+			instructions: '',
+			agents: [
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
+		};
+	}
+
+	it('shows spinner for in_progress agent (single-agent)', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'in_progress' }];
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-spinner')).toBeTruthy();
+	});
+
+	it('shows checkmark for completed agent (single-agent)', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'completed' }];
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-check')).toBeTruthy();
+	});
+
+	it('shows fail icon for needs_attention agent (single-agent)', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'needs_attention' }];
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-fail')).toBeTruthy();
+	});
+
+	it('shows fail icon for cancelled agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'cancelled' }];
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-fail')).toBeTruthy();
+	});
+
+	it('shows pending dot for pending agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'pending' }];
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-pending')).toBeTruthy();
+	});
+
+	it('applies green step badge when all agents done', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'completed' }];
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
+		const badge = getByTestId('node-step-badge');
+		expect(badge.className).toContain('green');
+	});
+
+	it('does NOT apply green step badge when not all done', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'in_progress' }];
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
+		const badge = getByTestId('node-step-badge');
+		expect(badge.className).not.toContain('green');
+	});
+
+	it('shows completion summary text when provided', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: null, status: 'completed', completionSummary: 'All done nicely' },
+		];
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('node-completion-summary').textContent).toBe('All done nicely');
+	});
+
+	it('shows per-agent status for multi-agent nodes', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: 'coder', status: 'completed' },
+			{ agentName: 'reviewer', status: 'in_progress' },
+		];
+		const { getAllByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node: makeMultiAgentStep(), nodeTaskStates: states })} />
+		);
+		// One checkmark for coder, one spinner for reviewer
+		expect(getAllByTestId('agent-status-check')).toHaveLength(1);
+		expect(getAllByTestId('agent-status-spinner')).toHaveLength(1);
+	});
+
+	it('does not show status icons when nodeTaskStates is not provided', () => {
+		const { container } = render(<WorkflowNodeCard {...makeProps()} />);
+		expect(container.querySelector('[data-testid="agent-status-check"]')).toBeNull();
+		expect(container.querySelector('[data-testid="agent-status-spinner"]')).toBeNull();
+		expect(container.querySelector('[data-testid="agent-status-fail"]')).toBeNull();
+	});
+
+	it('shows green border when all agents completed', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: 'coder', status: 'completed' },
+			{ agentName: 'reviewer', status: 'completed' },
+		];
+		const { container } = render(
+			<WorkflowNodeCard {...makeProps({ node: makeMultiAgentStep(), nodeTaskStates: states })} />
+		);
+		// The outer border should include 'green'
+		const outer = container.firstElementChild as HTMLElement;
+		expect(outer.className).toContain('green');
 	});
 });

@@ -17,8 +17,8 @@
 import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
-import type { NodeDraft } from '../WorkflowNodeCard';
-import { isMultiAgentNode } from '../WorkflowNodeCard';
+import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
+import { isMultiAgentNode, isNodeFullyCompleted, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
 
 // ============================================================================
@@ -83,6 +83,11 @@ export interface WorkflowNodeProps {
 	isDropTarget?: boolean;
 	/** Called when the card body is clicked (for selection) */
 	onClick?: (stepId: string) => void;
+	/**
+	 * Runtime agent completion states for this node.
+	 * When provided, per-agent status indicators are shown inside the node card.
+	 */
+	nodeTaskStates?: AgentTaskState[];
 }
 
 // ============================================================================
@@ -103,12 +108,19 @@ export function WorkflowNode({
 	onPortMouseEnter,
 	onPortMouseLeave,
 	onClick,
+	nodeTaskStates,
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
 
 	const multi = isMultiAgentNode(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
+
+	// Build a lookup: agentName → AgentTaskState
+	const taskStateByAgent = new Map<string | null, AgentTaskState>(
+		(nodeTaskStates ?? []).map((s) => [s.agentName, s])
+	);
+	const allDone = isNodeFullyCompleted(nodeTaskStates ?? []);
 
 	// ---- Drag state ----
 	const dragState = useRef<{
@@ -255,7 +267,9 @@ export function WorkflowNode({
 			? 'border-green-500'
 			: isSelected
 				? 'border-blue-500'
-				: 'border-gray-700';
+				: allDone
+					? 'border-green-600'
+					: 'border-gray-700';
 
 	const bgClass = isTaskAgent ? 'bg-amber-950' : 'bg-gray-800';
 
@@ -386,6 +400,7 @@ export function WorkflowNode({
 					<div data-testid="agent-badges" class="flex flex-wrap gap-1 mt-1">
 						{step.agents!.map((sa) => {
 							const hasOverrides = !!(sa.model || sa.systemPrompt);
+							const taskState = taskStateByAgent.get(sa.name);
 							return (
 								<span
 									key={sa.name}
@@ -393,20 +408,25 @@ export function WorkflowNode({
 									title={hasOverrides ? `${sa.name} (has overrides)` : sa.name}
 								>
 									{sa.name}
-									{hasOverrides && (
+									{hasOverrides && !taskState && (
 										<span
 											data-testid="override-indicator"
 											class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
 										/>
 									)}
+									{taskState && <AgentStatusIcon state={taskState} />}
 								</span>
 							);
 						})}
 					</div>
 				) : (
-					<p data-testid="agent-name" class="text-xs text-gray-400 truncate mt-0.5">
-						{agentName}
-					</p>
+					<div
+						data-testid="agent-name"
+						class="flex items-center gap-1 text-xs text-gray-400 truncate mt-0.5"
+					>
+						<span class="truncate">{agentName}</span>
+						{taskStateByAgent.get(null) && <AgentStatusIcon state={taskStateByAgent.get(null)!} />}
+					</div>
 				)}
 
 				{/* Channel topology */}
