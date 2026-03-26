@@ -1317,4 +1317,41 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/room-plugin' }]);
 		});
 	});
+
+	// Task 7.1 regression: Skill/WebSearch/WebFetch tools must remain available after Skills registry changes
+	describe('regression: Skill, WebSearch, WebFetch tool availability (Task 7.1)', () => {
+		beforeEach(() => {
+			mockSession.type = 'room_chat';
+		});
+
+		it('room_chat sessions include Skill in tools list', async () => {
+			const options = await new QueryOptionsBuilder(mockContext).build();
+			expect(options.tools).toContain('Skill');
+		});
+
+		it('room_chat sessions include WebSearch in tools list', async () => {
+			const options = await new QueryOptionsBuilder(mockContext).build();
+			expect(options.tools).toContain('WebSearch');
+		});
+
+		it('room_chat sessions include WebFetch in tools list', async () => {
+			const options = await new QueryOptionsBuilder(mockContext).build();
+			expect(options.tools).toContain('WebFetch');
+		});
+
+		it('room_chat allowedTools includes Skill, WebSearch, WebFetch', async () => {
+			const options = await new QueryOptionsBuilder(mockContext).build();
+			expect(options.allowedTools).toContain('Skill');
+			expect(options.allowedTools).toContain('WebSearch');
+			expect(options.allowedTools).toContain('WebFetch');
+		});
+
+		it('coordinator mode allowedTools includes Skill, WebSearch, WebFetch', async () => {
+			mockSession.config.coordinatorMode = true;
+			const options = await new QueryOptionsBuilder(mockContext).build();
+			expect(options.allowedTools).toContain('Skill');
+			expect(options.allowedTools).toContain('WebSearch');
+			expect(options.allowedTools).toContain('WebFetch');
+		});
+	});
 });
