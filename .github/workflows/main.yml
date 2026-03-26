@@ -296,6 +296,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.ANTHROPIC_API_KEY || '') }}
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          # CODEX_OAUTH_TOKEN — ChatGPT OAuth access token for the Codex bridge provider.
+          # How to obtain: run `codex login` locally, then read the access token:
+          #   cat ~/.codex/auth.json | jq -r '.tokens.access_token'
+          # Store the value as a GitHub Actions secret named CODEX_OAUTH_TOKEN.
+          # Note: OAuth access tokens expire (typically after a few hours). Refresh via:
+          #   cat ~/.codex/auth.json | jq -r '.tokens.access_token'  (codex CLI refreshes on use)
+          # Alternative: set CODEX_API_KEY instead (an OpenAI API key — paid but doesn't expire).
+          # If the secret is absent the test FAILS (hard-fail, not skip — by design).
           CODEX_OAUTH_TOKEN: ${{ matrix.module == 'providers-anthropic-to-codex-bridge' && secrets.CODEX_OAUTH_TOKEN || '' }}
           # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
           # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
