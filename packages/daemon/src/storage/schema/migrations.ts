@@ -3786,10 +3786,14 @@ export function runMigration59(db: BunDatabase): void {
  * currentNodeId is replaced by the agent-centric model where tasks track state.
  */
 export function runMigration60(db: BunDatabase): void {
+	// Disable FK enforcement before any DDL so that:
+	// - DROP TABLE space_workflow_runs does NOT fire ON DELETE SET NULL on space_tasks.workflow_run_id
+	// - The table rebuild completes atomically without cascading side-effects
+	// This matches the pattern used by M44, M45, M51, M55, etc.
 	db.exec(`PRAGMA foreign_keys = OFF`);
 	db.exec(`BEGIN`);
 	try {
-		// Drop member table first (FK constraint)
+		// Drop member table first (FK constraint order)
 		db.exec(`DROP TABLE IF EXISTS space_session_group_members`);
 		db.exec(`DROP TABLE IF EXISTS space_session_groups`);
 

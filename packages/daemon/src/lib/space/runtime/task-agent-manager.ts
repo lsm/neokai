@@ -263,7 +263,7 @@ export class TaskAgentManager {
 			const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
 
 			// --- Build and attach MCP server with live runtime dependencies
-			const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
+			const subSessionFactory = this.createSubSessionFactory(taskId);
 
 			const workflowRunId = workflowRun?.id ?? '';
 
@@ -618,7 +618,7 @@ export class TaskAgentManager {
 	 * Create a `SubSessionFactory` implementation bound to a specific taskId.
 	 * Passed to `createTaskAgentMcpServer()` for the given Task Agent session.
 	 */
-	private createSubSessionFactory(taskId: string, _spaceId: string): SubSessionFactory {
+	private createSubSessionFactory(taskId: string): SubSessionFactory {
 		// Capture workflowRunId once at factory-creation time to avoid a DB round-trip
 		// on every spawn. The run ID is immutable once assigned, so this is safe.
 		// Log a warning if the task lacks a workflow run — node-agent tools will
@@ -911,7 +911,7 @@ export class TaskAgentManager {
 		const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
 
 		// --- Build and attach MCP server (runtime-only, not persisted)
-		const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
+		const subSessionFactory = this.createSubSessionFactory(taskId);
 
 		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
 

@@ -89,21 +89,15 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
 	test('space_workflow_runs still has required columns after M60', () => {
 		runMigrations(db, () => {});
 
-		const requiredCols = ['id', 'space_id', 'workflow_id', 'status', 'start_node_id'];
-
-		// start_node_id is on space_workflows, not space_workflow_runs.
-		// The required columns on space_workflow_runs itself are: id, space_id, workflow_id, status.
+		// Verify required columns are preserved on space_workflow_runs
 		for (const col of ['id', 'space_id', 'workflow_id', 'status']) {
 			expect(columnExists(db, 'space_workflow_runs', col)).toBe(true);
 		}
-		// start_node_id lives on space_workflows
+		// start_node_id lives on space_workflows, not space_workflow_runs
 		expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
 
 		// Confirm current_node_id is gone
 		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
-
-		// Suppress unused variable lint warning
-		void requiredCols;
 	});
 
 	// -------------------------------------------------------------------------

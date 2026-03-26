@@ -961,8 +961,7 @@ describe('TaskAgentManager', () => {
 			// Create a task but do NOT spawn its Task Agent (so no group is created).
 			const task = await makeTask(ctx.taskManager);
 
-			// The factory is created directly without spawning the task agent,
-			// meaning taskGroupIds will not have an entry for this task.
+			// The factory is created directly without spawning the task agent.
 			const factory = getFactory(ctx.manager, task.id);
 			const subSessionId = `sub-no-group-${task.id}`;
 
