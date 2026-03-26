@@ -73,7 +73,7 @@ Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` s
    - `initializeBuiltins(): Promise<void>` — upserts default built-in skills on startup
    - **Private `validateSkillConfig(sourceType, config)`** — enforces:
      - `plugin`: `pluginPath` must be an absolute path (starts with `/`), must not contain `../`, must not be empty
-     - `mcp_server`: `command` must be a non-empty non-whitespace string; `args` entries must be strings; `env` keys must match `/^[A-Z_][A-Z0-9_]*$/i` (no injection via env var names); `env` values must be strings
+     - `mcp_server`: `appMcpServerId` must be a non-empty string; the referenced `app_mcp_servers` entry must exist (validated via `AppMcpServerRepository.get(appMcpServerId)` — throw if null)
      - `builtin`: `commandName` must be a non-empty string
      - Throw a descriptive `Error` on validation failure
 4. Register `SkillRepository` and `SkillsManager` in `packages/daemon/src/app.ts`.
@@ -83,7 +83,7 @@ Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` s
    - Test that built-in skills cannot be removed
    - Test persistence across load cycles
    - Test `getEnabledSkills()` filtering
-   - **Test all validation rules**: path traversal rejected, empty command rejected, invalid env key rejected
+   - **Test all validation rules**: path traversal rejected; `appMcpServerId` referencing a non-existent app MCP server rejected; empty `commandName` rejected
    - Test that valid configs pass validation
 
 **Acceptance criteria:**
@@ -162,7 +162,7 @@ Wire the `skills` and `room_skill_overrides` tables into the ReactiveDatabase an
    FROM skills
    ORDER BY built_in DESC, created_at ASC
    ```
-   Row mapper (`mapSkillRow`): parse `config` JSON (omit if NULL, same as `mapMcpServerRow` for `args`/`env`); coerce `enabled` and `builtIn` (integer → boolean).
+   Row mapper (`mapSkillRow`): parse `config` JSON blob (omit if NULL, same as `mapMcpServerRow` — spread into result only when non-null); coerce `enabled` and `builtIn` (integer → boolean).
 
    **`skills.byRoom`** (1 param: `roomId`) — all global skills with per-room override applied via LEFT JOIN:
    ```sql
@@ -217,7 +217,7 @@ Implement a `SKILL_VALIDATE` job queue so that when a skill is added or updated,
    - Payload: `{ skillId: string }`
    - Fetch the skill from `SkillsManager`; throw if not found
    - For `plugin` skills: check `fs.access(pluginPath)` — fail job if path is inaccessible
-   - For `mcp_server` skills: check that the referenced `app_mcp_servers` entry (by `config.appMcpServerId`) exists and is enabled via `AppMcpServerRepository.findById()`; fail job if not found
+   - For `mcp_server` skills: check that the referenced `app_mcp_servers` entry (by `config.appMcpServerId`) exists via `AppMcpServerRepository.get(config.appMcpServerId)`; fail job if `null`
    - For `builtin` skills: no-op (always valid)
    - On success: return `{ valid: true, skillId }`
    - On failure: throw descriptive error (job processor will retry then mark dead)
@@ -231,7 +231,7 @@ Implement a `SKILL_VALIDATE` job queue so that when a skill is added or updated,
 8. Write unit tests in `packages/daemon/tests/unit/job-handlers/skill-validate.handler.test.ts`:
    - Test that a valid plugin path passes
    - Test that a non-existent plugin path fails (job throws)
-   - Test that a missing MCP command fails (job throws)
+   - Test that an `appMcpServerId` referencing a non-existent app MCP server fails (job throws)
    - Test that builtin always passes
 
 **Acceptance criteria:**

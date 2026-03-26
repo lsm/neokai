@@ -112,15 +112,27 @@ Create a built-in `McpServerSkillConfig` entry for a web search MCP server (e.g.
 
 1. Run `bun install` at the worktree root.
 2. Research available web search MCP servers (Brave Search MCP, Tavily MCP, DuckDuckGo MCP). Document the chosen one in `docs/architecture/web-search-mcp.md`.
-3. In `SkillsManager.initializeBuiltins()`, register a built-in skill entry:
+3. In `SkillsManager.initializeBuiltins()`, register a built-in skill entry. Because `McpServerSkillConfig` references an existing `app_mcp_servers` entry by ID, the initializer must first ensure the corresponding app MCP server record exists, then reference it:
    ```
+   // Step 1: ensure app MCP server entry exists (upsert)
+   const appMcpEntry = appMcpServerRepo.getByName('web-search-brave') ??
+     appMcpServerRepo.create({
+       name: 'web-search-brave',
+       displayName: 'Brave Web Search',
+       sourceType: 'stdio',
+       command: 'npx',
+       args: ['-y', '@modelcontextprotocol/server-brave-search'],
+       enabled: true,
+     });
+
+   // Step 2: register the skill referencing the app MCP entry
    {
      id: 'builtin-web-search-mcp',
      name: 'web-search-mcp',
      displayName: 'Web Search (MCP)',
-     description: 'Web search capability via Brave/Tavily MCP server. Requires API key in env.',
+     description: 'Web search capability via Brave Search MCP. Requires BRAVE_API_KEY env var.',
      sourceType: 'mcp_server',
-     config: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-brave-search'] },
+     config: { appMcpServerId: appMcpEntry.id },
      enabled: false,  // opt-in, not default
      builtIn: true,
    }

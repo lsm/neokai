@@ -72,7 +72,7 @@ Build the `SkillsRegistry` component that allows users to view, add, edit, enabl
    - Conditional config fields based on source type:
      - Built-in: command name text field
      - Plugin: plugin directory path field (with a "Browse" tip)
-     - MCP Server: command field, args (JSON array), env vars (key-value editor)
+     - MCP Server: dropdown/selector to pick an existing app-level MCP server (populated from `mcp.registry.list` RPC); no separate command/args/env fields — those are managed in the App MCP Servers settings panel
    - Validate required fields before submit
    - Calls `addSkill` from hook
 4. Create `packages/web/src/components/settings/EditSkillDialog.tsx`:

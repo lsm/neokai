@@ -33,7 +33,7 @@ Extend `QueryOptionsBuilder` to pull enabled skills from `SkillsManager` and inj
    - Maps each to `{ type: 'local', path: (skill.config as PluginSkillConfig).pluginPath }`
 6. Add a private `getMcpServersFromSkills(): Record<string, McpServerConfig>` method that:
    - Filters enabled skills with `sourceType === 'mcp_server'`
-   - For each, looks up the referenced `app_mcp_servers` entry via `appMcpServerRepo.findById((skill.config as McpServerSkillConfig).appMcpServerId)` — skip silently if the referenced entry no longer exists or is disabled
+   - For each, looks up the referenced `app_mcp_servers` entry via `appMcpServerRepo.get((skill.config as McpServerSkillConfig).appMcpServerId)` — skip silently if `null` (entry deleted or no longer exists)
    - Maps the resolved `AppMcpServer` to a standard MCP server config entry keyed by `skill.name`
 7. In `build()`, merge plugins from skills with any existing `config.plugins`.
 8. In `getMcpServers()`, merge MCP servers from skills with existing `config.mcpServers`. If `strictMcpConfig` requires an explicit allowlist, add the skill server names there too.
