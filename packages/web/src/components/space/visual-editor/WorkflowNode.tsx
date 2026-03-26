@@ -132,10 +132,10 @@ export function WorkflowNode({
 	const nodeAgentNames: string[] = isTaskAgent
 		? ['task-agent']
 		: multi
-		  ? step.agents!.map((a) => a.name)
-		  : step.agentId
-		    ? [step.agentId]
-		    : [];
+			? step.agents!.map((a) => a.name)
+			: step.agentId
+				? [step.agentId]
+				: [];
 
 	// Build a lookup: agentName → AgentTaskState
 	const taskStateByAgent = new Map<string | null, AgentTaskState>(
@@ -339,7 +339,10 @@ export function WorkflowNode({
 						{step.name || 'Task Agent'}
 					</p>
 					{/* Channel topology */}
-					<ChannelTopologyBadge workflowChannels={workflowChannels} nodeAgentNames={nodeAgentNames} />
+					<ChannelTopologyBadge
+						workflowChannels={workflowChannels}
+						nodeAgentNames={nodeAgentNames}
+					/>
 				</div>
 			</div>
 		);
