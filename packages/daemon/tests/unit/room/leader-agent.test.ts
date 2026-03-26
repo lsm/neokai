@@ -225,6 +225,20 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('complete_task');
 		});
 
+		it('should include task review step in Phase 2 guidance for simple plan review', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			// Leader must review tasks against plan before completing
+			expect(prompt).toContain('docs/plans/');
+			expect(prompt).toContain('update_task');
+			expect(prompt).toContain('No scope creep');
+		});
+
+		it('should include task review step in Phase 2 guidance for post-approval section', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			// Post-approval section must mention review step
+			expect(prompt).toContain('verify title, description, dependencies');
+		});
+
 		it('should use planning-specific post-approval workflow for plan_review', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
 			// Should instruct leader to send planner back — NOT merge the PR itself
