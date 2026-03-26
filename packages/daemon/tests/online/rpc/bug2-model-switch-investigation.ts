@@ -20,7 +20,7 @@
 
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
-import { mkdirSync } from 'fs';
+import { mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -205,6 +205,7 @@ async function main() {
 	} finally {
 		daemon.kill('SIGTERM');
 		await daemon.waitForExit();
+		rmSync(workspacePath, { recursive: true, force: true });
 	}
 }
 
