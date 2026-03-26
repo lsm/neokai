@@ -194,6 +194,76 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 			// Some routing call should have been made
 			expect(callsAfter).toBeGreaterThanOrEqual(callsBefore);
 		});
+
+		it('restores task status to in_progress after rate limit expiry recovery', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(RATE_LIMIT_MSG),
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// Verify task is rate_limited
+			const rateLimited = await ctx.taskManager.getTask(task.id);
+			expect(rateLimited!.status).toBe('rate_limited');
+			expect(rateLimited!.restrictions).toBeDefined();
+
+			// Set the actual worker session to idle so recoverStuckWorkers picks it up
+			ctx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+
+			// Manually set an expired rate limit
+			ctx.groupRepo.setRateLimit(group.id, {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 60_000, // expired
+				sessionRole: 'worker',
+			});
+
+			// Trigger recovery via tick
+			await ctx.runtime.tick();
+
+			// Allow the fire-and-forget clearTaskRestriction to resolve
+			await new Promise((r) => setTimeout(r, 10));
+
+			// Task status must be restored to in_progress with restrictions cleared
+			const resumed = await ctx.taskManager.getTask(task.id);
+			expect(resumed!.status).toBe('in_progress');
+			expect(resumed!.restrictions).toBeNull();
+		});
+
+		it('restores task status to in_progress after usage_limit expiry recovery', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(USAGE_LIMIT_MSG),
+				// No fallback models — ensures usage_limit triggers pause
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// Verify task is usage_limited
+			const usageLimited = await ctx.taskManager.getTask(task.id);
+			expect(usageLimited!.status).toBe('usage_limited');
+			expect(usageLimited!.restrictions).toBeDefined();
+
+			// Set the actual worker session to idle so recoverStuckWorkers picks it up
+			ctx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+
+			// Manually set an expired rate limit (simulating timer expiry)
+			ctx.groupRepo.setRateLimit(group.id, {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 60_000, // expired
+				sessionRole: 'worker',
+			});
+
+			// Trigger recovery via tick
+			await ctx.runtime.tick();
+
+			// Allow the fire-and-forget clearTaskRestriction to resolve
+			await new Promise((r) => setTimeout(r, 10));
+
+			// Task status must be restored to in_progress with restrictions cleared
+			const resumed = await ctx.taskManager.getTask(task.id);
+			expect(resumed!.status).toBe('in_progress');
+			expect(resumed!.restrictions).toBeNull();
+		});
 	});
 
 	// ─── Leader rate/usage limit paths ───────────────────────────────────────
