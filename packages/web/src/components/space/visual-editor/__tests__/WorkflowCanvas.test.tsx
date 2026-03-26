@@ -670,3 +670,91 @@ describe('WorkflowCanvas — channel edge rendering', () => {
 		expect(channelEdges.length).toBeGreaterThan(0);
 	});
 });
+
+// ---- Explicit channels prop ----
+
+import type { ResolvedWorkflowChannel } from '../EdgeRenderer';
+
+describe('WorkflowCanvas — explicit channels prop', () => {
+	const CHANNEL_EDGES: ResolvedWorkflowChannel[] = [
+		{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'bidirectional' },
+	];
+
+	function renderCanvasWithExplicitChannels(extra: Partial<WorkflowCanvasProps> = {}) {
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={NODES}
+					viewportState={vp}
+					onViewportChange={setVp}
+					channels={CHANNEL_EDGES}
+					{...extra}
+				/>
+			);
+		}
+		return render(<Wrapper />);
+	}
+
+	it('renders SVG overlay when explicit channels are provided', () => {
+		const { getByTestId } = renderCanvasWithExplicitChannels();
+		expect(getByTestId('visual-canvas-svg')).toBeTruthy();
+	});
+
+	it('renders channel edges from explicit channels prop', () => {
+		const { container } = renderCanvasWithExplicitChannels();
+		// Channel edges are rendered inside the SVG overlay
+		const channelEdges = container.querySelectorAll('[data-channel-edge]');
+		expect(channelEdges.length).toBeGreaterThan(0);
+	});
+
+	it('deduplicates explicit channels with computed node channels', () => {
+		// Node has a channel from step-1 to step-2
+		const agentWithRole = makeAgent('agent-1', 'Coder');
+		agentWithRole.role = 'coder';
+		const nodesWithChannels: WorkflowNodeData[] = [
+			{
+				step: {
+					...makeStep('step-1', 'Step One'),
+					agentId: 'agent-1',
+					channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+				},
+				stepIndex: 1,
+				position: { x: 10, y: 10 },
+				agents: [agentWithRole],
+				isStartNode: false,
+			},
+			{
+				step: makeStep('step-2', 'Step Two'),
+				stepIndex: 2,
+				position: { x: 200, y: 10 },
+				agents: [makeAgent('agent-2', 'Reviewer')],
+				isStartNode: false,
+			},
+		];
+		// Pass duplicate of task-agent->step-1 edge explicitly
+		const duplicateChannels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+		];
+
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={nodesWithChannels}
+					viewportState={vp}
+					onViewportChange={setVp}
+					channels={duplicateChannels}
+					onNodeSelect={() => {}}
+					onDeleteNode={() => {}}
+				/>
+			);
+		}
+
+		const { container } = render(<Wrapper />);
+		// Should deduplicate: only one edge for task-agent->step-1
+		const taskAgentEdges = container.querySelectorAll('[data-channel-edge="task-agent:step-1"]');
+		expect(taskAgentEdges.length).toBeLessThanOrEqual(1);
+		cleanup();
+	});
+});
