@@ -45,6 +45,7 @@ const SETTINGS_SECTIONS: Array<{
 	{ id: 'providers', label: 'Providers', icon: 'cloud' },
 	{ id: 'mcp-servers', label: 'MCP Servers', icon: 'server' },
 	{ id: 'app-mcp-servers', label: 'Application MCP Servers', icon: 'app-server' },
+	{ id: 'skills', label: 'Skills', icon: 'skills' },
 	{ id: 'fallback-models', label: 'Fallback Models', icon: 'swap' },
 	{ id: 'usage', label: 'Usage', icon: 'chart' },
 	{ id: 'about', label: 'About', icon: 'info' },
@@ -136,6 +137,17 @@ function SectionIcon({ type }: { type: string }) {
 					/>
 					<circle cx="8" cy="8" r="1" fill="currentColor" />
 					<circle cx="12" cy="8" r="1" fill="currentColor" />
+				</svg>
+			);
+		case 'skills':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"
+					/>
 				</svg>
 			);
 		default:
