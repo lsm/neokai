@@ -218,6 +218,12 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`Call this when the workflow reaches a terminal step or an unrecoverable error occurs.`
 	);
 	sections.push(
+		`- **report_workflow_done** — Explicitly mark the entire workflow run as completed and close the main task. ` +
+			`Pass an optional \`summary\` string describing what the workflow accomplished. ` +
+			`Call this when all node agents have finished and you are certain the workflow is done. ` +
+			`This immediately marks the run completed without waiting for the automatic detector.`
+	);
+	sections.push(
 		`- **request_human_input** — Surface a human gate and block until the human responds. ` +
 			`Pass a \`question\` describing what decision or approval is needed. ` +
 			`Returns the human's response. ` +
@@ -269,7 +275,8 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`\`condition\` and \`task_result\` gates are evaluated automatically by the system. ` +
 			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
 			`5. **Detect completion** — When \`list_group_members\` shows all members have completed, ` +
-			`call \`report_result\` to close the task.\n` +
+			`call \`report_workflow_done\` to mark the workflow run and task as completed. ` +
+			`You may also use \`report_result\` directly for finer-grained status control.\n` +
 			`6. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
 			`\`status: "cancelled"\` and the error details.`
 	);

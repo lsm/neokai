@@ -1,10 +1,11 @@
 /**
  * Task Agent Tools — MCP tool handlers for the Task Agent session.
  *
- * These handlers implement the business logic for the 6 Task Agent tools:
+ * These handlers implement the business logic for the 7 Task Agent tools:
  *   spawn_node_agent      — Spawn a sub-session for a workflow node's assigned agent
  *   check_node_status     — Poll the status of a running node agent sub-session
  *   report_result         — Mark the task as completed/failed and record the result
+ *   report_workflow_done  — Explicitly mark the workflow run as completed
  *   request_human_input   — Pause execution and surface a question to the human user
  *   list_group_members    — List all members of the current task's session group
  *   send_message          — Send a message to peer node agents via channel topology
@@ -40,6 +41,7 @@ import {
 	SpawnNodeAgentSchema,
 	CheckNodeStatusSchema,
 	ReportResultSchema,
+	ReportWorkflowDoneSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
 } from './task-agent-tool-schemas';
@@ -49,6 +51,7 @@ import type {
 	SpawnNodeAgentInput,
 	CheckNodeStatusInput,
 	ReportResultInput,
+	ReportWorkflowDoneInput,
 	RequestHumanInputInput,
 	ListGroupMembersInput,
 } from './task-agent-tool-schemas';
@@ -638,6 +641,89 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		},
 
 		/**
+		 * Explicitly mark the workflow run as completed.
+		 *
+		 * Use this tool when all node agents have finished and you are certain the
+		 * overall workflow is done. It:
+		 *   1. Validates the workflow run exists and is still in_progress
+		 *   2. Marks the workflow run as completed (sets completedAt)
+		 *   3. Marks the main task as completed via report_result logic
+		 *   4. Emits a space.task.completed event so listeners are notified
+		 *
+		 * The SpaceRuntime tick loop will detect the completed run status on the next
+		 * tick and emit a workflow_run_completed notification to the Space Agent.
+		 */
+		async report_workflow_done(args: ReportWorkflowDoneInput): Promise<ToolResult> {
+			const { summary } = args;
+
+			const run = workflowRunRepo.getRun(workflowRunId);
+			if (!run) {
+				return jsonResult({
+					success: false,
+					error: `Workflow run not found: ${workflowRunId}`,
+				});
+			}
+
+			if (run.status !== 'in_progress') {
+				return jsonResult({
+					success: false,
+					error:
+						`Cannot mark workflow run as completed when status is "${run.status}". ` +
+						`Workflow run must be in_progress.`,
+					currentStatus: run.status,
+				});
+			}
+
+			const mainTask = taskRepo.getTask(taskId);
+			if (!mainTask) {
+				return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+			}
+
+			try {
+				// Mark the workflow run as completed — SpaceRuntime tick will detect this
+				// and emit workflow_run_completed via the notification sink.
+				workflowRunRepo.updateStatus(workflowRunId, 'completed');
+
+				// Mark the main task as completed (mirrors report_result logic).
+				await taskManager.setTaskStatus(taskId, 'completed', {
+					result: summary,
+				});
+
+				// Emit DaemonHub event so the Space Agent is notified.
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.task.completed', {
+							sessionId: 'global',
+							taskId,
+							spaceId: space.id,
+							status: 'completed',
+							summary: summary ?? '',
+							workflowRunId,
+							taskTitle: mainTask.title,
+						})
+						.catch((err) => {
+							log.warn(
+								`Failed to emit space.task.completed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+							);
+						});
+				}
+
+				return jsonResult({
+					success: true,
+					workflowRunId,
+					taskId,
+					summary,
+					message:
+						'Workflow run has been marked as completed. ' +
+						'The main task has also been closed. Stop here — do not call any further tools.',
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
 		 * List all members of the current task's session group.
 		 *
 		 * Returns every member (including the Task Agent itself) with:
@@ -984,6 +1070,14 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				'Call this when the workflow reaches a terminal step or an unrecoverable error occurs.',
 			ReportResultSchema.shape,
 			(args) => handlers.report_result(args)
+		),
+		tool(
+			'report_workflow_done',
+			'Explicitly mark the entire workflow run as completed and close the main task. ' +
+				'Call this when all node agents have finished and the workflow is fully done. ' +
+				'This bypasses the automatic all-agents-done detector and immediately marks the run completed.',
+			ReportWorkflowDoneSchema.shape,
+			(args) => handlers.report_workflow_done(args)
 		),
 		tool(
 			'request_human_input',
