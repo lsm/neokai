@@ -112,6 +112,90 @@ describe('rate-limit-utils', () => {
 		});
 	});
 
+	describe('SDK rate_limit_event JSON handling', () => {
+		it('returns null for rate_limit_event with status allowed (informational)', () => {
+			const json = JSON.stringify({
+				type: 'rate_limit_event',
+				rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', resetsAt: 1749600000 },
+				uuid: 'abc',
+				session_id: 'def',
+			});
+			expect(parseRateLimitReset(json)).toBeNull();
+		});
+
+		it('returns null for rate_limit_event with status allowed_warning (informational)', () => {
+			const json = JSON.stringify({
+				type: 'rate_limit_event',
+				rate_limit_info: {
+					status: 'allowed_warning',
+					rateLimitType: 'five_hour',
+					resetsAt: 1749600000,
+				},
+				uuid: 'abc',
+				session_id: 'def',
+			});
+			expect(parseRateLimitReset(json)).toBeNull();
+		});
+
+		it('returns resetsAt * 1000 for rate_limit_event with status rejected', () => {
+			const resetsAtSeconds = 1749600000;
+			const json = JSON.stringify({
+				type: 'rate_limit_event',
+				rate_limit_info: {
+					status: 'rejected',
+					rateLimitType: 'five_hour',
+					resetsAt: resetsAtSeconds,
+				},
+				uuid: 'abc',
+				session_id: 'def',
+			});
+			const result = parseRateLimitReset(json);
+			expect(result).toBe(resetsAtSeconds * 1000);
+		});
+
+		it('returns null for rate_limit_event with status rejected but no resetsAt', () => {
+			const json = JSON.stringify({
+				type: 'rate_limit_event',
+				rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour' },
+				uuid: 'abc',
+				session_id: 'def',
+			});
+			expect(parseRateLimitReset(json)).toBeNull();
+		});
+	});
+
+	describe('isRateLimitError — SDK rate_limit_event JSON', () => {
+		it('returns false for rate_limit_event with status allowed', () => {
+			const json = JSON.stringify({
+				type: 'rate_limit_event',
+				rate_limit_info: { status: 'allowed', resetsAt: 1749600000 },
+				uuid: 'abc',
+				session_id: 'def',
+			});
+			expect(isRateLimitError(json)).toBe(false);
+		});
+
+		it('returns false for rate_limit_event with status allowed_warning', () => {
+			const json = JSON.stringify({
+				type: 'rate_limit_event',
+				rate_limit_info: { status: 'allowed_warning', resetsAt: 1749600000 },
+				uuid: 'abc',
+				session_id: 'def',
+			});
+			expect(isRateLimitError(json)).toBe(false);
+		});
+
+		it('returns true for rate_limit_event with status rejected', () => {
+			const json = JSON.stringify({
+				type: 'rate_limit_event',
+				rate_limit_info: { status: 'rejected', resetsAt: 1749600000 },
+				uuid: 'abc',
+				session_id: 'def',
+			});
+			expect(isRateLimitError(json)).toBe(true);
+		});
+	});
+
 	describe('createRateLimitBackoff', () => {
 		let originalDateNow: typeof Date.now;
 		const mockDetectedAt = 1709508000000; // Fixed timestamp

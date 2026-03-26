@@ -17,14 +17,55 @@ const RATE_LIMIT_PATTERN =
 /**
  * Parse rate limit reset time from error message.
  *
- * @param errorMessage - The rate limit error message
- * @returns The reset timestamp in ms, or null if not parseable
+ * Handles two input formats:
+ *
+ * 1. SDK `rate_limit_event` JSON (e.g. from `mirrorSession`):
+ *    Only returns a timestamp for `status: 'rejected'` — the actual limit hit.
+ *    `status: 'allowed'` / `'allowed_warning'` events are informational (orange badge
+ *    in the UI) and must NOT trigger pause/backoff, so null is returned immediately.
+ *
+ * 2. Anthropic usage-limit text pattern:
+ *    "You've hit your limit · resets 1pm (America/New_York)"
+ *    (from actual 4xx API error responses)
+ *
+ * @param errorMessage - The rate limit error message (text or JSON string)
+ * @returns The reset timestamp in ms, or null if not parseable / not an actual limit hit
  *
  * @example
  * parseRateLimitReset("You've hit your limit · resets 1pm (America/New_York)")
  * // Returns timestamp for 1pm in America/New_York timezone
+ *
+ * parseRateLimitReset(JSON.stringify({type:'rate_limit_event',rate_limit_info:{status:'rejected',resetsAt:1749600000}}))
+ * // Returns 1749600000 * 1000 (resetsAt in ms)
+ *
+ * parseRateLimitReset(JSON.stringify({type:'rate_limit_event',rate_limit_info:{status:'allowed',resetsAt:1749600000}}))
+ * // Returns null — informational only, not an actual error
  */
 export function parseRateLimitReset(errorMessage: string): number | null {
+	// ── Structured SDK rate_limit_event JSON ─────────────────────────────────
+	// These messages are emitted for ALL rate limit state changes, not just errors.
+	// Only 'rejected' status means the API actually blocked the request.
+	if (errorMessage.includes('"type":"rate_limit_event"')) {
+		try {
+			const parsed = JSON.parse(errorMessage) as {
+				type?: string;
+				rate_limit_info?: { status?: string; resetsAt?: number };
+			};
+			if (parsed.type === 'rate_limit_event') {
+				const info = parsed.rate_limit_info;
+				if (info?.status === 'rejected' && typeof info.resetsAt === 'number') {
+					// SDK resetsAt is in seconds; convert to ms for callers
+					return info.resetsAt * 1000;
+				}
+				// 'allowed' / 'allowed_warning' → informational, not a limit hit
+				return null;
+			}
+		} catch {
+			// JSON parse failed — fall through to text pattern below
+		}
+	}
+
+	// ── Anthropic usage-limit text (from actual 4xx API responses) ───────────
 	const match = errorMessage.match(RATE_LIMIT_PATTERN);
 	if (!match) return null;
 
@@ -168,10 +209,30 @@ export function parseRateLimitReset(errorMessage: string): number | null {
 /**
  * Check if a message contains a rate limit error.
  *
+ * Returns true for:
+ * - Anthropic usage-limit text matching RATE_LIMIT_PATTERN
+ * - SDK `rate_limit_event` JSON with `status: 'rejected'`
+ *
+ * Returns false for SDK `rate_limit_event` JSON with non-rejected status
+ * (those are informational, not actual errors).
+ *
  * @param message - The message to check
- * @returns true if the message is a rate limit error
+ * @returns true if the message represents an actual rate limit hit
  */
 export function isRateLimitError(message: string): boolean {
+	if (message.includes('"type":"rate_limit_event"')) {
+		try {
+			const parsed = JSON.parse(message) as {
+				type?: string;
+				rate_limit_info?: { status?: string };
+			};
+			if (parsed.type === 'rate_limit_event') {
+				return parsed.rate_limit_info?.status === 'rejected';
+			}
+		} catch {
+			// fall through to text pattern
+		}
+	}
 	return RATE_LIMIT_PATTERN.test(message);
 }
 
