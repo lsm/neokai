@@ -1,4 +1,5 @@
 import { mock } from 'bun:test';
+import { registerDefaultSdkMock } from '../../helpers/default-sdk-mock';
 
 // Re-declare the SDK mock so it survives Bun's module isolation.
 // Without this, a preceding test file's mock.module() override causes the real
@@ -186,6 +187,8 @@ describe('Room Agent Tools', () => {
 
 	afterEach(() => {
 		db.close();
+		// Restore the default SDK mock so subsequent test files use the correct mock.
+		registerDefaultSdkMock();
 	});
 
 	function parseResult(result: { content: Array<{ type: string; text: string }> }) {

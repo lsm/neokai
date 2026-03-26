@@ -80,8 +80,11 @@ build:
 test: test-daemon test-web
 
 test-daemon:
+	@echo "Running shared tests..."
+	@cd packages/shared && NODE_ENV=test bun test --jobs=1 --dots --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../coverage tests
+	@echo ""
 	@echo "Running daemon tests..."
-	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
+	@cd packages/daemon && NODE_ENV=test bun test --jobs=1 --preload=./tests/unit/setup.ts --dots --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../coverage tests/unit
 
 test-web:
 	@echo "Running web tests..."

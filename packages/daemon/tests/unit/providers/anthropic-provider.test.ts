@@ -123,7 +123,16 @@ describe('AnthropicProvider', () => {
 			// Set credentials so SDK load is attempted
 			process.env.ANTHROPIC_API_KEY = 'test-key';
 
-			// Mock the SDK module with a query that fails when supportedModels is called
+			// Mock the SDK module with a query that fails when supportedModels is called.
+			// IMPORTANT: we must still provide createSdkMcpServer and tool so that other
+			// tests (e.g. provision-global-agent, task-agent-tools) don't break when
+			// this mock replaces setup.ts's default SDK mock.
+			class MockMcpServer {
+				readonly _registeredTools: Record<string, object> = {};
+				connect(): void {}
+				disconnect(): void {}
+			}
+			let _toolBatch: Array<{ name: string; def: object }> = [];
 			mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 				query: async () => ({
 					interrupt: () => {},
@@ -131,6 +140,31 @@ describe('AnthropicProvider', () => {
 						throw new Error('SDK unavailable');
 					},
 				}),
+				interrupt: mock(async () => {}),
+				supportedModels: mock(async () => {
+					throw new Error('SDK unavailable');
+				}),
+				createSdkMcpServer: mock((_options: { name: string; tools?: unknown[] }) => {
+					const server = new MockMcpServer();
+					for (const { name, def } of _toolBatch) {
+						server._registeredTools[name] = def;
+					}
+					_toolBatch = [];
+					return {
+						type: 'sdk' as const,
+						name: _options.name,
+						version: _options.version ?? '1.0.0',
+						tools: _options.tools ?? [],
+						instance: server,
+					};
+				}),
+				tool: mock(
+					(name: string, description: string, inputSchema: unknown, handler: unknown) => {
+						const def = { name, description, inputSchema, handler };
+						_toolBatch.push({ name, def });
+						return def;
+					}
+				),
 			}));
 
 			// Clear cache to force fresh load
