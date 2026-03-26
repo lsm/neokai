@@ -109,7 +109,7 @@ Plan ---[human gate]--> Code ---[always gate]--> Review ---[task_result gate: pa
 - The human gate only fires once (Plan → Code), not on every iteration
 - The Coder can iterate on feedback from both Reviewer and QA independently
 
-**Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow run transitions to `failed` status with a `maxIterationsReached` error, and a notification is sent to the human requesting manual intervention.
+**Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow run transitions to `needs_attention` status with error metadata `{ reason: 'maxIterationsReached' }`, and a notification is sent to the human requesting manual intervention. Note: the current `WorkflowRunStatus` type in `packages/shared/src/types/space.ts` does not include `'failed'` — a type expansion is needed in M5 (see Task 5.1 subtask 5).
 
 ## Cross-Milestone Dependencies
 
@@ -128,7 +128,8 @@ Plan ---[human gate]--> Code ---[always gate]--> Review ---[task_result gate: pa
 - The V2 workflow gets a `tag: 'default'` so `workflow-selector.ts` ranks it first for coding-type requests
 - The existing `CODING_WORKFLOW` (V1) is kept for backward compatibility but is no longer the default
 - New spaces created after the V2 seed will have both V1 and V2 available, with V2 as the suggested default
+- **V1→V2 migration is out of scope for this PR.** Existing spaces that were seeded with V1 retain the V1 workflow. V1's `Verify → Plan (on fail)` loop remains (which sends failures back to the Planner, not the Coder — this is intentional for V1's simpler topology). A future PR can add a migration that switches existing spaces to V2.
 
 ## Total Estimated Task Count
 
-19 tasks across 8 milestones
+28 tasks across 8 milestones

@@ -17,7 +17,7 @@ Build the full-stack human gate UX so humans can see when a workflow is waiting 
 3. **State transition**: The RPC handler sets `humanApproved: true` on the workflow run's config (or `humanRejected: true`), which the `ChannelGateEvaluator` checks on next gate evaluation.
 
 ### What happens on rejection
-- The workflow run transitions to `failed` status with reason `humanRejected`.
+- The workflow run transitions to `needs_attention` status with metadata `{ reason: 'humanRejected' }`. (See Task 5.1 subtask 5 for the type expansion that adds `'failed'` / `'waiting_for_approval'` to `WorkflowRunStatus`.)
 - The human can then provide feedback and restart, or create a new task.
 
 ### Post-rejection recovery
@@ -46,19 +46,28 @@ After a human rejects at the gate, the human has two recovery options:
    - Called when a human gate blocks a channel
    - Sends a notification event (`human_gate_blocked`) to the frontend
    - Parameters: `{ runId, channelId, message: string }` — the message describes what the human needs to approve
-5. Add workflow run status transitions:
-   - `running` → `waiting_for_approval` when a human gate blocks
-   - `waiting_for_approval` → `running` when human approves
+5. Add workflow run status transitions (using current `WorkflowRunStatus` values where possible):
+   - `in_progress` → `waiting_for_approval` when a human gate blocks (requires type expansion — see subtask 6)
+   - `waiting_for_approval` → `in_progress` when human approves
    - `waiting_for_approval` → `failed` when human rejects (reason: `humanRejected`)
-6. Persist the `waiting_for_approval` status and the gate metadata in the workflow run record
-7. Implement the `spaceWorkflowRun.restart` RPC handler for post-rejection recovery:
+   - `in_progress` → `failed` when max iterations reached (reason: `maxIterationsReached`)
+   - `in_progress` → `failed` when a node times out (reason: `nodeTimeout`)
+6. **Expand `WorkflowRunStatus` type** in `packages/shared/src/types/space.ts`:
+   - Current type: `'pending' | 'in_progress' | 'completed' | 'cancelled' | 'needs_attention'`
+   - Add `'waiting_for_approval'` and `'failed'`
+   - Add an optional `failureReason` field to `SpaceWorkflowRun` interface: `failureReason?: 'humanRejected' | 'maxIterationsReached' | 'nodeTimeout'`
+   - Update all consumers of `WorkflowRunStatus` to handle the new values (grep for type usage)
+   - Add `'failed'` to any exhaustive switch/case statements
+7. Persist the `waiting_for_approval` status and the gate metadata in the workflow run record
+8. **Rehydrate `waiting_for_approval` on daemon restart**: When the daemon starts, the `SpaceRuntime` rehydration logic (already implemented for general state) must restore runs that are in `waiting_for_approval` state. Ensure the gate metadata (channelId, gate type) is persisted alongside the status so the frontend can display the approval UI immediately after restart, without waiting for a live event.
+9. Implement the `spaceWorkflowRun.restart` RPC handler for post-rejection recovery:
    - Accepts `{ runId }`
    - Validates that the run is in `failed` status with reason `humanRejected`
-   - Transitions the run back to `running` status
+   - Transitions the run back to `in_progress` status
    - Resets the blocked node to `pending` status
    - Resumes the workflow from the blocked node (does NOT reset iteration counter)
    - The human can type feedback in the Space chat before restarting — this feedback is delivered to the node on restart
-8. Add unit tests:
+10. Add unit tests:
    - Gate blocks delivery and returns correct error
    - RPC handler approves/rejects correctly
    - Status transitions are correct
@@ -70,6 +79,9 @@ After a human rejects at the gate, the human has two recovery options:
 - `spaceWorkflowRun.approveGate` RPC handler works correctly
 - After approval, workflow resumes and coder starts automatically
 - After rejection, workflow transitions to `failed` with `humanRejected` reason
+- `WorkflowRunStatus` type is expanded with `'waiting_for_approval'` and `'failed'` values
+- `failureReason` field on `SpaceWorkflowRun` captures `'humanRejected'`, `'maxIterationsReached'`, `'nodeTimeout'`
+- `waiting_for_approval` state survives daemon restart (rehydrated from DB)
 - `spaceWorkflowRun.restart` RPC handler recovers from rejection without resetting iteration counter
 - `request_human_input` tool notifies the frontend
 - Unit tests cover all state transitions and RPC flows
@@ -154,6 +166,8 @@ After a human rejects at the gate, the human has two recovery options:
 ### Task 5.4: Space Chat Agent Task Creation from Conversation
 
 **Description**: Ensure the Space chat agent can create a task from a human's conversational request and automatically start the appropriate workflow run. This is the "entry point" of the happy path.
+
+> **Placement rationale**: This task is in M5 (not M1/M2) because it requires the full pipeline with the human gate to be functional. The task's acceptance criteria prove the end-to-end flow: conversation → task creation → workflow start → human gate → approval. This can only be verified once M2 (V2 workflow), M4 (QA node), and M5 Task 5.1 (human gate backend) are all in place. The space chat agent's intent recognition and workflow selection logic (subtask 1) can be developed independently in earlier milestones if desired, but the integration test belongs here.
 
 **Reference implementation**: `packages/daemon/src/lib/space/agents/space-chat-agent.ts` — the Space chat agent already has MCP tools for `start_workflow_run`, `create_standalone_task`, `suggest_workflow`, and `list_workflows`. This task verifies and fixes the end-to-end flow.
 

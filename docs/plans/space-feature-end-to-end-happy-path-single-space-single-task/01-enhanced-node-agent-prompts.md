@@ -49,11 +49,7 @@ Upgrade the system prompts for planner, coder, and reviewer node agents in the S
 
 **Depends on**: nothing (parallel with 1.1)
 
-**Agent type**: coder
-
----
-
-### Task 1.3: Enhance Reviewer Node Agent System Prompt
+**Agent type**: planner
 
 **Description**: Create a specialized reviewer prompt for Space node agents with role 'reviewer' that includes PR review posting via REST API, severity classification (P0-P3), and structured review output format.
 
@@ -72,4 +68,4 @@ Upgrade the system prompts for planner, coder, and reviewer node agents in the S
 
 **Depends on**: nothing (parallel with 1.1 and 1.2)
 
-**Agent type**: coder
+**Agent type**: reviewer

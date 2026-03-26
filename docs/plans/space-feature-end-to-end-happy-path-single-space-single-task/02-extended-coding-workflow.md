@@ -37,9 +37,10 @@ Plan ---[human gate]--> Code ---[always gate]--> Review ---[task_result gate: pa
 - `maxIterations` is set to `3` on the workflow run (configurable per-space in the future).
 - The iteration counter is **global** (per workflow run), incremented each time ANY cyclic channel is traversed.
 - When `maxIterations` is reached:
-  1. The workflow run transitions to `failed` status with error code `maxIterationsReached`.
+  1. The workflow run transitions to `needs_attention` status with error metadata `{ reason: 'maxIterationsReached' }`.
   2. A `workflow_run_failed` notification is emitted to the human.
   3. The human can then: (a) increase `maxIterations` and resume, (b) manually intervene and restart, or (c) cancel the run.
+  > **Note**: The current `WorkflowRunStatus` type (`packages/shared/src/types/space.ts:304`) does not include `'failed'`. The type expansion to add `'waiting_for_approval'` and `'failed'` (or use `'needs_attention'` with error metadata) is deferred to M5 Task 5.1, where the human gate first needs `waiting_for_approval`. For M2, the iteration cap uses the existing `'needs_attention'` status with structured error metadata.
 - The iteration count is persisted in the `SpaceWorkflowRun` record so it survives restarts.
 
 ## Tasks

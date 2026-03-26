@@ -79,7 +79,7 @@ Create Playwright E2E tests that exercise the full UI flow from space creation t
 **Subtasks**:
 1. Create a task and let the planner complete
 2. Type "reject" in the chat when the human gate appears
-3. Verify the workflow run transitions to `failed` status with `humanRejected` reason
+3. Verify the workflow run transitions to `failed` status with `humanRejected` reason (or `needs_attention` if type not yet expanded — see M5 Task 5.1)
 4. Verify a confirmation message appears in the chat
 5. Verify the human can create a new task afterward
 

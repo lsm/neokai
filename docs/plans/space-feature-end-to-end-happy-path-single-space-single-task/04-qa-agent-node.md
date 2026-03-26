@@ -40,7 +40,11 @@ Both increment the same global counter. When `maxIterations` is reached, the run
 **Subtasks**:
 1. Add `buildQaNodeAgentPrompt()` in `custom-agent.ts` for agents with role `'qa'`
 2. Include instructions for:
-   - Running test suites (`bun test`, `bunx vitest run`, etc.) — adapt to the project's test commands
+   - **Test command detection**: Before running tests, the QA agent probes the project's tooling by checking for known config files and scripts in this order:
+     1. `package.json` → check `scripts.test`, `scripts.test:unit`, `scripts.test:integration`
+     2. `Makefile` → check for `test`, `test-unit`, `test-integration` targets
+     3. Fallback: try `bun test` (Bun project), then `npx vitest run` (Vitest project), then `npm test`
+     The detected command is used for subsequent test runs in the same QA session.
    - Checking CI status via `gh pr checks` or `gh pr view --json statusCheckRollup`
    - Verifying PR mergeability via `gh pr view --json mergeable,mergeStateStatus`
    - Checking for merge conflicts (`git fetch origin && git merge --no-commit --no-ff origin/main`)

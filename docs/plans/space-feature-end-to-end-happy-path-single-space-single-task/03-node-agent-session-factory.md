@@ -47,7 +47,9 @@ Each node agent session gets its own git worktree created from the same reposito
    - On workflow run cancellation, remove all active worktrees for that run.
    - On daemon shutdown/restart, clean up orphaned space worktrees (worktrees whose workflow runs are no longer active).
 5. **Handle reviewer worktree specially**: Reviewers should have a worktree checked out at the PR head commit (read-only). They should NOT create a new branch or push.
+   - **Git state**: A PR's head commit may not be on any branch (e.g., after a force-push). Use `git worktree add <path> <commit-sha>` to create a detached-HEAD worktree at the exact commit, avoiding any branch resolution ambiguity.
 6. **Handle QA worktree specially**: QA should have a worktree at the PR head commit. It runs tests locally but does NOT commit.
+   - **Git state**: Same detached-HEAD approach as reviewer: `git worktree add <path> <commit-sha>`. The QA agent receives the commit SHA from the coder's result (or from the Task Agent's run metadata), not a branch name.
 7. **Add unit tests**:
    - Worktree creation and removal
    - Worktree isolation (git operations in one worktree don't affect another)
@@ -71,6 +73,8 @@ Each node agent session gets its own git worktree created from the same reposito
 ### Task 3.2: Configure Feature Flags for Node Agent Sessions
 
 **Description**: Node agents need specific feature flags to match their capabilities. Reviewers should not have rewind/worktree features; coders need full tool access.
+
+> **Note on `worktree: false`**: The `worktree` feature flag controls **UI visibility only** — whether the worktree button appears in the frontend. Task 3.1 implements actual worktree creation for isolation. These are orthogonal: Task 3.1 creates worktrees programmatically via `git worktree add` (not via the UI button), while `worktree: false` hides the manual worktree UI that's irrelevant for autonomous node agents.
 
 **Subtasks**:
 1. Define feature flag profiles per agent role:

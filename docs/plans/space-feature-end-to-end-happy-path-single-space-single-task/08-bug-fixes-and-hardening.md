@@ -80,10 +80,10 @@ Fix issues discovered during integration and E2E testing. Add missing error hand
 **Description**: Add robust error handling for common failure modes identified during testing.
 
 **Subtasks**:
-1. **Agent session crash handling**: When an agent session crashes mid-execution, the Task Agent should detect the failure (via session status change), transition the workflow run to `failed`, and notify the human with a clear error message. If the crash is transient (e.g., rate limit), the Task Agent should retry once before failing.
+1. **Agent session crash handling**: When an agent session crashes mid-execution, the Task Agent should detect the failure (via session status change), transition the workflow run to `failed` (or `needs_attention` with `failureReason: 'agentCrash'` if the `failed` status is not yet available), and notify the human with a clear error message. If the crash is transient (e.g., rate limit), the Task Agent should retry once before failing.
 2. **Network errors during PR operations**: Add retry logic with exponential backoff for `gh` CLI commands that fail due to network errors (as opposed to logical errors like "no changes to commit"). Max 3 retries, 5s/10s/20s backoff.
 3. **Rate limit handling**: When the LLM provider returns a rate limit error, the Task Agent should wait and retry (using the `Retry-After` header if available). If the provider supports fallback models (as the Room system does), use the fallback.
-4. **Timeout enforcement**: Each workflow node should have a configurable timeout (default: 30 minutes for Coder, 15 minutes for Reviewer/QA, 20 minutes for Planner). When a node times out, the run transitions to `failed` with `nodeTimeout` error.
+4. **Timeout enforcement**: Each workflow node should have a configurable timeout (default: 30 minutes for Coder, 15 minutes for Reviewer/QA, 20 minutes for Planner). When a node times out, the run transitions to `failed` (or `needs_attention` with `failureReason: 'nodeTimeout'`) with `nodeTimeout` error.
 5. **Workflow run cancellation cleanup**: When a workflow run is cancelled:
    - Kill all active agent sessions
    - Remove all space worktrees for the run
@@ -92,7 +92,7 @@ Fix issues discovered during integration and E2E testing. Add missing error hand
 6. **Structured error messages**: All failure modes should produce human-readable error messages in the Space chat, including: what failed, why, and suggested next steps.
 
 **Acceptance Criteria**:
-- Agent crashes produce clear `failed` status with error message (no orphaned sessions)
+- Agent crashes produce clear failure status with error message (no orphaned sessions)
 - Network errors retry with backoff before failing
 - Rate limits trigger retry with fallback model
 - Timeouts are enforced per-node and produce `nodeTimeout` error
