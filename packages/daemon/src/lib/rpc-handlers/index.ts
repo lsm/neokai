@@ -471,6 +471,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 				model: '',
 				error: 'switchModel not supported for global session factory',
 			}),
+			getCurrentModel: async (_sessionId: string) => null,
 		};
 
 		provisionGlobalSpacesAgent({

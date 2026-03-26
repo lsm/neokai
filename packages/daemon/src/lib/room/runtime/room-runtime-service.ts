@@ -165,7 +165,7 @@ export class RoomRuntimeService {
 		const sessionData = session.getSessionData();
 		return {
 			currentModel: sessionData.config.model,
-			provider: sessionData.config.provider ?? '',
+			provider: sessionData.config.provider ?? 'anthropic',
 		};
 	}
 
@@ -563,6 +563,19 @@ export class RoomRuntimeService {
 					return { success: false, model: '', error: 'Session not found in runtime' };
 				}
 				return session.handleModelSwitch(model, provider);
+			},
+			// Reads from DB (source of truth), not the in-memory agentSessions cache.
+			// This avoids stale model info when switchModel() updates the DB but the
+			// cache entry has been evicted (e.g., after daemon restart).
+			// Returns the raw model value from DB (may be alias or resolved ID).
+			// Callers building modelFallbackMap keys should resolve aliases first.
+			getCurrentModel: async (sessionId) => {
+				const session = ctx.db.getSession(sessionId);
+				if (!session) return null;
+				return {
+					currentModel: session.config.model,
+					provider: session.config.provider ?? 'anthropic',
+				};
 			},
 		};
 	}
