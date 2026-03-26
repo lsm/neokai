@@ -979,7 +979,7 @@ export class TaskAgentManager {
 
 		// Notify the Task Agent that a sub-session has completed.
 		// Include the agent's result summary so the Task Agent has immediate context.
-		// This sends a defer message so the Task Agent can call advance_workflow.
+		// This sends a defer message so the Task Agent can act on the completed step.
 		const taskAgentSession = this.taskAgentSessions.get(taskId);
 		if (taskAgentSession) {
 			try {

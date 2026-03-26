@@ -195,7 +195,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 		`- **request_human_input** — Surface a human gate and block until the human responds. ` +
 			`Pass a \`question\` describing what decision or approval is needed. ` +
 			`Returns the human's response. ` +
-			`Call this when \`advance_workflow\` returns a \`human\` gate condition.`
+			`Call this when a step agent pauses for human input.`
 	);
 	sections.push(
 		`- **list_group_members** — List all members of the current task's session group. ` +

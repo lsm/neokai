@@ -2,7 +2,7 @@
  * WorkflowExecutor Unit Tests
  *
  * Covers:
- * - Graph navigation (getCurrentStep, getOutgoingTransitions, isComplete)
+ * - Graph navigation (getCurrentStep, isComplete)
  * - evaluateCondition: always, human, condition, task_result types
  */
 

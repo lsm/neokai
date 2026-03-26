@@ -695,7 +695,7 @@ export class SpaceRuntime {
 		// When a TaskAgentManager is configured, Task Agents drive the workflow.
 		// SpaceRuntime's role here is lifecycle management only: spawn for pending
 		// tasks, check liveness, and recover from crashes. advance() is never called
-		// directly — the Task Agent calls it via the advance_workflow MCP tool.
+		// themselves via send_message and report_done — SpaceRuntime never calls advance().
 		if (this.config.taskAgentManager) {
 			const tam = this.config.taskAgentManager;
 

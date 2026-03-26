@@ -262,7 +262,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Find the pending task for this step (created by WorkflowExecutor.followTransition)
+			// Find the pending task for this step (created when the workflow node was activated)
 			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
 			const stepTasks = allRunTasks.filter((t) => t.workflowNodeId === step_id);
 			if (stepTasks.length === 0) {
