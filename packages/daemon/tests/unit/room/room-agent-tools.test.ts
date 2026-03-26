@@ -1,38 +1,10 @@
-import { mock } from 'bun:test';
-
-// Re-declare the SDK mock so it survives Bun's module isolation.
-// Without this, a preceding test file's mock.module() override causes the real
-// SDK to be resolved, making server.instance undefined.
-mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-	query: mock(async () => ({ interrupt: () => {} })),
-	interrupt: mock(async () => {}),
-	supportedModels: mock(async () => {
-		throw new Error('SDK unavailable');
-	}),
-	createSdkMcpServer: mock((_opts: { name: string; tools: unknown[] }) => {
-		const registeredTools: Record<string, unknown> = {};
-		for (const t of _opts.tools ?? []) {
-			const name = (t as { name: string }).name;
-			if (name) registeredTools[name] = t;
-		}
-		return {
-			type: 'sdk' as const,
-			name: _opts.name,
-			version: '1.0.0',
-			tools: _opts.tools ?? [],
-			instance: {
-				connect() {},
-				disconnect() {},
-				_registeredTools: registeredTools,
-			},
-		};
-	}),
-	tool: mock((_name: string, _desc: string, _schema: unknown, _handler: unknown) => ({
-		name: _name,
-	})),
-}));
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+
+// NOTE: The SDK mock is provided by the preload file (setup.ts) which covers
+// both static and dynamic imports.  Do NOT re-declare mock.module here —
+// per-file overrides replace the preload mock globally and poison subsequent
+// test files that rely on the full tool() capture (description, inputSchema,
+// handler).
 import { Database } from 'bun:sqlite';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { noOpReactiveDb } from '../../helpers/reactive-database';
