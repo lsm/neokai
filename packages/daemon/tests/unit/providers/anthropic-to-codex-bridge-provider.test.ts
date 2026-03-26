@@ -10,7 +10,15 @@
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as fs from 'fs/promises';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	unlinkSync,
+	writeFileSync,
+} from 'node:fs';
 import * as path from 'path';
 import * as os from 'os';
 import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
@@ -70,9 +78,66 @@ function writeCodexAuth(
 
 describe('AnthropicToCodexBridgeProvider', () => {
 	let provider: AnthropicToCodexBridgeProvider;
+	let fsSpies: ReturnType<typeof spyOn>[];
+
+	/**
+	 * Workaround for Bun 1.3.11 on Linux CI: `fs/promises.readFile` may not
+	 * see files written by `node:fs.writeFileSync` in rapid succession (likely a
+	 * kernel page-cache race on ext4).  Bridge all async fs operations through
+	 * their sync counterparts so that test fixtures are reliably visible to the
+	 * provider's internal `loadCredentials()` / `importFromCodexAuth()` methods.
+	 */
+	beforeEach(() => {
+		fsSpies = [
+			spyOn(fs, 'readFile').mockImplementation(
+				(
+					filePath: Parameters<typeof fs.readFile>[0],
+					options?: Parameters<typeof fs.readFile>[1]
+				) => {
+					const encoding =
+						typeof options === 'string'
+							? options
+							: (options as { encoding?: BufferEncoding })?.encoding;
+					return Promise.resolve(
+						readFileSync(filePath as Parameters<typeof readFileSync>[0], encoding as BufferEncoding)
+					);
+				}
+			),
+			spyOn(fs, 'writeFile').mockImplementation(
+				(
+					filePath: Parameters<typeof fs.writeFile>[0],
+					data: Parameters<typeof fs.writeFile>[1],
+					options?: Parameters<typeof fs.writeFile>[2]
+				) => {
+					const mode =
+						typeof options === 'object' ? (options as { mode?: number }).mode : undefined;
+					writeFileSync(
+						filePath as Parameters<typeof writeFileSync>[0],
+						data as Parameters<typeof writeFileSync>[1],
+						mode as Parameters<typeof writeFileSync>[2]
+					);
+					return Promise.resolve();
+				}
+			),
+			spyOn(fs, 'rename').mockImplementation(
+				(oldPath: Parameters<typeof fs.rename>[0], newPath: Parameters<typeof fs.rename>[1]) => {
+					renameSync(
+						oldPath as Parameters<typeof renameSync>[0],
+						newPath as Parameters<typeof renameSync>[1]
+					);
+					return Promise.resolve();
+				}
+			),
+			spyOn(fs, 'unlink').mockImplementation((filePath: Parameters<typeof fs.unlink>[0]) => {
+				unlinkSync(filePath as Parameters<typeof unlinkSync>[0]);
+				return Promise.resolve();
+			}),
+		];
+	});
 
 	afterEach(() => {
 		provider?.stopAllBridgeServers();
+		fsSpies.forEach((spy) => spy.mockRestore());
 	});
 
 	describe('getAuthStatus()', () => {
