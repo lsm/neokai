@@ -2567,7 +2567,7 @@ describe('TaskView — SetStatusModal', () => {
 		// Select 'pending' from the dropdown (portal renders in document.body)
 		const select = document.querySelector('select') as HTMLSelectElement;
 		await act(async () => {
-			fireEvent.change(select, { target: { value: 'pending' } });
+			fireEvent.input(select, { target: { value: 'pending' } });
 		});
 
 		// Confirm
@@ -2642,7 +2642,7 @@ describe('TaskView — SetStatusModal', () => {
 		// Select 'pending' to trigger destructive warning
 		const select = document.querySelector('select') as HTMLSelectElement;
 		await act(async () => {
-			fireEvent.change(select, { target: { value: 'pending' } });
+			fireEvent.input(select, { target: { value: 'pending' } });
 		});
 
 		// Warning text should appear in the modal

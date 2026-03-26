@@ -394,8 +394,8 @@ export function SetStatusModal({ task, isOpen, onClose, onConfirm }: SetStatusMo
 					<select
 						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-600"
 						value={selectedStatus ?? ''}
-						onChange={(e) => {
-							const val = (e.target as HTMLSelectElement).value;
+						onInput={(e) => {
+							const val = (e.currentTarget as HTMLSelectElement).value;
 							setSelectedStatus((val as TaskStatus) || null);
 							setError(null);
 						}}

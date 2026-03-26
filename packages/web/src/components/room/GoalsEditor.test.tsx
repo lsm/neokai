@@ -596,7 +596,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			expect(document.body.querySelector('[data-testid="custom-cron"]')).toBeTruthy();
 		});
@@ -610,7 +610,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			// The "Create" button (not "Skip & Create") should be disabled
 			const createBtn = Array.from(document.body.querySelectorAll('button')).find(
@@ -628,7 +628,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			// "Skip & Create" should NOT be disabled (it uses defaults, not current step 2 values)
 			const skipBtn = Array.from(document.body.querySelectorAll('button')).find(
