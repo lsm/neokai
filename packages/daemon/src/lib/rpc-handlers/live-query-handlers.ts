@@ -255,6 +255,44 @@ function mapMcpServerRow(row: Record<string, unknown>): Record<string, unknown> 
 	};
 }
 
+const SKILLS_LIST_SQL = `
+SELECT
+  id,
+  name,
+  display_name        AS displayName,
+  description,
+  source_type         AS sourceType,
+  config,
+  enabled,
+  built_in            AS builtIn,
+  validation_status   AS validationStatus,
+  created_at          AS createdAt
+FROM skills
+ORDER BY built_in DESC, created_at ASC, id ASC
+`.trim();
+
+/**
+ * Map a raw SQLite row from the `skills` table to the AppSkill shape expected
+ * by the frontend.
+ *
+ * JSON blob column: `config` — parsed to JS object; omitted when NULL.
+ * Boolean coercion: `enabled`, `builtIn` — SQLite stores 0/1; convert to JS boolean.
+ */
+function mapSkillRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		id: row.id,
+		name: row.name,
+		displayName: row.displayName,
+		description: row.description,
+		sourceType: row.sourceType,
+		...(row.config != null ? { config: JSON.parse(row.config as string) as unknown } : {}),
+		enabled: row.enabled === 1,
+		builtIn: row.builtIn === 1,
+		validationStatus: row.validationStatus,
+		...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
+	};
+}
+
 const MCP_ENABLEMENT_BY_ROOM_SQL = `
 SELECT
   rme.server_id   AS serverId,
@@ -380,6 +418,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			sql: MCP_SERVERS_GLOBAL_SQL,
 			paramCount: 0,
 			mapRow: mapMcpServerRow,
+		},
+	],
+	[
+		'skills.list',
+		{
+			sql: SKILLS_LIST_SQL,
+			paramCount: 0,
+			mapRow: mapSkillRow,
 		},
 	],
 	[
