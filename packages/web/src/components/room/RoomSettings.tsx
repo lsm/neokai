@@ -18,6 +18,8 @@ import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { toast } from '../../lib/toast';
+import { useRoomSkills } from '../../hooks/useRoomSkills';
+import { RoomSkillsSettings } from './RoomSkillsSettings';
 
 export interface RoomSettingsProps {
 	room: Room;
@@ -58,6 +60,7 @@ export function RoomSettings({
 			? ((room.config as Record<string, unknown>)['maxPlanningRetries'] as number)
 			: 0
 	);
+	const { skills: roomSkills, setOverride, clearOverride } = useRoomSkills(room.id);
 	const isSaving = useSignal(false);
 	const [showArchiveModal, setShowArchiveModal] = useState(false);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -619,6 +622,22 @@ export function RoomSettings({
 							})}
 						</div>
 					)}
+				</div>
+
+				{/* Skills */}
+				<div>
+					<div class="flex items-center justify-between mb-1.5">
+						<label class="block text-sm font-medium text-gray-300">Skills</label>
+					</div>
+					<p class="text-xs text-gray-500 mb-3">
+						Enable or disable skills for this room. Built-in skills are always active.
+					</p>
+					<RoomSkillsSettings
+						skills={roomSkills}
+						setOverride={setOverride}
+						clearOverride={clearOverride}
+						disabled={disabled}
+					/>
 				</div>
 
 				{/* Danger Zone */}
