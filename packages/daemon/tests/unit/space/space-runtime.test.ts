@@ -369,7 +369,6 @@ describe('SpaceRuntime', () => {
 			expect(run.spaceId).toBe(SPACE_ID);
 			expect(run.workflowId).toBe(workflow.id);
 			expect(run.status).toBe('in_progress');
-			expect(run.currentNodeId).toBe(STEP_A);
 		});
 
 		test('creates initial SpaceTask for the start step', async () => {
@@ -697,7 +696,6 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Orphaned Run',
-				currentNodeId: STEP_A,
 			});
 			workflowRunRepo.updateStatus(pendingRun.id, 'in_progress');
 

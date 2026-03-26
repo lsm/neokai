@@ -84,9 +84,8 @@ describe('Migration 29: Space system tables', () => {
 			'space_workflow_nodes',
 			'space_workflow_runs',
 			'space_tasks',
-			'space_session_groups',
-			'space_session_group_members',
 		];
+		// Note: space_session_groups and space_session_group_members were dropped by migration 60.
 
 		for (const table of expectedTables) {
 			expect(tableExists(db, table)).toBe(true);
@@ -130,8 +129,7 @@ describe('Migration 29: Space system tables', () => {
 			'workflow_id',
 			'title',
 			'description',
-			'current_step_index',
-			'current_node_id',
+			// Note: current_step_index and current_node_id were both dropped by migration 60.
 			'status',
 			'config',
 			'created_at',
@@ -142,6 +140,10 @@ describe('Migration 29: Space system tables', () => {
 		for (const col of requiredCols) {
 			expect(columnExists(db, 'space_workflow_runs', col)).toBe(true);
 		}
+
+		// Confirm current_node_id and current_step_index were dropped by migration 60.
+		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
+		expect(columnExists(db, 'space_workflow_runs', 'current_step_index')).toBe(false);
 	});
 
 	test('space_agents has role and provider columns with no CHECK constraint on role', () => {
@@ -217,17 +219,17 @@ describe('Migration 29: Space system tables', () => {
 			'idx_space_workflows_space_id',
 			'idx_space_workflow_nodes_workflow_id',
 			'idx_space_workflow_nodes_order',
-			'idx_space_workflow_runs_space_id',
-			'idx_space_workflow_runs_workflow_id',
+			// Note: M60 rebuilt space_workflow_runs with updated index names.
+			'idx_space_workflow_runs_space',
+			'idx_space_workflow_runs_workflow',
 			'idx_space_workflow_runs_status',
 			'idx_space_tasks_space_id',
 			'idx_space_tasks_status',
 			'idx_space_tasks_workflow_run_id',
 			'idx_space_tasks_workflow_node_id',
 			'idx_space_tasks_custom_agent_id',
-			'idx_space_session_groups_space_id',
-			'idx_space_session_group_members_group_id',
-			'idx_space_session_group_members_session_id',
+			// Note: idx_space_session_groups_* and idx_space_session_group_members_* indexes
+			// were dropped along with those tables by migration 59.
 		];
 
 		for (const idx of expectedIndexes) {
@@ -280,17 +282,7 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('task-1', 'sp-1', 'Task 1', ${now}, ${now})`
 		);
 
-		// Insert a session group
-		db.exec(
-			`INSERT INTO space_session_groups (id, space_id, name, created_at, updated_at)
-			 VALUES ('sg-1', 'sp-1', 'Group 1', ${now}, ${now})`
-		);
-
-		// Insert a session group member
-		db.exec(
-			`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
-			 VALUES ('sgm-1', 'sg-1', 'sess-1', 'worker', 0, ${now})`
-		);
+		// Note: space_session_groups and space_session_group_members were dropped by migration 60.
 
 		// Delete the space
 		db.exec(`DELETE FROM spaces WHERE id = 'sp-1'`);
@@ -307,12 +299,6 @@ describe('Migration 29: Space system tables', () => {
 			db.prepare(`SELECT * FROM space_workflow_runs WHERE space_id = 'sp-1'`).all()
 		).toHaveLength(0);
 		expect(db.prepare(`SELECT * FROM space_tasks WHERE space_id = 'sp-1'`).all()).toHaveLength(0);
-		expect(
-			db.prepare(`SELECT * FROM space_session_groups WHERE space_id = 'sp-1'`).all()
-		).toHaveLength(0);
-		expect(
-			db.prepare(`SELECT * FROM space_session_group_members WHERE group_id = 'sg-1'`).all()
-		).toHaveLength(0);
 	});
 
 	// -------------------------------------------------------------------------
@@ -417,76 +403,8 @@ describe('Migration 29: Space system tables', () => {
 		}).toThrow();
 	});
 
-	// -------------------------------------------------------------------------
-	// space_session_group_members role — freeform after migration 40
-	// -------------------------------------------------------------------------
-
-	test('space_session_group_members role accepts any freeform string (CHECK constraint dropped by migration 40)', () => {
-		runMigrations(db, () => {});
-
-		const now = Date.now();
-		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-5', '/workspace/roles', 'Role Space', ${now}, ${now})`
-		);
-		db.exec(
-			`INSERT INTO space_session_groups (id, space_id, name, created_at, updated_at)
-			 VALUES ('sg-5', 'sp-5', 'Group 5', ${now}, ${now})`
-		);
-
-		// All role strings are valid — no CHECK constraint on role
-		for (const role of [
-			'worker',
-			'leader',
-			'coder',
-			'reviewer',
-			'security-auditor',
-			'any-custom-role',
-		]) {
-			expect(() => {
-				db.exec(
-					`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
-					 VALUES ('sgm-${role}', 'sg-5', 'sess-${role}', '${role}', 0, ${now})`
-				);
-			}).not.toThrow();
-		}
-	});
-
-	// -------------------------------------------------------------------------
-	// space_session_group_members status CHECK
-	// -------------------------------------------------------------------------
-
-	test('space_session_group_members status CHECK constraint is enforced', () => {
-		runMigrations(db, () => {});
-
-		const now = Date.now();
-		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-status', '/workspace/status', 'Status Space', ${now}, ${now})`
-		);
-		db.exec(
-			`INSERT INTO space_session_groups (id, space_id, name, created_at, updated_at)
-			 VALUES ('sg-status', 'sp-status', 'Status Group', ${now}, ${now})`
-		);
-
-		// Valid statuses
-		for (const status of ['active', 'completed', 'failed']) {
-			expect(() => {
-				db.exec(
-					`INSERT INTO space_session_group_members (id, group_id, session_id, role, status, order_index, created_at)
-					 VALUES ('sgm-${status}', 'sg-status', 'sess-${status}', 'coder', '${status}', 0, ${now})`
-				);
-			}).not.toThrow();
-		}
-
-		// Invalid status
-		expect(() => {
-			db.exec(
-				`INSERT INTO space_session_group_members (id, group_id, session_id, role, status, order_index, created_at)
-				 VALUES ('sgm-bad', 'sg-status', 'sess-bad', 'coder', 'pending', 0, ${now})`
-			);
-		}).toThrow();
-	});
+	// Note: Tests for space_session_group_members role/status were removed because
+	// space_session_groups and space_session_group_members tables were dropped by migration 60.
 
 	// -------------------------------------------------------------------------
 	// spaces workspace_path uniqueness
@@ -547,37 +465,8 @@ describe('Migration 29: Space system tables', () => {
 		expect(task['workflow_node_id']).toBeNull();
 	});
 
-	// -------------------------------------------------------------------------
-	// space_session_group_members uniqueness
-	// -------------------------------------------------------------------------
-
-	test('space_session_group_members prevents duplicate (group_id, session_id)', () => {
-		runMigrations(db, () => {});
-
-		const now = Date.now();
-		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-uniq', '/workspace/memberuniq', 'MemberUniq Space', ${now}, ${now})`
-		);
-		db.exec(
-			`INSERT INTO space_session_groups (id, space_id, name, created_at, updated_at)
-			 VALUES ('sg-uniq', 'sp-uniq', 'Group Uniq', ${now}, ${now})`
-		);
-
-		// First insert — should succeed
-		db.exec(
-			`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
-			 VALUES ('sgm-dup-1', 'sg-uniq', 'sess-dup', 'worker', 0, ${now})`
-		);
-
-		// Second insert with same (group_id, session_id) — should fail
-		expect(() => {
-			db.exec(
-				`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
-				 VALUES ('sgm-dup-2', 'sg-uniq', 'sess-dup', 'leader', 1, ${now})`
-			);
-		}).toThrow();
-	});
+	// Note: space_session_group_members uniqueness test removed because
+	// space_session_group_members table was dropped by migration 60.
 
 	// -------------------------------------------------------------------------
 	// No existing tables affected

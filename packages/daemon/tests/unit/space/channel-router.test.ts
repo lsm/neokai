@@ -199,7 +199,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Test Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -230,7 +229,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Multi Agent Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -260,7 +258,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Custom Role Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -284,7 +281,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Idempotent Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -311,7 +307,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Cancelled Task Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -346,7 +341,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Concurrent Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -384,7 +378,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Cancelled Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'cancelled');
 
@@ -401,7 +394,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Completed Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'completed');
 
@@ -425,7 +417,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Bad Node Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -461,7 +452,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Deliver Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -497,7 +487,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Already Active Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -541,7 +530,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Missing Role Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -571,7 +559,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Target Node Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -604,7 +591,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Fan-out Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -638,7 +624,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'DM Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -663,7 +648,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Within-node Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -701,7 +685,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Human Gate Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -736,7 +719,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Human Gate Approved Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -772,7 +754,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Task Result Gate Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -807,7 +788,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Task Result Match Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -842,7 +822,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'No Context Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -882,7 +861,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Condition Gate Allowed',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -923,7 +901,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Condition Gate Blocked',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -961,7 +938,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Cyclic Run',
-				currentNodeId: NODE_A,
 				maxIterations: 5,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
@@ -1005,7 +981,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Iteration Cap Run',
-				currentNodeId: NODE_A,
 				maxIterations: 2,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
@@ -1044,7 +1019,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Non-cyclic Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1071,7 +1045,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Open Topology Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1097,7 +1070,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'No Match Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1124,7 +1096,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'No Gate Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1157,7 +1128,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Always Gate Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1190,7 +1160,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Human Gate Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1225,7 +1194,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Human Gate Approved Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1259,7 +1227,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Task Result Gate Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1300,7 +1267,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Iteration Cap Run',
-				currentNodeId: NODE_A,
 				maxIterations: 3,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
@@ -1336,7 +1302,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Below Cap Run',
-				currentNodeId: NODE_A,
 				maxIterations: 5,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
@@ -1371,7 +1336,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Non-cyclic Cap Run',
-				currentNodeId: NODE_A,
 				maxIterations: 1,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
@@ -1400,7 +1364,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Orphaned Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1451,7 +1414,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Condition Gate Allowed Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1492,7 +1454,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Condition Gate Blocked Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1530,7 +1491,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Wildcard From Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1566,7 +1526,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Wildcard To Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
@@ -1607,7 +1566,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Wildcard Delivery Run',
-				currentNodeId: NODE_A,
 			});
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 

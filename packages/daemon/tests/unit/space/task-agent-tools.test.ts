@@ -27,7 +27,6 @@ import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-work
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
 import {
 	createTaskAgentToolHandlers,
@@ -256,7 +255,6 @@ interface TestCtx {
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
-	sessionGroupRepo: SpaceSessionGroupRepository;
 }
 
 function makeCtx(): TestCtx {
@@ -279,7 +277,6 @@ function makeCtx(): TestCtx {
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
-	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
 
 	const runtime = new SpaceRuntime({
 		db,
@@ -304,7 +301,6 @@ function makeCtx(): TestCtx {
 		taskManager,
 		agentManager,
 		runtime,
-		sessionGroupRepo,
 	};
 }
 
@@ -316,8 +312,6 @@ function makeConfig(
 	options?: {
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
 		onSubSessionComplete?: (stepId: string, sessionId: string) => Promise<void>;
-		/** Optional group ID — if provided, getGroupId() returns it */
-		groupId?: string;
 	}
 ): TaskAgentToolsConfig {
 	return {
@@ -333,8 +327,6 @@ function makeConfig(
 		sessionFactory,
 		messageInjector: options?.messageInjector ?? (async () => {}),
 		onSubSessionComplete: options?.onSubSessionComplete ?? (async () => {}),
-		sessionGroupRepo: ctx.sessionGroupRepo,
-		getGroupId: () => options?.groupId,
 	};
 }
 
@@ -742,19 +734,19 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		expect(parsed.sessionStatus).toBe('unknown');
 	});
 
-	test('uses current step from workflow run when step_id is omitted', async () => {
+	test('returns error when step_id is omitted', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 		const factory = makeMockSessionFactory();
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		// Call without step_id — should use run.currentNodeId
+		// Call without step_id — step_id is required (currentNodeId removed in migration 59)
 		const result = await handlers.check_node_status({});
 		const parsed = JSON.parse(result.content[0].text);
 
-		expect(parsed.success).toBe(true);
-		expect(parsed.stepId).toBe(wf.startNodeId);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('step_id is required');
 	});
 
 	test('returns not_found when step has no task yet', async () => {
@@ -774,7 +766,7 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		expect(parsed.sessionStatus).toBe('not_started');
 	});
 
-	test('returns error when workflow run not found', async () => {
+	test('returns error when workflow run not found for the given step_id', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Main task',
@@ -783,16 +775,17 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		});
 		const factory = makeMockSessionFactory();
 
-		// No step_id, so it tries to look up the run
+		// step_id provided but run-missing does not exist
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, 'run-missing', factory)
 		);
 
-		const result = await handlers.check_node_status({});
+		const result = await handlers.check_node_status({ step_id: 'some-step-id' });
 		const parsed = JSON.parse(result.content[0].text);
 
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('run-missing');
+		expect(parsed.success).toBe(true);
+		expect(parsed.taskStatus).toBe('not_found');
+		expect(parsed.sessionStatus).toBe('not_started');
 	});
 
 	test('session state shows completed status when session isComplete=true', async () => {
@@ -1477,112 +1470,63 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('returns error when no group ID is available', async () => {
+	test('returns empty member list when no tasks have taskAgentSessionId', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 		const factory = makeMockSessionFactory();
-		// No groupId in options — getGroupId returns undefined
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		const result = await handlers.list_group_members({});
 		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('No session group found');
+		expect(parsed.success).toBe(true);
+		expect(parsed.members).toHaveLength(0);
 	});
 
-	test('returns error when group does not exist in DB', async () => {
+	test('returns members derived from tasks with taskAgentSessionId', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { groupId: 'nonexistent-group-id' })
-		);
+		const { run, mainTask, stepTask } = await startRun(ctx, wf);
 
-		const result = await handlers.list_group_members({});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('nonexistent-group-id');
-	});
-
-	test('returns members for a real group', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		// Create a group with two members
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'task-agent-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session-123', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
+		// Simulate spawn_node_agent by setting taskAgentSessionId on the step task
+		ctx.db
+			.prepare(`UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?`)
+			.run('coder-session-123', stepTask.id);
 
 		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { groupId: group.id })
-		);
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		const result = await handlers.list_group_members({});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.groupId).toBe(group.id);
-		expect(parsed.members).toHaveLength(2);
+		expect(parsed.members).toHaveLength(1);
 
-		const taskAgentMember = parsed.members.find((m: { role: string }) => m.role === 'task-agent');
-		expect(taskAgentMember).toBeDefined();
-		expect(taskAgentMember.sessionId).toBe('task-agent-session');
-		expect(taskAgentMember.status).toBe('active');
-		expect(Array.isArray(taskAgentMember.permittedTargets)).toBe(true);
-
-		const coderMember = parsed.members.find((m: { role: string }) => m.role === 'coder');
-		expect(coderMember).toBeDefined();
-		expect(coderMember.sessionId).toBe('coder-session-123');
-		expect(coderMember.agentId).toBe(ctx.agentId);
+		const member = parsed.members[0];
+		expect(member.sessionId).toBe('coder-session-123');
+		expect(member.status).toBe('active');
+		expect(Array.isArray(member.permittedTargets)).toBe(true);
 	});
 
-	test('no auto-added task-agent channels when no user-declared channels exist', async () => {
+	test('no channelTopologyDeclared when no user-declared channels exist', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
+		const { run, mainTask, stepTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'task-agent-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'session-a', {
-			role: 'coder',
-			status: 'active',
-		});
+		ctx.db
+			.prepare(`UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?`)
+			.run('session-a', stepTask.id);
 
 		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { groupId: group.id })
-		);
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		const result = await handlers.list_group_members({});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		// No channels are declared, so channelTopologyDeclared is false
 		expect(parsed.channelTopologyDeclared).toBe(false);
-		// The coder member should NOT have task-agent as a permitted target
-		// (no auto-generated channels after M3 auto-generation removal)
-		const coderMember = parsed.members.find((m: { role: string }) => m.role === 'coder');
-		expect(coderMember.permittedTargets).not.toContain('task-agent');
+		// The member should have empty permittedTargets (no auto-generated channels)
+		expect(parsed.members[0].permittedTargets).toHaveLength(0);
 	});
 
 	test('returns permitted targets based on resolved channels in run config', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 
 		// Store resolved channels in the run config
@@ -1601,26 +1545,33 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 			},
 		});
 
-		const group = ctx.sessionGroupRepo.createGroup({
+		// Seed two tasks with different roles and session IDs
+		const coderTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
+			title: 'Coder task',
+			description: '',
+			status: 'in_progress',
+			workflowRunId: run.id,
+			agentName: 'coder',
 		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
+		ctx.db
+			.prepare(`UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?`)
+			.run('coder-session', coderTask.id);
+
+		const reviewerTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Reviewer task',
+			description: '',
+			status: 'in_progress',
+			workflowRunId: run.id,
+			agentName: 'reviewer',
 		});
-		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
-			role: 'reviewer',
-			agentId: 'agent-reviewer-1',
-			status: 'active',
-		});
+		ctx.db
+			.prepare(`UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?`)
+			.run('reviewer-session', reviewerTask.id);
 
 		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { groupId: group.id })
-		);
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		const result = await handlers.list_group_members({});
 		const parsed = JSON.parse(result.content[0].text);

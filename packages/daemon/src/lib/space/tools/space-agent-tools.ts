@@ -123,19 +123,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 
-			// Include current step info if available
-			let currentStep = null;
-			if (run.currentNodeId) {
-				const workflow = workflowManager.getWorkflow(run.workflowId);
-				if (workflow) {
-					currentStep = workflow.nodes.find((s) => s.id === run.currentNodeId) ?? null;
-				}
-			}
-
 			// Include tasks for this run
 			const tasks = taskRepo.listByWorkflowRun(run.id);
 
-			return jsonResult({ success: true, run, currentStep, tasks });
+			return jsonResult({ success: true, run, tasks });
 		},
 
 		/**

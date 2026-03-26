@@ -269,9 +269,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		if (workflowRun.description) {
 			sections.push(`**Description:** ${workflowRun.description}`);
 		}
-		if (workflowRun.currentNodeId) {
-			sections.push(`**Current Step ID:** ${workflowRun.currentNodeId}`);
-		}
 	}
 
 	// Inject full workflow structure when the agent has opted in via injectWorkflowContext.
@@ -290,9 +287,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		if (workflow.nodes.length > 0) {
 			sections.push(`\n**Steps:**`);
 			for (const step of workflow.nodes) {
-				const isCurrent = step.id === workflowRun.currentNodeId;
-				const marker = isCurrent ? ' ← current step' : '';
-				sections.push(`- **${step.name}** (id: \`${step.id}\`)${marker}`);
+				sections.push(`- **${step.name}** (id: \`${step.id}\`)`);
 				if (step.instructions) {
 					sections.push(`  Instructions: ${step.instructions}`);
 				}

@@ -415,11 +415,6 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 			if (run.description) {
 				parts.push(`**Run Description:** ${run.description}`);
 			}
-			if (run.currentNodeId) {
-				const currentStep = wf.nodes.find((s) => s.id === run.currentNodeId);
-				const stepName = currentStep ? currentStep.name : run.currentNodeId;
-				parts.push(`**Current Step:** ${stepName} (\`${run.currentNodeId}\`)`);
-			}
 		}
 	} else {
 		parts.push(

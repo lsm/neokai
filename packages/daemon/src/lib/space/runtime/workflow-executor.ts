@@ -15,12 +15,7 @@
  * and condition evaluation utilities used by the runtime and channel layer.
  */
 
-import type {
-	SpaceWorkflow,
-	SpaceWorkflowRun,
-	WorkflowCondition,
-	WorkflowNode,
-} from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -125,17 +120,6 @@ export class WorkflowExecutor {
 	// -------------------------------------------------------------------------
 	// Navigation
 	// -------------------------------------------------------------------------
-
-	/**
-	 * Returns the step currently being executed, or null if the run has completed
-	 * or been cancelled.
-	 */
-	getCurrentStep(): WorkflowNode | null {
-		if (this.run.status === 'completed' || this.run.status === 'cancelled') {
-			return null;
-		}
-		return this.workflow.nodes.find((s) => s.id === this.run.currentNodeId) ?? null;
-	}
 
 	/**
 	 * Returns true when the run has reached a terminal state

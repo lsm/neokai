@@ -163,7 +163,6 @@ describe('WorkflowExecutor', () => {
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Test Run',
-			currentNodeId: workflow.startNodeId,
 		});
 
 		return { workflow, run };
@@ -173,34 +172,7 @@ describe('WorkflowExecutor', () => {
 	// Navigation
 	// =========================================================================
 
-	describe('getCurrentStep / isComplete', () => {
-		test('getCurrentStep returns the step at currentNodeId', () => {
-			const { workflow, run } = createLinearWorkflow([
-				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
-				{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
-			]);
-			const executor = makeExecutor(workflow, run);
-			expect(executor.getCurrentStep()?.name).toBe('Step A');
-		});
-
-		test('getCurrentStep returns null when run is completed', () => {
-			const { workflow, run } = createLinearWorkflow([
-				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
-			]);
-			const completedRun = { ...run, status: 'completed' as const };
-			const executor = makeExecutor(workflow, completedRun);
-			expect(executor.getCurrentStep()).toBeNull();
-		});
-
-		test('getCurrentStep returns null when run is cancelled', () => {
-			const { workflow, run } = createLinearWorkflow([
-				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
-			]);
-			const cancelledRun = { ...run, status: 'cancelled' as const };
-			const executor = makeExecutor(workflow, cancelledRun);
-			expect(executor.getCurrentStep()).toBeNull();
-		});
-
+	describe('isComplete', () => {
 		test('isComplete returns false at start of workflow', () => {
 			const { workflow, run } = createLinearWorkflow([
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },

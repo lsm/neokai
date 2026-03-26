@@ -35,7 +35,6 @@ import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-work
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
-import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
 import {
 	createTaskAgentToolHandlers,
@@ -191,7 +190,6 @@ interface TestCtx {
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
-	sessionGroupRepo: SpaceSessionGroupRepository;
 }
 
 function makeCtx(): TestCtx {
@@ -216,7 +214,6 @@ function makeCtx(): TestCtx {
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
-	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
 
 	const runtime = new SpaceRuntime({
 		db,
@@ -242,7 +239,6 @@ function makeCtx(): TestCtx {
 		taskManager,
 		agentManager,
 		runtime,
-		sessionGroupRepo,
 	};
 }
 
@@ -254,7 +250,6 @@ function makeConfig(
 	options?: {
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
 		onSubSessionComplete?: (stepId: string, sessionId: string) => Promise<void>;
-		groupId?: string;
 		completionDetector?: CompletionDetector;
 		daemonHub?: DaemonHub;
 	}
@@ -272,8 +267,6 @@ function makeConfig(
 		sessionFactory,
 		messageInjector: options?.messageInjector ?? (async () => {}),
 		onSubSessionComplete: options?.onSubSessionComplete ?? (async () => {}),
-		sessionGroupRepo: ctx.sessionGroupRepo,
-		getGroupId: () => options?.groupId,
 		completionDetector: options?.completionDetector,
 		daemonHub: options?.daemonHub,
 	};
@@ -855,16 +848,9 @@ describe('Task Agent — multi-agent node collaboration', () => {
 		});
 
 		const { run, mainTask } = await startRun(ctx, wf);
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
 
 		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { groupId: group.id })
-		);
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		const result = await handlers.list_group_members({});
 		const parsed = JSON.parse(result.content[0].text);

@@ -14,7 +14,6 @@
  * - workflowRuns: SpaceWorkflowRun list for the space
  * - agents: SpaceAgent list for the space
  * - workflows: SpaceWorkflow list for the space
- * - sessionGroups: SpaceSessionGroup list for the space (real-time via events)
  * - runtimeState: Runtime state (running/paused/stopped)
  * - loading: Loading state
  * - error: Error state
@@ -27,8 +26,6 @@ import type {
 	SpaceWorkflowRun,
 	SpaceAgent,
 	SpaceWorkflow,
-	SpaceSessionGroup,
-	SpaceSessionGroupMember,
 	RuntimeState,
 	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
@@ -87,9 +84,6 @@ class SpaceStore {
 	/** Runtime state for this space */
 	readonly runtimeState = signal<RuntimeState | null>(null);
 
-	/** Session groups for this space */
-	readonly sessionGroups = signal<SpaceSessionGroup[]>([]);
-
 	/** Loading state */
 	readonly loading = signal<boolean>(false);
 
@@ -134,18 +128,6 @@ class SpaceStore {
 					map.set(task.workflowNodeId, arr);
 				}
 				arr.push(task);
-			}
-		}
-		return map;
-	});
-
-	/** Session groups indexed by taskId for O(1) lookup */
-	readonly sessionGroupsByTask = computed(() => {
-		const map = new Map<string, SpaceSessionGroup[]>();
-		for (const group of this.sessionGroups.value) {
-			if (group.taskId) {
-				const existing = map.get(group.taskId) ?? [];
-				map.set(group.taskId, [...existing, group]);
 			}
 		}
 		return map;
@@ -389,7 +371,6 @@ class SpaceStore {
 		this.workflowRuns.value = [];
 		this.agents.value = [];
 		this.workflows.value = [];
-		this.sessionGroups.value = [];
 		this.runtimeState.value = null;
 		this.error.value = null;
 
@@ -638,90 +619,6 @@ class SpaceStore {
 		});
 		this.cleanupFunctions.push(unsubWorkflowDeleted);
 
-		// --- spaceSessionGroup.created ---
-		const unsubGroupCreated = hub.onEvent<{
-			sessionId: string;
-			spaceId: string;
-			taskId: string;
-			group: SpaceSessionGroup;
-		}>('spaceSessionGroup.created', (event) => {
-			if (event.spaceId === spaceId) {
-				const exists = this.sessionGroups.value.some((g) => g.id === event.group.id);
-				if (!exists) {
-					this.sessionGroups.value = [...this.sessionGroups.value, event.group];
-				}
-			}
-		});
-		this.cleanupFunctions.push(unsubGroupCreated);
-
-		// --- spaceSessionGroup.memberAdded ---
-		const unsubMemberAdded = hub.onEvent<{
-			sessionId: string;
-			spaceId: string;
-			groupId: string;
-			member: SpaceSessionGroupMember;
-		}>('spaceSessionGroup.memberAdded', (event) => {
-			if (event.spaceId === spaceId) {
-				const idx = this.sessionGroups.value.findIndex((g) => g.id === event.groupId);
-				if (idx >= 0) {
-					const group = this.sessionGroups.value[idx];
-					const memberExists = group.members.some((m) => m.id === event.member.id);
-					if (!memberExists) {
-						const updatedGroup = { ...group, members: [...group.members, event.member] };
-						this.sessionGroups.value = [
-							...this.sessionGroups.value.slice(0, idx),
-							updatedGroup,
-							...this.sessionGroups.value.slice(idx + 1),
-						];
-					}
-				}
-			}
-		});
-		this.cleanupFunctions.push(unsubMemberAdded);
-
-		// --- spaceSessionGroup.memberUpdated ---
-		const unsubMemberUpdated = hub.onEvent<{
-			sessionId: string;
-			spaceId: string;
-			groupId: string;
-			memberId: string;
-			member: SpaceSessionGroupMember;
-		}>('spaceSessionGroup.memberUpdated', (event) => {
-			if (event.spaceId === spaceId) {
-				const idx = this.sessionGroups.value.findIndex((g) => g.id === event.groupId);
-				if (idx >= 0) {
-					const group = this.sessionGroups.value[idx];
-					const memberIdx = group.members.findIndex((m) => m.id === event.memberId);
-					if (memberIdx >= 0) {
-						const updatedMembers = [
-							...group.members.slice(0, memberIdx),
-							event.member,
-							...group.members.slice(memberIdx + 1),
-						];
-						const updatedGroup = { ...group, members: updatedMembers };
-						this.sessionGroups.value = [
-							...this.sessionGroups.value.slice(0, idx),
-							updatedGroup,
-							...this.sessionGroups.value.slice(idx + 1),
-						];
-					}
-				}
-			}
-		});
-		this.cleanupFunctions.push(unsubMemberUpdated);
-
-		// --- spaceSessionGroup.deleted ---
-		const unsubGroupDeleted = hub.onEvent<{
-			sessionId: string;
-			spaceId: string;
-			groupId: string;
-		}>('spaceSessionGroup.deleted', (event) => {
-			if (event.spaceId === spaceId) {
-				this.sessionGroups.value = this.sessionGroups.value.filter((g) => g.id !== event.groupId);
-			}
-		});
-		this.cleanupFunctions.push(unsubGroupDeleted);
-
 		// Fetch initial state via RPC
 		await this.fetchInitialState(hub, spaceId);
 	}
@@ -749,12 +646,8 @@ class SpaceStore {
 		this.tasks.value = overview.tasks ?? [];
 		this.workflowRuns.value = overview.workflowRuns ?? [];
 
-		// Fetch agents, workflows, and session groups in parallel
-		await Promise.all([
-			this.fetchAgents(hub, spaceId),
-			this.fetchWorkflows(hub, spaceId),
-			this.fetchSessionGroups(hub, spaceId),
-		]);
+		// Fetch agents and workflows in parallel
+		await Promise.all([this.fetchAgents(hub, spaceId), this.fetchWorkflows(hub, spaceId)]);
 	}
 
 	/**
@@ -788,23 +681,6 @@ class SpaceStore {
 			this.workflows.value = result?.workflows ?? [];
 		} catch (err) {
 			logger.error('Failed to fetch workflows:', err);
-		}
-	}
-
-	/**
-	 * Fetch session groups for the space
-	 */
-	private async fetchSessionGroups(
-		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-		spaceId: string
-	): Promise<void> {
-		try {
-			const result = await hub.request<{ groups: SpaceSessionGroup[] }>('space.sessionGroup.list', {
-				spaceId,
-			});
-			this.sessionGroups.value = result?.groups ?? [];
-		} catch (err) {
-			logger.error('Failed to fetch session groups:', err);
 		}
 	}
 
