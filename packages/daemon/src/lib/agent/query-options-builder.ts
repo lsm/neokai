@@ -35,6 +35,7 @@ import type { AppMcpServerSourceType } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
+import type { RoomSkillOverride } from '@neokai/shared';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { homedir } from 'os';
@@ -51,6 +52,11 @@ export interface QueryOptionsBuilderContext {
 	readonly skillsManager?: SkillsManager;
 	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
 	readonly appMcpServerRepo?: AppMcpServerRepository;
+	/**
+	 * Room-level skill overrides. When provided, a skill with `enabled: false` in this list
+	 * is excluded from injection even if it is globally enabled in the skills registry.
+	 */
+	readonly roomSkillOverrides?: RoomSkillOverride[];
 }
 
 export class QueryOptionsBuilder {
@@ -791,16 +797,28 @@ CRITICAL RULES:
 	}
 
 	/**
+	 * Returns the set of skill IDs disabled by room-level overrides.
+	 * A skill in this set must be excluded even if globally enabled.
+	 */
+	private getRoomDisabledSkillIds(): Set<string> {
+		if (!this.ctx.roomSkillOverrides?.length) return new Set();
+		return new Set(this.ctx.roomSkillOverrides.filter((o) => !o.enabled).map((o) => o.skillId));
+	}
+
+	/**
 	 * Build plugin entries from enabled skills with sourceType === 'plugin'.
+	 * Room overrides with enabled=false exclude the skill even if globally enabled.
 	 * Returns an array of SdkPluginConfig objects for injection into options.plugins.
 	 */
 	private buildPluginsFromSkills(): Array<{ type: 'local'; path: string }> {
 		if (!this.ctx.skillsManager) return [];
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
+		const roomDisabled = this.getRoomDisabledSkillIds();
 		const plugins: Array<{ type: 'local'; path: string }> = [];
 
 		for (const skill of skills) {
+			if (roomDisabled.has(skill.id)) continue;
 			if (skill.sourceType === 'plugin' && skill.config.type === 'plugin') {
 				plugins.push({ type: 'local', path: skill.config.pluginPath });
 			}
@@ -811,6 +829,7 @@ CRITICAL RULES:
 
 	/**
 	 * Build MCP server entries from enabled skills with sourceType === 'mcp_server'.
+	 * Room overrides with enabled=false exclude the skill even if globally enabled.
 	 * Resolves each skill's appMcpServerId to an AppMcpServer entry and maps it
 	 * to an McpServerConfig keyed by skill.name.
 	 *
@@ -821,9 +840,11 @@ CRITICAL RULES:
 		if (!this.ctx.skillsManager || !this.ctx.appMcpServerRepo) return {};
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
+		const roomDisabled = this.getRoomDisabledSkillIds();
 		const servers: Record<string, McpServerConfig> = {};
 
 		for (const skill of skills) {
+			if (roomDisabled.has(skill.id)) continue;
 			if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') continue;
 
 			const appServer = this.ctx.appMcpServerRepo.get(skill.config.appMcpServerId);

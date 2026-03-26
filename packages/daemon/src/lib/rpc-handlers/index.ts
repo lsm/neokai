@@ -207,6 +207,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		reactiveDb: deps.reactiveDb,
 		jobQueue: deps.jobQueue,
 		jobProcessor: deps.jobProcessor,
+		skillsManager: deps.skillsManager,
+		appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
+		roomSkillOverrideRepo: deps.reactiveDb.db.roomSkillOverrides,
 	});
 
 	// Seed an initial room.tick job for every room after startup, and for each
