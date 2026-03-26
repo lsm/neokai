@@ -312,7 +312,6 @@ test.describe('Space Export/Import', () => {
 							agentRef: 'Bundle Agent',
 						},
 					],
-					transitions: [],
 					startNode: 'step-1',
 					rules: [],
 					tags: [],

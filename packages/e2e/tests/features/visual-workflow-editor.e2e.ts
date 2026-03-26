@@ -192,7 +192,6 @@ test.describe('Visual Workflow Editor', () => {
 						{ id: s1, name: 'Step One', agentId: aId },
 						{ id: s2, name: 'Step Two', agentId: aId },
 					],
-					transitions: [{ id: crypto.randomUUID(), from: s1, to: s2, order: 0 }],
 					startNodeId: s1,
 					rules: [],
 					tags: [],
@@ -679,9 +678,6 @@ test.describe('Visual Workflow Editor', () => {
 							agentId: aId,
 							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 						},
-					],
-					transitions: [
-						{ id: trans1, from: step1, to: step2, order: 0, condition: { type: 'always' } },
 					],
 					startNodeId: step1,
 					rules: [],

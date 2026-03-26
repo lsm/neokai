@@ -4,7 +4,7 @@
  * Business logic layer for SpaceWorkflow operations within a Space.
  *
  * Responsibilities:
- * - Validate workflow integrity (unique name, node agent refs, transition graph validity)
+ * - Validate workflow integrity (unique name, node agent refs, channel graph validity)
  * - Protect custom agents that are referenced by nodes
  *
  * Workflow selection: either explicit workflowId provided by the caller, or

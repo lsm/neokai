@@ -6,7 +6,7 @@
  * Key design decisions:
  * - `startNodeId` is passed through from the editor state (explicitly set by the
  *   user via "Set as Start"), never auto-detected from graph topology.
- * - Transition `order` is computed from the left-to-right x-position of the
+ * - Edge `order` is computed from the left-to-right x-position of the
  *   target node among all outgoing edges of a given source node.
  * - When `workflow.layout` is present, stored positions are restored exactly.
  *   When absent (or only partially populated), `autoLayout` fills in missing positions.
@@ -284,7 +284,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 		localIdMap.set(entry.node.step.localId, entry);
 	}
 
-	// Build key -> persisted ID map for transition and rule appliesTo remapping
+	// Build key -> persisted ID map for channel and rule appliesTo remapping
 	const keyToPersistedId = new Map<string, string>();
 	for (const [key, { persistedId }] of nodeMap) {
 		keyToPersistedId.set(key, persistedId);

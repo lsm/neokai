@@ -7,7 +7,7 @@
  * Key remappings performed during export:
  * - Node `id` fields are stripped (regenerated on import)
  * - Node `agentId` UUID → agent name (`agentRef`) — portable across Spaces
- * - Transition `id` stripped; `from`/`to` node UUIDs → node names
+ * - Channel `id` stripped; `from`/`to` node/agent UUIDs → names
  * - `startNodeId` UUID → node name (`startNode`)
  * - Rule `appliesTo` node UUIDs → node names (stable across re-import)
  *
@@ -191,7 +191,7 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
  * Remappings:
  * 1. Node `id` fields are stripped; node `agentId` UUID → agent name (`agentRef`).
  *    Falls back to the UUID string when no matching agent is found in `agents`.
- * 2. Transition `id` stripped; `from`/`to` node UUIDs → node names.
+ * 2. Channel `id` stripped; `from`/`to` node/agent UUIDs → names.
  *    Falls back to the UUID string when no matching node is found.
  * 3. `startNodeId` UUID → node name (`startNode`).
  * 4. Rule `appliesTo` node UUIDs → node names (stable cross-references on re-import).

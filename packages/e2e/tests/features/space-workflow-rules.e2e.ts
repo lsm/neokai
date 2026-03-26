@@ -299,7 +299,6 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 						spaceId: sid,
 						name: wname,
 						nodes: [node],
-						transitions: [],
 						startNodeId: node.id,
 						rules: [],
 						tags: [],

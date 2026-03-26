@@ -514,21 +514,21 @@ export interface UpdateSpaceAgentParams {
 // ============================================================================
 
 /**
- * Primitive condition type for workflow transitions.
+ * Primitive condition type for workflow channel gates.
  *
- * - `always`: The transition fires unconditionally.
+ * - `always`: The gate opens unconditionally.
  * - `human`: Blocks until a human explicitly approves (via a signal / run config update).
- * - `condition`: A user-supplied shell expression; the transition fires when it exits with code 0.
+ * - `condition`: A user-supplied shell expression; the gate opens when it exits with code 0.
  *   NeoKai is a framework — no allowlist is applied. Users are responsible for what they run.
  * - `task_result`: Matches against the `result` field of the most recently completed task on the
- *   current node. The transition fires when the task result starts with or equals the condition's
+ *   current node. The gate opens when the task result starts with or equals the condition's
  *   `expression` value (e.g., `'passed'`, `'failed'`).
  */
 export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
 /**
- * A condition that guards a workflow transition.
- * Conditions determine whether a transition may fire when advance() is called.
+ * A condition that guards a workflow channel gate.
+ * Conditions determine whether a channel may deliver a message.
  */
 export interface WorkflowCondition {
 	/** Condition type. */
@@ -536,10 +536,10 @@ export interface WorkflowCondition {
 	/**
 	 * Expression to evaluate for the `condition` and `task_result` types.
 	 *
-	 * - For `condition`: a shell expression; the transition fires when it exits with code 0.
+	 * - For `condition`: a shell expression; the gate opens when it exits with code 0.
 	 *   No allowlist is applied — users are responsible for the expression content.
 	 * - For `task_result`: the match value to compare against the completed task's `result`
-	 *   field (e.g., `'passed'`, `'failed'`). The transition fires when the task result
+	 *   field (e.g., `'passed'`, `'failed'`). The gate opens when the task result
 	 *   starts with or equals this value.
 	 */
 	expression?: string;
@@ -709,7 +709,7 @@ export interface WorkflowRule {
 /**
  * Input shape for a workflow node at creation time.
  * `id` is optional — if provided the backend uses it, otherwise a UUID is generated.
- * Providing an explicit `id` allows transitions in the same CreateSpaceWorkflowParams
+ * Providing an explicit `id` allows channels in the same CreateSpaceWorkflowParams
  * call to reference the node before it has been persisted.
  *
  * At least one of `agentId` or `agents` must be provided.
@@ -741,7 +741,7 @@ export type WorkflowRuleInput = Omit<WorkflowRule, 'id'>;
 
 /**
  * A named, reusable workflow definition within a Space.
- * Workflows are directed graphs: steps are nodes, transitions are edges.
+ * Workflows are collaboration graphs: nodes are agent groups, channels are communication paths.
  * The SpaceRuntime executes workflows by creating SpaceWorkflowRun instances.
  */
 export interface SpaceWorkflow {
@@ -796,7 +796,7 @@ export interface CreateSpaceWorkflowParams {
 	description?: string;
 	/**
 	 * Workflow nodes. Nodes may include an optional `id` field — if provided, the backend
-	 * uses it as the node's UUID so that `transitions` in the same call can reference it.
+	 * uses it as the node's UUID so that `channels` in the same call can reference it.
 	 */
 	nodes?: WorkflowNodeInput[];
 	/**
@@ -829,7 +829,7 @@ export interface CreateSpaceWorkflowParams {
  * Parameters for updating an existing SpaceWorkflow.
  * All fields are optional — only provided fields are updated.
  *
- * For array fields (`nodes`, `transitions`, `rules`, `tags`):
+ * For array fields (`nodes`, `channels`, `rules`, `tags`):
  * - Pass a new array to replace the entire collection.
  * - Pass `null` to explicitly clear the field to an empty collection.
  * - Pass `[]` to clear all entries (equivalent to null for arrays).
@@ -1029,7 +1029,7 @@ export interface ExportedSpaceAgent {
  * A Space workflow in the portable export format.
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
  * Node IDs are stripped; cross-references use node names.
- * Transition IDs are stripped; `from`/`to` use node names.
+ * Channel IDs are stripped; `from`/`to` use node/agent names.
  */
 export interface ExportedSpaceWorkflow {
 	/** Format version — always 1 for this revision */
