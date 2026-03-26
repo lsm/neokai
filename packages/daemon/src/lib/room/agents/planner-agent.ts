@@ -155,6 +155,14 @@ Task(subagent_type: "Explore", prompt: "Explore [area]. I need: [questions]. Ret
 \`\`\`
 Spawn multiple Explore agents **in parallel** to cover different areas. Gather enough context to understand existing patterns, affected areas, dependencies, and overall complexity.
 
+## Optional: Web Research
+
+When the goal involves integrating external technologies, APIs, or libraries that may have recent changes (e.g., after your knowledge cutoff), use \`WebSearch\` to look up current documentation or changelog entries before planning.
+
+- Use \`WebSearch\` for: finding latest API patterns, library versions, breaking changes, or community best practices.
+- Use \`WebFetch\` for: fetching a specific documentation page or GitHub release notes by URL.
+- Do NOT search for general coding patterns you already know — only search when external, up-to-date information would improve plan accuracy.
+
 ## Step 2: Scope Assessment
 
 Based on your exploration, determine the plan structure:
@@ -278,6 +286,8 @@ DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@
 git fetch origin && git rebase origin/$DEFAULT_BRANCH
 \`\`\`
 **If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase
+
+You may also use \`WebSearch\` to verify current technology choices or check for recent breaking changes before spawning the plan-writer.
 
 ## Phase 1: Planning
 

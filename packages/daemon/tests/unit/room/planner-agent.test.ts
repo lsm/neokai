@@ -131,6 +131,19 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null');
 		});
 
+		it('should mention WebSearch in pre-planning setup section', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('WebSearch');
+			// The note should appear in the Pre-Planning Setup section (before Phase 1)
+			const setupIdx = prompt.indexOf('Pre-Planning Setup (MANDATORY)');
+			const webSearchIdx = prompt.indexOf('WebSearch');
+			const phase1Idx = prompt.indexOf('Phase 1: Planning');
+			expect(setupIdx).toBeGreaterThanOrEqual(0);
+			expect(webSearchIdx).toBeGreaterThanOrEqual(0);
+			expect(webSearchIdx).toBeGreaterThan(setupIdx);
+			expect(webSearchIdx).toBeLessThan(phase1Idx);
+		});
+
 		it('should place pre-planning setup before Phase 1 planning', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			const syncIdx = prompt.indexOf('Pre-Planning Setup (MANDATORY)');
@@ -243,6 +256,30 @@ describe('planner-agent', () => {
 		it('should instruct to create a feature branch with plan slug', () => {
 			const prompt = buildPlanWriterPrompt();
 			expect(prompt).toContain('git checkout -b plan/<plan_slug>');
+		});
+
+		it('should include optional web research section', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('Optional: Web Research');
+			expect(prompt).toContain('WebSearch');
+			expect(prompt).toContain('WebFetch');
+		});
+
+		it('should position web research section after codebase exploration and before scope assessment', () => {
+			const prompt = buildPlanWriterPrompt();
+			const explorationIdx = prompt.indexOf('Step 1: Codebase Exploration');
+			const webResearchIdx = prompt.indexOf('Optional: Web Research');
+			const scopeIdx = prompt.indexOf('Step 2: Scope Assessment');
+			expect(explorationIdx).toBeGreaterThanOrEqual(0);
+			expect(webResearchIdx).toBeGreaterThanOrEqual(0);
+			expect(scopeIdx).toBeGreaterThanOrEqual(0);
+			expect(explorationIdx).toBeLessThan(webResearchIdx);
+			expect(webResearchIdx).toBeLessThan(scopeIdx);
+		});
+
+		it('should clarify when NOT to use web search', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('Do NOT search');
 		});
 	});
 
