@@ -5,7 +5,7 @@
 Fix two model switching bugs that prevent model changes from taking effect:
 
 1. **Bug 1 (Task View)**: When switching models in the Task View, `session.model.switch` creates a NEW `AgentSession` via `SessionCache` (a separate instance from `RoomRuntimeService.agentSessions`), causing duplicate/conflicting concurrent queries for the same session.
-2. **Bug 2 (Normal Session)**: When switching models on a normal session, `sdkSessionId` is NOT cleared during the restart, so the new query resumes the old SDK session file (created with the old model). The SDK may use the session-file model over the options model, making the switch ineffective.
+2. **Bug 2 (Normal Session)**: When switching models on a normal session, the agent may stop responding or may not use the new model. Root cause is unverified — an investigation task (Task 1) will determine whether the issue actually exists and what fix is needed.
 
 ## Approach
 
@@ -38,107 +38,58 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
 
 **Namespace invariant**: The disjoint namespace guarantee relies on an invariant that must be preserved: **room role strings (e.g., `coder`, `general`, `planner`, `leader`) must never equal the literal string `"space"`**. If a role named `"space"` were introduced, session IDs like `space:{roomId}:...` could collide with Space session IDs like `space:{spaceId}:task:{taskId}`. This constraint should be documented in the role definition code (where roles are defined/enumerated) to prevent future violations.
 
-### Bug 2 Fix: Use `forkSession: true` on model switch restart
+### Bug 2: Investigation — does model switching actually work?
 
-**Revised root cause**: The original analysis assumed the SDK uses the model stored in the session file when resuming, but investigation reveals the model is **NOT** stored in the session file (`.jsonl` files contain only messages, not model metadata). The SDK receives both `--model` and `--resume` as CLI flags and **should** honor the new model. However, the agent still stops responding after a model switch, suggesting the issue is likely that:
+**Observation**: Model switching worked before without forking. The original root-cause analysis assumed the SDK uses a stale model from the session file, but the model is NOT stored in the session file — `.jsonl` files contain only messages. The SDK receives `--model` and `--resume` as CLI flags and should honor the new model.
 
-1. The SDK's `setModel()` has a known issue: it doesn't update the cached `system:init` message (documented in `model-switch-handler.ts` lines 13-16). While NeoKai already restarts the query to work around this, the restart resumes the **same** session, and the SDK may still carry stale internal state from the old session.
-2. The 100ms delay in `restart()` may not be sufficient for the old subprocess to fully exit before the new one starts, causing conflicts.
+**Uncertainty**: The previous plan proposed using `forkSession: true` to work around potential stale state, but this was never verified. We need concrete evidence before committing to any fix approach.
 
-**Fix — use SDK's `forkSession: true` option**: The Claude Agent SDK supports `forkSession: true` as a query option (`packages/shared/src/sdk/sdk.d.ts:906`). When combined with `resume`, it forks the session to a **new session ID** while preserving the full conversation history. The old session file remains intact and resumable.
+**Approach**: Write an online integration test (using dev proxy) that performs a model switch mid-session and observes the `system:init` message from the SDK subprocess. The `system:init` message's `model` field is the authoritative source for which model the SDK is actually using. By comparing the `model` field before and after the switch, we can determine whether the new model takes effect.
 
-The fix requires three coordinated changes:
+**Observability mechanism**: Subscribe to `state.sdkMessages.delta` events on the session channel via WebSocket. Listen for `type === 'system' && subtype === 'init'` messages and read the `.model` field. This pattern is already used in `packages/daemon/tests/online/agent/agent-session-sdk.test.ts` (lines 300-326).
 
-1. In `ModelSwitchHandler.switchModel()`, after updating the model/provider config, set a transient flag on the session: `session._forkOnNextQuery = true`. This flag is NOT persisted to DB (it's a runtime-only signal).
-2. In `QueryOptionsBuilder.addSessionStateOptions()` (line 323 of `query-options-builder.ts`), when building options:
-   - If `session.sdkSessionId` is set AND `session._forkOnNextQuery` is true:
-     - Set `result.resume = session.sdkSessionId` (carry forward conversation history)
-     - Set `result.forkSession = true` (fork to new session, old one preserved)
-     - Clear `session._forkOnNextQuery = false` (consume the flag)
-   - Otherwise, behave as before (just set `resume` if `sdkSessionId` exists)
-3. **Critical**: Update `sdk-message-handler.ts` `handleSystemMessage()` (line 650) to allow overwriting `sdkSessionId` when it changes. The current guard `!session.sdkSessionId` prevents this — after a fork, the SDK emits a `system:init` with a NEW `session_id`, but the guard drops it because the old ID is still set. Without this fix, future restarts would resume the old (pre-fork) session instead of the forked one.
-
-**Why this preserves session resumability**:
-- The old `sdkSessionId` remains valid — the old session file is untouched and can be resumed via `--resume <old-id>` at any time.
-- The new `sdkSessionId` (from the fork) becomes the active session ID. Future queries resume the forked session (which has the full conversation history up to the fork point).
-- `forkSession` is a first-class, documented SDK feature (`Options.forkSession?: boolean`).
-
-**Why a transient flag instead of clearing sdkSessionId**:
-- Clearing `sdkSessionId` would lose the ability to resume the old session (the reviewer's concern).
-- Using `forkSession: true` preserves the old session AND starts a clean new session with the new model.
-- The SDK handles the fork atomically — no race conditions between old and new sessions.
-
-**Type-safe flag**: Add `_forkOnNextQuery?: boolean` with a `/** @internal */` JSDoc tag to the `Session` interface in `packages/shared/src/types.ts` (line ~157, near `sdkSessionId`). This avoids `(session as any)` casts scattered across multiple files, lets the TypeScript compiler catch typos, and signals the field should not be serialized to DB. The `@internal` tag marks it as private to the daemon runtime.
-
-**Error handling edge cases**:
-- If `restart()` throws after the flag is set, the flag remains but is harmless — the next successful `startStreamingQuery()` call will see the flag and apply `forkSession: true`. Note: `session.config.model` was already persisted to DB, so the next query uses the correct new model. The flag being set on retry is actually correct — the retry should fork with the new model.
-- If the user switches models multiple times before any query starts (e.g., A → B → C), each call sets `_forkOnNextQuery = true` (idempotent) and updates `session.config.model`. On the next query start, it forks to model C with the correct resume history. This is correct behavior.
-- If the SDK fork operation itself fails (e.g., corrupted session file), the SDK will likely emit an error message. The `QueryRunner` handles startup errors via its timeout/retry mechanism (lines 354-414 of `query-runner.ts`). If the fork fails, `_forkOnNextQuery` was already consumed, so the next restart attempt would resume without forking — which is acceptable since the model config is already persisted.
+**Decision point**: After this investigation task completes, the human reviewer will decide the Bug 2 approach based on the evidence:
+- **If the test passes** (new model appears in `system:init` after switch): model switching works without forking — the bug may be elsewhere (e.g., UI-only, race condition in restart, or already fixed). No `forkSession` implementation needed.
+- **If the test fails** (old model still appears in `system:init`): we have concrete proof of the issue, and can investigate further (forkSession, clearing sdkSessionId, or other approaches).
 
 ---
 
 ## Tasks
 
-### Task 1: Add `forkSession: true` support on model switch (Bug 2)
+### Task 1: Investigate whether model switching takes effect without code changes (Bug 2)
 
-**Description**: Modify `ModelSwitchHandler.switchModel()` to set a transient flag that causes the next query to fork the SDK session. Modify `QueryOptionsBuilder.addSessionStateOptions()` to detect this flag and pass `forkSession: true` alongside `resume` to the SDK. **Critical**: Update `sdk-message-handler.ts` to allow overwriting `sdkSessionId` when it changes (fork produces a new session ID).
+**Description**: Write an online integration test that performs a model switch mid-session and observes the SDK's `system:init` message to verify whether the new model actually takes effect. This task produces evidence to guide the Bug 2 fix approach — it does NOT implement any fix.
 
-**Files**:
-- `packages/shared/src/types.ts` — add `_forkOnNextQuery` to `Session` interface
-- `packages/daemon/src/lib/agent/model-switch-handler.ts` — set `_forkOnNextQuery` flag
-- `packages/daemon/src/lib/agent/query-options-builder.ts` — read flag, add `forkSession: true` to options
-- `packages/daemon/src/lib/agent/sdk-message-handler.ts` — update `sdkSessionId` capture guard to allow overwriting on fork
+**File**: `packages/daemon/tests/online/rpc/rpc-model-switching.test.ts` (append to existing file)
+
+**Key observability mechanism**: The SDK's `system:init` message (first message emitted by a new query) carries a `model` field that is the authoritative source for which model the subprocess is using. By subscribing to `state.sdkMessages.delta` events on the session channel and listening for `system:init` messages before and after the switch, we can determine whether the new model takes effect. This pattern is already used in `packages/daemon/tests/online/agent/agent-session-sdk.test.ts` (lines 300-326).
 
 **Subtasks**:
-0. Add `/** @internal */ _forkOnNextQuery?: boolean;` to the `Session` interface in `packages/shared/src/types.ts` (near `sdkSessionId` at line ~157). The `@internal` tag signals it should not be serialized to DB or exposed to clients. This avoids `as any` casts and gives the TypeScript compiler type-safety.
+1. Create a helper that subscribes to `state.sdkMessages.delta` on a session channel and returns a Promise that resolves with the next `system:init` message's `model` field. Use the WebSocket subscription pattern from `agent-session-sdk.test.ts`.
 
-1. In `ModelSwitchHandler.switchModel()`, after updating `session.config.model` and `session.config.provider` and persisting to DB (both the `!queryObject` and `queryObject` branches), set the transient flag:
-   ```ts
-   session._forkOnNextQuery = true;
-   ```
-   This is set in both branches (after the existing `db.updateSession` calls that update model/provider). The flag is NOT persisted to DB — it's a runtime-only signal.
+2. Write a test (using dev proxy via `NEOKAI_USE_DEV_PROXY=1`) that:
+   - Creates a session and sends a message to start a query.
+   - Captures the first `system:init` message's `model` field → `initialModel`.
+   - Waits for the query response to confirm the agent is working.
+   - Calls `session.model.switch` with a different model (e.g., `claude-sonnet-4-20250514` → `claude-haiku-4-5-20251001`).
+   - Waits for the model switch RPC to complete (the restart should happen automatically).
+   - Captures the next `system:init` message's `model` field → `postSwitchModel`.
+   - Asserts that `postSwitchModel !== initialModel` (the SDK subprocess is using the new model).
+   - Sends another message and waits for a response (verifying the agent is not stuck after the switch).
 
-2. In `QueryOptionsBuilder.addSessionStateOptions()` (line 323 of `query-options-builder.ts`), add logic after the `resume` block:
-   ```ts
-   // If a model switch requested a fork, use forkSession to create a new session
-   // while preserving conversation history. The old session remains resumable.
-   if (result.resume && this.ctx.session._forkOnNextQuery) {
-       result.forkSession = true;
-       this.ctx.session._forkOnNextQuery = false; // consume the flag
-   }
-   ```
-   This ensures that when `restart()` calls `startStreamingQuery()` → `runQuery()`, the query options include both `resume` (old session for history) and `forkSession: true` (create new session with new model).
+3. If the dev proxy does not support observing different models (it mocks all responses uniformly), the test can still verify that a NEW `system:init` is emitted after the switch (the `session_id` may or may not change). Document the limitation clearly.
 
-3. **Critical — update `sdk-message-handler.ts` guard**: The current guard at line 650 is `if (isSDKSystemInit(message) && !session.sdkSessionId && message.session_id)`. The `!session.sdkSessionId` condition means "only capture if we don't already have a session ID." After a fork, `session.sdkSessionId` still holds the OLD session ID, so the NEW `system:init` message (with the forked session ID) is silently dropped. This causes future restarts to resume the wrong session branch.
+4. Run the test and record the results. The test outcome determines next steps:
+   - **Pass**: Model switching works — the SDK honors `--model` even when `--resume` is set. Bug 2 may not exist as described, or the fix may be simpler than `forkSession`.
+   - **Fail**: The SDK uses the old model after a switch → we have proof that forking or another approach is needed.
 
-   Change the guard to also allow overwriting when the session ID has changed (indicating a fork):
-   ```ts
-   if (isSDKSystemInit(message) && message.session_id) {
-       const isNewSession = !session.sdkSessionId || session.sdkSessionId !== message.session_id;
-       if (isNewSession) {
-           session.sdkSessionId = message.session_id;
-           db.updateSession(session.id, { sdkSessionId: message.session_id });
-           await daemonHub.emit('session.updated', {
-               sessionId: session.id,
-               source: 'sdk-session',
-               session: { sdkSessionId: message.session_id },
-           });
-       }
-   }
-   ```
-   This preserves the existing behavior (capture on first init) while also handling session ID changes from forks or any future mechanism. The `isSDKSystemInit` guard on line 650 still ensures that other system subtypes (api_retry, status, etc.) cannot accidentally overwrite the field.
-
-4. Verify that `session.config.model` is correctly read by `QueryRunner.runQuery()` (line 159) after the model update, ensuring the new model is passed to the SDK.
+**Dev proxy considerations**: The dev proxy mock system does NOT distinguish between models — all requests get the same mock response regardless of the `model` field. The `system:init` message's `model` field is emitted by the SDK subprocess BEFORE any API request, so it reflects the CLI flag, not the mock response. The test should still be able to observe the model field from `system:init` even with dev proxy.
 
 **Acceptance criteria**:
-- `_forkOnNextQuery` is a typed field on `Session` (no `as any` casts).
-- After a model switch, the query options include both `resume` (old session ID) and `forkSession: true`.
-- The `_forkOnNextQuery` flag is consumed (set to false) after being used, so it doesn't leak into subsequent queries.
-- The old `sdkSessionId` remains in DB and can be used for resumption (not deleted).
-- A new `sdkSessionId` is captured from the `system:init` message after the fork (the guard in `sdk-message-handler.ts` allows overwriting).
-- After a fork, `session.get` returns the new (forked) `sdkSessionId`, not the old one.
-- Existing unit tests for `ModelSwitchHandler` still pass.
-- New unit test confirms `forkSession: true` is set in options on model switch (see Task 2).
+- Test produces a clear pass/fail result.
+- The `system:init` `model` field is captured before and after the switch.
+- Results are documented (pass → model switching works; fail → `forkSession` or alternative approach needed).
+- Test passes with `NEOKAI_USE_DEV_PROXY=1`.
 
 **Dependencies**: None
 
@@ -146,39 +97,11 @@ The fix requires three coordinated changes:
 
 ---
 
-### Task 2: Add unit tests for Bug 2 fix (forkSession on model switch)
-
-**Description**: Add unit tests to verify that `forkSession: true` is set in query options when a model switch occurs.
-
-**File**: `packages/daemon/tests/unit/agent/model-switch-handler.test.ts` (existing file, ~615 lines)
-
-**Subtasks**:
-1. Add a new `describe('forkSession on model switch')` block within the existing test file.
-2. Test that `_forkOnNextQuery` flag is set on the session after a successful model switch in both branches:
-   - When `queryObject` is `null` (no running query): verify flag is set.
-   - When `queryObject` is present (query running): verify flag is set and `restart()` is called.
-3. Test that `QueryOptionsBuilder.addSessionStateOptions()` produces options with `forkSession: true` when the flag is set and `sdkSessionId` exists.
-4. Test that `addSessionStateOptions()` produces options with `forkSession: true` AND `resume` set (both must be present for the fork to work).
-5. Test that the `_forkOnNextQuery` flag is consumed (set to `false`) after `addSessionStateOptions()` uses it.
-6. Test that when `_forkOnNextQuery` is NOT set, `forkSession` is NOT included in options (normal behavior).
-7. Test error path: if `restart()` throws after the flag is set, verify the flag is still set (it will be consumed on the next successful query start).
-8. Test the `sdk-message-handler.ts` guard update: simulate a `system:init` message with a DIFFERENT `session_id` than the current `session.sdkSessionId`, and verify the new ID is captured (overwriting the old one). Also verify that a `system:init` with the SAME `session_id` does NOT trigger an overwrite.
-
-**Acceptance criteria**:
-- Test confirms `_forkOnNextQuery` is set on session after model switch.
-- Test confirms `addSessionStateOptions()` sets `forkSession: true` when flag is present.
-- Test confirms `resume` is also set (conversation history is preserved).
-- Test confirms the flag is consumed after use.
-- Test confirms normal queries (no model switch) do NOT include `forkSession`.
-- All existing model switch handler tests still pass.
-
-**Dependencies**: Task 1
-
-**Agent type**: coder
+> **Decision point**: After Task 1 completes, the human reviewer will decide the Bug 2 approach based on the evidence. If the test shows model switching already works, no further Bug 2 tasks are needed. If it fails, a new task will be created with the appropriate fix (possibly `forkSession: true`, clearing `sdkSessionId`, or another approach).
 
 ---
 
-### Task 3: Add `unregisterSession` to SessionManager and register room sessions in SessionCache (Bug 1)
+### Task 2: Add `unregisterSession` to SessionManager and register room sessions in SessionCache (Bug 1)
 
 **Description**: Add `unregisterSession()` to `SessionManager` for symmetry with the existing `registerSession()`, then register room worker/leader sessions in `SessionCache` through both creation paths and unregister them through all teardown paths.
 
@@ -245,7 +168,7 @@ The fix requires three coordinated changes:
 
 ---
 
-### Task 4: Add unit tests for room session registration in SessionCache (Bug 1 tests)
+### Task 3: Add unit tests for room session registration in SessionCache (Bug 1 tests)
 
 **Description**: Add unit tests to verify that room sessions are properly registered/unregistered in SessionCache, covering both creation and restoration paths.
 
@@ -273,64 +196,3 @@ The fix requires three coordinated changes:
 
 **Agent type**: coder
 
----
-
-### Task 5: Add online integration test for model switch with forkSession (Bug 2)
-
-**Description**: Add an online integration test that verifies model switch works end-to-end, specifically that `sdkSessionId` is updated (forked) after switching models and the agent responds.
-
-**File**: `packages/daemon/tests/online/rpc/rpc-model-switching.test.ts` (existing file)
-
-**Subtasks**:
-1. Add a test (using dev proxy via `NEOKAI_USE_DEV_PROXY=1`) that:
-   - Creates a session and sends a message to establish an `sdkSessionId`.
-   - Waits for the response, then calls `session.get` to verify `sdkSessionId` is non-null. Record the original ID.
-   - Calls `session.model.switch` to switch to a different model.
-   - Waits for the model switch to complete (restart finishes).
-   - Calls `session.get` to verify `sdkSessionId` is still non-null but has CHANGED to a new value (the forked session ID).
-   - Sends another message and waits for a response (verifying the agent is not stuck).
-
-**Dev proxy considerations**: The dev proxy mock system does NOT distinguish between models -- all requests to the same endpoint get the same mock response regardless of the `model` field in the request body. This is fine for our test because we are verifying the `forkSession` behavior (observable via `session.get` showing a new `sdkSessionId`), not the actual model used by the SDK. The mock response is sufficient to confirm the agent starts a new forked query after the switch.
-
-**Note on dev proxy `forkSession` support**: The dev proxy may not fully support the `forkSession` flow since it intercepts HTTP requests. If the SDK's `--resume` + `--fork-session` flags cause the subprocess to behave differently, the dev proxy mock may need adjustment. If the forkSession option causes issues with dev proxy, this test should be marked as requiring real credentials (like the GLM model switching test) or the dev proxy mocks may need to be updated. The unit tests (Task 2) provide adequate coverage regardless. The `sdk-message-handler.ts` guard fix (Task 1, subtask 3) is a prerequisite for this test to pass — without it, the new `sdkSessionId` would not be captured.
-
-**Acceptance criteria**:
-- Test verifies `sdkSessionId` is non-null after first query.
-- Test verifies `sdkSessionId` changes (new ID) after model switch (fork occurred).
-- Test verifies agent responds after model switch (no stuck state).
-- Test passes with `NEOKAI_USE_DEV_PROXY=1` if possible, or documented as requiring real credentials.
-
-**Dependencies**: Task 1, Task 2
-
-**Agent type**: coder
-
----
-
-### Task 6: E2E test for normal session model switching
-
-**Description**: Add a Playwright E2E test that verifies normal session model switching works without causing the agent to become unresponsive.
-
-**Files**:
-- `packages/e2e/tests/` (new test file, e.g., `model-switching.e2e.ts`)
-
-**Subtasks**:
-1. Create an E2E test for normal session model switching:
-   - Navigate to the app and create a new session via the UI.
-   - Open the model selector dropdown.
-   - Switch to a different model.
-   - Verify the model indicator in the UI updates to show the new model.
-   - Type and send a message.
-   - Verify the agent responds (not stuck/silent) by waiting for a response message to appear in the chat.
-2. This test covers Bug 2 (the `forkSession` fix). It does not need to verify the internal `sdkSessionId` state (which is invisible to the browser) -- it verifies the observable behavior: the agent continues to respond after a model switch.
-
-**Task view E2E test**: A full task view E2E test for Bug 1 is deferred because it requires complex room setup (room creation, mission configuration, worker spawning, task view navigation). The Bug 1 fix (Task 3) is adequately covered by unit tests (Task 4) that verify `sessionManager.getSessionAsync()` returns the correct instance for room sessions, including the restoration path. If a regression occurs, it would be caught by those unit tests. A task view E2E test can be added in a follow-up if needed.
-
-**Acceptance criteria**:
-- Normal session model switch works without causing the agent to become unresponsive.
-- The model indicator in the UI updates correctly.
-- Test passes consistently.
-- Test follows E2E rules (all actions through UI, no direct RPC calls for assertions).
-
-**Dependencies**: Task 1
-
-**Agent type**: coder
