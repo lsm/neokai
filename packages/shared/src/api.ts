@@ -30,6 +30,7 @@ import type {
 	CreateAppMcpServerRequest,
 	UpdateAppMcpServerRequest,
 } from './types/app-mcp-server.ts';
+import type { AppSkill, CreateSkillParams, UpdateSkillParams } from './types/skills.ts';
 
 // Request types
 export interface CreateSessionRequest {
@@ -718,4 +719,72 @@ export interface McpRegistryError {
 /** Response from mcp.registry.listErrors */
 export interface McpRegistryListErrorsResponse {
 	errors: McpRegistryError[];
+}
+
+// ---------------------------------------------------------------------------
+// Skills RPC types (skill.*)
+//
+// Request/Response types for the application-level Skills registry RPC methods.
+// ---------------------------------------------------------------------------
+
+export type { AppSkill, CreateSkillParams, UpdateSkillParams };
+
+/** Request for skill.list */
+export interface SkillListRequest {}
+
+/** Response from skill.list */
+export interface SkillListResponse {
+	skills: AppSkill[];
+}
+
+/** Request for skill.get */
+export interface SkillGetRequest {
+	id: string;
+}
+
+/** Response from skill.get */
+export interface SkillGetResponse {
+	skill: AppSkill | null;
+}
+
+/** Request for skill.create */
+export interface SkillCreateRequest {
+	params: CreateSkillParams;
+}
+
+/** Response from skill.create */
+export interface SkillCreateResponse {
+	skill: AppSkill;
+}
+
+/** Request for skill.update */
+export interface SkillUpdateRequest {
+	id: string;
+	params: UpdateSkillParams;
+}
+
+/** Response from skill.update */
+export interface SkillUpdateResponse {
+	skill: AppSkill;
+}
+
+/** Request for skill.delete */
+export interface SkillDeleteRequest {
+	id: string;
+}
+
+/** Response from skill.delete */
+export interface SkillDeleteResponse {
+	success: boolean;
+}
+
+/** Request for skill.setEnabled */
+export interface SkillSetEnabledRequest {
+	id: string;
+	enabled: boolean;
+}
+
+/** Response from skill.setEnabled */
+export interface SkillSetEnabledResponse {
+	skill: AppSkill;
 }
