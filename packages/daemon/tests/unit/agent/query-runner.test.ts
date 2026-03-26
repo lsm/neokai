@@ -185,7 +185,6 @@ describe('QueryRunner', () => {
 			queryAbortController: null,
 			firstMessageReceived: false,
 			startupTimeoutTimer: null,
-			startupTimeoutAutoRecoverAttempts: 0,
 			originalEnvVars: {},
 
 			// Methods for state coordination
@@ -717,7 +716,7 @@ describe('QueryRunner', () => {
 		});
 	});
 
-	describe('startup timeout auto-recovery', () => {
+	describe('startup timeout error surfacing', () => {
 		// Integration tests: exercise the runQuery() catch block when a startup-timeout
 		// error is thrown.  buildSpy throws 'SDK startup timeout - query aborted' so the
 		// test never waits for the real 15-second timer.
@@ -741,18 +740,7 @@ describe('QueryRunner', () => {
 			}
 		});
 
-		it('should NOT call messageQueue.clear() when onStartupTimeoutAutoRecover is registered', async () => {
-			const ctx = createContext({
-				onStartupTimeoutAutoRecover: mock(async () => {}),
-			});
-			runner = new QueryRunner(ctx);
-			runner.start();
-			await ctx.queryPromise?.catch(() => {});
-
-			expect(clearSpy).not.toHaveBeenCalled();
-		});
-
-		it('should call messageQueue.clear() when onStartupTimeoutAutoRecover is absent', async () => {
+		it('should always call messageQueue.clear() on startup timeout error', async () => {
 			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
@@ -761,17 +749,12 @@ describe('QueryRunner', () => {
 			expect(clearSpy).toHaveBeenCalled();
 		});
 
-		it('should call messageQueue.clear() on startup-timeout AbortError even when handler is registered', async () => {
-			// Guard: if the throw site ever becomes an AbortError, queue must still be
-			// cleared because the recovery path is gated behind !isAbortError and will
-			// not run — leaving stale preserved messages would be wrong.
+		it('should call messageQueue.clear() on startup-timeout AbortError', async () => {
 			const abortError = new Error('SDK startup timeout - query aborted');
 			abortError.name = 'AbortError';
 			buildSpy.mockRejectedValue(abortError);
 
-			const ctx = createContext({
-				onStartupTimeoutAutoRecover: mock(async () => {}),
-			});
+			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
@@ -779,137 +762,17 @@ describe('QueryRunner', () => {
 			expect(clearSpy).toHaveBeenCalled();
 		});
 
-		it('should schedule onStartupTimeoutAutoRecover after the recovery delay (not immediately)', async () => {
-			jest.useFakeTimers();
-			const recoverSpy = mock(async () => {});
-			const ctx = createContext({
-				onStartupTimeoutAutoRecover: recoverSpy,
-			});
+		it('should surface error immediately via handleError on startup timeout', async () => {
+			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
 
-			// Not yet called — deferred by setTimeout
-			expect(recoverSpy).not.toHaveBeenCalled();
-			// startupTimeoutAutoRecoverAttempts was incremented (recovery is scheduled)
-			expect(ctx.startupTimeoutAutoRecoverAttempts).toBe(1);
-
-			// Advance timers past the base recovery delay (default 3000ms)
-			jest.runAllTimers();
-			// Allow microtasks to flush
-			await new Promise((resolve) => setImmediate(resolve));
-			expect(recoverSpy).toHaveBeenCalledTimes(1);
-			jest.useRealTimers();
-		});
-
-		it('should NOT invoke onStartupTimeoutAutoRecover when isCleaningUp returns true', async () => {
-			jest.useFakeTimers();
-			const recoverSpy = mock(async () => {});
-			const ctx = createContext({
-				isCleaningUp: () => true,
-				onStartupTimeoutAutoRecover: recoverSpy,
-			});
-			runner = new QueryRunner(ctx);
-			runner.start();
-			await ctx.queryPromise?.catch(() => {});
-
-			jest.runAllTimers();
-			await new Promise((resolve) => setImmediate(resolve));
-			expect(recoverSpy).not.toHaveBeenCalled();
-			jest.useRealTimers();
-		});
-
-		it('should surface error normally and NOT recover when retry limit (2) is already reached', async () => {
-			const recoverSpy = mock(async () => {});
-			const ctx = createContext({
-				startupTimeoutAutoRecoverAttempts: 2, // already at limit (default STARTUP_MAX_RETRIES=2)
-				onStartupTimeoutAutoRecover: recoverSpy,
-			});
-			runner = new QueryRunner(ctx);
-			runner.start();
-			await ctx.queryPromise?.catch(() => {});
-
-			await new Promise((resolve) => setTimeout(resolve, 100));
-			expect(recoverSpy).not.toHaveBeenCalled();
 			expect(handleErrorSpy).toHaveBeenCalled();
 		});
 
-		it('should still recover on second attempt (attempts=1, limit=2)', async () => {
-			jest.useFakeTimers();
-			const recoverSpy = mock(async () => {});
-			const ctx = createContext({
-				startupTimeoutAutoRecoverAttempts: 1, // first retry already done, second still allowed
-				onStartupTimeoutAutoRecover: recoverSpy,
-			});
-			runner = new QueryRunner(ctx);
-			runner.start();
-			await ctx.queryPromise?.catch(() => {});
-
-			expect(recoverSpy).not.toHaveBeenCalled();
-			// Second attempt increments to 2 (still ≤ STARTUP_MAX_RETRIES=2)
-			expect(ctx.startupTimeoutAutoRecoverAttempts).toBe(2);
-
-			jest.runAllTimers();
-			await new Promise((resolve) => setImmediate(resolve));
-			expect(recoverSpy).toHaveBeenCalledTimes(1);
-			jest.useRealTimers();
-		});
-
-		it('should use exponential backoff: second attempt delay is 2× the first', async () => {
-			// First attempt: delay = BASE * 2^(1-1) = BASE * 1
-			// Second attempt: delay = BASE * 2^(2-1) = BASE * 2
-			const capturedDelays: number[] = [];
-			const originalSetTimeout = globalThis.setTimeout;
-			// Spy on setTimeout to capture delay arguments for recovery calls
-			const setTimeoutSpy = mock((fn: () => void, delay?: number) => {
-				capturedDelays.push(delay ?? 0);
-				return originalSetTimeout(fn, 0); // fire immediately to avoid slow tests
-			});
-			globalThis.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
-
-			try {
-				const ctx1 = createContext({
-					startupTimeoutAutoRecoverAttempts: 0, // first attempt
-					onStartupTimeoutAutoRecover: mock(async () => {}),
-				});
-				new QueryRunner(ctx1).start();
-				await ctx1.queryPromise?.catch(() => {});
-
-				const ctx2 = createContext({
-					startupTimeoutAutoRecoverAttempts: 1, // second attempt
-					onStartupTimeoutAutoRecover: mock(async () => {}),
-				});
-				new QueryRunner(ctx2).start();
-				await ctx2.queryPromise?.catch(() => {});
-			} finally {
-				globalThis.setTimeout = originalSetTimeout;
-			}
-
-			// Each QueryRunner run produces exactly one setTimeout (the recovery defer).
-			// Asserting === 2 guards against accidental extra calls shifting the indices.
-			expect(capturedDelays.length).toBe(2);
-			const delay1 = capturedDelays[0];
-			const delay2 = capturedDelays[1];
-			expect(delay1).toBeGreaterThan(0);
-			expect(delay2).toBe(delay1 * 2);
-		});
-
-		it('should increment startupTimeoutAutoRecoverAttempts when recovery is scheduled', async () => {
-			const ctx = createContext({
-				startupTimeoutAutoRecoverAttempts: 0,
-				onStartupTimeoutAutoRecover: mock(async () => {}),
-			});
-			runner = new QueryRunner(ctx);
-			runner.start();
-			await ctx.queryPromise?.catch(() => {});
-
-			expect(ctx.startupTimeoutAutoRecoverAttempts).toBe(1);
-		});
-
-		it('should pass actionable user message to handleError when all retries exhausted (startup timeout)', async () => {
-			const ctx = createContext({
-				startupTimeoutAutoRecoverAttempts: 2, // at limit, no handler needed
-			});
+		it('should pass actionable user message with timeout hint to handleError (startup timeout)', async () => {
+			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
@@ -922,13 +785,14 @@ describe('QueryRunner', () => {
 				expect.anything(),
 				expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
 			);
+			// Should NOT contain retry count language
+			const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+			expect(userMessage).not.toContain('attempt(s)');
 		});
 
-		it('should pass session-reset hint (no timeout mention) when conversation-not-found retries exhausted', async () => {
+		it('should pass session-reset hint (no timeout mention) for conversation-not-found', async () => {
 			buildSpy.mockRejectedValue(new Error('No conversation found for session abc123'));
-			const ctx = createContext({
-				startupTimeoutAutoRecoverAttempts: 2, // at limit
-			});
+			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
@@ -944,6 +808,28 @@ describe('QueryRunner', () => {
 			// NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a missing session file
 			const userMessage = handleErrorSpy.mock.calls[0][3] as string;
 			expect(userMessage).not.toContain('NEOKAI_SDK_STARTUP_TIMEOUT_MS');
+			// Should NOT contain retry count language
+			expect(userMessage).not.toContain('attempt(s)');
+		});
+
+		it('should call stateManager.setIdle after handling startup timeout error', async () => {
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
+
+		it('should NOT pass startupMaxRetries in handleError metadata', async () => {
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(handleErrorSpy).toHaveBeenCalled();
+			const metadata = handleErrorSpy.mock.calls[0][5] as Record<string, unknown>;
+			expect(metadata.startupMaxRetries).toBeUndefined();
 		});
 	});
 });
