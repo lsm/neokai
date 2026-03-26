@@ -36,6 +36,7 @@ import { JobQueueRepository } from './repositories/job-queue-repository';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 import { TaskRepository } from './repositories/task-repository';
 import { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
+import { SkillRepository } from './repositories/skill-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -59,6 +60,7 @@ export { TaskRepository } from './repositories/task-repository';
 export { SpaceAgentRepository } from './repositories/space-agent-repository';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 export { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
+export { SkillRepository } from './repositories/skill-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -78,6 +80,7 @@ export class Database {
 	private appMcpServerRepo!: AppMcpServerRepository;
 	private taskRepo!: TaskRepository;
 	private roomMcpEnablementRepo!: RoomMcpEnablementRepository;
+	private skillRepo!: SkillRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -101,6 +104,7 @@ export class Database {
 		this.jobQueueRepo = new JobQueueRepository(db);
 		this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
 		this.roomMcpEnablementRepo = new RoomMcpEnablementRepository(db, reactiveDb);
+		this.skillRepo = new SkillRepository(db, reactiveDb);
 	}
 
 	// ============================================================================
@@ -457,6 +461,13 @@ export class Database {
 	 */
 	get roomMcpEnablement(): RoomMcpEnablementRepository {
 		return this.roomMcpEnablementRepo;
+	}
+
+	/**
+	 * Get the application-level Skills repository
+	 */
+	get skills(): SkillRepository {
+		return this.skillRepo;
 	}
 
 	close(): void {

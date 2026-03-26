@@ -26,6 +26,7 @@ import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
 import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
 import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
+import { SkillsManager } from './lib/skills-manager';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -75,6 +76,8 @@ export interface DaemonAppContext {
 	jobProcessor: JobQueueProcessor;
 	/** Application-level MCP lifecycle manager — converts registry entries to SDK configs */
 	appMcpManager: AppMcpLifecycleManager;
+	/** Application-level Skills manager — registry CRUD and validation */
+	skillsManager: SkillsManager;
 	/** Workspace file index for fast fuzzy file/folder search */
 	fileIndex: FileIndex;
 	/**
@@ -271,6 +274,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Seed default MCP entries (idempotent — skips entries that already exist)
 	seedDefaultMcpEntries(db);
+
+	// Instantiate Skills manager and initialize built-in skills
+	const skillsManager = new SkillsManager(db.skills, db.appMcpServers);
+	skillsManager.initializeBuiltins();
 
 	// Initialize workspace file index (non-blocking — init runs in the background)
 	const fileIndex = new FileIndex(config.workspaceRoot);
@@ -552,6 +559,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobQueue,
 		jobProcessor,
 		appMcpManager,
+		skillsManager,
 		fileIndex,
 		cleanup,
 	};
