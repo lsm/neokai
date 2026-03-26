@@ -10,6 +10,7 @@
 		"skipLibCheck": true,
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
+		"types": ["bun"],
 		"paths": {
 			"@/*": ["./src/*"]
 		}
