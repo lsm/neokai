@@ -269,6 +269,37 @@ describe('useAutoScroll', () => {
 
 			expect(scrollIntoViewMock).not.toHaveBeenCalled();
 		});
+
+		it('should not auto-scroll when loadingOlder transitions from true to false', () => {
+			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+
+			const { rerender } = renderHook(
+				({ messageCount, loadingOlder }) =>
+					useAutoScroll({
+						containerRef,
+						endRef,
+						enabled: true,
+						messageCount,
+						isInitialLoad: false,
+						loadingOlder,
+					}),
+				{
+					initialProps: { messageCount: 50, loadingOlder: false },
+				}
+			);
+
+			scrollIntoViewMock.mockClear();
+
+			// Start loading older — message count increases as hidden messages are revealed
+			rerender({ messageCount: 55, loadingOlder: true });
+			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+			// Finish loading older — message count stays at 55, loadingOlder flips to false.
+			// This should NOT trigger auto-scroll because the count increase came from
+			// revealing older messages, not from genuinely new messages.
+			rerender({ messageCount: 55, loadingOlder: false });
+			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('scroll position detection', () => {

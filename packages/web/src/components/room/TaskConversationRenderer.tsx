@@ -8,7 +8,7 @@
  * which agent produced it. Role transitions show a small divider label.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { RefObject } from 'preact';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { SessionInfo } from '@neokai/shared';
@@ -112,9 +112,11 @@ export function TaskConversationRenderer({
 
 	// After rawMessages changes (triggered by loadEarlier), restore scroll position
 	// so older prepended messages don't cause a jarring jump to the top.
+	// Uses useLayoutEffect to restore scroll synchronously before paint, preventing
+	// useEffect-based auto-scroll (in the parent) from racing and overriding the position.
 	// IMPORTANT: onLoadingOlderChange?.(false) must be called on ALL exit paths so
 	// isLoadingOlder never gets stuck true (which would permanently disable auto-scroll).
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (!scrollRestoreRef.current) return;
 		if (!scrollContainerRef?.current) {
 			// Container unmounted between handleLoadEarlier and this effect — clear the flag.
@@ -124,16 +126,9 @@ export function TaskConversationRenderer({
 		}
 		const { scrollHeight, scrollTop } = scrollRestoreRef.current;
 		scrollRestoreRef.current = null;
-		requestAnimationFrame(() => {
-			if (!scrollContainerRef.current) {
-				// Container unmounted between rAF scheduling and rAF execution — clear the flag.
-				onLoadingOlderChange?.(false);
-				return;
-			}
-			const newScrollHeight = scrollContainerRef.current.scrollHeight;
-			scrollContainerRef.current.scrollTop = scrollTop + (newScrollHeight - scrollHeight);
-			onLoadingOlderChange?.(false);
-		});
+		const newScrollHeight = scrollContainerRef.current.scrollHeight;
+		scrollContainerRef.current.scrollTop = scrollTop + (newScrollHeight - scrollHeight);
+		onLoadingOlderChange?.(false);
 	}, [rawMessages, scrollContainerRef, onLoadingOlderChange]);
 
 	const messages = useMemo(
