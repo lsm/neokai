@@ -39,7 +39,7 @@ Upgrade the system prompts for planner, coder, and reviewer node agents in the S
 2. Include two-phase instructions: Phase 1 (explore + plan document + PR), Phase 2 (merge PR + create tasks)
 3. Add instructions for `send_message` to reviewers to get plan review feedback
 4. Include task creation tool usage guidance (`create_task` MCP tool from Task Agent)
-5. Ensure the prompt works with the `injectWorkflowContext` flag to embed workflow structure
+5. Ensure the prompt works with the existing `injectWorkflowContext` flag on `SpaceAgent` to embed workflow structure into the task message (reference existing implementation, not a new feature)
 
 **Acceptance Criteria**:
 - Planner node agents create proper plan documents on feature branches with PRs
@@ -62,12 +62,12 @@ Upgrade the system prompts for planner, coder, and reviewer node agents in the S
 2. Include PR review process: read changed files, evaluate correctness/completeness/security
 3. Add review posting via REST API (`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews`)
 4. Add structured output format: `---REVIEW_POSTED---` block with URL, recommendation, severity counts
-5. Include self-review prevention (EVENT=COMMENT when reviewing own PR)
+5. Note: self-review prevention (EVENT=COMMENT when reviewing own PR) is NOT needed for Space node agents. In the Space workflow, the reviewer is a separate agent from the coder — it never creates its own PR. This check exists in the Room system for human reviewers and is not applicable here.
 
 **Acceptance Criteria**:
 - Reviewer node agents post proper PR reviews with severity classification
 - Reviews include P0-P3 issue counts and structured output
-- Reviewers handle own-PR detection (COMMENT instead of REQUEST_CHANGES)
+- Reviewer prompt does NOT include self-review prevention logic (unnecessary for automated agents)
 - Unit tests cover the new prompt builder
 
 **Depends on**: nothing (parallel with 1.1 and 1.2)
