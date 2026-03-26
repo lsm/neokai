@@ -558,12 +558,12 @@ describe('Leader Agent', () => {
 			expect(init.mcpServers).toBeDefined();
 			const ctxServer = init.mcpServers!['leader-context-tools'] as unknown as {
 				name: string;
-				instance: { _registeredTools: Record<string, unknown> };
+				tools: Array<{ name: string }>;
 			};
 			expect(ctxServer).toBeDefined();
 			// Verify it is the narrow leader-context server, not the full room-agent server
 			expect(ctxServer.name).toBe('leader-context');
-			const toolNames = Object.keys(ctxServer.instance._registeredTools).sort();
+			const toolNames = ctxServer.tools.map((t) => t.name).sort();
 			// Should include both read-only context tools and task management tools
 			expect(toolNames).toEqual(
 				[

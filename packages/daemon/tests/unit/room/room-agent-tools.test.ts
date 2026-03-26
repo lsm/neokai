@@ -1865,12 +1865,11 @@ describe('Room Agent Tools', () => {
 	describe('createLeaderContextMcpServer', () => {
 		/**
 		 * Helper: return the registered tool names from an SDK MCP server.
-		 * The SDK stores registered tools in `instance._registeredTools` keyed by tool name.
+		 * Extracts names from the `tools` array (passed at creation time) which is
+		 * available on both the real SDK and the unit-test mock.
 		 */
-		function getRegisteredToolNames(server: {
-			instance: { _registeredTools: Record<string, unknown> };
-		}): string[] {
-			return Object.keys(server.instance._registeredTools).sort();
+		function getRegisteredToolNames(server: { tools: Array<{ name: string }> }): string[] {
+			return server.tools.map((t) => t.name).sort();
 		}
 
 		it('should expose the 8 leader tools (context + task management)', () => {
