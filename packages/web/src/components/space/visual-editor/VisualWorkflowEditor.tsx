@@ -362,18 +362,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// Node operations
 	// ------------------------------------------------------------------
 
-	function addStep() {
+	const addStep = useCallback(() => {
 		const newLocalId = generateUUID();
 		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
-		// Capture emptiness before the setNodes call so we can call setStartStepId
-		// outside the updater. State setter calls inside updater functions are side
-		// effects and violate the purity requirement (React StrictMode double-invokes
-		// updaters to catch exactly this pattern).
-		// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
-		const isFirstNode =
-			nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID)
-				.length === 0;
 		setNodes((prev) => {
 			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px).
 			// Count only regular nodes so the Task Agent's fixed slot doesn't offset the stagger.
@@ -381,10 +373,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
 			).length;
 			const position: Point = { x: 120, y: 80 + regularCount * 100 };
+			const isFirstNode = regularCount === 0;
+			if (isFirstNode) setStartStepId(newLocalId);
 			return [...prev, { step: newStep, position }];
 		});
-		if (isFirstNode) setStartStepId(newLocalId);
-	}
+	}, []);
 
 	const handleNodePositionChange = useCallback((localId: string, newPosition: Point) => {
 		// Task Agent is pinned — its position must never change.
