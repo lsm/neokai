@@ -15,6 +15,9 @@
  * - At Space creation time, preset SpaceAgent records are seeded for each
  *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
  *   exist so that the `agentId` values resolve correctly.
+ * - Channels use node names (e.g. 'Plan', 'Code') in `from`/`to` so they
+ *   resolve correctly at runtime without UUID translation in the seeder.
+ *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
 
 import { generateUUID } from '@neokai/shared';
@@ -131,6 +134,51 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
+	channels: [
+		{
+			from: 'Plan',
+			to: 'Code',
+			direction: 'one-way',
+			gate: {
+				type: 'human',
+				description: 'Review and approve the plan before coding begins',
+			},
+			label: 'Plan → Code',
+		},
+		{
+			from: 'Code',
+			to: 'Verify & Test',
+			direction: 'one-way',
+			gate: {
+				type: 'always',
+				description: 'Automatically verify after coding is complete',
+			},
+			label: 'Code → Verify',
+		},
+		{
+			from: 'Verify & Test',
+			to: 'Plan',
+			direction: 'one-way',
+			isCyclic: true,
+			gate: {
+				type: 'task_result',
+				expression: 'failed',
+				description: 'Loop back to planning when verification fails',
+			},
+			label: 'Verify → Plan (on fail)',
+		},
+		{
+			from: 'Verify & Test',
+			to: 'Done',
+			direction: 'one-way',
+			gate: {
+				type: 'task_result',
+				expression: 'passed',
+				description: 'Complete workflow when verification passes',
+			},
+			label: 'Verify → Done (on pass)',
+		},
+	],
 };
 
 /**
@@ -175,6 +223,18 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	tags: ['research'],
 	createdAt: 0,
 	updatedAt: 0,
+	channels: [
+		{
+			from: 'Plan Research',
+			to: 'Research',
+			direction: 'one-way',
+			gate: {
+				type: 'always',
+				description: 'Automatically advance after planning is complete',
+			},
+			label: 'Plan → Research',
+		},
+	],
 };
 
 /**
@@ -309,6 +369,7 @@ export function seedBuiltInWorkflows(
 			rules: [],
 			tags: [...template.tags],
 			maxIterations: template.maxIterations,
+			channels: template.channels ? [...template.channels] : undefined,
 		});
 	}
 }
