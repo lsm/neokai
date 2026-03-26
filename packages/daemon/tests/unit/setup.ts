@@ -2,8 +2,67 @@
  * Unit Test Setup
  *
  * This file is preloaded before unit tests run.
- * It clears API keys to ensure tests don't accidentally make real API calls.
+ * It clears API keys to ensure tests don't accidentally make real API calls,
+ * and provides stubs for external SDK dependencies.
  */
+
+import { mock } from 'bun:test';
+
+// Mock the Claude Agent SDK — the installed version in CI may not export
+// createSdkMcpServer at runtime (it is declared in @neokai/shared's sdk.d.ts as a
+// type-only stub).  All test files that need real SDK behaviour call mock.module()
+// at the top of their own file and will override this default stub.
+mock.module('@anthropic-ai/claude-agent-sdk', () => {
+	// ---------------------------------------------------------------------------
+	// MockMcpServer — replicates the MCP server surface area needed by tests.
+	// ---------------------------------------------------------------------------
+	class MockMcpServer {
+		readonly _registeredTools: Record<string, object> = {};
+
+		connect(): void {}
+		disconnect(): void {}
+	}
+
+	// Per-call tool capture:
+	//   tool() is called with (name, description, inputSchema, handler) — we
+	//   store defs here keyed by name.  createSdkMcpServer drains the batch
+	//   into the server instance and resets so subsequent servers start clean.
+	let _toolBatch: Array<{ name: string; def: object }> = [];
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	function tool(name: string, description: string, inputSchema: any, handler: unknown): object {
+		const def = { name, description, inputSchema, handler };
+		_toolBatch.push({ name, def });
+		return def;
+	}
+
+	return {
+		query: mock(async () => ({
+			interrupt: () => {},
+		})),
+		interrupt: mock(async () => {}),
+		supportedModels: mock(async () => {
+			throw new Error('SDK unavailable in unit test');
+		}),
+		createSdkMcpServer: mock((_options: { name: string; version?: string; tools?: unknown[] }) => {
+			const server = new MockMcpServer();
+			// Drain the batch into this server's _registeredTools
+			for (const { name, def } of _toolBatch) {
+				server._registeredTools[name] = def;
+			}
+			_toolBatch = [];
+
+			return {
+				type: 'sdk' as const,
+				name: _options.name,
+				version: _options.version ?? '1.0.0',
+				tools: _options.tools ?? [],
+				instance: server,
+			};
+		}),
+		tool,
+	};
+});
 
 import { configureLogger, LogLevel } from '@neokai/shared';
 import { resetProviderRegistry } from '../../src/lib/providers/registry';

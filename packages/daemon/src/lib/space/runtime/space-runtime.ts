@@ -180,6 +180,19 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Returns the current dedup set snapshot for testing purposes.
+	 *
+	 * The returned Set is a copy — mutations have no effect on SpaceRuntime's
+	 * internal state.  Call this before and after a tick to verify that dedup
+	 * entries are added / removed as expected.
+	 *
+	 * @internal — exposed only for unit tests in the same package.
+	 */
+	getNotifiedTaskSet(): ReadonlySet<string> {
+		return new Set(this.notifiedTaskSet);
+	}
+
+	/**
 	 * Replace the notification sink at runtime.
 	 *
 	 * Called after construction once the Space Agent session has been provisioned,
