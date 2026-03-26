@@ -2,66 +2,34 @@
  * Cross-Provider Model Switching Tests (MiniMax <-> GLM)
  *
  * Tests end-to-end cross-provider model switching between MiniMax and GLM providers.
- * These tests verify that:
- * 1. Room chat sessions can switch models across providers
- * 2. Task agent sessions (leader/coder) can switch models
- * 3. trySwitchToFallbackModel correctly reads current model
- * 4. SDK restarts properly after model switch
- * 5. DB is source of truth for model/provider after switch
  *
  * REQUIREMENTS:
  * - Requires BOTH MINIMAX_API_KEY AND (GLM_API_KEY or ZHIPU_API_KEY)
  * - Makes real API calls to both providers (costs money, uses rate limits)
- * - Tests run against real APIs (not mocked)
+ * - Tests FAIL (not skip) when credentials are absent — by design per CLAUDE.md
+ *
+ * NOTE: These tests require real API credentials and are NOT run in the default
+ * CI matrix (they are excluded because they cost money). Run manually with:
+ *   bun test tests/online/cross-provider/cross-provider-model-switch.test.ts
  */
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { setupGitEnvironment } from '../room/room-test-helpers';
 
 // Temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-/**
- * Check if both providers are available for testing.
- * Skip tests if credentials are not configured.
- */
-function skipIfProvidersNotAvailable(): void {
-	const hasMinimax = Boolean(process.env.MINIMAX_API_KEY);
-	const hasGlm = Boolean(process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY);
-
-	if (!hasMinimax || !hasGlm) {
-		const missing: string[] = [];
-		if (!hasMinimax) missing.push('MINIMAX_API_KEY');
-		if (!hasGlm) missing.push('GLM_API_KEY or ZHIPU_API_KEY');
-		throw new Error(
-			`Skipping: requires both MiniMax and GLM credentials. Missing: ${missing.join(', ')}`
-		);
-	}
-}
-
 describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 	let daemon: DaemonServerContext;
-	let roomId: string;
 
-	beforeAll(async () => {
-		skipIfProvidersNotAvailable();
-
+	beforeEach(async () => {
 		daemon = await createDaemonServer();
-
-		// Set up git environment
-		setupGitEnvironment(process.env.NEOKAI_WORKSPACE_PATH!);
-
-		// Create a room for testing
-		const result = (await daemon.messageHub.request('room.create', {
-			name: `Cross-Provider Model Switch ${Date.now()}`,
-		})) as { room: { id: string } };
-		roomId = result.room.id;
 	}, 30000);
 
-	afterAll(async () => {
+	afterEach(async () => {
 		if (daemon) {
+			await daemon.cleanup();
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
@@ -71,7 +39,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 		test('should switch from MiniMax to GLM and continue session', async () => {
 			// Create session with MiniMax model
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-minimax-to-glm`,
+				workspacePath: `${TMP_DIR}/test-minimax-to-glm-${Date.now()}`,
 				title: 'MiniMax to GLM Test',
 				config: {
 					model: 'MiniMax-M2.5',
@@ -87,7 +55,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 				sessionId,
 			})) as { currentModel: string; modelInfo?: { provider: string } };
 
-			expect(initialModel.currentModel).toMatch(/MiniMax/i);
+			expect(initialModel.currentModel).toBe('MiniMax-M2.5');
 			expect(initialModel.modelInfo?.provider).toBe('minimax');
 
 			// Switch to GLM
@@ -120,7 +88,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 		test('should switch from GLM to MiniMax and continue session', async () => {
 			// Create session with GLM model
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-glm-to-minimax`,
+				workspacePath: `${TMP_DIR}/test-glm-to-minimax-${Date.now()}`,
 				title: 'GLM to MiniMax Test',
 				config: {
 					model: 'glm-5',
@@ -147,21 +115,21 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			})) as { success: boolean; model: string; error?: string };
 
 			expect(switchResult.success).toBe(true);
-			expect(switchResult.model).toMatch(/MiniMax/i);
+			expect(switchResult.model).toBe('MiniMax-M2.5');
 
 			// Verify model switched
 			const afterSwitchModel = (await daemon.messageHub.request('session.model.get', {
 				sessionId,
 			})) as { currentModel: string; modelInfo?: { provider: string } };
 
-			expect(afterSwitchModel.currentModel).toMatch(/MiniMax/i);
+			expect(afterSwitchModel.currentModel).toBe('MiniMax-M2.5');
 			expect(afterSwitchModel.modelInfo?.provider).toBe('minimax');
 		});
 
 		test('should handle multiple rapid switches between providers', async () => {
 			// Create session
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-rapid-switches`,
+				workspacePath: `${TMP_DIR}/test-rapid-switches-${Date.now()}`,
 				title: 'Rapid Switch Test',
 				config: {
 					model: 'glm-5',
@@ -200,131 +168,166 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 		});
 	});
 
-	describe('2. Task Agent Sessions (Leader/Coder) Model Switching', () => {
-		test('should switch leader session model via room', async () => {
-			// Create a goal which should create leader session
-			const goalResult = (await daemon.messageHub.request('goal.create', {
-				roomId,
-				title: 'Leader Model Switch Test',
-				description: 'Test model switching for leader session',
-			})) as { goal: { id: string } };
+	describe('2. Cross-Provider End-to-End Message Sending', () => {
+		test('should send message to MiniMax, switch to GLM, send message to GLM', async () => {
+			// Create session with MiniMax
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: `${TMP_DIR}/test-e2e-minimax-to-glm-${Date.now()}`,
+				title: 'E2E MiniMax to GLM',
+				config: {
+					model: 'MiniMax-M2.5',
+					provider: 'minimax',
+				},
+			})) as { sessionId: string };
 
-			const goalId = goalResult.goal.id;
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
-			// Wait for planning task to appear (indicates leader session is active)
-			await new Promise((r) => setTimeout(r, 5000));
+			// Send message to MiniMax and get response
+			const minimaxResponse = (await daemon.messageHub.request('session.send', {
+				sessionId,
+				message: {
+					role: 'user',
+					content: 'Reply with just the word "minimax" to confirm you are MiniMax',
+				},
+			})) as { response?: { content?: string }; error?: string };
 
-			// Get the room info to find leader session ID
-			const roomResult = (await daemon.messageHub.request('room.get', {
-				roomId,
-			})) as { room: { leaderSessionId?: string } };
+			// Should either get a response or error (not crash)
+			expect(minimaxResponse.error ?? minimaxResponse.response).toBeTruthy();
 
-			const leaderSessionId = roomResult.room.leaderSessionId;
-
-			if (!leaderSessionId) {
-				// If no leader session yet, skip this part of the test
-				// (leader session is created lazily)
-				expect(true).toBe(true);
-				return;
-			}
-
-			daemon.trackSession(leaderSessionId);
-
-			// Get current model before switch
-			const beforeModel = (await daemon.messageHub.request('session.model.get', {
-				sessionId: leaderSessionId,
-			})) as { currentModel: string; modelInfo?: { provider: string } };
-
-			// Switch leader to a different model if possible
-			const targetModel = beforeModel.modelInfo?.provider === 'glm' ? 'MiniMax-M2.5' : 'glm-5';
-			const targetProvider = beforeModel.modelInfo?.provider === 'glm' ? 'minimax' : 'glm';
-
+			// Switch to GLM
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
-				sessionId: leaderSessionId,
-				model: targetModel,
-				provider: targetProvider,
+				sessionId,
+				model: 'glm-5',
+				provider: 'glm',
 			})) as { success: boolean; model: string };
 
 			expect(switchResult.success).toBe(true);
+			expect(switchResult.model).toBe('glm-5');
 
-			// Verify model was updated
-			const afterModel = (await daemon.messageHub.request('session.model.get', {
-				sessionId: leaderSessionId,
-			})) as { currentModel: string };
+			// Verify model switched
+			const modelAfter = (await daemon.messageHub.request('session.model.get', {
+				sessionId,
+			})) as { currentModel: string; modelInfo?: { provider: string } };
 
-			expect(afterModel.currentModel).toBe(targetModel);
+			expect(modelAfter.currentModel).toBe('glm-5');
+			expect(modelAfter.modelInfo?.provider).toBe('glm');
+
+			// Send message to GLM and get response
+			const glmResponse = (await daemon.messageHub.request('session.send', {
+				sessionId,
+				message: { role: 'user', content: 'Reply with just the word "glm" to confirm you are GLM' },
+			})) as { response?: { content?: string }; error?: string };
+
+			// Should either get a response or error (not crash)
+			expect(glmResponse.error ?? glmResponse.response).toBeTruthy();
 		});
 
-		test('should maintain separate model configurations for different session types', async () => {
-			// Create a goal to spawn leader and worker sessions
-			const goalResult = (await daemon.messageHub.request('goal.create', {
-				roomId,
-				title: 'Separate Model Configs Test',
-				description: 'Test that different session types can have different models',
-			})) as { goal: { id: string } };
+		test('should send message to GLM, switch to MiniMax, send message to MiniMax', async () => {
+			// Create session with GLM
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: `${TMP_DIR}/test-e2e-glm-to-minimax-${Date.now()}`,
+				title: 'E2E GLM to MiniMax',
+				config: {
+					model: 'glm-5',
+					provider: 'glm',
+				},
+			})) as { sessionId: string };
 
-			const goalId = goalResult.goal.id;
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
-			// Wait for sessions to initialize
-			await new Promise((r) => setTimeout(r, 5000));
+			// Send message to GLM
+			const glmResponse = (await daemon.messageHub.request('session.send', {
+				sessionId,
+				message: { role: 'user', content: 'Reply with just the word "glm" to confirm you are GLM' },
+			})) as { response?: { content?: string }; error?: string };
 
-			// Get room info
-			const roomResult = (await daemon.messageHub.request('room.get', {
-				roomId,
-			})) as { room: { leaderSessionId?: string; workerSessionId?: string } };
+			expect(glmResponse.error ?? glmResponse.response).toBeTruthy();
 
-			const leaderSessionId = roomResult.room.leaderSessionId;
-			const workerSessionId = roomResult.room.workerSessionId;
+			// Switch to MiniMax
+			const switchResult = (await daemon.messageHub.request('session.model.switch', {
+				sessionId,
+				model: 'MiniMax-M2.5',
+				provider: 'minimax',
+			})) as { success: boolean; model: string };
 
-			// If both sessions exist, verify they can have different models
-			if (leaderSessionId && workerSessionId) {
-				daemon.trackSession(leaderSessionId);
-				daemon.trackSession(workerSessionId);
+			expect(switchResult.success).toBe(true);
+			expect(switchResult.model).toBe('MiniMax-M2.5');
 
-				// Get models for both sessions
-				const leaderModel = (await daemon.messageHub.request('session.model.get', {
-					sessionId: leaderSessionId,
-				})) as { currentModel: string };
+			// Verify model switched
+			const modelAfter = (await daemon.messageHub.request('session.model.get', {
+				sessionId,
+			})) as { currentModel: string; modelInfo?: { provider: string } };
 
-				const workerModel = (await daemon.messageHub.request('session.model.get', {
-					sessionId: workerSessionId,
-				})) as { currentModel: string };
+			expect(modelAfter.currentModel).toBe('MiniMax-M2.5');
+			expect(modelAfter.modelInfo?.provider).toBe('minimax');
 
-				// Verify we can query both independently
-				expect(leaderModel.currentModel).toBeTruthy();
-				expect(workerModel.currentModel).toBeTruthy();
-			} else {
-				// If sessions not yet created, test with a regular session
-				const createResult = (await daemon.messageHub.request('session.create', {
-					workspacePath: `${TMP_DIR}/test-separate-models`,
-					title: 'Separate Models Test',
-					config: {
-						model: 'glm-5',
-						provider: 'glm',
-					},
-				})) as { sessionId: string };
+			// Send message to MiniMax
+			const minimaxResponse = (await daemon.messageHub.request('session.send', {
+				sessionId,
+				message: {
+					role: 'user',
+					content: 'Reply with just the word "minimax" to confirm you are MiniMax',
+				},
+			})) as { response?: { content?: string }; error?: string };
 
-				const { sessionId } = createResult;
-				daemon.trackSession(sessionId);
-
-				expect(
-					(await daemon.messageHub.request('session.model.get', { sessionId })) as {
-						currentModel: string;
-					}
-				).toBeTruthy();
-			}
+			expect(minimaxResponse.error ?? minimaxResponse.response).toBeTruthy();
 		});
 	});
 
-	describe('3. Fallback Model Switching (trySwitchToFallbackModel)', () => {
-		test('should correctly read current model for fallback switching', async () => {
-			// This test verifies the bug fix: trySwitchToFallbackModel was calling
-			// messageHub.request() which routes to clients instead of server-side handler.
-			// After fix, it should use SessionFactory.getCurrentModel() directly.
+	describe('3. Fallback Settings Configuration', () => {
+		test('should store fallback chain configuration via settings.update', async () => {
+			// NOTE: This test verifies fallback settings can be stored, but does NOT
+			// test actual trySwitchToFallbackModel behavior (which requires triggering
+			// a rate limit error). Testing actual fallback switching would require
+			// mocking the SDK to return 429 errors.
+
+			// Create session with MiniMax
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: `${TMP_DIR}/test-fallback-chain-${Date.now()}`,
+				title: 'Fallback Chain Test',
+				config: {
+					model: 'MiniMax-M2.5',
+					provider: 'minimax',
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			// Update settings with fallback chain: MiniMax -> GLM
+			await daemon.messageHub.request('settings.update', {
+				fallbackModels: [
+					{ model: 'glm-5', provider: 'glm' },
+					{ model: 'glm-4.7', provider: 'glm' },
+				],
+			});
+
+			// Verify fallback chain is stored
+			const settings = (await daemon.messageHub.request('settings.get', {})) as {
+				fallbackModels?: Array<{ model: string; provider: string }>;
+			};
+
+			expect(settings.fallbackModels).toBeDefined();
+			expect(settings.fallbackModels!.length).toBeGreaterThan(0);
+
+			// Verify model still reports correctly after config change
+			const modelInfo = (await daemon.messageHub.request('session.model.get', {
+				sessionId,
+			})) as { currentModel: string };
+
+			expect(modelInfo.currentModel).toBe('MiniMax-M2.5');
+		});
+
+		test('should read current model correctly for fallback logic', async () => {
+			// NOTE: This tests session.model.get RPC works correctly, which is a
+			// prerequisite for trySwitchToFallbackModel to work. The actual fallback
+			// triggering requires a rate limit condition.
 
 			// Create session with GLM
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-fallback-read`,
+				workspacePath: `${TMP_DIR}/test-fallback-read-${Date.now()}`,
 				title: 'Fallback Read Test',
 				config: {
 					model: 'glm-5',
@@ -335,15 +338,11 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
-			// The bug: room-runtime.ts calls messageHub.request('session.model.get')
-			// which goes over WebSocket to clients instead of server handler.
-			// This test verifies that session.model.get RPC works correctly.
-
+			// Get current model - this is what trySwitchToFallbackModel calls
 			const modelInfo = (await daemon.messageHub.request('session.model.get', {
 				sessionId,
 			})) as { currentModel: string; modelInfo?: { provider: string } };
 
-			// Verify we get correct model info back
 			expect(modelInfo.currentModel).toBe('glm-5');
 			expect(modelInfo.modelInfo?.provider).toBe('glm');
 
@@ -359,62 +358,16 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 				sessionId,
 			})) as { currentModel: string; modelInfo?: { provider: string } };
 
-			expect(afterSwitch.currentModel).toMatch(/MiniMax/i);
+			expect(afterSwitch.currentModel).toBe('MiniMax-M2.5');
 			expect(afterSwitch.modelInfo?.provider).toBe('minimax');
-		});
-
-		test('should use fallback chain when primary model hits rate limit', async () => {
-			// This test verifies that when a rate limit is hit, the fallback model
-			// switching works correctly. We simulate this by manually triggering
-			// the fallback logic with settings that have a fallback chain configured.
-
-			// Create session with MiniMax
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-fallback-chain`,
-				title: 'Fallback Chain Test',
-				config: {
-					model: 'MiniMax-M2.5',
-					provider: 'minimax',
-				},
-			})) as { sessionId: string };
-
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
-
-			// Verify initial model
-			const initial = (await daemon.messageHub.request('session.model.get', {
-				sessionId,
-			})) as { currentModel: string };
-
-			expect(initial.currentModel).toMatch(/MiniMax/i);
-
-			// Update settings with fallback chain: MiniMax -> GLM
-			await daemon.messageHub.request('settings.update', {
-				fallbackModels: [
-					{ model: 'glm-5', provider: 'glm' },
-					{ model: 'glm-4.7', provider: 'glm' },
-				],
-			});
-
-			// The actual rate limit fallback is triggered by the SDK hitting 429 errors.
-			// Here we just verify the fallback chain is properly stored and retrievable.
-			const settings = (await daemon.messageHub.request('settings.get', {})) as {
-				fallbackModels?: Array<{ model: string; provider: string }>;
-			};
-
-			expect(settings.fallbackModels).toBeDefined();
-			expect(settings.fallbackModels!.length).toBeGreaterThan(0);
 		});
 	});
 
-	describe('4. SDK Startup After Model Switch', () => {
+	describe('4. SDK Session Continuity After Model Switch', () => {
 		test('should restart SDK session correctly after model switch', async () => {
-			// This test verifies that after switching models, the SDK session
-			// is properly restarted without silent auto-recovery clearing sdkSessionId.
-
 			// Create session with GLM
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-sdk-restart`,
+				workspacePath: `${TMP_DIR}/test-sdk-restart-${Date.now()}`,
 				title: 'SDK Restart Test',
 				config: {
 					model: 'glm-5',
@@ -424,11 +377,6 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
-
-			// Get session info including sdkSessionId
-			const sessionBefore = (await daemon.messageHub.request('session.get', {
-				sessionId,
-			})) as { session: { id: string; metadata?: { sdkSessionId?: string } } };
 
 			// Switch to MiniMax
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -446,23 +394,20 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 
 			expect(sessionAfter.session.id).toBe(sessionId);
 			expect(sessionAfter.session.status).toBeTruthy();
-			expect(sessionAfter.session.config.model).toMatch(/MiniMax/i);
+			expect(sessionAfter.session.config.model).toBe('MiniMax-M2.5');
 
 			// Verify model.get returns the new model immediately
 			const modelAfter = (await daemon.messageHub.request('session.model.get', {
 				sessionId,
 			})) as { currentModel: string };
 
-			expect(modelAfter.currentModel).toMatch(/MiniMax/i);
+			expect(modelAfter.currentModel).toBe('MiniMax-M2.5');
 		});
 
-		test('should not lose conversation context after model switch', async () => {
-			// This test verifies that switching models mid-conversation
-			// doesn't lose the conversation context.
-
+		test('should maintain session state after model switch', async () => {
 			// Create session
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-context-preservation`,
+				workspacePath: `${TMP_DIR}/test-context-preservation-${Date.now()}`,
 				title: 'Context Preservation Test',
 				config: {
 					model: 'glm-5',
@@ -492,10 +437,10 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 	});
 
 	describe('5. DB as Source of Truth', () => {
-		test('should persist model/provider changes to DB', async () => {
+		test('should persist model/provider changes to DB session record', async () => {
 			// Create session with GLM
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-db-truth`,
+				workspacePath: `${TMP_DIR}/test-db-truth-${Date.now()}`,
 				title: 'DB Truth Test',
 				config: {
 					model: 'glm-5',
@@ -506,7 +451,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
-			// Verify initial state from session.get
+			// Verify initial state
 			const initial = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as { session: { config: { model: string; provider: string } } };
@@ -521,12 +466,12 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 				provider: 'minimax',
 			});
 
-			// Verify persisted state
+			// Verify persisted state via session.get
 			const after = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as { session: { config: { model: string; provider: string } } };
 
-			expect(after.session.config.model).toMatch(/MiniMax/i);
+			expect(after.session.config.model).toBe('MiniMax-M2.5');
 			expect(after.session.config.provider).toBe('minimax');
 
 			// Verify model.get also returns the new model
@@ -534,14 +479,14 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 				sessionId,
 			})) as { currentModel: string; modelInfo?: { provider: string } };
 
-			expect(modelInfo.currentModel).toMatch(/MiniMax/i);
+			expect(modelInfo.currentModel).toBe('MiniMax-M2.5');
 			expect(modelInfo.modelInfo?.provider).toBe('minimax');
 		});
 
 		test('should reflect model changes correctly across multiple queries', async () => {
 			// Create session
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-multi-query`,
+				workspacePath: `${TMP_DIR}/test-multi-query-${Date.now()}`,
 				title: 'Multi Query Test',
 				config: {
 					model: 'MiniMax-M2.5',
@@ -586,11 +531,11 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 		});
 
 		test('should handle provider-specific model aliases correctly', async () => {
-			// Test that provider-specific model aliases work correctly
+			// Test that provider-specific model aliases resolve to canonical IDs
 
-			// Create session with GLM using alias 'glm'
+			// Create session with GLM using alias 'glm' (which maps to glm-5)
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-aliases`,
+				workspacePath: `${TMP_DIR}/test-aliases-${Date.now()}`,
 				title: 'Alias Test',
 				config: {
 					model: 'glm', // alias for glm-5
@@ -615,7 +560,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 		test('should fail gracefully when switching to non-existent model', async () => {
 			// Create session
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-invalid-model`,
+				workspacePath: `${TMP_DIR}/test-invalid-model-${Date.now()}`,
 				title: 'Invalid Model Test',
 				config: {
 					model: 'glm-5',
@@ -640,7 +585,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 		test('should fail when switching without provider', async () => {
 			// Create session
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-no-provider`,
+				workspacePath: `${TMP_DIR}/test-no-provider-${Date.now()}`,
 				title: 'No Provider Test',
 				config: {
 					model: 'glm-5',

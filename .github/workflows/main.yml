@@ -277,6 +277,11 @@ jobs:
           - module: websocket
             test_path: tests/online/websocket
             mock_sdk: true
+          # Cross-provider model switching tests - requires real MiniMax and GLM credentials
+          - module: cross-provider
+            test_path: tests/online/cross-provider
+            mock_sdk: false
+            default_provider: minimax
 
     steps:
       - uses: actions/checkout@v4
