@@ -280,9 +280,12 @@ describe('useTaskViewData', () => {
 		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
 
 		// fetchGroup retries once after 1s; wait up to 5s for isLoading to clear
-		await waitFor(() => {
-			expect(result.current.isLoading).toBe(false);
-		}, { timeout: 5000 });
+		await waitFor(
+			() => {
+				expect(result.current.isLoading).toBe(false);
+			},
+			{ timeout: 5000 }
+		);
 
 		// Group stays null; task is available from store; no error surfaced
 		expect(result.current.group).toBeNull();
