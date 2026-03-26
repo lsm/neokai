@@ -830,6 +830,18 @@ describe('ReferenceResolver — goal resolution', () => {
 		expect(data.missionType).toBe('measurable');
 		expect(data.autonomyLevel).toBe('semi_autonomous');
 	});
+
+	test('cross-room check: rejects goal whose roomId differs from context', async () => {
+		const goal = makeGoal({ roomId: OTHER_ROOM_ID });
+		const resolver = new ReferenceResolver({ goalRepo: mockGoalRepo(goal) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'goal', id: 'g-1', displayText: '@ref{goal:g-1}' },
+			{ roomId: ROOM_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
 });
 
 // ────────────────────────────────────────────────────────────────────────────

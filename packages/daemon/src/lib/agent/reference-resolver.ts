@@ -41,6 +41,7 @@ import type {
 	ReferenceType,
 	NeoTask,
 	RoomGoal,
+	SpaceTask,
 } from '@neokai/shared';
 import { REFERENCE_PATTERN } from '@neokai/shared';
 import { Logger } from '../logger.ts';
@@ -52,6 +53,10 @@ const MAX_FILE_SIZE = 50 * 1024;
 
 /** Max number of directory entries returned for folder references */
 const MAX_FOLDER_ENTRIES = 200;
+
+/** Reference prefixes */
+const ROOM_TASK_PREFIX = 't-';
+const SPACE_TASK_PREFIX = 'st-';
 
 /**
  * Minimal structural interface for TaskRepository — only the method(s) used here.
@@ -72,7 +77,7 @@ export interface GoalRepoLike {
  * Minimal structural interface for SpaceTaskRepository — only the method(s) used here.
  */
 export interface SpaceTaskRepoLike {
-	getTask(id: string): { id: string; spaceId: string; [key: string]: unknown } | null;
+	getTask(id: string): SpaceTask | null;
 }
 
 /** Optional repository dependencies injected at construction time. */
@@ -152,7 +157,7 @@ export class ReferenceResolver {
 			case 'task':
 				return this.resolveTask(mention.id, context);
 			case 'goal':
-				return this.resolveGoal(mention.id, context);
+				return Promise.resolve(this.resolveGoal(mention.id, context));
 			default: {
 				const _exhaustive: never = mention.type;
 				log.warn(`Unknown reference type: ${_exhaustive}`);
@@ -429,17 +434,16 @@ export class ReferenceResolver {
 	// Task resolver
 	// ────────────────────────────────────────────────────────────────────────────
 
-	private async resolveTask(
-		id: string,
-		context: ResolutionContext
-	): Promise<ResolvedTaskReference | null> {
-		if (id.startsWith('st-')) {
+	private resolveTask(id: string, context: ResolutionContext): ResolvedTaskReference | null {
+		if (id.startsWith(SPACE_TASK_PREFIX)) {
 			return this.resolveSpaceTask(id, context);
 		}
-		if (id.startsWith('t-')) {
+		if (id.startsWith(ROOM_TASK_PREFIX)) {
 			return this.resolveRoomTask(id, context);
 		}
-		log.warn(`Unrecognized task reference format: "${id}" (expected t- or st- prefix)`);
+		log.warn(
+			`Unrecognized task reference format: "${id}" (expected ${ROOM_TASK_PREFIX} or ${SPACE_TASK_PREFIX} prefix)`
+		);
 		return null;
 	}
 
@@ -480,7 +484,7 @@ export class ReferenceResolver {
 			return null;
 		}
 		// id is "st-<uuid>"; strip the prefix to get the UUID
-		const uuid = id.slice('st-'.length);
+		const uuid = id.slice(SPACE_TASK_PREFIX.length);
 		const task = this.spaceTaskRepo.getTask(uuid);
 		if (!task) {
 			log.warn(`Space task not found: UUID "${uuid}" (from reference "${id}")`);
@@ -492,7 +496,7 @@ export class ReferenceResolver {
 			);
 			return null;
 		}
-		return { type: 'task', id: task.id, data: task as unknown as NeoTask };
+		return { type: 'task', id: task.id, data: task };
 	}
 
 	// ────────────────────────────────────────────────────────────────────────────
@@ -511,6 +515,13 @@ export class ReferenceResolver {
 		const goal = this.goalRepo.getGoalByShortId(context.roomId, shortId);
 		if (!goal) {
 			log.warn(`Goal not found: "${shortId}" in room "${context.roomId}"`);
+			return null;
+		}
+		// Defensive cross-room check in case the repo isn't scoped
+		if (goal.roomId !== context.roomId) {
+			log.warn(
+				`Cross-room reference rejected: goal "${shortId}" belongs to room "${goal.roomId}", not "${context.roomId}"`
+			);
 			return null;
 		}
 		return { type: 'goal', id: goal.id, data: goal };

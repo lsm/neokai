@@ -7,6 +7,7 @@
  */
 
 import type { NeoTask, RoomGoal } from './neo.ts';
+import type { SpaceTask } from './space.ts';
 
 /**
  * The type of entity being referenced.
@@ -52,7 +53,8 @@ export interface ResolvedReference {
 
 export interface ResolvedTaskReference extends ResolvedReference {
 	type: 'task';
-	data: NeoTask;
+	/** Room tasks (t- prefix) carry NeoTask; space tasks (st- prefix) carry SpaceTask */
+	data: NeoTask | SpaceTask;
 }
 
 export interface ResolvedGoalReference extends ResolvedReference {
