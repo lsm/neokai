@@ -225,6 +225,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Uses a table rebuild pattern (SQLite does not support DROP COLUMN in all versions).
 	// Idempotent: checks for agent_name column before rebuilding.
 	runMigration55(db);
+
+	// Migration 56: Expand assigned_agent CHECK constraint to include 'planner'.
+	// SQLite cannot ALTER a CHECK constraint directly, so we recreate the table.
+	runMigration56(db);
 }
 
 /**
@@ -3465,10 +3469,13 @@ export function runMigration54(db: BunDatabase): void {
  * Migration 55: Rename slot_role → agent_name on space_tasks.
  *
  * Aligns with the "no role" naming convention from the agent-centric refactor.
- * completion_summary was already added by Migration 51.
+ * Note: completion_summary was already added and slot_role → agent_name was already renamed
+ * by Migration 51 (which runs before this migration). This migration is kept for recovery:
+ * if a prior migration left the table in a partially migrated state (e.g. crash between
+ * M51's table rebuild and index recreation), this migration's idempotency check will detect
+ * a pre-existing agent_name column and skip, or rebuild to restore indexes.
  *
  * Uses a table rebuild pattern because SQLite does not support DROP COLUMN on all versions.
- * The new table schema drops slot_role and preserves all other columns including completion_summary.
  * Idempotent: checks for agent_name column before rebuilding.
  */
 export function runMigration55(db: BunDatabase): void {
@@ -3589,4 +3596,114 @@ export function runMigration55(db: BunDatabase): void {
       AND agent_name IS NOT NULL
       AND status IN ('pending', 'in_progress', 'review', 'rate_limited', 'usage_limited')
   `);
+}
+
+/**
+ * Migration 56: Expand assigned_agent CHECK constraint to include 'planner'.
+ *
+ * The tasks table CHECK constraint on assigned_agent was previously:
+ *   CHECK(assigned_agent IN ('coder', 'general'))
+ *
+ * We now also allow 'planner' so that goal_review tasks can be assigned to the
+ * Planner/Leader agent.
+ *
+ * SQLite cannot ALTER a CHECK constraint directly, so we recreate the table.
+ */
+export function runMigration56(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) return;
+
+	// Guard: if the constraint already includes 'planner', skip the rebuild.
+	const schemaSql = (
+		db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`).get() as
+			| { sql: string }
+			| undefined
+	)?.sql;
+
+	if (schemaSql && schemaSql.includes('planner')) {
+		return;
+	}
+
+	// Recreate with expanded CHECK constraint.
+	db.exec(`DROP TABLE IF EXISTS tasks_migration56_new`);
+	db.exec(`
+		CREATE TABLE tasks_migration56_new (
+			id TEXT PRIMARY KEY,
+			room_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('draft','pending','in_progress','review','completed','needs_attention','cancelled','archived','rate_limited','usage_limited')),
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low','normal','high','urgent')),
+			progress INTEGER,
+			current_step TEXT,
+			result TEXT,
+			error TEXT,
+			depends_on TEXT DEFAULT '[]',
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			task_type TEXT DEFAULT 'coding'
+				CHECK(task_type IN ('planning','coding','research','design','goal_review')),
+			assigned_agent TEXT DEFAULT 'coder'
+				CHECK(assigned_agent IN ('coder','general','planner')),
+			created_by_task_id TEXT,
+			archived_at INTEGER,
+			active_session TEXT,
+			pr_url TEXT,
+			pr_number INTEGER,
+			pr_created_at INTEGER,
+			input_draft TEXT,
+			updated_at INTEGER,
+			short_id TEXT,
+			restrictions TEXT,
+			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+		)
+	`);
+
+	// Build INSERT SELECT dynamically: only select columns that exist in the old table.
+	const oldColumns = new Set(
+		(db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((r) => r.name)
+	);
+	const allNewColumns = [
+		'id',
+		'room_id',
+		'title',
+		'description',
+		'status',
+		'priority',
+		'progress',
+		'current_step',
+		'result',
+		'error',
+		'depends_on',
+		'created_at',
+		'started_at',
+		'completed_at',
+		'task_type',
+		'assigned_agent',
+		'created_by_task_id',
+		'archived_at',
+		'active_session',
+		'pr_url',
+		'pr_number',
+		'pr_created_at',
+		'input_draft',
+		'updated_at',
+		'short_id',
+		'restrictions',
+	];
+	const insertColumns = allNewColumns.filter((c) => oldColumns.has(c));
+	const selectClause = insertColumns.map((c) => `"${c}"`).join(', ');
+	db.exec(`INSERT INTO tasks_migration56_new (${selectClause}) SELECT ${selectClause} FROM tasks`);
+	db.exec(`DROP TABLE tasks`);
+	db.exec(`ALTER TABLE tasks_migration56_new RENAME TO tasks`);
+
+	// Restore indexes (dropped by DROP TABLE). Matches the set created by migration 49.
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
+	);
 }

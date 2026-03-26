@@ -25,6 +25,10 @@ export { runMigration49 } from './migrations';
 export { runMigration50 } from './migrations';
 // knip-ignore-next-line
 export { runMigration51 } from './migrations';
+// knip-ignore-next-line
+export { runMigration55 } from './migrations';
+// knip-ignore-next-line
+export { runMigration56 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -163,7 +167,7 @@ export function createTables(db: BunDatabase): void {
         started_at INTEGER,
         completed_at INTEGER,
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
-        assigned_agent TEXT DEFAULT 'coder',
+        assigned_agent TEXT DEFAULT 'coder' CHECK(assigned_agent IN ('coder', 'general', 'planner')),
         created_by_task_id TEXT,
         archived_at INTEGER,
         active_session TEXT,

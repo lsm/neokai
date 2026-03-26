@@ -285,9 +285,10 @@ export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type TaskType = 'planning' | 'coding' | 'research' | 'design' | 'goal_review';
 
 /**
- * Agent type that should execute a task
+ * Agent type that should execute a task.
+ * 'planner' is used for goal review and planning-type tasks assigned to the Planner/Leader agent.
  */
-export type AgentType = 'coder' | 'general';
+export type AgentType = 'coder' | 'general' | 'planner';
 
 /**
  * A task managed within a room
