@@ -1873,11 +1873,12 @@ describe('Room Agent Tools', () => {
 			return Object.keys(server.instance._registeredTools).sort();
 		}
 
-		it('should expose the 7 leader tools (context + task management)', () => {
+		it('should expose the 8 leader tools (context + task management)', () => {
 			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
 			const names = getRegisteredToolNames(server as never);
 			expect(names).toEqual([
 				'cancel_task',
+				'create_task',
 				'get_room_status',
 				'get_task_detail',
 				'list_goals',
@@ -1905,7 +1906,6 @@ describe('Room Agent Tools', () => {
 			const excluded = [
 				'create_goal',
 				'update_goal',
-				'create_task',
 				'stop_session',
 				'send_message_to_task',
 				'approve_task',
@@ -1914,6 +1914,134 @@ describe('Room Agent Tools', () => {
 			for (const w of excluded) {
 				expect(names).not.toContain(w);
 			}
+		});
+
+		describe('create_task tool', () => {
+			it('should create a task and return its ID', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Fix failing test',
+						description: 'The auth test is flaky due to race condition',
+					})
+				);
+				expect(result.success).toBe(true);
+				expect(result.taskId).toBeDefined();
+				expect(result.task).toBeDefined();
+				const task = result.task as { title: string; status: string };
+				expect(task.title).toBe('Fix failing test');
+				expect(task.status).toBe('pending');
+			});
+
+			it('should create a task linked to a goal', async () => {
+				const goal = await goalManager.createGoal({
+					title: 'Stabilize CI',
+					description: 'Fix flaky tests',
+				});
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Fix auth test',
+						description: 'Race condition in login flow',
+						goal_id: goal.id,
+					})
+				);
+				expect(result.success).toBe(true);
+				// Verify the task is linked to the goal via list_tasks
+				const tasksResult = parseResult(await leaderHandlers.list_tasks({ goal_id: goal.id }));
+				const tasks = tasksResult.tasks as Array<{ id: string }>;
+				expect(tasks.some((t) => t.id === result.taskId)).toBe(true);
+			});
+
+			it('should create a task with dependencies', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const prereq = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Investigate root cause',
+						description: 'Find why the test fails',
+					})
+				);
+				const result = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Apply fix',
+						description: 'Fix the identified issue',
+						depends_on: [prereq.taskId as string],
+					})
+				);
+				expect(result.success).toBe(true);
+				const task = result.task as { dependsOn: string[] };
+				expect(task.dependsOn).toContain(prereq.taskId);
+			});
+
+			it('should create a task with priority', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Critical fix',
+						description: 'P0 production issue',
+						priority: 'urgent',
+					})
+				);
+				expect(result.success).toBe(true);
+				const task = result.task as { priority: string };
+				expect(task.priority).toBe('urgent');
+			});
+
+			it('should reject planning task type', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Plan something',
+						description: 'Should be rejected',
+						task_type: 'planning' as never,
+					})
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('reserved');
+			});
+
+			it('should fail gracefully when dependency does not exist', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.create_task({
+						title: 'Depends on nothing',
+						description: 'Bad dep reference',
+						depends_on: ['non-existent-task-id'],
+					})
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toBeDefined();
+			});
 		});
 
 		describe('update_task tool', () => {

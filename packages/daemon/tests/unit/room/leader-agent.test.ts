@@ -145,6 +145,7 @@ describe('Leader Agent', () => {
 
 		it('should include task management tools in tool contract', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('create_task');
 			expect(prompt).toContain('update_task');
 			expect(prompt).toContain('cancel_task');
 			expect(prompt).toContain('update_task_status');
@@ -567,6 +568,7 @@ describe('Leader Agent', () => {
 			expect(toolNames).toEqual(
 				[
 					'cancel_task',
+					'create_task',
 					'get_room_status',
 					'get_task_detail',
 					'list_goals',

@@ -1259,6 +1259,7 @@ export type LeaderContextMcpConfig = Pick<
  *
  * Included tools:
  *   - list_goals, list_tasks, get_task_detail, get_room_status: read-only context
+ *   - create_task: create new tasks under the current goal (for adaptive planning and recurring missions)
  *   - update_task: edit title, description, priority, or dependencies of any task
  *   - cancel_task: cancel a task and cascade to pending dependents
  *   - update_task_status: change task status with transition validation
@@ -1266,7 +1267,6 @@ export type LeaderContextMcpConfig = Pick<
  * Excluded tools and reasons:
  *   - approve_task / reject_task: human-only decisions
  *   - create_goal / update_goal: not the leader's role
- *   - create_task: leader delegates task creation to worker via send_to_worker
  *   - stop_session: session management is handled by the runtime
  *   - complete_task / fail_task: leader uses these from leader-agent-tools for the current task
  *   - send_message_to_task: leader uses send_to_worker from leader-agent-tools instead
@@ -1308,6 +1308,35 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
 			{},
 			() => handlers.get_room_status()
+		),
+		tool(
+			'create_task',
+			'Create a new task and optionally link it to a goal. Use to spawn fix tasks, investigation tasks, or sub-tasks discovered during execution.',
+			{
+				title: z.string().describe('Short title for the task'),
+				description: z.string().describe('Detailed task description and acceptance criteria'),
+				goal_id: z.string().optional().describe('Goal ID to link this task to'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
+					.optional()
+					.default('normal')
+					.describe('Task priority'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('IDs of tasks this task depends on (must complete first)'),
+				task_type: z
+					.enum(['coding', 'research', 'design', 'goal_review'])
+					.optional()
+					.describe(
+						"Task type - determines agent preset (default: coding). Note: 'planning' is reserved for internal use."
+					),
+				assigned_agent: z
+					.enum(['coder', 'general', 'planner'])
+					.optional()
+					.describe('Agent type to execute this task (default: coder)'),
+			},
+			(args) => handlers.create_task(args)
 		),
 		tool(
 			'update_task',
