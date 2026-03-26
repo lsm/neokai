@@ -890,12 +890,11 @@ describe('RoomTasks', () => {
 			);
 
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
-			// Badge should be wrapped in a mt-1 div (separate line), not inside the title flex row
-			const badgeParent = badge?.parentElement;
-			expect(badgeParent?.classList.contains('mt-1')).toBe(true);
-			// The title flex row should NOT contain the badge
-			const titleRow = container.querySelector('h4')?.parentElement;
-			expect(titleRow?.contains(badge)).toBe(false);
+			const titleEl = container.querySelector('h4');
+			// The badge must NOT be inside the same element as the title (it is on its own line)
+			expect(titleEl?.parentElement?.contains(badge)).toBe(false);
+			// The badge must share a common ancestor with the title (both inside the task card)
+			expect(titleEl?.closest('[class*="flex-1"]')?.contains(badge)).toBe(true);
 		});
 
 		it('should use target icon (concentric circles) not lightning bolt on goal badge', () => {
