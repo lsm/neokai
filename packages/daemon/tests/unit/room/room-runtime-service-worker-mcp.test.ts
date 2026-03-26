@@ -19,7 +19,8 @@ import type { AgentSessionInit } from '../../../src/lib/agent/agent-session';
 // test files.  Without this, dynamic `await import(...)` calls in this file
 // (e.g. `import('../../../src/lib/room/runtime/room-runtime-service')`) can
 // resolve the real SDK module before the preload-level mock from setup.ts is
-// re-applied.  See setup.ts for why the SDK must be mocked in unit tests.
+// re-applied.  See the module-level comment in setup.ts for why the SDK must
+// be mocked in unit tests.
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 	query: mock(async () => ({ interrupt: () => {} })),
 	interrupt: mock(async () => {}),
