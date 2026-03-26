@@ -142,22 +142,26 @@ describe('CompletionDetector', () => {
 	});
 
 	test('2. single agent in_progress — returns false', () => {
-		seedTask(db, SPACE, { workflowRunId: RUN, status: 'in_progress' });
+		seedTask(db, SPACE, { workflowRunId: RUN, workflowNodeId: 'node-1', status: 'in_progress' });
 		expect(detector.isComplete(RUN)).toBe(false);
 	});
 
 	test('3. single agent completed — returns true', () => {
-		seedTask(db, SPACE, { workflowRunId: RUN, status: 'completed' });
+		seedTask(db, SPACE, { workflowRunId: RUN, workflowNodeId: 'node-1', status: 'completed' });
 		expect(detector.isComplete(RUN)).toBe(true);
 	});
 
 	test('4. single agent needs_attention — returns true (terminal)', () => {
-		seedTask(db, SPACE, { workflowRunId: RUN, status: 'needs_attention' });
+		seedTask(db, SPACE, {
+			workflowRunId: RUN,
+			workflowNodeId: 'node-1',
+			status: 'needs_attention',
+		});
 		expect(detector.isComplete(RUN)).toBe(true);
 	});
 
 	test('5. single agent cancelled — returns true (terminal)', () => {
-		seedTask(db, SPACE, { workflowRunId: RUN, status: 'cancelled' });
+		seedTask(db, SPACE, { workflowRunId: RUN, workflowNodeId: 'node-1', status: 'cancelled' });
 		expect(detector.isComplete(RUN)).toBe(true);
 	});
 
@@ -166,17 +170,17 @@ describe('CompletionDetector', () => {
 	// does not yet include them. They are covered by the TERMINAL_TASK_STATUSES set tests.
 
 	test('6. single agent pending — returns false (non-terminal)', () => {
-		seedTask(db, SPACE, { workflowRunId: RUN, status: 'pending' });
+		seedTask(db, SPACE, { workflowRunId: RUN, workflowNodeId: 'node-1', status: 'pending' });
 		expect(detector.isComplete(RUN)).toBe(false);
 	});
 
 	test('7. single agent draft — returns false (non-terminal)', () => {
-		seedTask(db, SPACE, { workflowRunId: RUN, status: 'draft' });
+		seedTask(db, SPACE, { workflowRunId: RUN, workflowNodeId: 'node-1', status: 'draft' });
 		expect(detector.isComplete(RUN)).toBe(false);
 	});
 
 	test('8. single agent review — returns false (non-terminal)', () => {
-		seedTask(db, SPACE, { workflowRunId: RUN, status: 'review' });
+		seedTask(db, SPACE, { workflowRunId: RUN, workflowNodeId: 'node-1', status: 'review' });
 		expect(detector.isComplete(RUN)).toBe(false);
 	});
 
@@ -413,6 +417,24 @@ describe('CompletionDetector', () => {
 			expect(TERMINAL_TASK_STATUSES.has('in_progress')).toBe(false);
 			expect(TERMINAL_TASK_STATUSES.has('draft')).toBe(false);
 			expect(TERMINAL_TASK_STATUSES.has('review')).toBe(false);
+		});
+	});
+
+	describe('orchestration task exclusion', () => {
+		test('26. orchestration task (null workflowNodeId) in_progress does not block completion', () => {
+			// Node-agent task is completed; orchestration task (no workflowNodeId) is in_progress.
+			// The completion detector must exclude tasks with null workflowNodeId so the
+			// orchestration task running this check does not block its own workflow from completing.
+			seedTask(db, SPACE, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'completed' });
+			seedTask(db, SPACE, { workflowRunId: RUN, status: 'in_progress' }); // orchestration task
+			expect(detector.isComplete(RUN)).toBe(true);
+		});
+
+		test('27. only an orchestration task (no workflowNodeId) — treated as not started', () => {
+			// When there are no node-agent tasks, the workflow has not started even if the
+			// orchestration task exists (it may still be spinning up the first node agents).
+			seedTask(db, SPACE, { workflowRunId: RUN, status: 'in_progress' }); // orchestration task only
+			expect(detector.isComplete(RUN)).toBe(false);
 		});
 	});
 });

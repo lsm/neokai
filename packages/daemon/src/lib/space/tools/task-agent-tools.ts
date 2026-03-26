@@ -35,6 +35,8 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
 import { resolveAgentInit, buildCustomAgentTaskMessage } from '../agents/custom-agent';
 import { ChannelResolver } from '../runtime/channel-resolver';
+import type { ChannelRouter } from '../runtime/channel-router';
+import type { CompletionDetector } from '../runtime/completion-detector';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -194,6 +196,20 @@ export interface TaskAgentToolsConfig {
 		role: string,
 		stepTaskId: string
 	) => McpServerConfig;
+	/**
+	 * Channel router for gate-checked message routing between agents.
+	 * When provided, the send_message tool uses it for channel validation and
+	 * lazy node activation instead of constructing a ChannelResolver from run config.
+	 * Optional — existing ChannelResolver-based routing is used as fallback.
+	 */
+	channelRouter?: ChannelRouter;
+	/**
+	 * Completion detector for validating all-agents-done state.
+	 * When provided, report_workflow_done checks that all node agent tasks have
+	 * reached a terminal status before marking the workflow run as completed.
+	 * Optional — if omitted, no completion pre-check is performed.
+	 */
+	completionDetector?: CompletionDetector;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +238,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		getGroupId,
 		daemonHub,
 		buildNodeAgentMcpServer,
+		completionDetector,
 	} = config;
 
 	return {
@@ -672,6 +689,25 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						`Workflow run must be in_progress.`,
 					currentStatus: run.status,
 				});
+			}
+
+			// Validate that all node agents have reached terminal status before
+			// allowing an explicit workflow completion. This guards against the Task
+			// Agent calling report_workflow_done prematurely while agents are still
+			// running.
+			if (completionDetector) {
+				const wfDef = workflowManager.getWorkflow(run.workflowId);
+				const channels = wfDef?.channels ?? [];
+				const nodes = wfDef?.nodes ?? [];
+				if (!completionDetector.isComplete(workflowRunId, channels, nodes)) {
+					return jsonResult({
+						success: false,
+						error:
+							'Not all node agents have reached a terminal state yet. ' +
+							'Wait for all agents to complete (check via check_node_status) ' +
+							'before calling report_workflow_done.',
+					});
+				}
 			}
 
 			const mainTask = taskRepo.getTask(taskId);

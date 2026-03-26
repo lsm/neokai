@@ -69,6 +69,8 @@ import type {
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { ChannelResolver } from './channel-resolver';
+import { ChannelRouter } from './channel-router';
+import { CompletionDetector } from './completion-detector';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
@@ -281,6 +283,16 @@ export class TaskAgentManager {
 
 			const workflowRunId = workflowRun?.id ?? '';
 
+			// Build shared channel routing and completion detection instances.
+			// Both use the same underlying repositories as the task agent tools.
+			const channelRouter = new ChannelRouter({
+				taskRepo: this.config.taskRepo,
+				workflowRunRepo: this.config.workflowRunRepo,
+				workflowManager: this.config.spaceWorkflowManager,
+				agentManager: this.config.spaceAgentManager,
+			});
+			const completionDetector = new CompletionDetector(this.config.taskRepo);
+
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
 				space,
@@ -299,6 +311,8 @@ export class TaskAgentManager {
 				sessionGroupRepo: this.config.sessionGroupRepo,
 				getGroupId: () => this.taskGroupIds.get(taskId),
 				daemonHub: this.config.daemonHub,
+				channelRouter,
+				completionDetector,
 				buildNodeAgentMcpServer: (subSessionId, role, stepTaskId) =>
 					this.buildNodeAgentMcpServerForSession(
 						taskId,
@@ -1129,6 +1143,15 @@ export class TaskAgentManager {
 
 		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
 
+		// Build shared channel routing and completion detection instances for rehydration.
+		const rehydrateChannelRouter = new ChannelRouter({
+			taskRepo: this.config.taskRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			workflowManager: this.config.spaceWorkflowManager,
+			agentManager: this.config.spaceAgentManager,
+		});
+		const rehydrateCompletionDetector = new CompletionDetector(this.config.taskRepo);
+
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,
 			space,
@@ -1147,6 +1170,8 @@ export class TaskAgentManager {
 			daemonHub: this.config.daemonHub,
 			sessionGroupRepo: this.config.sessionGroupRepo,
 			getGroupId: () => this.taskGroupIds.get(taskId),
+			channelRouter: rehydrateChannelRouter,
+			completionDetector: rehydrateCompletionDetector,
 			buildNodeAgentMcpServer: (subSessionId, role, stepTaskId) =>
 				this.buildNodeAgentMcpServerForSession(
 					taskId,

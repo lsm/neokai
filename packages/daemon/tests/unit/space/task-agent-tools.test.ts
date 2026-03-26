@@ -28,6 +28,7 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
+import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
 import {
 	createTaskAgentToolHandlers,
 	createTaskAgentMcpServer,
@@ -2060,6 +2061,119 @@ describe('createTaskAgentToolHandlers — report_workflow_done', () => {
 		// Should succeed without throwing
 		const result = await handlers.report_workflow_done({ summary: 'No hub' });
 		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+	});
+});
+
+// ===========================================================================
+// report_workflow_done with CompletionDetector
+// ===========================================================================
+
+describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDetector', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('blocks when node agents have not all completed', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
+
+		// The step task is still 'pending' — not terminal
+		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, mainTask.id, run.id, factory);
+		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
+
+		const result = await handlers.report_workflow_done({ summary: 'Premature' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Not all node agents have reached a terminal state');
+	});
+
+	test('blocks when a step task is still in_progress', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
+
+		// Set the step task to in_progress (non-terminal) — CompletionDetector should block
+		const stepTask = ctx.taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId != null);
+		ctx.taskRepo.updateTask(stepTask!.id, { status: 'in_progress' });
+
+		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, mainTask.id, run.id, factory);
+		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
+
+		const result = await handlers.report_workflow_done({ summary: 'Too soon' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Not all node agents');
+	});
+
+	test('allows completion when all step tasks have reached a terminal status', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
+
+		// Mark the step task as completed directly in the repo (bypass state machine)
+		const stepTask = ctx.taskRepo.listByWorkflowRun(run.id)[0];
+		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed' });
+
+		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, mainTask.id, run.id, factory);
+		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
+
+		const result = await handlers.report_workflow_done({ summary: 'All done' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		// Confirm the workflow run was actually marked completed
+		const updatedRun = ctx.workflowRunRepo.getRun(run.id);
+		expect(updatedRun?.status).toBe('completed');
+	});
+
+	test('allows completion when step task has needs_attention status (terminal)', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
+
+		// needs_attention is a terminal status for the CompletionDetector
+		const stepTask = ctx.taskRepo.listByWorkflowRun(run.id)[0];
+		ctx.taskRepo.updateTask(stepTask.id, { status: 'needs_attention' });
+
+		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, mainTask.id, run.id, factory);
+		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
+
+		const result = await handlers.report_workflow_done({ summary: 'Attention needed but done' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+	});
+
+	test('skips completion check when completionDetector is not provided', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
+
+		// Step task is still pending — without a detector this should still succeed
+		const factory = makeMockSessionFactory();
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		const result = await handlers.report_workflow_done({ summary: 'No detector' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		// No completionDetector → existing behaviour: no pre-check, should succeed
 		expect(parsed.success).toBe(true);
 	});
 });
