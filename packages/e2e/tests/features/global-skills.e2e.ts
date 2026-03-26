@@ -52,9 +52,7 @@ async function navigateToSkillsSection(page: Page): Promise<void> {
 
 /**
  * Add a new MCP server skill through the Add Skill dialog.
- * After submission, reloads the page so all Preact state (including any stale
- * Portal modal overlays) is fully cleared before the test continues.
- * The skill persists in the database, so it is still visible after reload.
+ * Waits for the skill to appear in the list and the dialog to close.
  */
 async function addMcpSkill(page: Page, displayName: string): Promise<void> {
 	// Click the "Add Skill" button
@@ -97,17 +95,13 @@ async function addMcpSkill(page: Page, displayName: string): Promise<void> {
 	// Wait for the skill to appear in the list (LiveQuery fires before RPC returns)
 	await page.locator(`text="${displayName}"`).first().waitFor({ state: 'visible', timeout: 15000 });
 
-	// Reload the page to clear all Preact state. The Add Skill dialog creates a Portal
-	// modal overlay that can persist as a stale backdrop (due to a Preact VNode cleanup
-	// race when signals update during an open dialog). A page reload fully resets all
-	// component state while the skill remains persisted in the database.
-	await page.reload();
-	await waitForWebSocketConnected(page);
-	await openGlobalSettings(page);
-	await navigateToSkillsSection(page);
-
-	// Verify the skill is still in the list after reload
-	await page.locator(`text="${displayName}"`).first().waitFor({ state: 'visible', timeout: 10000 });
+	// Wait for the dialog to close after the RPC completes and handleClose() fires.
+	// The Add Skill dialog title h2 was used to open the dialog; wait for it to disappear.
+	await page
+		.locator('[role="dialog"] h2')
+		.filter({ hasText: 'Add Skill' })
+		.first()
+		.waitFor({ state: 'hidden', timeout: 10000 });
 }
 
 /**
