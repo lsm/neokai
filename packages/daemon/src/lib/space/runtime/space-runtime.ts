@@ -641,7 +641,7 @@ export class SpaceRuntime {
 			// Escalate the run to needs_attention for multi-agent steps when ALL tasks are terminal.
 			// Single-task steps: only task_needs_attention is emitted (backward compat).
 			if (allRunTasks.length > 1 && this.areAllStepTasksTerminal(allRunTasks)) {
-				this.config.workflowRunRepo.updateStatus(runId, 'needs_attention');
+				this.config.workflowRunRepo.transitionStatus(runId, 'needs_attention');
 				await this.safeNotify({
 					kind: 'workflow_run_needs_attention',
 					spaceId: meta.spaceId,

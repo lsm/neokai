@@ -46,17 +46,8 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(run.workflowId).toBe(WORKFLOW_ID);
 			expect(run.title).toBe('Run #1');
 			expect(run.status).toBe('pending');
-			expect(run.currentNodeId).toBeUndefined();
 			expect(run.config).toBeUndefined();
 			expect(run.completedAt).toBeUndefined();
-		});
-
-		it('maps NULL currentNodeId to undefined (round-trip contract)', () => {
-			// Explicit omission: NULL stored in DB must come back as undefined, not ''
-			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'No step' });
-			expect(run.currentNodeId).toBeUndefined();
-			// Re-fetch from DB to confirm persistence
-			expect(repo.getRun(run.id)!.currentNodeId).toBeUndefined();
 		});
 
 		it('creates a run with description', () => {
@@ -163,14 +154,6 @@ describe('SpaceWorkflowRunRepository', () => {
 		});
 	});
 
-	describe('updateCurrentNode', () => {
-		it('updates the current node ID', () => {
-			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
-			const updated = repo.updateCurrentNode(run.id, 'node-abc');
-			expect(updated!.currentNodeId).toBe('node-abc');
-		});
-	});
-
 	describe('updateStatusUnchecked', () => {
 		it('updates only the status, bypassing transition guards', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
@@ -274,12 +257,10 @@ describe('SpaceWorkflowRunRepository', () => {
 			});
 
 			repo.transitionStatus(run.id, 'in_progress');
-			repo.updateCurrentNode(run.id, 'node-xyz');
 
 			const updated = repo.getRun(run.id)!;
 			expect(updated.goalId).toBe('goal-456');
 			expect(updated.status).toBe('in_progress');
-			expect(updated.currentNodeId).toBe('node-xyz');
 		});
 
 		it('goalId is included when listing runs by space', () => {

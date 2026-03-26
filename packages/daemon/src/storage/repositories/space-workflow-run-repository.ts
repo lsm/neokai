@@ -14,7 +14,6 @@ export interface UpdateWorkflowRunParams {
 	title?: string;
 	description?: string;
 	status?: WorkflowRunStatus;
-	currentNodeId?: string;
 	config?: Record<string, unknown>;
 	iterationCount?: number;
 	maxIterations?: number;
@@ -31,8 +30,8 @@ export class SpaceWorkflowRunRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, current_node_id, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -41,8 +40,6 @@ export class SpaceWorkflowRunRepository {
 			params.workflowId,
 			params.title,
 			params.description ?? '',
-			0, // keep current_step_index for backward compat
-			params.currentNodeId ?? null,
 			'pending',
 			null,
 			0,
@@ -136,10 +133,6 @@ export class SpaceWorkflowRunRepository {
 				values.push(Date.now());
 			}
 		}
-		if (params.currentNodeId !== undefined) {
-			fields.push('current_node_id = ?');
-			values.push(params.currentNodeId);
-		}
 		if (params.config !== undefined) {
 			fields.push('config = ?');
 			values.push(JSON.stringify(params.config));
@@ -164,13 +157,6 @@ export class SpaceWorkflowRunRepository {
 		}
 
 		return this.getRun(id);
-	}
-
-	/**
-	 * Advance the current node ID for a run
-	 */
-	updateCurrentNode(id: string, nodeId: string): SpaceWorkflowRun | null {
-		return this.updateRun(id, { currentNodeId: nodeId });
 	}
 
 	/**
@@ -243,7 +229,6 @@ export class SpaceWorkflowRunRepository {
 			workflowId: row.workflow_id as string,
 			title: row.title as string,
 			description: (row.description as string | null) ?? undefined,
-			currentNodeId: (row.current_node_id as string | null) ?? undefined,
 			status: row.status as WorkflowRunStatus,
 			config,
 			iterationCount: (row.iteration_count as number | undefined) ?? 0,
