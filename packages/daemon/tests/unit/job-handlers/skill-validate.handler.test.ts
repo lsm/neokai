@@ -5,6 +5,9 @@ import type { Job } from '../../../src/storage/repositories/job-queue-repository
 import type { SkillsManager } from '../../../src/lib/skills-manager';
 import type { AppMcpServerRepository } from '../../../src/storage/repositories/app-mcp-server-repository';
 import type { AppSkill } from '@neokai/shared';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -110,8 +113,8 @@ describe('createSkillValidateHandler', () => {
 	});
 
 	it('passes validation for plugin skill with accessible path', async () => {
-		// Use a path that always exists
-		const pluginPath = '/';
+		// Use a temp directory that is guaranteed to exist and be readable
+		const pluginPath = mkdtempSync(join(tmpdir(), 'neokai-test-'));
 		const skill = makeSkill({
 			sourceType: 'plugin',
 			config: { type: 'plugin', pluginPath },
@@ -130,7 +133,7 @@ describe('createSkillValidateHandler', () => {
 		expect(setStatusMock).toHaveBeenCalledWith('skill-1', 'valid');
 	});
 
-	it('fails validation for plugin skill with non-existent path', async () => {
+	it('fails validation for plugin skill with non-existent path and sets status to invalid', async () => {
 		const pluginPath = '/nonexistent/path/that/does/not/exist';
 		const skill = makeSkill({
 			sourceType: 'plugin',
@@ -145,10 +148,10 @@ describe('createSkillValidateHandler', () => {
 
 		const job = makeJob({ skillId: 'skill-1' });
 		await expect(handler(job)).rejects.toThrow();
-		expect(setStatusMock).not.toHaveBeenCalled();
+		expect(setStatusMock).toHaveBeenCalledWith('skill-1', 'invalid');
 	});
 
-	it('fails validation for mcp_server skill referencing non-existent MCP server', async () => {
+	it('fails validation for mcp_server skill referencing non-existent MCP server and sets status to invalid', async () => {
 		const skill = makeSkill({
 			sourceType: 'mcp_server',
 			config: { type: 'mcp_server', appMcpServerId: 'missing-server-id' },
@@ -166,7 +169,7 @@ describe('createSkillValidateHandler', () => {
 		await expect(handler(job)).rejects.toThrow(
 			'mcp_server skill "my-mcp-skill": app_mcp_servers entry not found for id "missing-server-id"'
 		);
-		expect(setStatusMock).not.toHaveBeenCalled();
+		expect(setStatusMock).toHaveBeenCalledWith('skill-1', 'invalid');
 	});
 
 	it('passes validation for mcp_server skill when MCP server exists', async () => {

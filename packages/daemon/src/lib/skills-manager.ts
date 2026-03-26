@@ -38,14 +38,6 @@ export class SkillsManager {
 		return this.repo.get(id);
 	}
 
-	/**
-	 * Set the job queue for async validation enqueuing.
-	 * Called by the daemon app after both SkillsManager and JobQueue are created.
-	 */
-	setJobQueue(jobQueue: JobQueueRepository): void {
-		this.jobQueue = jobQueue;
-	}
-
 	addSkill(params: CreateSkillParams): AppSkill {
 		// Validate sourceType/config consistency and security-sensitive fields
 		this.validateSkillConfig(params.sourceType, params.config);
@@ -90,6 +82,7 @@ export class SkillsManager {
 
 		this.repo.update(id, params);
 		if (params.config !== undefined) {
+			this.repo.setValidationStatus(id, 'pending');
 			this.enqueueValidation(id);
 		}
 		return this.repo.get(id)!;

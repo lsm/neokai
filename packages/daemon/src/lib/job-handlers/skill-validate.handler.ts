@@ -1,4 +1,4 @@
-import { accessSync, constants } from 'node:fs';
+import { access, constants } from 'node:fs/promises';
 import type { Job } from '../../storage/repositories/job-queue-repository';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
@@ -25,21 +25,24 @@ export function createSkillValidateHandler(
 			throw new Error(`Skill not found: ${skillId}`);
 		}
 
-		if (isPluginSkillConfig(skill.config)) {
-			// Check that the plugin path exists and is accessible
-			accessSync(skill.config.pluginPath, constants.R_OK);
-		} else if (isMcpServerSkillConfig(skill.config)) {
-			// Check that the referenced app_mcp_servers entry still exists
-			const server = appMcpServerRepo.get(skill.config.appMcpServerId);
-			if (!server) {
-				throw new Error(
-					`mcp_server skill "${skill.name}": app_mcp_servers entry not found for id "${skill.config.appMcpServerId}"`
-				);
+		try {
+			if (isPluginSkillConfig(skill.config)) {
+				await access(skill.config.pluginPath, constants.R_OK);
+			} else if (isMcpServerSkillConfig(skill.config)) {
+				const server = appMcpServerRepo.get(skill.config.appMcpServerId);
+				if (!server) {
+					throw new Error(
+						`mcp_server skill "${skill.name}": app_mcp_servers entry not found for id "${skill.config.appMcpServerId}"`
+					);
+				}
 			}
-		}
-		// builtin skills are always valid — no-op
+			// builtin skills are always valid — no-op
 
-		skillsManager.setSkillValidationStatus(skillId, 'valid');
-		return { valid: true, skillId };
+			skillsManager.setSkillValidationStatus(skillId, 'valid');
+			return { valid: true, skillId };
+		} catch (error) {
+			skillsManager.setSkillValidationStatus(skillId, 'invalid');
+			throw error;
+		}
 	};
 }
