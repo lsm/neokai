@@ -126,6 +126,42 @@ export function setupSpaceWorkflowRunHandlers(
 		return { run };
 	});
 
+	// ─── spaceWorkflowRun.resume ─────────────────────────────────────────────
+	//
+	// Resumes a run that is in needs_attention state after a human has resolved the
+	// blocking issue. Transitions needs_attention → in_progress so the tick loop
+	// will resume processing on the next cycle.
+	messageHub.onRequest('spaceWorkflowRun.resume', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) throw new Error('id is required');
+
+		const run = workflowRunRepo.getRun(params.id);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.id}`);
+
+		if (run.status !== 'needs_attention') {
+			throw new Error(
+				`Cannot resume run ${params.id}: expected status 'needs_attention', got '${run.status}'`
+			);
+		}
+
+		// needs_attention → in_progress (human resolved the blocking issue)
+		const updated = workflowRunRepo.transitionStatus(params.id, 'in_progress');
+
+		daemonHub
+			.emit('space.workflowRun.updated', {
+				sessionId: 'global',
+				spaceId: run.spaceId,
+				runId: run.id,
+				run: updated,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.workflowRun.updated:', err);
+			});
+
+		return { run: updated };
+	});
+
 	// ─── spaceWorkflowRun.cancel ─────────────────────────────────────────────
 	messageHub.onRequest('spaceWorkflowRun.cancel', async (data) => {
 		const params = data as { id: string };
@@ -153,9 +189,8 @@ export function setupSpaceWorkflowRunHandlers(
 			}
 		}
 
-		// Cancel the run
-		const updated = workflowRunRepo.updateStatus(params.id, 'cancelled');
-		if (!updated) throw new Error(`WorkflowRun not found: ${params.id}`);
+		// Cancel the run (pending/in_progress/needs_attention → cancelled)
+		const updated = workflowRunRepo.transitionStatus(params.id, 'cancelled');
 
 		daemonHub
 			.emit('space.workflowRun.updated', {

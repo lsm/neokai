@@ -579,7 +579,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(sink.events).toHaveLength(0);
 
 			// External cancellation: update run status directly in DB (simulating external API call)
-			workflowRunRepo.updateStatus(run.id, 'cancelled');
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// Tick 2: run is now cancelled, SpaceRuntime skips it in processRunTick
 			// and cleanupTerminalExecutors removes it without emitting workflow_run_completed
@@ -602,7 +602,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
 
 			// External cancellation between ticks
-			workflowRunRepo.updateStatus(run.id, 'cancelled');
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// Tick 2: run is cancelled, executor removed by cleanupTerminalExecutors.
 			// No new notification should be emitted.
@@ -622,7 +622,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 
 			// Simulate: between daemon restart and first tick, run gets cancelled externally
-			workflowRunRepo.updateStatus(run.id, 'cancelled');
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// Fresh runtime (simulating restart): first executeTick() rehydrates,
 			// then processes — cancelled run should emit nothing

@@ -31,6 +31,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
+import { canTransition } from '../runtime/workflow-run-status-machine';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -412,10 +413,10 @@ export function createGlobalSpacesToolHandlers(
 				const cancelled = await mgr.cancelTask(args.task_id);
 				let cancelledRun = null;
 				if (args.cancel_workflow_run && task.workflowRunId) {
-					// Guard against stale run IDs: updateStatus returns null when the run is
-					// not found, which would leave the task cancelled but the run untouched.
-					const updatedRun = workflowRunRepo.updateStatus(task.workflowRunId, 'cancelled');
-					if (updatedRun) {
+					// Only cancel if the run exists and the transition is valid (not already terminal).
+					const existingRun = workflowRunRepo.getRun(task.workflowRunId);
+					if (existingRun && canTransition(existingRun.status, 'cancelled')) {
+						workflowRunRepo.transitionStatus(task.workflowRunId, 'cancelled');
 						cancelledRun = task.workflowRunId;
 					}
 				}

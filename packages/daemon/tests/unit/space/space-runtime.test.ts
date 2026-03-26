@@ -697,7 +697,7 @@ describe('SpaceRuntime', () => {
 				workflowId: workflow.id,
 				title: 'Orphaned Run',
 			});
-			workflowRunRepo.updateStatus(pendingRun.id, 'in_progress');
+			workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
 
 			// Delete the workflow
 			workflowManager.deleteWorkflow(workflow.id);
@@ -731,7 +731,7 @@ describe('SpaceRuntime', () => {
 			expect(runtime.executorCount).toBe(1);
 
 			// Externally cancel the run
-			workflowRunRepo.updateStatus(run.id, 'cancelled');
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// executeTick → processCompletedTasks skips cancelled, cleanupTerminalExecutors removes it
 			await runtime.executeTick();

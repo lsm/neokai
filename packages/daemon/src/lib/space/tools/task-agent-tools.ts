@@ -693,7 +693,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			try {
 				// Mark the workflow run as completed — SpaceRuntime tick will detect this
 				// and emit workflow_run_completed via the notification sink.
-				workflowRunRepo.updateStatus(workflowRunId, 'completed');
+				workflowRunRepo.transitionStatus(workflowRunId, 'completed');
 
 				// Mark the main task as completed (mirrors report_result logic).
 				await taskManager.setTaskStatus(taskId, 'completed', {

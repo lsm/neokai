@@ -200,7 +200,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Test Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const tasks = await router.activateNode(run.id, NODE_A);
 
@@ -230,7 +230,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Multi Agent Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const tasks = await router.activateNode(run.id, NODE_A);
 
@@ -259,7 +259,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Custom Role Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const tasks = await router.activateNode(run.id, NODE_A);
 
@@ -282,7 +282,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Idempotent Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const firstResult = await router.activateNode(run.id, NODE_A);
 			const secondResult = await router.activateNode(run.id, NODE_A);
@@ -308,7 +308,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Cancelled Task Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// First activation
 			const firstTasks = await router.activateNode(run.id, NODE_A);
@@ -342,7 +342,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Concurrent Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// Simulate a concurrent activation by directly inserting a task with the
 			// same (workflow_run_id, workflow_node_id, agent_name) before the router
@@ -379,7 +379,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Cancelled Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'cancelled');
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
 			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/cancelled/);
@@ -395,7 +395,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Completed Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'completed');
+			workflowRunRepo.updateStatusUnchecked(run.id, 'completed');
 
 			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
 			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/completed/);
@@ -418,7 +418,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Bad Node Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			await expect(router.activateNode(run.id, 'nonexistent-node')).rejects.toBeInstanceOf(
 				ActivationError
@@ -453,7 +453,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Deliver Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'hello planner');
 
@@ -488,7 +488,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Already Active Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// Pre-create a task for NODE_B so it is already active
 			taskRepo.createTask({
@@ -531,7 +531,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Missing Role Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			await expect(
 				router.deliverMessage(run.id, 'coder', 'nonexistent-role', 'hello')
@@ -560,7 +560,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Target Node Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await router.deliverMessage(run.id, 'sender', 'receiver', 'test');
 			expect(result.targetNodeId).toBe(NODE_B);
@@ -592,7 +592,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Fan-out Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// Use node name 'Receiver Node' as target (fan-out)
 			const result = await router.deliverMessage(run.id, 'coder', 'Receiver Node', 'broadcast');
@@ -625,7 +625,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'DM Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'dm message');
 
@@ -649,7 +649,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Within-node Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// Both agents are in NODE_A; 'planner' is in the same node as 'coder'
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'hey planner');
@@ -686,7 +686,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Human Gate Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			await expect(
 				router.deliverMessage(run.id, 'coder', 'planner', 'needs review', {
@@ -720,7 +720,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Human Gate Approved Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'approved message', {
 				workspacePath: '/tmp/ws',
@@ -755,7 +755,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Task Result Gate Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			await expect(
 				router.deliverMessage(run.id, 'coder', 'planner', 'msg', {
@@ -789,7 +789,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Task Result Match Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'msg', {
 				workspacePath: '/tmp/ws',
@@ -823,7 +823,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'No Context Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// No context provided — gate is not evaluated
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'msg');
@@ -862,7 +862,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Condition Gate Allowed',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await allowingRouter.deliverMessage(run.id, 'coder', 'planner', 'msg', {
 				workspacePath: '/tmp/ws',
@@ -902,7 +902,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Condition Gate Blocked',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			await expect(
 				blockingRouter.deliverMessage(run.id, 'coder', 'planner', 'msg', {
@@ -940,7 +940,7 @@ describe('ChannelRouter', () => {
 				title: 'Cyclic Run',
 				maxIterations: 5,
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// First delivery
 			await router.deliverMessage(run.id, 'coder', 'planner', 'message 1');
@@ -983,7 +983,7 @@ describe('ChannelRouter', () => {
 				title: 'Iteration Cap Run',
 				maxIterations: 2,
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// Manually set iterationCount to the cap
 			workflowRunRepo.updateRun(run.id, { iterationCount: 2 });
@@ -1020,7 +1020,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Non-cyclic Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			await router.deliverMessage(run.id, 'coder', 'planner', 'non-cyclic message');
 
@@ -1046,7 +1046,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Open Topology Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await router.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
@@ -1071,7 +1071,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'No Match Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// coder→planner not declared; open topology for this pair
 			const result = await router.canDeliver(run.id, 'coder', 'planner', {
@@ -1097,7 +1097,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'No Gate Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await router.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
@@ -1129,7 +1129,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Always Gate Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await router.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
@@ -1161,7 +1161,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Human Gate Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const blocked = await router.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
@@ -1195,7 +1195,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Human Gate Approved Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const allowed = await router.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
@@ -1228,7 +1228,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Task Result Gate Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const blocked = await router.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
@@ -1269,7 +1269,7 @@ describe('ChannelRouter', () => {
 				title: 'Iteration Cap Run',
 				maxIterations: 3,
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 			workflowRunRepo.updateRun(run.id, { iterationCount: 3 });
 
 			const result = await router.canDeliver(run.id, 'coder', 'planner', {
@@ -1304,7 +1304,7 @@ describe('ChannelRouter', () => {
 				title: 'Below Cap Run',
 				maxIterations: 5,
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 			workflowRunRepo.updateRun(run.id, { iterationCount: 2 });
 
 			const result = await router.canDeliver(run.id, 'coder', 'planner', {
@@ -1338,7 +1338,7 @@ describe('ChannelRouter', () => {
 				title: 'Non-cyclic Cap Run',
 				maxIterations: 1,
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 			// Set iterationCount above maxIterations
 			workflowRunRepo.updateRun(run.id, { iterationCount: 100 });
 
@@ -1365,7 +1365,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Orphaned Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// Disable FK enforcement, remap workflow_id to a nonexistent ID, then re-enable.
 			db.exec('PRAGMA foreign_keys = OFF');
@@ -1415,7 +1415,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Condition Gate Allowed Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await allowingRouter.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
@@ -1455,7 +1455,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Condition Gate Blocked Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			const result = await blockingRouter.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
@@ -1492,7 +1492,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Wildcard From Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// 'coder' is not the declared sender, but '*' should match it
 			const blocked = await router.canDeliver(run.id, 'coder', 'planner', {
@@ -1527,7 +1527,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Wildcard To Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// 'planner' should be matched by '*'
 			const blocked = await router.canDeliver(run.id, 'coder', 'planner', {
@@ -1567,7 +1567,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Wildcard Delivery Run',
 			});
-			workflowRunRepo.updateStatus(run.id, 'in_progress');
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// Wildcard channel gate blocks delivery without approval
 			await expect(

@@ -8,6 +8,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRun, WorkflowRunStatus, CreateWorkflowRunParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
+import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
 
 export interface UpdateWorkflowRunParams {
 	title?: string;
@@ -159,10 +160,31 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * Update only the status of a run
+	 * Update only the status of a run, bypassing lifecycle transition guards.
+	 *
+	 * Intended for test fixtures and internal helpers only — use transitionStatus()
+	 * for all production code that changes run status.
 	 */
-	updateStatus(id: string, status: WorkflowRunStatus): SpaceWorkflowRun | null {
+	updateStatusUnchecked(id: string, status: WorkflowRunStatus): SpaceWorkflowRun | null {
 		return this.updateRun(id, { status });
+	}
+
+	/**
+	 * Atomically validate and apply a lifecycle status transition.
+	 *
+	 * Reads the current status from the DB, validates the requested transition
+	 * against the WorkflowRunStatusMachine, and persists the new status only
+	 * when the transition is allowed.
+	 *
+	 * @returns The updated run on success.
+	 * @throws {Error} when the run is not found.
+	 * @throws {Error} when the transition is not permitted by the lifecycle rules.
+	 */
+	transitionStatus(id: string, to: WorkflowRunStatus): SpaceWorkflowRun {
+		const run = this.getRun(id);
+		if (!run) throw new Error(`WorkflowRun not found: ${id}`);
+		assertValidTransition(run.status, to, id);
+		return this.updateRun(id, { status: to })!;
 	}
 
 	/**

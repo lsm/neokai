@@ -1953,7 +1953,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done', () => {
 		const { run, mainTask } = await startRun(ctx, wf);
 
 		// Manually mark the run as already completed
-		ctx.workflowRunRepo.updateStatus(run.id, 'completed');
+		ctx.workflowRunRepo.transitionStatus(run.id, 'completed');
 
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));

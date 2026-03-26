@@ -148,6 +148,9 @@ function createMockRunRepo(
 		updateStatus: mock((id: string, status: string) =>
 			run ? { ...run, id, status: status as SpaceWorkflowRun['status'] } : null
 		),
+		transitionStatus: mock((id: string, status: string) =>
+			run ? { ...run, id, status: status as SpaceWorkflowRun['status'] } : null
+		),
 	} as unknown as SpaceWorkflowRunRepository;
 }
 
@@ -491,7 +494,7 @@ describe('space-workflow-run-handlers', () => {
 			const result = await call('spaceWorkflowRun.cancel', { id: 'run-1' });
 			expect(result).toEqual({ success: true });
 
-			expect(runRepo.updateStatus).toHaveBeenCalledWith('run-1', 'cancelled');
+			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
 			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
@@ -529,7 +532,7 @@ describe('space-workflow-run-handlers', () => {
 			expect(callArgs).not.toContain('task-3');
 
 			// Run should also be cancelled
-			expect(runRepo.updateStatus).toHaveBeenCalledWith('run-1', 'cancelled');
+			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
 		});
 
 		it('continues cancelling remaining tasks even if one cancelTask fails', async () => {
@@ -574,7 +577,7 @@ describe('space-workflow-run-handlers', () => {
 			// Both tasks were attempted
 			expect(taskManager.cancelTask).toHaveBeenCalledTimes(2);
 			// Run still gets cancelled
-			expect(runRepo.updateStatus).toHaveBeenCalledWith('run-1', 'cancelled');
+			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
 		});
 	});
 });
