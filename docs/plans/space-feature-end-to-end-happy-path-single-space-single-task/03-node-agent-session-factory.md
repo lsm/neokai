@@ -33,10 +33,13 @@ Each node agent session gets its own git worktree created from the same reposito
 **Owner**: This task owns the full implementation of worktree isolation — investigation, implementation, lifecycle management, and cleanup.
 
 **Subtasks**:
-1. **Investigate existing WorktreeManager**: Read `packages/daemon/src/lib/room/managers/worktree-manager.ts` and determine if it can be reused. If it's tightly coupled to Room concepts, create a new `SpaceWorktreeManager` class in `packages/daemon/src/lib/space/` with a simpler API:
-   - `createWorktree(repoPath: string, branchName: string, baseBranch?: string): Promise<string>` — returns worktree path
-   - `removeWorktree(worktreePath: string): Promise<void>` — cleans up worktree
-   - `listWorktrees(repoPath: string): Promise<string[]>` — lists all space worktrees
+1. **Investigate existing WorktreeManager (bounded)**: Read `packages/daemon/src/lib/room/managers/worktree-manager.ts` and produce a decision document with one of two outcomes:
+   - **Reusable (with modifications)**: The Room WorktreeManager can be adapted. Document the required changes (e.g., parameterizing room-specific concepts). Proceed with modifications.
+   - **New implementation required**: The Room WorktreeManager is too tightly coupled to Room concepts (session groups, room IDs, etc.). Create a new `SpaceWorktreeManager` class in `packages/daemon/src/lib/space/` with a simpler API:
+     - `createWorktree(repoPath: string, branchName: string, baseBranch?: string): Promise<string>` — returns worktree path
+     - `removeWorktree(worktreePath: string): Promise<void>` — cleans up worktree
+     - `listWorktrees(repoPath: string): Promise<string[]>` — lists all space worktrees
+   - **Decision criteria**: If reusing requires >3 non-trivial modifications to the existing class or would break Room functionality, choose new implementation.
 2. **Implement worktree creation in TaskAgentManager**: Before calling `spawnSubSession()`, create a worktree for the node agent. The branch naming convention: `space/{spaceId}/task/{taskId}/{nodeRole}`.
 3. **Update spawnSubSession()**: Pass the worktree path as `workspacePath` in `AgentSessionInit` instead of the raw `space.workspacePath`.
 4. **Implement worktree cleanup**:

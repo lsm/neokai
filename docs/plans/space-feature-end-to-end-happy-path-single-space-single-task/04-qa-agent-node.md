@@ -81,10 +81,11 @@ Both increment the same global counter. When `maxIterations` is reached, the run
    - Description: "QA agent. Verifies test coverage, CI pipeline status, and PR mergeability."
 2. Update `CODING_WORKFLOW_V2` template (modify, don't create V3):
    - Add QA node with `agentId: 'qa'` between Review and Done
-   - Add channel: Review → QA (task_result: passed gate)
-   - Add channel: QA → Done (task_result: passed gate)
-   - Add channel: QA → Code (task_result: failed gate, cyclic)
+   - Add channel: Review → QA (`task_result` gate, expression: `passed`)
+   - Add channel: QA → Done (`task_result` gate, expression: `passed`)
+   - Add channel: QA → Code (`task_result` gate, expression: `failed`, `isCyclic: true`, description: "Route QA failures back to Coder for fixes")
    - The Review → Done channel is replaced by Review → QA → Done
+   - Verify that the QA → Code cyclic channel is explicitly marked `isCyclic: true` for iteration counter tracking
 3. Update `seedBuiltInWorkflows` to use the updated template (new spaces only; existing spaces keep their workflows)
 4. Add QA agent system prompt check in `createCustomAgentInit()` for role 'qa'
 5. Unit test: validate the updated 5-node workflow structure and QA agent seeding
@@ -107,11 +108,12 @@ Both increment the same global counter. When `maxIterations` is reached, the run
 **Description**: When the QA agent finds issues (result contains 'failed'), the channel router routes a message back to the Coder with the specific issues. The Coder then addresses them and the workflow loops through Review → QA again.
 
 **Subtasks**:
-1. Verify the QA → Code cyclic channel works with `task_result: failed` gate
-2. Ensure the QA agent's failure message (the `---QA_RESULT---` block) is included in the channel message to the Coder so the Coder has full context on what to fix
+1. Verify the QA → Code cyclic channel works with `task_result: failed` gate and `isCyclic: true`
+2. Clarify the QA feedback mechanism: the QA agent calls `report_done` with `result: 'failed: <reason>'`. The `task_result: failed` gate on the QA → Code channel evaluates this result and routes the message to the Coder. The QA agent's `---QA_RESULT---` structured output is included in the channel message payload so the Coder has full context.
+   - **Note on mechanism consistency**: M2's Reviewer → Coder feedback uses `send_message` (peer-to-peer DM). M4's QA → Coder feedback uses channel routing (gate-evaluated). This distinction is intentional: `send_message` is for ad-hoc peer communication (reviewer wants to give specific feedback), while channel routing is for structured state-driven transitions (QA result triggers the next workflow step). Both mechanisms exist in the channel router; the difference is in how the message is initiated.
 3. Test the full re-review cycle: Code → Review (pass) → QA (fail) → Code → Review (pass) → QA (pass) → Done
 4. Verify the global iteration counter is incremented on the QA → Code cycle (shared with Review → Code counter)
-5. Test that QA → Code feedback does NOT skip the Review step — the full cycle Code → Review → QA runs after a QA fix
+5. Test that QA → Code feedback does NOT skip the Review step — **QA activates only after Review reports `passed` on the re-review, not directly after Coder's `report_done`**. The Review → QA → Done path is gated on Review's passed result. The cyclic QA → Code channel feeds back to the Coder, which then must go through Code → Review → QA again.
 6. Add unit test for the QA feedback loop including iteration counting
 
 **Acceptance Criteria**:

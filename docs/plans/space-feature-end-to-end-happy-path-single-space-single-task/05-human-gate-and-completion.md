@@ -20,6 +20,11 @@ Build the full-stack human gate UX so humans can see when a workflow is waiting 
 - The workflow run transitions to `failed` status with reason `humanRejected`.
 - The human can then provide feedback and restart, or create a new task.
 
+### Post-rejection recovery
+After a human rejects at the gate, the human has two recovery options:
+1. **Restart the same run**: Call `spaceWorkflowRun.restart` RPC with `{ runId }`. This transitions the run from `failed` back to `running`, resets the blocked node to `pending`, and resumes the workflow from the node that was blocked (the Plan node, since that's where the human gate was). The iteration counter does NOT reset on restart. If the human wants to provide feedback to the planner before restarting, they can type a message in the Space chat, which will be delivered to the Plan node on restart.
+2. **Create a new task**: The human describes new work or a revised request in the Space chat, and the Space chat agent creates a new task and workflow run from scratch. The old rejected run stays as `failed` for history.
+
 ## Tasks
 
 ### Task 5.1: Implement Human Gate Backend (Pause/Resume/State)
@@ -46,17 +51,26 @@ Build the full-stack human gate UX so humans can see when a workflow is waiting 
    - `waiting_for_approval` → `running` when human approves
    - `waiting_for_approval` → `failed` when human rejects (reason: `humanRejected`)
 6. Persist the `waiting_for_approval` status and the gate metadata in the workflow run record
-7. Add unit tests:
+7. Implement the `spaceWorkflowRun.restart` RPC handler for post-rejection recovery:
+   - Accepts `{ runId }`
+   - Validates that the run is in `failed` status with reason `humanRejected`
+   - Transitions the run back to `running` status
+   - Resets the blocked node to `pending` status
+   - Resumes the workflow from the blocked node (does NOT reset iteration counter)
+   - The human can type feedback in the Space chat before restarting — this feedback is delivered to the node on restart
+8. Add unit tests:
    - Gate blocks delivery and returns correct error
    - RPC handler approves/rejects correctly
    - Status transitions are correct
    - `request_human_input` tool sends correct notification
+   - Restart RPC: reject → restart → node reactivates → iteration counter preserved
 
 **Acceptance Criteria**:
 - Workflow pauses at Plan → Code gate and transitions to `waiting_for_approval` status
 - `spaceWorkflowRun.approveGate` RPC handler works correctly
 - After approval, workflow resumes and coder starts automatically
 - After rejection, workflow transitions to `failed` with `humanRejected` reason
+- `spaceWorkflowRun.restart` RPC handler recovers from rejection without resetting iteration counter
 - `request_human_input` tool notifies the frontend
 - Unit tests cover all state transitions and RPC flows
 
@@ -73,8 +87,9 @@ Build the full-stack human gate UX so humans can see when a workflow is waiting 
 **Owner**: This task owns ALL frontend UI for the human gate.
 
 **Subtasks**:
-1. Subscribe to `workflow_run_status_changed` live query events in the Space chat to detect `waiting_for_approval` status
-2. When a `waiting_for_approval` event arrives:
+1. On Space chat load, **query the current workflow run status** from the DB/repo (not just subscribe to events). If a workflow run is in `waiting_for_approval` state when the chat loads, immediately display the approval UI. This handles the case where the human approves before the frontend subscription is active, or where the human refreshes the page.
+2. Subscribe to `workflow_run_status_changed` live query events for real-time updates while the chat is open
+3. When a `waiting_for_approval` state is detected (either from initial query or live event):
    - Display a system message in the Space chat: "Plan is ready for your review. Waiting for your approval."
    - Show the gate context: which node completed, what the next step is
 3. Implement chat-based approval parsing:
@@ -143,27 +158,28 @@ Build the full-stack human gate UX so humans can see when a workflow is waiting 
 **Reference implementation**: `packages/daemon/src/lib/space/agents/space-chat-agent.ts` — the Space chat agent already has MCP tools for `start_workflow_run`, `create_standalone_task`, `suggest_workflow`, and `list_workflows`. This task verifies and fixes the end-to-end flow.
 
 **Subtasks**:
-1. Audit the Space chat agent's intent recognition: verify it can parse a human request like "implement user authentication" and decide to create a task + start a workflow
-2. Verify the workflow selection logic:
-   - The agent calls `suggest_workflow` (or uses its built-in logic) to pick `CODING_WORKFLOW_V2` for coding tasks
-   - If the request is ambiguous, the agent asks the human for clarification before starting
-3. Verify the task creation flow:
+1. Audit the Space chat agent's intent recognition in `space-chat-agent.ts`:
+   - Verify the agent's system prompt instructs it to call `create_standalone_task` followed by `start_workflow_run` when it detects a coding task request
+   - Verify the workflow selection logic: the agent calls `suggest_workflow` (or uses its built-in logic) to pick `CODING_WORKFLOW_V2` for coding tasks
+   - If the request is ambiguous ("fix the thing"), the agent asks the human for clarification before creating a task
+   - If no matching workflow is found, the agent tells the human and suggests available workflows
+2. Verify the task creation flow:
    - Agent calls `create_standalone_task` with the human's description as the task body
    - Task is persisted in the database
-4. Verify the workflow run start:
+3. Verify the workflow run start:
    - Agent calls `start_workflow_run` with the correct workflow ID and task ID
    - The first node (Plan) gets spawned and receives the task
-5. Test the end-to-end conversation flow: human describes work → Space Agent creates task → workflow starts → Plan node activates → human gate fires
-6. Add unit test for the Space Agent's task creation and workflow start decision logic
+4. Test the end-to-end conversation flow: human describes work → Space Agent creates task → workflow starts → Plan node activates → human gate fires → human approves via RPC (Task 5.1 backend)
+5. Add unit test for the Space Agent's task creation and workflow start decision logic
 
 **Acceptance Criteria**:
-- Human can describe work in the Space chat and have it automatically routed to a workflow
-- Task is created with proper description and context from the conversation
-- Workflow run starts with `CODING_WORKFLOW_V2`
-- Plan node agent receives the task and begins working
-- If the request is ambiguous, the agent asks for clarification
-- Unit tests cover the conversation-to-task-to-workflow flow
+- **Verifiable criterion**: When the human sends a message containing a clear coding task description (e.g., "implement user authentication"), the Space chat agent calls `create_standalone_task` followed by `start_workflow_run` with `CODING_WORKFLOW_V2` within the same conversation turn.
+- **Verifiable criterion**: Task is created with the human's exact description as the task body, persisted in the DB.
+- **Verifiable criterion**: Workflow run starts with status `running` and the Plan node activates with status `pending`.
+- **Verifiable criterion**: When the human sends an ambiguous request ("fix the thing"), the agent responds with a clarification question and does NOT create a task.
+- **Verifiable criterion**: The workflow run hits the human gate on Plan → Code and transitions to `waiting_for_approval` status (provable via Task 5.1's RPC handler).
+- Unit tests cover: task creation on clear request, no task creation on ambiguous request, correct workflow selection
 
-**Depends on**: Task 5.2 (human gate UI must exist for the full entry-to-gate flow)
+**Depends on**: Task 5.1 (human gate RPC backend must exist — the conversation entry point needs the workflow to actually run and hit the gate to prove the full flow; does NOT depend on Task 5.2/frontend)
 
 **Agent type**: coder
