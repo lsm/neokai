@@ -12,6 +12,7 @@ import type {
 	AppSkillConfig,
 	SkillSourceType,
 	SkillValidationStatus,
+	UpdateSkillParams,
 } from '@neokai/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 
@@ -62,27 +63,6 @@ export class SkillRepository {
 	) {}
 
 	/**
-	 * Ensure the skills table exists. Called during DB initialization.
-	 * Idempotent via CREATE TABLE IF NOT EXISTS.
-	 */
-	ensureTable(): void {
-		this.db.exec(`
-      CREATE TABLE IF NOT EXISTS skills (
-        id TEXT PRIMARY KEY,
-        name TEXT UNIQUE NOT NULL,
-        display_name TEXT NOT NULL,
-        description TEXT NOT NULL,
-        source_type TEXT NOT NULL,
-        config TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        built_in INTEGER NOT NULL DEFAULT 0,
-        validation_status TEXT NOT NULL DEFAULT 'pending',
-        created_at INTEGER NOT NULL
-      )
-    `);
-	}
-
-	/**
 	 * List all skills, ordered by created_at ascending.
 	 */
 	findAll(): AppSkill[] {
@@ -97,6 +77,16 @@ export class SkillRepository {
 	 */
 	get(id: string): AppSkill | null {
 		const row = this.db.prepare(`SELECT * FROM skills WHERE id = ?`).get(id) as
+			| SkillRow
+			| undefined;
+		return row ? rowToSkill(row) : null;
+	}
+
+	/**
+	 * Get a skill by name. Returns null if not found.
+	 */
+	getByName(name: string): AppSkill | null {
+		const row = this.db.prepare(`SELECT * FROM skills WHERE name = ?`).get(name) as
 			| SkillRow
 			| undefined;
 		return row ? rowToSkill(row) : null;
@@ -138,9 +128,10 @@ export class SkillRepository {
 	}
 
 	/**
-	 * Update mutable fields on an existing skill.
+	 * Update user-editable fields on an existing skill (mirrors UpdateSkillParams).
+	 * Immutable fields (name, sourceType, builtIn, createdAt) are not settable here.
 	 */
-	update(id: string, fields: Partial<AppSkill>): void {
+	update(id: string, fields: UpdateSkillParams): void {
 		const setClauses: string[] = [];
 		const values: (string | number | null)[] = [];
 
@@ -160,10 +151,6 @@ export class SkillRepository {
 			setClauses.push('config = ?');
 			values.push(JSON.stringify(fields.config));
 		}
-		if (fields.validationStatus !== undefined) {
-			setClauses.push('validation_status = ?');
-			values.push(fields.validationStatus);
-		}
 
 		if (setClauses.length === 0) return;
 
@@ -182,10 +169,17 @@ export class SkillRepository {
 
 	/**
 	 * Set the validation_status for a skill. Used by the async validation job.
+	 * Only fires notifyChange when a row was actually updated.
 	 */
-	setValidationStatus(id: string, status: SkillValidationStatus): void {
-		this.db.prepare(`UPDATE skills SET validation_status = ? WHERE id = ?`).run(status, id);
-		this.reactiveDb.notifyChange('skills');
+	setValidationStatus(id: string, status: SkillValidationStatus): boolean {
+		const result = this.db
+			.prepare(`UPDATE skills SET validation_status = ? WHERE id = ?`)
+			.run(status, id);
+		const changed = result.changes > 0;
+		if (changed) {
+			this.reactiveDb.notifyChange('skills');
+		}
+		return changed;
 	}
 
 	/**

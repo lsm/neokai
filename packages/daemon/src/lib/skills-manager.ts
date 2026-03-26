@@ -32,7 +32,14 @@ export class SkillsManager {
 	}
 
 	addSkill(params: CreateSkillParams): AppSkill {
+		// Validate sourceType/config consistency and security-sensitive fields
 		this.validateSkillConfig(params.sourceType, params.config);
+
+		// Enforce name uniqueness with a user-friendly error
+		const existing = this.repo.getByName(params.name);
+		if (existing) {
+			throw new Error(`A skill named "${params.name}" already exists`);
+		}
 
 		const skill: AppSkill = {
 			id: generateUUID(),
@@ -48,7 +55,11 @@ export class SkillsManager {
 		};
 
 		this.repo.insert(skill);
-		return this.repo.get(skill.id)!;
+		const inserted = this.repo.get(skill.id);
+		if (!inserted) {
+			throw new Error(`Failed to insert skill "${params.name}"`);
+		}
+		return inserted;
 	}
 
 	updateSkill(id: string, params: UpdateSkillParams): AppSkill {
@@ -74,8 +85,17 @@ export class SkillsManager {
 		return this.repo.get(id)!;
 	}
 
-	setSkillValidationStatus(id: string, status: SkillValidationStatus): void {
+	/**
+	 * Set the validation status for a skill (called by the async validation job).
+	 * Throws if the skill does not exist so job failures are surfaced, not silenced.
+	 */
+	setSkillValidationStatus(id: string, status: SkillValidationStatus): AppSkill {
+		const existing = this.repo.get(id);
+		if (!existing) {
+			throw new Error(`Skill not found: ${id}`);
+		}
 		this.repo.setValidationStatus(id, status);
+		return this.repo.get(id)!;
 	}
 
 	/**
@@ -110,8 +130,17 @@ export class SkillsManager {
 	/**
 	 * Validate source-type-specific config fields for security.
 	 * Throws a descriptive Error on validation failure.
+	 *
+	 * Checks performed:
+	 * 1. sourceType must match config.type (prevents mismatched payloads)
+	 * 2. Source-type-specific field constraints
 	 */
 	private validateSkillConfig(sourceType: SkillSourceType, config: AppSkillConfig): void {
+		// Explicit sourceType/config.type consistency check
+		if (sourceType !== config.type) {
+			throw new Error(`sourceType "${sourceType}" must match config.type "${config.type}"`);
+		}
+
 		if (config.type === 'plugin') {
 			const { pluginPath } = config;
 			if (!pluginPath || pluginPath.trim() === '') {
@@ -120,7 +149,8 @@ export class SkillsManager {
 			if (!pluginPath.startsWith('/')) {
 				throw new Error('plugin skill: pluginPath must be an absolute path (starts with /)');
 			}
-			if (pluginPath.includes('../')) {
+			// Reject any path that contains '..' as a segment (handles /a/../b and /a/b/..)
+			if (pluginPath.split('/').some((seg) => seg === '..')) {
 				throw new Error('plugin skill: pluginPath must not contain path traversal sequences (../)');
 			}
 		} else if (config.type === 'mcp_server') {
@@ -140,9 +170,9 @@ export class SkillsManager {
 				throw new Error('builtin skill: commandName must not be empty');
 			}
 		} else {
-			// Exhaustive check — sourceType drives config.type in valid usage
-			const _: never = config;
-			throw new Error(`Unknown skill config type: ${sourceType}`);
+			// Exhaustive type guard
+			const _exhaustive: never = config;
+			throw new Error(`Unknown skill config type: ${(_exhaustive as AppSkillConfig).type}`);
 		}
 	}
 }

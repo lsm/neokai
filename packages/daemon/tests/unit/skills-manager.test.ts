@@ -7,9 +7,12 @@
  * - Persistence across load cycles
  * - getEnabledSkills() filtering
  * - All validation rules (plugin path traversal, mcp_server ref, builtin commandName)
+ * - sourceType / config.type consistency enforcement
+ * - Name uniqueness enforcement
  * - Valid configs pass validation
  */
 
+import { unlinkSync } from 'node:fs';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables } from '../../src/storage/schema';
@@ -93,6 +96,24 @@ describe('SkillRepository', () => {
 
 	test('get returns null for unknown id', () => {
 		expect(repo.get('nonexistent')).toBeNull();
+	});
+
+	test('getByName returns skill by name', () => {
+		const skill: AppSkill = {
+			id: 'gbn-1',
+			name: 'by-name',
+			displayName: 'By Name',
+			description: 'd',
+			sourceType: 'builtin',
+			config: { type: 'builtin', commandName: 'cmd' },
+			enabled: true,
+			builtIn: false,
+			validationStatus: 'pending',
+			createdAt: 1,
+		};
+		repo.insert(skill);
+		expect(repo.getByName('by-name')).not.toBeNull();
+		expect(repo.getByName('nonexistent')).toBeNull();
 	});
 
 	test('findAll returns all inserted skills', () => {
@@ -196,7 +217,7 @@ describe('SkillRepository', () => {
 		expect(repo.get('tog-1')!.enabled).toBe(true);
 	});
 
-	test('setValidationStatus updates validation_status', () => {
+	test('setValidationStatus updates validation_status and returns true', () => {
 		const skill: AppSkill = {
 			id: 'val-1',
 			name: 'val',
@@ -210,8 +231,13 @@ describe('SkillRepository', () => {
 			createdAt: 1,
 		};
 		repo.insert(skill);
-		repo.setValidationStatus('val-1', 'valid');
+		const changed = repo.setValidationStatus('val-1', 'valid');
+		expect(changed).toBe(true);
 		expect(repo.get('val-1')!.validationStatus).toBe('valid');
+	});
+
+	test('setValidationStatus returns false for unknown id', () => {
+		expect(repo.setValidationStatus('ghost', 'valid')).toBe(false);
 	});
 
 	test('delete removes a skill and returns true', () => {
@@ -237,7 +263,6 @@ describe('SkillRepository', () => {
 	});
 
 	test('persistence across load cycles — re-open same DB path', () => {
-		// Use a temp file path to test actual persistence
 		const tmpPath = `/tmp/skills-test-${Date.now()}.db`;
 		const db1 = new BunDatabase(tmpPath);
 		createTables(db1);
@@ -256,7 +281,7 @@ describe('SkillRepository', () => {
 		});
 		db1.close();
 
-		// Re-open
+		// Re-open — data must still be there
 		const db2 = new BunDatabase(tmpPath);
 		const repo2 = new SkillRepository(db2, noOpReactiveDb);
 		const found = repo2.get('persist-1');
@@ -264,6 +289,9 @@ describe('SkillRepository', () => {
 		expect(found!.name).toBe('persist');
 		expect(found!.validationStatus).toBe('valid');
 		db2.close();
+
+		// Clean up temp file
+		unlinkSync(tmpPath);
 	});
 });
 
@@ -362,7 +390,7 @@ describe('SkillsManager', () => {
 		expect(disabled.enabled).toBe(false);
 	});
 
-	test('setSkillValidationStatus updates status', () => {
+	test('setSkillValidationStatus updates status and returns updated skill', () => {
 		const skill = mgr.addSkill({
 			name: 'valst',
 			displayName: 'V',
@@ -372,8 +400,12 @@ describe('SkillsManager', () => {
 			enabled: true,
 			validationStatus: 'pending',
 		});
-		mgr.setSkillValidationStatus(skill.id, 'valid');
-		expect(mgr.getSkill(skill.id)!.validationStatus).toBe('valid');
+		const updated = mgr.setSkillValidationStatus(skill.id, 'valid');
+		expect(updated.validationStatus).toBe('valid');
+	});
+
+	test('setSkillValidationStatus throws for unknown id', () => {
+		expect(() => mgr.setSkillValidationStatus('ghost', 'valid')).toThrow('not found');
 	});
 
 	test('getEnabledSkills filters disabled skills', () => {
@@ -400,10 +432,35 @@ describe('SkillsManager', () => {
 		expect(enabled).toHaveLength(1);
 	});
 
+	// --- Name uniqueness ---
+
+	test('addSkill throws a friendly error on duplicate name', () => {
+		mgr.addSkill({
+			name: 'dupe',
+			displayName: 'Dupe',
+			description: 'd',
+			sourceType: 'builtin',
+			config: { type: 'builtin', commandName: 'cmd' },
+			enabled: true,
+			validationStatus: 'pending',
+		});
+		expect(() =>
+			mgr.addSkill({
+				name: 'dupe',
+				displayName: 'Dupe 2',
+				description: 'd',
+				sourceType: 'builtin',
+				config: { type: 'builtin', commandName: 'cmd2' },
+				enabled: true,
+				validationStatus: 'pending',
+			})
+		).toThrow('already exists');
+	});
+
 	// --- Built-in protection ---
 
 	test('removeSkill returns false for built-in skill', () => {
-		// Insert a built-in skill directly via repo
+		// Insert a built-in skill directly via repo (bypasses manager's addSkill)
 		const repo = makeRepo(db);
 		repo.insert({
 			id: 'builtin-1',
@@ -437,6 +494,23 @@ describe('SkillsManager', () => {
 		});
 		expect(mgr.removeSkill(skill.id)).toBe(true);
 		expect(mgr.getSkill(skill.id)).toBeNull();
+	});
+
+	// --- Validation: sourceType / config.type mismatch ---
+
+	test('addSkill rejects mismatched sourceType and config.type', () => {
+		expect(() =>
+			mgr.addSkill({
+				name: 'mismatch',
+				displayName: 'M',
+				description: 'd',
+				sourceType: 'builtin',
+				// @ts-expect-error — intentional mismatch for testing runtime guard
+				config: { type: 'plugin', pluginPath: '/some/path' },
+				enabled: true,
+				validationStatus: 'pending',
+			})
+		).toThrow('must match config.type');
 	});
 
 	// --- Validation: plugin ---
@@ -482,7 +556,7 @@ describe('SkillsManager', () => {
 		).toThrow('absolute path');
 	});
 
-	test('addSkill with plugin: path traversal throws', () => {
+	test('addSkill with plugin: path traversal with ../ throws', () => {
 		expect(() =>
 			mgr.addSkill({
 				name: 'plugin-traverse',
@@ -493,7 +567,21 @@ describe('SkillsManager', () => {
 				enabled: true,
 				validationStatus: 'pending',
 			})
-		).toThrow('../');
+		).toThrow('traversal');
+	});
+
+	test('addSkill with plugin: path traversal at end (/foo/..) throws', () => {
+		expect(() =>
+			mgr.addSkill({
+				name: 'plugin-traverse-end',
+				displayName: 'P',
+				description: 'd',
+				sourceType: 'plugin',
+				config: { type: 'plugin', pluginPath: '/plugins/foo/..' },
+				enabled: true,
+				validationStatus: 'pending',
+			})
+		).toThrow('traversal');
 	});
 
 	// --- Validation: mcp_server ---
