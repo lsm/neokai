@@ -34,7 +34,13 @@ import type {
 	MissionExecution,
 	LiveQuerySnapshotEvent,
 	LiveQueryDeltaEvent,
+	AppSkill,
 } from '@neokai/shared';
+
+/** AppSkill extended with the per-room effective enabled state from skills.byRoom LiveQuery. */
+export interface EffectiveRoomSkill extends AppSkill {
+	overriddenByRoom: boolean;
+}
 
 /**
  * Parameters for creating a new goal
@@ -92,6 +98,13 @@ class RoomStore {
 
 	/** Goals loading state */
 	readonly goalsLoading = signal<boolean>(false);
+
+	// ========================================
+	// Room Skills Signals
+	// ========================================
+
+	/** Effective per-room skills (global enabled state merged with room overrides via skills.byRoom). */
+	readonly roomSkills = signal<EffectiveRoomSkill[]>([]);
 
 	/** Auto-completed task notifications (from semi-autonomous mode) */
 	readonly autoCompletedNotifications = signal<
@@ -288,6 +301,7 @@ class RoomStore {
 		this.error.value = null;
 		this.goals.value = [];
 		this.goalsLoading.value = false;
+		this.roomSkills.value = [];
 		this.autoCompletedNotifications.value = [];
 		this.runtimeState.value = null;
 
@@ -528,6 +542,85 @@ class RoomStore {
 					h.request('liveQuery.unsubscribe', { subscriptionId: goalsSubId }).catch(() => {});
 				}
 			});
+
+			// --- Room Skills via LiveQuery (skills.byRoom) ---
+			// The server JOINs skills with room_skill_overrides and returns the effective
+			// enabled state + overriddenByRoom flag — no client-side merging needed.
+			const skillsSubId = `skills-byRoom-${roomId}`;
+
+			this.activeSubscriptionIds.add(skillsSubId);
+			cleanups.push(() => this.activeSubscriptionIds.delete(skillsSubId));
+
+			const unsubSkillSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
+				'liveQuery.snapshot',
+				(event) => {
+					if (event.subscriptionId !== skillsSubId) return;
+					if (!this.activeSubscriptionIds.has(skillsSubId)) return; // stale-event guard
+					this.roomSkills.value = event.rows as EffectiveRoomSkill[];
+				}
+			);
+			cleanups.push(unsubSkillSnapshot);
+
+			const unsubSkillDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+				if (event.subscriptionId !== skillsSubId) return;
+				if (!this.activeSubscriptionIds.has(skillsSubId)) return; // stale-event guard
+				let current = this.roomSkills.value;
+				if (event.removed?.length) {
+					const removedIds = new Set((event.removed as EffectiveRoomSkill[]).map((r) => r.id));
+					current = current.filter((s) => !removedIds.has(s.id));
+				}
+				if (event.updated?.length) {
+					const updatedMap = new Map((event.updated as EffectiveRoomSkill[]).map((u) => [u.id, u]));
+					current = current.map((s) => updatedMap.get(s.id) ?? s);
+				}
+				if (event.added?.length) {
+					current = [...current, ...(event.added as EffectiveRoomSkill[])];
+				}
+				this.roomSkills.value = current;
+			});
+			cleanups.push(unsubSkillDelta);
+
+			await hub.request('liveQuery.subscribe', {
+				queryName: 'skills.byRoom',
+				params: [roomId],
+				subscriptionId: skillsSubId,
+			});
+
+			// Guard: abort if unsubscribed while awaiting the subscribe request
+			if (!this.liveQueryActive.has(roomId)) {
+				for (const fn of cleanups) {
+					try {
+						fn();
+					} catch {
+						/* ignore */
+					}
+				}
+				this.liveQueryCleanups.delete(roomId);
+				return;
+			}
+
+			// Re-subscribe on reconnect: the server-side subscription is per-connection.
+			const unsubSkillReconnect = hub.onConnection((state) => {
+				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
+				hub
+					.request('liveQuery.subscribe', {
+						queryName: 'skills.byRoom',
+						params: [roomId],
+						subscriptionId: skillsSubId,
+					})
+					.catch((err) => {
+						logger.warn('Skills LiveQuery re-subscribe failed:', err);
+					});
+			});
+			cleanups.push(unsubSkillReconnect);
+
+			// Cleanup: tell the server to dispose the subscription when leaving the room.
+			cleanups.push(() => {
+				const h = connectionManager.getHubIfConnected();
+				if (h) {
+					h.request('liveQuery.unsubscribe', { subscriptionId: skillsSubId }).catch(() => {});
+				}
+			});
 		} catch (err) {
 			this.liveQueryActive.delete(roomId);
 			// Run any cleanups that were registered before the error, so that
@@ -562,6 +655,7 @@ class RoomStore {
 		// queued in the JS event loop are discarded before the handlers are removed.
 		this.activeSubscriptionIds.delete(`tasks-byRoom-${roomId}`);
 		this.activeSubscriptionIds.delete(`goals-byRoom-${roomId}`);
+		this.activeSubscriptionIds.delete(`skills-byRoom-${roomId}`);
 		const cleanups = this.liveQueryCleanups.get(roomId);
 		if (cleanups) {
 			for (const fn of cleanups) {
