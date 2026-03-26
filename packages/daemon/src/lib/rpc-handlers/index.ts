@@ -78,6 +78,8 @@ import { FileIndex } from '../file-index';
 import { LiveQueryEngine } from '../../storage/live-query';
 import type { AppMcpLifecycleManager } from '../mcp';
 import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers';
+import { registerSkillHandlers } from './skill-handlers';
+import type { SkillsManager } from '../skills-manager';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -108,6 +110,8 @@ export interface RPCHandlerDependencies {
 	liveQueries: LiveQueryEngine;
 	/** Application-level MCP lifecycle manager */
 	appMcpManager: AppMcpLifecycleManager;
+	/** Application-level Skills manager */
+	skillsManager: SkillsManager;
 }
 
 const log = new Logger('rpc-handlers');
@@ -300,6 +304,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Per-room MCP enablement RPC handlers
 	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.db);
+
+	// Skills registry RPC handlers
+	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
