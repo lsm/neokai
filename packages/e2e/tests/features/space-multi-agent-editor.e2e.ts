@@ -216,7 +216,7 @@ test.describe('Multi-Agent Step Editor', () => {
 		await expect(secondEntry).toContainText(ROLE_A);
 	});
 
-	// ─── Test 3: Remove one agent — verify channels removed ──────────────────
+	// ─── Test 3: Remove one agent — verify workflow channels persist ──────────
 
 	test('Remove one agent — verify only one remains and workflow channels persist', async ({
 		page,
@@ -248,9 +248,11 @@ test.describe('Multi-Agent Step Editor', () => {
 		// Add a workflow-level channel: coder → reviewer
 		await ensureChannelsSectionOpen(editor);
 		await addWorkflowChannel(editor, ROLE_A, ROLE_B);
-		const channelsSection = editor.getByTestId('channels-section');
 		await expect(
-			channelsSection.getByTestId('channels-list').getByTestId('channel-entry')
+			editor
+				.getByTestId('channels-section')
+				.getByTestId('channels-list')
+				.getByTestId('channel-entry')
 		).toHaveCount(1, { timeout: 3000 });
 
 		// Reopen the node config panel to remove an agent
@@ -282,7 +284,10 @@ test.describe('Multi-Agent Step Editor', () => {
 		// Workflow-level channels are independent of node-level agent config and persist
 		await ensureChannelsSectionOpen(editor);
 		await expect(
-			channelsSection.getByTestId('channels-list').getByTestId('channel-entry')
+			editor
+				.getByTestId('channels-section')
+				.getByTestId('channels-list')
+				.getByTestId('channel-entry')
 		).toHaveCount(1, { timeout: 3000 });
 
 		// Single-agent select dropdown and add-agent button should be visible
