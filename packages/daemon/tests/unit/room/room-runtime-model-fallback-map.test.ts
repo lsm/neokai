@@ -34,18 +34,8 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 		return [{ id: 'msg-1', text, toolCallNames: [] }];
 	}
 
-	function makeMessageHub(currentModel: string, provider: string = 'anthropic') {
-		return {
-			async request(method: string, _args: unknown): Promise<unknown> {
-				if (method === 'session.model.get') {
-					return {
-						currentModel,
-						modelInfo: { provider },
-					};
-				}
-				return undefined;
-			},
-		};
+	function makeGetCurrentModel(currentModel: string, provider: string = 'anthropic') {
+		return async (_sessionId: string) => ({ currentModel, provider });
 	}
 
 	function makeGlobalSettings(overrides: Partial<GlobalSettings>): () => GlobalSettings {
@@ -81,7 +71,7 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 						],
 					},
 				}),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 			});
 
 			const { group } = await spawnGroup();
@@ -110,7 +100,7 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 						'anthropic/opus': [{ model: 'glm-4', provider: 'glm' }],
 					},
 				}),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 			});
 
 			const { group } = await spawnGroup();
@@ -141,7 +131,7 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 						],
 					},
 				}),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 			});
 
 			const { group } = await spawnGroup();
@@ -170,7 +160,7 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 						],
 					},
 				}),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 			});
 
 			const { group } = await spawnGroup();
@@ -198,7 +188,7 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 						],
 					},
 				}),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 				isProviderAvailable: async (provider, model) => {
 					if (provider === 'minimax' && model === 'minimax-turbo') return false;
 					return true;
@@ -231,7 +221,7 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 						],
 					},
 				}),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 				isProviderAvailable: async () => false,
 			});
 
@@ -258,7 +248,7 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 					fallbackModels: [{ model: 'haiku', provider: 'anthropic' }],
 					modelFallbackMap: {}, // empty map, no matching key
 				}),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 			});
 
 			const { group } = await spawnGroup();
@@ -279,7 +269,7 @@ describe('RoomRuntime - modelFallbackMap in trySwitchToFallbackModel', () => {
 			ctx = createRuntimeTestContext({
 				getWorkerMessages: () => makeWorkerMessages(USAGE_LIMIT_MSG),
 				getGlobalSettings: makeGlobalSettings({}),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 			});
 
 			const { group, task } = await spawnGroup();

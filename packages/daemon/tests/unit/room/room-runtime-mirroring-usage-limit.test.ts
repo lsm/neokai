@@ -15,29 +15,16 @@ import {
 	createGoalAndTask,
 	type RuntimeTestContext,
 } from './room-runtime-test-helpers';
-import type { MessageHub } from '@neokai/shared';
 import type { GlobalSettings } from '@neokai/shared';
 
 const USAGE_LIMIT_MSG = "You've hit your limit · resets 11pm (America/New_York)";
 
-/** Build a minimal MessageHub mock that responds to session.model.get */
-function makeMessageHubMock(opts: {
-	model?: string;
-	provider?: string;
-	failModelGet?: boolean;
-}): MessageHub {
-	return {
-		request: async (method: string, _params: unknown) => {
-			if (method === 'session.model.get') {
-				if (opts.failModelGet) throw new Error('model get failed');
-				return {
-					currentModel: opts.model ?? 'claude-3-5-sonnet-20241022',
-					modelInfo: { provider: opts.provider ?? 'anthropic' },
-				};
-			}
-			return undefined;
-		},
-	} as unknown as MessageHub;
+/** Default getCurrentModel impl: returns sonnet/anthropic for any session */
+function defaultGetCurrentModel() {
+	return async (_sessionId: string) => ({
+		currentModel: 'claude-3-5-sonnet-20241022',
+		provider: 'anthropic',
+	});
 }
 
 /** Global settings with one fallback model configured */
@@ -136,7 +123,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		it('calls trySwitchToFallbackModel when usage_limit detected', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
-				messageHub: makeMessageHubMock({}),
+				getCurrentModelImpl: defaultGetCurrentModel(),
 			});
 
 			const { group } = await spawnGroup();
@@ -155,7 +142,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		it('appends model_fallback event on successful switch', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
-				messageHub: makeMessageHubMock({}),
+				getCurrentModelImpl: defaultGetCurrentModel(),
 			});
 
 			const { group } = await spawnGroup();
@@ -179,7 +166,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		it('does NOT set group.rateLimit on successful switch', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
-				messageHub: makeMessageHubMock({}),
+				getCurrentModelImpl: defaultGetCurrentModel(),
 			});
 
 			const { group } = await spawnGroup();
@@ -197,7 +184,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		it('clears task restriction when task was usage_limited before successful switch', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
-				messageHub: makeMessageHubMock({}),
+				getCurrentModelImpl: defaultGetCurrentModel(),
 			});
 
 			const { group, task } = await spawnGroup();
@@ -228,7 +215,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		it('does not attempt fallback twice for the same session+message', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
-				messageHub: makeMessageHubMock({}),
+				getCurrentModelImpl: defaultGetCurrentModel(),
 			});
 
 			const { group } = await spawnGroup();
@@ -253,7 +240,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		it('does not attempt fallback twice for different UUIDs (race condition: both fired before .then() resolves)', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
-				messageHub: makeMessageHubMock({}),
+				getCurrentModelImpl: defaultGetCurrentModel(),
 			});
 
 			const { group } = await spawnGroup();
@@ -418,7 +405,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		it('does not trigger fallback switch for user message with usage_limit text', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
-				messageHub: makeMessageHubMock({}),
+				getCurrentModelImpl: defaultGetCurrentModel(),
 			});
 
 			const { group } = await spawnGroup();
@@ -577,7 +564,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		it('resetting mirroring clears fallbackAttempted so a new setup can attempt fallback again', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
-				messageHub: makeMessageHubMock({}),
+				getCurrentModelImpl: defaultGetCurrentModel(),
 			});
 
 			const { group } = await spawnGroup();

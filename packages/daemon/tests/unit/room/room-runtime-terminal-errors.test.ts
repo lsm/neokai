@@ -386,15 +386,7 @@ describe('RoomRuntime - terminal error detection', () => {
 		});
 
 		it('returns early without routing to leader after successful fallback switch', async () => {
-			// Configure a fallback model and a mock messageHub that provides the current model
-			const mockMessageHub = {
-				request: async (method: string) => {
-					if (method === 'session.model.get') {
-						return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
-					}
-					return undefined;
-				},
-			};
+			// Configure a fallback model and getCurrentModel to provide the current model info
 			ctx = createRuntimeTestContext({
 				getWorkerMessages: () => [
 					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
@@ -403,7 +395,10 @@ describe('RoomRuntime - terminal error detection', () => {
 					({
 						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
 					}) as never,
-				messageHub: mockMessageHub,
+				getCurrentModelImpl: async () => ({
+					currentModel: 'claude-opus-4-5',
+					provider: 'anthropic',
+				}),
 			});
 
 			const { group, task } = await spawnAndSimulateWorkerOutput('');
@@ -445,14 +440,10 @@ describe('RoomRuntime - terminal error detection', () => {
 					({
 						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
 					}) as never,
-				messageHub: {
-					request: async (method: string) => {
-						if (method === 'session.model.get') {
-							return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
-						}
-						return undefined;
-					},
-				},
+				getCurrentModelImpl: async () => ({
+					currentModel: 'claude-opus-4-5',
+					provider: 'anthropic',
+				}),
 			});
 
 			const { task } = await createGoalAndTask(ctx);
@@ -510,14 +501,6 @@ describe('RoomRuntime - terminal error detection', () => {
 			//   5. trySwitchToFallbackModel succeeds
 			//   6. clearTaskRestriction must clear the stale restriction from step 1
 
-			const mockMessageHub = {
-				request: async (method: string) => {
-					if (method === 'session.model.get') {
-						return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
-					}
-					return undefined;
-				},
-			};
 			ctx = createRuntimeTestContext({
 				getWorkerMessages: () => [
 					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
@@ -526,7 +509,10 @@ describe('RoomRuntime - terminal error detection', () => {
 					({
 						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
 					}) as never,
-				messageHub: mockMessageHub,
+				getCurrentModelImpl: async () => ({
+					currentModel: 'claude-opus-4-5',
+					provider: 'anthropic',
+				}),
 			});
 
 			const { task } = await createGoalAndTask(ctx);

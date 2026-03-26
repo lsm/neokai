@@ -83,6 +83,10 @@ export function createMockSessionFactory() {
 		model,
 		_provider
 	) => ({ success: true, model });
+	/** Override for getCurrentModel — tests can replace this to control model info */
+	let getCurrentModelImpl: (
+		sessionId: string
+	) => Promise<{ currentModel: string; provider: string } | null> = async (_sessionId) => null;
 	return {
 		calls,
 		processingStates,
@@ -99,6 +103,12 @@ export function createMockSessionFactory() {
 			provider: string
 		) => Promise<{ success: boolean; model: string; error?: string }>) {
 			switchModelImpl = fn;
+		},
+		/** Override to control getCurrentModel responses in tests */
+		set getCurrentModelImpl(fn: (
+			sessionId: string
+		) => Promise<{ currentModel: string; provider: string } | null>) {
+			getCurrentModelImpl = fn;
 		},
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
@@ -148,6 +158,9 @@ export function createMockSessionFactory() {
 		async switchModel(sessionId: string, model: string, provider: string) {
 			calls.push({ method: 'switchModel', args: [sessionId, model, provider] });
 			return switchModelImpl(sessionId, model, provider);
+		},
+		async getCurrentModel(sessionId: string) {
+			return getCurrentModelImpl(sessionId);
 		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
@@ -300,7 +313,11 @@ export interface RuntimeTestContextOptions {
 	getGlobalSettings?: () => GlobalSettings;
 	/** Optional provider availability check for testing fallback chain skipping */
 	isProviderAvailable?: (provider: string, model: string) => Promise<boolean>;
-	/** Optional MessageHub mock for testing trySwitchToFallbackModel (session.model.get RPC) */
+	/** Override getCurrentModel on the mock SessionFactory for testing trySwitchToFallbackModel */
+	getCurrentModelImpl?: (
+		sessionId: string
+	) => Promise<{ currentModel: string; provider: string } | null>;
+	/** Optional MessageHub mock (kept for backward compat; no longer used by trySwitchToFallbackModel) */
 	messageHub?: MessageHub;
 }
 
@@ -318,6 +335,9 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	const taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
 	const goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);
 	const sessionFactory = createMockSessionFactory();
+	if (opts?.getCurrentModelImpl) {
+		sessionFactory.getCurrentModelImpl = opts.getCurrentModelImpl;
+	}
 	const room = makeRoom(opts?.room);
 
 	const runtime = new RoomRuntime({

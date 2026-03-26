@@ -32,22 +32,9 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 		return [{ id: 'msg-1', text, toolCallNames: [] }];
 	}
 
-	/**
-	 * Create a messageHub mock that responds to 'session.model.get' with the
-	 * given current model / provider.
-	 */
-	function makeMessageHub(currentModel: string, provider: string = 'anthropic') {
-		return {
-			async request(method: string, _args: unknown): Promise<unknown> {
-				if (method === 'session.model.get') {
-					return {
-						currentModel,
-						modelInfo: { provider },
-					};
-				}
-				return undefined;
-			},
-		};
+	/** Create a getCurrentModel impl that returns the given current model / provider. */
+	function makeGetCurrentModel(currentModel: string, provider: string = 'anthropic') {
+		return async (_sessionId: string) => ({ currentModel, provider });
 	}
 
 	function makeGlobalSettings(
@@ -78,7 +65,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'haiku', provider: 'anthropic' },
 					{ model: 'glm-4', provider: 'glm' },
 				]),
-				messageHub: makeMessageHub('not-in-chain', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('not-in-chain', 'anthropic'),
 				// isProviderAvailable intentionally omitted
 			});
 
@@ -106,7 +93,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'haiku', provider: 'anthropic' },
 					{ model: 'glm-4', provider: 'glm' },
 				]),
-				messageHub: makeMessageHub('not-in-chain', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('not-in-chain', 'anthropic'),
 				isProviderAvailable: async (provider, model) => {
 					availabilityChecks.push({ provider, model });
 					return true;
@@ -138,7 +125,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'glm-4', provider: 'glm' },
 					{ model: 'sonnet', provider: 'anthropic' },
 				]),
-				messageHub: makeMessageHub('not-in-chain', 'other'),
+				getCurrentModelImpl: makeGetCurrentModel('not-in-chain', 'other'),
 				isProviderAvailable: async (provider, model) => {
 					// anthropic/haiku is down, glm/glm-4 is down, anthropic/sonnet is up
 					if (provider === 'anthropic' && model === 'haiku') return false;
@@ -167,7 +154,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'haiku', provider: 'anthropic' },
 					{ model: 'glm-4', provider: 'glm' },
 				]),
-				messageHub: makeMessageHub('not-in-chain', 'other'),
+				getCurrentModelImpl: makeGetCurrentModel('not-in-chain', 'other'),
 				isProviderAvailable: async () => false, // all providers down
 			});
 
@@ -199,7 +186,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'glm-4', provider: 'glm' },
 					{ model: 'sonnet', provider: 'anthropic' },
 				]),
-				messageHub: makeMessageHub('haiku', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('haiku', 'anthropic'),
 				isProviderAvailable: async (provider, model) => {
 					if (provider === 'glm' && model === 'glm-4') return false;
 					return true;
@@ -226,7 +213,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'haiku', provider: 'anthropic' },
 					{ model: 'sonnet', provider: 'anthropic' },
 				]),
-				messageHub: makeMessageHub('sonnet', 'anthropic'),
+				getCurrentModelImpl: makeGetCurrentModel('sonnet', 'anthropic'),
 				isProviderAvailable: async () => true,
 			});
 
@@ -254,7 +241,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'haiku', provider: 'anthropic' },
 					{ model: 'glm-4', provider: 'glm' },
 				]),
-				messageHub: makeMessageHub('not-in-chain', 'other'),
+				getCurrentModelImpl: makeGetCurrentModel('not-in-chain', 'other'),
 				isProviderAvailable: async (_provider, model) => {
 					if (model === 'haiku') throw new Error('network timeout');
 					return true;
@@ -280,7 +267,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'haiku', provider: 'anthropic' },
 					{ model: 'glm-4', provider: 'glm' },
 				]),
-				messageHub: makeMessageHub('not-in-chain', 'other'),
+				getCurrentModelImpl: makeGetCurrentModel('not-in-chain', 'other'),
 				isProviderAvailable: async () => {
 					throw new Error('check service down');
 				},
@@ -306,7 +293,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 			ctx = createRuntimeTestContext({
 				getWorkerMessages: () => makeWorkerMessages(USAGE_LIMIT_MSG),
 				getGlobalSettings: makeGlobalSettings([{ model: 'haiku', provider: 'anthropic' }]),
-				messageHub: makeMessageHub('not-in-chain', 'other'),
+				getCurrentModelImpl: makeGetCurrentModel('not-in-chain', 'other'),
 				isProviderAvailable: async () => true, // provider is available
 			});
 
@@ -343,7 +330,7 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 					{ model: 'haiku', provider: 'anthropic' },
 					{ model: 'glm-4', provider: 'glm' },
 				]),
-				messageHub: makeMessageHub('haiku', 'anthropic'), // same as chain[0]
+				getCurrentModelImpl: makeGetCurrentModel('haiku', 'anthropic'), // same as chain[0]
 				isProviderAvailable: async () => true,
 			});
 
