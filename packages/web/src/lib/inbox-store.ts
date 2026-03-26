@@ -79,7 +79,7 @@ async function refresh(): Promise<void> {
 async function approveTask(taskId: string, roomId: string): Promise<boolean> {
 	try {
 		const hub = await connectionManager.getHub();
-		await hub.request('room.task.approve', { roomId, taskId });
+		await hub.request('task.approve', { roomId, taskId });
 		await refresh();
 		return true;
 	} catch (err) {
@@ -91,7 +91,7 @@ async function approveTask(taskId: string, roomId: string): Promise<boolean> {
 async function rejectTask(taskId: string, roomId: string, feedback: string): Promise<boolean> {
 	try {
 		const hub = await connectionManager.getHub();
-		await hub.request('room.task.reject', { roomId, taskId, feedback });
+		await hub.request('task.reject', { roomId, taskId, feedback });
 		await refresh();
 		return true;
 	} catch (err) {
