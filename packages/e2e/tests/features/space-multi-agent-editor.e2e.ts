@@ -5,7 +5,7 @@
  * - Add a second agent to a step — verify both agents appear as badges in the canvas node
  * - Configure a one-way channel (A → B) — verify directed arrow in panel and node
  * - Configure a bidirectional channel (A ↔ B) — verify bidirectional arrow in panel and node
- * - Remove one agent — verify only one remains and associated channels are removed
+ * - Remove one agent — verify only one remains and workflow channels persist
  * - Save workflow and re-open — verify multi-agent config AND channel topology persists
  *
  * Setup: creates a Space with two agents via RPC in beforeEach (infrastructure).
@@ -170,9 +170,11 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Add step and open config
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		// Use .last() to click the newly added regular node (Task Agent is not selectable)
-		await nodes.last().click();
+		const regularNode = editor.locator(
+			'[data-testid^="workflow-node-"]:not([data-task-agent="true"])'
+		);
+		await expect(regularNode).toHaveCount(1, { timeout: 3000 });
+		await regularNode.click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Channel Step');
@@ -216,7 +218,9 @@ test.describe('Multi-Agent Step Editor', () => {
 
 	// ─── Test 3: Remove one agent — verify channels removed ──────────────────
 
-	test('Remove one agent — verify only one remains and channels are removed', async ({ page }) => {
+	test('Remove one agent — verify only one remains and workflow channels persist', async ({
+		page,
+	}) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
 		await switchToVisualMode(page);
@@ -226,9 +230,11 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Add step, open config, set up multi-agent
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		// Use .last() to click the newly added regular node (Task Agent is not selectable)
-		await nodes.last().click();
+		const regularNode = editor.locator(
+			'[data-testid^="workflow-node-"]:not([data-task-agent="true"])'
+		);
+		await expect(regularNode).toHaveCount(1, { timeout: 3000 });
+		await regularNode.click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Remove Step');
@@ -248,8 +254,7 @@ test.describe('Multi-Agent Step Editor', () => {
 		).toHaveCount(1, { timeout: 3000 });
 
 		// Reopen the node config panel to remove an agent
-		const freshNodes = editor.locator('[data-testid^="workflow-node-"]');
-		await freshNodes.nth(1).click();
+		await regularNode.click();
 		const reopenedPanel = editor.getByTestId('node-config-panel');
 		await expect(reopenedPanel).toBeVisible({ timeout: 3000 });
 
@@ -273,6 +278,12 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Click "Switch to single" — reverts to single-agent mode and clears node-level channels
 		await switchToSingleBtn.click();
+
+		// Workflow-level channels are independent of node-level agent config and persist
+		await ensureChannelsSectionOpen(editor);
+		await expect(
+			channelsSection.getByTestId('channels-list').getByTestId('channel-entry')
+		).toHaveCount(1, { timeout: 3000 });
 
 		// Single-agent select dropdown and add-agent button should be visible
 		await expect(reopenedPanel.getByTestId('agent-select')).toBeVisible({ timeout: 3000 });
