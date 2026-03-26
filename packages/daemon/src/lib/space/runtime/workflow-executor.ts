@@ -451,7 +451,7 @@ export class WorkflowExecutor {
 		// Per-agent instructions override step-level instructions when present.
 		//
 		// Idempotency: if the target node already has active tasks for a given agent slot
-		// (detected via UNIQUE constraint violation on workflow_run_id+workflow_node_id+slot_role),
+		// (detected via UNIQUE constraint violation on workflow_run_id+workflow_node_id+agent_name),
 		// reuse the existing task. This handles both cyclic re-activation and concurrent
 		// activateNode() calls racing with followTransition().
 		const tasks: SpaceTask[] = [];

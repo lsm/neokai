@@ -216,7 +216,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	runMigration53(db);
 
 	// Migration 54: Add unique partial index on space_tasks (workflow_run_id, workflow_node_id,
-	// slot_role) to enforce at-most-one task per agent slot per workflow node per run.
+	// agent_name) to enforce at-most-one task per agent slot per workflow node per run.
 	// Prevents duplicate tasks from concurrent ChannelRouter.activateNode() calls.
 	runMigration54(db);
 }
