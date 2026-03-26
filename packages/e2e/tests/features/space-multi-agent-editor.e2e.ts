@@ -178,25 +178,24 @@ test.describe('Multi-Agent Step Editor', () => {
 		// Set up two agents (required for channels section to appear)
 		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
 
-		// Channels section should now be visible (multi-agent mode)
-		const channelsSection = panel.getByTestId('channels-section');
+		// Channels section should now be visible (multi-agent mode) — it lives in the
+		// editor sidebar, not inside the node-config-panel
+		const channelsSection = editor.getByTestId('channels-section');
 		await expect(channelsSection).toBeVisible({ timeout: 3000 });
 
-		const addChannelForm = panel.getByTestId('add-channel-form');
-		const channelsList = panel.getByTestId('channels-list');
+		const addChannelForm = channelsSection.getByTestId('add-channel-form');
+		const channelsList = channelsSection.getByTestId('channels-list');
 
 		// ── Add one-way channel: coder → reviewer ────────────────────────────
 
-		await addChannelForm.getByTestId('channel-from-select').selectOption({ value: ROLE_A });
+		await addChannelForm.getByTestId('new-channel-from-select').selectOption({ value: ROLE_A });
 		// Direction defaults to 'one-way' — no change needed
-		await addChannelForm.getByTestId('channel-to-input').fill(ROLE_B);
-		await addChannelForm.getByTestId('add-channel-button').click();
+		await addChannelForm.getByTestId('new-channel-to-select').selectOption({ value: ROLE_B });
+		await addChannelForm.getByTestId('add-channel-submit-button').click();
 
 		// Channel entry should appear: "coder → reviewer"
-		// setupMultiAgentStep creates 1 default channel (task-agent → first agent),
-		// so 2 total channels exist after this add (1 default + 1 user-added)
-		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(2, { timeout: 3000 });
-		// The user-added channel is the last one
+		// setupMultiAgentStep does not create default channels — only the user-added channel
+		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
 		const lastEntry = channelsList.getByTestId('channel-entry').last();
 		await expect(lastEntry).toContainText(ROLE_A);
 		await expect(lastEntry).toContainText('→');
@@ -204,16 +203,16 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// ── Add bidirectional channel: reviewer ↔ coder ──────────────────────
 
-		await addChannelForm.getByTestId('channel-from-select').selectOption({ value: ROLE_B });
+		await addChannelForm.getByTestId('new-channel-from-select').selectOption({ value: ROLE_B });
 		await addChannelForm
-			.getByTestId('channel-direction-select')
+			.getByTestId('new-channel-direction-select')
 			.selectOption({ value: 'bidirectional' });
-		await addChannelForm.getByTestId('channel-to-input').fill(ROLE_A);
-		await addChannelForm.getByTestId('add-channel-button').click();
+		await addChannelForm.getByTestId('new-channel-to-select').selectOption({ value: ROLE_A });
+		await addChannelForm.getByTestId('add-channel-submit-button').click();
 
-		// Three channel entries should now be present (1 default + 2 user-added)
-		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(3, { timeout: 3000 });
-		const secondEntry = channelsList.getByTestId('channel-entry').nth(2);
+		// Two channel entries should now be present (1 one-way + 1 bidirectional)
+		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(2, { timeout: 3000 });
+		const secondEntry = channelsList.getByTestId('channel-entry').nth(1);
 		await expect(secondEntry).toContainText(ROLE_B);
 		await expect(secondEntry).toContainText('↔');
 		await expect(secondEntry).toContainText(ROLE_A);
@@ -259,12 +258,15 @@ test.describe('Multi-Agent Step Editor', () => {
 		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
 
 		// Add channel coder → reviewer
-		const addChannelForm = panel.getByTestId('add-channel-form');
-		await addChannelForm.getByTestId('channel-from-select').selectOption({ value: ROLE_A });
-		await addChannelForm.getByTestId('channel-to-input').fill(ROLE_B);
-		await addChannelForm.getByTestId('add-channel-button').click();
-		// setupMultiAgentStep creates 1 default channel, plus 1 user-added = 2 total
-		await expect(panel.getByTestId('channels-list').getByTestId('channel-entry')).toHaveCount(2, {
+		const channelsSection = editor.getByTestId('channels-section');
+		await expect(channelsSection).toBeVisible({ timeout: 3000 });
+		const addChannelForm = channelsSection.getByTestId('add-channel-form');
+		const channelsList = channelsSection.getByTestId('channels-list');
+		await addChannelForm.getByTestId('new-channel-from-select').selectOption({ value: ROLE_A });
+		await addChannelForm.getByTestId('new-channel-to-select').selectOption({ value: ROLE_B });
+		await addChannelForm.getByTestId('add-channel-submit-button').click();
+		// 1 user-added channel
+		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, {
 			timeout: 3000,
 		});
 
@@ -286,14 +288,11 @@ test.describe('Multi-Agent Step Editor', () => {
 		const switchToSingleBtn = panel.getByTestId('switch-to-single-button');
 		await expect(switchToSingleBtn).toBeVisible({ timeout: 3000 });
 
-		// Click "Switch to single" — reverts to single-agent mode and clears channels
+		// Click "Switch to single" — reverts to single-agent mode
 		await switchToSingleBtn.click();
 
-		// Channels section is still visible but shows empty state message (channels cleared)
-		await expect(panel.getByTestId('channels-section')).toBeVisible({ timeout: 3000 });
-		await expect(panel.locator('text=No channels — agents are isolated.')).toBeVisible({
-			timeout: 2000,
-		});
+		// Channels section is still visible (channels are workflow-level, not node-level)
+		await expect(editor.getByTestId('channels-section')).toBeVisible({ timeout: 3000 });
 
 		// Single-agent select dropdown and add-agent button should be visible
 		await expect(panel.getByTestId('agent-select')).toBeVisible({ timeout: 3000 });

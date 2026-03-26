@@ -64,6 +64,7 @@ function makeNode(
 		stepIndex: 0,
 		position: { x: 0, y: 0 },
 		agents: AGENTS,
+		workflowChannels: [],
 		isStartNode: false,
 		...opts,
 	};

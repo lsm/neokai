@@ -80,6 +80,7 @@ function makeProps(overrides: Partial<WorkflowNodeProps> = {}): WorkflowNodeProp
 		step: STEP_DRAFT,
 		position: DEFAULT_POSITION,
 		agents: [AGENT_A, AGENT_B],
+		workflowChannels: [],
 		isSelected: false,
 		isStartNode: false,
 		scale: 1,
