@@ -137,16 +137,17 @@ Skills registry (SQLite) → SkillsManager → QueryOptionsBuilder → SDK sessi
 ```
 
 At session init, `QueryOptionsBuilder.build()` calls `SkillsManager.getEnabledSkills()` and injects enabled skills:
-- `builtin` sourceType → adds `commandName` to `session.availableCommands`
 - `plugin` sourceType → adds `{ type: 'local', path }` to `SDKConfig.plugins`
 - `mcp_server` sourceType → merges into `Options.mcpServers` (stdio/sse/http variants)
+
+The `builtin` sourceType is defined in the type system but not currently injected by `QueryOptionsBuilder` — only `plugin` and `mcp_server` are actively injected.
 
 **Key files:**
 - `packages/shared/src/types/skills.ts` — `AppSkill`, discriminated union configs (`BuiltinSkillConfig` / `PluginSkillConfig` / `McpServerSkillConfig`), `SkillValidationStatus`
 - `packages/daemon/src/lib/skills-manager.ts` — `SkillsManager`: CRUD, validation, built-in initialization (seeds `web-search-mcp` on startup)
 - `packages/daemon/src/lib/rpc-handlers/skill-handlers.ts` — RPC handlers: `skill.list`, `skill.get`, `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`
 - `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` — `skills.list` and `skills.byRoom` named queries for reactive frontend sync
-- `packages/daemon/src/lib/agent/query-options-builder.ts` — `buildPluginsFromSkills()`, `getMcpServersFromSkills()` methods
+- `packages/daemon/src/lib/agent/query-options-builder.ts` — `buildPluginsFromSkills()`, `getMcpServersFromSkills()`, `getRoomDisabledSkillIds()` methods; room overrides only disable globally-enabled skills (cannot enable globally-disabled)
 - `packages/web/src/lib/skills-store.ts` — `SkillsStore`: signal-based frontend store with LiveQuery subscription (`skills.list`)
 
 See [`docs/features/skills.md`](docs/features/skills.md) for user-facing documentation.
