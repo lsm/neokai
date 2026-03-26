@@ -94,7 +94,7 @@
 			}
 		},
 		{
-			"comment": "Task Agent lifecycle — spawn_step_agent probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'spawn_step_agent' (registered as 'mcp__task-agent__spawn_step_agent'). Tool dispatch with a non-matching name causes the SDK to loop indefinitely. The text mentions spawn_step_agent and step-code-lifecycle-001 so tests can assert on text content.",
+			"comment": "Task Agent lifecycle — spawn_node_agent probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'spawn_node_agent' (registered as 'mcp__task-agent__spawn_node_agent'). Tool dispatch with a non-matching name causes the SDK to loop indefinitely. The text mentions spawn_node_agent and step-code-lifecycle-001 so tests can assert on text content.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -109,7 +109,7 @@
 					},
 					{
 						"name": "x-mocked-by",
-						"value": "Dev Proxy mocks.json (task-agent spawn_step_agent probe)"
+						"value": "Dev Proxy mocks.json (task-agent spawn_node_agent probe)"
 					}
 				],
 				"body": {
@@ -119,7 +119,7 @@
 					"content": [
 						{
 							"type": "text",
-							"text": "[MOCKED LIFECYCLE] I will now call spawn_step_agent for step step-code-lifecycle-001 to create a sub-agent for the Code Implementation step."
+							"text": "[MOCKED LIFECYCLE] I will now call spawn_node_agent for step step-code-lifecycle-001 to create a sub-agent for the Code Implementation step."
 						}
 					],
 					"model": "claude-haiku-20250307",
@@ -136,7 +136,7 @@
 			}
 		},
 		{
-			"comment": "Task Agent lifecycle — check_step_status probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'check_step_status'. The text mentions check_step_status and step-code-lifecycle-001 so tests can assert on text content.",
+			"comment": "Task Agent lifecycle — check_node_status probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'check_node_status'. The text mentions check_node_status and step-code-lifecycle-001 so tests can assert on text content.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -151,7 +151,7 @@
 					},
 					{
 						"name": "x-mocked-by",
-						"value": "Dev Proxy mocks.json (task-agent check_step_status probe)"
+						"value": "Dev Proxy mocks.json (task-agent check_node_status probe)"
 					}
 				],
 				"body": {
@@ -161,7 +161,7 @@
 					"content": [
 						{
 							"type": "text",
-							"text": "[MOCKED LIFECYCLE] I will now call check_step_status to monitor the running step agent for step-code-lifecycle-001."
+							"text": "[MOCKED LIFECYCLE] I will now call check_node_status to monitor the running node agent for step-code-lifecycle-001."
 						}
 					],
 					"model": "claude-haiku-20250307",
