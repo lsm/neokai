@@ -229,6 +229,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 56: Expand assigned_agent CHECK constraint to include 'planner'.
 	// SQLite cannot ALTER a CHECK constraint directly, so we recreate the table.
 	runMigration56(db);
+
+	// Migration 57: Create skills table for application-level Skills registry.
+	// Idempotent via CREATE TABLE IF NOT EXISTS.
+	runMigration57(db);
 }
 
 /**
@@ -3706,4 +3710,26 @@ export function runMigration56(db: BunDatabase): void {
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
 	);
+}
+
+/**
+ * Migration 57: Create skills table for application-level Skills registry.
+ * Skills are available globally to any room or session that enables them.
+ * Idempotent via CREATE TABLE IF NOT EXISTS.
+ */
+export function runMigration57(db: BunDatabase): void {
+	db.exec(`
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      display_name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      config TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      built_in INTEGER NOT NULL DEFAULT 0,
+      validation_status TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL
+    )
+  `);
 }
