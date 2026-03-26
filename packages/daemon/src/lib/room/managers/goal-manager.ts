@@ -337,13 +337,44 @@ export class GoalManager {
 	 * General-purpose patch for editable fields (title, description, missionType,
 	 * autonomyLevel, structuredMetrics, schedule, priority, and similar).
 	 * Does NOT change status or recalculate progress.
+	 *
+	 * Auto-computes nextRunAt when schedule is set for a recurring mission,
+	 * mirroring the same logic in createGoal(). This ensures that updating a
+	 * goal's cron expression via goal.update also persists nextRunAt so the
+	 * scheduler (tickRecurringMissions Phase 2) can fire the goal.
 	 */
 	async patchGoal(goalId: string, patch: UpdateGoalParams): Promise<RoomGoal> {
 		const goal = await this.getGoal(goalId);
 		if (!goal) {
 			throw new Error(`Goal not found: ${goalId}`);
 		}
-		const updatedGoal = this.goalRepo.updateGoal(goalId, patch);
+
+		// Auto-compute nextRunAt when schedule is being set for a recurring mission.
+		// The effective mission type is the patched type (if changing) or the existing type.
+		const effectiveMissionType = patch.missionType ?? goal.missionType;
+		let computedPatch: UpdateGoalParams = patch;
+		if (
+			effectiveMissionType === 'recurring' &&
+			patch.schedule != null &&
+			patch.nextRunAt === undefined
+		) {
+			if (!isValidCronExpression(patch.schedule.expression)) {
+				throw new Error(
+					`Invalid cron expression "${patch.schedule.expression}" for recurring mission. ` +
+						'Use 5-field cron or presets (@daily, @weekly, @hourly, @monthly).'
+				);
+			}
+			const tz = patch.schedule.timezone ?? getSystemTimezone();
+			const nextRunAt = getNextRunAt(patch.schedule.expression, tz);
+			if (nextRunAt === null) {
+				throw new Error(
+					`Cron expression "${patch.schedule.expression}" produces no future run times.`
+				);
+			}
+			computedPatch = { ...patch, nextRunAt };
+		}
+
+		const updatedGoal = this.goalRepo.updateGoal(goalId, computedPatch);
 		if (!updatedGoal) {
 			throw new Error(`Failed to update goal: ${goalId}`);
 		}

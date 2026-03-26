@@ -875,3 +875,72 @@ describe('Recurring Missions: plan reuse for subsequent executions', () => {
 		expect(planningCalls.length).toBeGreaterThan(0);
 	});
 });
+
+describe('Recurring Missions: schedule updated via patchGoal triggers execution', () => {
+	let ctx: RuntimeTestContext;
+
+	beforeEach(() => {
+		ctx = createRuntimeTestContext();
+	});
+
+	afterEach(() => {
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	test('recurring goal whose schedule was set via patchGoal fires when nextRunAt passes', async () => {
+		// Simulate a user creating a one-shot goal, then editing it to become recurring.
+		// patchGoal must auto-compute nextRunAt for the goal to ever trigger.
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Edited to recurring',
+			description: 'Was one-shot, now recurring',
+			missionType: 'one_shot',
+		});
+
+		// patchGoal now auto-computes nextRunAt; immediately advance it to the past
+		// so the scheduler fires in the next tick.
+		const patched = await ctx.goalManager.patchGoal(goal.id, {
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+		// patchGoal must have set nextRunAt (the bug was that it didn't)
+		expect(patched.nextRunAt).toBeDefined();
+
+		// Simulate time passing: move nextRunAt into the past
+		await ctx.goalManager.updateNextRunAt(goal.id, Math.floor(Date.now() / 1000) - 60);
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// Scheduler should have started a new execution
+		const activeExecution = ctx.goalManager.getActiveExecution(goal.id);
+		expect(activeExecution).not.toBeNull();
+		expect(activeExecution?.status).toBe('running');
+
+		// nextRunAt should have been advanced to the future
+		const updated = await ctx.goalManager.getGoal(goal.id);
+		expect(updated?.nextRunAt).not.toBeNull();
+		expect(updated!.nextRunAt!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+	});
+
+	test('createGoal auto-computes nextRunAt and scheduler fires without manual override', async () => {
+		// createGoal already auto-computes nextRunAt — verify it, then simulate time passing.
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Auto nextRunAt',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+
+		expect(goal.nextRunAt).toBeDefined();
+		expect(goal.nextRunAt!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+		// Advance nextRunAt to past so scheduler fires
+		await ctx.goalManager.updateNextRunAt(goal.id, Math.floor(Date.now() / 1000) - 60);
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		const activeExecution = ctx.goalManager.getActiveExecution(goal.id);
+		expect(activeExecution).not.toBeNull();
+	});
+});
