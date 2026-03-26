@@ -58,6 +58,18 @@ function createMockSessionFactory() {
 			calls.push({ method: 'startSession', args: [sessionId] });
 			return true;
 		},
+		setSessionMcpServers(_sessionId: string, _mcpServers: Record<string, unknown>) {
+			return true;
+		},
+		async removeWorktree(_workspacePath: string) {
+			return true;
+		},
+		async switchModel(_sessionId: string, model: string, _provider: string) {
+			return { success: true, model };
+		},
+		async getCurrentModel(_sessionId: string) {
+			return { currentModel: 'sonnet', provider: 'anthropic' };
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
