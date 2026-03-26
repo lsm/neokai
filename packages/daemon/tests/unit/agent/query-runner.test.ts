@@ -832,6 +832,24 @@ describe('QueryRunner', () => {
 			expect(metadata.startupMaxRetries).toBeUndefined();
 		});
 	});
+
+	describe('auto-recovery removal regression guards (Task 2.3)', () => {
+		// Regression guards: verify that auto-recovery fields removed in Task 2.1 are absent
+		// from QueryRunnerContext.  If any are reintroduced, TypeScript will catch callers
+		// that omit the field; these runtime checks provide belt-and-suspenders coverage.
+
+		it('should not have onStartupTimeoutAutoRecover in QueryRunnerContext', () => {
+			// createContext() returns a full QueryRunnerContext built from all known fields.
+			// A reintroduced onStartupTimeoutAutoRecover would appear as a defined property.
+			const ctx = createContext();
+			expect((ctx as Record<string, unknown>).onStartupTimeoutAutoRecover).toBeUndefined();
+		});
+
+		it('should not have startupTimeoutAutoRecoverAttempts in QueryRunnerContext', () => {
+			const ctx = createContext();
+			expect((ctx as Record<string, unknown>).startupTimeoutAutoRecoverAttempts).toBeUndefined();
+		});
+	});
 });
 
 describe('QueryRunner error categorization', () => {
