@@ -10,8 +10,29 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
+import { waitForSystemInit } from '../../helpers/sdk-message-helpers';
+import { MinimaxProvider } from '../../../src/lib/providers/minimax-provider';
+import { GlmProvider } from '../../../src/lib/providers/glm-provider';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
+
+/**
+ * Hard-fail if credentials are absent — per CLAUDE.md policy.
+ * Tests must fail with clear messages when secrets are missing, not silently skip.
+ */
+function requireProvidersOrFail(): void {
+	const hasMinimax = new MinimaxProvider().isAvailable();
+	const hasGlm = new GlmProvider().isAvailable();
+
+	if (!hasMinimax || !hasGlm) {
+		const missing: string[] = [];
+		if (!hasMinimax) missing.push('MINIMAX_API_KEY');
+		if (!hasGlm) missing.push('GLM_API_KEY or ZHIPU_API_KEY');
+		throw new Error(
+			`Cross-provider model switch tests require both MiniMax and GLM credentials. Missing: ${missing.join(', ')}`
+		);
+	}
+}
 
 describe('Model Switching', () => {
 	let daemon: DaemonServerContext;
@@ -92,7 +113,7 @@ describe('Model Switching', () => {
 	/**
 	 * Bug 2 investigation: observe system:init.model before and after session.model.switch.
 	 *
-	 * Uses NEOKAI_USE_DEV_PROXY=1 (dev proxy mode).
+	 * Uses NEOKAI_USE_DEV_PROXY=1 (dev proxy mode) with REAL credentials.
 	 *
 	 * The SDK's `system:init` message is emitted BEFORE any API request, so its
 	 * `model` field reflects the `--model` CLI flag used when the query started.
@@ -107,54 +128,18 @@ describe('Model Switching', () => {
 	 * system:init.model will be 'MiniMax-M2.5' vs 'glm-5' — a definitive,
 	 * observable difference that proves whether the switch took effect.
 	 *
+	 * REQUIREMENT: Both MINIMAX_API_KEY and (GLM_API_KEY or ZHIPU_API_KEY) must be set.
+	 * Tests FAIL (not skip) when credentials are absent — by design per CLAUDE.md.
+	 *
 	 * LIMITATION: In dev proxy mode, the SDK mock doesn't write session files, so
 	 * sdkSessionId is cleared on restart and every query starts fresh. This means
 	 * the test passes even if the SDK ignores --model during resume (Bug 2 masked).
 	 * The test IS conclusive in a real environment with actual SDK session files.
 	 */
 	describe('system:init model field observation (Bug 2 investigation)', () => {
-		/**
-		 * Wait for the next system:init SDK message on a session channel.
-		 * Must be called BEFORE the action that triggers a new query turn.
-		 */
-		function waitForSystemInit(
-			sessionId: string,
-			timeout = 30000
-		): Promise<Record<string, unknown>> {
-			return new Promise((resolve, reject) => {
-				let unsubscribe: (() => void) | undefined;
-				let resolved = false;
-
-				const cleanup = () => {
-					if (!resolved) {
-						resolved = true;
-						clearTimeout(timer);
-						unsubscribe?.();
-					}
-				};
-
-				const timer = setTimeout(() => {
-					cleanup();
-					reject(new Error(`Timeout waiting for system:init message after ${timeout}ms`));
-				}, timeout);
-
-				// Subscribe FIRST so no events are missed once the channel is joined
-				unsubscribe = daemon.messageHub.onEvent('state.sdkMessages.delta', (data: unknown) => {
-					if (resolved) return;
-					const delta = data as { added?: Array<Record<string, unknown>> };
-					for (const msg of delta.added ?? []) {
-						if (msg.type === 'system' && msg.subtype === 'init') {
-							cleanup();
-							resolve(msg);
-							return;
-						}
-					}
-				});
-
-				// Join the session channel (idempotent — safe to call multiple times)
-				daemon.messageHub.joinChannel('session:' + sessionId).catch(() => {});
-			});
-		}
+		beforeAll(() => {
+			requireProvidersOrFail();
+		});
 
 		/**
 		 * Cross-provider test: MiniMax-M2.5 → glm-5
@@ -189,7 +174,7 @@ describe('Model Switching', () => {
 			daemon.trackSession(sessionId);
 
 			// --- Phase 1: Capture system:init model BEFORE the switch ---
-			const initialSystemInitPromise = waitForSystemInit(sessionId);
+			const initialSystemInitPromise = waitForSystemInit(daemon, sessionId);
 			await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
 			const initialSystemInit = await initialSystemInitPromise;
 
@@ -211,7 +196,7 @@ describe('Model Switching', () => {
 
 			// --- Phase 3: Capture system:init model AFTER the switch ---
 			// Subscribe AFTER the RPC returns to avoid racing with restart() teardown.
-			const postSwitchSystemInitPromise = waitForSystemInit(sessionId);
+			const postSwitchSystemInitPromise = waitForSystemInit(daemon, sessionId);
 			await sendMessage(daemon, sessionId, 'Say "world" in one word.');
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 
@@ -258,7 +243,7 @@ describe('Model Switching', () => {
 			daemon.trackSession(sessionId);
 
 			// --- Phase 1: Capture system:init model BEFORE the switch ---
-			const initialSystemInitPromise = waitForSystemInit(sessionId);
+			const initialSystemInitPromise = waitForSystemInit(daemon, sessionId);
 			await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
 			const initialSystemInit = await initialSystemInitPromise;
 
@@ -279,7 +264,7 @@ describe('Model Switching', () => {
 			expect(switchResult.model).toBe(SWITCHED_MODEL);
 
 			// --- Phase 3: Capture system:init model AFTER the switch ---
-			const postSwitchSystemInitPromise = waitForSystemInit(sessionId);
+			const postSwitchSystemInitPromise = waitForSystemInit(daemon, sessionId);
 			await sendMessage(daemon, sessionId, 'Say "world" in one word.');
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 

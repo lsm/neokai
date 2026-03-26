@@ -20,55 +20,12 @@
 
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
+import { waitForSystemInit } from '../../helpers/sdk-message-helpers';
 import { mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 const TMP_DIR = tmpdir();
-
-// ─── helper ────────────────────────────────────────────────────────────────
-
-/**
- * Wait for the next system:init SDK message on a session channel.
- * Must be called BEFORE the action that triggers a new query turn.
- */
-function waitForSystemInit(
-	daemon: DaemonServerContext,
-	sessionId: string,
-	timeout = 60000
-): Promise<Record<string, unknown>> {
-	return new Promise((resolve, reject) => {
-		let unsubscribe: (() => void) | undefined;
-		let resolved = false;
-
-		const cleanup = () => {
-			if (!resolved) {
-				resolved = true;
-				clearTimeout(timer);
-				unsubscribe?.();
-			}
-		};
-
-		const timer = setTimeout(() => {
-			cleanup();
-			reject(new Error(`Timeout waiting for system:init after ${timeout}ms`));
-		}, timeout);
-
-		unsubscribe = daemon.messageHub.onEvent('state.sdkMessages.delta', (data: unknown) => {
-			if (resolved) return;
-			const delta = data as { added?: Array<Record<string, unknown>> };
-			for (const msg of delta.added ?? []) {
-				if (msg.type === 'system' && msg.subtype === 'init') {
-					cleanup();
-					resolve(msg);
-					return;
-				}
-			}
-		});
-
-		daemon.messageHub.joinChannel('session:' + sessionId).catch(() => {});
-	});
-}
 
 // ─── main ───────────────────────────────────────────────────────────────────
 
@@ -177,6 +134,7 @@ async function main() {
 					console.log(
 						'  Bug 2 does NOT exist (or is already fixed) — the SDK honors the new model.'
 					);
+					process.exit(0);
 				} else {
 					console.log('CONCLUSION: FAIL — system:init.model did NOT change after switch.');
 					console.log(`  Before: ${turn2SysInit.model}`);
@@ -185,6 +143,7 @@ async function main() {
 						'  Bug 2 CONFIRMED — the SDK is resuming with the old model from the session file.'
 					);
 					console.log('  Fix needed: clear sdkSessionId in restart() during model switch.');
+					process.exit(1);
 				}
 			} catch (err) {
 				turn3Error = String(err);
@@ -200,6 +159,7 @@ async function main() {
 				console.log(
 					'CONCLUSION: INCONCLUSIVE — agent did not respond after switch (possible Bug 2 symptom).'
 				);
+				process.exit(1);
 			}
 		}
 	} finally {
