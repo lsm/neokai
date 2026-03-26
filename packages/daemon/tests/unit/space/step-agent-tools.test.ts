@@ -422,7 +422,6 @@ describe('step-agent-tools: send_message', () => {
 		expect(data.error).toContain('No channel topology declared');
 	});
 
-
 	test('multicast delivers to all specified target roles', async () => {
 		// Add a third member (security) to the group
 		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
@@ -475,7 +474,6 @@ describe('step-agent-tools: send_message', () => {
 		expect(data.success).toBe(false);
 		expect(data.unauthorizedRoles).toContain('security');
 	});
-
 
 	test('hub-spoke: spoke cannot send to other spokes', async () => {
 		// Hub-spoke topology: hub ↔ coder, hub ↔ reviewer (coder cannot send to reviewer directly)

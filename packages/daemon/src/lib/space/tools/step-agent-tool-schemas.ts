@@ -37,23 +37,25 @@ export type ListPeersInput = z.infer<typeof ListPeersSchema>;
  * Schema for `send_message` input.
  *
  * Primary direct messaging tool for step agents. Validates against declared channel
- * topology before routing. Supports three target forms:
+ * topology before routing. Supports four target forms:
  *   - Agent name (role): `target: 'coder'` — DM to the named agent
  *   - Node name: `target: 'node-name'` — fan-out to all agents in the named node
+ *   - Multicast array: `target: ['coder', 'reviewer']` — deliver to multiple roles
  *   - Broadcast to all permitted: `target: '*'`
  */
 export const SendMessageSchema = z.object({
 	/**
 	 * Delivery target: an agent role name for DM, a node name for fan-out,
-	 * or '*' for broadcast to all topology-permitted targets.
+	 * an array of role names for multicast, or '*' for broadcast to all topology-permitted targets.
 	 * - Agent name: delivers to the specific agent (or all agents sharing the role)
 	 * - Node name: fan-out to all agents in the named node
+	 * - Array of role names: multicast to each specified role (all must be permitted)
 	 * - '*': broadcast to all permitted targets
 	 */
 	target: z
-		.string()
+		.union([z.string(), z.array(z.string())])
 		.describe(
-			"Delivery target: agent role name (DM), node name (fan-out), or '*' (broadcast to all permitted targets)"
+			"Delivery target: agent role name (DM), node name (fan-out), array of role names (multicast), or '*' (broadcast to all permitted targets)"
 		),
 	/** The message to send to the target(s). */
 	message: z.string().min(1).describe('The message content to send to the target peer(s)'),

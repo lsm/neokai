@@ -334,6 +334,8 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 					});
 				}
 				targetRoles = permitted;
+			} else if (Array.isArray(target)) {
+				targetRoles = target;
 			} else {
 				targetRoles = [target];
 			}
