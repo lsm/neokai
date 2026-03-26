@@ -10,7 +10,6 @@ import { describe, test, expect } from 'bun:test';
 import {
 	SpawnStepAgentSchema,
 	CheckStepStatusSchema,
-	AdvanceWorkflowSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
@@ -92,33 +91,6 @@ describe('CheckStepStatusSchema', () => {
 
 	test('rejects null step_id', () => {
 		const result = CheckStepStatusSchema.safeParse({ step_id: null });
-		expect(result.success).toBe(false);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// advance_workflow
-// ---------------------------------------------------------------------------
-
-describe('AdvanceWorkflowSchema', () => {
-	test('accepts empty object (no step_result)', () => {
-		const result = AdvanceWorkflowSchema.safeParse({});
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.step_result).toBeUndefined();
-		}
-	});
-
-	test('accepts valid input with step_result', () => {
-		const result = AdvanceWorkflowSchema.safeParse({ step_result: 'All tests passed.' });
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.step_result).toBe('All tests passed.');
-		}
-	});
-
-	test('rejects non-string step_result', () => {
-		const result = AdvanceWorkflowSchema.safeParse({ step_result: 42 });
 		expect(result.success).toBe(false);
 	});
 });
@@ -275,15 +247,14 @@ describe('RequestHumanInputSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 6 tool schemas', () => {
+	test('contains all 5 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
 		expect(keys).toContain('spawn_step_agent');
 		expect(keys).toContain('check_step_status');
-		expect(keys).toContain('advance_workflow');
 		expect(keys).toContain('report_result');
 		expect(keys).toContain('request_human_input');
 		expect(keys).toContain('list_group_members');
-		expect(keys).toHaveLength(6);
+		expect(keys).toHaveLength(5);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {

@@ -182,11 +182,6 @@ describe('buildTaskAgentSystemPrompt — MCP tools', () => {
 		expect(prompt).toContain('check_step_status');
 	});
 
-	test('includes advance_workflow tool', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('advance_workflow');
-	});
-
 	test('includes report_result tool', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
 		expect(prompt).toContain('report_result');
@@ -207,11 +202,6 @@ describe('buildTaskAgentSystemPrompt — workflow execution instructions', () =>
 	test('mentions monitoring completion via check_step_status', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
 		expect(prompt).toContain('check_step_status');
-	});
-
-	test('mentions advancing the workflow', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('advance_workflow');
 	});
 
 	test('includes instructions to call report_result on terminal step', () => {
@@ -237,24 +227,7 @@ describe('buildTaskAgentSystemPrompt — human gate handling', () => {
 	});
 });
 
-describe('buildTaskAgentSystemPrompt — step_result vs report_result.status', () => {
-	test('includes section distinguishing step_result from report_result.status', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('step_result');
-		expect(prompt).toContain('report_result.status');
-	});
-
-	test('describes step_result as free-form string for transition evaluation', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('task_result');
-	});
-
-	test('advance_workflow description mentions passing step_result on verify/review/test steps', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('step_result');
-		expect(prompt).toContain('passed');
-	});
-
+describe('buildTaskAgentSystemPrompt — result handling', () => {
 	test('uses cancelled instead of failed for error handling in Workflow Execution Instructions', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
 		expect(prompt).toContain('cancelled');

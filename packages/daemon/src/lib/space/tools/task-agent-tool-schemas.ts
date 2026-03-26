@@ -1,16 +1,15 @@
 /**
- * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 6
+ * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 5
  * tools available to the Task Agent session.
  *
  * Tools:
  *   spawn_step_agent      — spawn a sub-session for a specific workflow step
  *   check_step_status     — check the status of the current or a specific step's sub-session
- *   advance_workflow      — advance the workflow to the next step after the current step completes
  *   report_result         — report the final task result (terminal tool)
  *   request_human_input   — pause execution and surface a question to the human user
  *   list_group_members    — list all members of the current task's session group
  *
- * This file is consumed by the MCP server factory (Milestone 3). It intentionally
+ * This file is consumed by the MCP server factory. It intentionally
  * contains only schema definitions — no runtime logic or side effects.
  *
  * Style conventions (matching space-agent-tools.ts):
@@ -59,34 +58,6 @@ export const CheckStepStatusSchema = z.object({
 });
 
 export type CheckStepStatusInput = z.infer<typeof CheckStepStatusSchema>;
-
-// ---------------------------------------------------------------------------
-// advance_workflow
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `advance_workflow` input.
- * Advances the workflow to the next step after the current step completes.
- * When a `task_result` transition condition is present on the outgoing transitions,
- * supply `step_result` to evaluate it — e.g. `'passed'` or `'failed: <reason>'`.
- */
-export const AdvanceWorkflowSchema = z.object({
-	/**
-	 * Result from the completed step, used for `task_result` transition condition evaluation.
-	 * Example values: `'passed'`, `'failed: tests failed'`, `'approved'`.
-	 * When evaluating a `task_result` condition, the executor matches this value
-	 * (prefix match) against the condition's `expression` field.
-	 */
-	step_result: z
-		.string()
-		.describe(
-			"Result of the completed step — used for 'task_result' condition evaluation. " +
-				"Example: 'passed' or 'failed: <reason>'. Prefix-match against the condition's expression."
-		)
-		.optional(),
-});
-
-export type AdvanceWorkflowInput = z.infer<typeof AdvanceWorkflowSchema>;
 
 // ---------------------------------------------------------------------------
 // report_result
@@ -163,7 +134,6 @@ export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 export const TASK_AGENT_TOOL_SCHEMAS = {
 	spawn_step_agent: SpawnStepAgentSchema,
 	check_step_status: CheckStepStatusSchema,
-	advance_workflow: AdvanceWorkflowSchema,
 	report_result: ReportResultSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,

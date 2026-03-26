@@ -277,7 +277,6 @@ export class TaskAgentManager {
 			const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
 
 			// --- Build and attach MCP server with live runtime dependencies
-			const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
 			const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
 
 			const workflowRunId = workflowRun?.id ?? '';
@@ -287,7 +286,6 @@ export class TaskAgentManager {
 				space,
 				workflowRunId,
 				workspacePath: space.workspacePath,
-				runtime,
 				workflowManager: this.config.spaceWorkflowManager,
 				taskRepo: this.config.taskRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
@@ -981,7 +979,7 @@ export class TaskAgentManager {
 
 		// Notify the Task Agent that a sub-session has completed.
 		// Include the agent's result summary so the Task Agent has immediate context.
-		// This sends a defer message so the Task Agent can call advance_workflow.
+		// This sends a defer message so the Task Agent can act on the completed step.
 		const taskAgentSession = this.taskAgentSessions.get(taskId);
 		if (taskAgentSession) {
 			try {
@@ -992,7 +990,7 @@ export class TaskAgentManager {
 					: '';
 				await this.injectMessageIntoSession(
 					taskAgentSession,
-					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_step_status to verify, then call advance_workflow to proceed.`,
+					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_step_status to verify completion status.`,
 					'defer'
 				);
 			} catch (err) {
@@ -1127,7 +1125,6 @@ export class TaskAgentManager {
 		const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
 
 		// --- Build and attach MCP server (runtime-only, not persisted)
-		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
 		const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
 
 		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
@@ -1137,7 +1134,6 @@ export class TaskAgentManager {
 			space,
 			workflowRunId: rehydrateWorkflowRunId,
 			workspacePath: space.workspacePath,
-			runtime,
 			workflowManager: this.config.spaceWorkflowManager,
 			taskRepo: this.config.taskRepo,
 			workflowRunRepo: this.config.workflowRunRepo,

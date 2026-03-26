@@ -199,83 +199,6 @@ describe('SpaceRuntime — notification events', () => {
 	// workflow_run_needs_attention
 	// -------------------------------------------------------------------------
 
-	describe('workflow_run_needs_attention', () => {
-		test('emits event when human gate blocks advancement', async () => {
-			const workflow = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
-					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
-				],
-				[{ type: 'human' }]
-			);
-
-			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			await runtime.executeTick();
-
-			expect(sink.events).toHaveLength(1);
-			const evt = sink.events[0];
-			expect(evt.kind).toBe('workflow_run_needs_attention');
-			if (evt.kind === 'workflow_run_needs_attention') {
-				expect(evt.spaceId).toBe(SPACE_ID);
-				expect(evt.runId).toBe(run.id);
-				expect(typeof evt.reason).toBe('string');
-				expect(evt.reason.length).toBeGreaterThan(0);
-				expect(typeof evt.timestamp).toBe('string');
-			}
-		});
-
-		test('emits event with the WorkflowTransitionError message as reason', async () => {
-			const workflow = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
-					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
-				],
-				[{ type: 'human' }]
-			);
-
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			await runtime.executeTick();
-
-			const evt = sink.events[0];
-			// WorkflowGateError message should contain human-gate context
-			expect(evt.kind).toBe('workflow_run_needs_attention');
-			if (evt.kind === 'workflow_run_needs_attention') {
-				expect(evt.reason).toMatch(/human/i);
-			}
-		});
-
-		test('does NOT re-emit on subsequent ticks (run already in needs_attention status)', async () => {
-			const workflow = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
-					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
-				],
-				[{ type: 'human' }]
-			);
-
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			// First tick — gate fires
-			await runtime.executeTick();
-			expect(sink.events).toHaveLength(1);
-
-			// Second tick — run is needs_attention, processRunTick returns early
-			await runtime.executeTick();
-			expect(sink.events).toHaveLength(1); // still just one
-		});
-	});
-
 	// -------------------------------------------------------------------------
 	// task_needs_attention
 	// -------------------------------------------------------------------------
@@ -425,87 +348,6 @@ describe('SpaceRuntime — notification events', () => {
 			// Second tick — still deduped (no new events)
 			await runtime.executeTick();
 			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(2);
-		});
-	});
-
-	// -------------------------------------------------------------------------
-	// workflow_run_completed
-	// -------------------------------------------------------------------------
-
-	describe('workflow_run_completed', () => {
-		test('emits event when terminal step is completed', async () => {
-			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: STEP_A, name: 'Only Step', agentId: AGENT_CODER },
-			]);
-
-			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			await runtime.executeTick();
-
-			expect(sink.events).toHaveLength(1);
-			const evt = sink.events[0];
-			expect(evt.kind).toBe('workflow_run_completed');
-			if (evt.kind === 'workflow_run_completed') {
-				expect(evt.spaceId).toBe(SPACE_ID);
-				expect(evt.runId).toBe(run.id);
-				expect(evt.status).toBe('completed');
-				expect(typeof evt.timestamp).toBe('string');
-			}
-		});
-
-		test('emits event after multi-step workflow completes', async () => {
-			const workflow = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
-					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
-				],
-				[{ type: 'always' }]
-			);
-
-			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-
-			// Complete step A → advance to step B
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			await runtime.executeTick();
-
-			// No completed event yet (still running)
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
-
-			// Complete step B → run completes
-			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId === STEP_B);
-			expect(stepBTask).toBeDefined();
-			taskRepo.updateTask(stepBTask!.id, { status: 'completed' });
-			await runtime.executeTick();
-
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
-			expect(completedEvents).toHaveLength(1);
-			if (completedEvents[0].kind === 'workflow_run_completed') {
-				expect(completedEvents[0].runId).toBe(run.id);
-				expect(completedEvents[0].status).toBe('completed');
-			}
-		});
-
-		test('does NOT emit completed event for normal step advancement (mid-workflow)', async () => {
-			const workflow = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
-					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
-				],
-				[{ type: 'always' }]
-			);
-
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			await runtime.executeTick();
-
-			// Should have no events — just a normal advance
-			expect(sink.events).toHaveLength(0);
 		});
 	});
 
@@ -1066,51 +908,6 @@ describe('SpaceRuntime — notification events', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// setNotificationSink() — post-construction wiring
-	// -------------------------------------------------------------------------
-
-	describe('setNotificationSink()', () => {
-		test('replaces the sink at runtime before first tick', async () => {
-			const newSink = new MockNotificationSink();
-			// Create runtime WITHOUT a sink (uses NullNotificationSink)
-			const rt = makeRuntime({ notificationSink: undefined });
-
-			// Wire in the new sink before the first tick
-			rt.setNotificationSink(newSink);
-
-			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-wire', name: 'Only Step', agentId: AGENT_CODER },
-			]);
-
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			await rt.executeTick();
-
-			// Original sink should NOT have received events
-			expect(sink.events).toHaveLength(0);
-			// New sink SHOULD have received workflow_run_completed
-			expect(newSink.events).toHaveLength(1);
-			expect(newSink.events[0].kind).toBe('workflow_run_completed');
-		});
-
-		test('NullNotificationSink (default) silently drops all events', async () => {
-			// Create runtime without any sink — no error should be thrown
-			const rt = makeRuntime({ notificationSink: undefined });
-
-			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-null', name: 'Only Step', agentId: AGENT_CODER },
-			]);
-
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			// Should not throw
-			await expect(rt.executeTick()).resolves.toBeUndefined();
-		});
-	});
-
-	// -------------------------------------------------------------------------
 	// Full pipeline — concurrent events in a single tick
 	// Verifies that multiple distinct event kinds are ALL delivered when they
 	// occur in the same SpaceRuntime tick.
@@ -1146,46 +943,6 @@ describe('SpaceRuntime — notification events', () => {
 			const reasons = naEvents.map((e) => (e.kind === 'task_needs_attention' ? e.reason : ''));
 			expect(reasons).toContain('Test failed');
 			expect(reasons).toContain('Build failed');
-		});
-
-		test('workflow run completes AND another task enters needs_attention in the same tick', async () => {
-			// Run A: single-step, completes → workflow_run_completed
-			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-mix-a', name: 'Only Step A', agentId: AGENT_CODER },
-			]);
-			// Run B: single-step, enters needs_attention → task_needs_attention
-			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-mix-b', name: 'Only Step B', agentId: AGENT_CODER },
-			]);
-
-			const { run: runA, tasks: tasksA } = await runtime.startWorkflowRun(
-				SPACE_ID,
-				wfA.id,
-				'Run A'
-			);
-			const { tasks: tasksB } = await runtime.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
-
-			taskRepo.updateTask(tasksA[0].id, { status: 'completed' });
-			taskRepo.updateTask(tasksB[0].id, { status: 'needs_attention', error: 'Compile error' });
-
-			// Single tick processes both runs — each emits a different event kind
-			await runtime.executeTick();
-
-			expect(sink.events).toHaveLength(2);
-
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
-			expect(completedEvents).toHaveLength(1);
-			if (completedEvents[0].kind === 'workflow_run_completed') {
-				expect(completedEvents[0].runId).toBe(runA.id);
-				expect(completedEvents[0].status).toBe('completed');
-			}
-
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
-			expect(naEvents).toHaveLength(1);
-			if (naEvents[0].kind === 'task_needs_attention') {
-				expect(naEvents[0].taskId).toBe(tasksB[0].id);
-				expect(naEvents[0].reason).toBe('Compile error');
-			}
 		});
 
 		test('workflow task needs_attention AND standalone task needs_attention in the same tick', async () => {
@@ -1257,54 +1014,6 @@ describe('SpaceRuntime — notification events', () => {
 					expect(evt.elapsedMs).toBeGreaterThan(1000);
 					expect(evt.spaceId).toBe(SPACE_ID);
 				}
-			}
-		});
-
-		test('gate blocked AND workflow_run_completed in the same tick — both events delivered', async () => {
-			// Run A: two steps, step A completes, gate blocks → workflow_run_needs_attention
-			const wfA = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: 'step-gate-a1', name: 'Plan', agentId: AGENT_CODER },
-					{ id: 'step-gate-a2', name: 'Code', agentId: AGENT_CODER },
-				],
-				[{ type: 'human' }]
-			);
-			// Run B: single step, completes → workflow_run_completed
-			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-gate-b', name: 'Quick Step', agentId: AGENT_CODER },
-			]);
-
-			const { run: runA, tasks: tasksA } = await runtime.startWorkflowRun(
-				SPACE_ID,
-				wfA.id,
-				'Run A'
-			);
-			const { run: runB, tasks: tasksB } = await runtime.startWorkflowRun(
-				SPACE_ID,
-				wfB.id,
-				'Run B'
-			);
-
-			taskRepo.updateTask(tasksA[0].id, { status: 'completed' }); // gate will block
-			taskRepo.updateTask(tasksB[0].id, { status: 'completed' }); // terminal → completes
-
-			// Single tick — gate fires for run A, completion fires for run B
-			await runtime.executeTick();
-
-			const gateEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
-			expect(gateEvents).toHaveLength(1);
-			if (gateEvents[0].kind === 'workflow_run_needs_attention') {
-				expect(gateEvents[0].runId).toBe(runA.id);
-				expect(gateEvents[0].reason).toMatch(/human/i);
-			}
-
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
-			expect(completedEvents).toHaveLength(1);
-			if (completedEvents[0].kind === 'workflow_run_completed') {
-				expect(completedEvents[0].runId).toBe(runB.id);
-				expect(completedEvents[0].status).toBe('completed');
 			}
 		});
 	});

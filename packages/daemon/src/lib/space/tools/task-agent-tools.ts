@@ -1,10 +1,9 @@
 /**
  * Task Agent Tools — MCP tool handlers for the Task Agent session.
  *
- * These handlers implement the business logic for the 7 Task Agent tools:
+ * These handlers implement the business logic for the 6 Task Agent tools:
  *   spawn_step_agent      — Spawn a sub-session for a workflow step's assigned agent
  *   check_step_status     — Poll the status of a running step agent sub-session
- *   advance_workflow      — Advance the workflow to the next step after current step completes
  *   report_result         — Mark the task as completed/failed and record the result
  *   request_human_input   — Pause execution and surface a question to the human user
  *   list_group_members    — List all members of the current task's session group
@@ -27,8 +26,6 @@ import type { Space, McpServerConfig } from '@neokai/shared';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { AgentSessionInit } from '../../agent/agent-session';
-import type { SpaceRuntime } from '../runtime/space-runtime';
-import { WorkflowGateError } from '../runtime/workflow-executor';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -42,7 +39,6 @@ import type { ToolResult } from './tool-result';
 import {
 	SpawnStepAgentSchema,
 	CheckStepStatusSchema,
-	AdvanceWorkflowSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
@@ -52,7 +48,6 @@ import { resolveNodeAgents } from '@neokai/shared';
 import type {
 	SpawnStepAgentInput,
 	CheckStepStatusInput,
-	AdvanceWorkflowInput,
 	ReportResultInput,
 	RequestHumanInputInput,
 	ListGroupMembersInput,
@@ -141,8 +136,6 @@ export interface TaskAgentToolsConfig {
 	workflowRunId: string;
 	/** Absolute path to the workspace — forwarded to agent sessions. */
 	workspacePath: string;
-	/** SpaceRuntime for accessing WorkflowExecutors by run ID. */
-	runtime: SpaceRuntime;
 	/** Workflow manager for loading workflow definitions. */
 	workflowManager: SpaceWorkflowManager;
 	/** Task repository for direct DB reads. */
@@ -214,7 +207,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		space,
 		workflowRunId,
 		workspacePath,
-		runtime,
 		workflowManager,
 		taskRepo,
 		workflowRunRepo,
@@ -270,7 +262,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Find the pending task for this step (created by WorkflowExecutor.followTransition)
+			// Find the pending task for this step (created when the workflow node was activated)
 			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
 			const stepTasks = allRunTasks.filter((t) => t.workflowNodeId === step_id);
 			if (stepTasks.length === 0) {
@@ -278,7 +270,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					success: false,
 					error:
 						`No task found for step "${step.name}" (id: ${step_id}). ` +
-						`Ensure advance_workflow was called first to create the step task.`,
+						`The step task may not have been created yet — check that the workflow run is active.`,
 				});
 			}
 
@@ -592,145 +584,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		},
 
 		/**
-		 * Advance the workflow to the next step after the current step completes.
-		 *
-		 * Pre-conditions:
-		 * - The current step's SpaceTask must have status = 'completed' in the DB
-		 *   (set by the completion callback registered in spawn_step_agent)
-		 *
-		 * Flow:
-		 * 1. Get the WorkflowExecutor for this run
-		 * 2. Verify the current step task is completed
-		 * 3. If the main task is needs_attention (waiting for human), reset to in_progress
-		 * 4. Call executor.advance() to evaluate transitions and move to next step
-		 * 5. Handle WorkflowGateError → return gate-blocked status (caller calls request_human_input)
-		 * 6. Return next step info (or terminal state)
-		 *
-		 * Note: WorkflowExecutor.advance() accepts `{ stepResult?: string }` for
-		 * task_result condition evaluation. The `step_result` field from the tool input
-		 * is forwarded to the executor, which uses it as a fallback when the DB result
-		 * is absent (DB result takes precedence — the most recently completed task on
-		 * the step is queried first).
-		 */
-		async advance_workflow(args: AdvanceWorkflowInput): Promise<ToolResult> {
-			const executor = runtime.getExecutor(workflowRunId);
-			if (!executor) {
-				return jsonResult({
-					success: false,
-					error:
-						`No active executor found for workflow run: ${workflowRunId}. ` +
-						`The run may have completed or been cancelled.`,
-				});
-			}
-
-			if (executor.isComplete()) {
-				return jsonResult({
-					success: false,
-					error: 'Workflow run is already complete. Call report_result to close the task.',
-				});
-			}
-
-			const currentStep = executor.getCurrentStep();
-			if (!currentStep) {
-				return jsonResult({
-					success: false,
-					error: 'No current step on the workflow executor. The run may be in an invalid state.',
-				});
-			}
-
-			// Verify the current step's task is completed in the DB
-			const stepTasks = taskRepo
-				.listByWorkflowRun(workflowRunId)
-				.filter((t) => t.workflowNodeId === currentStep.id);
-
-			const allCompleted = stepTasks.length > 0 && stepTasks.every((t) => t.status === 'completed');
-
-			if (!allCompleted) {
-				const taskStatus =
-					stepTasks.length > 0 ? stepTasks[stepTasks.length - 1].status : 'not_found';
-				return jsonResult({
-					success: false,
-					error:
-						`Current step "${currentStep.name}" has not completed yet. ` +
-						`Task status: ${taskStatus}. ` +
-						`Wait for the step agent to finish before calling advance_workflow.`,
-					currentNodeId: currentStep.id,
-					currentStepName: currentStep.name,
-					taskStatus,
-				});
-			}
-
-			// If the main task is needs_attention (waiting after a human gate), reset to in_progress
-			const mainTask = taskRepo.getTask(taskId);
-			if (mainTask && mainTask.status === 'needs_attention') {
-				try {
-					await taskManager.setTaskStatus(taskId, 'in_progress');
-				} catch {
-					// Non-fatal — if transition fails, continue with advance attempt
-				}
-			}
-
-			try {
-				const { step: nextStep, tasks: newTasks } = await executor.advance({
-					stepResult: args.step_result,
-				});
-
-				if (newTasks.length === 0) {
-					// Terminal step reached — executor marked run as completed.
-					// `nextStep` is the step that was just completed (the terminal one).
-					return jsonResult({
-						success: true,
-						terminal: true,
-						terminalStep: {
-							id: nextStep.id,
-							name: nextStep.name,
-						},
-						message:
-							'Workflow has reached a terminal step. ' +
-							`Call report_result with status "completed" to close the task.`,
-					});
-				}
-
-				// Workflow advanced to the next step — resolve and store channel topology for the new step.
-				// This ensures Task Agent can send_message to agents in the new step's topology.
-				runtime.resolveAndStoreChannels(
-					workflowRunId,
-					'',
-					nextStep,
-					runtime.getWorkflowChannels(workflowRunId)
-				);
-
-				return jsonResult({
-					success: true,
-					terminal: false,
-					nextStep: {
-						id: nextStep.id,
-						name: nextStep.name,
-						instructions: nextStep.instructions,
-						agentId: nextStep.agentId,
-					},
-					newTasks: newTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-					message: `Workflow advanced to step "${nextStep.name}". Call spawn_step_agent to execute it.`,
-				});
-			} catch (err) {
-				if (err instanceof WorkflowGateError) {
-					return jsonResult({
-						success: true,
-						gateBlocked: true,
-						message: err.message,
-						instruction:
-							'A human gate is blocking workflow advancement. ' +
-							'Call request_human_input to surface this to the human user. ' +
-							'When the human responds, call advance_workflow again.',
-					});
-				}
-
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
-			}
-		},
-
-		/**
 		 * Report the final outcome of the task and close the task lifecycle.
 		 *
 		 * Updates the main SpaceTask status to one of:
@@ -1041,8 +894,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * Gate re-engagement:
 		 * When the human responds (via space.task.sendMessage), the message is injected
 		 * into this Task Agent session as a normal conversation message. The Task Agent
-		 * receives it, sees the human's response, and calls advance_workflow to proceed.
-		 * The advance_workflow handler resets the task to in_progress before advancing.
+		 * receives it, sees the human's response, and can proceed accordingly.
 		 */
 		async request_human_input(args: RequestHumanInputInput): Promise<ToolResult> {
 			const { question, context: questionContext } = args;
@@ -1089,7 +941,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						'Human input has been requested. The question is now visible to the human in the UI. ' +
 						'Wait — do not call any other tools until the human responds. ' +
 						"When the human's response appears in the conversation, " +
-						'read it and then call advance_workflow to continue execution.',
+						'read it and then continue as appropriate.',
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -1125,14 +977,6 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				'Call this periodically after spawn_step_agent to detect when a step has completed.',
 			CheckStepStatusSchema.shape,
 			(args) => handlers.check_step_status(args)
-		),
-		tool(
-			'advance_workflow',
-			'Advance the workflow to the next step after the current step completes. ' +
-				'The current step must be completed before calling this. ' +
-				'Returns the next step info, a terminal state, or a gate-blocked status.',
-			AdvanceWorkflowSchema.shape,
-			(args) => handlers.advance_workflow(args)
 		),
 		tool(
 			'report_result',
