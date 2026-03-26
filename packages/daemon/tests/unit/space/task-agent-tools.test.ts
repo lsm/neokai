@@ -27,6 +27,7 @@ import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-work
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
+import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
 import {
 	createTaskAgentToolHandlers,
 	createTaskAgentMcpServer,
