@@ -53,9 +53,14 @@ export class CompletionDetector {
 		channels: WorkflowChannel[] = [],
 		nodes: WorkflowNode[] = []
 	): boolean {
-		const tasks = this.taskRepo.listByWorkflowRun(workflowRunId);
+		// Only consider node-agent tasks (those with workflowNodeId set).
+		// The orchestration task (Task Agent's own task) has workflowNodeId = null
+		// and is still in_progress while this check runs — it must be excluded.
+		const tasks = this.taskRepo
+			.listByWorkflowRun(workflowRunId)
+			.filter((t) => t.workflowNodeId != null);
 
-		// Workflow has not started yet — no tasks created
+		// Workflow has not started yet — no node tasks created
 		if (tasks.length === 0) return false;
 
 		// Any non-terminal task prevents completion
