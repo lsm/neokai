@@ -35,7 +35,7 @@ Check if `@anthropic-ai/claude-agent-sdk` has a newer version than the currently
 
 **Subtasks:**
 1. Run `bun install` at the worktree root to install all dependencies.
-2. Check the current pinned version of `@anthropic-ai/claude-agent-sdk` in `packages/daemon/package.json` (currently `0.2.81`).
+2. Read the currently pinned version of `@anthropic-ai/claude-agent-sdk` from `packages/daemon/package.json` (do not hardcode -- read the actual value each cycle).
 3. Check the latest published version:
    ```bash
    bun npm info @anthropic-ai/claude-agent-sdk version
@@ -61,7 +61,7 @@ Check if `@anthropic-ai/claude-agent-sdk` has a newer version than the currently
     ```bash
     bun run check
     ```
-13. Create a feature branch, commit, push, and create a PR targeting `dev` via `gh pr create`. PR title should be: `chore(deps): update @anthropic-ai/claude-agent-sdk to <version>`.
+13. Create a feature branch **from `dev`**, commit, push, and create a PR targeting `dev` via `gh pr create`. PR title should be: `chore(deps): update @anthropic-ai/claude-agent-sdk to <version>`.
 
 **Acceptance Criteria:**
 - `@anthropic-ai/claude-agent-sdk` is updated to the latest version with an exact pin (no `^` or `~`).
@@ -84,21 +84,24 @@ Update all non-SDK dependencies across all workspace `package.json` files to the
 
 **Subtasks:**
 1. Run `bun install` at the worktree root.
-2. Check for outdated packages across the monorepo. For each `package.json`, compare pinned versions against latest:
+2. Check for outdated packages across the monorepo. For each dependency in each `package.json`, compare the pinned version against the latest published version using `bun npm info <pkg> version`. Example:
+   ```bash
+   bun npm info preact version
+   bun npm info vite version
+   bun npm info tailwindcss version
+   # ... repeat for each dependency
+   ```
+   Alternatively, if `bun outdated` is available in the current Bun version, use it per workspace:
    ```bash
    bun outdated
-   ```
-   Or check individually for packages where `bun outdated` does not cover workspaces:
-   ```bash
    cd packages/daemon && bun outdated
    cd packages/web && bun outdated
-   cd packages/cli && bun outdated
-   cd packages/e2e && bun outdated
-   cd packages/ui && bun outdated
-   cd packages/shared && bun outdated
+   # ... etc.
    ```
+   If `bun outdated` is not available, fall back to the `bun npm info` approach above.
 3. If all packages are up to date, report "All dependencies are current" and stop.
-4. For each outdated package, update the version in the relevant `package.json` to the latest stable version. Use exact versions only (no `^` or `~`). Do NOT update `@anthropic-ai/claude-agent-sdk` -- that is handled in Task 1.
+4. For each outdated package, update the version in the relevant `package.json` to the latest stable version. Use exact versions only (no `^` or `~`). Do NOT update `@anthropic-ai/claude-agent-sdk` -- that is handled in Task 1. `@github/copilot-sdk` is included in this bulk update (no special handling needed).
+   **Caution with major version bumps:** For major version upgrades of core dependencies (`preact`, `vite`, `tailwindcss`, `marked`, `highlight.js`), check the changelog for breaking changes before updating. If migration effort is significant, skip the major bump and note it in the PR description for manual follow-up.
 5. When updating shared dependencies that appear in multiple packages (e.g., `preact`, `vite`, `@types/bun`, `tailwindcss`, `vitest`, `typescript`), ensure all packages use the same version.
 6. Run `bun install` to update the lockfile.
 7. Run typecheck:
@@ -116,7 +119,7 @@ Update all non-SDK dependencies across all workspace `package.json` files to the
     bun run check
     ```
 11. If any tests fail due to API changes in updated dependencies, fix the code to work with the new versions.
-12. Create a feature branch, commit, push, and create a PR targeting `dev` via `gh pr create`. PR title should be: `chore(deps): update all dependencies`.
+12. Create a feature branch **from `dev`**, commit, push, and create a PR targeting `dev` via `gh pr create`. PR title should be: `chore(deps): update all dependencies`. If any major version bumps were skipped, note them in the PR description.
 
 **Acceptance Criteria:**
 - All non-SDK dependencies are updated to latest stable versions with exact pins.
@@ -132,22 +135,25 @@ Update all non-SDK dependencies across all workspace `package.json` files to the
 
 ## Task 3: Audit and Enforce Exact Version Pins
 
-**Type:** general
+**Type:** coder
 
 **Description:**
-Verify that all dependency versions across every `package.json` in the monorepo are exact (no `~` or `^` prefixes). This task runs after Tasks 1 and 2 to catch any range specifiers that may have been introduced.
+Verify that all dependency versions across every `package.json` in the monorepo are exact (no `~` or `^` prefixes). This task runs after Tasks 1 and 2 to catch any range specifiers that may have been introduced. If violations are found, fix them directly.
 
 **Subtasks:**
-1. Search all `package.json` files for version strings with `~` or `^` prefixes:
+1. Run `bun install` at the worktree root.
+2. Search all `package.json` files for version strings with `~` or `^` prefixes:
    ```bash
    grep -rn '[\"\x27]\(\^\|~\)[0-9]' packages/*/package.json package.json
    ```
-2. If any are found, report which packages and dependencies have range specifiers.
-3. If Task 1 or Task 2 PRs are still open, request amendments to fix the pinning in those PRs.
-4. If the range specifiers exist in already-merged code, create a coder task to remove them.
+3. If none are found, report "All versions are exact" and stop. The task is complete.
+4. If any are found, remove the `~` or `^` prefix from each version string, keeping the version number intact.
+5. Run `bun install` to update the lockfile after changes.
+6. Run `bun run typecheck` and `bun run check` to verify nothing is broken.
+7. Create a feature branch **from `dev`**, commit, push, and create a PR targeting `dev` via `gh pr create`. PR title: `chore(deps): pin all dependency versions to exact`.
 
 **Acceptance Criteria:**
 - All `package.json` files across the monorepo use exact version pins (no `~` or `^`).
-- Any violations are either fixed in the open PRs from Tasks 1/2 or flagged for a follow-up fix.
+- If violations were found and fixed, changes are on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.
 
 **Dependencies:** Task 1, Task 2
