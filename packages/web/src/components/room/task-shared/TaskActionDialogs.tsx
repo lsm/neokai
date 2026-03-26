@@ -399,6 +399,11 @@ export function SetStatusModal({ task, isOpen, onClose, onConfirm }: SetStatusMo
 							setSelectedStatus((val as TaskStatus) || null);
 							setError(null);
 						}}
+						onInput={(e) => {
+							const val = (e.target as HTMLSelectElement).value;
+							setSelectedStatus((val as TaskStatus) || null);
+							setError(null);
+						}}
 					>
 						<option value="">Select a status…</option>
 						{availableStatuses.map((s) => (

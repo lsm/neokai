@@ -577,6 +577,7 @@ function GoalForm({
 							<select
 								value={schedulePreset}
 								onChange={(e) => setSchedulePreset((e.target as HTMLSelectElement).value)}
+								onInput={(e) => setSchedulePreset((e.target as HTMLSelectElement).value)}
 								class="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
 								data-testid="schedule-preset"
 							>
@@ -956,6 +957,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 							<select
 								value={schedulePreset}
 								onChange={(e) => setSchedulePreset((e.target as HTMLSelectElement).value)}
+								onInput={(e) => setSchedulePreset((e.target as HTMLSelectElement).value)}
 								class="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
 								data-testid="schedule-preset"
 							>
