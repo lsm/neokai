@@ -215,7 +215,7 @@ describe('SetStatusModal', () => {
 		);
 
 		const select = getByTestId('modal').querySelector('select') as HTMLSelectElement;
-		fireEvent.change(select, { target: { value: 'completed' } });
+		fireEvent.input(select, { target: { value: 'completed' } });
 
 		fireEvent.click(getByTestId('set-status-confirm'));
 

@@ -60,10 +60,9 @@ function ConflictSelector({
 		<select
 			aria-label={`Conflict resolution for ${name}`}
 			value={value}
-			onChange={(e) =>
-				onChange((e.target as HTMLSelectElement).value as ConflictResolutionStrategy)
+			onInput={(e) =>
+				onChange((e.currentTarget as HTMLSelectElement).value as ConflictResolutionStrategy)
 			}
-			onInput={(e) => onChange((e.target as HTMLSelectElement).value as ConflictResolutionStrategy)}
 			class="text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
 		>
 			{(Object.keys(STRATEGY_LABELS) as ConflictResolutionStrategy[]).map((s) => (
