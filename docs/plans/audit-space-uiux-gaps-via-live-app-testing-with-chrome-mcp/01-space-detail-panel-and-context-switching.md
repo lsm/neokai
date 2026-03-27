@@ -38,7 +38,8 @@ Build a space-specific ContextPanel (`SpaceDetailPanel`) that mirrors `RoomConte
 3. **Pinned items**: Dashboard button (navigates to `/space/:id`, highlighted when no session/task selected) and Space Agent button (navigates to `/space/:id/agent`, highlighted when `currentSpaceSessionIdSignal.value === 'space:chat:{spaceId}'`). Use same button styling as RoomContextPanel (lines 219-267)
 4. **Workflow Runs section**: Collapsible section showing `spaceStore.activeRuns.value`. Each run is expandable to show its tasks (filter `spaceStore.tasks.value` by `workflowRunId`). Run items show status dot + title. Task items show TaskStatusDot + title, clickable to navigate to `/space/:id/task/:taskId`
 5. **Tasks section**: Orphan tasks (tasks without a `workflowRunId`) with active/review/done tab filter. Same pattern as RoomContextPanel's orphan tasks section (lines 392-429). Click navigates to `/space/:id/task/:taskId`
-6. **Sessions section**: Collapsible, default collapsed, shows sessions from space. Include a "+" button to create a new session (future use). Click navigates to `/space/:id/session/:sessionId`
+6. **Sessions section**: Collapsible, default collapsed. Shows: (1) the space agent session (`space:chat:{spaceId}`) — always listed, (2) task agent sessions linked via `SpaceTask.taskAgentSessionId`, (3) manually created sessions. Include a "+" button to create a new session (future use). Click navigates to `/space/:id/session/:sessionId`
+7. **Empty states**: Each section needs an empty state: "No active runs" for Workflow Runs, "No tasks" for Tasks, "No sessions" for Sessions (matching RoomContextPanel's empty state patterns)
 7. Accept props: `spaceId: string`, `onNavigate?: () => void` (for mobile drawer close)
 8. Write unit test in `packages/web/src/islands/__tests__/SpaceDetailPanel.test.tsx` covering: stats strip counts, pinned item highlighting, workflow run expansion, task tab filtering, click navigation
 
@@ -87,32 +88,4 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
-### Task 1.3: Add Space Agent Navigation to Router
-
-**Description:** Add the `navigateToSpaceAgent()` router function following the exact pattern of `navigateToRoomAgent()`. This is needed by SpaceDetailPanel's "Space Agent" pinned item and by M2's ChatContainer integration.
-
-**Agent type:** coder
-
-**Key files to reference:**
-- `packages/web/src/lib/router.ts` — `navigateToRoomAgent()` at ~line 358 as the pattern
-- `packages/web/src/lib/signals.ts` — may need `currentSpaceSessionIdSignal` updates
-
-**Subtasks:**
-1. In `router.ts`, add `navigateToSpaceAgent(spaceId: string, replace = false)` function:
-   - Set `currentSpaceIdSignal.value = spaceId`
-   - Set `currentSpaceSessionIdSignal.value = 'space:chat:' + spaceId`
-   - Clear `currentSpaceTaskIdSignal.value = null`
-   - Push URL `/space/${spaceId}/agent`
-2. In the URL parser (the `parseUrl` or route handler), add handling for `/space/:id/agent` pattern:
-   - Set `currentSpaceIdSignal` and `currentSpaceSessionIdSignal` appropriately
-3. Export the function
-4. Write unit test verifying signal state after calling `navigateToSpaceAgent()`
-
-**Acceptance criteria:**
-- `navigateToSpaceAgent('abc')` sets signals correctly and pushes `/space/abc/agent` URL
-- URL `/space/:id/agent` is parsed correctly on page load (deep link support)
-- Function is exported and available for import
-
-**Dependencies:** None
-
-Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+**Note:** The `navigateToSpaceAgent()` router function needed by SpaceDetailPanel's "Space Agent" button is in M2 Task 2.4. Task 1.1 should use it as an import — if Task 2.4 lands first, import directly; otherwise, use a placeholder `navigateToSpaceSession(spaceId, 'space:chat:' + spaceId)` which achieves the same navigation.

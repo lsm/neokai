@@ -57,9 +57,9 @@ Spaces should follow this exact paradigm, adapted for workflow-driven multi-agen
 |--------|-----------|---------|
 | **NavRail** | "Spaces" icon selected | Same as now |
 | **ContextPanel** | `SpaceContextPanel` (existing) | Thread-style space list with expandable tasks, active/archived filter, "Create Space" button |
-| **ContentPanel** | `SpacesPage` (existing) | ChatContainer for `spaces:global` session — chat with Global Spaces Agent |
+| **ContentPanel** | `SpacesPage` (existing) | `SpacesPage` is a thin wrapper that renders `<ChatContainer sessionId="spaces:global" />` — a full chat interface with the Global Spaces Agent |
 
-**This layer already works correctly.** The Global Spaces Agent can create/list/manage spaces via MCP tools.
+**This layer already works correctly.** `SpacesPage` (at `packages/web/src/islands/SpacesPage.tsx`) renders ChatContainer with the pre-provisioned `spaces:global` session. The Global Spaces Agent can create/list/manage spaces via MCP tools.
 
 ### Layer 2: Individual Space (`/space/:id`, space selected)
 
@@ -89,9 +89,18 @@ Spaces should follow this exact paradigm, adapted for workflow-driven multi-agen
 │   ● Standalone task 1   │    Tasks not linked to runs
 ├─────────────────────────┤
 │ ▼ Sessions (3)       [+]│  ← Collapsible, default collapsed
-│   ● Session abc123      │
+│   ● Space Agent chat    │    The space:chat:{spaceId} session
+│   ● Task: Build API     │    Task agent session (via taskAgentSessionId)
+│   ● Manual session      │    User-created sessions within space
 └─────────────────────────┘
 ```
+
+**Sessions section contents:** Shows all sessions associated with the space:
+1. The space agent session (`space:chat:{spaceId}`) — always present
+2. Task agent sessions — sessions linked via `SpaceTask.taskAgentSessionId` (read-only, created by workflow execution)
+3. Manually created sessions — any sessions the user creates within the space context
+
+Note: `spaceStore` signals already handle real-time updates via WebSocket event subscriptions (`space.task.*`, `space.workflowRun.*`), so SpaceDetailPanel will automatically reflect live state changes without additional wiring.
 
 #### ContentPanel Route Mapping
 
@@ -108,7 +117,9 @@ Spaces should follow this exact paradigm, adapted for workflow-driven multi-agen
 |-------|--------------|-------------------|
 | **Global Spaces Agent** | SpacesPage (Level 1 ContentPanel) | `spaces:global` (pre-provisioned) |
 | **Space Agent** | "Space Agent" pinned item in SpaceDetailPanel | `space:chat:{spaceId}` (mirrors `room:chat:{roomId}`) |
-| **Task Agent** | Task detail view (future) | Via task's linked session |
+| **Task Agent** | "View Agent Session" button in full-width SpaceTaskPane | Via `SpaceTask.taskAgentSessionId` → navigates to `/space/:id/session/:taskAgentSessionId` |
+
+**Task agent interaction**: `SpaceTask` already has `taskAgentSessionId?: string | null` (line 218 in `packages/shared/src/types/space.ts`) and `activeSession?: 'worker' | 'leader' | null` (line 204). When a task has a linked agent session, the full-width task view (M3) shows a "View Agent Session" button that navigates to `/space/:id/session/:taskAgentSessionId` — reusing the existing session route with ChatContainer. No new infrastructure needed.
 
 The Space Agent chat enables users to:
 - Ask about space status, task progress, workflow state
@@ -118,20 +129,37 @@ The Space Agent chat enables users to:
 
 ## Milestones
 
-1. **SpaceDetailPanel + ContextPanel Switching** — Build the space-specific ContextPanel and wire ContextPanel.tsx to switch between SpaceContextPanel (level 1) and SpaceDetailPanel (level 2) based on `currentSpaceIdSignal` (3 tasks)
-2. **Space Agent Chat** — Add `navigateToSpaceAgent()` router function, wire SpaceIsland to render ChatContainer for agent sessions, provision space agent session (3 tasks)
-3. **Route-Driven Content Switching** — Refactor SpaceIsland to use route-based content rendering (dashboard/agent/task) instead of tabs-only, make task view full-width instead of side pane (2 tasks)
-4. **Wire Quick Actions + Task Creation** — Connect dashboard buttons, build SpaceTaskCreateDialog, fix RPC naming mismatch (3 tasks)
-5. **Space Settings CRUD + Polish** — Add edit/archive/delete UI, fix padding, remove emojis, remove SpaceNavPanel (3 tasks)
+1. **SpaceDetailPanel + ContextPanel Switching** — Build the space-specific ContextPanel and wire ContextPanel.tsx to switch between SpaceContextPanel (level 1) and SpaceDetailPanel (level 2) based on `currentSpaceIdSignal` (2 tasks)
+2. **Space Agent Chat** — Provision space agent session in daemon, add `navigateToSpaceAgent()` router function, wire SpaceIsland to render ChatContainer for agent/session views with props-based rendering, fix RPC naming mismatch (4 tasks)
+3. **Route-Driven Content Switching** — Make task view full-width with "View Agent Session" button, verify all space sub-routes (2 tasks)
+4. **Wire Quick Actions + Task Creation** — Connect dashboard buttons, build SpaceTaskCreateDialog and WorkflowRunStartDialog (3 tasks)
+5. **Space Settings CRUD + Polish** — Add edit/archive/delete UI, fix padding, remove emojis, remove SpaceNavPanel, comprehensive E2E test (3 tasks)
 
-Note: M1 and M2 can be developed in parallel. M3 depends on M2 (needs agent route). M4 depends on M3 (content routing). M5 is independent.
+### Dependency Graph
+
+```
+M1: Task 1.1 ──────┐
+                    ├──→ M2: Task 2.3 ──→ M3: Task 3.1, 3.2 ──→ M5: Task 5.3
+M2: Task 2.4 ──────┘
+    Task 2.1 ──────────→ M2: Task 2.3
+    Task 2.2 (independent) ──→ M4: Task 4.2
+
+M4: Task 4.1 (independent)
+M5: Task 5.1, 5.2 (independent)
+```
+
+- M1 Task 1.1 and M2 Task 2.4 must complete before M2 Task 2.3 (ChatContainer wiring needs SpaceDetailPanel + agent route)
+- M2 Task 2.1 (daemon provisioning), Task 2.2 (RPC fix), and Task 2.4 (router) are independent — can start immediately
+- M3 depends on M2 Task 2.3 completing (extends the content priority chain)
+- M4 Tasks 4.1/4.2 are independent dialog components; Task 4.3 wires them
+- M5 Tasks 5.1/5.2 are independent; Task 5.3 (E2E) depends on M1+M2+M3
 
 ## Estimated Task Count
 
-Total: 14 tasks across 5 milestones
+Total: 14 tasks across 5 milestones (M1:2, M2:4, M3:2, M4:3, M5:3)
 
 ## Deferred to Future Iteration
-- **Task agent chat**: Viewing a task's linked agent sessions requires backend support for task-session association. Deferred.
-- **Mobile responsiveness**: WorkflowCanvas hides on mobile but other views lack mobile layouts. Deferred as P3.
+- **Mobile responsiveness**: WorkflowCanvas hides on mobile but other views lack mobile layouts. SpaceDetailPanel will support mobile drawer close via `onNavigate` prop. Deferred as P3.
 - **Workflow run detail view**: Drill-down into a run's task breakdown. Deferred until SpaceDetailPanel establishes the navigation pattern.
+- **Task status management UI**: SpaceTaskPane currently shows task detail + "Human Input Required" form for `needs_attention` status. Adding explicit status transition buttons (mark complete, cancel, change priority) and task reassignment is deferred — the existing HumanInputArea already handles the primary `inputDraft` interaction flow.
 - **Deep links for space sessions**: Session sub-routes exist in router but need SpaceIsland handling. Addressed in M3.

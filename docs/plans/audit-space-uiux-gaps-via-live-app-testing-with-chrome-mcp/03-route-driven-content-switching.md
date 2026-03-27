@@ -2,88 +2,91 @@
 
 ## Goal
 
-Refactor SpaceIsland's content rendering from a purely tab-based model to a route-driven model that supports dashboard tabs (default), agent/session chat, and full-width task view — matching the Room component's pattern.
+Extend SpaceIsland's content priority chain (established in M2 Task 2.3) to support full-width task view with task agent session access, and verify all space sub-routes work correctly.
 
 ## Design Reference
 
-**Room.tsx content priority:**
+**Content priority chain after M2 Task 2.3:**
 ```
-taskViewId   → <TaskViewToggle roomId={roomId} taskId={taskViewId} />
+taskViewId   → SpaceTaskPane (still side-pane from M2)
 sessionViewId → <ChatContainer sessionId={sessionViewId} />
-default      → Header + Tab bar + Tab content
+default       → Tab bar + Tab content (Dashboard/Agents/Workflows/Settings)
 ```
 
-**SpaceIsland target content priority (after M2 partially wires this):**
+**Target after M3:**
 ```
-activeTaskId  → <SpaceTaskView spaceId={spaceId} taskId={activeTaskId} />  (full-width)
-sessionViewId → <ChatContainer sessionId={sessionViewId} />                 (from M2)
+taskViewId   → SpaceTaskPane (FULL-WIDTH, with "View Agent Session" button)
+sessionViewId → <ChatContainer sessionId={sessionViewId} />
 default       → Tab bar + Tab content (Dashboard/Agents/Workflows/Settings)
 ```
 
 ## Tasks
 
-### Task 3.1: Make Task View Full-Width in SpaceIsland
+### Task 3.1: Make Task View Full-Width with Agent Session Access
 
-**Description:** Currently SpaceTaskPane renders as a 320px side panel alongside the tab content. Refactor so that when a task is selected, SpaceTaskPane takes the full content area (replacing tabs), matching how Room shows TaskViewToggle full-width.
+**Description:** Convert SpaceTaskPane from a 320px side panel to a full-width content view (extending the content priority chain from M2 Task 2.3). Add a "View Agent Session" button that leverages the existing `SpaceTask.taskAgentSessionId` field to let users view the task's agent chat.
 
 **Agent type:** coder
 
 **Key files to reference:**
-- `packages/web/src/islands/SpaceIsland.tsx` — currently renders task pane as `w-80` right column
+- `packages/web/src/islands/SpaceIsland.tsx` — after M2 Task 2.3, has content priority chain with side-pane task view
 - `packages/web/src/islands/Room.tsx` lines 155-156 — TaskViewToggle takes full width
-- `packages/web/src/components/space/SpaceTaskPane.tsx` — may need layout adjustments for full-width
+- `packages/web/src/components/space/SpaceTaskPane.tsx` — needs layout adjustments + agent session button
+- `packages/shared/src/types/space.ts` line 218 — `SpaceTask.taskAgentSessionId?: string | null`
+- `packages/shared/src/types/space.ts` line 204 — `SpaceTask.activeSession?: 'worker' | 'leader' | null`
 
 **Subtasks:**
-1. In `SpaceIsland.tsx`, move the task view to the content priority chain (before session, before tabs):
+1. In `SpaceIsland.tsx`, convert the task view branch of the content priority chain from side-pane to full-width. Remove the 320px right column. The task view should now take the full content area (same priority position, just full-width):
    ```
-   activeTaskId ? <SpaceTaskPane full-width /> : sessionViewId ? <ChatContainer /> : <tabs>
+   taskViewId ? <full-width SpaceTaskPane /> : sessionViewId ? <ChatContainer /> : <tabs>
    ```
-2. Remove the 320px right column rendering for SpaceTaskPane
-3. Add a header to the full-width task view with: back button (navigates to `/space/:id`), task title, status badge
-4. Adjust SpaceTaskPane layout for full-width display (it currently assumes narrow width). Consider using a max-width container (e.g., `max-w-3xl mx-auto`) for readability
-5. Ensure clicking a task in SpaceDetailPanel navigates to `/space/:id/task/:tid` and shows full-width task view
-6. Write unit test: verify SpaceTaskPane renders full-width when task selected, tabs hidden
-7. Add E2E test: click task in SpaceDetailPanel, verify task pane fills content area, click back, verify tabs return
+2. Add a header bar to the full-width task view with: back button (navigates to `/space/:id`), task title, status badge
+3. Adjust SpaceTaskPane layout for full-width display. Use a max-width container (e.g., `max-w-3xl mx-auto`) for readability since the component currently assumes 320px narrow width.
+4. **Add "View Agent Session" button**: When `task.taskAgentSessionId` is set, show a button in the task header or actions section. Clicking it navigates to `/space/:id/session/:taskAgentSessionId` — this reuses the existing session route and ChatContainer rendering from M2. Show the button label as "View Worker Session" or "View Leader Session" based on `task.activeSession` value. Hide the button when `taskAgentSessionId` is null.
+5. Write unit test: verify full-width rendering, back button, "View Agent Session" button visibility (shown when `taskAgentSessionId` set, hidden when null)
+6. Add E2E test: click task in SpaceDetailPanel → verify full-width task pane → click back → verify tabs return
 
 **Acceptance criteria:**
 - Task view takes full content width (not 320px side panel)
 - Tab bar is hidden when task is selected
 - Back button returns to dashboard/tabs
 - SpaceTaskPane is readable at full width (max-width constraint)
-- Task navigation from SpaceDetailPanel works
+- "View Agent Session" button appears when `taskAgentSessionId` is set
+- Clicking "View Agent Session" navigates to the session ChatContainer view
+- Button hidden when no agent session is linked
 - E2E test passes
 
-**Dependencies:** Task 1.1 (SpaceDetailPanel), Task 2.3 (content priority chain)
+**Dependencies:** Task 2.3 (content priority chain with props-based rendering)
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
-### Task 3.2: Handle All Space Sub-Routes in SpaceIsland
+### Task 3.2: Verify and Fix All Space Sub-Routes
 
-**Description:** Ensure SpaceIsland correctly handles all sub-route patterns: `/space/:id` (dashboard), `/space/:id/agent` (space agent), `/space/:id/session/:sid` (session), `/space/:id/task/:tid` (task). Currently only task sub-routes are partially handled.
+**Description:** Ensure all space sub-route patterns work correctly end-to-end: `/space/:id` (dashboard), `/space/:id/agent` (space agent), `/space/:id/session/:sid` (session), `/space/:id/task/:tid` (task). After M2, SpaceIsland uses props-based rendering — this task verifies the full integration and fixes any gaps in deep link handling.
 
 **Agent type:** coder
 
 **Key files to reference:**
-- `packages/web/src/lib/router.ts` — route parsing logic
-- `packages/web/src/islands/MainContent.tsx` — how spaceId/sessionViewId/taskViewId are passed
-- `packages/web/src/lib/signals.ts` — `currentSpaceSessionIdSignal`, `currentSpaceTaskIdSignal`
+- `packages/web/src/lib/router.ts` — route parsing logic, URL → signal mapping
+- `packages/web/src/islands/MainContent.tsx` — props passing (updated in M2 Task 2.3)
+- `packages/web/src/islands/SpaceIsland.tsx` — content priority chain (updated in M2 Task 2.3, extended in Task 3.1)
 
 **Subtasks:**
-1. Verify `MainContent.tsx` passes `sessionViewId` and `taskViewId` to SpaceIsland (similar to how Room receives them as props). If not, add these props.
-2. In `MainContent.tsx`, derive session and task view IDs from signals:
-   - `spaceSessionViewId = currentSpaceSessionIdSignal.value` (when `currentSpaceIdSignal` is set)
-   - `spaceTaskViewId = currentSpaceTaskIdSignal.value` (when `currentSpaceIdSignal` is set)
-3. Pass both as props to `<SpaceIsland spaceId={spaceId} sessionViewId={spaceSessionViewId} taskViewId={spaceTaskViewId} />`
-4. Update `SpaceIsland` to accept `sessionViewId` and `taskViewId` as props (replacing direct signal reads) for consistency with Room pattern
-5. Verify deep link support: loading `/space/abc/agent` directly should show the space agent chat
-6. Write E2E test: deep link to `/space/:id/agent`, verify chat loads. Deep link to `/space/:id/task/:tid`, verify task pane loads.
+1. Verify deep link support for all sub-routes by testing URL parsing:
+   - `/space/:id` → `currentSpaceIdSignal` set, no session/task → dashboard tabs
+   - `/space/:id/agent` → `currentSpaceIdSignal` + `currentSpaceSessionIdSignal` set → ChatContainer
+   - `/space/:id/session/:sid` → `currentSpaceIdSignal` + `currentSpaceSessionIdSignal` set → ChatContainer
+   - `/space/:id/task/:tid` → `currentSpaceIdSignal` + `currentSpaceTaskIdSignal` set → full-width SpaceTaskPane
+2. Fix any gaps in the URL parser for space sub-routes (router.ts)
+3. Verify browser back/forward navigation works between space views (e.g., dashboard → agent → task → back → back)
+4. Write E2E test covering all deep link scenarios: direct navigation to `/space/:id/agent`, `/space/:id/task/:tid`, browser back/forward between views
 
 **Acceptance criteria:**
-- All space sub-routes render the correct content
-- Props-based rendering (matching Room pattern) instead of direct signal reads in SpaceIsland
-- Deep links work for all sub-routes
+- All space sub-routes render the correct content when navigated to directly (deep links)
+- Browser back/forward works correctly between space views
+- No signal state leaks between navigation transitions
 - E2E test passes
 
-**Dependencies:** Task 2.3 (ChatContainer wiring)
+**Dependencies:** Task 2.3 (props-based rendering), Task 3.1 (full-width task view)
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
