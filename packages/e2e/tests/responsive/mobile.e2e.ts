@@ -333,7 +333,7 @@ test.describe('Mobile Room Agent Navigation', () => {
 		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
 		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toBeVisible();
 
-		// Click the "/" (Home) tab to navigate away from the room
+		// Click the "/" (Home) tab — present in room context, navigates to global home
 		await bottomTabBar.getByRole('tab', { name: '/' }).click();
 
 		// URL should change to home

@@ -273,6 +273,9 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 		if (requestedTypes.includes('folder')) fileTypes.push('folder');
 
 		if (fileTypes.length > 0 && query.length > 0) {
+			// Note: file/folder search requires a non-empty query — returning all files
+			// on empty query would be too slow and noisy. Task/goal results above are
+			// returned for empty queries since they are bounded to the room scope.
 			// Path traversal check — reject queries with .. or absolute paths
 			if (query.includes('..') || query.startsWith('/')) {
 				// Return what we have so far without file results

@@ -823,6 +823,29 @@ describe('reference.search handler', () => {
 			expect(result.results[0].type).toBe('task');
 			expect(result.results[0].displayText).toBe('Room Agent Task');
 		});
+
+		it('returns all tasks for whitespace-only query with synthetic session ID', async () => {
+			insertTask(db, roomId, 'task-1', 'Synthetic WS Task', 't-1');
+
+			// Whitespace-only query trims to "" — with room context, should return all tasks
+			const sessions = new Map();
+			const { hub, call } = buildMessageHub();
+			setupReferenceHandlers(hub, {
+				db: db as never,
+				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
+				sessionManager: buildSessionManager(sessions) as never,
+				fileIndex: buildFileIndex(),
+			});
+
+			const result = (await call('reference.search', {
+				sessionId: `room:chat:${roomId}`,
+				query: '   ',
+			})) as { results: Array<{ type: string }> };
+
+			expect(result.results).toHaveLength(1);
+			expect(result.results[0].type).toBe('task');
+		});
 	});
 });
 

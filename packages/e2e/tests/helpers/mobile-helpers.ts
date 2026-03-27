@@ -56,7 +56,8 @@ export async function closeMobilePanel(page: Page): Promise<void> {
 
 	// Use force: true because the BottomTabBar (z-50) overlaps the panel (z-40)
 	// on mobile, causing Playwright's actionability check to report click interception.
-	await closePanelButton(page).click({ force: true });
+	// Use .first() for robustness in case multiple elements match the selector.
+	await closePanelButton(page).first().click({ force: true, timeout: 5000 });
 
 	// Wait for close button to leave the viewport — confirms panel finished closing
 	const closeBtn = closePanelButton(page);
