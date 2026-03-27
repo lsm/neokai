@@ -1449,3 +1449,129 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.error).toContain('Session queue is full');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// M5.3 — Task creation and workflow activation
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — task creation and planning node activation (M5.3)', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('create_standalone_task creates task with pending status (clear request)', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Fix the login bug where international users cannot authenticate',
+			description: 'Fix authentication failure for international card payments',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.workflowRunId ?? null).toBeNull();
+	});
+
+	test('create_standalone_task task persists to DB and is retrievable', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Add JWT auth',
+			description: 'Implement user authentication with JWT tokens',
+		});
+		const taskId = JSON.parse(result.content[0].text).task.id;
+		const stored = ctx.taskRepo.getTask(taskId);
+		expect(stored).not.toBeNull();
+		expect(stored?.title).toBe('Add JWT auth');
+		expect(stored?.status).toBe('pending');
+	});
+
+	test('start_workflow_run with planning start node creates task with planning taskType', async () => {
+		// Seed a planner agent so resolveTaskTypeForAgent returns 'planning'
+		seedAgentRow(ctx.db, 'agent-planner-1', ctx.spaceId, 'Planner', 'planner');
+
+		const stepId = 'planning-step-1';
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Plan-first Workflow',
+			description: 'Workflow with planning start node',
+			nodes: [{ id: stepId, name: 'Planning', agentId: 'agent-planner-1' }],
+			transitions: [],
+			startNodeId: stepId,
+			rules: [],
+			tags: ['coding', 'v2'],
+		});
+
+		const result = await makeHandlers(ctx).start_workflow_run({
+			workflow_id: wf.id,
+			title: 'Implement payment system',
+			description: 'Build a secure payment processing module',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.tasks).toHaveLength(1);
+		// Planning node activation: taskType must be 'planning'
+		expect(parsed.tasks[0].taskType).toBe('planning');
+		expect(parsed.tasks[0].workflowNodeId).toBe(stepId);
+		expect(parsed.tasks[0].status).toBe('pending');
+	});
+
+	test('start_workflow_run with V2 planning workflow stores run in DB', async () => {
+		seedAgentRow(ctx.db, 'agent-planner-2', ctx.spaceId, 'Planner', 'planner');
+
+		const stepId = 'v2-planning-step';
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Coding Workflow V2',
+			description: 'Full-cycle coding workflow with plan review',
+			nodes: [{ id: stepId, name: 'Planning', agentId: 'agent-planner-2' }],
+			transitions: [],
+			startNodeId: stepId,
+			rules: [],
+			tags: ['coding', 'v2', 'default'],
+		});
+
+		await makeHandlers(ctx).start_workflow_run({
+			workflow_id: wf.id,
+			title: 'Implement authentication system',
+		});
+
+		const runs = ctx.workflowRunRepo.listBySpace(ctx.spaceId);
+		expect(runs).toHaveLength(1);
+		expect(runs[0].status).toBe('in_progress');
+
+		const tasks = ctx.taskRepo.listByWorkflowRun(runs[0].id);
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0].taskType).toBe('planning');
+	});
+
+	test('suggest_workflow ranks V2 workflow first for clear coding request', async () => {
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Coding Workflow',
+			['coding', 'default'],
+			'For writing code'
+		);
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Coding Workflow V2',
+			['coding', 'v2', 'default'],
+			'Full-cycle coding with plan review and parallel reviewers'
+		);
+
+		const result = await makeHandlers(ctx).suggest_workflow({
+			description: 'implement authentication system with JWT tokens',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		// V2 must rank first — it has the 'v2' tiebreaker tag
+		expect(parsed.workflows[0].name).toBe('Coding Workflow V2');
+	});
+});
