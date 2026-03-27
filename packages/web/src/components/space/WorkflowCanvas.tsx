@@ -315,6 +315,7 @@ interface GateIconProps {
 	y: number;
 	status: GateStatus;
 	isRuntimeMode: boolean;
+	gateId?: string;
 	onApprove?: () => void;
 	onReject?: () => void;
 	onViewArtifacts?: () => void;
@@ -328,6 +329,7 @@ function GateIcon({
 	y,
 	status,
 	isRuntimeMode,
+	gateId,
 	onApprove,
 	onReject,
 	onViewArtifacts,
@@ -423,6 +425,7 @@ function GateIcon({
 	return (
 		<g
 			data-testid={`gate-icon-${status}`}
+			data-gate-id={gateId}
 			style={{ cursor: isRuntimeMode && status === 'waiting_human' ? 'pointer' : 'default' }}
 			onClick={handleClick}
 		>
@@ -1212,6 +1215,7 @@ export function WorkflowCanvas({
 									y={pts.my}
 									status={gateStatus}
 									isRuntimeMode={isRuntimeMode}
+									gateId={ch.gateId}
 									voteCount={voteCount}
 									onApprove={
 										isHumanGate ? () => void handleApproveGate(ch.gateId!, true) : undefined

@@ -195,6 +195,7 @@ function createMockRuntimeService(): SpaceRuntimeService {
 		createOrGetRuntime: mock(async () => ({
 			startWorkflowRun: mock(async () => ({ run: mockRun, tasks: [] })),
 		})),
+		notifyGateDataChanged: mock(async () => {}),
 		start: mock(() => {}),
 		stop: mock(() => {}),
 	} as unknown as SpaceRuntimeService;
@@ -766,16 +767,16 @@ describe('space-workflow-run gate handlers', () => {
 			).rejects.toThrow('gateId is required');
 		});
 
-		it('throws if data is not a plain object', async () => {
+		it('throws if data is not an object', async () => {
 			await expect(
 				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'g1', data: 'bad' })
-			).rejects.toThrow('data must be a plain object');
+			).rejects.toThrow('data must be an object');
 		});
 
 		it('throws if data is an array', async () => {
 			await expect(
 				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'g1', data: [] })
-			).rejects.toThrow('data must be a plain object');
+			).rejects.toThrow('data must be an object');
 		});
 
 		it('throws if run not found', async () => {
