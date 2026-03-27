@@ -89,10 +89,78 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('depends_on');
 		});
 
-		it('should instruct to spawn the plan-writer sub-agent in Phase 1', () => {
+		it('should describe 3-stage pipeline in Phase 1', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('3-Stage Pipeline');
+			expect(prompt).toContain('Stage 1');
+			expect(prompt).toContain('Stage 2');
+			expect(prompt).toContain('Stage 3');
+		});
+
+		it('should instruct to spawn planner-explorer in Stage 1', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('planner-explorer');
+			expect(prompt).toContain('Stage 1: Codebase Exploration');
+		});
+
+		it('should instruct to collect ---EXPLORER_FINDINGS--- from planner-explorer', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('---EXPLORER_FINDINGS---');
+		});
+
+		it('should instruct to spawn planner-fact-checker in Stage 2 with explorer findings', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('planner-fact-checker');
+			expect(prompt).toContain('Stage 2: Fact-Checking');
+			// Must pass explorer findings to fact-checker
+			expect(prompt).toContain('## Explorer Findings');
+		});
+
+		it('should instruct to collect ---FACT_CHECK_RESULT--- from planner-fact-checker', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('---FACT_CHECK_RESULT---');
+		});
+
+		it('should instruct to spawn plan-writer in Stage 3 with both findings', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('plan-writer');
-			expect(prompt).toContain('plan-writer');
+			expect(prompt).toContain('Stage 3: Plan Writing');
+			// Must pass both explorer findings and fact-check results to plan-writer
+			expect(prompt).toContain('## Fact-Check Results');
+		});
+
+		it('should have stages in correct order (1 before 2 before 3)', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			const stage1Idx = prompt.indexOf('Stage 1:');
+			const stage2Idx = prompt.indexOf('Stage 2:');
+			const stage3Idx = prompt.indexOf('Stage 3:');
+			expect(stage1Idx).toBeGreaterThanOrEqual(0);
+			expect(stage2Idx).toBeGreaterThanOrEqual(0);
+			expect(stage3Idx).toBeGreaterThanOrEqual(0);
+			expect(stage1Idx).toBeLessThan(stage2Idx);
+			expect(stage2Idx).toBeLessThan(stage3Idx);
+		});
+
+		it('should document context-passing: explorer findings passed verbatim to fact-checker', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// verbatim keyword must appear near the context-passing instructions
+			const explorerFindingsIdx = prompt.indexOf('---EXPLORER_FINDINGS--- block>');
+			expect(explorerFindingsIdx).toBeGreaterThan(0);
+		});
+
+		it('should provide graceful degradation when planner-explorer fails', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// If explorer fails, proceed directly to Stage 3 (plan-writer)
+			expect(prompt).toContain('planner-explorer fails or times out');
+			expect(prompt).toContain('Skip Stage 2 and proceed directly to Stage 3');
+		});
+
+		it('should provide graceful degradation when planner-fact-checker fails', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// If fact-checker fails, proceed to plan-writer with explorer findings only
+			expect(prompt).toContain('planner-fact-checker fails or times out');
+			expect(prompt).toContain('explorer findings only');
+			expect(prompt).toContain('fact-checking was skipped');
 		});
 
 		it('should instruct to parse ---PLAN_RESULT--- from plan-writer response', () => {
@@ -133,9 +201,10 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null');
 		});
 
-		it('should mention WebSearch in pre-planning setup section', () => {
+		it('should mention WebSearch and WebFetch in pre-planning setup section', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('WebSearch');
+			expect(prompt).toContain('WebFetch');
 			// The note should appear in the Pre-Planning Setup section (before Phase 1)
 			const setupIdx = prompt.indexOf('Pre-Planning Setup (MANDATORY)');
 			const webSearchIdx = prompt.indexOf('WebSearch');
@@ -182,6 +251,17 @@ describe('planner-agent', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('00-overview.md');
 			expect(prompt).toContain('multi');
+		});
+
+		it('should instruct plan-writer to use explorer and fact-checker context as foundation', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('explorer + fact-checker context as its foundation');
+		});
+
+		it('should include feedback handling instruction for plan edits', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('Leader sends feedback on the plan');
+			expect(prompt).toContain('Edit the plan files directly');
 		});
 	});
 
@@ -645,9 +725,30 @@ describe('planner-agent', () => {
 			expect(init.agents).toHaveProperty('Planner');
 		});
 
-		it('agents map includes plan-writer sub-agent', () => {
+		it('agents map includes all 3-stage pipeline sub-agents', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.agents).toHaveProperty('planner-explorer');
+			expect(init.agents).toHaveProperty('planner-fact-checker');
 			expect(init.agents).toHaveProperty('plan-writer');
+		});
+
+		it('planner-explorer sub-agent has only read-only codebase tools', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const explorer = init.agents?.['planner-explorer'];
+			expect(explorer?.tools).toContain('Read');
+			expect(explorer?.tools).toContain('Grep');
+			expect(explorer?.tools).toContain('Glob');
+			expect(explorer?.tools).not.toContain('Write');
+			expect(explorer?.tools).not.toContain('Task');
+		});
+
+		it('planner-fact-checker sub-agent has only web tools', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const factChecker = init.agents?.['planner-fact-checker'];
+			expect(factChecker?.tools).toContain('WebSearch');
+			expect(factChecker?.tools).toContain('WebFetch');
+			expect(factChecker?.tools).not.toContain('Read');
+			expect(factChecker?.tools).not.toContain('Task');
 		});
 
 		it('plan-writer agent does NOT have Task tool (cannot spawn sub-agents)', () => {
