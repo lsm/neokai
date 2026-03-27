@@ -248,7 +248,12 @@ export function messageStartSSE(messageId: string, model: string, inputTokens: n
 			model,
 			stop_reason: null,
 			stop_sequence: null,
-			usage: { input_tokens: inputTokens, output_tokens: 1 },
+			usage: {
+				input_tokens: inputTokens,
+				output_tokens: 1,
+				cache_creation_input_tokens: 0,
+				cache_read_input_tokens: 0,
+			},
 		},
 	});
 }

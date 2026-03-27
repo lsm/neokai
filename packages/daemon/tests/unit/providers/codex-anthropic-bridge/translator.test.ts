@@ -358,6 +358,13 @@ describe('SSE builders', () => {
 		expect(msg.usage.input_tokens).toBe(25);
 	});
 
+	it('messageStartSSE includes cache token fields for SDK 0.2.84+ compatibility', () => {
+		const { data } = parseSSE(messageStartSSE('msg_abc', 'gpt-4o', 25));
+		const msg = (data as { message: { usage: Record<string, number> } }).message;
+		expect(msg.usage.cache_creation_input_tokens).toBe(0);
+		expect(msg.usage.cache_read_input_tokens).toBe(0);
+	});
+
 	it('contentBlockStartTextSSE emits text block at given index', () => {
 		const { data } = parseSSE(contentBlockStartTextSSE(0));
 		expect((data as { content_block: { type: string } }).content_block.type).toBe('text');
