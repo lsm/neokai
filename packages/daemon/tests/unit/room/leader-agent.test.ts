@@ -1365,7 +1365,6 @@ describe('Leader Helper Sub-Agents', () => {
 		const stub = async () => ({ content: [{ type: 'text' as const, text: 'ok' }] });
 		return {
 			sendToWorker: stub,
-			handoffToWorker: stub,
 			completeTask: stub,
 			failTask: stub,
 			replanGoal: stub,
@@ -1749,6 +1748,11 @@ describe('Leader Helper Sub-Agents', () => {
 			expect(def.tools).not.toContain('Bash');
 		});
 
+		it('should have ONLY WebSearch and WebFetch tools (exact match)', () => {
+			const def = buildLeaderFactCheckerAgentDef();
+			expect(def.tools).toEqual(['WebSearch', 'WebFetch']);
+		});
+
 		it('should include structured ANALYSIS_RESULT output format in prompt', () => {
 			const def = buildLeaderFactCheckerAgentDef();
 			expect(def.prompt).toContain('---ANALYSIS_RESULT---');
@@ -1866,6 +1870,11 @@ describe('Leader Helper Sub-Agents', () => {
 			expect(def.tools).not.toContain('Grep');
 			expect(def.tools).not.toContain('Glob');
 			expect(def.tools).not.toContain('Bash');
+		});
+
+		it('should have ONLY WebSearch and WebFetch tools (exact match)', () => {
+			const def = buildReviewerFactCheckerAgentDef();
+			expect(def.tools).toEqual(['WebSearch', 'WebFetch']);
 		});
 
 		it('should include FACT_CHECK_RESULT structured output block', () => {
