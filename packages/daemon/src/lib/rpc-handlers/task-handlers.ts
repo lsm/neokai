@@ -18,7 +18,7 @@
  * - task.group.addMessage - (non-production) Insert a synthetic canonical timeline row
  */
 
-import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
+import type { MessageHub, TaskPriority, TaskStatus } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
@@ -60,21 +60,6 @@ export function setupTaskHandlers(
 ): void {
 	const makeGroupRepo = () => new SessionGroupRepository(db.getDatabase(), reactiveDb);
 	const makeTaskRepo = () => new TaskRepository(db.getDatabase(), reactiveDb);
-
-	/**
-	 * Emit room.task.update event to notify UI clients
-	 */
-	const emitTaskUpdate = (roomId: string, task: NeoTask) => {
-		daemonHub
-			.emit('room.task.update', {
-				sessionId: `room:${roomId}`,
-				roomId,
-				task,
-			})
-			.catch((error) => {
-				log.warn(`Failed to emit room.task.update for room ${roomId}:`, error);
-			});
-	};
 
 	/**
 	 * Emit room.overview event to notify UI clients of full room state
@@ -122,9 +107,6 @@ export function setupTaskHandlers(
 			dependsOn: params.dependsOn,
 			status: params.status,
 		});
-
-		// Emit room.overview for new task creation (significant change)
-		emitRoomOverview(params.roomId);
 
 		return { task };
 	});
@@ -224,8 +206,6 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.failTask(taskId, params.error ?? '');
 
-		emitRoomOverview(params.roomId);
-
 		return { task };
 	});
 
@@ -264,7 +244,7 @@ export function setupTaskHandlers(
 				}
 				const updatedTask = await taskManager.getTask(taskId);
 				if (updatedTask) {
-					emitTaskUpdate(params.roomId, updatedTask);
+					// TODO: remove once session LiveQuery covers list
 					emitRoomOverview(params.roomId);
 					return { task: updatedTask };
 				}
@@ -273,8 +253,6 @@ export function setupTaskHandlers(
 
 		// No active group - just mark the task as cancelled
 		const cancelledTask = await taskManager.cancelTask(taskId);
-		emitTaskUpdate(params.roomId, cancelledTask);
-		emitRoomOverview(params.roomId);
 
 		return { task: cancelledTask };
 	});
@@ -361,10 +339,6 @@ export function setupTaskHandlers(
 		}
 
 		const archivedTask = await taskManager.getTask(taskId);
-		if (archivedTask) {
-			emitTaskUpdate(params.roomId, archivedTask);
-			emitRoomOverview(params.roomId);
-		}
 
 		log.info(`Task ${taskId} archived in room ${params.roomId}`);
 		return { task: archivedTask };
@@ -424,10 +398,6 @@ export function setupTaskHandlers(
 			}
 
 			const archivedTask = await taskManager.getTask(taskId);
-			if (archivedTask) {
-				emitTaskUpdate(params.roomId, archivedTask);
-				emitRoomOverview(params.roomId);
-			}
 			return { task: archivedTask };
 		}
 
@@ -451,7 +421,7 @@ export function setupTaskHandlers(
 						if (!cancelledTask) {
 							throw new Error(`Task not found: ${taskId}`);
 						}
-						emitTaskUpdate(params.roomId, cancelledTask);
+						// TODO: remove once session LiveQuery covers list
 						emitRoomOverview(params.roomId);
 						return { task: cancelledTask };
 					}
@@ -508,9 +478,6 @@ export function setupTaskHandlers(
 			error: params.error,
 			mode: params.mode,
 		});
-
-		emitTaskUpdate(params.roomId, updatedTask);
-		emitRoomOverview(params.roomId);
 
 		return { task: updatedTask };
 	});
@@ -1117,12 +1084,6 @@ export function setupTaskHandlers(
 			throw new Error(result.error ?? 'Failed to send human message');
 		}
 
-		// Emit task update after successful message routing (may have changed status)
-		const updatedTask = await taskManager.getTask(taskId);
-		if (updatedTask) {
-			emitTaskUpdate(params.roomId, updatedTask);
-		}
-
 		return { success: true };
 	});
 
@@ -1154,6 +1115,7 @@ export function setupTaskHandlers(
 			throw new Error(result.error ?? `Failed to stop session group ${params.groupId}`);
 		}
 
+		// TODO: remove once session LiveQuery covers list
 		emitRoomOverview(params.roomId);
 		return { success: true };
 	});
