@@ -8,6 +8,9 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import { Logger } from '../../lib/logger';
+
+const log = new Logger('gate-data-repository');
 
 /** A single gate data record as returned by the repository. */
 export interface GateDataRecord {
@@ -120,10 +123,28 @@ export class GateDataRepository {
 	}
 
 	private rowToRecord(row: Record<string, unknown>): GateDataRecord {
+		const runId = row.run_id as string;
+		const gateId = row.gate_id as string;
+		let data: Record<string, unknown> = {};
+		const raw = row.data as string;
+		try {
+			data = JSON.parse(raw) as Record<string, unknown>;
+		} catch (err) {
+			// Gate data is corrupted — reset to empty object and log so engineers can
+			// investigate. Human-approval gates still block correctly: an empty `{}`
+			// means no approval key exists, so the gate condition (`check: exists`)
+			// remains closed until a human explicitly approves.
+			log.error(
+				`GateDataRepository: corrupted gate data for run=${runId} gate=${gateId} — ` +
+					`JSON.parse failed (${err instanceof Error ? err.message : String(err)}). ` +
+					`Resetting to {} to allow gate evaluation to continue.`
+			);
+			data = {};
+		}
 		return {
-			runId: row.run_id as string,
-			gateId: row.gate_id as string,
-			data: JSON.parse(row.data as string) as Record<string, unknown>,
+			runId,
+			gateId,
+			data,
 			updatedAt: row.updated_at as number,
 		};
 	}

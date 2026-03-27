@@ -700,7 +700,7 @@ export class SpaceRuntime {
 			const tam = this.config.taskAgentManager;
 
 			// Step 1: Check tasks that already have a Task Agent session (in_progress).
-			// Full loop always completes so that dead-agent resets are applied to ALL
+			// Full loop always completes so that crashed-agent handling is applied to ALL
 			// tasks before deciding whether to skip.
 			//
 			// NOTE: we intentionally do NOT return early when alive agents are found.
@@ -714,14 +714,23 @@ export class SpaceRuntime {
 					continue; // still check remaining tasks for dead agents
 				}
 
-				// Task Agent session is gone — reset for re-spawn on next tick
+				// Task Agent session crashed — transition to needs_attention so a human
+				// can investigate and retry. This prevents silent re-spawn loops and
+				// ensures crash failures are surfaced with a clear error message.
 				log.warn(
-					`SpaceRuntime: task agent for task ${task.id} is gone ` +
-						`(session ${task.taskAgentSessionId}), resetting to pending for re-spawn`
+					`SpaceRuntime: task agent for task ${task.id} crashed ` +
+						`(session ${task.taskAgentSessionId}); marking needs_attention`
 				);
 				this.config.taskRepo.updateTask(task.id, {
 					taskAgentSessionId: null,
-					status: 'pending',
+					status: 'needs_attention',
+					error: 'Agent session crashed unexpectedly',
+				});
+				await this.safeNotify({
+					kind: 'agent_crash',
+					spaceId: meta.spaceId,
+					taskId: task.id,
+					timestamp: new Date().toISOString(),
 				});
 			}
 

@@ -209,3 +209,84 @@ describe('GateDataRepository — persistence', () => {
 		expect(record!.data).toEqual({ persistent: true, value: 42 });
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Gate data corruption recovery (M9.4)
+// ---------------------------------------------------------------------------
+
+describe('GateDataRepository — corruption recovery', () => {
+	test('get() returns {} when stored JSON is corrupted', () => {
+		// Directly insert corrupted JSON bypassing the repository write path
+		const now = Date.now();
+		db.prepare(`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`).run(
+			RUN_ID,
+			'gate-corrupted',
+			'NOT_VALID_JSON{{{',
+			now
+		);
+
+		// Should not throw — instead returns record with empty data
+		const record = repo.get(RUN_ID, 'gate-corrupted');
+		expect(record).not.toBeNull();
+		expect(record!.data).toEqual({});
+		expect(record!.gateId).toBe('gate-corrupted');
+	});
+
+	test('listByRun() returns {} for each corrupted gate and valid data for healthy ones', () => {
+		const now = Date.now();
+		// Corrupted gate
+		db.prepare(`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`).run(
+			RUN_ID,
+			'gate-bad',
+			'[[invalid',
+			now
+		);
+		// Healthy gate
+		repo.set(RUN_ID, GATE_ID_A, { approved: true });
+
+		const records = repo.listByRun(RUN_ID);
+		const badRecord = records.find((r) => r.gateId === 'gate-bad');
+		const goodRecord = records.find((r) => r.gateId === GATE_ID_A);
+
+		expect(badRecord).not.toBeUndefined();
+		expect(badRecord!.data).toEqual({}); // corruption reset to {}
+
+		expect(goodRecord).not.toBeUndefined();
+		expect(goodRecord!.data).toEqual({ approved: true }); // healthy data intact
+	});
+
+	test('corrupted gate data does not block gate evaluation (empty {} keeps gate closed)', () => {
+		// When JSON is corrupted, reset to {} means:
+		// - A "check: exists" gate stays CLOSED (field doesn't exist in {})
+		// - This is the safe/secure default — no accidental gate opening
+		const now = Date.now();
+		db.prepare(`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`).run(
+			RUN_ID,
+			'gate-human-approval',
+			'CORRUPT_DATA',
+			now
+		);
+
+		const record = repo.get(RUN_ID, 'gate-human-approval');
+		expect(record!.data).toEqual({}); // safe fallback
+		// Verify that {} means no "approved" key — gate stays closed
+		expect(record!.data['approved']).toBeUndefined();
+	});
+
+	test('set() after corrupted read writes valid JSON', () => {
+		// Even if a record was corrupted, a subsequent set() should write valid data
+		const now = Date.now();
+		db.prepare(`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`).run(
+			RUN_ID,
+			'gate-recoverable',
+			'BAD_JSON',
+			now
+		);
+
+		// set() overwrites corrupted data with valid JSON
+		repo.set(RUN_ID, 'gate-recoverable', { approved: true });
+
+		const record = repo.get(RUN_ID, 'gate-recoverable');
+		expect(record!.data).toEqual({ approved: true });
+	});
+});
