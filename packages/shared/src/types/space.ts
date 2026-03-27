@@ -148,6 +148,8 @@ export interface SpaceTask {
 	id: string;
 	/** Space this task belongs to */
 	spaceId: string;
+	/** Human-friendly numeric ID, unique per space (auto-incremented, like GitHub issue numbers) */
+	taskNumber: number;
 	/** Task title */
 	title: string;
 	/** Detailed description */

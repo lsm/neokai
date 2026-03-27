@@ -253,6 +253,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// and failure_reason column to space_workflow_runs.
 	// Part of M1.1 — separated Channel + Gate types.
 	runMigration61(db);
+
+	// Migration 62: Add task_number column to space_tasks for human-friendly numeric IDs.
+	// Scoped per space via UNIQUE(space_id, task_number). Backfills existing rows.
+	runMigration62(db);
 }
 
 /**
@@ -3790,6 +3794,37 @@ export function runMigration59(db: BunDatabase): void {
  *
  * currentNodeId is replaced by the agent-centric model where tasks track state.
  */
+export function runMigration62(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+
+	// Check if column already exists (idempotent guard)
+	const cols = db.prepare('PRAGMA table_info(space_tasks)').all() as Array<{ name: string }>;
+	if (cols.some((c) => c.name === 'task_number')) return;
+
+	// Add the column (nullable initially so existing rows don't violate NOT NULL)
+	db.exec(`ALTER TABLE space_tasks ADD COLUMN task_number INTEGER`);
+
+	// Backfill existing rows: assign sequential numbers per space ordered by created_at
+	const spaces = db.prepare(`SELECT DISTINCT space_id FROM space_tasks`).all() as Array<{
+		space_id: string;
+	}>;
+	for (const { space_id } of spaces) {
+		const tasks = db
+			.prepare(`SELECT id FROM space_tasks WHERE space_id = ? ORDER BY created_at ASC`)
+			.all(space_id) as Array<{ id: string }>;
+		const updateStmt = db.prepare(`UPDATE space_tasks SET task_number = ? WHERE id = ?`);
+		let num = 1;
+		for (const { id } of tasks) {
+			updateStmt.run(num++, id);
+		}
+	}
+
+	// Create unique index (enforces per-space uniqueness)
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
+	);
+}
+
 export function runMigration60(db: BunDatabase): void {
 	// Disable FK enforcement before any DDL so that:
 	// - DROP TABLE space_workflow_runs does NOT fire ON DELETE SET NULL on space_tasks.workflow_run_id

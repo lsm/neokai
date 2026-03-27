@@ -79,6 +79,13 @@ export class SpaceTaskManager {
 	}
 
 	/**
+	 * Get a task by its space-scoped numeric ID (e.g. task #5)
+	 */
+	async getTaskByNumber(taskNumber: number): Promise<SpaceTask | null> {
+		return this.taskRepo.getTaskByNumber(this.spaceId, taskNumber);
+	}
+
+	/**
 	 * List tasks in this space
 	 */
 	async listTasks(includeArchived = false): Promise<SpaceTask[]> {

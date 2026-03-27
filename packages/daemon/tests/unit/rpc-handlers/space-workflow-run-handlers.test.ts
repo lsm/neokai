@@ -72,6 +72,7 @@ const mockRun: SpaceWorkflowRun = {
 const mockTask: SpaceTask = {
 	id: 'task-1',
 	spaceId: 'space-1',
+	taskNumber: 1,
 	title: 'Step One',
 	description: '',
 	status: 'pending',

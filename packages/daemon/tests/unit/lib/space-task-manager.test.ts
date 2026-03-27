@@ -717,4 +717,39 @@ describe('SpaceTaskManager', () => {
 			await expect(manager.retryTask(task.id)).rejects.toThrow("Cannot retry task in 'archived'");
 		});
 	});
+
+	describe('taskNumber (numeric task IDs)', () => {
+		it('createTask assigns auto-incrementing taskNumber', async () => {
+			const t1 = await manager.createTask({ title: 'A', description: '' });
+			const t2 = await manager.createTask({ title: 'B', description: '' });
+			expect(t1.taskNumber).toBe(1);
+			expect(t2.taskNumber).toBe(2);
+		});
+
+		it('getTaskByNumber retrieves the correct task', async () => {
+			const t1 = await manager.createTask({ title: 'A', description: '' });
+			await manager.createTask({ title: 'B', description: '' });
+
+			const found = await manager.getTaskByNumber(1);
+			expect(found).not.toBeNull();
+			expect(found!.id).toBe(t1.id);
+			expect(found!.taskNumber).toBe(1);
+		});
+
+		it('getTaskByNumber returns null for non-existent number', async () => {
+			await manager.createTask({ title: 'A', description: '' });
+			expect(await manager.getTaskByNumber(999)).toBeNull();
+		});
+
+		it('getTaskByNumber is scoped to this space', async () => {
+			await manager.createTask({ title: 'A', description: '' });
+
+			const otherSpace = spaceRepo.createSpace({
+				workspacePath: '/workspace/other',
+				name: 'Other',
+			});
+			const otherManager = new SpaceTaskManager(db as any, otherSpace.id);
+			expect(await otherManager.getTaskByNumber(1)).toBeNull();
+		});
+	});
 });

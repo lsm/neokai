@@ -331,7 +331,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 
 	// ---- Task context -------------------------------------------------------
-	sections.push(`\n## Task Details\n`);
+	sections.push(`\n## Task #${context.task.taskNumber} Details\n`);
 	sections.push(`**Title:** ${context.task.title}`);
 	sections.push(`**Priority:** ${context.task.priority}`);
 	sections.push(`**Status:** ${context.task.status}`);
@@ -363,7 +363,7 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 
 	// ---- Task assignment -----------------------------------------------------
 	parts.push(
-		`## Task Assignment\n` +
+		`## Task #${context.task.taskNumber} Assignment\n` +
 			`\n` +
 			`You have been assigned the following task:\n` +
 			`\n` +

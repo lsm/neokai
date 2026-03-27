@@ -244,7 +244,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 	const sections: string[] = [];
 
 	// Task context
-	sections.push(`## Task\n`);
+	sections.push(`## Task #${task.taskNumber}\n`);
 	sections.push(`**Title:** ${task.title}`);
 	sections.push(`**Description:** ${task.description}`);
 	if (task.priority) {
