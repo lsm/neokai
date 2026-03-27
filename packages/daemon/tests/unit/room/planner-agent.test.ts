@@ -195,17 +195,17 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('rebase fails with conflicts, stop immediately');
 		});
 
-		it('should explain that explorer/fact-checker context is provided as input', () => {
+		it('should instruct to explore using own tools, not spawn sub-agents', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('Explorer sub-agent');
-			expect(prompt).toContain('Fact-Checker sub-agent');
 			expect(prompt).toContain('do NOT attempt to spawn further sub-agents');
+			expect(prompt).not.toContain('Task(subagent_type:');
+			expect(prompt).not.toContain('subagent_type: "Explore"');
 		});
 
-		it('should instruct to verify findings using own tools', () => {
+		it('should describe codebase exploration using Read/Grep/Glob/Bash', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('Read/Grep/Glob/Bash');
-			expect(prompt).toContain('verify');
+			expect(prompt).toContain('Read, Grep, Glob, and Bash');
+			expect(prompt).toContain('Step 1: Codebase Exploration');
 		});
 
 		it('should define small vs large scope thresholds', () => {
@@ -267,13 +267,13 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('WebFetch');
 		});
 
-		it('should position verification step before scope assessment', () => {
+		it('should position codebase exploration step before scope assessment', () => {
 			const prompt = buildPlanWriterPrompt();
-			const verifyIdx = prompt.indexOf('Step 1: Verify Explorer Findings');
+			const exploreIdx = prompt.indexOf('Step 1: Codebase Exploration');
 			const scopeIdx = prompt.indexOf('Step 2: Scope Assessment');
-			expect(verifyIdx).toBeGreaterThanOrEqual(0);
+			expect(exploreIdx).toBeGreaterThanOrEqual(0);
 			expect(scopeIdx).toBeGreaterThanOrEqual(0);
-			expect(verifyIdx).toBeLessThan(scopeIdx);
+			expect(exploreIdx).toBeLessThan(scopeIdx);
 		});
 
 		it('should clarify when NOT to use web search for general patterns', () => {
