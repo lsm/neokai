@@ -112,7 +112,7 @@ function makeCallbacks(): LeaderToolCallbacks & {
 		async sendToWorker(
 			groupId: string,
 			message: string,
-			mode?: 'steer' | 'queue',
+			mode?: 'immediate' | 'defer',
 			progressSummary?: string
 		) {
 			calls.push({ method: 'sendToWorker', args: [groupId, message, mode, progressSummary] });
