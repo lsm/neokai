@@ -5,7 +5,7 @@
  * empty states, click handling, and section rendering for all tabs:
  * Active (draft + pending + in_progress),
  * Review (needs_attention → rate_limited/usage_limited → review),
- * Done (completed + cancelled), Archived (archived, hidden by default).
+ * Done (completed + cancelled).
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
@@ -65,7 +65,7 @@ describe('RoomTasks', () => {
 			selectedTabSignal.value = 'active';
 		});
 
-		it('should show Active, Review, Done tabs (Archived hidden when count is 0)', () => {
+		it('should show Active, Review, Done tabs (no Archived tab)', () => {
 			const tasks = [
 				createTask('t1', 'in_progress'),
 				createTask('t2', 'review'),
@@ -78,16 +78,8 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Active');
 			expect(container.textContent).toContain('Review');
 			expect(container.textContent).toContain('Done');
-			// Archived tab hidden when no archived tasks
+			// Archived tab removed — archived tasks are excluded server-side
 			expect(container.textContent).not.toContain('Archived');
-		});
-
-		it('should show Archived tab when there are archived tasks', () => {
-			const tasks = [createTask('t1', 'in_progress'), createTask('t2', 'archived')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			expect(container.textContent).toContain('Archived');
 		});
 
 		it('should show correct counts on tabs', () => {
@@ -327,40 +319,6 @@ describe('RoomTasks', () => {
 		});
 	});
 
-	describe('Archived Tab', () => {
-		beforeEach(() => {
-			selectedTabSignal.value = 'archived';
-		});
-
-		it('should render archived section with muted header', () => {
-			const tasks = [createTask('t1', 'archived', { title: 'Old task' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const header = container.querySelector('h3.text-gray-500');
-			expect(header).toBeTruthy();
-			expect(header?.textContent).toContain('Archived (1)');
-		});
-
-		it('should show archived task titles', () => {
-			const tasks = [createTask('t1', 'archived', { title: 'Old task' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			expect(container.textContent).toContain('Old task');
-		});
-
-		it('should auto-reset to active tab when no archived tasks exist', () => {
-			const tasks = [createTask('t1', 'pending')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			// Auto-reset kicks in, shows active tab content instead of archived empty state
-			expect(container.textContent).toContain('Pending (1)');
-			expect(selectedTabSignal.value).toBe('active');
-		});
-	});
-
 	describe('Tab Switching', () => {
 		it('should switch to review tab when clicked', () => {
 			const tasks = [
@@ -397,23 +355,6 @@ describe('RoomTasks', () => {
 
 			// Should see completed section
 			expect(container.textContent).toContain('Completed (1)');
-		});
-
-		it('should switch to archived tab when clicked', () => {
-			const tasks = [
-				createTask('t1', 'in_progress'),
-				createTask('t2', 'archived', { title: 'Archived task' }),
-			];
-
-			// Set to active BEFORE render
-			selectedTabSignal.value = 'active';
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			// Click archived tab
-			clickTab(container, 'Archived');
-
-			// Should see archived section
-			expect(container.textContent).toContain('Archived (1)');
 		});
 	});
 
@@ -590,16 +531,6 @@ describe('RoomTasks', () => {
 			const item = container.querySelector('.border-l-gray-700');
 			expect(item).toBeTruthy();
 		});
-
-		it('should apply muted border to archived tasks', () => {
-			selectedTabSignal.value = 'archived';
-			const tasks = [createTask('t1', 'archived')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const item = container.querySelector('.border-l-gray-800');
-			expect(item).toBeTruthy();
-		});
 	});
 
 	describe('Worker Summary (currentStep)', () => {
@@ -657,6 +588,11 @@ describe('RoomTasks', () => {
 			expect(getInitialTab()).toBe('review');
 		});
 
+		it('should migrate "archived" to "active"', () => {
+			mockStoredTab('archived');
+			expect(getInitialTab()).toBe('active');
+		});
+
 		it('should preserve valid tab values', () => {
 			mockStoredTab('active');
 			expect(getInitialTab()).toBe('active');
@@ -666,9 +602,6 @@ describe('RoomTasks', () => {
 
 			mockStoredTab('done');
 			expect(getInitialTab()).toBe('done');
-
-			mockStoredTab('archived');
-			expect(getInitialTab()).toBe('archived');
 		});
 
 		it('should default to "active" for unknown values', () => {
@@ -750,31 +683,6 @@ describe('RoomTasks', () => {
 				t.textContent?.replace(/\d/g, '').trim()
 			);
 			expect(tabButtonLabels).not.toContain('Needs Attention');
-		});
-	});
-
-	describe('Archived Tab Auto-Reset', () => {
-		it('should auto-reset to active when archived tab selected but no archived tasks', () => {
-			selectedTabSignal.value = 'archived';
-			const tasks = [createTask('t1', 'in_progress')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			// Should show active tab content, not archived empty state
-			expect(container.textContent).toContain('In Progress');
-			expect(container.textContent).not.toContain('No archived tasks');
-			// Signal should be reset
-			expect(selectedTabSignal.value).toBe('active');
-		});
-
-		it('should stay on archived tab when archived tasks exist', () => {
-			selectedTabSignal.value = 'archived';
-			const tasks = [createTask('t1', 'archived', { title: 'Old task' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			expect(container.textContent).toContain('Archived (1)');
-			expect(selectedTabSignal.value).toBe('archived');
 		});
 	});
 

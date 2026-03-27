@@ -604,6 +604,38 @@ describe('setupLiveQueryHandlers', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// Archiving a task emits a removed delta for tasks.byRoom subscriber
+	// -----------------------------------------------------------------------
+
+	test('archiving a task emits a removed delta for tasks.byRoom subscriber', async () => {
+		// Subscribe — snapshot includes the pending task from beforeEach
+		await setup.callHandler('liveQuery.subscribe', {
+			queryName: 'tasks.byRoom',
+			params: [roomId],
+			subscriptionId: 'sub-archive-delta',
+		});
+		expect(setup.sentMessages.length).toBe(1);
+		const snapshot = setup.sentMessages[0].message.data;
+		expect((snapshot.rows as Array<{ id: string }>).map((r) => r.id)).toContain(taskId);
+
+		// Archive the task by updating its status
+		db.exec(`UPDATE tasks SET status = 'archived' WHERE id = '${taskId}'`);
+		reactiveDb.notifyChange('tasks');
+		await new Promise((r) => setTimeout(r, 50));
+
+		// Find the delta that removed the archived task
+		const deltas = setup.sentMessages
+			.slice(1)
+			.filter((m) => m.message.method === 'liveQuery.delta');
+		expect(deltas.length).toBeGreaterThanOrEqual(1);
+
+		// The last delta should contain the removed task
+		const lastDelta = deltas[deltas.length - 1].message.data;
+		const removedIds = (lastDelta.removed as Array<{ id: string }> | undefined)?.map((r) => r.id);
+		expect(removedIds).toContain(taskId);
+	});
+
+	// -----------------------------------------------------------------------
 	// P1: Version monotonically increasing across deltas
 	// -----------------------------------------------------------------------
 
