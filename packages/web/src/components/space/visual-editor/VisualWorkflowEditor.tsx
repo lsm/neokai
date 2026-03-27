@@ -367,13 +367,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function addStep() {
-		// Guard: skip if already called this cycle (e.g. double-invoked by React/StictMode).
+		// Guard: skip if already called this cycle (e.g. double-invoked by React StrictMode).
 		if (addStepGuardRef.current) return;
 		addStepGuardRef.current = true;
-		// Reset on next paint so the guard is fresh for the next click.
-		void Promise.resolve().then(() => {
+		// Reset synchronously after the state update is enqueued so the guard is fresh
+		// before the next user click. A microtask reset (Promise.resolve().then()) would
+		// create a race: a fast second click within the same microtask tick would see
+		// addStepGuardRef.current === true and be silently dropped.
+		void setTimeout(() => {
 			addStepGuardRef.current = false;
-		});
+		}, 0);
 
 		const newLocalId = generateUUID();
 		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
