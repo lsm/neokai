@@ -114,6 +114,9 @@ test.describe('Agent-Centric Workflow', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill('Agent Channel Test');
 
+		// Wait for the canvas to fully render before clicking add-step.
+		await expect(editor.getByTestId('add-step-button')).toBeVisible({ timeout: 5000 });
+
 		// Add a node and configure two agents so agentRoles is populated,
 		// which gives the ChannelEditor select dropdowns instead of text inputs.
 		await editor.getByTestId('add-step-button').click();
@@ -169,6 +172,9 @@ test.describe('Agent-Centric Workflow', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill('Gate Config Test');
 
+		// Wait for the canvas to fully render before clicking add-step.
+		await expect(editor.getByTestId('add-step-button')).toBeVisible({ timeout: 5000 });
+
 		// Add a node with two agents so agentRoles is populated
 		await editor.getByTestId('add-step-button').click();
 		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
@@ -219,6 +225,9 @@ test.describe('Agent-Centric Workflow', () => {
 
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill(WORKFLOW_NAME);
+
+		// Wait for the canvas to fully render before clicking add-step.
+		await expect(editor.getByTestId('add-step-button')).toBeVisible({ timeout: 5000 });
 
 		// Add a step with two agents
 		await editor.getByTestId('add-step-button').click();
@@ -287,6 +296,9 @@ test.describe('Agent-Centric Workflow', () => {
 
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill(WORKFLOW_NAME);
+
+		// Wait for the canvas to fully render before clicking add-step.
+		await expect(editor.getByTestId('add-step-button')).toBeVisible({ timeout: 5000 });
 
 		// Add step with two agents
 		await editor.getByTestId('add-step-button').click();
