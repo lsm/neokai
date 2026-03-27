@@ -392,11 +392,12 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 		ctx.db
 			.prepare(
 				`INSERT INTO space_tasks
-         (id, space_id, title, description, status, priority, task_type, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'needs_attention', 'normal', 'coding', ?, ?)`
+         (id, space_id, task_number, title, description, status, priority, task_type, created_at, updated_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, ?, 'needs_attention', 'normal', 'coding', ?, ?)`
 			)
 			.run(
 				taskId,
+				ctx.spaceId,
 				ctx.spaceId,
 				'Failing task',
 				'Task that needs attention',

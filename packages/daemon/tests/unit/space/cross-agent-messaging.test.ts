@@ -105,10 +105,20 @@ function seedRunTask(
 	const id = `task-cam-${Math.random().toString(36).slice(2)}`;
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, title, description, status, priority, agent_name,
+       (id, space_id, task_number, title, description, status, priority, agent_name,
         workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, '', 'in_progress', 'normal', ?, ?, '[]', ?, ?, ?)`
-	).run(id, spaceId, `Task for ${agentName}`, agentName, workflowRunId, sessionId, now, now);
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', 'in_progress', 'normal', ?, ?, '[]', ?, ?, ?)`
+	).run(
+		id,
+		spaceId,
+		spaceId,
+		`Task for ${agentName}`,
+		agentName,
+		workflowRunId,
+		sessionId,
+		now,
+		now
+	);
 	db.exec('PRAGMA foreign_keys = ON');
 }
 
@@ -157,11 +167,12 @@ function seedStepTask(
 	const id = `task-cam-${Math.random().toString(36).slice(2)}`;
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, title, description, status, priority, agent_name,
+       (id, space_id, task_number, title, description, status, priority, agent_name,
         workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
 	).run(
 		id,
+		spaceId,
 		spaceId,
 		`Task for ${agentName}`,
 		status,
