@@ -16,6 +16,7 @@
  */
 
 import { signal, computed } from '@preact/signals';
+import { EntityStore } from './entity-store';
 import type {
 	Room,
 	NeoTask,
@@ -76,8 +77,11 @@ class RoomStore {
 	/** Room metadata */
 	readonly room = signal<Room | null>(null);
 
-	/** Tasks for this room (excludes archived — filtered server-side by LiveQuery) */
-	readonly tasks = signal<NeoTask[]>([]);
+	/** Entity store for tasks — Map-backed for O(1) lookups and delta application */
+	readonly taskStore = new EntityStore<NeoTask>();
+
+	/** Tasks for this room — computed pass-through from taskStore (excludes archived — filtered server-side by LiveQuery) */
+	readonly tasks = computed(() => this.taskStore.toArray());
 
 	/** Sessions in this room */
 	readonly sessions = signal<SessionSummary[]>([]);
@@ -92,11 +96,16 @@ class RoomStore {
 	// Goals Signals
 	// ========================================
 
-	/** Goals for this room */
-	readonly goals = signal<RoomGoal[]>([]);
+	/** Entity store for goals — Map-backed for O(1) lookups and delta application */
+	readonly goalStore = new EntityStore<RoomGoal>();
 
-	/** Goals loading state */
-	readonly goalsLoading = signal<boolean>(false);
+	/** Goals for this room — computed pass-through from goalStore */
+	readonly goals = computed(() => this.goalStore.toArray());
+
+	/** Goals loading state — delegates to goalStore.loading */
+	get goalsLoading() {
+		return this.goalStore.loading;
+	}
 
 	// ========================================
 	// Room Skills Signals
@@ -291,11 +300,10 @@ class RoomStore {
 
 		// 2. Clear state
 		this.room.value = null;
-		this.tasks.value = [];
+		this.taskStore.clear();
 		this.sessions.value = [];
 		this.error.value = null;
-		this.goals.value = [];
-		this.goalsLoading.value = false;
+		this.goalStore.clear();
 		this.roomSkills.value = [];
 		this.autoCompletedNotifications.value = [];
 		this.runtimeState.value = null;
@@ -363,7 +371,7 @@ class RoomStore {
 				(event) => {
 					if (event.subscriptionId !== tasksSubId) return;
 					if (!this.activeSubscriptionIds.has(tasksSubId)) return; // stale-event guard
-					this.tasks.value = event.rows as NeoTask[];
+					this.taskStore.applySnapshot(event.rows as NeoTask[]);
 				}
 			);
 			cleanups.push(unsubTaskSnapshot);
@@ -371,17 +379,12 @@ class RoomStore {
 			const unsubTaskDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== tasksSubId) return;
 				if (!this.activeSubscriptionIds.has(tasksSubId)) return; // stale-event guard
-				let current = this.tasks.value;
-				if (event.removed?.length) {
-					const removedIds = new Set((event.removed as NeoTask[]).map((r) => r.id));
-					current = current.filter((t) => !removedIds.has(t.id));
-				}
+				// Show toast when a known task transitions into review/rate-limited/usage-limited status.
+				// Must read prevTask from the store BEFORE applyDelta overwrites it.
+				// Skip when prevTask is absent to avoid spurious toasts during hydration.
 				if (event.updated?.length) {
-					const updatedTasks = event.updated as NeoTask[];
-					// Show toast when a known task transitions into review/rate-limited/usage-limited status.
-					// Skip when prevTask is absent to avoid spurious toasts during hydration.
-					for (const updatedTask of updatedTasks) {
-						const prevTask = current.find((t) => t.id === updatedTask.id);
+					for (const updatedTask of event.updated as NeoTask[]) {
+						const prevTask = this.taskStore.getById(updatedTask.id);
 						if (prevTask) {
 							if (updatedTask.status === 'review' && prevTask.status !== 'review') {
 								toast.info(`Task ready for review: ${updatedTask.title}`);
@@ -394,13 +397,8 @@ class RoomStore {
 							}
 						}
 					}
-					const updatedMap = new Map(updatedTasks.map((u) => [u.id, u]));
-					current = current.map((t) => updatedMap.get(t.id) ?? t);
 				}
-				if (event.added?.length) {
-					current = [...current, ...(event.added as NeoTask[])];
-				}
-				this.tasks.value = current;
+				this.taskStore.applyDelta(event as { added?: NeoTask[]; removed?: NeoTask[]; updated?: NeoTask[] });
 			});
 			cleanups.push(unsubTaskDelta);
 
@@ -460,8 +458,7 @@ class RoomStore {
 				(event) => {
 					if (event.subscriptionId !== goalsSubId) return;
 					if (!this.activeSubscriptionIds.has(goalsSubId)) return; // stale-event guard
-					this.goals.value = event.rows as RoomGoal[];
-					this.goalsLoading.value = false;
+					this.goalStore.applySnapshot(event.rows as RoomGoal[]);
 				}
 			);
 			cleanups.push(unsubGoalSnapshot);
@@ -469,25 +466,13 @@ class RoomStore {
 			const unsubGoalDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== goalsSubId) return;
 				if (!this.activeSubscriptionIds.has(goalsSubId)) return; // stale-event guard
-				let current = this.goals.value;
-				if (event.removed?.length) {
-					const removedIds = new Set((event.removed as RoomGoal[]).map((r) => r.id));
-					current = current.filter((g) => !removedIds.has(g.id));
-				}
-				if (event.updated?.length) {
-					const updatedMap = new Map((event.updated as RoomGoal[]).map((u) => [u.id, u]));
-					current = current.map((g) => updatedMap.get(g.id) ?? g);
-				}
-				if (event.added?.length) {
-					current = [...current, ...(event.added as RoomGoal[])];
-				}
-				this.goals.value = current;
+				this.goalStore.applyDelta(event as { added?: RoomGoal[]; removed?: RoomGoal[]; updated?: RoomGoal[] });
 			});
 			cleanups.push(unsubGoalDelta);
 
 			// Subscribe to the goals.byRoom named query.
 			// Mark loading before subscribing; the snapshot handler clears it.
-			this.goalsLoading.value = true;
+			this.goalStore.loading.value = true;
 			await hub.request('liveQuery.subscribe', {
 				queryName: 'goals.byRoom',
 				params: [roomId],
@@ -506,7 +491,7 @@ class RoomStore {
 				this.liveQueryCleanups.delete(roomId);
 				// Reset goalsLoading: it was set to true above but the snapshot
 				// handler (which normally clears it) will never fire.
-				this.goalsLoading.value = false;
+				this.goalStore.loading.value = false;
 				return;
 			}
 
@@ -516,7 +501,7 @@ class RoomStore {
 			// snapshot handler above.
 			const unsubGoalReconnect = hub.onConnection((state) => {
 				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
-				this.goalsLoading.value = true;
+				this.goalStore.loading.value = true;
 				hub
 					.request('liveQuery.subscribe', {
 						queryName: 'goals.byRoom',
@@ -525,7 +510,7 @@ class RoomStore {
 					})
 					.catch((err) => {
 						logger.warn('Goals LiveQuery re-subscribe failed:', err);
-						this.goalsLoading.value = false;
+						this.goalStore.loading.value = false;
 					});
 			});
 			cleanups.push(unsubGoalReconnect);
@@ -633,7 +618,7 @@ class RoomStore {
 			}
 			this.liveQueryCleanups.delete(roomId);
 			// Reset goalsLoading in case the error occurred after it was set to true.
-			this.goalsLoading.value = false;
+			this.goalStore.loading.value = false;
 			logger.error('Failed to subscribe room LiveQuery:', err);
 		}
 	}

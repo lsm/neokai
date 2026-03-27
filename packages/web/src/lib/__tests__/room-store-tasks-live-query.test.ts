@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { TaskSummary } from '@neokai/shared';
+import type { NeoTask } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -91,7 +91,7 @@ import { roomStore } from '../room-store.js';
 const ROOM_ID = 'room-tasks-test';
 const TASKS_SUB_ID = `tasks-byRoom-${ROOM_ID}`;
 
-function makeTask(id: string, overrides: Partial<TaskSummary> = {}): TaskSummary {
+function makeTask(id: string, overrides: Partial<NeoTask> = {}): NeoTask {
 	return {
 		id,
 		roomId: ROOM_ID,
@@ -100,10 +100,11 @@ function makeTask(id: string, overrides: Partial<TaskSummary> = {}): TaskSummary
 		status: 'pending',
 		priority: 'normal',
 		progress: 0,
+		dependsOn: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
-	} as TaskSummary;
+	} as NeoTask;
 }
 
 function setupHubRequests(hub: MockHub): void {
