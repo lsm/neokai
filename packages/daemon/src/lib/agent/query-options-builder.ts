@@ -117,6 +117,17 @@ export class QueryOptionsBuilder {
 		const mergedEnv = this.getMergedEnvironmentVars();
 		const sdkCliPath = this.getSDKCliPath();
 
+		// Disabled MCP server names from tools config.
+		// These are filtered from the mcpServers map directly so the exclusion
+		// applies to ALL session types — including room_chat which sets settingSources: []
+		// and therefore never reads disabledMcpjsonServers from settings.local.json.
+		const toolsConfig = config.tools;
+		const disabledMcpServers = toolsConfig?.disabledMcpServers ?? [];
+		const mergedMcpServers = this.filterDisabledMcpServers(
+			this.mergeMcpServers(mcpServers, mcpServersFromSkills),
+			disabledMcpServers
+		);
+
 		// Build final query options
 		// Settings-derived options first, then session-specific overrides
 		const queryOptions: Options = {
@@ -162,7 +173,8 @@ export class QueryOptionsBuilder {
 			// (e.g. room_chat sessions), the SDK only allows servers present in this
 			// map — user settings are ignored. By merging skill servers here, they
 			// are always available regardless of strictMcpConfig setting.
-			mcpServers: this.mergeMcpServers(mcpServers, mcpServersFromSkills) as Options['mcpServers'],
+			// Disabled servers are already filtered out by filterDisabledMcpServers above.
+			mcpServers: mergedMcpServers as Options['mcpServers'],
 			strictMcpConfig: config.strictMcpConfig,
 
 			// ============ Output Format ============
@@ -759,6 +771,25 @@ CRITICAL RULES:
 		return await this.ctx.settingsManager.prepareSDKOptions({
 			disabledMcpServers: toolsConfig?.disabledMcpServers ?? [],
 		});
+	}
+
+	/**
+	 * Filter disabled MCP servers from the merged servers map.
+	 *
+	 * This ensures disabledMcpServers takes effect for ALL session types,
+	 * including room_chat sessions that set settingSources: [] and therefore
+	 * never read disabledMcpjsonServers from .claude/settings.local.json.
+	 */
+	private filterDisabledMcpServers(
+		servers: Record<string, unknown> | undefined,
+		disabledList: string[]
+	): Record<string, unknown> | undefined {
+		if (!servers || disabledList.length === 0) return servers;
+		const filtered = { ...servers };
+		for (const name of disabledList) {
+			delete filtered[name];
+		}
+		return Object.keys(filtered).length > 0 ? filtered : undefined;
 	}
 
 	/**
