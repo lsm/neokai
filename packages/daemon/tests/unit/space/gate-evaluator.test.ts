@@ -778,6 +778,37 @@ describe('validateGateCondition', () => {
 		expect(errors[0]).toContain('min');
 	});
 
+	test('rejects count with missing matchValue', () => {
+		const errors = validateGateCondition({
+			type: 'count',
+			field: 'reviews',
+			min: 2,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('matchValue');
+	});
+
+	test('warns when check has value with exists op', () => {
+		const errors = validateGateCondition({
+			type: 'check',
+			field: 'plan',
+			op: 'exists',
+			value: 'something',
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('ignored');
+		expect(errors[0]).toContain('exists');
+	});
+
+	test('no warning when check has exists op without value', () => {
+		const errors = validateGateCondition({
+			type: 'check',
+			field: 'plan',
+			op: 'exists',
+		});
+		expect(errors).toEqual([]);
+	});
+
 	test('rejects all with non-array conditions', () => {
 		const errors = validateGateCondition({ type: 'all', conditions: 'not an array' });
 		expect(errors.length).toBeGreaterThan(0);

@@ -69,6 +69,10 @@ export function validateGateCondition(condition: unknown, path = 'condition'): s
 			if (cond.op !== undefined && (typeof cond.op !== 'string' || !VALID_CHECK_OPS.has(cond.op))) {
 				errors.push(`${path}.op: expected one of [exists, ==, !=], got ${JSON.stringify(cond.op)}`);
 			}
+			// Warn when value is set but op is 'exists' (value is ignored by exists)
+			if (cond.op === 'exists' && cond.value !== undefined) {
+				errors.push(`${path}: "value" is set but ignored when op is "exists"`);
+			}
 			break;
 
 		case 'count':
@@ -78,7 +82,9 @@ export function validateGateCondition(condition: unknown, path = 'condition'): s
 			if (typeof cond.min !== 'number') {
 				errors.push(`${path}.min: expected number, got ${typeof cond.min}`);
 			}
-			// matchValue can be anything — no validation needed
+			if (cond.matchValue === undefined) {
+				errors.push(`${path}.matchValue: required but missing`);
+			}
 			break;
 
 		case 'all':
