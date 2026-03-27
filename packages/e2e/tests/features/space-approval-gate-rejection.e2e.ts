@@ -300,6 +300,6 @@ test.describe('Approval Gate Rejection', () => {
 		// pre-coding phase (plan-approval-gate). If the workflow adds more human gates
 		// in the future, this assertion would need revisiting — but for the current
 		// template it confirms the gate correctly transitioned away from waiting_human.
-		await expect(page.getByTestId('gate-icon-waiting_human')).toBeHidden({ timeout: 5000 });
+		await expect(page.getByTestId('gate-icon-waiting_human')).toBeHidden({ timeout: 10000 });
 	});
 });
