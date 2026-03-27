@@ -2,35 +2,43 @@
 
 ## Goal and Scope
 
-Implement git worktree isolation for Space tasks. Each task gets **one worktree** shared by all agents in that task (planner, coder, reviewer, QA all work in the same worktree). Worktree folder names are short, human-readable, and memorable (e.g., `alpha-3`, `nova-7`, `flux-2`).
+Implement git worktree isolation for Space tasks. Each task gets **one worktree** shared by all agents in that task (planner, coder, reviewer, QA all work in the same worktree). Worktree folder names and branch names are derived from the task title via slugification, making them self-documenting (e.g., task "Add dark mode support" → folder `add-dark-mode-support`, branch `space/add-dark-mode-support`).
 
 ## Key Design Decisions
 
 1. **One worktree per task, not per agent**. Agents work sequentially within a task, so there are no conflicts. This is simpler to manage and matches the Room system's approach.
 
-2. **Short, human-readable names**. Format: `{adjective}-{number}` (e.g., `alpha-3`, `nova-7`, `flux-2`, `spark-12`). Similar to how Codex names its sandboxes. The name doesn't need to encode session IDs or task IDs — the DB links everything.
+2. **Task-title-based naming**. The worktree folder name and git branch name are both derived from the task title using a slugification function. The same slug is used for both, making it easy to identify which worktree/branch corresponds to which task. Example: task "Fix login timeout bug" → slug `fix-login-timeout-bug` → folder `.worktrees/fix-login-timeout-bug/` → branch `space/fix-login-timeout-bug`.
 
-3. **Name generation**: Pick from a curated word list (~50 short adjectives: alpha, beta, nova, flux, spark, blaze, drift, frost, etc.) + sequential number. Check for uniqueness against existing worktrees.
+3. **Slugification rules**: Lowercase, replace spaces/special chars with hyphens, collapse consecutive hyphens, strip leading/trailing hyphens, max 60 characters (truncate at word boundary), append `-2`/`-3`/etc. suffix if the slug already exists among active worktrees.
 
 4. **Worktree lifecycle**: Created when task workflow starts. **Not immediately cleaned up on completion** — kept until the PR is merged or the task is explicitly deleted, since the human may want to review code locally or the Coder may need follow-up commits. A TTL-based reaper (default: 7 days after workflow completion) cleans up stale worktrees. Immediate cleanup only on task cancellation.
 
 ## Tasks
 
-### Task 4.1: Implement Worktree Name Generator
+### Task 4.1: Implement Task Title Slugification
 
-**Description**: Create a name generator that produces short, memorable, unique worktree folder names.
+**Description**: Create a slugification function that converts task titles into valid folder/branch names, used for both the worktree folder and the git branch.
 
 **Subtasks**:
-1. Create `packages/daemon/src/lib/space/worktree-names.ts` with:
-   - A curated word list of ~50 short adjectives (alpha, beta, nova, flux, spark, blaze, drift, frost, pulse, quark, etc.)
-   - `generateWorktreeName(existingNames: string[]): string` — picks a random adjective + incrementing number, ensures uniqueness
-2. Names are 2-8 characters for the adjective, 1-3 digits for the number
-3. Unit tests: uniqueness, format validation, collision handling
+1. Create `packages/daemon/src/lib/space/worktree-slug.ts` with:
+   - `slugifyTaskTitle(title: string, existingSlugs: string[]): string` — converts a task title to a valid slug, appending `-2`/`-3`/etc. if the base slug already exists
+2. Slugification rules:
+   - Lowercase the input
+   - Replace spaces and non-alphanumeric characters with hyphens
+   - Collapse consecutive hyphens into one
+   - Strip leading/trailing hyphens
+   - Truncate to max 60 characters at a word boundary (don't cut mid-word)
+   - If the resulting slug already exists in `existingSlugs`, append `-2`, `-3`, etc. until unique
+   - If the title is empty or results in an empty slug after processing, fall back to `task-{shortId}` (first 8 chars of task UUID)
+3. The same slug is used for both the worktree folder name and the git branch name (prefixed with `space/`)
+4. Unit tests: basic slugification, special characters, long titles (truncation), collision handling (suffix incrementing), empty/whitespace-only titles, unicode handling
 
 **Acceptance Criteria**:
-- Generated names are short and human-readable (e.g., `alpha-3`, `nova-7`)
-- No collisions with existing worktree names
-- Unit tests verify format and uniqueness
+- Slugs are lowercase, hyphen-separated, max 60 chars (e.g., `add-dark-mode-support`)
+- Collisions resolved with incrementing suffix (`-2`, `-3`)
+- Empty titles produce valid fallback slugs
+- Unit tests verify all edge cases
 
 **Depends on**: nothing
 
@@ -45,18 +53,18 @@ Implement git worktree isolation for Space tasks. Each task gets **one worktree*
 **Subtasks**:
 1. **Create a new `SpaceWorktreeManager`** in `packages/daemon/src/lib/space/`. The existing Room `WorktreeManager` uses `simple-git` with room-specific abstractions (`sessionId`, `WorktreeMetadata`, session group lifecycle). The Space system needs task-scoped worktrees with different lifecycle management (one per task, shared by all agents, TTL-based cleanup). Reuse `simple-git` directly (same dependency) but do NOT extend or modify the Room's `WorktreeManager` class.
 2. `SpaceWorktreeManager` API:
-   - `createTaskWorktree(spaceId: string, taskId: string, baseBranch?: string): Promise<{ path: string, name: string }>` — creates worktree with short name, returns path and name
+   - `createTaskWorktree(spaceId: string, taskId: string, taskTitle: string, baseBranch?: string): Promise<{ path: string, slug: string }>` — slugifies the task title, creates worktree, returns path and slug
    - `removeTaskWorktree(spaceId: string, taskId: string): Promise<void>` — cleans up
    - `getTaskWorktreePath(spaceId: string, taskId: string): Promise<string | null>` — looks up existing worktree for a task
-   - `listWorktrees(spaceId: string): Promise<Array<{ name: string, taskId: string, path: string }>>` — lists all worktrees for a space
+   - `listWorktrees(spaceId: string): Promise<Array<{ slug: string, taskId: string, path: string }>>` — lists all worktrees for a space
    - `cleanupOrphaned(spaceId: string): Promise<void>` — removes worktrees for completed/cancelled tasks
-3. Worktree location: `{spaceWorkspacePath}/.worktrees/{worktree-name}/` (e.g., `.worktrees/alpha-3/`)
-4. Persist worktree ↔ task mapping in SQLite (table: `space_worktrees` with columns: `id`, `space_id`, `task_id`, `name`, `path`, `created_at`)
-5. Branch naming: `space/{worktree-name}` (e.g., `space/alpha-3`) — short because worktree names are already unique; no UUID-based task IDs in the branch name
+3. Worktree location: `{spaceWorkspacePath}/.worktrees/{slug}/` (e.g., `.worktrees/add-dark-mode-support/`)
+4. Persist worktree ↔ task mapping in SQLite (table: `space_worktrees` with columns: `id`, `space_id`, `task_id`, `slug`, `path`, `created_at`)
+5. Branch naming: `space/{slug}` (e.g., `space/add-dark-mode-support`) — the same slug used for the folder name, making it easy to correlate worktrees with branches
 6. Unit tests: create, remove, lookup, list, orphan cleanup
 
 **Acceptance Criteria**:
-- One worktree per task with short, readable name
+- One worktree per task with task-title-derived slug name
 - Worktree ↔ task mapping persisted in SQLite
 - Create/remove/lookup/list/cleanup all work
 - Unit tests cover lifecycle

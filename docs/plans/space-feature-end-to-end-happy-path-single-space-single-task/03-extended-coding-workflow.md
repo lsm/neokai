@@ -70,7 +70,7 @@ Planning ──[check: prUrl]──► Plan Review ──[check: approved]──
 5. Define 3 Reviewer nodes with `agentId: 'reviewer'`, marked as parallel
 6. Define the QA node with `agentId: 'qa'`
 7. Define the Done node (terminal)
-8. Define all channels per the table above — each gate is a unified Gate entity with the appropriate condition config (`check`, `count`, or `always`), `allowedWriterRoles`, `resetOnCycle` flag, and `description`
+8. Define all channels per the table above — each gate is a unified Gate entity with the appropriate condition config (`check`, `count`, `always`, or composite `all`/`any`), `allowedWriterRoles`, `resetOnCycle` flag, and `description`. Note: V2 uses only `check` and `count` conditions; `all`/`any` composites are available for future workflows.
 9. Set `maxIterations: 5` on the workflow template
 10. Mark cyclic channels with `isCyclic: true`
 

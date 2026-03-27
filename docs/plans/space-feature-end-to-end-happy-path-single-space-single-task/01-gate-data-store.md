@@ -21,11 +21,13 @@ interface Gate {
   resetOnCycle: boolean;                // whether data resets when a cyclic channel fires
 }
 
-// Three condition types cover ALL workflow behaviors
+// Five condition types cover ALL workflow behaviors (including composition)
 type GateCondition =
   | { type: 'always' }
   | { type: 'check'; field: string; op?: '==' | '!=' | 'exists'; value?: unknown }
   | { type: 'count'; field: string; matchValue: unknown; min: number }
+  | { type: 'all'; conditions: GateCondition[] }   // AND — all must pass
+  | { type: 'any'; conditions: GateCondition[] }    // OR — at least one must pass
 ```
 
 ### Condition Evaluation
@@ -39,6 +41,10 @@ One `evaluate(gate)` function with a switch on `condition.type`:
   - `op: '!='`: `data[field] !== value`
 - **`count`**: Counts entries in a map field that match a value.
   - `Object.values(data[field] || {}).filter(v => v === matchValue).length >= min`
+- **`all`**: AND composition — `conditions.every(c => evaluate(c, gate.data))`.
+  - Empty `conditions` array returns `true` (vacuous truth).
+- **`any`**: OR composition — `conditions.some(c => evaluate(c, gate.data))`.
+  - Empty `conditions` array returns `false`.
 
 ### How Each Workflow Gate Maps to Conditions
 
@@ -63,7 +69,7 @@ One `evaluate(gate)` function with a switch on `condition.type`:
 **Subtasks**:
 1. Audit the existing gate types in `packages/shared/src/types/space.ts` — currently supports `always`, `human`, `condition`, `task_result` as separate types
 2. Replace with the unified `Gate` interface: `{ id, condition: GateCondition, data, allowedWriterRoles, description, resetOnCycle }`
-3. Define the `GateCondition` discriminated union with three types: `always`, `check`, `count`
+3. Define the `GateCondition` discriminated union with five types: `always`, `check`, `count`, `all` (AND composition), `any` (OR composition). The `all`/`any` types are recursive — `conditions` is `GateCondition[]`, enabling arbitrarily nested logic.
 4. Create a dedicated `gate_data` table in SQLite keyed by `(run_id, gate_id)` with a JSON `data` column. Rationale: (a) gate data changes frequently during a run while gate definitions are static, (b) gate data is per-run while gate definitions are per-workflow template, (c) separate table enables atomic reads/writes without JSON blob deserialization, (d) concurrent writes (e.g., 3 reviewers voting) benefit from row-level granularity.
 5. Add `allowedWriterRoles: string[]` to the gate definition schema (static, per-gate)
 6. Add `resetOnCycle: boolean` to the gate definition schema — controls whether data is cleared on cyclic channel traversal
@@ -73,7 +79,7 @@ One `evaluate(gate)` function with a switch on `condition.type`:
 
 **Acceptance Criteria**:
 - Single unified `Gate` interface replaces all separate gate types
-- Three condition types (`always`, `check`, `count`) cover all workflow behaviors
+- Five condition types (`always`, `check`, `count`, `all`, `any`) cover all workflow behaviors including composition
 - Gate data persisted to SQLite `gate_data` table and survives daemon restart
 - Existing gate definitions are migrated to unified format
 - Unit tests verify persistence round-trip and migration
@@ -94,15 +100,18 @@ One `evaluate(gate)` function with a switch on `condition.type`:
    - `always` → return `true`
    - `check` → read `gate.data[field]`, apply op (`exists`, `==`, `!=`)
    - `count` → read `gate.data[field]` as a map, count values matching `matchValue`, check `>= min`
+   - `all` → recursively evaluate all sub-conditions, return `true` only if ALL pass. Empty array → `true` (vacuous truth).
+   - `any` → recursively evaluate all sub-conditions, return `true` if ANY passes. Empty array → `false`.
 2. Refactor `ChannelGateEvaluator` to call `evaluateGate()` instead of per-type logic
 3. Ensure the evaluator reads from the gate's `data` store (from `gate_data` table), not from workflow run config
 4. Handle edge cases: missing field → `check` with `exists` returns false; missing map field → `count` returns 0
 5. Remove the old per-type evaluator code paths (`human`, `pr`, `aggregate`, `task_result` as separate branches)
 6. Unit tests for each condition type with various data states, including edge cases (null data, empty map, missing field)
+7. Unit tests for composite conditions: `all` with mixed pass/fail sub-conditions, `any` with mixed pass/fail, nested `all`/`any`, empty arrays
 
 **Acceptance Criteria**:
-- Single `evaluateGate()` function handles all conditions
-- No separate evaluator per gate type — one code path with a 3-way switch
+- Single `evaluateGate()` function handles all conditions including recursive `all`/`any`
+- No separate evaluator per gate type — one code path with a 5-way switch
 - All existing gate behaviors continue to work (verified by backward-compat tests)
 - Unit tests cover all condition types and edge cases
 

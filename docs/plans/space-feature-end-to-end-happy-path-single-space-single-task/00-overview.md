@@ -40,9 +40,11 @@ type GateCondition =
   | { type: 'always' }                                            // always passes
   | { type: 'check'; field: string; op?: '==' | '!=' | 'exists'; value?: unknown }  // check a single field
   | { type: 'count'; field: string; matchValue: unknown; min: number }              // count matching entries in a map
+  | { type: 'all'; conditions: GateCondition[] }                  // AND — all sub-conditions must pass
+  | { type: 'any'; conditions: GateCondition[] }                  // OR — at least one sub-condition must pass
 ```
 
-Three condition types cover **every** gate behavior in the workflow:
+Five condition types cover **every** gate behavior in the workflow:
 
 | Gate use case | Condition | Example |
 |---------------|-----------|---------|
@@ -52,8 +54,12 @@ Three condition types cover **every** gate behavior in the workflow:
 | QA failed (cyclic) | `{ type: 'check', field: 'result', op: '==', value: 'failed' }` | Passes when `data.result === 'failed'` |
 | Review rejected (cyclic) | `{ type: 'check', field: 'result', op: '==', value: 'rejected' }` | Passes when `data.result === 'rejected'` |
 | 3 reviewer votes | `{ type: 'count', field: 'votes', matchValue: 'approve', min: 3 }` | Passes when ≥3 entries in `data.votes` equal `'approve'` |
+| Composite AND | `{ type: 'all', conditions: [...] }` | Passes when ALL sub-conditions pass |
+| Composite OR | `{ type: 'any', conditions: [...] }` | Passes when ANY sub-condition passes |
 
-**Why this is better**: No class hierarchy, no separate evaluator per type. One `evaluate(gate)` function with a switch on `condition.type`. Adding a new behavior = defining a new condition config, not a new class. All gates have the same API: `read_gate`, `write_gate`.
+The `all`/`any` types are **recursive** — sub-conditions can themselves be `all`/`any`, enabling arbitrarily complex logic. For the current V2 workflow, simple `check`/`count` conditions suffice, but composite conditions enable future gates like "PR exists AND CI passes" without needing multiple separate gates.
+
+**Why this is better**: No class hierarchy, no separate evaluator per type. One `evaluate(gate)` function with a switch on `condition.type`. Adding a new behavior = defining a new condition config, not a new class. Composite `all`/`any` allow combining conditions without proliferating gates. All gates have the same API: `read_gate`, `write_gate`.
 
 ### Gate Data Store
 
@@ -163,7 +169,7 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 7. **Approval gate UI with canvas visualization**: Live workflow visualization on a canvas. Clicking an approval gate (`plan-approval-gate`) opens an artifacts view showing all changes in the worktree.
 
-8. **Worktree isolation (one per task)**: Currently no worktree isolation exists. Need ONE worktree per task (shared by all agents in that task), with short human-readable folder names.
+8. **Worktree isolation (one per task)**: Currently no worktree isolation exists. Need ONE worktree per task (shared by all agents in that task), with folder/branch names derived from the task title via slugification (e.g., task "Add dark mode support" → folder `add-dark-mode-support`, branch `space/add-dark-mode-support`).
 
 9. **Gate data MCP tools**: Agents need `read_gate`, `write_gate`, and `list_gates` MCP tools to interact with gate data stores.
 
@@ -190,13 +196,13 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 ## Milestones
 
-1. **Unified Gate with composable conditions** — Implement the single Gate entity with persistent data store, three condition types (`always`, `check`, `count`), `read_gate`/`write_gate`/`list_gates` MCP tools, and channel router integration
+1. **Unified Gate with composable conditions** — Implement the single Gate entity with persistent data store, five condition types (`always`, `check`, `count`, plus `all`/`any` for AND/OR composition), `read_gate`/`write_gate`/`list_gates` MCP tools, and channel router integration
 
 2. **Enhanced node agent prompts** — Add git/PR/review-specific system prompts for planner, coder, reviewer, and QA agents, including gate data interaction instructions
 
 3. **Extended coding workflow (V2)** — Create CODING_WORKFLOW_V2 with the full pipeline using unified gates with composable conditions
 
-4. **Worktree isolation (one per task)** — Implement single worktree per task with short human-readable names (e.g., `alpha-3`, `nova-7`), shared by all agents in the task
+4. **Worktree isolation (one per task)** — Implement single worktree per task with task-title-derived slug names (e.g., `add-dark-mode-support`), shared by all agents in the task
 
 5. **QA agent node** — Add QA as the verification step before Done, with QA→Code feedback loop
 
@@ -260,11 +266,10 @@ Planning ──[check: prUrl exists]──► Plan Review (1 reviewer) ──[ch
 ## Worktree Strategy
 
 - **One worktree per task** (shared by all agents in that task — planner, coder, reviewer, QA all work in the same worktree)
-- **Short, human-readable folder names**: `alpha-3`, `nova-7`, `flux-2` — short adjective + dash + number (similar to Codex naming)
-- The worktree name does NOT need to associate with session IDs — the DB links everything
-- Folder name just needs to be unique and memorable
+- **Task-title-derived slug names**: The worktree folder name is a slugified version of the task title (e.g., task "Add dark mode support" → `add-dark-mode-support`). This is self-documenting — you can see which worktree belongs to which task at a glance.
+- Slugification: lowercase, hyphens for spaces/special chars, max 60 chars, collision suffix (`-2`, `-3`) if needed
 - Agents work sequentially in the task worktree, so no conflicts
-- **Branch naming**: `space/{worktree-name}` (e.g., `space/alpha-3`) — short because worktree names are already unique; no UUID-based task IDs in the branch name
+- **Branch naming**: `space/{slug}` (e.g., `space/add-dark-mode-support`) — same slug as the folder name, making worktrees and branches easy to correlate
 - **Cleanup timing**: Worktrees are kept until the PR is merged or the task is explicitly deleted by the human. A TTL-based reaper (default: 7 days after workflow completion) cleans up stale worktrees. Immediate cleanup only on task cancellation.
 
 ## Total Estimated Task Count
