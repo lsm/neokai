@@ -1,7 +1,7 @@
 /**
  * Space Preset Agent Seeding
  *
- * Seeds the four default SpaceAgent records when a new Space is created.
+ * Seeds the five default SpaceAgent records when a new Space is created.
  * Preset agents are regular SpaceAgent rows — fully editable by users — that
  * happen to have a well-known role label and sensible defaults for system
  * prompt, tools, and model. SpaceRuntime resolves all agents by ID at
@@ -12,11 +12,63 @@
  *   - General  (role: 'general')  — general-purpose worker
  *   - Planner  (role: 'planner')  — planning/orchestration worker
  *   - Reviewer (role: 'reviewer') — code review specialist
+ *   - QA       (role: 'qa')       — quality assurance specialist
  */
 
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgent, SessionFeatures } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
+
+// ---------------------------------------------------------------------------
+// Feature flag profiles per role
+// ---------------------------------------------------------------------------
+
+/**
+ * All sub-session roles disable UI features — sub-sessions are internal
+ * and should not expose rewind, worktree, coordinator, archive, or sessionInfo.
+ */
+export const ROLE_FEATURES: Record<string, SessionFeatures> = {
+	coder: { rewind: false, worktree: false, coordinator: false, archive: false, sessionInfo: false },
+	general: {
+		rewind: false,
+		worktree: false,
+		coordinator: false,
+		archive: false,
+		sessionInfo: false,
+	},
+	planner: {
+		rewind: false,
+		worktree: false,
+		coordinator: false,
+		archive: false,
+		sessionInfo: false,
+	},
+	reviewer: {
+		rewind: false,
+		worktree: false,
+		coordinator: false,
+		archive: false,
+		sessionInfo: false,
+	},
+	qa: { rewind: false, worktree: false, coordinator: false, archive: false, sessionInfo: false },
+};
+
+/** Default features for roles not explicitly listed in ROLE_FEATURES */
+export const DEFAULT_ROLE_FEATURES: SessionFeatures = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: false,
+};
+
+/**
+ * Look up feature flags for a given role.
+ * Falls back to DEFAULT_ROLE_FEATURES for unknown roles.
+ */
+export function getFeaturesForRole(role: string): SessionFeatures {
+	return ROLE_FEATURES[role] ?? DEFAULT_ROLE_FEATURES;
+}
 
 // ---------------------------------------------------------------------------
 // Tool defaults per role
@@ -33,8 +85,23 @@ const GENERAL_TOOLS = CODER_TOOLS;
 /** Planner uses the same toolset as coder (orchestration patterns reserved for future) */
 const PLANNER_TOOLS = CODER_TOOLS;
 
-/** Reviewers read and run tests — no file write/edit by default */
+/** Reviewers read-only — no Write or Edit */
 const REVIEWER_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+
+/** QA: read-only + bash for running tests — no Write or Edit */
+const QA_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+
+/**
+ * Tool profiles per role. Exported for testing and external consumption.
+ * Keys match the SpaceAgent.role value.
+ */
+export const ROLE_TOOLS: Record<string, string[]> = {
+	coder: CODER_TOOLS,
+	general: GENERAL_TOOLS,
+	planner: PLANNER_TOOLS,
+	reviewer: REVIEWER_TOOLS,
+	qa: QA_TOOLS,
+};
 
 // ---------------------------------------------------------------------------
 // Preset definitions
@@ -79,6 +146,13 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		description:
 			'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
 		tools: REVIEWER_TOOLS,
+	},
+	{
+		name: 'QA',
+		role: 'qa',
+		description:
+			'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
+		tools: QA_TOOLS,
 	},
 ];
 
