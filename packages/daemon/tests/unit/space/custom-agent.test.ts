@@ -210,51 +210,86 @@ describe('buildReviewerNodeAgentPrompt', () => {
 		expect(prompt).not.toContain('Agent Instructions');
 	});
 
+	it('uses list_gates to discover nodeId, does not mention read_gate', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// nodeId is returned by list_gates, NOT read_gate — prompt must use list_gates
+		expect(prompt).toContain('list_gates');
+		expect(prompt).toContain('nodeId');
+		// read_gate does NOT return nodeId; remove it to avoid LLM confusion
+		expect(prompt).not.toContain('read_gate');
+	});
+
+	it('retrieves PR URL from list_gates response (code-pr-gate currentData)', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('code-pr-gate');
+		expect(prompt).toContain('currentData');
+	});
+
 	it('includes review process steps', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
-		expect(prompt).toContain('Review Process');
-		expect(prompt).toContain('read_gate');
 		expect(prompt).toContain('gh pr diff');
 		expect(prompt).toContain('Evaluate the changes');
 	});
 
-	it('includes severity classification', () => {
+	it('includes P0/P1/P2/P3 severity classification', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
 		expect(prompt).toContain('Severity Classification');
-		expect(prompt).toContain('Critical');
-		expect(prompt).toContain('Major');
-		expect(prompt).toContain('Minor');
+		expect(prompt).toContain('P0');
+		expect(prompt).toContain('P1');
+		expect(prompt).toContain('P2');
+		expect(prompt).toContain('P3');
 	});
 
 	it('includes PR review posting via GitHub REST API', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
-		expect(prompt).toContain('Posting the PR Review');
 		expect(prompt).toContain('gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews');
 		expect(prompt).toContain('--method POST');
 		expect(prompt).toContain('APPROVE');
 		expect(prompt).toContain('REQUEST_CHANGES');
 	});
 
-	it('includes ---REVIEW_POSTED--- structured output block', () => {
+	it('includes guidance for API failure handling', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('ERROR');
+	});
+
+	it('includes ---REVIEW_POSTED--- and ---END_REVIEW_POSTED--- structured output block', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
 		expect(prompt).toContain('---REVIEW_POSTED---');
-		expect(prompt).toContain('"recommendation"');
-		expect(prompt).toContain('"severityCounts"');
-		expect(prompt).toContain('"critical"');
-		expect(prompt).toContain('"major"');
-		expect(prompt).toContain('"minor"');
-		expect(prompt).toContain('"url"');
+		expect(prompt).toContain('---END_REVIEW_POSTED---');
 	});
 
-	it('includes gate interaction: read code-pr-gate for PR URL', () => {
+	it('structured output uses flat key-value format with p0/p1/p2/p3 fields', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
-		expect(prompt).toContain('code-pr-gate');
-		expect(prompt).toContain('Gate Interaction');
+		// Flat format — NOT JSON with severityCounts
+		expect(prompt).toContain('p0:');
+		expect(prompt).toContain('p1:');
+		expect(prompt).toContain('p2:');
+		expect(prompt).toContain('p3:');
+		expect(prompt).toContain('summary:');
+		expect(prompt).toContain('url:');
+		expect(prompt).toContain('recommendation:');
+		// Should NOT use old nested JSON format
+		expect(prompt).not.toContain('"severityCounts"');
+		expect(prompt).not.toContain('"critical"');
+	});
+
+	it('recommendation vocabulary is APPROVE / REQUEST_CHANGES (uppercase), not approve/reject', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// Flat block: recommendation: APPROVE | REQUEST_CHANGES
+		expect(prompt).toContain('recommendation: APPROVE | REQUEST_CHANGES');
+		// Should NOT use lowercase "approve"/"reject" as recommendation values
+		expect(prompt).not.toContain('"recommendation": "approve"');
+		expect(prompt).not.toContain('"recommendation": "reject"');
 	});
 
 	it('includes gate interaction: write vote to review-votes-gate using nodeId', () => {
@@ -262,24 +297,40 @@ describe('buildReviewerNodeAgentPrompt', () => {
 		const prompt = buildReviewerNodeAgentPrompt(agent);
 		expect(prompt).toContain('review-votes-gate');
 		expect(prompt).toContain('write_gate');
-		expect(prompt).toContain('nodeId');
 		expect(prompt).toContain('"votes"');
+		expect(prompt).toContain('"approve"');
+		expect(prompt).toContain('"reject"');
 	});
 
-	it('includes idempotency / re-spawn protection instructions', () => {
+	it('idempotency check comes before any action (Step 1 position)', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
-		expect(prompt).toContain('Idempotency');
+		expect(prompt).toContain('Idempotency Check');
 		expect(prompt).toContain('already voted');
-		expect(prompt).toContain('skip');
+		// Idempotency section must appear before the PR review posting section
+		const idempotencyPos = prompt.indexOf('Idempotency Check');
+		const postReviewPos = prompt.indexOf('Post the PR Review');
+		expect(idempotencyPos).toBeLessThan(postReviewPos);
 	});
 
-	it('includes peer communication section', () => {
+	it('list_gates call appears in idempotency section (nodeId discovery is part of idempotency)', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// The idempotency section tells agent to call list_gates to get nodeId
+		const idempotencyPos = prompt.indexOf('Idempotency Check');
+		const listGatesPos = prompt.indexOf('list_gates');
+		expect(idempotencyPos).toBeGreaterThanOrEqual(0);
+		expect(listGatesPos).toBeGreaterThan(idempotencyPos);
+	});
+
+	it('includes peer communication section with all target modes including multicast', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
 		expect(prompt).toContain('Peer Communication');
 		expect(prompt).toContain('send_message');
 		expect(prompt).toContain('list_peers');
+		// Must include multicast target form
+		expect(prompt).toContain("['role1', 'role2']");
 	});
 
 	it('includes completion signalling via report_done', () => {
@@ -292,19 +343,9 @@ describe('buildReviewerNodeAgentPrompt', () => {
 	it('does NOT include git commit/push workflow instructions', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
-		// Reviewer should not be committing/pushing code
 		expect(prompt).not.toContain('Git Workflow (MANDATORY)');
 		expect(prompt).not.toContain('git push -u origin HEAD');
 		expect(prompt).not.toContain('gh pr create');
-	});
-
-	it('vote data shape uses nodeId key and approve/reject values', () => {
-		const agent = makeAgent({ role: 'reviewer' });
-		const prompt = buildReviewerNodeAgentPrompt(agent);
-		// The data shape for the vote: { votes: { [nodeId]: "approve" | "reject" } }
-		expect(prompt).toContain('"votes"');
-		expect(prompt).toContain('"approve"');
-		expect(prompt).toContain('"reject"');
 	});
 });
 
