@@ -11,7 +11,8 @@
  * - spaceWorkflowRun.getFileDiff    - Returns unified diff for a specific file in the worktree
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { isAbsolute } from 'node:path';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -65,18 +66,27 @@ function parseNumstat(output: string): DiffSummary {
 }
 
 /**
- * Get the diff base ref for a worktree.
- * Tries `origin/dev` merge-base first; falls back to `HEAD` (uncommitted only).
+ * Async wrapper around `execFile('git', ...)`.
+ * Non-blocking — does not stall the event loop during git I/O.
  */
-function getDiffBaseRef(worktreePath: string): string {
+function execGit(args: string[], cwd: string, timeout = 10000): Promise<string> {
+	return new Promise((resolve, reject) => {
+		execFile('git', args, { cwd, encoding: 'utf8', timeout }, (err, stdout) => {
+			if (err) reject(err);
+			else resolve(stdout as string);
+		});
+	});
+}
+
+/**
+ * Get the diff base ref for a worktree.
+ * Tries `origin/dev` merge-base first; falls back to empty string (uncommitted only).
+ */
+async function getDiffBaseRef(worktreePath: string): Promise<string> {
 	for (const candidate of ['origin/dev', 'origin/main', 'origin/master']) {
 		try {
-			const base = execFileSync('git', ['merge-base', 'HEAD', candidate], {
-				cwd: worktreePath,
-				encoding: 'utf8',
-				timeout: 5000,
-			}).trim();
-			if (base) return base;
+			const base = await execGit(['merge-base', 'HEAD', candidate], worktreePath, 5000);
+			if (base.trim()) return base.trim();
 		} catch {
 			// candidate not available
 		}
@@ -275,7 +285,9 @@ export function setupSpaceWorkflowRunHandlers(
 	//
 	// Writes approval or rejection decision to gate data. Idempotent: calling
 	// approve on an already-approved gate returns the existing data unchanged.
-	// Rejection transitions the run to `needs_attention` with `humanRejected`.
+	// Rejection transitions the run to `needs_attention` with `humanRejected`
+	// via the status machine. Approval after a prior rejection also transitions
+	// the run back to `in_progress` so the workflow resumes.
 	messageHub.onRequest('spaceWorkflowRun.approveGate', async (data) => {
 		const params = data as {
 			runId: string;
@@ -293,7 +305,7 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		if (run.status === 'completed' || run.status === 'cancelled') {
+		if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
 			throw new Error(`Cannot modify gate on a ${run.status} workflow run`);
 		}
 
@@ -310,21 +322,29 @@ export function setupSpaceWorkflowRunHandlers(
 				approvedAt: Date.now(),
 			});
 
+			// If the run was previously rejected (needs_attention + humanRejected),
+			// approval overrides that — transition back to in_progress so the
+			// workflow executor picks it up again on the next tick.
+			let updatedRun = run;
+			if (run.status === 'needs_attention' && run.failureReason === 'humanRejected') {
+				updatedRun = workflowRunRepo.transitionStatus(params.runId, 'in_progress');
+			}
+
 			daemonHub
 				.emit('space.workflowRun.updated', {
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: run.id,
-					run,
+					run: updatedRun,
 				})
 				.catch((err) => {
 					log.warn('Failed to emit space.workflowRun.updated:', err);
 				});
 
-			return { run, gateData };
+			return { run: updatedRun, gateData };
 		} else {
-			// Rejection — idempotent: already rejected with humanRejected
-			if (existing?.data?.approved === false && run.failureReason === 'humanRejected') {
+			// Rejection — idempotent: gate data already shows rejected
+			if (existing?.data?.approved === false) {
 				return { run, gateData: existing };
 			}
 
@@ -334,6 +354,9 @@ export function setupSpaceWorkflowRunHandlers(
 				reason: params.reason ?? null,
 			});
 
+			// At this point run.status is either 'in_progress' or 'needs_attention'
+			// (completed, cancelled, and pending are all guarded above).
+			// Both transitions to 'needs_attention' are valid — write atomically.
 			const updated =
 				workflowRunRepo.updateRun(params.runId, {
 					status: 'needs_attention',
@@ -373,18 +396,14 @@ export function setupSpaceWorkflowRunHandlers(
 			throw new Error(`No worktree path found for run: ${params.runId}`);
 		}
 
-		const baseRef = getDiffBaseRef(worktreePath);
+		const baseRef = await getDiffBaseRef(worktreePath);
 		const diffArgs = baseRef
 			? ['diff', '--numstat', `${baseRef}..HEAD`]
 			: ['diff', '--numstat', 'HEAD'];
 
 		let numstatOutput = '';
 		try {
-			numstatOutput = execFileSync('git', diffArgs, {
-				cwd: worktreePath,
-				encoding: 'utf8',
-				timeout: 10000,
-			});
+			numstatOutput = await execGit(diffArgs, worktreePath);
 		} catch (err) {
 			log.warn('git diff --numstat failed:', err);
 		}
@@ -404,6 +423,9 @@ export function setupSpaceWorkflowRunHandlers(
 		if (!params.filePath || params.filePath.trim() === '') {
 			throw new Error('filePath is required');
 		}
+		if (params.filePath.includes('..') || isAbsolute(params.filePath)) {
+			throw new Error('filePath must be a relative path within the worktree');
+		}
 
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
@@ -413,16 +435,12 @@ export function setupSpaceWorkflowRunHandlers(
 			throw new Error(`No worktree path found for run: ${params.runId}`);
 		}
 
-		const baseRef = getDiffBaseRef(worktreePath);
+		const baseRef = await getDiffBaseRef(worktreePath);
 		const diffRangeArgs = baseRef ? [`${baseRef}..HEAD`] : ['HEAD'];
 
 		let diff = '';
 		try {
-			diff = execFileSync('git', ['diff', ...diffRangeArgs, '--', params.filePath], {
-				cwd: worktreePath,
-				encoding: 'utf8',
-				timeout: 10000,
-			});
+			diff = await execGit(['diff', ...diffRangeArgs, '--', params.filePath], worktreePath);
 		} catch (err) {
 			log.warn('git diff for file failed:', err);
 		}

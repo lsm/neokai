@@ -28,11 +28,26 @@ import type {
 import type { SpaceRuntimeService } from '../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { DaemonHub } from '../../../src/lib/daemon-hub.ts';
 
-// ─── Mock module for execFileSync ─────────────────────────────────────────────
+// ─── Mock module for execFile (async) ─────────────────────────────────────────
+//
+// Production code uses execFile (callback-based) wrapped in a Promise.
+// We mock node:child_process so git calls never touch the filesystem.
+// mockExecResult is set per-test; by default returns empty string.
 
-// We mock child_process so git calls don't touch the filesystem
-const mockExecFileSync = mock((_cmd: string, _args: string[], _opts: unknown): string => '');
-mock.module('node:child_process', () => ({ execFileSync: mockExecFileSync }));
+type ExecFileCallback = (err: Error | null, stdout: string, stderr: string) => void;
+let mockExecResult: (args: string[]) => string = () => '';
+
+const mockExecFile = mock(
+	(_cmd: string, args: string[], _opts: unknown, callback: ExecFileCallback) => {
+		try {
+			callback(null, mockExecResult(args), '');
+		} catch (err) {
+			callback(err as Error, '', '');
+		}
+	}
+);
+
+mock.module('node:child_process', () => ({ execFile: mockExecFile }));
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -195,7 +210,8 @@ describe('space-workflow-run gate handlers', () => {
 	function setup(
 		opts: { run?: SpaceWorkflowRun | null; existingGateData?: GateDataRecord | null } = {}
 	) {
-		mockExecFileSync.mockReset();
+		mockExecResult = () => '';
+		mockExecFile.mockClear();
 
 		const mh = createMockMessageHub();
 		hub = mh.hub;
@@ -273,6 +289,13 @@ describe('space-workflow-run gate handlers', () => {
 			).rejects.toThrow('Cannot modify gate on a cancelled workflow run');
 		});
 
+		it('throws if run is pending (invalid transition)', async () => {
+			setup({ run: { ...mockRun, status: 'pending' } });
+			await expect(
+				call('spaceWorkflowRun.approveGate', { runId: 'run-1', gateId: 'g', approved: false })
+			).rejects.toThrow('Cannot modify gate on a pending workflow run');
+		});
+
 		it('approves gate: merges { approved: true } and emits event', async () => {
 			const result = (await call('spaceWorkflowRun.approveGate', {
 				runId: 'run-1',
@@ -304,7 +327,7 @@ describe('space-workflow-run gate handlers', () => {
 			expect(result.gateData.data.approved).toBe(true);
 		});
 
-		it('rejection: merges { approved: false } and transitions run to needs_attention', async () => {
+		it('rejection: merges { approved: false } and sets run to needs_attention + humanRejected', async () => {
 			const result = (await call('spaceWorkflowRun.approveGate', {
 				runId: 'run-1',
 				gateId: 'gate-approval',
@@ -317,6 +340,8 @@ describe('space-workflow-run gate handlers', () => {
 				rejectedAt: expect.any(Number),
 				reason: 'Not ready',
 			});
+			// Status and failureReason set atomically via updateRun
+			// (pending is guarded above, so transition is always valid)
 			expect(runRepo.updateRun).toHaveBeenCalledWith('run-1', {
 				status: 'needs_attention',
 				failureReason: 'humanRejected',
@@ -339,7 +364,7 @@ describe('space-workflow-run gate handlers', () => {
 			});
 		});
 
-		it('rejection is idempotent: returns existing state if already rejected + needs_attention', async () => {
+		it('rejection is idempotent: returns existing state if gate data already shows rejected', async () => {
 			const alreadyRejectedRun: SpaceWorkflowRun = {
 				...mockRun,
 				status: 'needs_attention',
@@ -356,9 +381,34 @@ describe('space-workflow-run gate handlers', () => {
 				approved: false,
 			})) as { run: SpaceWorkflowRun; gateData: GateDataRecord };
 
+			// Idempotent: no writes at all
 			expect(gateDataRepo.merge).not.toHaveBeenCalled();
 			expect(runRepo.updateRun).not.toHaveBeenCalled();
 			expect(result.gateData.data.approved).toBe(false);
+		});
+
+		it('approve after prior rejection: transitions run back to in_progress', async () => {
+			const rejectedRun: SpaceWorkflowRun = {
+				...mockRun,
+				status: 'needs_attention',
+				failureReason: 'humanRejected',
+			};
+			setup({ run: rejectedRun });
+
+			const result = (await call('spaceWorkflowRun.approveGate', {
+				runId: 'run-1',
+				gateId: 'gate-approval',
+				approved: true,
+			})) as { run: SpaceWorkflowRun; gateData: GateDataRecord };
+
+			expect(gateDataRepo.merge).toHaveBeenCalledWith('run-1', 'gate-approval', {
+				approved: true,
+				approvedAt: expect.any(Number),
+			});
+			// Must transition run back to in_progress
+			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'in_progress');
+			expect(result.run.status).toBe('in_progress');
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
 		});
 
 		it('gate approval persists to gateDataRepo (survives restart)', async () => {
@@ -404,13 +454,11 @@ describe('space-workflow-run gate handlers', () => {
 
 		it('returns file stats from git diff --numstat', async () => {
 			// merge-base call returns a base SHA, numstat returns file changes
-			mockExecFileSync.mockImplementation(
-				(_cmd: string, args: string[], _opts: unknown): string => {
-					if (args.includes('merge-base')) return 'abc123\n';
-					if (args.includes('--numstat')) return '5\t3\tsrc/foo.ts\n2\t0\tsrc/bar.ts\n';
-					return '';
-				}
-			);
+			mockExecResult = (args) => {
+				if (args.includes('merge-base')) return 'abc123\n';
+				if (args.includes('--numstat')) return '5\t3\tsrc/foo.ts\n2\t0\tsrc/bar.ts\n';
+				return '';
+			};
 
 			const result = (await call('spaceWorkflowRun.getGateArtifacts', {
 				runId: 'run-1',
@@ -432,13 +480,11 @@ describe('space-workflow-run gate handlers', () => {
 		});
 
 		it('falls back to uncommitted diff when merge-base fails', async () => {
-			mockExecFileSync.mockImplementation(
-				(_cmd: string, args: string[], _opts: unknown): string => {
-					if (args.includes('merge-base')) throw new Error('not found');
-					if (args.includes('--numstat')) return '10\t2\tsrc/main.ts\n';
-					return '';
-				}
-			);
+			mockExecResult = (args) => {
+				if (args.includes('merge-base')) throw new Error('not found');
+				if (args.includes('--numstat')) return '10\t2\tsrc/main.ts\n';
+				return '';
+			};
 
 			const result = (await call('spaceWorkflowRun.getGateArtifacts', {
 				runId: 'run-1',
@@ -450,8 +496,7 @@ describe('space-workflow-run gate handlers', () => {
 		});
 
 		it('returns empty file list when no changes', async () => {
-			mockExecFileSync.mockImplementation(() => '');
-
+			// mockExecResult already returns '' by default after setup()
 			const result = (await call('spaceWorkflowRun.getGateArtifacts', {
 				runId: 'run-1',
 			})) as { files: Array<unknown>; totalAdditions: number; totalDeletions: number };
@@ -462,13 +507,11 @@ describe('space-workflow-run gate handlers', () => {
 		});
 
 		it('handles binary files (- entries in numstat)', async () => {
-			mockExecFileSync.mockImplementation(
-				(_cmd: string, args: string[], _opts: unknown): string => {
-					if (args.includes('merge-base')) return 'abc123\n';
-					if (args.includes('--numstat')) return '-\t-\tassets/image.png\n3\t1\tsrc/foo.ts\n';
-					return '';
-				}
-			);
+			mockExecResult = (args) => {
+				if (args.includes('merge-base')) return 'abc123\n';
+				if (args.includes('--numstat')) return '-\t-\tassets/image.png\n3\t1\tsrc/foo.ts\n';
+				return '';
+			};
 
 			const result = (await call('spaceWorkflowRun.getGateArtifacts', {
 				runId: 'run-1',
@@ -505,6 +548,24 @@ describe('space-workflow-run gate handlers', () => {
 			).rejects.toThrow('filePath is required');
 		});
 
+		it('throws if filePath contains path traversal (..)', async () => {
+			await expect(
+				call('spaceWorkflowRun.getFileDiff', {
+					runId: 'run-1',
+					filePath: '../../etc/passwd',
+				})
+			).rejects.toThrow('filePath must be a relative path within the worktree');
+		});
+
+		it('throws if filePath is absolute', async () => {
+			await expect(
+				call('spaceWorkflowRun.getFileDiff', {
+					runId: 'run-1',
+					filePath: '/etc/passwd',
+				})
+			).rejects.toThrow('filePath must be a relative path within the worktree');
+		});
+
 		it('throws if run not found', async () => {
 			setup({ run: null });
 			await expect(
@@ -531,12 +592,10 @@ describe('space-workflow-run gate handlers', () => {
 				'-// old comment',
 			].join('\n');
 
-			mockExecFileSync.mockImplementation(
-				(_cmd: string, args: string[], _opts: unknown): string => {
-					if (args.includes('merge-base')) return 'abc123\n';
-					return unifiedDiff;
-				}
-			);
+			mockExecResult = (args) => {
+				if (args.includes('merge-base')) return 'abc123\n';
+				return unifiedDiff;
+			};
 
 			const result = (await call('spaceWorkflowRun.getFileDiff', {
 				runId: 'run-1',
@@ -550,8 +609,7 @@ describe('space-workflow-run gate handlers', () => {
 		});
 
 		it('returns empty diff when file has no changes', async () => {
-			mockExecFileSync.mockImplementation(() => '');
-
+			// mockExecResult already returns '' by default
 			const result = (await call('spaceWorkflowRun.getFileDiff', {
 				runId: 'run-1',
 				filePath: 'src/unchanged.ts',
@@ -563,22 +621,20 @@ describe('space-workflow-run gate handlers', () => {
 		});
 
 		it('passes correct git args with baseRef', async () => {
-			mockExecFileSync.mockImplementation(
-				(_cmd: string, args: string[], _opts: unknown): string => {
-					if (args.includes('merge-base')) return 'deadbeef\n';
-					return '+added line\n-removed line\n';
-				}
-			);
+			mockExecResult = (args) => {
+				if (args.includes('merge-base')) return 'deadbeef\n';
+				return '+added line\n-removed line\n';
+			};
 
 			await call('spaceWorkflowRun.getFileDiff', {
 				runId: 'run-1',
 				filePath: 'src/foo.ts',
 			});
 
-			// Second call should be the diff call with baseRef..HEAD
-			const calls = (mockExecFileSync as ReturnType<typeof mock>).mock.calls;
+			// Find the diff call (has 'diff' and '--' separator in args)
+			const calls = mockExecFile.mock.calls;
 			const diffCall = calls.find(
-				(c: string[][]) => c[1]?.includes('diff') && c[1]?.includes('--')
+				(c: unknown[]) => Array.isArray(c[1]) && c[1].includes('diff') && c[1].includes('--')
 			);
 			expect(diffCall).toBeDefined();
 			expect(diffCall![1]).toContain('deadbeef..HEAD');
@@ -586,26 +642,25 @@ describe('space-workflow-run gate handlers', () => {
 		});
 
 		it('falls back to uncommitted diff range when merge-base fails', async () => {
-			mockExecFileSync.mockImplementation(
-				(_cmd: string, args: string[], _opts: unknown): string => {
-					if (args.includes('merge-base')) throw new Error('no remote');
-					return '+new line\n';
-				}
-			);
+			mockExecResult = (args) => {
+				if (args.includes('merge-base')) throw new Error('no remote');
+				return '+new line\n';
+			};
 
 			await call('spaceWorkflowRun.getFileDiff', {
 				runId: 'run-1',
 				filePath: 'src/foo.ts',
 			});
 
-			const calls = (mockExecFileSync as ReturnType<typeof mock>).mock.calls;
+			const calls = mockExecFile.mock.calls;
 			const diffCall = calls.find(
-				(c: string[][]) => c[1]?.includes('diff') && c[1]?.includes('--')
+				(c: unknown[]) => Array.isArray(c[1]) && c[1].includes('diff') && c[1].includes('--')
 			);
 			expect(diffCall).toBeDefined();
 			// Should use HEAD (not baseRef..HEAD) when merge-base unavailable
-			expect(diffCall![1]).toContain('HEAD');
-			expect(diffCall![1]).not.toContain('..');
+			const diffArgs = diffCall![1] as string[];
+			expect(diffArgs).toContain('HEAD');
+			expect(diffArgs.some((a) => a.includes('..'))).toBe(false);
 		});
 
 		it('correctly counts additions and deletions, ignoring diff header lines', async () => {
@@ -618,7 +673,7 @@ describe('space-workflow-run gate handlers', () => {
 				' unchanged line',
 			].join('\n');
 
-			mockExecFileSync.mockImplementation(() => unifiedDiff);
+			mockExecResult = () => unifiedDiff;
 
 			const result = (await call('spaceWorkflowRun.getFileDiff', {
 				runId: 'run-1',
