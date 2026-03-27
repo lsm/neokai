@@ -189,6 +189,11 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 			`- All communication is scoped to this group — you cannot message agents in other tasks`
 	);
 
+	// Planner-specific instructions (injected before completion signalling)
+	if (customAgent.role === 'planner') {
+		sections.push(buildPlannerNodeAgentPrompt());
+	}
+
 	// Completion signalling
 	sections.push(`\n## Signalling Completion\n`);
 	sections.push(`\n### \`report_done\` (signal task completion)\n`);
@@ -498,6 +503,123 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		previousTaskSummaries,
 		slotOverrides,
 	});
+}
+
+// ============================================================================
+// Planner-specific prompt builder
+// ============================================================================
+
+/**
+ * Build the planner-specific section of the system prompt.
+ *
+ * Injected into the full system prompt when the agent's role is 'planner'.
+ * Covers:
+ *   1. Plan document creation (explore codebase → write plan → create PR)
+ *   2. Gate interaction: write plan PR data to `plan-pr-gate` after opening the PR
+ *   3. Communicating with plan reviewers via `send_message`
+ *
+ * This function is intentionally exported so that it can be unit-tested
+ * independently of the full `buildCustomAgentSystemPrompt` output.
+ */
+export function buildPlannerNodeAgentPrompt(): string {
+	const sections: string[] = [];
+
+	sections.push(`\n## Planner Responsibilities\n`);
+	sections.push(
+		`As a Planner Agent you are responsible for producing a written plan document, ` +
+			`opening a plan pull request, and unblocking the downstream review channel ` +
+			`by writing the PR data to the \`plan-pr-gate\` gate.`
+	);
+
+	// Step 1 — explore + write plan
+	sections.push(`\n### Step 1 — Explore the codebase and write the plan\n`);
+	sections.push(
+		`Before writing anything, explore the codebase thoroughly to understand the ` +
+			`current state of the relevant code. Use \`Read\`, \`Grep\`, \`Glob\`, and \`Bash\` ` +
+			`to build an accurate picture of what exists before making decisions.`
+	);
+	sections.push(
+		`Create a plan document on a feature branch. Suggested location: \`docs/plans/<task-slug>.md\`.`
+	);
+	sections.push(
+		`The plan document should include:\n` +
+			`- **Objective** — what is being built and why\n` +
+			`- **Current state** — what already exists in the codebase\n` +
+			`- **Approach** — the implementation strategy, key decisions, trade-offs\n` +
+			`- **Milestones / subtasks** — ordered list of concrete steps\n` +
+			`- **Test strategy** — how the changes will be tested\n` +
+			`- **Out of scope** — what is explicitly excluded`
+	);
+
+	// Step 2 — commit + push + PR
+	sections.push(`\n### Step 2 — Commit, push, and open a plan PR\n`);
+	sections.push(
+		`After writing the plan document, commit it and open a pull request following the ` +
+			`mandatory Git workflow above. The PR title should be descriptive, e.g. ` +
+			`\`plan: <task title>\`. Do NOT use \`--delete-branch\` when merging.`
+	);
+	sections.push(
+		`Record the PR URL and PR number from the \`gh pr create\` output — ` +
+			`you will need them in the next step.`
+	);
+
+	// Step 3 — write gate
+	sections.push(`\n### Step 3 — Write PR data to \`plan-pr-gate\`\n`);
+	sections.push(
+		`After the plan PR is open, call \`write_gate\` to unblock the plan-review channel ` +
+			`for the downstream reviewer agents. This is **mandatory** — reviewers cannot ` +
+			`start until the gate is open.`
+	);
+	sections.push(
+		`\`\`\`json\n` +
+			`write_gate({\n` +
+			`  "gateId": "plan-pr-gate",\n` +
+			`  "data": {\n` +
+			`    "prUrl": "<PR URL from gh pr create>",\n` +
+			`    "prNumber": <PR number as integer>,\n` +
+			`    "branch": "<feature branch name>"\n` +
+			`  }\n` +
+			`})\n` +
+			`\`\`\``
+	);
+	sections.push(
+		`The gate condition is \`check: prUrl exists\`. Once \`prUrl\` is present in the ` +
+			`gate data, the condition passes and the plan-review channel opens automatically.`
+	);
+
+	// Step 4 — notify reviewers
+	sections.push(`\n### Step 4 — Notify plan reviewers via \`send_message\`\n`);
+	sections.push(
+		`After writing the gate, send a message to plan reviewers so they know the plan is ` +
+			`ready for review. Use \`send_message\` with the reviewer role as the target:`
+	);
+	sections.push(
+		`\`\`\`json\n` +
+			`send_message({\n` +
+			`  "target": "reviewer",\n` +
+			`  "text": "Plan PR is ready for review.",\n` +
+			`  "data": {\n` +
+			`    "prUrl": "<PR URL>",\n` +
+			`    "prNumber": <PR number>\n` +
+			`  }\n` +
+			`})\n` +
+			`\`\`\``
+	);
+	sections.push(
+		`Use \`list_peers\` first if you are unsure which roles are available as review targets.`
+	);
+
+	// Step 5 — workflow context awareness
+	sections.push(`\n### Using workflow context (\`injectWorkflowContext\`)\n`);
+	sections.push(
+		`When a \`## Workflow Structure\` section appears in your task message, use it to ` +
+			`align your plan with the declared workflow steps. Each step in the workflow ` +
+			`corresponds to a node that will execute after your plan is approved. Your plan ` +
+			`should describe the work for each relevant node so downstream agents have clear ` +
+			`instructions to follow.`
+	);
+
+	return sections.join('\n');
 }
 
 // ============================================================================
