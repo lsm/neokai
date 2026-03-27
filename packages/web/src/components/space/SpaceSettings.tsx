@@ -1,17 +1,66 @@
 /**
- * SpaceSettings — settings panel for a Space with "Export Bundle" action.
+ * SpaceSettings — settings panel for a Space.
+ *
+ * Provides:
+ * - Inline editing of name and description
+ * - Export Bundle action
+ * - Archive / Delete space (danger zone)
  */
 
+import { useState, useEffect } from 'preact/hooks';
 import type { Space, SpaceExportBundle } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
 import { downloadBundle } from './export-import-utils.ts';
+import { navigateToSpaces } from '../../lib/router.ts';
+import { Button } from '../ui/Button.tsx';
 
 interface SpaceSettingsProps {
 	space: Space;
 }
 
 export function SpaceSettings({ space }: SpaceSettingsProps) {
+	// Edit state
+	const [name, setName] = useState(space.name);
+	const [description, setDescription] = useState(space.description ?? '');
+	const [saving, setSaving] = useState(false);
+	const [saveError, setSaveError] = useState<string | null>(null);
+
+	// Keep local state in sync when space prop changes (e.g. after save)
+	useEffect(() => {
+		setName(space.name);
+		setDescription(space.description ?? '');
+	}, [space.id, space.name, space.description]);
+
+	const isDirty = name !== space.name || description !== (space.description ?? '');
+
+	async function handleSave(e: Event) {
+		e.preventDefault();
+		if (!name.trim()) {
+			setSaveError('Space name is required');
+			return;
+		}
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			setSaveError('Not connected to server');
+			return;
+		}
+		try {
+			setSaving(true);
+			setSaveError(null);
+			await hub.request('space.update', {
+				id: space.id,
+				name: name.trim(),
+				description: description.trim() || undefined,
+			});
+			toast.success('Space updated');
+		} catch (err) {
+			setSaveError(err instanceof Error ? err.message : 'Failed to save changes');
+		} finally {
+			setSaving(false);
+		}
+	}
+
 	async function exportBundle() {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
@@ -29,13 +78,116 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		}
 	}
 
+	async function handleArchive() {
+		if (
+			!confirm(
+				`Archive "${space.name}"? The space will be hidden from the main list but can be restored later.`
+			)
+		) {
+			return;
+		}
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			toast.error('Not connected to server');
+			return;
+		}
+		try {
+			await hub.request('space.archive', { id: space.id });
+			toast.success(`Space "${space.name}" archived`);
+			navigateToSpaces();
+		} catch (err) {
+			toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	async function handleDelete() {
+		if (
+			!confirm(
+				`Permanently delete "${space.name}"? This will remove all agents, workflows, tasks, and runs. This cannot be undone.`
+			)
+		) {
+			return;
+		}
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			toast.error('Not connected to server');
+			return;
+		}
+		try {
+			await hub.request('space.delete', { id: space.id });
+			toast.success(`Space "${space.name}" deleted`);
+			navigateToSpaces();
+		} catch (err) {
+			toast.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
 	return (
-		<div class="flex flex-col h-full p-6 space-y-6">
-			<div>
-				<h2 class="text-base font-semibold text-gray-100 mb-1">{space.name}</h2>
-				{space.description && <p class="text-sm text-gray-400">{space.description}</p>}
-				<p class="text-xs text-gray-600 font-mono mt-1">{space.workspacePath}</p>
-			</div>
+		<div class="flex flex-col h-full overflow-y-auto p-6 space-y-6">
+			{/* Edit name & description */}
+			<section class="space-y-4">
+				<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">General</h3>
+
+				<form onSubmit={handleSave} class="space-y-3">
+					{saveError && (
+						<div class="bg-red-900/20 border border-red-800 rounded-lg px-4 py-2 text-red-400 text-sm">
+							{saveError}
+						</div>
+					)}
+
+					<div>
+						<label class="block text-xs font-medium text-gray-400 mb-1">Name</label>
+						<input
+							type="text"
+							value={name}
+							onInput={(e) => setName((e.target as HTMLInputElement).value)}
+							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+								placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
+						/>
+					</div>
+
+					<div>
+						<label class="block text-xs font-medium text-gray-400 mb-1">
+							Description
+							<span class="text-gray-600 ml-1">(optional)</span>
+						</label>
+						<textarea
+							value={description}
+							onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
+							placeholder="Brief description of this space..."
+							rows={3}
+							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-none text-sm"
+						/>
+					</div>
+
+					{isDirty && (
+						<div class="flex gap-2 justify-end">
+							<Button
+								type="button"
+								variant="secondary"
+								size="sm"
+								onClick={() => {
+									setName(space.name);
+									setDescription(space.description ?? '');
+									setSaveError(null);
+								}}
+							>
+								Discard
+							</Button>
+							<Button type="submit" size="sm" loading={saving}>
+								Save Changes
+							</Button>
+						</div>
+					)}
+				</form>
+
+				{/* Workspace path — read-only */}
+				<div>
+					<label class="block text-xs font-medium text-gray-400 mb-1">Workspace Path</label>
+					<p class="text-xs text-gray-500 font-mono break-all">{space.workspacePath}</p>
+				</div>
+			</section>
 
 			{/* Export section */}
 			<section class="space-y-3">
@@ -78,6 +230,41 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 						<dd class="text-xs text-gray-300">{new Date(space.createdAt).toLocaleDateString()}</dd>
 					</div>
 				</dl>
+			</section>
+
+			{/* Danger zone */}
+			<section class="space-y-3 border border-red-900/40 rounded-lg p-4">
+				<h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Danger Zone</h3>
+
+				<div class="flex items-center justify-between gap-4">
+					<div>
+						<p class="text-sm text-gray-300">Archive space</p>
+						<p class="text-xs text-gray-500 mt-0.5">
+							Hide from the main list. Can be restored later.
+						</p>
+					</div>
+					<Button
+						type="button"
+						variant="secondary"
+						size="sm"
+						onClick={handleArchive}
+						disabled={space.status === 'archived'}
+					>
+						Archive
+					</Button>
+				</div>
+
+				<div class="border-t border-red-900/30 pt-3 flex items-center justify-between gap-4">
+					<div>
+						<p class="text-sm text-gray-300">Delete space</p>
+						<p class="text-xs text-gray-500 mt-0.5">
+							Permanently remove this space and all its data.
+						</p>
+					</div>
+					<Button type="button" variant="danger" size="sm" onClick={handleDelete}>
+						Delete
+					</Button>
+				</div>
 			</section>
 		</div>
 	);
