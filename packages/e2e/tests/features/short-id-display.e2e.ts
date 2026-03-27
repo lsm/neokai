@@ -49,6 +49,9 @@ async function createTask(
 			roomId: rId,
 			title: 'Short ID E2E Test Task',
 			description: 'Task used to verify short ID display and copy behavior',
+			// Use 'draft' to prevent the scheduler from spawning a worktree
+			// (the E2E workspace is not a git repo, so worktree creation fails).
+			status: 'draft',
 		});
 		const task = (res as { task: { id: string; shortId?: string } }).task;
 		if (!task.shortId)

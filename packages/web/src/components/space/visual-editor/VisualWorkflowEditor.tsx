@@ -115,6 +115,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
 	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
 	const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
+	// Guard against double-invocation: setNodes updater may be called twice in development
+	// (e.g. React StrictMode, Bun hot reload). Toggle the flag so the second call skips.
+	const addStepGuardRef = useRef(false);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -329,11 +332,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				step: node.step,
 				position: node.position,
 				agents,
+				workflowChannels: channels,
 				isStartNode: nodeIsStart(node),
 				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
 			};
 		});
-	}, [nodes, agents, nodeIsStart, tasksByNodeId, relevantRunId]);
+	}, [nodes, agents, channels, nodeIsStart, tasksByNodeId, relevantRunId]);
 
 	// ------------------------------------------------------------------
 	// Derived: selected node / edge
@@ -363,27 +367,41 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function addStep() {
+		// Guard: skip if already called this cycle (e.g. double-invoked by React StrictMode).
+		if (addStepGuardRef.current) return;
+		addStepGuardRef.current = true;
+		// Reset synchronously after the state update is enqueued so the guard is fresh
+		// before the next user click. A microtask reset (Promise.resolve().then()) would
+		// create a race: a fast second click within the same microtask tick would see
+		// addStepGuardRef.current === true and be silently dropped.
+		void setTimeout(() => {
+			addStepGuardRef.current = false;
+		}, 0);
+
 		const newLocalId = generateUUID();
 		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
-		// Capture emptiness before the setNodes call so we can call setStartStepId
-		// outside the updater. State setter calls inside updater functions are side
-		// effects and violate the purity requirement (React StrictMode double-invokes
-		// updaters to catch exactly this pattern).
-		// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
-		const isFirstNode =
-			nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID)
-				.length === 0;
 		setNodes((prev) => {
+			// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
+			const isFirstNode =
+				prev.filter(
+					(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
+				).length === 0;
+			if (isFirstNode) setStartStepId(newLocalId);
+
 			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px).
 			// Count only regular nodes so the Task Agent's fixed slot doesn't offset the stagger.
 			const regularCount = prev.filter(
 				(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
 			).length;
 			const position: Point = { x: 120, y: 80 + regularCount * 100 };
+
+			// Auto-set start step for the first regular node (pure — reads from prev).
+			const isFirstRegular = regularCount === 0;
+			if (isFirstRegular) setStartStepId(newLocalId);
+
 			return [...prev, { step: newStep, position }];
 		});
-		if (isFirstNode) setStartStepId(newLocalId);
 	}
 
 	const handleNodePositionChange = useCallback((localId: string, newPosition: Point) => {

@@ -5,7 +5,7 @@
  * - Add a second agent to a step — verify both agents appear as badges in the canvas node
  * - Configure a one-way channel (A → B) — verify directed arrow in panel and node
  * - Configure a bidirectional channel (A ↔ B) — verify bidirectional arrow in panel and node
- * - Remove one agent — verify only one remains and associated channels are removed
+ * - Remove one agent — verify only one remains and workflow channels persist
  * - Save workflow and re-open — verify multi-agent config AND channel topology persists
  *
  * Setup: creates a Space with two agents via RPC in beforeEach (infrastructure).
@@ -29,6 +29,8 @@ import {
 	switchToVisualMode,
 	openWorkflowForEdit,
 	setupMultiAgentStep,
+	ensureChannelsSectionOpen,
+	addWorkflowChannel,
 } from '../helpers/workflow-editor-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
@@ -168,78 +170,57 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Add step and open config
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		// Use .last() to click the newly added regular node (Task Agent is not selectable)
-		await nodes.last().click();
+		const regularNode = editor.locator(
+			'[data-testid^="workflow-node-"]:not([data-task-agent="true"])'
+		);
+		await expect(regularNode).toHaveCount(1, { timeout: 3000 });
+		await regularNode.click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Channel Step');
 
-		// Set up two agents (required for channels section to appear)
+		// Set up two agents (required for channels section to populate agent role dropdowns)
 		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
 
-		// Channels section should now be visible (multi-agent mode)
-		const channelsSection = panel.getByTestId('channels-section');
-		await expect(channelsSection).toBeVisible({ timeout: 3000 });
-
-		const addChannelForm = panel.getByTestId('add-channel-form');
-		const channelsList = panel.getByTestId('channels-list');
-
-		// ── Add one-way channel: coder → reviewer ────────────────────────────
-
-		await addChannelForm.getByTestId('channel-from-select').selectOption({ value: ROLE_A });
-		// Direction defaults to 'one-way' — no change needed
-		await addChannelForm.getByTestId('channel-to-input').fill(ROLE_B);
-		await addChannelForm.getByTestId('add-channel-button').click();
-
-		// Channel entry should appear: "coder → reviewer"
-		// setupMultiAgentStep creates 1 default channel (task-agent → first agent),
-		// so 2 total channels exist after this add (1 default + 1 user-added)
-		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(2, { timeout: 3000 });
-		// The user-added channel is the last one
-		const lastEntry = channelsList.getByTestId('channel-entry').last();
-		await expect(lastEntry).toContainText(ROLE_A);
-		await expect(lastEntry).toContainText('→');
-		await expect(lastEntry).toContainText(ROLE_B);
-
-		// ── Add bidirectional channel: reviewer ↔ coder ──────────────────────
-
-		await addChannelForm.getByTestId('channel-from-select').selectOption({ value: ROLE_B });
-		await addChannelForm
-			.getByTestId('channel-direction-select')
-			.selectOption({ value: 'bidirectional' });
-		await addChannelForm.getByTestId('channel-to-input').fill(ROLE_A);
-		await addChannelForm.getByTestId('add-channel-button').click();
-
-		// Three channel entries should now be present (1 default + 2 user-added)
-		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(3, { timeout: 3000 });
-		const secondEntry = channelsList.getByTestId('channel-entry').nth(2);
-		await expect(secondEntry).toContainText(ROLE_B);
-		await expect(secondEntry).toContainText('↔');
-		await expect(secondEntry).toContainText(ROLE_A);
-
-		// Close panel and verify canvas node renders channel topology via ChannelTopologyBadge
+		// Close panel — channels section is in the editor sidebar, not the node config panel
 		await panel.getByTestId('close-button').click();
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		const node = nodes.last();
-		// The ChannelTopologyBadge container has data-testid="channel-topology-badge"
-		const topologyBadge = node.getByTestId('channel-topology-badge');
-		await expect(topologyBadge).toBeVisible({ timeout: 3000 });
+		// Open the workflow-level channels section in the sidebar
+		await ensureChannelsSectionOpen(editor);
+		const channelsSection = editor.getByTestId('channels-section');
+		await expect(channelsSection).toBeVisible({ timeout: 3000 });
 
-		// One-way arrow should appear within the topology badge
-		await expect(
-			topologyBadge.locator('[class*="font-mono"]').filter({ hasText: ROLE_A }).first()
-		).toBeVisible({
-			timeout: 2000,
-		});
-		// Bidirectional arrow should also appear within the topology badge
-		await expect(topologyBadge.locator('text=↔').first()).toBeVisible({ timeout: 2000 });
+		const channelsList = channelsSection.getByTestId('channels-list');
+
+		// ── Add one-way channel: coder → reviewer ────────────────────────────
+
+		await addWorkflowChannel(editor, ROLE_A, ROLE_B, 'one-way');
+
+		// One channel entry should appear
+		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
+		const firstEntry = channelsList.getByTestId('channel-entry').first();
+		await expect(firstEntry).toContainText(ROLE_A);
+		await expect(firstEntry).toContainText('→');
+		await expect(firstEntry).toContainText(ROLE_B);
+
+		// ── Add bidirectional channel: reviewer ↔ coder ──────────────────────
+
+		await addWorkflowChannel(editor, ROLE_B, ROLE_A, 'bidirectional');
+
+		// Two channel entries should now be present
+		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(2, { timeout: 3000 });
+		const secondEntry = channelsList.getByTestId('channel-entry').nth(1);
+		await expect(secondEntry).toContainText(ROLE_B);
+		await expect(secondEntry).toContainText('↔');
+		await expect(secondEntry).toContainText(ROLE_A);
 	});
 
-	// ─── Test 3: Remove one agent — verify channels removed ──────────────────
+	// ─── Test 3: Remove one agent — verify workflow channels persist ──────────
 
-	test('Remove one agent — verify only one remains and channels are removed', async ({ page }) => {
+	test('Remove one agent — verify only one remains and workflow channels persist', async ({
+		page,
+	}) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
 		await switchToVisualMode(page);
@@ -247,29 +228,40 @@ test.describe('Multi-Agent Step Editor', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill('Remove Agent Test');
 
-		// Add step, open config, set up multi-agent with a channel
+		// Add step, open config, set up multi-agent
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		// Use .last() to click the newly added regular node (Task Agent is not selectable)
-		await nodes.last().click();
+		const regularNode = editor.locator(
+			'[data-testid^="workflow-node-"]:not([data-task-agent="true"])'
+		);
+		await expect(regularNode).toHaveCount(1, { timeout: 3000 });
+		await regularNode.click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Remove Step');
 
 		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
 
-		// Add channel coder → reviewer
-		const addChannelForm = panel.getByTestId('add-channel-form');
-		await addChannelForm.getByTestId('channel-from-select').selectOption({ value: ROLE_A });
-		await addChannelForm.getByTestId('channel-to-input').fill(ROLE_B);
-		await addChannelForm.getByTestId('add-channel-button').click();
-		// setupMultiAgentStep creates 1 default channel, plus 1 user-added = 2 total
-		await expect(panel.getByTestId('channels-list').getByTestId('channel-entry')).toHaveCount(2, {
-			timeout: 3000,
-		});
+		// Close panel — channels section is in the editor sidebar, not the node config panel
+		await panel.getByTestId('close-button').click();
+		await expect(panel).not.toBeVisible({ timeout: 2000 });
+
+		// Add a workflow-level channel: coder → reviewer
+		await ensureChannelsSectionOpen(editor);
+		await addWorkflowChannel(editor, ROLE_A, ROLE_B);
+		await expect(
+			editor
+				.getByTestId('channels-section')
+				.getByTestId('channels-list')
+				.getByTestId('channel-entry')
+		).toHaveCount(1, { timeout: 3000 });
+
+		// Reopen the node config panel to remove an agent
+		await regularNode.click();
+		const reopenedPanel = editor.getByTestId('node-config-panel');
+		await expect(reopenedPanel).toBeVisible({ timeout: 3000 });
 
 		// Remove Reviewer Agent (the second entry in the list)
-		const agentsList = panel.getByTestId('agents-list');
+		const agentsList = reopenedPanel.getByTestId('agents-list');
 		const secondAgentEntry = agentsList
 			.getByTestId('agent-entry')
 			.filter({ hasText: AGENT_B_NAME });
@@ -283,21 +275,24 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// "Switch to single" button (data-testid="switch-to-single-button") appears when
 		// exactly 1 agent remains in multi-agent mode
-		const switchToSingleBtn = panel.getByTestId('switch-to-single-button');
+		const switchToSingleBtn = reopenedPanel.getByTestId('switch-to-single-button');
 		await expect(switchToSingleBtn).toBeVisible({ timeout: 3000 });
 
-		// Click "Switch to single" — reverts to single-agent mode and clears channels
+		// Click "Switch to single" — reverts to single-agent mode and clears node-level channels
 		await switchToSingleBtn.click();
 
-		// Channels section is still visible but shows empty state message (channels cleared)
-		await expect(panel.getByTestId('channels-section')).toBeVisible({ timeout: 3000 });
-		await expect(panel.locator('text=No channels — agents are isolated.')).toBeVisible({
-			timeout: 2000,
-		});
+		// Workflow-level channels are independent of node-level agent config and persist
+		await ensureChannelsSectionOpen(editor);
+		await expect(
+			editor
+				.getByTestId('channels-section')
+				.getByTestId('channels-list')
+				.getByTestId('channel-entry')
+		).toHaveCount(1, { timeout: 3000 });
 
 		// Single-agent select dropdown and add-agent button should be visible
-		await expect(panel.getByTestId('agent-select')).toBeVisible({ timeout: 3000 });
-		await expect(panel.getByTestId('add-agent-button')).toBeVisible({ timeout: 2000 });
+		await expect(reopenedPanel.getByTestId('agent-select')).toBeVisible({ timeout: 3000 });
+		await expect(reopenedPanel.getByTestId('add-agent-button')).toBeVisible({ timeout: 2000 });
 	});
 
 	// ─── Test 4: Save and reopen — verify persistence ─────────────────────────

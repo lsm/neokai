@@ -12,9 +12,11 @@ import { test, expect, devices } from '../../fixtures';
 import {
 	cleanupTestSession,
 	createSessionViaUI,
+	waitForAssistantResponse,
 	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
 import { createRoom, deleteRoom } from '../helpers/room-helpers';
+import { openMobilePanel, closeMobilePanel } from '../helpers/mobile-helpers';
 
 test.describe('Mobile Layout', () => {
 	// Use iPhone 13 viewport for mobile tests
@@ -28,7 +30,6 @@ test.describe('Mobile Layout', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
 	});
 
 	test('should display correctly on mobile viewport', async ({ page }) => {
@@ -45,22 +46,26 @@ test.describe('Mobile Layout', () => {
 	});
 
 	test('should have responsive sidebar behavior', async ({ page }) => {
-		// On mobile, sidebar might be hidden or toggleable
-		// Look for "Open menu" button (hamburger) or "Close sidebar" button or "New Session"
-		const openMenuButton = page.locator('button[aria-label="Open menu"]');
-		const closeSidebarButton = page.locator('button[aria-label="Close sidebar"]');
+		// On mobile, the context panel should be toggleable via the menu button
+		const menuButton = page.locator('button[aria-label="Open navigation menu"]');
+		const closePanelButton = page.locator('button[title="Close panel"]');
 		const newSessionButton = page.getByRole('button', {
 			name: 'New Session',
 			exact: true,
 		});
 
-		// Check if any navigation element exists
-		const hasOpenMenu = (await openMenuButton.count()) > 0;
-		const hasCloseSidebar = (await closeSidebarButton.count()) > 0;
+		// At least one navigation method should exist
+		const hasMenuButton = (await menuButton.count()) > 0;
+		const hasCloseButton = (await closePanelButton.count()) > 0;
 		const hasNewSession = (await newSessionButton.count()) > 0;
 
-		// At least one navigation method should exist
-		expect(hasOpenMenu || hasCloseSidebar || hasNewSession).toBe(true);
+		expect(hasMenuButton || hasCloseButton || hasNewSession).toBe(true);
+
+		// If menu button exists, clicking it should open the panel
+		if (hasMenuButton) {
+			await openMobilePanel(page);
+			await expect(newSessionButton).toBeVisible({ timeout: 5000 });
+		}
 	});
 });
 
@@ -78,7 +83,6 @@ test.describe('Mobile Input', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
 
@@ -94,23 +98,8 @@ test.describe('Mobile Input', () => {
 	});
 
 	test('should create session on mobile', async ({ page }) => {
-		// On mobile, the sidebar may be open or closed - check both states
-		const closeSidebarButton = page.locator('button[aria-label="Close sidebar"]');
-		const openMenuButton = page.locator('button[aria-label="Open menu"]');
-
-		// If sidebar is closed (Open menu visible), open it
-		const isSidebarClosed = (await openMenuButton.count()) > 0;
-		if (isSidebarClosed) {
-			await openMenuButton.first().click();
-			await page.waitForTimeout(500);
-		}
-
-		// Now the New Session button should be accessible in the sidebar
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await expect(newSessionButton).toBeVisible();
+		// Open the mobile panel to access the New Session button
+		await openMobilePanel(page);
 
 		// Create session via RPC helper
 		sessionId = await createSessionViaUI(page);
@@ -118,11 +107,8 @@ test.describe('Mobile Input', () => {
 		// Verify session was created
 		expect(sessionId).toBeTruthy();
 
-		// On mobile, close sidebar to see the chat area
-		if (await closeSidebarButton.isVisible().catch(() => false)) {
-			await closeSidebarButton.click();
-			await page.waitForTimeout(300);
-		}
+		// Close panel to see the chat area
+		await closeMobilePanel(page);
 
 		// Textarea should be visible and usable
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -130,30 +116,14 @@ test.describe('Mobile Input', () => {
 	});
 
 	test('should handle touch input on textarea', async ({ page }) => {
-		// On mobile, ensure sidebar is accessible
-		const openMenuButton = page.locator('button[aria-label="Open menu"]');
-		const isSidebarClosed = (await openMenuButton.count()) > 0;
-		if (isSidebarClosed) {
-			await openMenuButton.first().click();
-			await page.waitForTimeout(500);
-		}
-
-		// Create a session using dispatchEvent to bypass viewport checks
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await expect(newSessionButton).toBeVisible();
+		// Open the mobile panel to access the New Session button
+		await openMobilePanel(page);
 
 		// Create session via RPC helper
 		sessionId = await createSessionViaUI(page);
 
-		// Close sidebar to see chat area
-		const closeSidebarButton = page.locator('button[aria-label="Close sidebar"]');
-		if (await closeSidebarButton.isVisible().catch(() => false)) {
-			await closeSidebarButton.click();
-			await page.waitForTimeout(300);
-		}
+		// Close panel to see chat area
+		await closeMobilePanel(page);
 
 		// Find textarea
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -171,13 +141,8 @@ test.describe('Mobile Input', () => {
 	});
 
 	test('should have appropriately sized touch targets', async ({ page }) => {
-		// On mobile, ensure sidebar is accessible
-		const openMenuButton = page.locator('button[aria-label="Open menu"]');
-		const isSidebarClosed = (await openMenuButton.count()) > 0;
-		if (isSidebarClosed) {
-			await openMenuButton.first().click();
-			await page.waitForTimeout(500);
-		}
+		// Open the mobile panel to access the New Session button
+		await openMobilePanel(page);
 
 		// Check New Session button
 		const newSessionButton = page.getByRole('button', {
@@ -198,12 +163,8 @@ test.describe('Mobile Input', () => {
 		// Create session via RPC helper
 		sessionId = await createSessionViaUI(page);
 
-		// Close sidebar to see textarea
-		const closeSidebarButton = page.locator('button[aria-label="Close sidebar"]');
-		if (await closeSidebarButton.isVisible().catch(() => false)) {
-			await closeSidebarButton.click();
-			await page.waitForTimeout(300);
-		}
+		// Close panel to see textarea
+		await closeMobilePanel(page);
 
 		// Textarea should be appropriately sized
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -230,7 +191,6 @@ test.describe('Mobile Messages', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
 
@@ -246,40 +206,22 @@ test.describe('Mobile Messages', () => {
 	});
 
 	test('should display messages correctly on narrow screen', async ({ page }) => {
-		// On mobile, ensure sidebar is accessible
-		const openMenuButton = page.locator('button[aria-label="Open menu"]');
-		const isSidebarClosed = (await openMenuButton.count()) > 0;
-		if (isSidebarClosed) {
-			await openMenuButton.first().click();
-			await page.waitForTimeout(500);
-		}
-
-		// Create a session using dispatchEvent to bypass viewport checks
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await expect(newSessionButton).toBeVisible();
+		// Open the mobile panel to access the New Session button
+		await openMobilePanel(page);
 
 		// Create session via RPC helper
 		sessionId = await createSessionViaUI(page);
 
-		// Close sidebar to see chat area
-		const closeSidebarButton = page.locator('button[aria-label="Close sidebar"]');
-		if (await closeSidebarButton.isVisible().catch(() => false)) {
-			await closeSidebarButton.click();
-			await page.waitForTimeout(300);
-		}
+		// Close panel to see chat area
+		await closeMobilePanel(page);
 
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toBeVisible({ timeout: 10000 });
 		await textarea.fill('Test message on mobile');
 		await page.keyboard.press('Meta+Enter');
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 60000,
-		});
+		// Wait for response using the shared helper (90s default for CI reliability)
+		await waitForAssistantResponse(page);
 
 		// Check that messages don't overflow horizontally
 		const messageContainer = page.locator('[data-message-role="assistant"]').first();
@@ -391,11 +333,11 @@ test.describe('Mobile Room Agent Navigation', () => {
 		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
 		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toBeVisible();
 
-		// Click Inbox tab (present in both room and global contexts)
-		await bottomTabBar.getByRole('tab', { name: 'Inbox' }).click();
+		// Click the "/" (Home) tab — present in room context, navigates to global home
+		await bottomTabBar.getByRole('tab', { name: '/' }).click();
 
-		// URL should change to inbox
-		await expect(page).toHaveURL(/\/inbox$/, { timeout: 5000 });
+		// URL should change to home
+		await expect(page).toHaveURL(/\/$/, { timeout: 5000 });
 
 		// Now global tabs should be shown (Rooms tab visible)
 		await expect(bottomTabBar.getByRole('tab', { name: 'Rooms' })).toBeVisible({ timeout: 5000 });

@@ -15,6 +15,13 @@ import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { McpServerConfig } from '@neokai/shared';
 import type { AgentSessionInit } from '../../../src/lib/agent/agent-session';
 
+// NOTE: The SDK mock is provided by the preload file (setup.ts) which covers
+// both static and dynamic imports of '@anthropic-ai/claude-agent-sdk'.  Do NOT
+// re-declare mock.module here — per-file overrides can race with dynamic
+// await import(...) calls and cause a SyntaxError on CI where the installed SDK
+// version (0.2.81) does not always export createSdkMcpServer at the ESM level.
+// The preload-level mock is applied before any test code runs, so it always wins.
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

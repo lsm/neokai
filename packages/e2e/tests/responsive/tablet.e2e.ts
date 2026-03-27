@@ -7,7 +7,12 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	waitForAssistantResponse,
+} from '../helpers/wait-helpers';
+import { closeMobilePanel } from '../helpers/mobile-helpers';
 
 test.describe('Tablet Responsiveness', () => {
 	let sessionId: string | null = null;
@@ -22,7 +27,6 @@ test.describe('Tablet Responsiveness', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
 
@@ -39,32 +43,27 @@ test.describe('Tablet Responsiveness', () => {
 
 	test('should display sidebar on tablet', async ({ page }) => {
 		// On tablet, check for sidebar controls
-		// Sidebar is visible if "Close sidebar" button exists, or "Open menu" button for toggle
-		const closeSidebarButton = page.locator('button[aria-label="Close sidebar"]');
-		const openMenuButton = page.locator('button[aria-label="Open menu"]');
+		const closePanelButton = page.locator('button[title="Close panel"]');
+		const menuButton = page.locator('button[aria-label="Open navigation menu"]');
 		const newSessionButton = page.getByRole('button', {
 			name: 'New Session',
 			exact: true,
 		});
 
-		const hasCloseSidebar = await closeSidebarButton.isVisible().catch(() => false);
-		const hasOpenMenu = await openMenuButton.isVisible().catch(() => false);
+		const hasClosePanel = await closePanelButton.isVisible().catch(() => false);
+		const hasMenuButton = await menuButton.isVisible().catch(() => false);
 		const hasNewSession = await newSessionButton.isVisible().catch(() => false);
 
 		// At least one navigation method should exist
-		expect(hasCloseSidebar || hasOpenMenu || hasNewSession).toBe(true);
+		expect(hasClosePanel || hasMenuButton || hasNewSession).toBe(true);
 	});
 
 	test('should create and use session on tablet', async ({ page }) => {
 		// Create a session on tablet
 		sessionId = await createSessionViaUI(page);
 
-		// On tablet, close sidebar if it's covering the chat area
-		const closeSidebarButton = page.locator('button[aria-label="Close sidebar"]');
-		if (await closeSidebarButton.isVisible().catch(() => false)) {
-			await closeSidebarButton.click();
-			await page.waitForTimeout(300);
-		}
+		// On tablet, close panel if it's covering the chat area
+		await closeMobilePanel(page);
 
 		// Send a message
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -72,10 +71,8 @@ test.describe('Tablet Responsiveness', () => {
 		await textarea.fill('Hello from tablet');
 		await page.keyboard.press('Meta+Enter');
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 60000,
-		});
+		// Wait for response using the shared helper (90s default for CI reliability)
+		await waitForAssistantResponse(page);
 
 		// Verify assistant message is displayed - this confirms layout works correctly
 		const assistantMessage = page.locator('[data-message-role="assistant"]').first();

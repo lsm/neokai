@@ -65,6 +65,29 @@ export async function typeInChatInput(page: Page, text: string): Promise<void> {
 }
 
 /**
+ * Get all visible autocomplete option items inside the reference dropdown.
+ */
+export function getReferenceAutocompleteItems(page: Page) {
+	return getReferenceDropdown(page).locator(AUTOCOMPLETE_ITEM_SELECTOR);
+}
+
+/**
+ * Select an autocomplete item by its index using keyboard Enter.
+ * The item at the given index is already pre-selected when the dropdown opens.
+ *
+ * @param page - Playwright page
+ * @param index - Zero-based index of the item to select
+ */
+export async function selectReferenceByIndex(page: Page, index: number): Promise<void> {
+	const items = getReferenceAutocompleteItems(page);
+	// Navigate to the target index with ArrowDown if needed
+	for (let i = 0; i < index; i++) {
+		await page.keyboard.press('ArrowDown');
+	}
+	await page.keyboard.press('Enter');
+}
+
+/**
  * Click on a specific autocomplete item whose text contains `searchText`.
  *
  * @param page - Playwright page

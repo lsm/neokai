@@ -226,6 +226,9 @@ test.describe('TaskView — Message Pagination', () => {
 			// Verify newest messages are still present (they should not have disappeared)
 			await expect(page.getByText('Message number 55', { exact: true })).toBeVisible();
 
+			// Wait for any pending microtask/flush to settle before reading scroll state.
+			await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+
 			// Verify scroll position was preserved (not jumped to top).
 			// Only assert when scrollBefore > 0 — if the container was too short to
 			// overflow before clicking, scrollTop stays 0 and there is nothing to preserve.

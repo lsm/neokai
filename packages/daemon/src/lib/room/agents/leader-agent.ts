@@ -170,6 +170,7 @@ You MUST call tools (no text-only final responses).
 - \`submit_for_review\` — Work is done with a PR ready; submit for peer review and human approval
 
 ### Task Management Tools (for managing other tasks in the room)
+- \`create_task\` — Create a new task, optionally linked to a goal. Use to spawn fix tasks, investigation tasks, or sub-tasks discovered during execution
 - \`update_task\` — Edit title, description, priority, or dependencies of any task
 - \`cancel_task\` — Cancel a task and cascade to any pending dependents
 - \`update_task_status\` — Change a task's status (e.g., retry a failed task: needs_attention → pending)

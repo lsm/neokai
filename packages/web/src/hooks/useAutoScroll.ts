@@ -122,6 +122,16 @@ export function useAutoScroll({
 		return setupScrollDetection(container);
 	}, [nearBottomThreshold, messageCount]);
 
+	// When loadingOlder transitions from true to false, skip the message-count delta
+	// that was introduced by revealing older messages so that auto-scroll doesn't fire.
+	const prevLoadingOlderRef = useRef(loadingOlder);
+	useEffect(() => {
+		if (prevLoadingOlderRef.current && !loadingOlder) {
+			prevMessageCountRef.current = messageCount;
+		}
+		prevLoadingOlderRef.current = loadingOlder;
+	}, [loadingOlder, messageCount]);
+
 	// Auto-scroll on new messages
 	useEffect(() => {
 		const hasNewContent = messageCount > prevMessageCountRef.current;

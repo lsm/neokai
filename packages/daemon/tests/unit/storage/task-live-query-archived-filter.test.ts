@@ -2,8 +2,9 @@
  * Task LiveQuery Archived Filter Tests
  *
  * Verifies that the TASKS_BY_ROOM_SQL query used by the LiveQuery engine
- * excludes archived tasks server-side. Archived tasks are treated as deleted
- * and must not be sent to clients via the live-query stream.
+ * includes archived tasks so the frontend Archived tab can display them.
+ * Archived tasks are included in the query results; the frontend filters
+ * them into the "Archived" tab via client-side status filtering.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -11,7 +12,6 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
 
 // Mirrors TASKS_BY_ROOM_SQL from live-query-handlers.ts — keep in sync.
-// The AND status != 'archived' clause is the critical server-side filter.
 const TASKS_BY_ROOM_SQL = `
 SELECT
   id,
@@ -22,11 +22,10 @@ SELECT
   created_at          AS createdAt
 FROM tasks
 WHERE room_id = ?
-  AND status != 'archived'
 ORDER BY created_at DESC, id DESC
 `.trim();
 
-describe('TASKS_BY_ROOM_SQL archived filter', () => {
+describe('TASKS_BY_ROOM_SQL includes archived tasks', () => {
 	let db: BunDatabase;
 	const roomId = 'room-lq-filter-test';
 
@@ -53,7 +52,7 @@ describe('TASKS_BY_ROOM_SQL archived filter', () => {
 		return db.prepare(TASKS_BY_ROOM_SQL).all(roomId) as Array<{ id: string; status: string }>;
 	}
 
-	test('excludes archived tasks from query results', () => {
+	test('includes archived tasks in query results', () => {
 		insertTask('task-in-progress', 'in_progress');
 		insertTask('task-pending', 'pending');
 		insertTask('task-archived', 'archived');
@@ -61,12 +60,12 @@ describe('TASKS_BY_ROOM_SQL archived filter', () => {
 		const rows = queryTasks();
 		const ids = rows.map((r) => r.id);
 
-		expect(ids).not.toContain('task-archived');
+		expect(ids).toContain('task-archived');
 		expect(ids).toContain('task-in-progress');
 		expect(ids).toContain('task-pending');
 	});
 
-	test('returns tasks in all non-archived statuses', () => {
+	test('returns tasks in all statuses including archived', () => {
 		const statuses = [
 			'draft',
 			'pending',
@@ -75,11 +74,11 @@ describe('TASKS_BY_ROOM_SQL archived filter', () => {
 			'needs_attention',
 			'completed',
 			'cancelled',
+			'archived',
 		];
 		for (const status of statuses) {
 			insertTask(`task-${status}`, status);
 		}
-		insertTask('task-archived', 'archived');
 
 		const rows = queryTasks();
 		const ids = rows.map((r) => r.id);
@@ -88,18 +87,17 @@ describe('TASKS_BY_ROOM_SQL archived filter', () => {
 		for (const status of statuses) {
 			expect(ids).toContain(`task-${status}`);
 		}
-		expect(ids).not.toContain('task-archived');
 	});
 
-	test('returns empty array when only archived tasks exist', () => {
+	test('returns archived tasks even when only they exist', () => {
 		insertTask('task-1', 'archived');
 		insertTask('task-2', 'archived');
 
 		const rows = queryTasks();
-		expect(rows).toHaveLength(0);
+		expect(rows).toHaveLength(2);
 	});
 
-	test('excludes archived tasks for a specific room only', () => {
+	test('includes archived tasks for a specific room only', () => {
 		const otherRoomId = 'other-room';
 		db.exec(
 			`INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${otherRoomId}', 'Other Room', ${Date.now()}, ${Date.now()})`
@@ -124,6 +122,8 @@ describe('TASKS_BY_ROOM_SQL archived filter', () => {
 		const rows = queryTasks();
 		const ids = rows.map((r) => r.id);
 
-		expect(ids).toEqual(['task-pending']);
+		expect(ids).toHaveLength(2);
+		expect(ids).toContain('task-archived');
+		expect(ids).toContain('task-pending');
 	});
 });

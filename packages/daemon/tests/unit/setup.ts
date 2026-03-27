@@ -2,8 +2,77 @@
  * Unit Test Setup
  *
  * This file is preloaded before unit tests run.
- * It clears API keys to ensure tests don't accidentally make real API calls.
+ * It clears API keys to ensure tests don't accidentally make real API calls,
+ * and provides stubs for external SDK dependencies.
  */
+
+import { mock } from 'bun:test';
+
+// Mock the Claude Agent SDK.  The real SDK must be mocked in unit tests for two reasons:
+//
+// 1. Unit tests must not make real API calls — query/interrupt are stubbed out.
+//
+// 2. The real createSdkMcpServer returns an McpServer whose _registeredTools is
+//    PRIVATE (no public listTools() API, no way to inspect or invoke handlers
+//    outside the MCP protocol).  Several test suites (task-agent-tools, leader-agent,
+//    room-agent-tools, provision-global-agent) rely on inspecting
+//    server.instance._registeredTools to verify tool names, descriptions, schemas,
+//    and to invoke handlers directly.  The mock provides a testable surface area
+//    that the real McpServer class does not expose.
+//
+// Individual test files that need different mock behaviour call mock.module() at the
+// top of their own file to override this default.
+mock.module('@anthropic-ai/claude-agent-sdk', () => {
+	// ---------------------------------------------------------------------------
+	// MockMcpServer — replicates the MCP server surface area needed by tests.
+	// ---------------------------------------------------------------------------
+	class MockMcpServer {
+		readonly _registeredTools: Record<string, object> = {};
+
+		connect(): void {}
+		disconnect(): void {}
+	}
+
+	// Per-call tool capture:
+	//   tool() is called with (name, description, inputSchema, handler) — we
+	//   store defs here keyed by name.  createSdkMcpServer drains the batch
+	//   into the server instance and resets so subsequent servers start clean.
+	let _toolBatch: Array<{ name: string; def: object }> = [];
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	function tool(name: string, description: string, inputSchema: any, handler: unknown): object {
+		const def = { name, description, inputSchema, handler };
+		_toolBatch.push({ name, def });
+		return def;
+	}
+
+	return {
+		query: mock(async () => ({
+			interrupt: () => {},
+		})),
+		interrupt: mock(async () => {}),
+		supportedModels: mock(async () => {
+			throw new Error('SDK unavailable in unit test');
+		}),
+		createSdkMcpServer: mock((_options: { name: string; version?: string; tools?: unknown[] }) => {
+			const server = new MockMcpServer();
+			// Drain the batch into this server's _registeredTools
+			for (const { name, def } of _toolBatch) {
+				server._registeredTools[name] = def;
+			}
+			_toolBatch = [];
+
+			return {
+				type: 'sdk' as const,
+				name: _options.name,
+				version: _options.version ?? '1.0.0',
+				tools: _options.tools ?? [],
+				instance: server,
+			};
+		}),
+		tool,
+	};
+});
 
 import { configureLogger, LogLevel } from '@neokai/shared';
 import { resetProviderRegistry } from '../../src/lib/providers/registry';

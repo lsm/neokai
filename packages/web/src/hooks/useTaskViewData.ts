@@ -7,6 +7,7 @@
  */
 
 import type { NeoTask, RoomGoal, SessionInfo, TaskStatus } from '@neokai/shared';
+import { useComputed } from '@preact/signals';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
 import { useModal } from './useModal';
@@ -68,7 +69,8 @@ export interface UseTaskViewDataResult {
 
 export function useTaskViewData(roomId: string, taskId: string): UseTaskViewDataResult {
 	const { request, onEvent, joinRoom, leaveRoom, isConnected } = useMessageHub();
-	const [task, setTask] = useState<NeoTask | null>(null);
+	// Derive task reactively from roomStore.tasks so LiveQuery deltas are reflected immediately.
+	const task = useComputed(() => roomStore.tasks.value.find((t) => t.id === taskId) ?? null);
 	const [group, setGroup] = useState<TaskGroupInfo | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -170,11 +172,7 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 			setIsLoading(true);
 
 			try {
-				const taskRes = await request<{ task: NeoTask }>('task.get', { roomId, taskId });
-				if (!cancelled) {
-					setTask(taskRes.task);
-					await fetchGroup();
-				}
+				await fetchGroup();
 			} catch (err) {
 				if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load task');
 			} finally {
@@ -183,17 +181,6 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 		};
 
 		load();
-
-		// Re-fetch group whenever the task status changes (e.g. group spawned or completed)
-		const unsubTaskUpdate = onEvent<{ roomId: string; task: NeoTask }>(
-			'room.task.update',
-			(event) => {
-				if (event.task.id === taskId && !cancelled) {
-					setTask(event.task);
-					void fetchGroup();
-				}
-			}
-		);
 
 		// Update session model when session.updated event is received for worker or leader.
 		// This ensures the model label in TaskInfoPanel updates immediately after a model switch.
@@ -216,24 +203,31 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 
 		return () => {
 			cancelled = true;
-			unsubTaskUpdate();
 			unsubSessionUpdate();
 			leaveRoom(channel);
 		};
 	}, [roomId, taskId, isConnected]);
 
 	// Derived permission flags
-	const canComplete = task ? task.status === 'in_progress' || task.status === 'review' : false;
-	const canCancel = task
-		? task.status === 'pending' || task.status === 'in_progress' || task.status === 'review'
+	const canComplete = task.value
+		? task.value.status === 'in_progress' || task.value.status === 'review'
 		: false;
-	const canReactivate = task ? task.status === 'completed' || task.status === 'cancelled' : false;
-	const canArchive = task
-		? task.status === 'completed' ||
-			task.status === 'cancelled' ||
-			task.status === 'needs_attention'
+	const canCancel = task.value
+		? task.value.status === 'pending' ||
+			task.value.status === 'in_progress' ||
+			task.value.status === 'review'
 		: false;
-	const canInterrupt = task ? task.status === 'in_progress' || task.status === 'review' : false;
+	const canReactivate = task.value
+		? task.value.status === 'completed' || task.value.status === 'cancelled'
+		: false;
+	const canArchive = task.value
+		? task.value.status === 'completed' ||
+			task.value.status === 'cancelled' ||
+			task.value.status === 'needs_attention'
+		: false;
+	const canInterrupt = task.value
+		? task.value.status === 'in_progress' || task.value.status === 'review'
+		: false;
 
 	const completeTask = useCallback(
 		async (summary: string) => {
@@ -341,7 +335,7 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 	);
 
 	return {
-		task,
+		task: task.value,
 		group,
 		workerSession,
 		leaderSession,
