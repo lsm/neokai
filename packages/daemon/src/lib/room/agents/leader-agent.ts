@@ -306,7 +306,7 @@ function leaderPlanReviewOrchestrationSection(
 		)
 		.join('\n');
 
-	const allSpecialists =
+	const customSpecialists =
 		helperNames.length > 0
 			? `${reviewerNames.join(', ')}, ${helperNames.join(', ')}`
 			: reviewerNames.join(', ');
@@ -314,7 +314,8 @@ function leaderPlanReviewOrchestrationSection(
 	return `\
 ## Available Specialists (via Task subagent_type)
 
-Custom: ${allSpecialists}
+Built-in: \`leader-explorer\` (codebase exploration), \`leader-fact-checker\` (web-based fact-checking)
+Custom: ${customSpecialists}
 
 ## Plan Review Orchestration Workflow
 
@@ -355,12 +356,16 @@ Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a h
 }
 
 function leaderPlanReviewSimpleSection(helperNames: string[]): string {
-	const helperSection =
-		helperNames.length > 0
-			? `\n## Available Helpers (via Task subagent_type)\n\n${helperNames.join(', ')}\n\nHelpers perform read-only analysis tasks. Use them to delegate heavy analysis and keep your context clean.\n`
-			: '';
+	const userHelperSection =
+		helperNames.length > 0 ? `\nAdditional helpers: ${helperNames.join(', ')}\n` : '';
 	return `\
-${helperSection}## Plan Review Guidelines
+## Available Analysis Tools (via Task subagent_type)
+
+Built-in (always available):
+- \`leader-explorer\`: Read-only codebase explorer — explores files, searches patterns, understands code structure
+- \`leader-fact-checker\`: Web-based fact-checker — validates technical decisions against current docs and best practices
+${userHelperSection}
+## Plan Review Guidelines
 
 **Phase 1 (plan document)**: When you receive \`[PLANNER OUTPUT] — Phase 1 (plan document)\`, follow this workflow:
 1. Read the planner output and extract the PR number/URL.
@@ -405,7 +410,7 @@ function leaderCodeReviewOrchestrationSection(
 		)
 		.join('\n');
 
-	const allSpecialists =
+	const customSpecialists =
 		helperNames.length > 0
 			? `${reviewerNames.join(', ')}, ${helperNames.join(', ')}`
 			: reviewerNames.join(', ');
@@ -413,7 +418,8 @@ function leaderCodeReviewOrchestrationSection(
 	return `\
 ## Available Specialists (via Task subagent_type)
 
-Custom: ${allSpecialists}
+Built-in: \`leader-explorer\` (codebase exploration), \`leader-fact-checker\` (web-based fact-checking)
+Custom: ${customSpecialists}
 
 ## Review Orchestration Workflow
 
@@ -448,12 +454,16 @@ ${prMergeabilityCheckBlock('Step 5', false)}`;
 }
 
 function leaderCodeReviewSimpleSection(helperNames: string[]): string {
-	const helperSection =
-		helperNames.length > 0
-			? `\n## Available Helpers (via Task subagent_type)\n\n${helperNames.join(', ')}\n\nHelpers perform read-only analysis tasks (e.g., "summarize changes in these files"). Use them to delegate heavy analysis and keep your context clean.\n`
-			: '';
+	const userHelperSection =
+		helperNames.length > 0 ? `\nAdditional helpers: ${helperNames.join(', ')}\n` : '';
 	return `\
-${helperSection}## Code Review Guidelines
+## Available Analysis Tools (via Task subagent_type)
+
+Built-in (always available):
+- \`leader-explorer\`: Read-only codebase explorer — explores files, searches patterns, understands code structure
+- \`leader-fact-checker\`: Web-based fact-checker — validates technical decisions against current docs and best practices
+${userHelperSection}
+## Code Review Guidelines
 
 **Every iteration follows the same workflow** — including after the worker addresses feedback.
 1. Read the worker output and extract the PR number/URL.
@@ -1343,11 +1353,32 @@ export function buildReviewerAgents(
 }
 
 /**
+ * Built-in sub-agent names that are always present in the Leader's agents map.
+ * User-configured agents that collide with these names are prefixed with `custom-`.
+ */
+const BUILTIN_LEADER_SUBAGENT_NAMES = new Set(['leader-explorer', 'leader-fact-checker']);
+
+/**
+ * Resolve name collisions between user-configured agents and built-in sub-agents.
+ * If a user agent name matches a built-in name, it is prefixed with `custom-`.
+ */
+export function resolveAgentNameCollisions(
+	agents: Record<string, AgentDefinition>
+): Record<string, AgentDefinition> {
+	const result: Record<string, AgentDefinition> = {};
+	for (const [name, def] of Object.entries(agents)) {
+		result[BUILTIN_LEADER_SUBAGENT_NAMES.has(name) ? `custom-${name}` : name] = def;
+	}
+	return result;
+}
+
+/**
  * Create an AgentSessionInit for a Leader agent session.
  *
- * Uses the agent/agents pattern: the Leader is defined as a named AgentDefinition
+ * Always uses the agent/agents pattern: the Leader is defined as a named AgentDefinition
  * and the session is configured with `agent: 'Leader'` to designate it as the main thread.
- * Reviewer sub-agents (if configured) are merged into the `agents` map alongside Leader.
+ * Built-in sub-agents (`leader-explorer`, `leader-fact-checker`) are always included.
+ * Reviewer and helper sub-agents from room config are merged in if configured.
  *
  * This is analogous to coordinatorMode but custom: we define the Leader agent explicitly
  * rather than using the SDK's built-in coordinator. This preserves the leader's system
@@ -1358,11 +1389,6 @@ export function buildReviewerAgents(
  * via the mcpServers config and should be available to the main agent thread regardless
  * of the agent's tools list. If this assumption is wrong and MCP tools are NOT available,
  * add 'leader-agent-tools__*' to the Leader agent's tools array.
- *
- * To test: Run the server, create a room with reviewer sub-agents configured,
- * trigger autonomous mode, and verify:
- * 1. Leader can call MCP tools (send_to_worker, complete_task, etc.)
- * 2. Leader can dispatch reviewer sub-agents via Task tool
  */
 export function createLeaderAgentInit(
 	config: LeaderAgentConfig,
@@ -1383,73 +1409,46 @@ export function createLeaderAgentInit(
 				}) as unknown as McpServerConfig)
 			: undefined;
 
-	// Build reviewer agents from room config (if any)
+	// Build reviewer agents from room config (if any), resolving name collisions with built-ins
 	const roomConfig = config.room.config ?? {};
 	const reviewerConfigs = getLeaderSubagents(roomConfig);
 	const leaderModel = config.model ?? DEFAULT_LEADER_MODEL;
 	const reviewerAgents =
 		reviewerConfigs && reviewerConfigs.length > 0
-			? buildReviewerAgents(reviewerConfigs, leaderModel)
-			: undefined;
+			? resolveAgentNameCollisions(buildReviewerAgents(reviewerConfigs, leaderModel))
+			: {};
 
-	// Build helper agents from room config (if any)
+	// Build helper agents from room config (if any), resolving name collisions with built-ins
 	const helperConfigs = getLeaderHelperSubagents(roomConfig);
 	const helperAgents =
-		helperConfigs && helperConfigs.length > 0 ? buildLeaderHelperAgents(helperConfigs) : undefined;
+		helperConfigs && helperConfigs.length > 0
+			? resolveAgentNameCollisions(buildLeaderHelperAgents(helperConfigs))
+			: {};
 
-	// Merge reviewers and helpers into a single sub-agents map.
-	// Use the agent/agents pattern when ANY sub-agents are configured.
-	const allSubAgents: Record<string, AgentDefinition> = {
+	// Leader agent definition — orchestrates reviews via MCP tools + Task for sub-agents
+	const leaderAgentDef: AgentDefinition = {
+		description:
+			'Coordinator that orchestrates code review. Dispatches reviewer and helper sub-agents, collects their results, and routes decisions using MCP tools.',
+		prompt: buildLeaderSystemPrompt(config),
+		tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob', 'Bash'],
+		model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
+	};
+
+	// Always include built-in sub-agents plus any user-configured reviewers and helpers.
+	const allAgents: Record<string, AgentDefinition> = {
+		Leader: leaderAgentDef,
+		'leader-explorer': buildLeaderExplorerAgentDef(),
+		'leader-fact-checker': buildLeaderFactCheckerAgentDef(),
 		...reviewerAgents,
 		...helperAgents,
 	};
-	const hasSubAgents = Object.keys(allSubAgents).length > 0;
 
-	if (hasSubAgents) {
-		// Leader agent definition — orchestrates reviews via MCP tools + Task for sub-agents
-		const leaderAgentDef: AgentDefinition = {
-			description:
-				'Coordinator that orchestrates code review. Dispatches reviewer and helper sub-agents, collects their results, and routes decisions using MCP tools.',
-			prompt: buildLeaderSystemPrompt(config),
-			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob', 'Bash'],
-			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
-		};
-
-		const allAgents: Record<string, AgentDefinition> = {
-			Leader: leaderAgentDef,
-			...allSubAgents,
-		};
-
-		return {
-			sessionId: config.sessionId,
-			workspacePath: config.workspacePath,
-			systemPrompt: {
-				type: 'preset',
-				preset: 'claude_code',
-			},
-			mcpServers: {
-				'leader-agent-tools': mcpServer as unknown as McpServerConfig,
-				...(roomAgentTools ? { 'leader-context-tools': roomAgentTools } : {}),
-			},
-			features: LEADER_FEATURES,
-			context: { roomId: config.room.id },
-			type: 'leader' as const,
-			model: config.model ?? DEFAULT_LEADER_MODEL,
-			provider: config.provider,
-			agent: 'Leader',
-			agents: allAgents,
-			contextAutoQueue: false,
-		};
-	}
-
-	// Simple path: no reviewer sub-agents, no agent/agents needed
 	return {
 		sessionId: config.sessionId,
 		workspacePath: config.workspacePath,
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildLeaderSystemPrompt(config),
 		},
 		mcpServers: {
 			'leader-agent-tools': mcpServer as unknown as McpServerConfig,
@@ -1457,9 +1456,11 @@ export function createLeaderAgentInit(
 		},
 		features: LEADER_FEATURES,
 		context: { roomId: config.room.id },
-		type: 'leader',
+		type: 'leader' as const,
 		model: config.model ?? DEFAULT_LEADER_MODEL,
 		provider: config.provider,
+		agent: 'Leader',
+		agents: allAgents,
 		contextAutoQueue: false,
 	};
 }

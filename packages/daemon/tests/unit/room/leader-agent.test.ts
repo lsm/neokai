@@ -11,6 +11,7 @@ import {
 	createLeaderAgentInit,
 	createLeaderToolHandlers,
 	getLeaderHelperSubagents,
+	resolveAgentNameCollisions,
 	toAgentModel,
 	toShortModelName,
 	type LeaderAgentConfig,
@@ -341,8 +342,22 @@ describe('Leader Agent', () => {
 				})
 			);
 			expect(prompt).toContain('Available Specialists (via Task subagent_type)');
+			expect(prompt).toContain('leader-explorer');
+			expect(prompt).toContain('leader-fact-checker');
 			expect(prompt).toContain('reviewer-opus, reviewer-sonnet');
 			expect(prompt).toContain('Dispatch Reviewer Sub-agents');
+		});
+
+		it('always includes built-in sub-agent names in system prompt (no reviewers)', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('leader-explorer');
+			expect(prompt).toContain('leader-fact-checker');
+		});
+
+		it('always includes built-in sub-agent names in system prompt (plan review, no reviewers)', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('leader-explorer');
+			expect(prompt).toContain('leader-fact-checker');
 		});
 
 		it('recommends submit_for_review in simple review path', () => {
@@ -571,14 +586,21 @@ describe('Leader Agent', () => {
 			expect(init.type).toBe('leader');
 		});
 
-		it('should use Claude Code preset with leader prompt appended', () => {
+		it('should use Claude Code preset without append (prompt is in agent def)', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.systemPrompt).toEqual({
 				type: 'preset',
 				preset: 'claude_code',
-				append: expect.stringContaining('Leader Agent'),
 			});
+		});
+
+		it('should embed leader system prompt in Leader agent definition prompt field', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(makeConfig(), callbacks);
+			const leaderDef = init.agents!['Leader'];
+			expect(leaderDef).toBeDefined();
+			expect(leaderDef.prompt).toContain('Leader Agent');
 		});
 
 		it('should include leader-agent-tools MCP server', () => {
@@ -592,14 +614,16 @@ describe('Leader Agent', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.mcpServers).toBeDefined();
+			// The SDK MCP server object has shape: { type, name, instance }
+			// Tools are registered in instance._registeredTools (object keyed by tool name)
 			const ctxServer = init.mcpServers!['leader-context-tools'] as unknown as {
 				name: string;
-				tools: Array<{ name: string }>;
+				instance: { _registeredTools: Record<string, unknown> };
 			};
 			expect(ctxServer).toBeDefined();
 			// Verify it is the narrow leader-context server, not the full room-agent server
 			expect(ctxServer.name).toBe('leader-context');
-			const toolNames = ctxServer.tools.map((t) => t.name).sort();
+			const toolNames = Object.keys(ctxServer.instance._registeredTools).sort();
 			// Should include both read-only context tools and task management tools
 			expect(toolNames).toEqual(
 				[
@@ -726,8 +750,10 @@ describe('Leader Agent', () => {
 			// agent: 'Leader' designates Leader as the main thread
 			expect(init.agent).toBe('Leader');
 			expect(init.agents).toBeDefined();
-			// agents map must include both the Leader and reviewer entries
+			// agents map must include Leader, built-ins, and reviewer entries
 			expect(Object.keys(init.agents!)).toContain('Leader');
+			expect(Object.keys(init.agents!)).toContain('leader-explorer');
+			expect(Object.keys(init.agents!)).toContain('leader-fact-checker');
 			expect(Object.keys(init.agents!)).toContain('reviewer-opus');
 		});
 
@@ -747,8 +773,11 @@ describe('Leader Agent', () => {
 			);
 			expect(init.agent).toBe('Leader');
 			expect(init.agents).toBeDefined();
-			expect(Object.keys(init.agents!)).toHaveLength(5); // Leader + 2 reviewers + reviewer-explorer + reviewer-fact-checker
+			// Leader + 2 built-ins + 2 reviewers + reviewer-explorer + reviewer-fact-checker = 7
+			expect(Object.keys(init.agents!)).toHaveLength(7);
 			expect(Object.keys(init.agents!)).toContain('Leader');
+			expect(Object.keys(init.agents!)).toContain('leader-explorer');
+			expect(Object.keys(init.agents!)).toContain('leader-fact-checker');
 			expect(Object.keys(init.agents!)).toContain('reviewer-opus');
 			expect(Object.keys(init.agents!)).toContain('reviewer-sonnet');
 			expect(Object.keys(init.agents!)).toContain('reviewer-explorer');
@@ -757,18 +786,7 @@ describe('Leader Agent', () => {
 
 		it('should include Task tools in Leader agent definition', () => {
 			const callbacks = makeCallbacks();
-			const init = createLeaderAgentInit(
-				makeConfig({
-					room: makeRoom({
-						config: {
-							agentSubagents: {
-								leader: [{ model: 'claude-opus-4-6' }],
-							},
-						},
-					}),
-				}),
-				callbacks
-			);
+			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			const leaderDef = init.agents!['Leader'];
 			expect(leaderDef).toBeDefined();
 			expect(leaderDef.tools).toContain('Task');
@@ -796,16 +814,22 @@ describe('Leader Agent', () => {
 			expect(init.coordinatorMode).toBeUndefined();
 			expect(init.agent).toBe('Leader');
 			expect(Object.keys(init.agents!)).toContain('Leader');
+			expect(Object.keys(init.agents!)).toContain('leader-explorer');
+			expect(Object.keys(init.agents!)).toContain('leader-fact-checker');
 			expect(Object.keys(init.agents!)).toContain('reviewer-sonnet');
 			expect(Object.keys(init.agents!)).toContain('reviewer-haiku');
 		});
 
-		it('should not set agent or agents when no reviewers configured', () => {
+		it('should always set agent: Leader and agents map (even with no reviewers configured)', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.coordinatorMode).toBeUndefined();
-			expect(init.agent).toBeUndefined();
-			expect(init.agents).toBeUndefined();
+			expect(init.agent).toBe('Leader');
+			expect(init.agents).toBeDefined();
+			// Leader + 2 built-in sub-agents
+			expect(Object.keys(init.agents!)).toContain('Leader');
+			expect(Object.keys(init.agents!)).toContain('leader-explorer');
+			expect(Object.keys(init.agents!)).toContain('leader-fact-checker');
 		});
 	});
 
@@ -1217,6 +1241,79 @@ describe('Leader Agent', () => {
 			expect(reviewerAgent.model).toBe('inherit');
 		});
 	});
+
+	describe('createLeaderAgentInit — built-in sub-agents always present', () => {
+		it('always includes leader-explorer and leader-fact-checker regardless of room config', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(makeConfig(), callbacks);
+			expect(init.agents!['leader-explorer']).toBeDefined();
+			expect(init.agents!['leader-fact-checker']).toBeDefined();
+		});
+
+		it('built-in sub-agents have the correct tools (explorer: read-only, fact-checker: web)', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(makeConfig(), callbacks);
+			const explorer = init.agents!['leader-explorer'];
+			const factChecker = init.agents!['leader-fact-checker'];
+			expect(explorer.tools).toContain('Read');
+			expect(explorer.tools).toContain('Grep');
+			expect(explorer.tools).toContain('Glob');
+			expect(explorer.tools).not.toContain('Task');
+			expect(factChecker.tools).toContain('WebSearch');
+			expect(factChecker.tools).toContain('WebFetch');
+			expect(factChecker.tools).not.toContain('Task');
+		});
+
+		it('built-in sub-agents are still present when reviewers are configured', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(
+				makeConfig({
+					room: makeRoom({
+						config: { agentSubagents: { leader: [{ model: 'claude-opus-4-6' }] } },
+					}),
+				}),
+				callbacks
+			);
+			expect(init.agents!['leader-explorer']).toBeDefined();
+			expect(init.agents!['leader-fact-checker']).toBeDefined();
+		});
+
+		it('resolveAgentNameCollisions: renames agents whose names match built-ins to custom-*', () => {
+			// Directly exercise the collision path: inject an agent named 'leader-explorer'
+			// (a built-in name) and verify it gets renamed to 'custom-leader-explorer'.
+			const collidingAgents = {
+				'leader-explorer': buildLeaderExplorerAgentDef(),
+				'leader-fact-checker': buildLeaderFactCheckerAgentDef(),
+				'reviewer-opus': buildReviewerAgents([{ model: 'claude-opus-4-6' }])['reviewer-opus'],
+			};
+			const resolved = resolveAgentNameCollisions(collidingAgents);
+			// Built-in names must be renamed
+			expect(resolved['leader-explorer']).toBeUndefined();
+			expect(resolved['leader-fact-checker']).toBeUndefined();
+			expect(resolved['custom-leader-explorer']).toBeDefined();
+			expect(resolved['custom-leader-fact-checker']).toBeDefined();
+			// Non-colliding names are unchanged
+			expect(resolved['reviewer-opus']).toBeDefined();
+		});
+
+		it('no code path returns init without agent and agents', () => {
+			const callbacks = makeCallbacks();
+			// No room config — the simplest possible config
+			const init = createLeaderAgentInit(
+				{
+					task: makeTask(),
+					goal: makeGoal(),
+					room: makeRoom(),
+					sessionId: 'test-session',
+					workspacePath: '/ws',
+					groupId: 'g1',
+				},
+				callbacks
+			);
+			expect(init.agent).toBe('Leader');
+			expect(init.agents).toBeDefined();
+		});
+	});
 });
 
 describe('Leader Helper Sub-Agents', () => {
@@ -1444,9 +1541,11 @@ describe('Leader Helper Sub-Agents', () => {
 			expect(init.agents).toBeDefined();
 		});
 
-		it('includes leader helper agents in agents map', () => {
+		it('includes leader helper agents in agents map alongside built-ins', () => {
 			const init = createLeaderAgentInit(makeConfigWithHelpers(), makeCallbacks());
-			const keys = Object.keys(init.agents ?? {}).filter((k) => k !== 'Leader');
+			const keys = Object.keys(init.agents ?? {});
+			expect(keys).toContain('leader-explorer');
+			expect(keys).toContain('leader-fact-checker');
 			expect(keys.some((k) => k.startsWith('leader-helper-'))).toBe(true);
 		});
 
@@ -1465,16 +1564,20 @@ describe('Leader Helper Sub-Agents', () => {
 			const keys = Object.keys(init.agents ?? {}).filter((k) => k !== 'Leader');
 			expect(keys.some((k) => k.startsWith('reviewer-'))).toBe(true);
 			expect(keys.some((k) => k.startsWith('leader-helper-'))).toBe(true);
+			expect(keys).toContain('leader-explorer');
+			expect(keys).toContain('leader-fact-checker');
 		});
 
-		it('uses simple path when neither reviewers nor helpers are configured', () => {
+		it('always uses agent/agents pattern (even when no reviewers nor helpers configured)', () => {
 			const init = createLeaderAgentInit(makeConfig(), makeCallbacks());
-			expect(init.agent).toBeUndefined();
-			expect(init.agents).toBeUndefined();
+			expect(init.agent).toBe('Leader');
+			expect(init.agents).toBeDefined();
+			expect(Object.keys(init.agents!)).toContain('leader-explorer');
+			expect(Object.keys(init.agents!)).toContain('leader-fact-checker');
 		});
 
-		it('Leader agent def includes Task tool when helpers configured', () => {
-			const init = createLeaderAgentInit(makeConfigWithHelpers(), makeCallbacks());
+		it('Leader agent def includes Task tool (always, no reviewers needed)', () => {
+			const init = createLeaderAgentInit(makeConfig(), makeCallbacks());
 			const leaderDef = init.agents?.['Leader'];
 			expect(leaderDef?.tools).toContain('Task');
 		});
@@ -1491,18 +1594,22 @@ describe('Leader Helper Sub-Agents', () => {
 			});
 		}
 
-		it('includes Available Helpers section in code review mode', () => {
+		it('includes Available Analysis Tools section with built-ins and user helpers in code review mode', () => {
 			const config = makeConfigWithHelpers();
 			const prompt = buildLeaderSystemPrompt(config);
-			expect(prompt).toContain('Available Helpers');
+			expect(prompt).toContain('Available Analysis Tools');
+			expect(prompt).toContain('leader-explorer');
+			expect(prompt).toContain('leader-fact-checker');
 			expect(prompt).toContain('leader-helper-');
 		});
 
-		it('includes Available Helpers section in plan review mode', () => {
+		it('includes Available Analysis Tools section with built-ins and user helpers in plan review mode', () => {
 			const config = makeConfigWithHelpers();
 			config.reviewContext = 'plan_review';
 			const prompt = buildLeaderSystemPrompt(config);
-			expect(prompt).toContain('Available Helpers');
+			expect(prompt).toContain('Available Analysis Tools');
+			expect(prompt).toContain('leader-explorer');
+			expect(prompt).toContain('leader-fact-checker');
 			expect(prompt).toContain('leader-helper-');
 		});
 
@@ -1523,7 +1630,7 @@ describe('Leader Helper Sub-Agents', () => {
 			}
 		});
 
-		it('includes helpers alongside reviewers in Available Specialists section', () => {
+		it('includes built-ins and helpers alongside reviewers in Available Specialists section', () => {
 			const config = makeConfig({
 				room: makeRoom({
 					config: {
@@ -1536,6 +1643,8 @@ describe('Leader Helper Sub-Agents', () => {
 			});
 			const prompt = buildLeaderSystemPrompt(config);
 			expect(prompt).toContain('Available Specialists');
+			expect(prompt).toContain('leader-explorer');
+			expect(prompt).toContain('leader-fact-checker');
 			expect(prompt).toContain('reviewer-haiku');
 			expect(prompt).toContain('leader-helper-sonnet');
 		});
