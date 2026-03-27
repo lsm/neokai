@@ -3,9 +3,11 @@
  *
  * Creates AgentSessionInit for Planner sessions that break goals into tasks.
  *
- * The Planner agent orchestrates two phases:
- * 1. Plan phase: Spawns the plan-writer sub-agent to explore the codebase, assess scope,
- *    and produce plan document(s) on a feature branch/PR.
+ * The Planner agent orchestrates two phases within a single session:
+ * 1. Plan phase: Runs a 3-stage pipeline to produce plan document(s) on a feature branch/PR:
+ *    - Stage 1 (planner-explorer): Read-only codebase exploration, returns ---EXPLORER_FINDINGS---
+ *    - Stage 2 (planner-fact-checker): Validates explorer findings via web search, returns ---FACT_CHECK_RESULT---
+ *    - Stage 3 (plan-writer): Creates the plan using explorer + fact-checker context
  * 2. Task creation phase: After human approval, merges the PR and creates tasks.
  *
  * The plan-writer sub-agent handles scope assessment and file structure:
@@ -334,7 +336,8 @@ export function buildPlanWriterAgentDef(planSlug: string): AgentDefinition {
  * Build the behavioral system prompt for the Planner agent.
  *
  * The Planner orchestrates two phases:
- * 1. Plan phase: Spawns the plan-writer sub-agent to explore and create a plan PR.
+ * 1. Plan phase: Runs a 3-stage pipeline (planner-explorer → planner-fact-checker → plan-writer)
+ *    to explore, validate, and create a plan PR.
  * 2. Task creation phase: After human approval, merges the PR and creates tasks.
  *
  * Goal-specific context is delivered via the initial user message.
@@ -348,7 +351,7 @@ export function buildPlannerSystemPrompt(goalTitle?: string): string {
 You are a Planner Agent responsible for breaking down a goal into a concrete plan.
 
 Your job has two phases within a single session:
-1. **Plan phase**: Spawn the \`plan-writer\` sub-agent to explore the codebase and create a plan PR
+1. **Plan phase**: Orchestrate a 3-stage pipeline to explore, fact-check, and create a plan PR
 2. **Task creation phase**: After the plan is approved, merge the PR and create tasks
 
 ## Pre-Planning Setup (MANDATORY)
@@ -362,19 +365,46 @@ git fetch origin && git rebase origin/$DEFAULT_BRANCH
 \`\`\`
 **If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase
 
-You may also use \`WebSearch\` to verify current technology choices or check for recent breaking changes before spawning the plan-writer.
+You may also use \`WebSearch\` or \`WebFetch\` to verify current technology choices or check for recent breaking changes before spawning sub-agents.
 
-## Phase 1: Planning
+## Phase 1: Planning (3-Stage Pipeline)
 
-Spawn the \`plan-writer\` sub-agent to handle all exploration and plan creation work.
-Pass the full goal context (title, description, room background, instructions) as the Task prompt:
+Execute the following three stages in order, passing accumulated context forward at each stage.
+
+### Stage 1: Codebase Exploration
+
+Spawn the \`planner-explorer\` sub-agent with the goal context:
 
 \`\`\`
-Task(subagent_type: "plan-writer", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>")
+Task(subagent_type: "planner-explorer", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>")
+\`\`\`
+
+Collect the \`---EXPLORER_FINDINGS---\` block from the response verbatim — this is the structured output you will pass to subsequent stages.
+
+**If planner-explorer fails or times out:** Skip Stage 2 and proceed directly to Stage 3 (spawn plan-writer) with only the goal context — the plan-writer has its own Read/Grep/Glob/Bash tools and can explore directly.
+
+### Stage 2: Fact-Checking
+
+Spawn the \`planner-fact-checker\` sub-agent with the goal context **plus** the explorer findings verbatim:
+
+\`\`\`
+Task(subagent_type: "planner-fact-checker", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>\\n\\n## Explorer Findings\\n\\n<verbatim ---EXPLORER_FINDINGS--- block>")
+\`\`\`
+
+Collect the \`---FACT_CHECK_RESULT---\` block from the response verbatim.
+
+**If planner-fact-checker fails or times out:** Proceed to Stage 3 with explorer findings only and note that fact-checking was skipped.
+
+### Stage 3: Plan Writing
+
+Spawn the \`plan-writer\` sub-agent with the goal context, explorer findings, **and** fact-checker results:
+
+\`\`\`
+Task(subagent_type: "plan-writer", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>\\n\\n## Explorer Findings\\n\\n<verbatim ---EXPLORER_FINDINGS--- block>\\n\\n## Fact-Check Results\\n\\n<verbatim ---FACT_CHECK_RESULT--- block>")
 \`\`\`
 
 The plan-writer will:
-- Explore the codebase and assess scope
+- Use explorer + fact-checker context as its foundation, but also verify directly with its own tools
 - For small goals (≤ 5 milestones): write a single plan file at \`${planPath}\`
 - For large goals (> 5 milestones): write multi-file plans in \`${planDir}/\` with a numbered overview (\`00-overview.md\`) and per-milestone files (\`01-<milestone>.md\`, \`02-<milestone>.md\`, …)
 - Use an iterative two-pass approach for large goals: first create the overview, then expand each milestone into detailed tasks and subtasks
@@ -387,8 +417,8 @@ Parse the \`---PLAN_RESULT---\` block in the plan-writer's response to capture:
 
 **If the Leader sends feedback on the plan:** Edit the plan files directly (you have Write/Edit/Bash tools), push to the existing branch, and finish your response.
 
-5. Do NOT call \`create_task\` — that tool is disabled until the plan is approved
-6. Do NOT implement any code — only plan
+- Do NOT call \`create_task\` — that tool is disabled until the plan is approved
+- Do NOT implement any code — only plan
 
 Finish your response after the plan-writer completes — the Leader will dispatch reviewers, then submit for human approval.
 
@@ -647,8 +677,10 @@ export function createPlannerMcpServer(config: PlannerAgentConfig) {
  * Create an AgentSessionInit for a Planner agent.
  *
  * Uses the agent/agents pattern so the Planner has access to the Task/TaskOutput/TaskStop
- * tools for spawning the plan-writer sub-agent. The plan-writer handles all Phase 1 work
- * (exploration, scope assessment, plan creation, branch/PR).
+ * tools for spawning the 3-stage pipeline sub-agents:
+ * - planner-explorer: read-only codebase exploration
+ * - planner-fact-checker: web-based validation of explorer findings
+ * - plan-writer: produces the plan documents using accumulated context
  *
  * MCP planning tools (create_task, update_task, remove_task) are provided via mcpServers
  * and are available to the main Planner agent thread regardless.
@@ -659,10 +691,10 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 
 	const plannerAgentDef: AgentDefinition = {
 		description:
-			'Planning agent that orchestrates plan creation by spawning a plan-writer sub-agent, ' +
-			'then creates tasks from the approved plan.',
+			'Planning agent that orchestrates a 3-stage pipeline (explorer → fact-checker → plan-writer) ' +
+			'to create a plan PR, then creates tasks from the approved plan.',
 		prompt: buildPlannerSystemPrompt(config.goal.title),
-		// Planner needs Task/TaskOutput/TaskStop to spawn plan-writer,
+		// Planner needs Task/TaskOutput/TaskStop to spawn the 3-stage pipeline sub-agents,
 		// plus standard tools for direct file editing during feedback rounds.
 		tools: [
 			'Task',
@@ -698,6 +730,8 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		agent: 'Planner',
 		agents: {
 			Planner: plannerAgentDef,
+			'planner-explorer': buildPlannerExplorerAgentDef(),
+			'planner-fact-checker': buildPlannerFactCheckerAgentDef(),
 			'plan-writer': buildPlanWriterAgentDef(planSlug),
 		},
 		contextAutoQueue: false,
