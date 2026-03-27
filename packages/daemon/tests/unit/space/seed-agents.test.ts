@@ -159,6 +159,19 @@ describe('seedPresetAgents', () => {
 		}
 	});
 
+	it('General agent has restricted tools (no Write or Edit) — read-only Done node', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.role === 'general');
+
+		expect(general).toBeDefined();
+		expect(general?.tools).not.toContain('Write');
+		expect(general?.tools).not.toContain('Edit');
+		expect(general?.tools).toContain('Read');
+		expect(general?.tools).toContain('Bash');
+		expect(general?.tools).toContain('Grep');
+		expect(general?.tools).toContain('Glob');
+	});
+
 	it('QA agent has restricted tools (no Write or Edit)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const qa = seeded.find((a) => a.role === 'qa');

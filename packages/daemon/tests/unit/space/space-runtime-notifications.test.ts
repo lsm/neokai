@@ -1539,5 +1539,270 @@ describe('SpaceRuntime — notification events', () => {
 				expect(completedEvents[0].summary).not.toBe('Upstream result');
 			}
 		});
+
+		test('no terminal nodes — all nodes have outbound channels, summary is undefined', async () => {
+			const rt = makeRuntimeWithTam();
+			// A → B → A is a cycle; both nodes have outbound edges so neither is terminal.
+			// We simulate this by using transitions (not channels) and patching the workflow after
+			// creation. More practically: two nodes each with channels pointing at the other.
+			// Use a simpler approach: workflow with one node whose only outbound channel loops
+			// back to itself (or just create a workflow where we manually verify summary=undefined).
+			// Easiest: build a workflow, then manually invoke resolveCompletionSummary via
+			// the notification payload.
+			//
+			// Actually, SpaceWorkflow.channels has `from` and `to`. Let's create two nodes both
+			// having outbound channels so neither qualifies as terminal.
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `No Terminal ${Date.now()}`,
+				nodes: [
+					{ id: 'step-nt-a', name: 'A', agentId: AGENT_CODER },
+					{ id: 'step-nt-b', name: 'B', agentId: AGENT_CODER },
+				],
+				channels: [
+					{
+						id: 'ch-nt-ab',
+						from: 'step-nt-a',
+						to: 'step-nt-b',
+						direction: 'one-way' as const,
+					},
+					{
+						id: 'ch-nt-ba',
+						from: 'step-nt-b',
+						to: 'step-nt-a',
+						direction: 'one-way' as const,
+					},
+				],
+				startNodeId: 'step-nt-a',
+				rules: [],
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Create a task for node B as well
+			const taskB = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'B',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'step-nt-b',
+				taskType: 'coding',
+				status: 'pending',
+			});
+
+			taskRepo.updateTask(tasks[0].id, { status: 'completed', result: 'Result A' });
+			taskRepo.updateTask(taskB.id, { status: 'completed', result: 'Result B' });
+
+			await rt.executeTick();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				// No terminal nodes → summary should be undefined
+				expect(completedEvents[0].summary).toBeUndefined();
+			}
+		});
+
+		test('multiple terminal nodes — returns first non-empty result', async () => {
+			const rt = makeRuntimeWithTam();
+			// Fan-out: one start node, two terminal nodes each with a result.
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi Terminal ${Date.now()}`,
+				nodes: [
+					{ id: 'step-mt-start', name: 'Start', agentId: AGENT_CODER },
+					{ id: 'step-mt-done1', name: 'Done1', agentId: AGENT_CODER },
+					{ id: 'step-mt-done2', name: 'Done2', agentId: AGENT_CODER },
+				],
+				channels: [
+					{
+						id: 'ch-mt-1',
+						from: 'step-mt-start',
+						to: 'step-mt-done1',
+						direction: 'one-way' as const,
+					},
+					{
+						id: 'ch-mt-2',
+						from: 'step-mt-start',
+						to: 'step-mt-done2',
+						direction: 'one-way' as const,
+					},
+				],
+				startNodeId: 'step-mt-start',
+				rules: [],
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			const taskDone1 = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Done1',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'step-mt-done1',
+				taskType: 'coding',
+				status: 'pending',
+			});
+			const taskDone2 = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Done2',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'step-mt-done2',
+				taskType: 'coding',
+				status: 'pending',
+			});
+
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(taskDone1.id, { status: 'completed', result: 'Summary from Done1' });
+			taskRepo.updateTask(taskDone2.id, { status: 'completed', result: 'Summary from Done2' });
+
+			await rt.executeTick();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				// Returns the first non-empty result found — either Done1 or Done2
+				expect(completedEvents[0].summary).toMatch(/Summary from Done[12]/);
+			}
+		});
+
+		test('multiple terminal nodes with no results — summary is undefined', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi Terminal No Result ${Date.now()}`,
+				nodes: [
+					{ id: 'step-mtnr-start', name: 'Start', agentId: AGENT_CODER },
+					{ id: 'step-mtnr-done1', name: 'Done1', agentId: AGENT_CODER },
+					{ id: 'step-mtnr-done2', name: 'Done2', agentId: AGENT_CODER },
+				],
+				channels: [
+					{
+						id: 'ch-mtnr-1',
+						from: 'step-mtnr-start',
+						to: 'step-mtnr-done1',
+						direction: 'one-way' as const,
+					},
+					{
+						id: 'ch-mtnr-2',
+						from: 'step-mtnr-start',
+						to: 'step-mtnr-done2',
+						direction: 'one-way' as const,
+					},
+				],
+				startNodeId: 'step-mtnr-start',
+				rules: [],
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			const taskDone1 = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Done1',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'step-mtnr-done1',
+				taskType: 'coding',
+				status: 'pending',
+			});
+			const taskDone2 = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Done2',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'step-mtnr-done2',
+				taskType: 'coding',
+				status: 'pending',
+			});
+
+			// Complete all tasks but set NO result on any terminal node
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(taskDone1.id, { status: 'completed' });
+			taskRepo.updateTask(taskDone2.id, { status: 'completed' });
+
+			await rt.executeTick();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				expect(completedEvents[0].summary).toBeUndefined();
+			}
+		});
+
+		test('empty result string on terminal node is not returned as summary', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Empty Result ${Date.now()}`,
+				nodes: [{ id: 'step-empty-res', name: 'Done', agentId: AGENT_CODER }],
+				startNodeId: 'step-empty-res',
+				rules: [],
+				tags: [],
+			});
+
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			// Set result to empty string — should not be treated as a valid summary
+			taskRepo.updateTask(tasks[0].id, { status: 'completed', result: '' });
+
+			await rt.executeTick();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				expect(completedEvents[0].summary).toBeUndefined();
+			}
+		});
+
+		test('bidirectional channel — neither endpoint is treated as terminal', async () => {
+			const rt = makeRuntimeWithTam();
+			// A ↔ B — both nodes have outbound edges (bidirectional), so neither is terminal.
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Bidirectional ${Date.now()}`,
+				nodes: [
+					{ id: 'step-bidi-a', name: 'A', agentId: AGENT_CODER },
+					{ id: 'step-bidi-b', name: 'B', agentId: AGENT_CODER },
+				],
+				channels: [
+					{
+						id: 'ch-bidi',
+						from: 'step-bidi-a',
+						to: 'step-bidi-b',
+						direction: 'bidirectional' as const,
+					},
+				],
+				startNodeId: 'step-bidi-a',
+				rules: [],
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			const taskB = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'B',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'step-bidi-b',
+				taskType: 'coding',
+				status: 'pending',
+			});
+
+			taskRepo.updateTask(tasks[0].id, { status: 'completed', result: 'Result A' });
+			taskRepo.updateTask(taskB.id, { status: 'completed', result: 'Result B' });
+
+			await rt.executeTick();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				// Both nodes are bidirectional — neither is terminal, summary should be undefined
+				expect(completedEvents[0].summary).toBeUndefined();
+			}
+		});
 	});
 });

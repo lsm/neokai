@@ -80,8 +80,8 @@ const CODER_TOOLS = KNOWN_TOOLS.filter(
 	(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
 ) as string[];
 
-/** Same as coder — general agents have the same toolset */
-const GENERAL_TOOLS = CODER_TOOLS;
+/** Done node agent: read-only summarization — no Write or Edit */
+const DONE_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
 
 /** Planner uses the same toolset as coder (orchestration patterns reserved for future) */
 const PLANNER_TOOLS = CODER_TOOLS;
@@ -98,7 +98,7 @@ const QA_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSear
  */
 export const ROLE_TOOLS: Record<string, string[]> = {
 	coder: CODER_TOOLS,
-	general: GENERAL_TOOLS,
+	general: DONE_TOOLS,
 	planner: PLANNER_TOOLS,
 	reviewer: REVIEWER_TOOLS,
 	qa: QA_TOOLS,
@@ -131,7 +131,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		description:
 			'Done node agent. Reads gate data from completed workflow stages and produces a ' +
 			'comprehensive human-readable summary of what was accomplished.',
-		tools: GENERAL_TOOLS,
+		tools: DONE_TOOLS,
 		// systemPrompt is populated lazily in seedPresetAgents() to avoid
 		// calling buildDoneNodeAgentPrompt() at module-init time.
 	},

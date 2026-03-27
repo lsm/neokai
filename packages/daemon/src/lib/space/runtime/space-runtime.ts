@@ -805,10 +805,17 @@ export class SpaceRuntime {
 		const channels = workflow.channels ?? [];
 		const nodes = workflow.nodes;
 
-		// Collect node IDs that appear as channel sources (have outbound channels)
+		// Collect node IDs that appear as channel sources (have outbound channels).
+		// Bidirectional channels flow both ways, so both endpoints are non-terminal.
 		const nodesWithOutbound = new Set<string>();
 		for (const ch of channels) {
 			nodesWithOutbound.add(ch.from);
+			if (ch.direction === 'bidirectional') {
+				const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
+				for (const target of targets) {
+					nodesWithOutbound.add(target);
+				}
+			}
 		}
 
 		// Terminal nodes are those with no outbound channels
