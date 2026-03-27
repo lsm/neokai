@@ -313,6 +313,14 @@ function GateIcon({
 }: GateIconProps): JSX.Element {
 	const [showActions, setShowActions] = useState(false);
 
+	// Dismiss the popup when the user clicks anywhere outside the gate icon
+	useEffect(() => {
+		if (!showActions) return;
+		const dismiss = () => setShowActions(false);
+		document.addEventListener('click', dismiss, { once: true });
+		return () => document.removeEventListener('click', dismiss);
+	}, [showActions]);
+
 	let fill: string;
 	let strokeColor: string;
 	let icon: JSX.Element;

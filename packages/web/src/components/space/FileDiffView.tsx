@@ -64,7 +64,12 @@ export function parseDiff(diff: string): ParsedLine[] {
 			raw.startsWith('new file') ||
 			raw.startsWith('deleted file') ||
 			raw.startsWith('old mode') ||
-			raw.startsWith('new mode')
+			raw.startsWith('new mode') ||
+			raw.startsWith('similarity index') ||
+			raw.startsWith('rename from') ||
+			raw.startsWith('rename to') ||
+			raw.startsWith('copy from') ||
+			raw.startsWith('copy to')
 		) {
 			result.push({ type: 'index', content: raw, oldLineNum: null, newLineNum: null });
 		} else if (raw.startsWith('--- ') || raw.startsWith('+++ ')) {
@@ -87,6 +92,9 @@ export function parseDiff(diff: string): ParsedLine[] {
 				oldLineNum: oldLine,
 				newLineNum: null,
 			});
+		} else if (raw.startsWith('\\')) {
+			// "\ No newline at end of file" — informational; no line number increment
+			result.push({ type: 'index', content: raw, oldLineNum: null, newLineNum: null });
 		} else {
 			// context line (starts with space) or empty
 			oldLine++;

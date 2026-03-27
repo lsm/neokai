@@ -103,6 +103,40 @@ describe('parseDiff', () => {
 		expect(lines[0].newLineNum).toBe(2);
 	});
 
+	it('does not increment counters for "no newline at end of file" line', () => {
+		// "\ No newline at end of file" must NOT increment old or new line counters
+		const diff =
+			'@@ -1,1 +1,1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file';
+		const lines = parseDiff(diff);
+		const noNewline = lines.filter((l) => l.content.startsWith('\\ No newline'));
+		expect(noNewline.length).toBe(2);
+		noNewline.forEach((l) => {
+			expect(l.oldLineNum).toBeNull();
+			expect(l.newLineNum).toBeNull();
+		});
+		// Line numbers must still be correct for removed/added lines
+		const removed = lines.find((l) => l.type === 'removed');
+		const added = lines.find((l) => l.type === 'added');
+		expect(removed!.oldLineNum).toBe(1);
+		expect(added!.newLineNum).toBe(1);
+	});
+
+	it('treats rename/similarity lines as index (no counter increment)', () => {
+		const diff =
+			'diff --git a/a.ts b/b.ts\nsimilarity index 95%\nrename from a.ts\nrename to b.ts\n--- a/a.ts\n+++ b/b.ts\n@@ -1,1 +1,1 @@\n-old\n+new';
+		const lines = parseDiff(diff);
+		const renameLines = lines.filter(
+			(l) => l.content.startsWith('similarity') || l.content.startsWith('rename')
+		);
+		expect(renameLines.length).toBe(3);
+		renameLines.forEach((l) => expect(l.type).toBe('index'));
+		// Line numbers should still be 1 for removed/added after rename header
+		const removed = lines.find((l) => l.type === 'removed');
+		const added = lines.find((l) => l.type === 'added');
+		expect(removed!.oldLineNum).toBe(1);
+		expect(added!.newLineNum).toBe(1);
+	});
+
 	it('strips leading sigil from addition content', () => {
 		const diff = '@@ -1,1 +1,1 @@\n+const x = 1;';
 		const lines = parseDiff(diff).filter((l) => l.type === 'added');
