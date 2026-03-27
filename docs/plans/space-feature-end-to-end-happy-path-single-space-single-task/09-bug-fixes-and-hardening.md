@@ -71,12 +71,17 @@ Fix issues discovered during integration and E2E testing. Add robust error handl
 **Description**: Add robust error handling for common failure modes.
 
 **Subtasks**:
-1. **Agent session crash handling**: Task Agent detects crash, transitions to `failed`, notifies human
+1. **Agent session crash handling**: Task Agent detects crash, transitions to `needs_attention` with `failureReason: 'agentCrash'`, notifies human
 2. **Network errors**: Retry with exponential backoff for `gh` CLI commands (max 3, 5s/10s/20s)
 3. **Rate limit handling**: Wait and retry using `Retry-After` header
 4. **Timeout enforcement**: Per-node configurable timeouts (30min coder, 15min reviewer/QA, 20min planner)
 5. **Cancellation cleanup**: Kill sessions, remove worktree, transition to `cancelled`, notify human
-6. **Gate data corruption recovery**: If gate data is malformed, reset to initial state and log error
+6. **Gate data corruption recovery**: If gate data is malformed (fails JSON parse or schema validation), reset to the gate type's initial state and log error. **Initial state per gate type**:
+   - PR Gate: `{}` (no PR URL — blocks until planner/coder writes)
+   - Human Gate: `{ waiting: true }` (re-shows approval UI)
+   - Aggregate Gate: `{ votes: {} }` (clears all votes, requires re-review)
+   - Task Result Gate: `{}` (blocks until agent writes result)
+   - Always Gate: `{}` (always passes, no data needed)
 7. **Structured error messages**: All failures produce human-readable messages in Space chat
 
 **Acceptance Criteria**:

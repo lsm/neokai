@@ -2,7 +2,11 @@
 
 ## Goal and Scope
 
-Upgrade the system prompts for planner, coder, reviewer, and QA node agents in the Space system. Prompts must include git workflow, PR management, review posting, and — critically — instructions for interacting with gate data stores via `read_gate`/`write_gate` MCP tools.
+Upgrade the system prompts for planner, coder, reviewer, and QA node agents in the Space system. Prompts must include git workflow, PR management, review posting, and — critically — instructions for interacting with gate data stores via `list_gates`/`read_gate`/`write_gate` MCP tools.
+
+**Dependency note**: M2 depends on both M1 (gate MCP tools) and M3 (V2 workflow template). Prompts reference specific gate IDs from the V2 workflow (e.g., "Code PR Gate", "Aggregate Gate"). **Implement M3 before M2** so the concrete gate IDs exist. The prompts use the gate IDs injected via workflow context (M1 Task 1.3 subtask 5) and reference them by the human-readable descriptions from the gate definitions.
+
+**Gate discovery pattern**: All prompts include a standard preamble: "At session start, call `list_gates` to discover available gates and their IDs. Your task message also includes a `workflowContext` block with your upstream/downstream gate IDs."
 
 ## Tasks
 
@@ -24,7 +28,7 @@ Upgrade the system prompts for planner, coder, reviewer, and QA node agents in t
 - Coder reads plan gate data to understand the plan
 - Unit tests pass for updated prompt builder
 
-**Depends on**: Milestone 1 (gate MCP tools must exist)
+**Depends on**: Milestone 1 (gate MCP tools) and Milestone 3 (V2 workflow template with concrete gate IDs)
 
 **Agent type**: coder
 
@@ -61,8 +65,9 @@ Upgrade the system prompts for planner, coder, reviewer, and QA node agents in t
 2. Include PR review process: read changed files, evaluate correctness/completeness/security
 3. Add review posting via REST API (`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews`)
 4. Add structured output format: `---REVIEW_POSTED---` block with URL, recommendation, severity counts
-5. **Add gate interaction instructions**: Reviewer reads the Code PR Gate to find the PR URL, then after reviewing, writes its vote to the Aggregate Gate via `write_gate({ votes: { [agentId]: 'approve' | 'reject' } })`
+5. **Add gate interaction instructions**: Reviewer reads the Code PR Gate (via `read_gate`) to find the PR URL, then after reviewing, writes its vote to the Aggregate Gate via `write_gate` using its **nodeId** as the vote key: `{ votes: { [nodeId]: 'approve' | 'reject' } }`. Using nodeId (not agentId) prevents collision if the agent is re-spawned after a crash.
 6. When 3 reviewers all write 'approve', the Aggregate Gate passes and QA is activated
+7. **Add edge case guidance**: Instruct the reviewer to check current vote state via `read_gate` on the Aggregate Gate before voting. If a reviewer is killed mid-review and re-spawned, it should check if it already voted and either update or confirm its vote.
 
 **Acceptance Criteria**:
 - Reviewer reads PR URL from gate data

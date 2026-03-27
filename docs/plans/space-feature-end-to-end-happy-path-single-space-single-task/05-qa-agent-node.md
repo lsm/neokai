@@ -27,9 +27,10 @@ Both cyclic channels (Reviewer→Coding and QA→Coding) share the same global `
 **Subtasks**:
 1. Verify QA node exists in V2 template with correct agent assignment and tool access
 2. Verify channels: Aggregate→QA (passes on quorum), QA→Done (passes on 'passed'), QA→Coding (fails on 'failed', cyclic)
-3. Test the QA→Coding feedback loop: QA writes `{ result: 'failed', summary: '...' }` to Task Result Gate → cyclic channel activates → Coding node re-activates
-4. Verify the full re-review cycle after QA failure: Coding → 3 Reviewers → QA (all 3 reviewers must re-vote)
-5. Verify iteration counter increments on QA→Coding cycle
+3. Test the QA→Coding feedback loop: QA writes `{ result: 'failed', summary: '...' }` to `qa-fail-gate` → cyclic channel activates → Coding node re-activates
+4. Verify the full re-review cycle after QA failure: Coding → 3 Reviewers → QA (all 3 reviewers must re-vote from scratch)
+5. **Verify gate data reset**: When the QA→Coding cyclic channel fires, the `ChannelRouter` resets downstream gate data (M1 Task 1.4). Specifically: `review-aggregate-gate` votes reset to `{ votes: {} }`, `qa-result-gate` → `{}`, `review-reject-gate` → `{}`. The `code-pr-gate` data is preserved. This ensures all 3 reviewers must re-vote — stale approve votes from the previous round are cleared. The reset is performed by `ChannelRouter.onCyclicTraversal()` (implemented in M1).
+6. Verify iteration counter increments on QA→Coding cycle
 6. Unit tests for QA feedback loop
 
 **Acceptance Criteria**:

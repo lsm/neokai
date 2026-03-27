@@ -4,6 +4,8 @@
 
 Create Playwright E2E tests that exercise the full UI flow including the workflow canvas visualization, human gate artifacts view, and diff rendering.
 
+**Testing strategy**: E2E tests use real agent execution via dev proxy (mocked LLM responses). To manage timing, tests wait for **visible UI state changes** on the canvas (e.g., node status indicators, gate highlights) rather than polling internal state. Each "wait for X to complete" step uses `page.waitForSelector()` on the canvas node's status indicator. The dev proxy returns fast, deterministic responses so tests complete in seconds, not minutes.
+
 ## Tasks
 
 ### Task 8.1: Space Happy Path E2E Test
@@ -54,11 +56,12 @@ Create Playwright E2E tests that exercise the full UI flow including the workflo
 
 **Subtasks**:
 1. Proceed through pipeline to reviewer phase
-2. Verify one reviewer rejects (visible on canvas — Aggregate Gate shows votes)
-3. Verify Coding node re-activates on canvas
-4. Wait for coder fix + re-review
-5. Verify all 3 reviewers approve
-6. Verify flow continues to QA and completion
+2. **Wait for Aggregate Gate vote display** on canvas (use `page.waitForSelector` on vote indicator elements). Verify one reviewer rejects (visible rejection indicator on canvas)
+3. **Wait for Coding node status change** to "active" on canvas. Verify Coding node re-activates.
+4. **Wait for Aggregate Gate to show reset** (votes cleared after cyclic traversal)
+5. Wait for coder fix + re-review (wait for all 3 reviewer node statuses to change to "completed")
+6. Verify all 3 reviewers approve (Aggregate Gate shows 3/3)
+7. Verify flow continues to QA and completion
 
 **Acceptance Criteria**:
 - Reviewer rejection visible on canvas
@@ -80,13 +83,13 @@ Create Playwright E2E tests that exercise the full UI flow including the workflo
 1. Proceed to human gate
 2. Click human gate on canvas → artifacts view opens
 3. Click "Reject" button
-4. Verify workflow run transitions to failed (visible on canvas)
+4. Verify workflow run transitions to `needs_attention` state (visible on canvas as error/attention indicator)
 5. Verify confirmation message in chat
 6. Verify space remains usable after rejection
 
 **Acceptance Criteria**:
 - Rejection via artifacts view works
-- Canvas shows failed state
+- Canvas shows needs_attention/error state
 - Space remains usable
 
 **Depends on**: Task 8.1

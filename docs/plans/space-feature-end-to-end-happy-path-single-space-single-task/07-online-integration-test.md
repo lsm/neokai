@@ -4,6 +4,8 @@
 
 Exercise the full happy path with the dev proxy (mocked SDK). Tests are broken into focused sub-tests per workflow stage with shared helpers.
 
+**Testing strategy**: These are **gate-level integration tests**, not full agent execution tests. Each test uses `mockAgentDone()` and `writeGateData()` helpers to simulate agent completion and gate writes directly, then verifies the gate evaluation, channel routing, and node activation logic. This keeps tests fast (no real LLM calls, no agent session startup) while testing the actual Gate + Channel architecture end-to-end. The dev proxy is used only for the agent session lifecycle (spawn/kill), not for full conversation turns.
+
 ## Test File Structure
 
 ```
@@ -49,7 +51,7 @@ packages/daemon/tests/online/space/
    g. Verify Human Gate blocks (gate data shows `{ waiting: true }`)
    h. Approve via `approveHumanGate()` helper
    i. Verify Coding node activates
-   j. Test rejection: reject → verify `failed` status with `humanRejected` reason
+   j. Test rejection: reject → verify `needs_attention` status with `failureReason: 'humanRejected'`
 
 **Acceptance Criteria**:
 - Shared helpers work with dev proxy
@@ -145,9 +147,9 @@ packages/daemon/tests/online/space/
 1. Write `space-edge-cases.test.ts`:
    a. Concurrent tasks: separate worktrees, separate iteration counters
    b. Cancellation: agents cleaned up, worktree removed
-   c. Agent crash: Task Agent detects failure, run transitions to `failed`
-   d. Human gate persistence: `waiting` state survives daemon restart
-   e. Aggregate gate partial: 2/3 approve, daemon restarts, 3rd vote still counted
+   c. Agent crash: Task Agent detects failure, run transitions to `needs_attention` with `failureReason: 'agentCrash'`
+   d. Human gate persistence: `waiting` state in gate data survives daemon restart
+   e. **Aggregate gate partial + restart**: (1) write 2 approve votes to `review-aggregate-gate`, (2) verify gate still blocked (quorum not met), (3) restart daemon, (4) verify gate data persisted (2 votes present in `gate_data` table), (5) write 3rd approve vote, (6) verify gate passes and QA activates. This proves gate data survives restart via the `gate_data` SQLite table.
 
 **Acceptance Criteria**:
 - All edge cases pass

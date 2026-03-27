@@ -45,29 +45,33 @@ The artifacts view is essentially an embedded PR review interface:
 1. Implement `spaceWorkflowRun.approveGate` RPC handler:
    - Accepts `{ runId, gateId, decision: 'approve' | 'reject' }`
    - Writes to gate data store: `{ approved: true, approvedBy, approvedAt }` or `{ rejected: true, rejectedBy, reason }`
+   - **Idempotency**: If the gate is already approved/rejected (e.g., two humans click simultaneously), return success without re-writing. Use optimistic locking: read current gate data, check if already decided, only write if still `{ waiting: true }`.
    - Triggers gate re-evaluation (which unblocks the channel)
 2. Implement `spaceWorkflowRun.getGateArtifacts` RPC handler:
    - Accepts `{ runId, gateId }`
+   - **Worktree path lookup**: Queries the `space_worktrees` table (M4) using the workflow run's task ID to find the worktree path. Falls back to workflow run metadata if the worktree table lookup fails.
    - Returns: list of changed files in the task worktree, git diff summary, gate context data
    - Uses `git diff` and `git status` in the task worktree to get changes
+   - **Guard**: If the worktree no longer exists (cleaned up), return an error with the PR URL from gate data so the human can review on GitHub instead
 3. Implement `spaceWorkflowRun.getFileDiff` RPC handler:
    - Accepts `{ runId, gateId, filePath }`
    - Returns: unified diff for the specified file
 4. Add workflow run status: when human gate blocks → run stays `in_progress` but gate data shows `{ waiting: true }`
-   - No need for `waiting_for_approval` status — the gate data IS the state. The workflow run is `in_progress`, and the gate's data tells you it's waiting.
-5. Handle rejection: gate data gets `{ rejected: true, reason }`. The workflow run transitions to `failed` with `failureReason: 'humanRejected'`.
-6. Add `WorkflowRunStatus` expansion: add `'failed'` to the type, add `failureReason` field
+   - No need for a new `waiting_for_approval` status — the gate data IS the state. The workflow run is `in_progress`, and the gate's data tells you it's waiting.
+5. Handle rejection: gate data gets `{ rejected: true, reason }`. The workflow run transitions to `needs_attention` with `failureReason: 'humanRejected'`. (Uses existing `needs_attention` status, not a new `failed` status — see overview WorkflowRunStatus Strategy.)
+6. Add `failureReason` field to `SpaceWorkflowRun` interface (if not already added in M1 Task 1.1): `failureReason?: 'humanRejected' | 'maxIterationsReached' | 'nodeTimeout' | 'agentCrash'`
 7. Implement post-rejection recovery via `spaceWorkflowRun.restart` RPC
 8. Ensure gate data (including waiting/approved/rejected state) persists across daemon restart
-9. Unit tests: approval, rejection, artifacts retrieval, file diff, restart, persistence
+9. Unit tests: approval, rejection, concurrent approval idempotency, artifacts retrieval (with and without worktree), file diff, restart, persistence
 
 **Acceptance Criteria**:
 - Human gate blocks workflow and gate data shows `{ waiting: true }`
 - Approval writes to gate data and unblocks downstream channel
-- Rejection transitions run to `failed`
-- Artifacts RPC returns changed files and diffs from task worktree
+- Concurrent approvals are idempotent (no double-write)
+- Rejection transitions run to `needs_attention` with `failureReason: 'humanRejected'`
+- Artifacts RPC returns changed files and diffs from task worktree (or error + PR URL if worktree gone)
 - State persists across daemon restart
-- Unit tests cover all flows
+- Unit tests cover all flows including concurrent approval edge case
 
 **Depends on**: Milestone 1 (gate data store), Milestone 4 (worktree for diff access)
 

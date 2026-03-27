@@ -12,7 +12,7 @@ Implement git worktree isolation for Space tasks. Each task gets **one worktree*
 
 3. **Name generation**: Pick from a curated word list (~50 short adjectives: alpha, beta, nova, flux, spark, blaze, drift, frost, etc.) + sequential number. Check for uniqueness against existing worktrees.
 
-4. **Worktree lifecycle**: Created when task workflow starts, cleaned up when task completes or is cancelled.
+4. **Worktree lifecycle**: Created when task workflow starts. **Not immediately cleaned up on completion** — kept until the PR is merged or the task is explicitly deleted, since the human may want to review code locally or the Coder may need follow-up commits. A TTL-based reaper (default: 7 days after workflow completion) cleans up stale worktrees. Immediate cleanup only on task cancellation.
 
 ## Tasks
 
@@ -43,9 +43,8 @@ Implement git worktree isolation for Space tasks. Each task gets **one worktree*
 **Description**: Create a `SpaceWorktreeManager` that manages git worktrees for Space tasks. One worktree per task, created from the space's repository.
 
 **Subtasks**:
-1. **Investigate existing WorktreeManager**: Read `packages/daemon/src/lib/room/managers/worktree-manager.ts` and decide: reuse (with modifications) or new implementation.
-   - Decision criteria: if reusing requires >3 non-trivial modifications or would break Room functionality, create new.
-2. Create `SpaceWorktreeManager` in `packages/daemon/src/lib/space/`:
+1. **Create a new `SpaceWorktreeManager`** in `packages/daemon/src/lib/space/`. The existing Room `WorktreeManager` uses `simple-git` with room-specific abstractions (`sessionId`, `WorktreeMetadata`, session group lifecycle). The Space system needs task-scoped worktrees with different lifecycle management (one per task, shared by all agents, TTL-based cleanup). Reuse `simple-git` directly (same dependency) but do NOT extend or modify the Room's `WorktreeManager` class.
+2. `SpaceWorktreeManager` API:
    - `createTaskWorktree(spaceId: string, taskId: string, baseBranch?: string): Promise<{ path: string, name: string }>` — creates worktree with short name, returns path and name
    - `removeTaskWorktree(spaceId: string, taskId: string): Promise<void>` — cleans up
    - `getTaskWorktreePath(spaceId: string, taskId: string): Promise<string | null>` — looks up existing worktree for a task
@@ -53,7 +52,7 @@ Implement git worktree isolation for Space tasks. Each task gets **one worktree*
    - `cleanupOrphaned(spaceId: string): Promise<void>` — removes worktrees for completed/cancelled tasks
 3. Worktree location: `{spaceWorkspacePath}/.worktrees/{worktree-name}/` (e.g., `.worktrees/alpha-3/`)
 4. Persist worktree ↔ task mapping in SQLite (table: `space_worktrees` with columns: `id`, `space_id`, `task_id`, `name`, `path`, `created_at`)
-5. Branch naming: `space/{taskId}/{worktree-name}` (e.g., `space/task-abc/alpha-3`)
+5. Branch naming: `space/{worktree-name}` (e.g., `space/alpha-3`) — short because worktree names are already unique; no UUID-based task IDs in the branch name
 6. Unit tests: create, remove, lookup, list, orphan cleanup
 
 **Acceptance Criteria**:
@@ -76,17 +75,21 @@ Implement git worktree isolation for Space tasks. Each task gets **one worktree*
 1. Before spawning the first node agent for a task, call `SpaceWorktreeManager.createTaskWorktree()`
 2. Store the worktree path in the workflow run metadata
 3. All subsequent `spawnSubSession()` calls for the same task use the same worktree path as `workspacePath`
-4. On workflow run completion (Done node), call `SpaceWorktreeManager.removeTaskWorktree()`
-5. On workflow run cancellation, clean up the worktree
-6. On daemon restart, run `cleanupOrphaned()` to remove worktrees from stale runs
-7. Unit tests: worktree creation at run start, reuse across nodes, cleanup at completion/cancellation
+4. **Do NOT immediately remove worktree on completion** — the PR may not be merged yet and the human may want to review locally. Instead, mark the worktree as `completed` in the `space_worktrees` table with a `completed_at` timestamp.
+5. On workflow run cancellation, clean up the worktree immediately (no TTL — cancelled work is abandoned)
+6. Implement TTL-based reaper: on daemon startup and periodically (every hour), remove worktrees where `completed_at` is older than 7 days (configurable). Also check if the associated PR has been merged — if so, clean up immediately regardless of TTL.
+7. Store worktree path in the workflow run's gate data (so M6 `getGateArtifacts` RPC can find it for diff rendering)
+8. On daemon restart, run `cleanupOrphaned()` to remove worktrees for cancelled/deleted tasks
+9. Unit tests: worktree creation at run start, reuse across nodes, TTL-based cleanup, cancellation cleanup, orphan cleanup
 
 **Acceptance Criteria**:
 - All node agents in a task share the same worktree
-- Worktree is created at workflow run start and cleaned up at completion
-- Cancellation cleans up the worktree
+- Worktree is created at workflow run start
+- Worktree is kept after completion (TTL-based cleanup, or immediate cleanup if PR merged)
+- Cancellation cleans up worktree immediately
+- Worktree path stored in workflow run metadata (for M6 artifacts RPC)
 - Daemon restart cleans up orphaned worktrees
-- Unit tests verify lifecycle
+- Unit tests verify lifecycle including TTL reaper
 
 **Depends on**: Task 4.2
 

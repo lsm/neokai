@@ -27,25 +27,34 @@ Planning ──[PR Gate]──► Plan Review ──[Human Gate]──► Coding
 
 ### Channel Definitions
 
-| Channel | Gate Type | Gate Config | Cyclic | Description |
-|---------|-----------|-------------|--------|-------------|
-| Planning → Plan Review | PR Gate | - | no | Planner writes `{ prUrl }` to gate |
-| Plan Review → Coding | Human Gate | - | no | Human approves plan in artifacts view |
-| Coding → Reviewer 1 | PR Gate | - | no | Coder writes `{ prUrl }` to gate |
-| Coding → Reviewer 2 | PR Gate | - | no | Same gate as above (shared) |
-| Coding → Reviewer 3 | PR Gate | - | no | Same gate as above (shared) |
-| Reviewer 1 → QA | Aggregate | `{ quorum: 3 }` | no | All 3 must approve |
-| Reviewer 2 → QA | Aggregate | `{ quorum: 3 }` | no | Same aggregate gate (shared) |
-| Reviewer 3 → QA | Aggregate | `{ quorum: 3 }` | no | Same aggregate gate (shared) |
-| QA → Done | Task Result | `{ expression: 'passed' }` | no | QA passes |
-| QA → Coding | Task Result | `{ expression: 'failed' }` | yes | QA fails, feedback to coder |
-| Reviewer → Coding | Aggregate | on reject | yes | Any reviewer rejects, feedback to coder |
+**Gate instances**: Each gate has a unique ID. Channels that share the same gate instance are noted below.
+
+| Channel | Gate ID | Gate Type | Gate Config | Cyclic | Description |
+|---------|---------|-----------|-------------|--------|-------------|
+| Planning → Plan Review | `plan-pr-gate` | PR Gate | - | no | Planner writes `{ prUrl }` to gate |
+| Plan Review → Coding | `plan-human-gate` | Human Gate | - | no | Human approves plan in artifacts view |
+| Coding → Reviewer 1 | `code-pr-gate` | PR Gate | - | no | **Shared gate**: all 3 reviewer channels use the same `code-pr-gate` instance |
+| Coding → Reviewer 2 | `code-pr-gate` | PR Gate | - | no | Same `code-pr-gate` instance |
+| Coding → Reviewer 3 | `code-pr-gate` | PR Gate | - | no | Same `code-pr-gate` instance |
+| Reviewer 1 → QA | `review-aggregate-gate` | Aggregate | `{ quorum: 3 }` | no | **Shared gate**: all 3 reviewers write votes to the same gate |
+| Reviewer 2 → QA | `review-aggregate-gate` | Aggregate | `{ quorum: 3 }` | no | Same `review-aggregate-gate` |
+| Reviewer 3 → QA | `review-aggregate-gate` | Aggregate | `{ quorum: 3 }` | no | Same `review-aggregate-gate` |
+| QA → Done | `qa-result-gate` | Task Result | `{ expression: 'passed' }` | no | QA passes |
+| QA → Coding | `qa-fail-gate` | Task Result | `{ expression: 'failed' }` | yes | QA fails, feedback to coder |
+| Reviewers → Coding | `review-reject-gate` | Task Result | `{ expression: 'rejected' }` | yes | **Separate gate from aggregate**: when any reviewer writes `'rejected'` to `review-reject-gate`, this cyclic channel fires and routes feedback to Coding |
+
+**Clarification on reject vs. aggregate gates**: The `review-aggregate-gate` (quorum gate) and `review-reject-gate` (reject feedback gate) are **separate gate instances** with different IDs and different evaluation logic:
+- `review-aggregate-gate`: evaluates `Object.values(data.votes).filter(v => v === 'approve').length >= 3`. Only passes when ALL 3 approve.
+- `review-reject-gate`: evaluates `data.result === 'rejected'`. Any reviewer that rejects writes `{ result: 'rejected', feedback: '...' }` to this gate, which fires the cyclic channel back to Coding.
+- A reviewer writes to BOTH gates: it writes its vote to `review-aggregate-gate` AND, if rejecting, writes the rejection to `review-reject-gate`.
+
+**Gate data reset on cycles**: When any cyclic channel fires (QA→Coding or Reviewers→Coding), the `ChannelRouter` resets downstream gate data: `review-aggregate-gate` votes → `{ votes: {} }`, `qa-result-gate` → `{}`, `review-reject-gate` → `{}`. The `code-pr-gate` data is preserved (PR URL doesn't change). See M1 Task 1.4 for implementation.
 
 ### Iteration Cap
 
 - `maxIterations: 5` (higher than before because the pipeline is longer)
 - Global counter per workflow run, incremented on each cyclic channel traversal
-- When exhausted: workflow transitions to `failed` with `failureReason: 'maxIterationsReached'`
+- When exhausted: workflow transitions to `needs_attention` with `failureReason: 'maxIterationsReached'`
 
 ## Tasks
 
