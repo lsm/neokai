@@ -9,7 +9,7 @@ Make the happy path for a single space with a single task using a single workflo
 ## Target Workflow Pipeline
 
 ```
-Planning → [PR Gate] → Plan Review (reviewer agents) → [Human Gate] → Coding Agent → [PR Gate] → 3 Coding Reviewers (parallel) → [Aggregate Gate: 3 yes votes required] → QA → Task Agent (Done)
+Planning → [PR Gate] → Plan Review (1 reviewer) → [Human Gate] → Coding → [PR Gate] → 3 Code Reviewers (parallel) → [Aggregate Gate: 3 yes votes required] → QA → Done
 ```
 
 **Gate types**:
@@ -29,7 +29,7 @@ A **Gate** is a simple condition that can pass or not, **with a data store**. Ga
 ```typescript
 interface Gate {
   id: string;
-  type: 'pr' | 'human' | 'aggregate' | 'task_result' | 'always';
+  type: 'pr' | 'human' | 'aggregate' | 'task_result' | 'condition' | 'always';
   // The gate's data store — agents can read/write this
   data: Record<string, unknown>;
   // Evaluate whether the gate passes
@@ -56,11 +56,13 @@ Agents discover available gates via two mechanisms:
 ### Gate Write Permissions
 
 Each gate has an `allowedWriterRoles` list (persisted in the gate definition, not the data store):
-- Plan PR Gate: `['planner']`
-- Human Gate: `['human']` (written via RPC, not MCP tool)
-- Code PR Gate: `['coder']`
-- Aggregate Gate: `['reviewer']`
-- Task Result Gate: `['qa']`
+- `plan-pr-gate` (Plan PR Gate): `['planner']`
+- `plan-human-gate` (Human Gate): `['human']` (written via RPC, not MCP tool)
+- `code-pr-gate` (Code PR Gate): `['coder']`
+- `review-aggregate-gate` (Aggregate Gate): `['reviewer']`
+- `review-reject-gate` (Review Reject Gate): `['reviewer']`
+- `qa-result-gate` (QA Result Gate): `['qa']`
+- `qa-fail-gate` (QA Fail Gate): `['qa']`
 
 When an unauthorized agent calls `write_gate`, the tool returns an error: `"Permission denied: role '{role}' cannot write to gate '{gateId}'"`. The authorization check uses the agent's `nodeRole` from the MCP server config.
 
@@ -191,7 +193,7 @@ Adding new behaviors = adding new gates and channels, not new states and transit
 ## Final Workflow Graph
 
 ```
-Planning ──[PR Gate]──► Plan Review (reviewers) ──[Human Gate]──► Coding ──[PR Gate]──► Reviewer 1 ─┐
+Planning ──[PR Gate]──► Plan Review (1 reviewer) ──[Human Gate]──► Coding ──[PR Gate]──► Reviewer 1 ─┐
                                                                     ▲                    Reviewer 2 ─┼─[Aggregate Gate: 3 yes]──► QA ──[Task Result: pass]──► Done
                                                                     │                    Reviewer 3 ─┘                            │
                                                                     │                                                             │

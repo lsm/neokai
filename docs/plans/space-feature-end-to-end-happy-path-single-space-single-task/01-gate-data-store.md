@@ -145,10 +145,12 @@ Each gate type has a simple evaluate function that checks its own data:
 3. When a gate transitions from blocked → passed, activate the target node (call `TaskAgentManager.activateNode()`)
 4. Handle the Aggregate Gate case: multiple agents write to the same gate (3 reviewers voting). Each write triggers re-evaluation, but only the final vote that meets quorum unblocks the channel.
 5. **Implement gate data reset on cyclic traversal**: When the `ChannelRouter` traverses a cyclic channel (e.g., reviewer rejection → Coding, or QA failure → Coding), it must **reset the gate data of all downstream gates** between the cycle target (Coding) and the cycle source. Specifically:
-   - Aggregate Gate votes reset to `{ votes: {} }` — all 3 reviewers must re-vote from scratch
-   - Code PR Gate data is preserved (the PR URL doesn't change)
-   - Task Result Gate (QA) resets to `{}`
-   - The reset is atomic with the cyclic channel traversal (same transaction)
+   - `review-aggregate-gate` votes reset to `{ votes: {} }` — all 3 reviewers must re-vote from scratch
+   - `review-reject-gate` resets to `{}` — clears previous rejection data
+   - `qa-result-gate` (Task Result Gate for QA) resets to `{}`
+   - `qa-fail-gate` (Task Result Gate for QA failure) resets to `{}`
+   - `code-pr-gate` data is **preserved** (the PR URL doesn't change)
+   - The reset is atomic with the cyclic channel traversal (same SQLite transaction)
    - This prevents stale approve votes from a previous round short-circuiting the re-review
 6. Ensure gate data changes are persisted before evaluation (no race conditions). Use SQLite transactions for atomic read-evaluate-write cycles.
 7. Handle concurrent writes to the same gate (e.g., 3 reviewers voting near-simultaneously): serialize writes via SQLite's write lock, re-evaluate after each write.
