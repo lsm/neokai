@@ -281,19 +281,13 @@ test.describe('Space Happy Path Pipeline', () => {
 		const diffSummaryEl = page.getByTestId('diff-summary');
 		const noFilesEl = page.getByTestId('no-files');
 
-		const state = await Promise.race([
-			errorEl
-				.waitFor({ state: 'visible', timeout: 5000 })
-				.then(() => 'error' as const)
-				.catch(() => {}),
-			diffSummaryEl
-				.waitFor({ state: 'visible', timeout: 5000 })
-				.then(() => 'diff' as const)
-				.catch(() => {}),
-			noFilesEl
-				.waitFor({ state: 'visible', timeout: 5000 })
-				.then(() => 'no-files' as const)
-				.catch(() => {}),
+		// Promise.any resolves with the first fulfilled value; if all three time out it
+		// rejects with an AggregateError, giving a clear failure instead of the silent
+		// `undefined` that Promise.race with swallowed .catch() would return.
+		const state = await Promise.any([
+			errorEl.waitFor({ state: 'visible', timeout: 5000 }).then(() => 'error' as const),
+			diffSummaryEl.waitFor({ state: 'visible', timeout: 5000 }).then(() => 'diff' as const),
+			noFilesEl.waitFor({ state: 'visible', timeout: 5000 }).then(() => 'no-files' as const),
 		]);
 
 		// Any terminal state is acceptable for an E2E test without a real worktree.
