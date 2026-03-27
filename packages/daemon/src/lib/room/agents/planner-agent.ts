@@ -122,8 +122,9 @@ export function toPlanSlug(goalTitle: string): string {
 /**
  * Build the system prompt for the Plan Writer sub-agent.
  *
- * The plan-writer handles all Phase 1 work: codebase exploration, scope assessment,
- * plan document creation (single file or multi-file), branch/commit/PR.
+ * The plan-writer receives pre-gathered explorer findings and fact-checker results
+ * as context in its task prompt (passed by the Planner). It uses Read/Grep/Glob/Bash
+ * for its own verification during writing, but does NOT spawn sub-agents.
  *
  * For large-scope goals it uses an iterative two-pass approach:
  * - Pass 1: Create 00-overview.md with milestones list
@@ -137,9 +138,15 @@ export function toPlanSlug(goalTitle: string): string {
 export function buildPlanWriterPrompt(): string {
 	return `You are a Plan Writer Agent spawned by the Planner to produce a structured plan for a goal.
 
+## Context
+
+The Planner has already run an Explorer sub-agent and a Fact-Checker sub-agent before spawning you. Their findings are provided in your task prompt as pre-gathered context. Use this context as your foundation — do NOT attempt to spawn further sub-agents (you cannot; you are already a sub-agent).
+
+During writing, use your own tools (Read, Grep, Glob, Bash) to verify findings, read specific files, and fill in gaps. Use WebSearch/WebFetch for targeted lookups when external, up-to-date information would improve plan accuracy.
+
 ## Pre-Work: Git Sync (MANDATORY)
 
-Before exploring, sync with the default branch — run all three lines as a **single bash invocation**:
+Before writing, sync with the default branch — run all three lines as a **single bash invocation**:
 \`\`\`bash
 DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
 [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
@@ -147,21 +154,9 @@ git fetch origin && git rebase origin/$DEFAULT_BRANCH
 \`\`\`
 **If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase.
 
-## Step 1: Codebase Exploration
+## Step 1: Verify Explorer Findings
 
-Explore the codebase using Explore sub-agents (each has its own context window):
-\`\`\`
-Task(subagent_type: "Explore", prompt: "Explore [area]. I need: [questions]. Return key findings, file paths, patterns.")
-\`\`\`
-Spawn multiple Explore agents **in parallel** to cover different areas. Gather enough context to understand existing patterns, affected areas, dependencies, and overall complexity.
-
-## Optional: Web Research
-
-When the goal involves integrating external technologies, APIs, or libraries that may have recent changes (e.g., after your knowledge cutoff), use \`WebSearch\` to look up current documentation or changelog entries before planning.
-
-- Use \`WebSearch\` for: finding latest API patterns, library versions, breaking changes, or community best practices.
-- Use \`WebFetch\` for: fetching a specific documentation page or GitHub release notes by URL.
-- Do NOT search for general coding patterns you already know — only search when external, up-to-date information would improve plan accuracy.
+Review the explorer and fact-checker context provided in your task prompt. Use Read/Grep/Glob/Bash to verify key claims, read referenced files, and confirm file paths exist. Fill in any gaps the Explorer missed. Use WebSearch/WebFetch only for targeted external lookups (API versions, breaking changes, community best practices) — not for general patterns you already know.
 
 ## Step 2: Scope Assessment
 
@@ -235,21 +230,10 @@ export function buildPlanWriterAgentDef(planSlug: string): AgentDefinition {
 
 	return {
 		description:
-			'Plan writer that explores the codebase and produces structured plan documents. ' +
-			'Supports single-file plans for small goals and multi-file iterative plans for large-scope goals.',
-		tools: [
-			'Task',
-			'TaskOutput',
-			'TaskStop',
-			'Read',
-			'Write',
-			'Edit',
-			'Bash',
-			'Grep',
-			'Glob',
-			'WebFetch',
-			'WebSearch',
-		],
+			'Plan writer that receives pre-gathered explorer and fact-checker context, verifies findings, ' +
+			'and produces structured plan documents. Supports single-file plans for small goals and ' +
+			'multi-file iterative plans for large-scope goals.',
+		tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
 		model: 'inherit',
 		prompt,
 	};
