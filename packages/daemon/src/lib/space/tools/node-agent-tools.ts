@@ -179,8 +179,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			// Build peers from all node tasks, excluding self and task-agent.
 			// Includes completed tasks (taskAgentSessionId may be null) so callers
 			// can see completion state even after the peer session has ended.
+			// Pending tasks with no session are excluded — they cannot receive messages.
 			const peers = nodeTasks
-				.filter((t) => t.agentName !== 'task-agent' && t.taskAgentSessionId !== mySessionId)
+				.filter(
+					(t) =>
+						t.agentName !== 'task-agent' &&
+						t.taskAgentSessionId !== mySessionId &&
+						(t.taskAgentSessionId !== null || t.status === 'completed')
+				)
 				.map((t) => {
 					const taskStatus = t.status;
 					const memberStatus =
@@ -190,7 +196,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 								? ('failed' as const)
 								: ('active' as const);
 					return {
-						sessionId: t.taskAgentSessionId!,
+						sessionId: t.taskAgentSessionId ?? null,
 						role: t.agentName ?? 'agent',
 						agentId: t.customAgentId ?? null,
 						status: memberStatus,
