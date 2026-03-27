@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+	buildCoderExplorerAgentDef,
 	buildCoderHelperAgentPrompt,
 	buildCoderSystemPrompt,
 	buildCoderTaskMessage,
@@ -506,6 +507,66 @@ describe('Coder Agent', () => {
 			const def = buildTesterAgentDef();
 			expect(def.prompt).toContain('current branch');
 			expect(def.prompt).toContain('do NOT create new PRs');
+		});
+	});
+
+	describe('buildCoderExplorerAgentDef', () => {
+		it('has Read, Grep, Glob, and Bash tools only', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.tools).toContain('Read');
+			expect(def.tools).toContain('Grep');
+			expect(def.tools).toContain('Glob');
+			expect(def.tools).toContain('Bash');
+			expect(def.tools).toHaveLength(4);
+		});
+
+		it('does NOT have Write or Edit tools (read-only)', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.tools).not.toContain('Write');
+			expect(def.tools).not.toContain('Edit');
+		});
+
+		it('does NOT have Task tool (no sub-agent spawning)', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.tools).not.toContain('Task');
+		});
+
+		it('uses inherit model', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.model).toBe('inherit');
+		});
+
+		it('has a non-empty description', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.description).toBeTruthy();
+			expect(def.description.length).toBeGreaterThan(10);
+		});
+
+		it('prompt requires ---EXPLORE_RESULT--- structured output block', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.prompt).toContain('---EXPLORE_RESULT---');
+			expect(def.prompt).toContain('---END_EXPLORE_RESULT---');
+		});
+
+		it('prompt includes relevant_files, patterns, dependencies, architecture_notes, findings fields', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.prompt).toContain('relevant_files');
+			expect(def.prompt).toContain('patterns');
+			expect(def.prompt).toContain('dependencies');
+			expect(def.prompt).toContain('architecture_notes');
+			expect(def.prompt).toContain('findings');
+		});
+
+		it('prompt explicitly forbids file modifications', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.prompt).toContain('Read-only');
+			expect(def.prompt).toContain('MUST NOT');
+		});
+
+		it('prompt explicitly forbids spawning sub-agents', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.prompt).toContain('No sub-agents');
+			expect(def.prompt).toContain('MUST NOT spawn');
 		});
 	});
 
