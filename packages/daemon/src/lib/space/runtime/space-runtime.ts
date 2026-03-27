@@ -798,6 +798,10 @@ export class SpaceRuntime {
 	 * 2. Look up completed tasks for those node IDs.
 	 * 3. Return the first non-empty result string found.
 	 *
+	 * Channel `from`/`to` values are agent slot names or node names (NOT node UUIDs).
+	 * Cross-node format `"nodeId/agentName"` encodes the node UUID before the slash.
+	 * We resolve all references to node UUIDs before comparing against `node.id`.
+	 *
 	 * Falls back to `undefined` when no terminal task result is available
 	 * (e.g. the Done node hasn't run yet, or the result field was not set).
 	 */
@@ -805,15 +809,41 @@ export class SpaceRuntime {
 		const channels = workflow.channels ?? [];
 		const nodes = workflow.nodes;
 
+		// Build name → nodeId map: node names and per-node agent slot names both resolve
+		// to the containing node's UUID.
+		const nameToNodeId = new Map<string, string>();
+		for (const node of nodes) {
+			nameToNodeId.set(node.name, node.id);
+			if (node.agents) {
+				for (const agent of node.agents) {
+					nameToNodeId.set(agent.name, node.id);
+				}
+			}
+		}
+
+		// Resolve a channel endpoint reference to a node UUID.
+		// Handles: plain names (node/agent-slot), cross-node "nodeId/agentName", '*' wildcard.
+		const resolveRef = (ref: string): string | undefined => {
+			if (ref === '*') return undefined;
+			const slashIdx = ref.indexOf('/');
+			if (slashIdx !== -1) {
+				// Cross-node format — the part before the slash is the node UUID
+				return ref.slice(0, slashIdx);
+			}
+			return nameToNodeId.get(ref);
+		};
+
 		// Collect node IDs that appear as channel sources (have outbound channels).
 		// Bidirectional channels flow both ways, so both endpoints are non-terminal.
 		const nodesWithOutbound = new Set<string>();
 		for (const ch of channels) {
-			nodesWithOutbound.add(ch.from);
+			const fromId = resolveRef(ch.from);
+			if (fromId) nodesWithOutbound.add(fromId);
 			if (ch.direction === 'bidirectional') {
 				const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
 				for (const target of targets) {
-					nodesWithOutbound.add(target);
+					const toId = resolveRef(target);
+					if (toId) nodesWithOutbound.add(toId);
 				}
 			}
 		}

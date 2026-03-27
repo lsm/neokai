@@ -1403,6 +1403,7 @@ describe('SpaceRuntime — notification events', () => {
 		test('workflow_run_completed notification includes summary from terminal (Done) node task result', async () => {
 			const rt = makeRuntimeWithTam();
 			// 2-node workflow with an explicit channel: Coder → Done
+			// Channel from/to use node names (realistic production format, not node IDs)
 			// The Done node is terminal (no outbound channels from it)
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
@@ -1414,8 +1415,8 @@ describe('SpaceRuntime — notification events', () => {
 				channels: [
 					{
 						id: 'ch-sum',
-						from: 'step-coder-sum',
-						to: 'step-done-sum',
+						from: 'Coder',
+						to: 'Done',
 						direction: 'one-way' as const,
 					},
 				],
@@ -1487,18 +1488,19 @@ describe('SpaceRuntime — notification events', () => {
 
 		test('summary comes from Done terminal node, not from upstream Coder node', async () => {
 			const rt = makeRuntimeWithTam();
+			// Channel uses node names (realistic production format)
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Terminal Node Priority ${Date.now()}`,
 				nodes: [
-					{ id: 'step-upstream-prio', name: 'Coder', agentId: AGENT_CODER },
+					{ id: 'step-upstream-prio', name: 'Coding', agentId: AGENT_CODER },
 					{ id: 'step-terminal-prio', name: 'Done', agentId: AGENT_CODER },
 				],
 				channels: [
 					{
 						id: 'ch-priority',
-						from: 'step-upstream-prio',
-						to: 'step-terminal-prio',
+						from: 'Coding',
+						to: 'Done',
 						direction: 'one-way' as const,
 					},
 				],
@@ -1542,34 +1544,26 @@ describe('SpaceRuntime — notification events', () => {
 
 		test('no terminal nodes — all nodes have outbound channels, summary is undefined', async () => {
 			const rt = makeRuntimeWithTam();
-			// A → B → A is a cycle; both nodes have outbound edges so neither is terminal.
-			// We simulate this by using transitions (not channels) and patching the workflow after
-			// creation. More practically: two nodes each with channels pointing at the other.
-			// Use a simpler approach: workflow with one node whose only outbound channel loops
-			// back to itself (or just create a workflow where we manually verify summary=undefined).
-			// Easiest: build a workflow, then manually invoke resolveCompletionSummary via
-			// the notification payload.
-			//
-			// Actually, SpaceWorkflow.channels has `from` and `to`. Let's create two nodes both
-			// having outbound channels so neither qualifies as terminal.
+			// A ↔ B cycle: both nodes have outbound edges so neither is terminal.
+			// Channel from/to use node names (realistic production format).
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `No Terminal ${Date.now()}`,
 				nodes: [
-					{ id: 'step-nt-a', name: 'A', agentId: AGENT_CODER },
-					{ id: 'step-nt-b', name: 'B', agentId: AGENT_CODER },
+					{ id: 'step-nt-a', name: 'NodeA', agentId: AGENT_CODER },
+					{ id: 'step-nt-b', name: 'NodeB', agentId: AGENT_CODER },
 				],
 				channels: [
 					{
 						id: 'ch-nt-ab',
-						from: 'step-nt-a',
-						to: 'step-nt-b',
+						from: 'NodeA',
+						to: 'NodeB',
 						direction: 'one-way' as const,
 					},
 					{
 						id: 'ch-nt-ba',
-						from: 'step-nt-b',
-						to: 'step-nt-a',
+						from: 'NodeB',
+						to: 'NodeA',
 						direction: 'one-way' as const,
 					},
 				],
@@ -1607,6 +1601,7 @@ describe('SpaceRuntime — notification events', () => {
 		test('multiple terminal nodes — returns first non-empty result', async () => {
 			const rt = makeRuntimeWithTam();
 			// Fan-out: one start node, two terminal nodes each with a result.
+			// Channel from/to use node names (realistic production format).
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi Terminal ${Date.now()}`,
@@ -1618,14 +1613,14 @@ describe('SpaceRuntime — notification events', () => {
 				channels: [
 					{
 						id: 'ch-mt-1',
-						from: 'step-mt-start',
-						to: 'step-mt-done1',
+						from: 'Start',
+						to: 'Done1',
 						direction: 'one-way' as const,
 					},
 					{
 						id: 'ch-mt-2',
-						from: 'step-mt-start',
-						to: 'step-mt-done2',
+						from: 'Start',
+						to: 'Done2',
 						direction: 'one-way' as const,
 					},
 				],
@@ -1671,6 +1666,7 @@ describe('SpaceRuntime — notification events', () => {
 
 		test('multiple terminal nodes with no results — summary is undefined', async () => {
 			const rt = makeRuntimeWithTam();
+			// Channel from/to use node names (realistic production format).
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi Terminal No Result ${Date.now()}`,
@@ -1682,14 +1678,14 @@ describe('SpaceRuntime — notification events', () => {
 				channels: [
 					{
 						id: 'ch-mtnr-1',
-						from: 'step-mtnr-start',
-						to: 'step-mtnr-done1',
+						from: 'Start',
+						to: 'Done1',
 						direction: 'one-way' as const,
 					},
 					{
 						id: 'ch-mtnr-2',
-						from: 'step-mtnr-start',
-						to: 'step-mtnr-done2',
+						from: 'Start',
+						to: 'Done2',
 						direction: 'one-way' as const,
 					},
 				],
@@ -1760,18 +1756,19 @@ describe('SpaceRuntime — notification events', () => {
 		test('bidirectional channel — neither endpoint is treated as terminal', async () => {
 			const rt = makeRuntimeWithTam();
 			// A ↔ B — both nodes have outbound edges (bidirectional), so neither is terminal.
+			// Channel from/to use node names (realistic production format).
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Bidirectional ${Date.now()}`,
 				nodes: [
-					{ id: 'step-bidi-a', name: 'A', agentId: AGENT_CODER },
-					{ id: 'step-bidi-b', name: 'B', agentId: AGENT_CODER },
+					{ id: 'step-bidi-a', name: 'Alpha', agentId: AGENT_CODER },
+					{ id: 'step-bidi-b', name: 'Beta', agentId: AGENT_CODER },
 				],
 				channels: [
 					{
 						id: 'ch-bidi',
-						from: 'step-bidi-a',
-						to: 'step-bidi-b',
+						from: 'Alpha',
+						to: 'Beta',
 						direction: 'bidirectional' as const,
 					},
 				],
@@ -1802,6 +1799,69 @@ describe('SpaceRuntime — notification events', () => {
 			if (completedEvents[0].kind === 'workflow_run_completed') {
 				// Both nodes are bidirectional — neither is terminal, summary should be undefined
 				expect(completedEvents[0].summary).toBeUndefined();
+			}
+		});
+
+		test('channel from/to agent slot names resolve to correct node', async () => {
+			// Regression guard: channels use WorkflowNodeAgent.name (slot names), not node IDs.
+			// Multi-agent node "Parallel" has slots "coder-slot" and "reviewer-slot".
+			// Channel uses slot name "reviewer-slot" as from — that node should be non-terminal.
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Slot Name Resolution ${Date.now()}`,
+				nodes: [
+					{
+						id: 'step-slot-parallel',
+						name: 'Parallel',
+						agents: [
+							{ agentId: AGENT_CODER, name: 'coder-slot' },
+							{ agentId: AGENT_PLANNER2, name: 'reviewer-slot' },
+						],
+					},
+					{ id: 'step-slot-done', name: 'Done', agentId: AGENT_CODER },
+				],
+				channels: [
+					{
+						id: 'ch-slot',
+						// Agent slot name used as from — this is the production format
+						from: 'reviewer-slot',
+						to: 'Done',
+						direction: 'one-way' as const,
+					},
+				],
+				startNodeId: 'step-slot-parallel',
+				rules: [],
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(2); // two agents in Parallel node
+
+			const doneTask = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Done',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'step-slot-done',
+				taskType: 'coding',
+				status: 'pending',
+			});
+
+			const doneSummary = '## Workflow Complete\n\nAll steps passed.';
+			for (const t of tasks) {
+				taskRepo.updateTask(t.id, { status: 'completed', result: 'Slot result' });
+			}
+			taskRepo.updateTask(doneTask.id, { status: 'completed', result: doneSummary });
+
+			await rt.executeTick();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				// The Parallel node has an outbound channel (via slot name) → not terminal
+				// Only Done is terminal → its summary is returned
+				expect(completedEvents[0].summary).toBe(doneSummary);
 			}
 		});
 	});
