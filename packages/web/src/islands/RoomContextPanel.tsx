@@ -349,10 +349,12 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 											{activeLinkedTasks.map((task) => (
 												<button
 													key={task.id}
-													onClick={() => handleTaskClick(task.id)}
+													onClick={() => handleTaskClick(task.shortId ?? task.id)}
 													class={cn(
 														'w-full pl-8 pr-3 py-1.5 flex items-center gap-2 transition-colors text-left',
-														selectedTaskId === task.id ? 'bg-dark-700' : 'hover:bg-dark-800'
+														selectedTaskId === task.id || selectedTaskId === task.shortId
+															? 'bg-dark-700'
+															: 'hover:bg-dark-800'
 													)}
 												>
 													<TaskStatusDot status={task.status} />
@@ -364,10 +366,12 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 												completedLinkedTasks.map((task) => (
 													<button
 														key={task.id}
-														onClick={() => handleTaskClick(task.id)}
+														onClick={() => handleTaskClick(task.shortId ?? task.id)}
 														class={cn(
 															'w-full pl-8 pr-3 py-1.5 flex items-center gap-2 transition-colors text-left',
-															selectedTaskId === task.id ? 'bg-dark-700' : 'hover:bg-dark-800'
+															selectedTaskId === task.id || selectedTaskId === task.shortId
+																? 'bg-dark-700'
+																: 'hover:bg-dark-800'
 														)}
 													>
 														<TaskStatusDot status={task.status} />
@@ -409,10 +413,12 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 						orphanTasksForTab.map((task) => (
 							<button
 								key={task.id}
-								onClick={() => handleTaskClick(task.id)}
+								onClick={() => handleTaskClick(task.shortId ?? task.id)}
 								class={cn(
 									'w-full px-3 py-1.5 flex items-center gap-2 transition-colors text-left',
-									selectedTaskId === task.id ? 'bg-dark-700' : 'hover:bg-dark-800'
+									selectedTaskId === task.id || selectedTaskId === task.shortId
+										? 'bg-dark-700'
+										: 'hover:bg-dark-800'
 								)}
 							>
 								<TaskStatusDot status={task.status} />
