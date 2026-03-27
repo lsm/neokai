@@ -25,8 +25,11 @@
  *  1. Happy path — full pipeline completes; run.status becomes completed
  *     Verifies every stage in order and confirms the completion summary.
  *
- *  2. Failure-and-recovery — one reviewer rejects (cycles Coding back),
- *     then QA fails once (cycles Coding back again), then happy path completes.
+ *  2. Failure-and-recovery — two failure injections:
+ *       a. QA fails once (qa-fail-gate → cycles Coding back, iteration 1)
+ *       b. One reviewer rejects in the next review round
+ *          (review-reject-gate → cycles Coding back, iteration 2)
+ *       c. Third Coding pass → all approve → QA passes → Done
  *     Verifies iteration counter increments, gate resets, and eventual completion.
  *
  * ## Running
@@ -45,7 +48,6 @@ import {
 	writeGateData,
 	readGateData,
 	approveGate,
-	rejectGate,
 	waitForNodeActivated,
 	waitForNewNodeTask,
 	waitForRunStatus,
@@ -61,34 +63,47 @@ const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 
 const NODE_ACTIVATION_TIMEOUT = IS_MOCK ? 3_000 : 15_000;
 // Run completion requires a SpaceRuntime tick (default 5s interval), so we
-// allow up to 15s in mock mode to safely cover two tick periods.
+// allow up to 15s in mock mode to safely cover two tick periods. This applies
+// to both tests since Done-node completion in either test path triggers the
+// same tick-based detection.
 const RUN_STATUS_TIMEOUT = IS_MOCK ? 15_000 : 30_000;
 const SETUP_TIMEOUT = IS_MOCK ? 15_000 : 30_000;
 const TEST_TIMEOUT = IS_MOCK ? 60_000 : 180_000;
 
 // ---------------------------------------------------------------------------
-// Reusable pipeline driver
+// Shared pipeline helper
 // ---------------------------------------------------------------------------
 
 /**
- * Drive the workflow from start through QA activation.
+ * Drive the workflow through Planning → Plan Review → Coding → 3 Reviewers
+ * (all approve) and return after writing review-votes-gate (which activates QA
+ * synchronously).
  *
  * Steps executed:
  *   1. Create space → start run → Planning task appears
  *   2. Write plan-pr-gate → Plan Review activates → complete it
  *   3. Approve plan-approval-gate → Coding activates → complete it
  *   4. Write code-pr-gate → Reviewer 1/2/3 activate (parallel) → complete all
- *   5. Write all 3 approval votes to review-votes-gate → QA activates
+ *   5. Write all 3 approval votes to review-votes-gate (opens gate, QA activates)
  *
- * Returns context needed to continue the pipeline.
+ * Caller is responsible for waiting on QA (and continuing the pipeline).
+ *
+ * Note: existing reviewer task IDs are captured BEFORE writing code-pr-gate
+ * because writeGateData triggers node activation synchronously inside the RPC.
+ * On the first reviewer round the exclude-set is empty, so waitForNewNodeTask
+ * behaves equivalently to waitForNodeActivated — but the same pattern applies
+ * consistently across all rounds.
+ *
+ * Note: all 3 votes are written in a single RPC call for simplicity. Real agents
+ * use a sequential read-merge-write pattern per reviewer, but the gate condition
+ * (count votes == approved, min: 3) evaluates correctly either way.
  */
-async function driveToQaActivated(daemon: DaemonServerContext): Promise<{
-	spaceId: string;
-	runId: string;
-	qaTaskId: string;
-}> {
+async function driveToCodePrGateOpen(
+	daemon: DaemonServerContext,
+	runTitle: string
+): Promise<{ spaceId: string; runId: string }> {
 	const { space, workflow } = await createTestSpace(daemon);
-	const { runId } = await startWorkflowRun(daemon, space.id, workflow.id, 'Full pipeline test run');
+	const { runId } = await startWorkflowRun(daemon, space.id, workflow.id, runTitle);
 
 	// ── Stage 1: Planning → plan-pr-gate ───────────────────────────────────
 	const planningTask = await waitForNodeActivated(
@@ -128,26 +143,59 @@ async function driveToQaActivated(daemon: DaemonServerContext): Promise<{
 	);
 	await mockAgentDone(daemon, space.id, codingTask.id, 'Implementation complete, PR opened');
 
+	// ── Stage 4: Reviewer 1/2/3 (parallel) → review-votes-gate ─────────────
+	// Collect existing reviewer task IDs BEFORE writing code-pr-gate.
+	// writeGateData triggers reviewer activation synchronously inside the RPC,
+	// so IDs must be captured first to allow waitForNewNodeTask to detect them.
+	const reviewerTasksBefore = [
+		...(await getTasksForNode(daemon, space.id, runId, 'Reviewer 1')),
+		...(await getTasksForNode(daemon, space.id, runId, 'Reviewer 2')),
+		...(await getTasksForNode(daemon, space.id, runId, 'Reviewer 3')),
+	];
+	const reviewerIdsBefore = new Set(reviewerTasksBefore.map((t) => t.id));
+
 	await writeGateData(daemon, runId, 'code-pr-gate', {
 		pr_url: 'https://github.com/example/repo/pull/99',
 		pr_number: 99,
 		branch: 'feat/test-feature',
 	});
 
-	// ── Stage 4: Reviewer 1/2/3 (parallel) → review-votes-gate ─────────────
-	// Collect reviewer task IDs BEFORE writing code-pr-gate activates them — but
-	// code-pr-gate has already been written above. Collect IDs after activation
-	// and complete them all.
 	const [r1, r2, r3] = await Promise.all([
-		waitForNodeActivated(daemon, space.id, runId, 'Reviewer 1', NODE_ACTIVATION_TIMEOUT),
-		waitForNodeActivated(daemon, space.id, runId, 'Reviewer 2', NODE_ACTIVATION_TIMEOUT),
-		waitForNodeActivated(daemon, space.id, runId, 'Reviewer 3', NODE_ACTIVATION_TIMEOUT),
+		waitForNewNodeTask(
+			daemon,
+			space.id,
+			runId,
+			'Reviewer 1',
+			reviewerIdsBefore,
+			NODE_ACTIVATION_TIMEOUT
+		),
+		waitForNewNodeTask(
+			daemon,
+			space.id,
+			runId,
+			'Reviewer 2',
+			reviewerIdsBefore,
+			NODE_ACTIVATION_TIMEOUT
+		),
+		waitForNewNodeTask(
+			daemon,
+			space.id,
+			runId,
+			'Reviewer 3',
+			reviewerIdsBefore,
+			NODE_ACTIVATION_TIMEOUT
+		),
 	]);
+	expect(['pending', 'in_progress']).toContain(r1.status);
+	expect(['pending', 'in_progress']).toContain(r2.status);
+	expect(['pending', 'in_progress']).toContain(r3.status);
 
+	// Complete all reviewer tasks before writing votes (mirrors real agent ordering)
 	await mockAgentDone(daemon, space.id, r1.id, 'LGTM');
 	await mockAgentDone(daemon, space.id, r2.id, 'LGTM');
 	await mockAgentDone(daemon, space.id, r3.id, 'LGTM');
 
+	// Write all 3 approval votes — opens review-votes-gate, QA activates synchronously
 	await writeGateData(daemon, runId, 'review-votes-gate', {
 		votes: {
 			'Reviewer 1': 'approved',
@@ -156,10 +204,23 @@ async function driveToQaActivated(daemon: DaemonServerContext): Promise<{
 		},
 	});
 
-	// ── Stage 5: QA activates ──────────────────────────────────────────────
-	const qaTask = await waitForNodeActivated(daemon, space.id, runId, 'QA', NODE_ACTIVATION_TIMEOUT);
+	return { spaceId: space.id, runId };
+}
 
-	return { spaceId: space.id, runId, qaTaskId: qaTask.id };
+/**
+ * Drive the workflow from start through QA activation.
+ *
+ * Delegates to driveToCodePrGateOpen for the Planning → reviewers-approve
+ * phase, then waits for QA to appear.
+ */
+async function driveToQaActivated(daemon: DaemonServerContext): Promise<{
+	spaceId: string;
+	runId: string;
+	qaTaskId: string;
+}> {
+	const { spaceId, runId } = await driveToCodePrGateOpen(daemon, 'Full pipeline test run');
+	const qaTask = await waitForNodeActivated(daemon, spaceId, runId, 'QA', NODE_ACTIVATION_TIMEOUT);
+	return { spaceId, runId, qaTaskId: qaTask.id };
 }
 
 // ---------------------------------------------------------------------------
@@ -188,11 +249,13 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 		async () => {
 			const { spaceId, runId, qaTaskId } = await driveToQaActivated(daemon);
 
-			// Verify run is still in_progress while QA has not yet passed
+			// Verify run is in_progress at this point (no cycles, no completion yet)
 			const { run: runMid } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };
 			expect(runMid.status).toBe('in_progress');
+			// Sanity-check: iterationCount must be 0 — no cycles have occurred
+			expect(runMid.iterationCount).toBe(0);
 
 			// Done must NOT be active yet
 			const doneBefore = await getTasksForNode(daemon, spaceId, runId, 'Done');
@@ -226,7 +289,6 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			expect(completedRun.completedAt).toBeDefined();
 
 			// ── Verify completion summary ──────────────────────────────────────
-			// The Done node task's result field should contain the summary
 			const doneTasks = await getTasksForNode(daemon, spaceId, runId, 'Done');
 			const completedDoneTask = doneTasks.find((t) => t.status === 'completed');
 			expect(completedDoneTask).toBeDefined();
@@ -248,115 +310,46 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 2: Failure-and-recovery — reviewer rejects, QA fails, then completes
+	// Test 2: Failure-and-recovery — QA fail then reviewer rejection
+	//
+	// Pipeline path:
+	//   driveToCodePrGateOpen → QA activates (all approved, round 1)
+	//   → QA fails (qa-fail-gate) → Coding cycles back (iteration 1)
+	//   → Reviewer 1 rejects (review-reject-gate) → Coding cycles back (iteration 2)
+	//   → all 3 approve (round 3) → QA passes → Done → completed
 	// -------------------------------------------------------------------------
 	test(
-		'Failure-and-recovery: reviewer rejection + QA failure → eventual completion',
+		'Failure-and-recovery: QA fail + reviewer rejection → eventual completion',
 		async () => {
-			const { space, workflow } = await createTestSpace(daemon);
-			const { runId } = await startWorkflowRun(
+			// Use the shared helper for the initial Planning → reviewers-approve pass
+			const { spaceId, runId } = await driveToCodePrGateOpen(
 				daemon,
-				space.id,
-				workflow.id,
 				'Failure-and-recovery pipeline test'
 			);
-			const spaceId = space.id;
 
-			// ── Stage 1: Planning ────────────────────────────────────────────────
-			const planningTask = await waitForNodeActivated(
+			// QA activates after all 3 reviewers approved in the helper
+			const qaTask1 = await waitForNodeActivated(
 				daemon,
 				spaceId,
 				runId,
-				'Planning',
+				'QA',
 				NODE_ACTIVATION_TIMEOUT
 			);
-			await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/10',
-				pr_number: 10,
-				branch: 'plan/test-feature',
-			});
-			await mockAgentDone(daemon, spaceId, planningTask.id, 'Plan PR opened');
 
-			// ── Stage 2: Plan Review → approve ──────────────────────────────────
-			const planReviewTask = await waitForNodeActivated(
-				daemon,
-				spaceId,
-				runId,
-				'Plan Review',
-				NODE_ACTIVATION_TIMEOUT
-			);
-			await mockAgentDone(daemon, spaceId, planReviewTask.id, 'Plan looks good');
-			await approveGate(daemon, runId, 'plan-approval-gate');
+			// ── QA fail → Coding cycles back (iteration 1) ──────────────────────
+			await mockAgentDone(daemon, spaceId, qaTask1.id, 'Tests failing: 3 assertions broken');
 
-			// ── Stage 3: First Coding pass ──────────────────────────────────────
-			const codingTask1 = await waitForNodeActivated(
-				daemon,
-				spaceId,
-				runId,
-				'Coding',
-				NODE_ACTIVATION_TIMEOUT
-			);
-			await mockAgentDone(daemon, spaceId, codingTask1.id, 'First implementation attempt');
-
-			// Collect reviewer task IDs BEFORE writing code-pr-gate (activation is synchronous)
-			const reviewerTasksBefore1 = [
-				...(await getTasksForNode(daemon, spaceId, runId, 'Reviewer 1')),
-				...(await getTasksForNode(daemon, spaceId, runId, 'Reviewer 2')),
-				...(await getTasksForNode(daemon, spaceId, runId, 'Reviewer 3')),
-			];
-			const reviewerIdsBefore1 = new Set(reviewerTasksBefore1.map((t) => t.id));
-
-			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_url: 'https://github.com/example/repo/pull/99',
-				pr_number: 99,
-				branch: 'feat/test-feature',
-			});
-
-			// ── Stage 4: Reviewers (first round) — Reviewer 1 rejects ───────────
-			const [r1a, r2a, r3a] = await Promise.all([
-				waitForNewNodeTask(
-					daemon,
-					spaceId,
-					runId,
-					'Reviewer 1',
-					reviewerIdsBefore1,
-					NODE_ACTIVATION_TIMEOUT
-				),
-				waitForNewNodeTask(
-					daemon,
-					spaceId,
-					runId,
-					'Reviewer 2',
-					reviewerIdsBefore1,
-					NODE_ACTIVATION_TIMEOUT
-				),
-				waitForNewNodeTask(
-					daemon,
-					spaceId,
-					runId,
-					'Reviewer 3',
-					reviewerIdsBefore1,
-					NODE_ACTIVATION_TIMEOUT
-				),
-			]);
-
-			await mockAgentDone(daemon, spaceId, r1a.id, 'Needs refactoring');
-			await mockAgentDone(daemon, spaceId, r2a.id, 'LGTM');
-			await mockAgentDone(daemon, spaceId, r3a.id, 'LGTM');
-
-			// Record iteration count before reject cycle
-			const { run: runBeforeReject } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			const iterBefore = runBeforeReject.iterationCount;
-
-			// Reviewer 1 rejects — review-reject-gate opens → Coding cycles back.
-			// Write to review-reject-gate (min: 1 rejected vote triggers the cyclic channel).
 			const codingTasksBefore1 = await getTasksForNode(daemon, spaceId, runId, 'Coding');
 			const codingIdsBefore1 = new Set(codingTasksBefore1.map((t) => t.id));
 
-			await writeGateData(daemon, runId, 'review-reject-gate', {
-				votes: { 'Reviewer 1': 'rejected' },
+			const { run: runBefore1 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
+				id: runId,
+			})) as { run: SpaceWorkflowRun };
+			const iterBefore1 = runBefore1.iterationCount;
+
+			await writeGateData(daemon, runId, 'qa-fail-gate', {
+				result: 'failed',
+				summary: 'Test suite failed: 3 assertions breaking',
 			});
 
 			const codingTask2 = await waitForNewNodeTask(
@@ -367,28 +360,17 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 				codingIdsBefore1,
 				NODE_ACTIVATION_TIMEOUT
 			);
-			expect(codingTask2.title).toBe('Coding');
 
-			// Iteration counter must have incremented
-			const { run: runAfterReject } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
+			const { run: runAfter1 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };
-			expect(runAfterReject.iterationCount).toBe(iterBefore + 1);
+			expect(runAfter1.iterationCount).toBe(iterBefore1 + 1);
+			expect(runAfter1.status).toBe('in_progress');
 
-			// Run must still be in_progress (rejection is a cyclic correction)
-			expect(runAfterReject.status).toBe('in_progress');
+			// ── Coding round 2: Reviewer 1 rejects → Coding cycles back (iter 2) ─
+			await mockAgentDone(daemon, spaceId, codingTask2.id, 'Fixed failing tests');
 
-			// review-votes-gate must be reset after the cycle
-			const votesGateAfterReject = await readGateData(daemon, runId, 'review-votes-gate');
-			if (votesGateAfterReject !== null) {
-				const votes = votesGateAfterReject.data.votes as Record<string, string> | undefined;
-				expect(votes == null || Object.keys(votes).length === 0).toBe(true);
-			}
-
-			// ── Stage 5: Second Coding pass → all 3 reviewers approve ───────────
-			await mockAgentDone(daemon, spaceId, codingTask2.id, 'Refactored as requested');
-
-			// Collect reviewer task IDs BEFORE writing code-pr-gate (activation is synchronous)
+			// Collect reviewer IDs BEFORE writing code-pr-gate (activation is synchronous)
 			const reviewerTasksBefore2 = [
 				...(await getTasksForNode(daemon, spaceId, runId, 'Reviewer 1')),
 				...(await getTasksForNode(daemon, spaceId, runId, 'Reviewer 2')),
@@ -402,7 +384,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 				branch: 'feat/test-feature',
 			});
 
-			const [r1b, r2b, r3b] = await Promise.all([
+			const [r2a, r2b, r2c] = await Promise.all([
 				waitForNewNodeTask(
 					daemon,
 					spaceId,
@@ -428,47 +410,25 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 					NODE_ACTIVATION_TIMEOUT
 				),
 			]);
+			expect(['pending', 'in_progress']).toContain(r2a.status);
+			expect(['pending', 'in_progress']).toContain(r2b.status);
+			expect(['pending', 'in_progress']).toContain(r2c.status);
 
-			await mockAgentDone(daemon, spaceId, r1b.id, 'Looks good now');
+			await mockAgentDone(daemon, spaceId, r2a.id, 'Needs refactoring');
 			await mockAgentDone(daemon, spaceId, r2b.id, 'LGTM');
-			await mockAgentDone(daemon, spaceId, r3b.id, 'LGTM');
+			await mockAgentDone(daemon, spaceId, r2c.id, 'LGTM');
 
-			// Collect QA task IDs BEFORE writing votes (activation is synchronous)
-			const qaBefore = await getTasksForNode(daemon, spaceId, runId, 'QA');
-			const qaIdsBefore = new Set(qaBefore.map((t) => t.id));
-
-			await writeGateData(daemon, runId, 'review-votes-gate', {
-				votes: {
-					'Reviewer 1': 'approved',
-					'Reviewer 2': 'approved',
-					'Reviewer 3': 'approved',
-				},
-			});
-
-			// ── Stage 6: QA activates → QA fails once ───────────────────────────
-			const qaTask1 = await waitForNewNodeTask(
-				daemon,
-				spaceId,
-				runId,
-				'QA',
-				qaIdsBefore,
-				NODE_ACTIVATION_TIMEOUT
-			);
-
-			// QA fails — cycles back to Coding
-			await mockAgentDone(daemon, spaceId, qaTask1.id, 'Tests failing: 3 assertions broken');
-
+			// Reviewer 1 rejects: review-reject-gate (min: 1 rejected) opens → Coding cycles
 			const codingTasksBefore2 = await getTasksForNode(daemon, spaceId, runId, 'Coding');
 			const codingIdsBefore2 = new Set(codingTasksBefore2.map((t) => t.id));
 
-			const { run: runBeforeQaFail } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
+			const { run: runBefore2 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };
-			const iterBeforeQaFail = runBeforeQaFail.iterationCount;
+			const iterBefore2 = runBefore2.iterationCount;
 
-			await writeGateData(daemon, runId, 'qa-fail-gate', {
-				result: 'failed',
-				summary: 'Test suite failed: 3 assertions breaking',
+			await writeGateData(daemon, runId, 'review-reject-gate', {
+				votes: { 'Reviewer 1': 'rejected' },
 			});
 
 			const codingTask3 = await waitForNewNodeTask(
@@ -479,18 +439,25 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 				codingIdsBefore2,
 				NODE_ACTIVATION_TIMEOUT
 			);
+			expect(codingTask3.title).toBe('Coding');
 
-			// Iteration counter must have incremented again
-			const { run: runAfterQaFail } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
+			const { run: runAfter2 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };
-			expect(runAfterQaFail.iterationCount).toBe(iterBeforeQaFail + 1);
-			expect(runAfterQaFail.status).toBe('in_progress');
+			expect(runAfter2.iterationCount).toBe(iterBefore2 + 1);
+			expect(runAfter2.status).toBe('in_progress');
 
-			// ── Stage 7: Third Coding pass → all 3 approve → QA passes → Done ───
-			await mockAgentDone(daemon, spaceId, codingTask3.id, 'Fixed failing tests');
+			// review-votes-gate must be reset after the reject cycle
+			const votesGateAfterReject = await readGateData(daemon, runId, 'review-votes-gate');
+			if (votesGateAfterReject !== null) {
+				const votes = votesGateAfterReject.data.votes as Record<string, string> | undefined;
+				expect(votes == null || Object.keys(votes).length === 0).toBe(true);
+			}
 
-			// Collect reviewer task IDs BEFORE writing code-pr-gate
+			// ── Coding round 3: all 3 approve → QA passes → Done ─────────────────
+			await mockAgentDone(daemon, spaceId, codingTask3.id, 'Refactored as requested');
+
+			// Collect reviewer IDs BEFORE writing code-pr-gate
 			const reviewerTasksBefore3 = [
 				...(await getTasksForNode(daemon, spaceId, runId, 'Reviewer 1')),
 				...(await getTasksForNode(daemon, spaceId, runId, 'Reviewer 2')),
@@ -504,7 +471,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 				branch: 'feat/test-feature',
 			});
 
-			const [r1c, r2c, r3c] = await Promise.all([
+			const [r3a, r3b, r3c] = await Promise.all([
 				waitForNewNodeTask(
 					daemon,
 					spaceId,
@@ -531,13 +498,13 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 				),
 			]);
 
-			await mockAgentDone(daemon, spaceId, r1c.id, 'LGTM');
-			await mockAgentDone(daemon, spaceId, r2c.id, 'LGTM');
+			await mockAgentDone(daemon, spaceId, r3a.id, 'LGTM');
+			await mockAgentDone(daemon, spaceId, r3b.id, 'LGTM');
 			await mockAgentDone(daemon, spaceId, r3c.id, 'LGTM');
 
-			// Collect QA task IDs BEFORE writing votes
-			const qaTasksBefore2 = await getTasksForNode(daemon, spaceId, runId, 'QA');
-			const qaIdsBefore2 = new Set(qaTasksBefore2.map((t) => t.id));
+			// Collect QA task IDs BEFORE writing review-votes-gate (activation is synchronous)
+			const qaTasksBefore = await getTasksForNode(daemon, spaceId, runId, 'QA');
+			const qaIdsBefore = new Set(qaTasksBefore.map((t) => t.id));
 
 			await writeGateData(daemon, runId, 'review-votes-gate', {
 				votes: {
@@ -552,7 +519,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 				spaceId,
 				runId,
 				'QA',
-				qaIdsBefore2,
+				qaIdsBefore,
 				NODE_ACTIVATION_TIMEOUT
 			);
 
@@ -560,12 +527,10 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const doneTasksBefore = await getTasksForNode(daemon, spaceId, runId, 'Done');
 			const doneIdsBefore = new Set(doneTasksBefore.map((t) => t.id));
 
-			// QA passes this time
 			const completionSummary = 'Fixed tests pass; CI green; PR #99 mergeable.';
 			await mockAgentDone(daemon, spaceId, qaTask2.id, 'All checks green');
 			await writeGateData(daemon, runId, 'qa-result-gate', { result: 'passed' });
 
-			// Done activates
 			const doneTask = await waitForNewNodeTask(
 				daemon,
 				spaceId,
@@ -583,8 +548,8 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			expect(completedRun.status).toBe('completed');
 			expect(completedRun.completedAt).toBeDefined();
 
-			// Iteration count must be at least 2 (one reviewer reject + one QA fail)
-			expect(completedRun.iterationCount).toBeGreaterThanOrEqual(2);
+			// Exactly 2 iteration increments: one QA fail + one reviewer reject
+			expect(completedRun.iterationCount).toBe(iterBefore2 + 1);
 
 			// Completion summary available on the Done task
 			const doneTasks = await getTasksForNode(daemon, spaceId, runId, 'Done');
