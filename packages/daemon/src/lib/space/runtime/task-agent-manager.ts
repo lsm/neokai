@@ -124,9 +124,19 @@ export interface TaskAgentManagerConfig {
 	 * All sub-sessions (node agents) share the same worktree path as their workspace.
 	 */
 	worktreeManager?: SpaceWorktreeManager;
-	/** Skills manager — injected into agent sessions so enabled skills (plugins and MCP servers) are available. */
+	/**
+	 * Skills manager — injected into agent sessions so enabled skills (plugins and MCP servers)
+	 * are available. `QueryOptionsBuilder.getMcpServersFromSkills()` uses this to merge enabled
+	 * `mcp_server`-type skills into the SDK query options at session start.
+	 *
+	 * Note: `roomSkillOverrides` is NOT applicable to task agent sessions — task agents have no
+	 * per-room override concept. Skills are either enabled globally or not.
+	 */
 	skillsManager: SkillsManager;
-	/** App MCP server repository — used by QueryOptionsBuilder to resolve skills-based MCP configs. */
+	/**
+	 * App MCP server repository — used by QueryOptionsBuilder to resolve skills-based MCP configs
+	 * (maps `AppSkill.config.appMcpServerId` → `AppMcpServer` entry for the SDK config).
+	 */
 	appMcpServerRepo: AppMcpServerRepository;
 }
 
@@ -460,8 +470,14 @@ export class TaskAgentManager {
 			this.config.appMcpServerRepo
 		);
 
-		// Inject registry-sourced MCP servers so sub-sessions have the same skills-based
-		// MCP access as the parent task agent session.
+		// Inject registry-sourced MCP servers so sub-sessions have the same app-level MCP
+		// access as the parent task agent session. Note: unlike sub-session rehydration (which
+		// always calls setRuntimeMcpServers because it also re-attaches the node-agent server),
+		// fresh sub-sessions don't yet have a node-agent server — it's attached later by the
+		// task agent via buildNodeAgentMcpServerForSession. So we only call setRuntimeMcpServers
+		// here when there are registry entries to inject.
+		// Note: skills-based MCP servers (from skillsManager) are injected separately at query
+		// start time via QueryOptionsBuilder.getMcpServersFromSkills(), NOT via setRuntimeMcpServers.
 		const subSessionRegistryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
 		if (Object.keys(subSessionRegistryMcpServers).length > 0) {
 			subSession.setRuntimeMcpServers(subSessionRegistryMcpServers);

@@ -467,6 +467,11 @@ export class RoomRuntimeService {
 				// Idempotent: already in cache
 				if (agentSessions.has(sessionId)) return true;
 
+				// TODO(G5): pass ctx.skillsManager and ctx.appMcpServerRepo so that rehydrated
+				// room worker sessions receive skills injection on daemon restart, matching the
+				// behaviour of freshly created workers (fromInit at line ~320 already passes them).
+				// Tracked as a separate task: "Restore MCP servers and skills for recovered room
+				// worker sessions".
 				const session = AgentSession.restore(
 					sessionId,
 					ctx.db,

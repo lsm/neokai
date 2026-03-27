@@ -204,11 +204,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 			);
 
 			// Step 5: Wait for the task agent session to be spawned.
-			// If skillsManager was NOT wired (before our fix), the session could still
-			// spawn (getMcpServersFromSkills() returns {} when skillsManager is undefined).
-			// With our fix, the session now has skillsManager/appMcpServerRepo properly set,
-			// so QueryOptionsBuilder can include the MCP server in the SDK options.
-			// The fact that the session spawns without error confirms the wiring didn't break.
 			const taskAgentSessionId = await waitForTaskAgentSpawned(
 				daemon,
 				space.id,
@@ -218,13 +213,32 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 
 			daemon.trackSession(taskAgentSessionId);
 
-			// Step 6: Verify the task agent session exists and is accessible
+			// Step 6: Verify the task agent session exists, is accessible, and has the
+			// registry-sourced MCP server in its runtime config.
+			//
+			// TaskAgentManager calls setRuntimeMcpServers({ ...appMcpManager.getEnabledMcpConfigs(),
+			// 'task-agent': inProcessServer }) after fromInit(). setRuntimeMcpServers() updates
+			// this.session.config.mcpServers in memory. session.get returns the live in-memory
+			// session (from the SessionManager cache), so config.mcpServers reflects the runtime
+			// state rather than the persisted DB record.
+			//
+			// The 'test-skills-mcp' key is the app_mcp_server entry created in Step 1 (enabled=true),
+			// which appMcpManager.getEnabledMcpConfigs() includes. Its presence here directly
+			// confirms that skillsManager/appMcpServerRepo were wired through and the registry
+			// MCPs were injected into the task agent session.
 			const sessionResult = (await daemon.messageHub.request('session.get', {
 				sessionId: taskAgentSessionId,
-			})) as { session: { id: string; type: string } };
+			})) as {
+				session: { id: string; type: string; config?: { mcpServers?: Record<string, unknown> } };
+			};
 
 			expect(sessionResult.session.id).toBe(taskAgentSessionId);
 			expect(sessionResult.session.type).toBe('space_task_agent');
+
+			// Verify registry MCP servers are present in the session's runtime config
+			const mcpServerKeys = Object.keys(sessionResult.session.config?.mcpServers ?? {});
+			expect(mcpServerKeys).toContain('test-skills-mcp');
+			expect(mcpServerKeys).toContain('task-agent');
 		},
 		TEST_TIMEOUT
 	);
