@@ -120,6 +120,7 @@ export class AnthropicStreamWriter {
 				content: [],
 				model,
 				stop_reason: null,
+				stop_sequence: null,
 				// Heuristic estimate: ceil(inputTextLength / 4).
 				// NOT actual model-reported values — the Copilot SDK does not expose
 				// per-request token counts.  Approximation for UI display purposes only.
