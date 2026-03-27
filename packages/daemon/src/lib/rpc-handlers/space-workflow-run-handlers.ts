@@ -324,10 +324,12 @@ export function setupSpaceWorkflowRunHandlers(
 
 			// If the run was previously rejected (needs_attention + humanRejected),
 			// approval overrides that — transition back to in_progress so the
-			// workflow executor picks it up again on the next tick.
+			// workflow executor picks it up again on the next tick, and clear
+			// the stale failureReason so the run appears clean to the UI.
 			let updatedRun = run;
 			if (run.status === 'needs_attention' && run.failureReason === 'humanRejected') {
-				updatedRun = workflowRunRepo.transitionStatus(params.runId, 'in_progress');
+				workflowRunRepo.transitionStatus(params.runId, 'in_progress');
+				updatedRun = workflowRunRepo.updateRun(params.runId, { failureReason: null }) ?? run;
 			}
 
 			daemonHub
@@ -354,14 +356,15 @@ export function setupSpaceWorkflowRunHandlers(
 				reason: params.reason ?? null,
 			});
 
-			// At this point run.status is either 'in_progress' or 'needs_attention'
-			// (completed, cancelled, and pending are all guarded above).
-			// Both transitions to 'needs_attention' are valid — write atomically.
+			// Enforce the state machine: only call transitionStatus when the run is
+			// not already in needs_attention (e.g. blocked by a different mechanism).
+			// In either case, write failureReason via a separate updateRun so it
+			// is always persisted regardless of whether the status changed.
+			if (run.status !== 'needs_attention') {
+				workflowRunRepo.transitionStatus(params.runId, 'needs_attention');
+			}
 			const updated =
-				workflowRunRepo.updateRun(params.runId, {
-					status: 'needs_attention',
-					failureReason: 'humanRejected',
-				}) ?? run;
+				workflowRunRepo.updateRun(params.runId, { failureReason: 'humanRejected' }) ?? run;
 
 			daemonHub
 				.emit('space.workflowRun.updated', {

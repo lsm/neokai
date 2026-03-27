@@ -154,20 +154,23 @@ function createMockWorkflowManager(): SpaceWorkflowManager {
 	} as unknown as SpaceWorkflowManager;
 }
 
-function createMockRunRepo(
-	run: SpaceWorkflowRun | null = mockRun,
-	updatedRun?: SpaceWorkflowRun
-): SpaceWorkflowRunRepository {
+function createMockRunRepo(run: SpaceWorkflowRun | null = mockRun): SpaceWorkflowRunRepository {
+	// Stateful mock: transitionStatus and updateRun mutate currentRun so that
+	// chained calls (e.g. transitionStatus then updateRun) see the updated state.
+	let currentRun = run;
 	return {
-		getRun: mock(() => run),
-		listBySpace: mock(() => (run ? [run] : [])),
-		transitionStatus: mock((id: string, status: string) =>
-			run ? { ...run, id, status: status as SpaceWorkflowRun['status'] } : null
-		),
-		updateRun: mock((id: string, params: Partial<SpaceWorkflowRun>) =>
-			run ? { ...run, id, ...params } : null
-		),
-		...(updatedRun ? { getRun: mock(() => updatedRun) } : {}),
+		getRun: mock(() => currentRun),
+		listBySpace: mock(() => (currentRun ? [currentRun] : [])),
+		transitionStatus: mock((id: string, status: string) => {
+			if (!currentRun) return null;
+			currentRun = { ...currentRun, id, status: status as SpaceWorkflowRun['status'] };
+			return currentRun;
+		}),
+		updateRun: mock((id: string, params: Partial<SpaceWorkflowRun>) => {
+			if (!currentRun) return null;
+			currentRun = { ...currentRun, id, ...params };
+			return currentRun;
+		}),
 	} as unknown as SpaceWorkflowRunRepository;
 }
 
@@ -340,13 +343,12 @@ describe('space-workflow-run gate handlers', () => {
 				rejectedAt: expect.any(Number),
 				reason: 'Not ready',
 			});
-			// Status and failureReason set atomically via updateRun
-			// (pending is guarded above, so transition is always valid)
-			expect(runRepo.updateRun).toHaveBeenCalledWith('run-1', {
-				status: 'needs_attention',
-				failureReason: 'humanRejected',
-			});
+			// State machine transition to needs_attention (in_progress→needs_attention is valid)
+			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'needs_attention');
+			// failureReason written separately so it persists independently
+			expect(runRepo.updateRun).toHaveBeenCalledWith('run-1', { failureReason: 'humanRejected' });
 			expect(result.run.status).toBe('needs_attention');
+			expect(result.run.failureReason).toBe('humanRejected');
 			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
 		});
 
@@ -387,7 +389,7 @@ describe('space-workflow-run gate handlers', () => {
 			expect(result.gateData.data.approved).toBe(false);
 		});
 
-		it('approve after prior rejection: transitions run back to in_progress', async () => {
+		it('approve after prior rejection: transitions run back to in_progress and clears failureReason', async () => {
 			const rejectedRun: SpaceWorkflowRun = {
 				...mockRun,
 				status: 'needs_attention',
@@ -405,10 +407,39 @@ describe('space-workflow-run gate handlers', () => {
 				approved: true,
 				approvedAt: expect.any(Number),
 			});
-			// Must transition run back to in_progress
+			// State machine transition back to in_progress
 			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'in_progress');
+			// failureReason cleared separately so the run appears clean to the UI
+			expect(runRepo.updateRun).toHaveBeenCalledWith('run-1', { failureReason: null });
 			expect(result.run.status).toBe('in_progress');
+			// null from updateRun({ failureReason: null }) — effectively cleared
+			expect(result.run.failureReason).toBeFalsy();
 			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
+		});
+
+		it('rejection when run is already needs_attention (non-humanRejected): skips transitionStatus, sets failureReason', async () => {
+			// e.g. run is needs_attention due to maxIterationsReached; human gate rejection
+			// should override the failureReason without calling transitionStatus (which would
+			// reject needs_attention→needs_attention as a no-op or invalid transition).
+			const stuckRun: SpaceWorkflowRun = {
+				...mockRun,
+				status: 'needs_attention',
+				failureReason: 'maxIterationsReached',
+			};
+			setup({ run: stuckRun });
+
+			const result = (await call('spaceWorkflowRun.approveGate', {
+				runId: 'run-1',
+				gateId: 'gate-approval',
+				approved: false,
+			})) as { run: SpaceWorkflowRun; gateData: GateDataRecord };
+
+			// transitionStatus must NOT be called since status is already needs_attention
+			expect(runRepo.transitionStatus).not.toHaveBeenCalled();
+			// Only failureReason is written
+			expect(runRepo.updateRun).toHaveBeenCalledWith('run-1', { failureReason: 'humanRejected' });
+			expect(result.run.status).toBe('needs_attention');
+			expect(result.run.failureReason).toBe('humanRejected');
 		});
 
 		it('gate approval persists to gateDataRepo (survives restart)', async () => {
