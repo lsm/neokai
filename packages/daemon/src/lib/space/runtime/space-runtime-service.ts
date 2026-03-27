@@ -10,14 +10,17 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import type { SpaceTask } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
 import { SpaceRuntime } from './space-runtime';
+import { ChannelRouter } from './channel-router';
 import { Logger } from '../../logger';
 
 const log = new Logger('space-runtime-service');
@@ -39,6 +42,12 @@ export interface SpaceRuntimeServiceConfig {
 	 */
 	taskAgentManager?: TaskAgentManager;
 	tickIntervalMs?: number;
+	/**
+	 * Optional gate data repository for onGateDataChanged support.
+	 * When provided, notifyGateDataChanged() can be called to trigger lazy node
+	 * activation after gate data is written externally (e.g. human approval via RPC).
+	 */
+	gateDataRepo?: GateDataRepository;
 }
 
 export class SpaceRuntimeService {
@@ -128,5 +137,30 @@ export class SpaceRuntimeService {
 	 */
 	stopRuntime(_spaceId: string): void {
 		// No-op: shared runtime handles all spaces; use stop() to stop entirely.
+	}
+
+	/**
+	 * Notify that gate data has changed for a given run/gate pair.
+	 *
+	 * Creates a temporary ChannelRouter and calls onGateDataChanged() to re-evaluate
+	 * all channels referencing the gate and lazily activate any newly-unblocked nodes.
+	 *
+	 * Used by the approveGate RPC handler and the writeGateData RPC handler to trigger
+	 * downstream node activation after gate data is written externally (i.e. without going
+	 * through the write_gate MCP tool, which has its own onGateDataChanged wiring).
+	 *
+	 * No-op when gateDataRepo was not provided at construction time.
+	 */
+	async notifyGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
+		if (!this.config.gateDataRepo) return [];
+		const router = new ChannelRouter({
+			taskRepo: this.config.taskRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			workflowManager: this.config.spaceWorkflowManager,
+			agentManager: this.config.spaceAgentManager,
+			gateDataRepo: this.config.gateDataRepo,
+			db: this.config.db,
+		});
+		return router.onGateDataChanged(runId, gateId);
 	}
 }

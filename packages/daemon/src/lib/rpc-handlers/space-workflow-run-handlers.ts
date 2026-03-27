@@ -108,6 +108,16 @@ export function setupSpaceWorkflowRunHandlers(
 	taskManagerFactory: SpaceWorkflowRunTaskManagerFactory,
 	daemonHub: DaemonHub
 ): void {
+	/**
+	 * Helper: notify the channel router that gate data has changed.
+	 * Triggers lazy node activation for any newly-unblocked channels.
+	 * Fire-and-forget — callers do not need to await this.
+	 */
+	function fireGateChanged(runId: string, gateId: string): void {
+		void spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch((err) => {
+			log.warn(`notifyGateDataChanged failed for gate "${gateId}" in run "${runId}":`, err);
+		});
+	}
 	// ─── spaceWorkflowRun.start ──────────────────────────────────────────────
 	messageHub.onRequest('spaceWorkflowRun.start', async (data) => {
 		const params = data as {
@@ -356,6 +366,9 @@ export function setupSpaceWorkflowRunHandlers(
 					log.warn('Failed to emit space.gateData.updated:', err);
 				});
 
+			// Trigger channel re-evaluation so downstream nodes activate if the gate is now open.
+			fireGateChanged(params.runId, params.gateId);
+
 			return { run: updatedRun, gateData };
 		} else {
 			// Rejection — idempotent: gate data already shows rejected
@@ -404,6 +417,50 @@ export function setupSpaceWorkflowRunHandlers(
 
 			return { run: updated, gateData };
 		}
+	});
+
+	// ─── spaceWorkflowRun.writeGateData ──────────────────────────────────────
+	//
+	// Writes (merges) arbitrary data into a gate's runtime record and triggers
+	// channel re-evaluation so downstream nodes activate when a gate opens.
+	//
+	// Used by test helpers to simulate agent behavior (e.g. planner writing
+	// plan_submitted to plan-pr-gate) without spinning up a real agent session.
+	// Does NOT enforce allowedWriterRoles — callers are trusted.
+	messageHub.onRequest('spaceWorkflowRun.writeGateData', async (data) => {
+		const params = data as { runId: string; gateId: string; data: Record<string, unknown> };
+
+		if (!params.runId) throw new Error('runId is required');
+		if (!params.gateId) throw new Error('gateId is required');
+		if (!params.data || typeof params.data !== 'object' || Array.isArray(params.data)) {
+			throw new Error('data must be an object');
+		}
+
+		const run = workflowRunRepo.getRun(params.runId);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
+			throw new Error(`Cannot write gate data on a ${run.status} workflow run`);
+		}
+
+		const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
+
+		daemonHub
+			.emit('space.gateData.updated', {
+				sessionId: 'global',
+				spaceId: run.spaceId,
+				runId: params.runId,
+				gateId: params.gateId,
+				data: gateData.data,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.gateData.updated:', err);
+			});
+
+		// Trigger channel re-evaluation so downstream nodes activate if the gate is now open.
+		fireGateChanged(params.runId, params.gateId);
+
+		return { gateData };
 	});
 
 	// ─── spaceWorkflowRun.listGateData ───────────────────────────────────────

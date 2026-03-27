@@ -363,6 +363,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API.
 	// Not started yet: TaskAgentManager is created next and injected before start().
+	// gateDataRepo is injected so notifyGateDataChanged() can trigger lazy node activation
+	// after gate data is written externally (e.g. approveGate RPC, writeGateData RPC).
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		spaceManager: deps.spaceManager,
@@ -370,6 +372,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowManager,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
+		gateDataRepo,
 	});
 
 	// Space Worktree Manager — one worktree per task, shared by all node agents.

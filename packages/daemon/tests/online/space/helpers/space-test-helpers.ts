@@ -1,0 +1,387 @@
+/**
+ * Shared test helpers for Space online integration tests.
+ *
+ * These helpers drive the workflow gate machinery directly via RPC without
+ * spinning up real LLM agent sessions. This lets gate-open/close and node-
+ * activation logic be exercised deterministically and quickly with dev proxy.
+ *
+ * ## Key helpers
+ *
+ * - createTestSpace        — create a Space with CODING_WORKFLOW_V2 pre-seeded
+ * - startWorkflowRun       — start a run and return its ID + initial tasks
+ * - writeGateData          — write arbitrary data to a gate (simulates agent write_gate call)
+ * - readGateData           — read current gate data for a (runId, gateId) pair
+ * - approveGate            — human-approve a gate (writes approved:true + triggers activation)
+ * - rejectGate             — human-reject a gate (writes approved:false, run → needs_attention)
+ * - waitForNodeStatus      — poll until at least one task for a node reaches a target status
+ * - waitForRunStatus       — poll until the workflow run reaches a target status
+ * - getGateArtifacts       — fetch gate artifacts (changed files + diff) for a run
+ * - mockAgentDone          — mark a task as completed directly via spaceTask.update
+ *
+ * ## Usage
+ *
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/space/...
+ */
+
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import type { Space, SpaceAgent, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface TestSpaceFixture {
+	space: Space;
+	/** All agents seeded into the space */
+	agents: SpaceAgent[];
+	/** The CODING_WORKFLOW_V2 workflow (preferred) or the first available */
+	workflow: SpaceWorkflow;
+}
+
+export interface GateDataRecord {
+	runId: string;
+	gateId: string;
+	data: Record<string, unknown>;
+	updatedAt: number;
+}
+
+export interface GateArtifacts {
+	files: Array<{ path: string; additions: number; deletions: number }>;
+	totalAdditions: number;
+	totalDeletions: number;
+	prUrl?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Space + workflow setup
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a Space whose name embeds a unique suffix so tests never collide.
+ * space.create auto-seeds preset agents and built-in workflows (including V2).
+ *
+ * Returns the Space, all its agents, and the CODING_WORKFLOW_V2 workflow.
+ * Falls back to the first workflow if V2 is not found (should not happen with
+ * normal seeding, but keeps tests robust).
+ */
+export async function createTestSpace(daemon: DaemonServerContext): Promise<TestSpaceFixture> {
+	const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+	const space = (await daemon.messageHub.request('space.create', {
+		name: `Test Space ${suffix}`,
+		description: 'Integration test space — plan-to-approve flow',
+		workspacePath: process.cwd(),
+		autonomyLevel: 'supervised',
+	})) as Space;
+
+	const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
+		spaceId: space.id,
+	})) as { agents: SpaceAgent[] };
+
+	const { workflows } = (await daemon.messageHub.request('spaceWorkflow.list', {
+		spaceId: space.id,
+	})) as { workflows: SpaceWorkflow[] };
+
+	// Prefer the V2 workflow (tags include 'v2')
+	const workflow =
+		workflows.find((w) => Array.isArray(w.tags) && w.tags.includes('v2')) ?? workflows[0];
+
+	if (!workflow)
+		throw new Error('No workflows found after space creation — seeding may have failed');
+
+	return { space, agents, workflow };
+}
+
+// ---------------------------------------------------------------------------
+// Workflow run lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Start a workflow run and return its ID plus the initial pending tasks.
+ *
+ * spaceTask.list returns an array directly (not wrapped in { tasks }).
+ */
+export async function startWorkflowRun(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	workflowId: string,
+	title: string
+): Promise<{ runId: string; tasks: SpaceTask[] }> {
+	const { run } = (await daemon.messageHub.request('spaceWorkflowRun.start', {
+		spaceId,
+		workflowId,
+		title,
+	})) as { run: SpaceWorkflowRun };
+
+	const tasks = (await daemon.messageHub.request('spaceTask.list', {
+		spaceId,
+	})) as SpaceTask[];
+
+	const runTasks = tasks.filter((t) => t.workflowRunId === run.id);
+	return { runId: run.id, tasks: runTasks };
+}
+
+// ---------------------------------------------------------------------------
+// Gate data helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Write (merge) data into a gate's runtime record and trigger channel
+ * re-evaluation via spaceWorkflowRun.writeGateData RPC.
+ *
+ * Simulates what an agent does when it calls the write_gate MCP tool —
+ * without requiring a real LLM session.
+ */
+export async function writeGateData(
+	daemon: DaemonServerContext,
+	runId: string,
+	gateId: string,
+	data: Record<string, unknown>
+): Promise<GateDataRecord> {
+	const result = (await daemon.messageHub.request('spaceWorkflowRun.writeGateData', {
+		runId,
+		gateId,
+		data,
+	})) as { gateData: GateDataRecord };
+	return result.gateData;
+}
+
+/**
+ * Read current gate data for a (runId, gateId) pair.
+ * Returns null when no data has been written to the gate yet.
+ */
+export async function readGateData(
+	daemon: DaemonServerContext,
+	runId: string,
+	gateId: string
+): Promise<GateDataRecord | null> {
+	const { gateData } = (await daemon.messageHub.request('spaceWorkflowRun.listGateData', {
+		runId,
+	})) as { gateData: GateDataRecord[] };
+	return gateData.find((g) => g.gateId === gateId) ?? null;
+}
+
+/**
+ * Human-approve a gate: writes approved:true and triggers downstream node activation.
+ * If the run was previously in needs_attention+humanRejected, it resumes to in_progress.
+ */
+export async function approveGate(
+	daemon: DaemonServerContext,
+	runId: string,
+	gateId: string,
+	reason?: string
+): Promise<{ run: SpaceWorkflowRun; gateData: GateDataRecord }> {
+	return (await daemon.messageHub.request('spaceWorkflowRun.approveGate', {
+		runId,
+		gateId,
+		approved: true,
+		reason,
+	})) as { run: SpaceWorkflowRun; gateData: GateDataRecord };
+}
+
+/**
+ * Human-reject a gate: writes approved:false and transitions run to needs_attention
+ * with failureReason: 'humanRejected'.
+ */
+export async function rejectGate(
+	daemon: DaemonServerContext,
+	runId: string,
+	gateId: string,
+	reason?: string
+): Promise<{ run: SpaceWorkflowRun; gateData: GateDataRecord }> {
+	return (await daemon.messageHub.request('spaceWorkflowRun.approveGate', {
+		runId,
+		gateId,
+		approved: false,
+		reason,
+	})) as { run: SpaceWorkflowRun; gateData: GateDataRecord };
+}
+
+// ---------------------------------------------------------------------------
+// Status polling helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Poll spaceTask.list until at least one task for the given node name has
+ * one of the expected statuses. Returns the first matching task.
+ *
+ * Matches tasks by:
+ * 1. task.title (which equals node.name, e.g. 'Planning', 'Plan Review', 'Coding')
+ * 2. task.workflowNodeId (UUID, for direct UUID matching)
+ * 3. task.agentName (agent slot name)
+ */
+export async function waitForNodeStatus(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	runId: string,
+	/** Node name (e.g. 'Planning', 'Plan Review', 'Coding') or node UUID */
+	nodeNameOrId: string,
+	expectedStatuses: string[],
+	timeout: number
+): Promise<SpaceTask> {
+	const deadline = Date.now() + timeout;
+	while (Date.now() < deadline) {
+		const tasks = (await daemon.messageHub.request('spaceTask.list', {
+			spaceId,
+		})) as SpaceTask[];
+
+		const runTasks = tasks.filter((t) => t.workflowRunId === runId);
+		const match = runTasks.find(
+			(t) =>
+				(t.title === nodeNameOrId ||
+					t.workflowNodeId === nodeNameOrId ||
+					t.agentName === nodeNameOrId) &&
+				expectedStatuses.includes(t.status)
+		);
+		if (match) return match;
+
+		await new Promise((resolve) => setTimeout(resolve, 300));
+	}
+	throw new Error(
+		`Node "${nodeNameOrId}" did not reach status [${expectedStatuses.join(', ')}] within ${timeout}ms`
+	);
+}
+
+/**
+ * Poll spaceTask.list until any task for the given node name exists in the run
+ * (i.e. the node has been activated). Useful before calling waitForNodeStatus
+ * when you just want to confirm activation happened.
+ */
+export async function waitForNodeActivated(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	runId: string,
+	nodeNameOrId: string,
+	timeout: number
+): Promise<SpaceTask> {
+	return waitForNodeStatus(
+		daemon,
+		spaceId,
+		runId,
+		nodeNameOrId,
+		['pending', 'in_progress', 'completed', 'review', 'needs_attention'],
+		timeout
+	);
+}
+
+/**
+ * Poll spaceWorkflowRun.get until the run reaches one of the expected statuses.
+ * Returns the final run object.
+ */
+export async function waitForRunStatus(
+	daemon: DaemonServerContext,
+	runId: string,
+	expectedStatuses: string[],
+	timeout: number
+): Promise<SpaceWorkflowRun> {
+	const deadline = Date.now() + timeout;
+	while (Date.now() < deadline) {
+		// spaceWorkflowRun.get uses 'id' not 'runId'
+		const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
+			id: runId,
+		})) as { run: SpaceWorkflowRun };
+
+		if (expectedStatuses.includes(run.status)) return run;
+		await new Promise((resolve) => setTimeout(resolve, 300));
+	}
+	throw new Error(
+		`Run "${runId}" did not reach status [${expectedStatuses.join(', ')}] within ${timeout}ms`
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Artifact helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch gate artifacts (changed files and diff summary) for a workflow run.
+ */
+export async function getGateArtifacts(
+	daemon: DaemonServerContext,
+	runId: string
+): Promise<GateArtifacts> {
+	return (await daemon.messageHub.request('spaceWorkflowRun.getGateArtifacts', {
+		runId,
+	})) as GateArtifacts;
+}
+
+// ---------------------------------------------------------------------------
+// Task simulation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark a task as 'completed' directly via spaceTask.update.
+ *
+ * Simulates an agent calling report_result without actually running a session.
+ * Handles intermediate transitions: if the task is still 'pending', it is first
+ * moved to 'in_progress' before completing.
+ */
+export async function mockAgentDone(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	taskId: string,
+	result?: string
+): Promise<SpaceTask> {
+	// Fetch current status to determine whether we need an intermediate transition
+	const current = (await daemon.messageHub.request('spaceTask.get', {
+		spaceId,
+		taskId,
+	})) as SpaceTask;
+
+	// pending → in_progress → completed; in_progress → completed
+	if (current.status === 'pending' || current.status === 'draft') {
+		await daemon.messageHub.request('spaceTask.update', {
+			spaceId,
+			taskId,
+			status: 'in_progress',
+		});
+	}
+
+	return (await daemon.messageHub.request('spaceTask.update', {
+		spaceId,
+		taskId,
+		status: 'completed',
+		result: result ?? 'Mock agent completed',
+	})) as SpaceTask;
+}
+
+/**
+ * Find tasks for a given node name in a run.
+ * Matches by task.title (= node.name), workflowNodeId (UUID), or agentName.
+ * Returns empty array when the node has not been activated yet.
+ */
+export async function getTasksForNode(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	runId: string,
+	nodeNameOrId: string
+): Promise<SpaceTask[]> {
+	const tasks = (await daemon.messageHub.request('spaceTask.list', {
+		spaceId,
+	})) as SpaceTask[];
+
+	return tasks.filter(
+		(t) =>
+			t.workflowRunId === runId &&
+			(t.title === nodeNameOrId ||
+				t.workflowNodeId === nodeNameOrId ||
+				t.agentName === nodeNameOrId)
+	);
+}
+
+/**
+ * Find tasks for a given workflow node UUID in a run.
+ * Unlike getTasksForNode, this does an exact UUID match on workflowNodeId.
+ */
+export async function getTasksForNodeId(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	runId: string,
+	nodeId: string
+): Promise<SpaceTask[]> {
+	const tasks = (await daemon.messageHub.request('spaceTask.list', {
+		spaceId,
+	})) as SpaceTask[];
+
+	return tasks.filter((t) => t.workflowRunId === runId && t.workflowNodeId === nodeId);
+}
