@@ -1294,55 +1294,66 @@ export class RoomRuntime {
 					this.groupRepo.setApprovalSource(groupId, 'leader_no_pr');
 
 					// Lifecycle gate still runs for no_pr — blocks planning tasks without draft children
-					{
-						const hookTask = await this.taskManager.getTask(group.taskId);
-						if (hookTask) {
-							const currentRoom = this.getCurrentRoom();
-							const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
-							const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
-							const hasReviewers = !!agentSubs?.leader?.length;
+					let gatePassed = false;
+					try {
+						{
+							const hookTask = await this.taskManager.getTask(group.taskId);
+							if (hookTask) {
+								const currentRoom = this.getCurrentRoom();
+								const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
+								const agentSubs = roomConfig.agentSubagents as
+									| Record<string, unknown[]>
+									| undefined;
+								const hasReviewers = !!agentSubs?.leader?.length;
 
-							const hookCtx: LeaderCompleteHookContext = {
-								workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
-								rootWorkspacePath: this.taskGroupManager.workspacePath,
-								taskType: hookTask.taskType ?? 'coding',
-								workerRole: group.workerRole,
-								taskId: group.taskId,
-								groupId,
-								hasReviewers,
-								approved: group.approved,
-								workerBypassed: group.workerBypassed,
-							};
-							if (hookTask.taskType === 'planning') {
-								const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
-								hookCtx.draftTaskCount = draftTasks.length;
-							}
-							const gateResult = await runLeaderCompleteGate(hookCtx, this.hookOptions);
-							if (!gateResult.pass) {
-								this.groupRepo.setApprovalSource(groupId, null); // roll back on gate failure
-								log.info(`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`);
-								this.appendGroupEvent(groupId, 'status', {
-									text: `Leader complete gate: ${gateResult.reason}`,
-								});
-
-								if (
-									await this.recordAndCheckDeadLoop(
-										groupId,
-										group.taskId,
-										'leader_complete',
-										gateResult.reason ?? 'Gate check failed'
-									)
-								) {
-									return jsonResult({ success: false, error: 'Dead loop detected.' });
+								const hookCtx: LeaderCompleteHookContext = {
+									workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+									rootWorkspacePath: this.taskGroupManager.workspacePath,
+									taskType: hookTask.taskType ?? 'coding',
+									workerRole: group.workerRole,
+									taskId: group.taskId,
+									groupId,
+									hasReviewers,
+									approved: group.approved,
+									workerBypassed: group.workerBypassed,
+								};
+								if (hookTask.taskType === 'planning') {
+									const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
+									hookCtx.draftTaskCount = draftTasks.length;
 								}
+								const gateResult = await runLeaderCompleteGate(hookCtx, this.hookOptions);
+								if (!gateResult.pass) {
+									log.info(
+										`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`
+									);
+									this.appendGroupEvent(groupId, 'status', {
+										text: `Leader complete gate: ${gateResult.reason}`,
+									});
 
-								this.groupRepo.setLeaderCalledTool(groupId, false);
-								return jsonResult({
-									success: false,
-									error: gateResult.reason ?? 'Precondition not met.',
-									action_required: gateResult.bounceMessage,
-								});
+									if (
+										await this.recordAndCheckDeadLoop(
+											groupId,
+											group.taskId,
+											'leader_complete',
+											gateResult.reason ?? 'Gate check failed'
+										)
+									) {
+										return jsonResult({ success: false, error: 'Dead loop detected.' });
+									}
+
+									this.groupRepo.setLeaderCalledTool(groupId, false);
+									return jsonResult({
+										success: false,
+										error: gateResult.reason ?? 'Precondition not met.',
+										action_required: gateResult.bounceMessage,
+									});
+								}
 							}
+						}
+						gatePassed = true;
+					} finally {
+						if (!gatePassed) {
+							this.groupRepo.setApprovalSource(groupId, null); // roll back on gate failure or exception
 						}
 					}
 

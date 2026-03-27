@@ -895,6 +895,9 @@ describe('RoomRuntime leader tools', () => {
 			const updatedGroup = ctx.groupRepo.getGroup(group.id);
 			expect(updatedGroup?.approvalSource).toBeNull();
 
+			// leaderCalledTool should have been reset so leader can retry
+			expect(updatedGroup?.leaderCalledTool).toBe(false);
+
 			// Task should NOT be completed
 			const updatedTask = await ctx.taskManager.getTask(planTask.id);
 			expect(updatedTask!.status).toBe('in_progress');
