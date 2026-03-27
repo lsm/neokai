@@ -764,8 +764,17 @@ export interface WorkflowChannel {
 	 * Optional gate condition evaluated before a message is delivered on this channel.
 	 * When present, the message is held until the condition passes.
 	 * Absent means the channel is always open (no gate).
+	 * @deprecated Use `gateId` to reference a `Gate` entity instead. Will be removed in a future milestone.
 	 */
 	gate?: WorkflowCondition;
+	/**
+	 * Optional reference to a Gate entity in `SpaceWorkflow.gates`.
+	 * When set, the channel is gated — delivery is blocked until the referenced gate's
+	 * condition passes against runtime data in `gate_data`.
+	 * Takes precedence over the legacy inline `gate` field when both are set.
+	 * Absent means the channel is always open (no gate).
+	 */
+	gateId?: string;
 }
 
 /**

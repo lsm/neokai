@@ -124,6 +124,16 @@ export interface NodeAgentToolsConfig {
 	 * Used by list_gates, read_gate, write_gate.
 	 */
 	gateDataRepo: GateDataRepository;
+	/**
+	 * Callback invoked after a gate data write to trigger re-evaluation and
+	 * potential lazy node activation for any channels referencing the changed gate.
+	 *
+	 * Called by `write_gate` after every successful data merge (fire-and-forget).
+	 * When provided, blocked target nodes are auto-activated the moment their gate
+	 * condition is satisfied — enabling vote-counting and push-on-write semantics.
+	 * When absent, nodes are activated at the next `deliverMessage` call instead.
+	 */
+	onGateDataChanged?: (runId: string, gateId: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +161,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		agentMessageRouter,
 		workflow,
 		gateDataRepo,
+		onGateDataChanged,
 	} = config;
 
 	return {
@@ -511,9 +522,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * guards the channel. Use this to understand the full channel map
 		 * before calling list_reachable_agents or send_message.
 		 *
-		 * Note: `gateId` is always null — `WorkflowChannel` uses an inline
-		 * `gate?: WorkflowCondition` rather than a `gateId` reference.
-		 * Separated gate entities require a future type migration to `Channel`.
+		 * A channel can be gated via:
+		 * - `gateId` (new separated architecture, M1.1): references a Gate entity
+		 *   in `workflow.gates`; use `list_gates` to see current gate data and status.
+		 * - `gate` (legacy inline condition): an inline WorkflowCondition object.
+		 * `hasGate` is true when either path is set.
 		 */
 		async list_channels(_args: ListChannelsInput): Promise<ToolResult> {
 			const channels = workflow?.channels ?? [];
@@ -524,8 +537,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				direction: ch.direction,
 				isCyclic: ch.isCyclic ?? false,
 				label: ch.label ?? null,
-				// Legacy inline gate — summarize presence without exposing full condition
-				hasGate: ch.gate !== undefined,
+				// True when the channel is gated via either the new gateId reference
+				// or the legacy inline gate condition.
+				hasGate: ch.gate !== undefined || ch.gateId !== undefined,
+				// Gate ID for new-architecture channels; null for legacy inline gates.
+				gateId: ch.gateId ?? null,
 			}));
 			return jsonResult({
 				success: true,
@@ -658,6 +674,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			// Re-evaluate gate with updated data
 			const evalResult = evaluateGate({ ...gateDef, data: updated.data });
 
+			// Trigger re-evaluation and lazy node activation for channels referencing
+			// this gate (fire-and-forget — response is not delayed waiting for activation).
+			if (onGateDataChanged) {
+				void onGateDataChanged(workflowRunId, gateId).catch((err) => {
+					log.warn(
+						`onGateDataChanged failed for gate "${gateId}" in run "${workflowRunId}":`,
+						err instanceof Error ? err.message : String(err)
+					);
+				});
+			}
+
 			return jsonResult({
 				success: true,
 				gateId,
@@ -666,7 +693,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				reason: evalResult.reason ?? null,
 				nodeId: workflowNodeId,
 				message: evalResult.open
-					? `Gate "${gateId}" is now OPEN — gated channel(s) may unblock.`
+					? `Gate "${gateId}" is now OPEN — gated channel(s) are unblocked.`
 					: `Gate "${gateId}" is still CLOSED after write: ${evalResult.reason ?? 'condition not met'}.`,
 			});
 		},
@@ -757,8 +784,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			'List all channels declared in this workflow. ' +
 				'Channels define the messaging topology — which agents can communicate and whether a gate ' +
 				'guards the channel. Use this to understand the full channel map for this workflow run. ' +
-				'Note: `gateId` is not yet available — `WorkflowChannel` uses inline `gate?: WorkflowCondition` ' +
-				'instead of a separated `Gate` reference; correlation via `gateId` requires a type migration.',
+				'Each entry includes `hasGate` (true when a gate guards the channel) and `gateId` ' +
+				'(non-null when using the new separated gate architecture — use `list_gates` to read gate state).',
 			ListChannelsSchema.shape,
 			(args) => handlers.list_channels(args)
 		),
@@ -783,8 +810,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			"Write (merge) data into a gate's runtime data store. " +
 				"Your role must be in the gate's allowedWriterRoles. " +
 				'For vote-counting (count condition) gates, use your nodeId as the map key so each node votes once. ' +
-				'After writing, gate re-evaluation is triggered locally — the response tells you if the gate is now open. ' +
-				'Note: the workflow runtime polls gate state at channel-routing time; this tool does not directly push channel unblock events.',
+				'After writing, gate re-evaluation is triggered — the response tells you if the gate is now open. ' +
+				'When the gate opens, blocked target nodes are automatically activated by the workflow runtime.',
 			WriteGateSchema.shape,
 			(args) => handlers.write_gate(args)
 		),
