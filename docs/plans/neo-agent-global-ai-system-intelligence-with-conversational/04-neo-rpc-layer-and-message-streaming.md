@@ -20,8 +20,12 @@ Create the RPC endpoints and real-time message streaming infrastructure that the
 1. Create `packages/daemon/src/lib/rpc-handlers/neo-handlers.ts`
 2. Implement `neo.send` handler:
    - Accepts `{ message: string }` payload
+   - Runs health check before injection (auto-recovers if session is unhealthy)
    - Injects the message into the `neo:global` session via `sessionManager.injectMessage()`
    - Returns `{ success: boolean, messageId: string }`
+   - **Provider error handling**: Catch LLM provider errors (429 rate limit, 5xx server errors, network failures) and return user-friendly error responses: `{ success: false, error: 'Neo is temporarily unavailable. Please try again.', errorCode: 'PROVIDER_ERROR' }`
+   - **Missing credentials**: If no API key is configured, return `{ success: false, error: 'API key not configured. Please set up your provider in Settings.', errorCode: 'NO_CREDENTIALS' }`
+   - **Model unavailable**: If the selected Neo model is not available, return descriptive error
 3. Implement `neo.history` handler:
    - Accepts `{ limit?: number, before?: string }` for pagination
    - Queries `sdk_messages` for the `neo:global` session
@@ -35,15 +39,26 @@ Create the RPC endpoints and real-time message streaming infrastructure that the
 6. Implement `neo.updateSettings` handler:
    - Updates Neo settings (security mode, model)
    - Persists via SettingsManager
-7. Register handlers in `setupRPCHandlers()` in `packages/daemon/src/lib/rpc-handlers/index.ts`
-8. Add unit tests for each handler
+7. Implement `neo.confirmAction` handler:
+   - Accepts `{ actionId: string }` payload
+   - Retrieves pending action from `PendingActionStore`, executes it, injects result into Neo chat as a system message
+   - Returns `{ success: boolean, result?: unknown, error?: string }`
+   - This is the **primary confirmation path** called by `NeoConfirmationCard` buttons (bypasses LLM)
+8. Implement `neo.cancelAction` handler:
+   - Accepts `{ actionId: string }` payload
+   - Removes pending action without executing, injects cancellation message into Neo chat
+   - Returns `{ success: boolean }`
+9. Register handlers in `setupRPCHandlers()` in `packages/daemon/src/lib/rpc-handlers/index.ts`
+10. Add unit tests for each handler (including provider error scenarios)
 
 **Acceptance Criteria**:
 - `neo.send` delivers messages to Neo session and Neo responds
 - `neo.history` returns paginated message history
-- `neo.clearSession` resets the session cleanly
+- `neo.clearSession` resets the session cleanly (stops in-flight SDK queries before destroying)
+- `neo.confirmAction` / `neo.cancelAction` execute/discard pending actions via direct RPC
 - Settings CRUD works
-- Unit tests pass
+- Provider errors return user-friendly messages with appropriate error codes
+- Unit tests pass (including provider error scenarios)
 
 **Dependencies**: Task 1.3
 

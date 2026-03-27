@@ -59,8 +59,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `NeoAgentManager` class with `provision()`, `getSession()`, `cleanup()`, `healthCheck()` methods
    - Manages the singleton `neo:global` session
    - Handles first-run creation and restart re-attachment
-   - **Session resilience**: `healthCheck()` detects crashed/corrupted sessions (SDK errors, unresponsive state) and auto-recovers by destroying and re-provisioning the session
-   - Health check runs on `neo.send` before message injection -- if session is unhealthy, auto-recover and retry
+   - **Session resilience**: `healthCheck()` detects crashed/corrupted sessions (SDK errors, unresponsive state, in-flight queries that will never complete) and auto-recovers by destroying and re-provisioning the session
+   - Health check runs at **two points**: (1) during `provision()` on daemon startup (detects partially-provisioned or stale sessions from previous crashes), and (2) on `neo.send` before message injection (detects runtime failures)
+   - Recovery flow: stop any in-flight SDK queries → destroy the session → create a fresh session → re-attach MCP tools
    - `neo.clearSession` also provides manual recovery path
    - Exposes Neo settings (security mode, model) from SettingsManager via `neo.securityMode` and `neo.model` keys
 4. Create `packages/daemon/src/lib/neo/index.ts` barrel export
@@ -70,8 +71,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - System prompt covers Neo's full role and behavior
 - NeoAgentManager can provision the Neo session
 - On restart, existing session is re-attached (not duplicated)
-- Health check detects unhealthy sessions and auto-recovers
-- Unit tests verify provision, re-attach, and health-check/recovery flows
+- Health check detects unhealthy sessions (including in-flight queries from previous crashes) and auto-recovers
+- Health check runs at startup (provision) and before message injection
+- Unit tests verify provision, re-attach, startup health-check, and runtime recovery flows
 
 **Dependencies**: Task 1.1
 

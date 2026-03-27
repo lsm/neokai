@@ -10,7 +10,8 @@ Record every action Neo takes into an activity log, and support undoing the most
 - Undo data capture for reversible operations
 - `undo_last_action` tool implementation
 - Activity log retention policy (auto-prune old entries)
-- `explain` diagnostic tool (separated from undo -- purely informational)
+
+> **Note: Activity logging gap (M1-M4)**: The `neo_activity_log` table is created in M1, but logging hooks are wired in this milestone (M5). This means Neo tools in M2-M4 execute without activity logging during development. This is intentional -- logging is a cross-cutting concern best added once all tools exist. It is not a bug.
 
 ## Tasks
 
@@ -45,8 +46,8 @@ Record every action Neo takes into an activity log, and support undoing the most
    - `start_workflow_run` / `cancel_workflow_run`: workflow runs create cascading side effects (tasks, agent sessions) that cannot be cleanly reversed
    - `approve_gate` / `reject_gate`: gate decisions may have triggered downstream workflow steps
    - `approve_task` / `reject_task`: task review decisions may have triggered agent actions
-4. Wire `NeoActivityLogger` into `NeoAgentManager`
-5. Add unit tests for logging and undo data capture
+5. Wire `NeoActivityLogger` into `NeoAgentManager`
+6. Add unit tests for logging and undo data capture
 
 **Acceptance Criteria**:
 - Every Neo tool invocation is logged with full context
@@ -62,9 +63,11 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 5.2: Undo and Explain Tool Implementation
+### Task 5.2: Undo Tool Implementation
 
-**Description**: Implement the `undo_last_action` MCP tool that reverses Neo's most recent undoable action, and the `explain` diagnostic tool.
+**Description**: Implement the `undo_last_action` MCP tool that reverses Neo's most recent undoable action.
+
+> **Design decision**: No separate `explain` tool. The LLM already knows its tools and their risk classifications from the system prompt. The system prompt instructs Neo to proactively explain risk levels and confirmation requirements when describing actions to the user. This achieves the same user experience with zero additional code.
 
 **Subtasks**:
 1. Add `undo_last_action` tool to the Neo action tools MCP server:
@@ -78,17 +81,12 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Restore previous goal/task status
    - Restore previous room settings
 3. Handle edge cases: nothing to undo, undo target no longer exists, undo already performed
-4. Add `explain` tool (separate from undo -- purely diagnostic):
-   - `explain({ action, target })`: Neo describes what the action would do, what risk level it carries, and whether confirmation would be required under the current security mode
-   - This is an informational tool only -- it does not execute or queue any action
-   - Useful for users to preview what Neo will do before asking it to proceed
-5. Add unit tests for undo logic including edge cases, and for explain output
+4. Add unit tests for undo logic including edge cases
 
 **Acceptance Criteria**:
 - `undo_last_action` reverses the most recent undoable action
 - Undo itself is logged in the activity feed
 - Edge cases produce clear error messages
-- `explain` tool returns action description, risk level, and confirmation requirement without executing
 - Activity log pruning keeps table bounded (30 days / 10,000 rows max)
 - Unit tests pass
 

@@ -71,9 +71,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 2.3: Goal, Task, Skill, and MCP Query Tools
+### Task 2.3: Goal and Task Query Tools
 
-**Description**: Create MCP tools for querying goals, tasks, skills, and MCP servers across all rooms.
+**Description**: Create MCP tools for querying goals and tasks across all rooms.
 
 **Subtasks**:
 1. Add to `neo-query-tools.ts`:
@@ -82,18 +82,12 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `get_metrics` tool: returns current metric values for a measurable goal
    - `list_tasks` tool: returns tasks filterable by room, status, assignee
    - `get_task_detail` tool: returns full task info
-   - `list_mcp_servers` tool: returns all registered MCP servers with enabled/disabled status
-   - `get_mcp_server_status` tool: returns MCP server details (type, config, connected rooms)
-   - `list_skills` tool: returns all skills with type, enabled status
-   - `get_skill_details` tool: returns full skill info including validation status
 2. Wire goal queries through `GoalRepository` (cross-room query requires iterating rooms or direct DB access)
 3. Wire task queries through `TaskRepository`
-4. Wire MCP/skill queries through `AppMcpServerRepository` and `SkillsManager`
-5. Add unit tests for each tool handler
+4. Add unit tests for each tool handler
 
 **Acceptance Criteria**:
 - Cross-room goal/task queries work correctly
-- MCP and skill queries return accurate status
 - All filters work as documented
 - Unit tests pass
 
@@ -105,7 +99,34 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 2.4: Attach Query Tools MCP Server to Neo Session
+### Task 2.4: Skill and MCP Server Query Tools
+
+**Description**: Create MCP tools for querying skills and MCP servers.
+
+**Subtasks**:
+1. Add to `neo-query-tools.ts`:
+   - `list_mcp_servers` tool: returns all registered MCP servers with enabled/disabled status
+   - `get_mcp_server_status` tool: returns MCP server details (type, config, connected rooms)
+   - `list_skills` tool: returns all skills with type, enabled status
+   - `get_skill_details` tool: returns full skill info including validation status
+2. Wire MCP queries through `AppMcpServerRepository`
+3. Wire skill queries through `SkillsManager`
+4. Add unit tests for each tool handler
+
+**Acceptance Criteria**:
+- MCP and skill queries return accurate status
+- Tools handle missing entities gracefully
+- Unit tests pass
+
+**Dependencies**: Task 2.1
+
+**Agent type**: coder
+
+Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+
+---
+
+### Task 2.5: Attach Query Tools MCP Server to Neo Session
 
 **Description**: Wire the query tools MCP server into Neo's provisioning flow.
 
@@ -122,7 +143,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Neo's in-process tools take precedence on name collision
 - Integration test passes
 
-**Dependencies**: Tasks 2.1, 2.2, 2.3
+**Dependencies**: Tasks 2.1, 2.2, 2.3, 2.4
 
 **Agent type**: coder
 

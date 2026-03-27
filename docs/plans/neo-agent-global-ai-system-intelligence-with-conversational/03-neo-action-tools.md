@@ -17,10 +17,12 @@ The confirmation flow does **not** pause the SDK session. Instead it uses a stan
 
 1. **Action tool returns early**: When a tool requires confirmation, it returns `{ confirmationRequired: true, pendingActionId: '<uuid>', description: '...', riskLevel: 'medium' }` as a normal tool result (no execution happens)
 2. **LLM renders confirmation**: The system prompt instructs Neo to present confirmation results as user-facing cards (the frontend renders these as `NeoConfirmationCard` components)
-3. **User responds**: User clicks Confirm/Cancel or types "yes"/"no" in the chat
-4. **LLM calls confirm/cancel tool**: `confirm_action({ actionId })` executes the pending action; `cancel_action({ actionId })` discards it
-5. **Pending action storage**: Pending actions are stored in-memory in `NeoAgentManager` with a TTL (5 minutes). Expired actions return an error on confirm.
-6. **Panel close / navigate away**: Pending actions remain valid until TTL expires. User can return to the panel and confirm later within the window.
+3. **User responds via dual path**:
+   - **Primary (reliable)**: `NeoConfirmationCard` Confirm/Cancel buttons call `neo.confirmAction` / `neo.cancelAction` RPC endpoints directly, bypassing the LLM entirely. The RPC handler executes the pending action and injects the result back into the Neo chat as a system message.
+   - **Secondary (convenience)**: User types "yes"/"no"/"confirm" in chat; the LLM calls `confirm_action` / `cancel_action` MCP tools. The system prompt strongly instructs Neo to NEVER auto-confirm without explicit user input.
+4. **Pending action storage**: Pending actions are stored in-memory in `NeoAgentManager` with a TTL (5 minutes). Expired actions return an error on confirm.
+5. **Panel close / navigate away**: Pending actions remain valid until TTL expires. User can return to the panel and confirm later within the window.
+6. **LLM hallucination mitigation**: The system prompt includes an explicit instruction: "NEVER call confirm_action unless the user has explicitly said yes/confirm/go ahead in their most recent message." The primary RPC path exists specifically so the critical flow doesn't depend on LLM compliance.
 
 ## Tasks
 
@@ -141,7 +143,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `send_message_to_task`: inject a message into a space task agent session
    - `stop_session`: stop a running agent session
    - `pause_schedule` / `resume_schedule`: control recurring goal schedules
-2. `send_message_to_room` uses `sessionManager.injectMessage()` with `origin: 'neo'` metadata
+2. `send_message_to_room` uses `sessionManager.injectMessage()` -- initially without origin annotation. Once M6 (Origin Metadata) lands, update to pass `origin: 'neo'` metadata. This task implements the messaging functionality; M6 adds the origin annotation.
 3. MCP/skill management tools use `AppMcpLifecycleManager` and `SkillsManager`
 4. Add unit tests
 

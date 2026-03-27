@@ -59,12 +59,13 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - On click: toggles `neoStore.togglePanel()` and auto-focuses the panel's text input when opening
    - Active/highlighted state when panel is open
    - Tooltip: "Neo (⌘J)" on hover
-   - Keyboard shortcut: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle the panel (avoids Cmd+K conflicts with VS Code, Slack, browser address bars)
+   - Keyboard shortcut: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle the panel. Note: Firefox uses Cmd+J for Downloads -- `preventDefault()` overrides this within the app tab, which is acceptable since NeoKai is a dedicated web app. Consider making the shortcut user-configurable in a future iteration.
 2. Update `packages/web/src/islands/NavRail.tsx`:
    - Import and render `NeoNavButton` between nav items and settings button (same position as other nav icons)
 3. Register global keyboard shortcut handler at the app level (in `App.tsx` or a dedicated hook):
    - `Cmd+J` / `Ctrl+J`: toggle Neo panel
    - Verify no conflicts with existing shortcuts in the codebase (currently none registered)
+   - Use `preventDefault()` to override browser defaults within the app
 4. Style with Tailwind: dark theme, consistent with other NavRail icon buttons
 5. Add component unit test (renders, handles click, triggers store methods)
 
@@ -105,17 +106,24 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 4. Create `packages/web/src/components/neo/NeoConfirmationCard.tsx`:
    - Inline card in chat when Neo needs confirmation
    - Shows: action description, target, risk level
-   - Confirm / Cancel buttons
-   - User can also type "yes" / "no" / "confirm" in the panel's input bar (the LLM maps these to `confirm_action` / `cancel_action` tool calls)
-5. Wire panel into `packages/web/src/islands/MainContent.tsx` or appropriate layout component
-6. Handle click-outside-to-dismiss
-7. Add component unit tests
+   - Confirm / Cancel buttons call `neo.confirmAction` / `neo.cancelAction` RPC **directly** (primary path, bypasses LLM for reliability)
+   - User can also type "yes" / "no" / "confirm" in the panel's input bar (secondary path, LLM-mediated)
+   - Confirmation cards remain interactive in chat history until the pending action's TTL expires (5 minutes)
+5. Create error state UI in `NeoChatView.tsx`:
+   - **Provider unavailable**: "Neo is temporarily unavailable. Please try again." (on 429/5xx errors)
+   - **No credentials**: "API key not configured. Please set up your provider in Settings." with link to Settings
+   - **Model unavailable**: "The selected model is not available. Please update Neo's model in Settings."
+   - Error states are rendered as styled message cards in the chat, not alerts/modals
+6. Wire panel into `packages/web/src/islands/MainContent.tsx` or appropriate layout component
+7. Handle click-outside-to-dismiss
+8. Add component unit tests
 
 **Acceptance Criteria**:
 - Panel slides in/out smoothly
 - Chat view displays messages with auto-scroll
 - Activity view shows action history
-- Confirmation cards render and handle user input
+- Confirmation cards render with Confirm/Cancel buttons that call RPC directly
+- Provider error states display user-friendly messages with appropriate guidance
 - Panel dismisses on close button or click outside
 - Unit tests pass
 

@@ -16,11 +16,13 @@ The implementation follows the established pattern of the Global Spaces Agent (`
 4. **Provisioning**: Follows `provisionGlobalSpacesAgent` pattern -- create session on first run, re-attach tools on restart
 5. **RPC layer**: New `neo.*` RPC namespace (`neo.send`, `neo.history`, `neo.clearSession`, `neo.getSettings`, `neo.updateSettings`)
 6. **Frontend**: NavRail icon button (not text input -- rail is only 64px/`w-16`) that opens a slide-out panel with Chat and Activity Feed tabs; text input lives inside the panel
-7. **Security / Confirmation protocol**: Tiered confirmation system (Conservative/Balanced/Autonomous). Confirmation uses a two-message LLM pattern: the tool returns a `{ confirmationRequired, pendingActionId, description }` result, the LLM renders it as a confirmation message, the user replies "yes"/"no", and the LLM calls a `confirm_action` / `cancel_action` tool to proceed. No SDK session pause required.
-8. **Origin metadata**: Lightweight `origin` field on messages (`'human' | 'neo' | 'system'`). Origin is single-hop only -- downstream messages from room agents acting on Neo-originated messages do NOT inherit the origin. This keeps the model simple; full provenance chains are a future concern.
+7. **Security / Confirmation protocol**: Tiered confirmation system (Conservative/Balanced/Autonomous). Dual-path confirmation: (a) **Primary**: `NeoConfirmationCard` Confirm/Cancel buttons call `neo.confirmAction` / `neo.cancelAction` RPC directly (bypasses LLM, reliable); (b) **Secondary**: user types "yes"/"no" in chat, LLM calls `confirm_action` / `cancel_action` tools (convenience fallback). No SDK session pause required.
+8. **Origin metadata**: Lightweight `origin` column on `sdk_messages` table (`'human' | 'neo' | 'system'`). This is a **DB-level annotation for frontend display only** (powering "via Neo" indicators in M9). It is NOT injected into SDK message JSON -- room/space agents do not see it via the SDK API. Origin is single-hop only. Full provenance chains are a future concern.
 9. **Activity logging**: New `neo_activity_log` SQLite table recording every Neo tool invocation, with a retention policy (auto-prune entries older than 30 days, capped at 10,000 rows)
 10. **Settings storage**: Neo settings stored via existing `SettingsManager` under namespaced keys: `neo.securityMode` (default `'balanced'`), `neo.model` (default `null` = app primary model). No separate table needed.
-11. **Keyboard shortcut**: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle Neo panel -- avoids conflict with Cmd+K used by VS Code, Slack, browser address bars
+11. **Keyboard shortcut**: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle Neo panel -- avoids Cmd+K conflicts. Note: Firefox uses Cmd+J for Downloads -- NeoKai runs in its own browser tab where `preventDefault()` overrides browser defaults; document this trade-off and consider making the shortcut user-configurable in a future iteration
+12. **Activity logging rollout**: The activity log table is created in M1 but logging is wired in M5. This means M2-M4 tools execute without activity logging -- this is intentional (logging is a cross-cutting concern best added once all tools exist). Document this in M5 so it's not mistaken for a bug.
+13. **Provider error handling**: Neo RPC handlers and frontend must gracefully handle LLM provider failures (429 rate limits, 5xx errors, missing API keys, unavailable models). The RPC layer returns user-friendly error messages; the panel displays appropriate error states.
 
 ### Relationship to Existing Code
 
@@ -57,13 +59,13 @@ Each milestone task includes unit tests as subtasks (not deferred). Milestones 1
 - M2, M3 depend on M1 (agent must exist before tools can be attached)
 - M4 depends on M1 (RPC layer needs session infrastructure)
 - M5 depends on M3 (undo needs action tools to be defined)
-- M6 is independent of M2-M5 (origin metadata is a data model concern)
+- M6 depends on M1 only (origin is a data model concern). However, Task 3.4 (`send_message_to_room` with `origin: 'neo'`) depends on M6 being complete. Task 3.4 can be implemented without origin initially and annotated once M6 lands -- or M6 can be scheduled before/alongside M3.
 - M7 depends on M4 (panel UI needs RPC layer for messaging)
 - M8 depends on M1 and M7 (settings UI needs both backend and panel)
 - M9 depends on M6 (indicators need origin metadata)
-- M10 depends on M1-M5 (tests cover all backend features)
+- M10 depends on M1-M6 (tests cover all backend features including origin)
 - M11 depends on M7-M9 (E2E tests cover all frontend features)
 
 ## Estimated Total Task Count
 
-~33 tasks across 11 milestones.
+~34 tasks across 11 milestones.
