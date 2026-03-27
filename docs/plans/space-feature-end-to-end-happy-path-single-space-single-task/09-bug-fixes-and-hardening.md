@@ -13,7 +13,7 @@ Fix issues discovered during integration and E2E testing. Add robust error handl
 **Subtasks**:
 1. Collect all test failures from M7 and M8
 2. Create triage document at `docs/plans/space-feature-end-to-end-happy-path-single-space-single-task/bug-triage.md`
-3. Group by area: gate routing, human gate UI, worktree isolation, canvas, agent prompts
+3. Group by area: gate routing, approval gate UI, worktree isolation, canvas, agent prompts
 4. Prioritize: P0/P1/P2
 
 **Acceptance Criteria**:

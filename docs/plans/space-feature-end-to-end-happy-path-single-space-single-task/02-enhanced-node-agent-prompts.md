@@ -47,7 +47,7 @@ Upgrade the system prompts for planner, coder, reviewer, and QA node agents in t
 
 **Acceptance Criteria**:
 - Planner creates plan documents on feature branches with PRs
-- Planner writes PR data to Plan PR Gate (triggers plan review activation)
+- Planner writes PR data to `plan-pr-gate` (triggers plan review activation)
 - Unit tests cover the new prompt builder
 
 **Depends on**: Milestone 1 (gate MCP tools)

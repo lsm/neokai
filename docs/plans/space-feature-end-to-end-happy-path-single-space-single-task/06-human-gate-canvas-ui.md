@@ -1,8 +1,8 @@
-# Milestone 6: Human Gate Canvas UI
+# Milestone 6: Approval Gate Canvas UI
 
 ## Goal and Scope
 
-Build a live workflow canvas visualization where humans can see the running workflow instance, interact with human gates, and review artifacts. This is the primary way humans approve/reject at gates — not just chat-based, but a visual canvas similar to GitHub Actions workflow visualization but with human-in-the-loop nodes.
+Build a live workflow canvas visualization where humans can see the running workflow instance, interact with approval gates, and review artifacts. This is the primary way humans approve/reject at gates — not just chat-based, but a visual canvas similar to GitHub Actions workflow visualization but with human-in-the-loop nodes.
 
 ## UX Specification
 
@@ -15,11 +15,11 @@ The workflow runs as a live instance on a **canvas/visualization**:
 - Completed nodes show a checkmark with elapsed time
 - Failed nodes show an error indicator
 
-### Human Gate Interaction
+### Approval Gate Interaction
 
-When the workflow reaches a human gate:
+When the workflow reaches an approval gate (`plan-approval-gate` with `check: approved == true`):
 1. The gate node on the canvas highlights (pulsing, distinct color)
-2. **Clicking the human gate opens an artifacts view** showing all changes in the worktree
+2. **Clicking the approval gate opens an artifacts view** showing all changes in the worktree
 3. The artifacts view lists all changed files (like a PR diff view)
 4. **Clicking individual changes renders the file or code diff** (side-by-side or unified diff view)
 5. Approve/Reject buttons are prominently displayed in the artifacts view
@@ -32,14 +32,14 @@ The artifacts view is essentially an embedded PR review interface:
 - Click a file → shows the diff (syntax highlighted, line numbers)
 - Summary section: number of files changed, lines added/removed
 - Context from the agent: what was done and why (read from gate data)
-- For the Plan PR Gate: shows the plan document diff
-- For the Code PR Gate: shows the code changes diff
+- For `plan-pr-gate`: shows the plan document diff
+- For `code-pr-gate`: shows the code changes diff
 
 ## Tasks
 
-### Task 6.1: Implement Human Gate Backend
+### Task 6.1: Implement Approval Gate Backend
 
-**Description**: Implement the backend for the human gate: blocking, state persistence, approval RPC, and notification.
+**Description**: Implement the backend for the approval gate (`plan-approval-gate`): blocking, state persistence, approval RPC, and notification.
 
 **Subtasks**:
 1. Implement `spaceWorkflowRun.approveGate` RPC handler:
@@ -56,7 +56,7 @@ The artifacts view is essentially an embedded PR review interface:
 3. Implement `spaceWorkflowRun.getFileDiff` RPC handler:
    - Accepts `{ runId, gateId, filePath }`
    - Returns: unified diff for the specified file
-4. Add workflow run status: when human gate blocks → run stays `in_progress` but gate data shows `{ waiting: true }`
+4. Add workflow run status: when approval gate blocks → run stays `in_progress` but gate data shows `{ waiting: true }`
    - No need for a new `waiting_for_approval` status — the gate data IS the state. The workflow run is `in_progress`, and the gate's data tells you it's waiting.
 5. Handle rejection: gate data gets `{ rejected: true, reason }`. The workflow run transitions to `needs_attention` with `failureReason: 'humanRejected'`. (Uses existing `needs_attention` status, not a new `failed` status — see overview WorkflowRunStatus Strategy.)
 6. Add `failureReason` field to `SpaceWorkflowRun` interface (if not already added in M1 Task 1.1): `failureReason?: 'humanRejected' | 'maxIterationsReached' | 'nodeTimeout' | 'agentCrash'`
@@ -65,7 +65,7 @@ The artifacts view is essentially an embedded PR review interface:
 9. Unit tests: approval, rejection, concurrent approval idempotency, artifacts retrieval (with and without worktree), file diff, restart, persistence
 
 **Acceptance Criteria**:
-- Human gate blocks workflow and gate data shows `{ waiting: true }`
+- Approval gate blocks workflow and gate data shows `{ waiting: true }`
 - Approval writes to gate data and unblocks downstream channel
 - Concurrent approvals are idempotent (no double-write)
 - Rejection transitions run to `needs_attention` with `failureReason: 'humanRejected'`
@@ -87,18 +87,18 @@ The artifacts view is essentially an embedded PR review interface:
 1. Create `packages/web/src/components/space/WorkflowCanvas.tsx`:
    - Renders the workflow graph as a visual canvas (nodes + edges)
    - Each node shows: name, agent role, status (pending/active/completed/failed), elapsed time
-   - Edges (channels) show gate status: blocked (gray), open (green), waiting for human (amber pulsing)
+   - Edges (channels) show gate status: blocked (gray), open (green), waiting for approval (amber pulsing)
    - Active nodes have animation/pulse effect
 2. Subscribe to `workflow_run_status_changed` and `gate_data_changed` live queries for real-time updates
 3. On initial load, query current workflow run state and gate data to render correct initial state
 4. Layout algorithm: horizontal pipeline layout (left to right), with parallel nodes stacked vertically
-5. Handle the 3 parallel reviewer nodes: show them stacked vertically with a shared aggregate gate indicator
+5. Handle the 3 parallel reviewer nodes: show them stacked vertically with a shared `review-votes-gate` indicator
 6. Style with Tailwind CSS, consistent with existing Space UI
 
 **Acceptance Criteria**:
 - Canvas shows all nodes with correct statuses
 - Real-time updates as nodes activate/complete
-- Human gates are visually distinct (amber, pulsing)
+- Approval gates are visually distinct (amber, pulsing)
 - Parallel reviewer nodes displayed correctly
 - Works on initial load (not just live updates)
 
@@ -114,7 +114,7 @@ The artifacts view is essentially an embedded PR review interface:
 
 **Subtasks**:
 1. Create `packages/web/src/components/space/GateArtifactsView.tsx`:
-   - Opens as a panel/overlay when human gate is clicked on canvas
+   - Opens as a panel/overlay when approval gate is clicked on canvas
    - Calls `spaceWorkflowRun.getGateArtifacts` RPC to get changed files
    - Shows file tree: added (green), modified (yellow), deleted (red)
    - Shows summary: N files changed, +X / -Y lines
@@ -132,7 +132,7 @@ The artifacts view is essentially an embedded PR review interface:
 5. Style: clean diff view similar to GitHub PR review interface
 
 **Acceptance Criteria**:
-- Clicking human gate on canvas opens artifacts view
+- Clicking approval gate on canvas opens artifacts view
 - Changed files listed with add/modify/delete indicators
 - Clicking a file shows syntax-highlighted diff
 - Approve/Reject buttons work and update workflow state

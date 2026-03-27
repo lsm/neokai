@@ -2,14 +2,14 @@
 
 ## Goal and Scope
 
-Wire the QA agent into the V2 workflow pipeline. QA sits between the Aggregate Gate (after 3 reviewers approve) and Done. QA verifies test coverage, CI status, and PR mergeability. On failure, QA feeds back to Coding via a cyclic channel.
+Wire the QA agent into the V2 workflow pipeline. QA sits after `review-votes-gate` (passes when `count: votes.approve >= 3`) and before Done. QA verifies test coverage, CI status, and PR mergeability. On failure, QA feeds back to Coding via a cyclic channel.
 
 ## Feedback Topology
 
 ```
-3 Reviewers ──[Aggregate Gate: 3 yes]──► QA ──[Task Result: pass]──► Done
-                                          │
-                                          └──[Task Result: fail, cyclic]──► Coding
+3 Reviewers ──[review-votes-gate: count >= 3]──► QA ──[qa-result-gate: pass]──► Done
+                                                  │
+                                                  └──[qa-fail-gate: fail, cyclic]──► Coding
 ```
 
 When QA fails, feedback goes **directly to Coding** (not through Review). After the Coder fixes, the full re-review cycle runs: Coding → 3 Reviewers → QA → Done. This ensures reviewers verify the fix.
@@ -55,7 +55,7 @@ Both cyclic channels (Reviewer→Coding and QA→Coding) share the same global `
 2. Ensure `SpaceRuntime` transitions the workflow run to `completed` status
 3. Update the Task Agent prompt to produce a human-readable summary:
    - What was implemented (from Coder's result)
-   - PR link and status (from Code PR Gate data)
+   - PR link and status (from `code-pr-gate` data)
    - Review summary (from `review-votes-gate` data)
    - QA verification status (from `qa-result-gate` data)
    - Suggested next steps

@@ -161,7 +161,7 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 6. **QA agent step**: Verification agent that checks test coverage, CI status, and PR mergeability.
 
-7. **Human gate UI with canvas visualization**: Live workflow visualization on a canvas. Clicking a human-approval gate opens an artifacts view showing all changes in the worktree.
+7. **Approval gate UI with canvas visualization**: Live workflow visualization on a canvas. Clicking an approval gate (`plan-approval-gate`) opens an artifacts view showing all changes in the worktree.
 
 8. **Worktree isolation (one per task)**: Currently no worktree isolation exists. Need ONE worktree per task (shared by all agents in that task), with short human-readable folder names.
 
@@ -177,9 +177,9 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 - Create extended CODING_WORKFLOW_V2 with the full pipeline
 - Implement worktree isolation (one per task, short names)
 
-**Phase 2 — QA, human gate UI, and completion** (Milestones 4-6):
+**Phase 2 — QA, approval gate UI, and completion** (Milestones 4-6):
 - Add QA node to the pipeline
-- Build human gate canvas UI with artifacts view and diff rendering
+- Build approval gate canvas UI with artifacts view and diff rendering
 - Wire completion flow so Task Agent reports final status
 - Implement conversation-to-task entry point
 
@@ -200,7 +200,7 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 5. **QA agent node** — Add QA as the verification step before Done, with QA→Code feedback loop
 
-6. **Human gate canvas UI** — Build live workflow canvas visualization with clickable human-approval gates that show artifacts view with file diffs (GitHub Actions-style but with human-in-the-loop)
+6. **Approval gate canvas UI** — Build live workflow canvas visualization with clickable approval gates (`plan-approval-gate`) that show artifacts view with file diffs (GitHub Actions-style but with human-in-the-loop)
 
 7. **Online integration test** — Exercise the full happy path with dev proxy, broken into focused per-component sub-tests
 
@@ -230,7 +230,7 @@ Planning ──[check: prUrl exists]──► Plan Review (1 reviewer) ──[ch
 
 **All cyclic channels route back to Coding, never to Planning.** This ensures:
 - Code-level issues (review feedback, QA failures) are fixed by the Coder directly without re-planning
-- The human gate only fires once (Plan Review → Coding), not on every iteration
+- The approval gate (`plan-approval-gate`) only fires once (Plan Review → Coding), not on every iteration
 - The Coder can iterate on feedback from both reviewers and QA independently
 
 **Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow transitions to `needs_attention` with `failureReason: 'maxIterationsReached'`.
@@ -244,7 +244,7 @@ Planning ──[check: prUrl exists]──► Plan Review (1 reviewer) ──[ch
 - Milestone 3 (V2 workflow) depends on M1 (unified gate must exist)
 - Milestone 4 (worktree) can start in parallel with M2/M3
 - Milestone 5 (QA) depends on M3 (V2 workflow template must exist)
-- Milestone 6 (human gate UI) depends on M1 (gate data store) and M3 (V2 workflow with human-approval gate)
+- Milestone 6 (approval gate UI) depends on M1 (gate data store) and M3 (V2 workflow with `plan-approval-gate`)
 - Milestone 7 (online test) depends on M5 and M6
 - Milestone 8 (E2E test) depends on M6; can start in parallel with M7
 - Milestone 9 (hardening) depends on M7 and M8

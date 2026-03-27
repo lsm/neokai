@@ -120,11 +120,11 @@ Planning ──[check: prUrl]──► Plan Review ──[check: approved]──
 
 ### Task 3.3: Implement Parallel Node Execution
 
-**Description**: Update `TaskAgentManager` to support parallel node execution. When the Coding node completes and the PR Gate opens, all 3 reviewer nodes should activate simultaneously.
+**Description**: Update `TaskAgentManager` to support parallel node execution. When the Coding node completes and `code-pr-gate` opens, all 3 reviewer nodes should activate simultaneously.
 
 **Subtasks**:
 1. Update `TaskAgentManager.activateNode()` to handle multiple target nodes from a single gate transition
-2. When `code-pr-gate` passes (condition `check: prUrl exists`) with 3 downstream channels, spawn all 3 reviewer sessions
+2. When `code-pr-gate` passes (condition `check: prUrl exists`) with 3 downstream channels, spawn all 3 reviewer sessions simultaneously
 3. Each reviewer session operates in the same task worktree (read-only for reviewers)
 4. Track parallel node completion: each reviewer writes its vote to the shared `review-votes-gate`
 5. The gate's `count: votes.approve >= 3` condition evaluates after each write — only activates QA when threshold is met
