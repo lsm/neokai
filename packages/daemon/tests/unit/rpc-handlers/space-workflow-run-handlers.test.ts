@@ -20,6 +20,7 @@ import {
 import type { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
+import type { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
 import type { SpaceRuntimeService } from '../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
@@ -156,6 +157,24 @@ function createMockRunRepo(
 	} as unknown as SpaceWorkflowRunRepository;
 }
 
+function createMockGateDataRepo(): GateDataRepository {
+	return {
+		get: mock(() => null),
+		merge: mock((_runId: string, _gateId: string, partial: Record<string, unknown>) => ({
+			runId: _runId,
+			gateId: _gateId,
+			data: partial,
+			updatedAt: Date.now(),
+		})),
+		set: mock(() => null),
+		listByRun: mock(() => []),
+		delete: mock(() => false),
+		deleteByRun: mock(() => 0),
+		initializeForRun: mock(() => {}),
+		reset: mock(() => null),
+	} as unknown as GateDataRepository;
+}
+
 function createMockRuntime(run: SpaceWorkflowRun = mockRun): SpaceRuntime {
 	return {
 		startWorkflowRun: mock(async () => ({ run, tasks: [mockTask] })),
@@ -238,6 +257,7 @@ describe('space-workflow-run-handlers', () => {
 			spaceManager,
 			workflowManager,
 			runRepo,
+			createMockGateDataRepo(),
 			runtimeService,
 			taskManagerFactory,
 			daemonHub
@@ -567,6 +587,7 @@ describe('space-workflow-run-handlers', () => {
 				spaceManager,
 				workflowManager,
 				runRepo,
+				createMockGateDataRepo(),
 				createMockRuntimeService(),
 				taskManagerFactory,
 				daemonHub
