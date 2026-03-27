@@ -773,6 +773,27 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 		}
 	});
 
+	it('does NOT apply worker MCP merge for a restored planner session', async () => {
+		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
+
+		try {
+			const config = makeConfig({
+				fileMcpServers: { 'file-server': { command: 'npx', args: ['file-mcp'] } },
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			await factory.restoreSession('planner:room-1:task-1:abc12345');
+
+			expect(setRuntimeMcpServersSpy).not.toHaveBeenCalled();
+		} finally {
+			restoreSpy.mockRestore();
+		}
+	});
+
 	it('does NOT apply worker MCP merge for a restored leader session', async () => {
 		const { session, setRuntimeMcpServersSpy } = makeMockSession();
 		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);

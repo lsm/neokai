@@ -971,11 +971,10 @@ export class RoomRuntimeService {
 						runtime.restoreRecoveredGroupMirroring(group);
 
 						// Restore role-specific in-process MCP servers (planner-tools, leader-agent-tools).
-						// Note: file-based and registry-sourced MCP servers are NOT restored here for
-						// worker sessions (coder/general). This is a known limitation — recovered workers
-						// run without user-configured MCP servers for the remainder of their task.
-						// Workers are short-lived (one task per session) so this is accepted behaviour;
-						// the merged map is applied on the next session creation via createSessionFactory().
+						// Note: file-based and registry-sourced MCP servers for coder/general workers are
+						// restored earlier in the recovery path — inside sessionFactory.restoreSession(),
+						// called by recoverRuntime() above — via the shared applyWorkerMcpServers() helper.
+						// This call only handles role-specific in-process tools that are not covered there.
 						await runtime.restoreMcpServersForGroup(group);
 
 						if (!resumeAgents) {
