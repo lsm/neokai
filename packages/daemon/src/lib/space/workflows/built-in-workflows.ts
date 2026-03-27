@@ -33,6 +33,16 @@ const CODING_CODER_STEP = 'tpl-coding-coder';
 const CODING_VERIFY_STEP = 'tpl-coding-verify';
 const CODING_DONE_STEP = 'tpl-coding-done';
 
+// V2 node IDs
+const V2_PLANNING_STEP = 'tpl-v2-planning';
+const V2_PLAN_REVIEW_STEP = 'tpl-v2-plan-review';
+const V2_CODING_STEP = 'tpl-v2-coding';
+const V2_REVIEWER1_STEP = 'tpl-v2-reviewer1';
+const V2_REVIEWER2_STEP = 'tpl-v2-reviewer2';
+const V2_REVIEWER3_STEP = 'tpl-v2-reviewer3';
+const V2_QA_STEP = 'tpl-v2-qa';
+const V2_DONE_STEP = 'tpl-v2-done';
+
 const RESEARCH_PLANNER_STEP = 'tpl-research-planner';
 const RESEARCH_GENERAL_STEP = 'tpl-research-general';
 
@@ -209,6 +219,280 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	updatedAt: 0,
 };
 
+/**
+ * Coding Workflow V2
+ *
+ * Eight-node graph with parallel reviewers and QA verification.
+ *
+ * Main progression:
+ *   Planning → Plan Review (plan-pr-gate: planner submits plan)
+ *   Plan Review → Coding (plan-approval-gate: reviewer approves)
+ *   Coding → Reviewer 1/2/3 in parallel (code-pr-gate: PR opened)
+ *   Reviewer 1/2/3 → QA (review-votes-gate: all 3 approve)
+ *   QA → Done (qa-result-gate: QA passes)
+ *
+ * Cyclic paths:
+ *   Reviewer 1/2/3 → Coding (review-reject-gate: any reviewer rejects)
+ *   QA → Coding (qa-fail-gate: QA finds issues)
+ *
+ * Ungated feedback channels:
+ *   Plan Review → Planning (reviewer requests plan changes)
+ *   Coding → Planning (coder asks planner for clarification)
+ */
+export const CODING_WORKFLOW_V2: SpaceWorkflow = {
+	id: '',
+	spaceId: '',
+	name: 'Coding Workflow V2',
+	description:
+		'Full-cycle coding workflow with plan review, parallel code reviewers, and QA gate. ' +
+		'Supports rejection cycles at both review and QA stages.',
+	maxIterations: 5,
+	nodes: [
+		{
+			id: V2_PLANNING_STEP,
+			name: 'Planning',
+			agentId: 'planner',
+			instructions:
+				'Break down the task into an actionable implementation plan. ' +
+				'When the plan is ready, write it to the plan-pr-gate (field: plan_submitted) to notify reviewers.',
+		},
+		{
+			id: V2_PLAN_REVIEW_STEP,
+			name: 'Plan Review',
+			agentId: 'reviewer',
+			instructions:
+				'Review the implementation plan for feasibility and completeness. ' +
+				'Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
+		},
+		{
+			id: V2_CODING_STEP,
+			name: 'Coding',
+			agentId: 'coder',
+			instructions:
+				'Implement the approved plan. Open a pull request when done. ' +
+				'Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
+		},
+		{
+			id: V2_REVIEWER1_STEP,
+			name: 'Reviewer 1',
+			agentId: 'reviewer',
+			instructions:
+				'Review the pull request for correctness, style, and test coverage. ' +
+				'Write your vote to review-votes-gate and review-reject-gate (field: votes, key: your name, value: "approved" or "rejected").',
+		},
+		{
+			id: V2_REVIEWER2_STEP,
+			name: 'Reviewer 2',
+			agentId: 'reviewer',
+			instructions:
+				'Review the pull request for correctness, style, and test coverage. ' +
+				'Write your vote to review-votes-gate and review-reject-gate (field: votes, key: your name, value: "approved" or "rejected").',
+		},
+		{
+			id: V2_REVIEWER3_STEP,
+			name: 'Reviewer 3',
+			agentId: 'reviewer',
+			instructions:
+				'Review the pull request for correctness, style, and test coverage. ' +
+				'Write your vote to review-votes-gate and review-reject-gate (field: votes, key: your name, value: "approved" or "rejected").',
+		},
+		{
+			id: V2_QA_STEP,
+			name: 'QA',
+			agentId: 'qa',
+			instructions:
+				'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. ' +
+				'Write to qa-result-gate: "result: passed" if everything is green, or "result: failed" with details if issues are found.',
+		},
+		{
+			id: V2_DONE_STEP,
+			name: 'Done',
+			agentId: 'general',
+		},
+	],
+	startNodeId: V2_PLANNING_STEP,
+	rules: [],
+	tags: ['coding', 'v2', 'parallel-review'],
+	createdAt: 0,
+	updatedAt: 0,
+	// Gates — independent entities referenced by channels via gateId
+	gates: [
+		{
+			id: 'plan-pr-gate',
+			description: 'Planning agent has submitted a plan for review',
+			condition: { type: 'check', field: 'plan_submitted', op: 'exists' },
+			data: {},
+			allowedWriterRoles: ['planner'],
+			resetOnCycle: false,
+		},
+		{
+			id: 'plan-approval-gate',
+			description: 'Plan has been reviewed and approved by the plan reviewer',
+			condition: { type: 'check', field: 'approved', op: '==', value: true },
+			data: {},
+			allowedWriterRoles: ['reviewer'],
+			resetOnCycle: true,
+		},
+		{
+			id: 'code-pr-gate',
+			description: 'Code has been implemented and a pull request has been opened',
+			condition: { type: 'check', field: 'pr_url', op: 'exists' },
+			data: {},
+			allowedWriterRoles: ['coder'],
+			resetOnCycle: true,
+		},
+		{
+			id: 'review-votes-gate',
+			description: 'All three reviewers have approved the code changes',
+			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+			data: {},
+			allowedWriterRoles: ['reviewer'],
+			resetOnCycle: true,
+		},
+		{
+			id: 'review-reject-gate',
+			description: 'At least one reviewer has rejected the code changes',
+			condition: { type: 'count', field: 'votes', matchValue: 'rejected', min: 1 },
+			data: {},
+			allowedWriterRoles: ['reviewer'],
+			resetOnCycle: true,
+		},
+		{
+			id: 'qa-result-gate',
+			description: 'QA verification has passed — tests, CI, and PR are green',
+			condition: { type: 'check', field: 'result', op: '==', value: 'passed' },
+			data: {},
+			allowedWriterRoles: ['qa'],
+			resetOnCycle: false,
+		},
+		{
+			id: 'qa-fail-gate',
+			description: 'QA found issues — needs another coding and review cycle',
+			condition: { type: 'check', field: 'result', op: '==', value: 'failed' },
+			data: {},
+			allowedWriterRoles: ['qa'],
+			resetOnCycle: true,
+		},
+	],
+	// Channels — simple unidirectional pipes, gated via gateId references
+	channels: [
+		// Main progression: Planning → Plan Review → Coding
+		{
+			from: 'Planning',
+			to: 'Plan Review',
+			direction: 'one-way',
+			gateId: 'plan-pr-gate',
+			label: 'Planning → Plan Review',
+		},
+		{
+			from: 'Plan Review',
+			to: 'Coding',
+			direction: 'one-way',
+			gateId: 'plan-approval-gate',
+			label: 'Plan Review → Coding',
+		},
+		// Coding → Reviewers (fan-out, shared code-pr-gate)
+		{
+			from: 'Coding',
+			to: 'Reviewer 1',
+			direction: 'one-way',
+			gateId: 'code-pr-gate',
+			label: 'Coding → Reviewer 1',
+		},
+		{
+			from: 'Coding',
+			to: 'Reviewer 2',
+			direction: 'one-way',
+			gateId: 'code-pr-gate',
+			label: 'Coding → Reviewer 2',
+		},
+		{
+			from: 'Coding',
+			to: 'Reviewer 3',
+			direction: 'one-way',
+			gateId: 'code-pr-gate',
+			label: 'Coding → Reviewer 3',
+		},
+		// Reviewers → QA (fan-in, shared review-votes-gate: all 3 must approve)
+		{
+			from: 'Reviewer 1',
+			to: 'QA',
+			direction: 'one-way',
+			gateId: 'review-votes-gate',
+			label: 'Reviewer 1 → QA',
+		},
+		{
+			from: 'Reviewer 2',
+			to: 'QA',
+			direction: 'one-way',
+			gateId: 'review-votes-gate',
+			label: 'Reviewer 2 → QA',
+		},
+		{
+			from: 'Reviewer 3',
+			to: 'QA',
+			direction: 'one-way',
+			gateId: 'review-votes-gate',
+			label: 'Reviewer 3 → QA',
+		},
+		// QA → Done (success path)
+		{
+			from: 'QA',
+			to: 'Done',
+			direction: 'one-way',
+			gateId: 'qa-result-gate',
+			label: 'QA → Done',
+		},
+		// Cyclic: QA → Coding (QA found issues)
+		{
+			from: 'QA',
+			to: 'Coding',
+			direction: 'one-way',
+			gateId: 'qa-fail-gate',
+			isCyclic: true,
+			label: 'QA → Coding (on fail)',
+		},
+		// Cyclic: Reviewer 1/2/3 → Coding (reviewer rejected changes)
+		{
+			from: 'Reviewer 1',
+			to: 'Coding',
+			direction: 'one-way',
+			gateId: 'review-reject-gate',
+			isCyclic: true,
+			label: 'Reviewer 1 → Coding (on reject)',
+		},
+		{
+			from: 'Reviewer 2',
+			to: 'Coding',
+			direction: 'one-way',
+			gateId: 'review-reject-gate',
+			isCyclic: true,
+			label: 'Reviewer 2 → Coding (on reject)',
+		},
+		{
+			from: 'Reviewer 3',
+			to: 'Coding',
+			direction: 'one-way',
+			gateId: 'review-reject-gate',
+			isCyclic: true,
+			label: 'Reviewer 3 → Coding (on reject)',
+		},
+		// Ungated feedback: Plan Review ↔ Planning, Coding → Planning
+		{
+			from: 'Plan Review',
+			to: 'Planning',
+			direction: 'one-way',
+			label: 'Plan Review → Planning (feedback)',
+		},
+		{
+			from: 'Coding',
+			to: 'Planning',
+			direction: 'one-way',
+			label: 'Coding → Planning (feedback)',
+		},
+	],
+};
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -222,7 +506,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  * to persist them with real SpaceAgent IDs for a given space.
  */
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
-	return [CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
+	return [CODING_WORKFLOW, CODING_WORKFLOW_V2, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
 }
 
 /**
@@ -304,6 +588,7 @@ export function seedBuiltInWorkflows(
 			tags: [...template.tags],
 			maxIterations: template.maxIterations,
 			channels: template.channels ? [...template.channels] : undefined,
+			gates: template.gates ? [...template.gates] : undefined,
 		});
 	}
 }
