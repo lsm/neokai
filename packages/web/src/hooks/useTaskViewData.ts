@@ -70,7 +70,10 @@ export interface UseTaskViewDataResult {
 export function useTaskViewData(roomId: string, taskId: string): UseTaskViewDataResult {
 	const { request, onEvent, joinRoom, leaveRoom, isConnected } = useMessageHub();
 	// Derive task reactively from roomStore.tasks so LiveQuery deltas are reflected immediately.
-	const task = useComputed(() => roomStore.tasks.value.find((t) => t.id === taskId) ?? null);
+	// Match by UUID or short ID so deep links like /room/:roomId/task/t-616 resolve correctly.
+	const task = useComputed(
+		() => roomStore.tasks.value.find((t) => t.id === taskId || t.shortId === taskId) ?? null
+	);
 	const [group, setGroup] = useState<TaskGroupInfo | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -89,8 +92,9 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 	const archiveModal = useModal();
 	const setStatusModal = useModal();
 
-	// Look up the goal associated with this task (reverse lookup from roomStore)
-	const associatedGoal = roomStore.goalByTaskId.value.get(taskId) ?? null;
+	// Look up the goal associated with this task (reverse lookup from roomStore).
+	// goalByTaskId is keyed by UUID, so use the resolved task's id when taskId is a short ID.
+	const associatedGoal = roomStore.goalByTaskId.value.get(task.value?.id ?? taskId) ?? null;
 
 	useEffect(() => {
 		const channel = `room:${roomId}`;
