@@ -39,6 +39,9 @@ async function createRoomWithLinkedGoalAndTask(
 			roomId,
 			title: 'Goal-Linked Task',
 			description: 'A task linked to a mission',
+			// Use 'draft' to prevent the scheduler from spawning a worktree
+			// (the E2E workspace is not a git repo, so worktree creation fails).
+			status: 'draft',
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
@@ -76,6 +79,9 @@ async function createRoomWithUnlinkedTask(
 			roomId,
 			title: 'Unlinked Task',
 			description: 'A task with no mission',
+			// Use 'draft' to prevent the scheduler from spawning a worktree
+			// (the E2E workspace is not a git repo, so worktree creation fails).
+			status: 'draft',
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
