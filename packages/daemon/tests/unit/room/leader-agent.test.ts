@@ -276,13 +276,16 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('create_task');
 			// The "merge PR yourself" instructions should NOT be present for plan_review
 			expect(prompt).not.toContain('Do NOT send the worker back to do the merge');
+			// Plan merge instruction must also use --no-delete-branch to prevent worktree branch hijack
+			expect(prompt).toContain('gh pr merge <PR_NUMBER> --no-delete-branch');
 		});
 
 		it('should use direct merge post-approval workflow for code review', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			// Leader merges the PR directly for coder/general tasks (no hardcoded merge method)
-			expect(prompt).toContain('gh pr merge <PR_NUMBER>');
-			expect(prompt).not.toContain('gh pr merge <PR_NUMBER> --');
+			expect(prompt).toContain('gh pr merge <PR_NUMBER> --no-delete-branch');
+			// Must not include bare --delete-branch (without the "no-" prefix)
+			expect(prompt).not.toMatch(/(?<!no-)--delete-branch/);
 			expect(prompt).toContain('Do NOT send the worker back to do the merge');
 		});
 

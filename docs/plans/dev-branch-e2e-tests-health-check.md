@@ -189,7 +189,7 @@ After applying fixes, verify they pass CI. Always use PRs for review and safety 
 5. If CI fails on the fix, investigate and iterate (return to Task 2/3).
 6. Once CI passes, merge the PR:
    ```bash
-   gh pr merge --squash --delete-branch
+   gh pr merge --squash --no-delete-branch
    ```
 7. Trigger a fresh CI run on dev to confirm all e2e tests pass:
    ```bash

@@ -310,7 +310,7 @@ export async function checkWorkerPrMerged(
 				`The PR for branch "${branch}" is CLOSED — it was closed without merging.\n\n` +
 				`A closed PR cannot be merged directly. To fix this:\n` +
 				`1. Reopen the PR: \`gh pr reopen ${branch}\`\n` +
-				`2. Then merge: \`gh pr merge ${branch}\`\n` +
+				`2. Then merge: \`gh pr merge ${branch} --no-delete-branch\`\n` +
 				`3. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
 				`4. Then finish your response.`,
 		};
@@ -322,7 +322,7 @@ export async function checkWorkerPrMerged(
 		bounceMessage:
 			`The PR for branch "${branch}" is not merged yet (state: ${prState}).\n\n` +
 			`You were asked to merge the PR. Please complete this step:\n` +
-			`1. Run: \`gh pr merge ${branch}\`\n` +
+			`1. Run: \`gh pr merge ${branch} --no-delete-branch\`\n` +
 			`2. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
 			`3. Then finish your response.`,
 	};
@@ -389,7 +389,7 @@ export async function checkLeaderPrMerged(
 				`The PR for this task is CLOSED — it was closed without merging.\n\n` +
 				'A closed PR cannot be merged directly. To fix this:\n' +
 				'1. Use `send_to_worker` with: "The PR was closed without merging. ' +
-				`Reopen it with \`gh pr reopen ${branch}\`, then merge with \`gh pr merge ${branch}\`, ` +
+				`Reopen it with \`gh pr reopen ${branch}\`, then merge with \`gh pr merge ${branch} --no-delete-branch\`, ` +
 				`and verify with \`gh pr view ${branch} --json state --jq .state\`"\n` +
 				'2. After the worker confirms the merge (state: MERGED), call `complete_task` again.',
 		};
@@ -402,7 +402,7 @@ export async function checkLeaderPrMerged(
 			`The PR for this task is not merged (state: ${prState}). You cannot mark the task complete until the PR is actually merged.\n\n` +
 			'To fix this:\n' +
 			'1. Use `send_to_worker` to ask the worker: "The PR merge did not complete. ' +
-			`Please run \`gh pr merge ${branch}\` and verify with \`gh pr view ${branch} --json state --jq .state\`"\n` +
+			`Please run \`gh pr merge ${branch} --no-delete-branch\` and verify with \`gh pr view ${branch} --json state --jq .state\`"\n` +
 			'2. After the worker confirms the merge (state: MERGED), call `complete_task` again.',
 	};
 }
@@ -610,7 +610,7 @@ export async function checkLeaderDraftsExist(
 			'No draft tasks were created by the planner yet. The planner must run Phase 2 to create tasks.\n\n' +
 			'To fix this:\n' +
 			'1. Call `send_to_worker` (mode: "defer") with: "The plan is approved. Please:\n' +
-			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER>`\n' +
+			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER> --no-delete-branch`\n' +
 			'   2. Read the plan file under docs/plans/\n' +
 			'   3. Create all tasks 1:1 from the plan using the `create_task` tool\n' +
 			'   4. Finish your response after all tasks are created"\n' +
