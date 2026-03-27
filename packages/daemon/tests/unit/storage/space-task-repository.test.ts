@@ -23,7 +23,11 @@ describe('SpaceTaskRepository', () => {
 		spaceRepo = new SpaceRepository(db as any);
 		repo = new SpaceTaskRepository(db as any);
 
-		const space = spaceRepo.createSpace({ workspacePath: '/workspace/test', name: 'Test' });
+		const space = spaceRepo.createSpace({
+			workspacePath: '/workspace/test',
+			slug: 'test',
+			name: 'Test',
+		});
 		spaceId = space.id;
 
 		// Set up workflow records for FK-constrained fields

@@ -82,8 +82,8 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/project', 'Test Space', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
 
 		const row = db.prepare(`SELECT autonomy_level FROM spaces WHERE id = 'space-1'`).get() as {
 			autonomy_level: string;
@@ -96,8 +96,8 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, autonomy_level, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/project', 'Test Space', 'semi_autonomous', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, autonomy_level, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace/project', 'Test Space', 'semi_autonomous', now, now);
 
 		const row = db.prepare(`SELECT autonomy_level FROM spaces WHERE id = 'space-1'`).get() as {
 			autonomy_level: string;
@@ -191,8 +191,8 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/project', 'Test', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test', '/workspace/project', 'Test', now, now);
 
 		runMigrations(db, () => {});
 

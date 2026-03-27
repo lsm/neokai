@@ -20,6 +20,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS spaces (
 			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
 			workspace_path TEXT NOT NULL UNIQUE,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
@@ -36,6 +37,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
+
+	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agents (

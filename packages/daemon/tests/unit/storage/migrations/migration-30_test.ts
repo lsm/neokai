@@ -70,8 +70,8 @@ describe('Migration 30: layout column on space_workflows', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-1', '/workspace/m30a', 'Space A', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-1', 'm30a', '/workspace/m30a', 'Space A', ${now}, ${now})`
 		);
 		db.exec(
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
@@ -89,8 +89,8 @@ describe('Migration 30: layout column on space_workflows', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-2', '/workspace/m30b', 'Space B', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-2', 'm30b', '/workspace/m30b', 'Space B', ${now}, ${now})`
 		);
 		const layoutJson = JSON.stringify({
 			'step-1': { x: 100, y: 200 },

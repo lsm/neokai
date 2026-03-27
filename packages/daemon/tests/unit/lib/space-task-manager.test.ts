@@ -25,7 +25,11 @@ describe('SpaceTaskManager', () => {
 		createSpaceTables(db);
 		spaceRepo = new SpaceRepository(db as any);
 
-		const space = spaceRepo.createSpace({ workspacePath: '/workspace/test', name: 'Test' });
+		const space = spaceRepo.createSpace({
+			workspacePath: '/workspace/test',
+			slug: 'test',
+			name: 'Test',
+		});
 		spaceId = space.id;
 		manager = new SpaceTaskManager(db as any, spaceId);
 	});
@@ -83,6 +87,7 @@ describe('SpaceTaskManager', () => {
 			// Create another space and its manager
 			const otherSpace = spaceRepo.createSpace({
 				workspacePath: '/workspace/other',
+				slug: 'other',
 				name: 'Other',
 			});
 			const otherManager = new SpaceTaskManager(db as any, otherSpace.id);

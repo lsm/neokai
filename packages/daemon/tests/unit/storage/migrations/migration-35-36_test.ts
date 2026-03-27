@@ -89,8 +89,8 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/project', 'Test Space', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
 		db.prepare(
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
 		).run('wf-1', 'space-1', 'Test Workflow', now, now);
@@ -223,8 +223,8 @@ describe('Migration 36: Add max_iterations to space_workflows', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/project', 'Test Space', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
 		db.prepare(
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
 		).run('wf-1', 'space-1', 'Test Workflow', now, now);
@@ -240,8 +240,8 @@ describe('Migration 36: Add max_iterations to space_workflows', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/project', 'Test Space', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
 		db.prepare(
 			`INSERT INTO space_workflows (id, space_id, name, max_iterations, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 		).run('wf-1', 'space-1', 'Cyclic Workflow', 3, now, now);

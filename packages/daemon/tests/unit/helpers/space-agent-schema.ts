@@ -12,6 +12,7 @@ export function createSpaceAgentSchema(db: Database): void {
 	db.exec(`
 		CREATE TABLE spaces (
 			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
 			workspace_path TEXT NOT NULL UNIQUE,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
@@ -27,6 +28,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
+	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
 	// Keep in sync with runMigration33 in migrations.ts and space-test-db.ts.
 	db.exec(`
@@ -86,8 +88,8 @@ export function createSpaceAgentSchema(db: Database): void {
 export function insertSpace(db: Database, id = 'space-1'): void {
 	const now = Date.now();
 	db.prepare(
-		`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-	).run(id, `/workspace/${id}`, `Space ${id}`, now, now);
+		`INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+	).run(id, `/workspace/${id}`, `Space ${id}`, id, now, now);
 }
 
 export function insertWorkflow(db: Database, id: string, spaceId: string, name: string): void {

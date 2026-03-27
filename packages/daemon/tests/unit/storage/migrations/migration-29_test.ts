@@ -155,8 +155,8 @@ describe('Migration 29: Space system tables', () => {
 		// role accepts any string — no fixed enum
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-role', '/workspace/role', 'Role Space', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-role', 'role-space', '/workspace/role', 'Role Space', ${now}, ${now})`
 		);
 		for (const role of ['custom-role', 'admin', 'leader', 'any-string']) {
 			expect(() => {
@@ -179,8 +179,8 @@ describe('Migration 29: Space system tables', () => {
 		const now = Date.now();
 		// Insert a space first
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('s-1', '/workspace/a', 'Space A', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('s-1', 'space-a', '/workspace/a', 'Space A', ${now}, ${now})`
 		);
 		db.exec(
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
@@ -248,8 +248,8 @@ describe('Migration 29: Space system tables', () => {
 
 		// Insert a space
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-1', '/workspace/cascade', 'Cascade Space', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-1', 'cascade-space', '/workspace/cascade', 'Cascade Space', ${now}, ${now})`
 		);
 
 		// Insert a space agent
@@ -311,8 +311,8 @@ describe('Migration 29: Space system tables', () => {
 		const now = Date.now();
 
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-2', '/workspace/setnull', 'SetNull Space', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-2', 'setnull-space', '/workspace/setnull', 'SetNull Space', ${now}, ${now})`
 		);
 		db.exec(
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
@@ -348,8 +348,8 @@ describe('Migration 29: Space system tables', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-3', '/workspace/checks', 'Check Space', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-3', 'check-space', '/workspace/checks', 'Check Space', ${now}, ${now})`
 		);
 
 		// Valid status values
@@ -386,8 +386,8 @@ describe('Migration 29: Space system tables', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-4', '/workspace/priority', 'Priority Space', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-4', 'priority-space', '/workspace/priority', 'Priority Space', ${now}, ${now})`
 		);
 
 		expect(() => {
@@ -417,14 +417,14 @@ describe('Migration 29: Space system tables', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-u1', '/workspace/unique', 'Space U1', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-u1', 'space-u1', '/workspace/unique', 'Space U1', ${now}, ${now})`
 		);
 
 		expect(() => {
 			db.exec(
-				`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-				 VALUES ('sp-u2', '/workspace/unique', 'Space U2', ${now}, ${now})`
+				`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+				 VALUES ('sp-u2', 'space-u2', '/workspace/unique', 'Space U2', ${now}, ${now})`
 			);
 		}).toThrow();
 	});
@@ -439,8 +439,8 @@ describe('Migration 29: Space system tables', () => {
 		const now = Date.now();
 
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-step', '/workspace/stepnull', 'StepNull Space', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-step', 'stepnull-space', '/workspace/stepnull', 'StepNull Space', ${now}, ${now})`
 		);
 		db.exec(
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)

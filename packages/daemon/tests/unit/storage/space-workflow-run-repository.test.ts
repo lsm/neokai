@@ -21,7 +21,11 @@ describe('SpaceWorkflowRunRepository', () => {
 		spaceRepo = new SpaceRepository(db as any);
 		repo = new SpaceWorkflowRunRepository(db as any);
 
-		const space = spaceRepo.createSpace({ workspacePath: '/workspace/test', name: 'Test' });
+		const space = spaceRepo.createSpace({
+			workspacePath: '/workspace/test',
+			slug: 'test',
+			name: 'Test',
+		});
 		spaceId = space.id;
 
 		// Insert a dummy workflow row to satisfy the FK

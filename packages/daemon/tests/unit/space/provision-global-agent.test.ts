@@ -104,9 +104,9 @@ function makeDb(): { db: BunDatabase; dir: string } {
 function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, '/tmp/workspace', `Space ${spaceId}`, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, '/tmp/workspace', `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
