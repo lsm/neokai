@@ -597,7 +597,7 @@ export function buildPlannerNodeAgentPrompt(): string {
 		`\`\`\`json\n` +
 			`send_message({\n` +
 			`  "target": "reviewer",\n` +
-			`  "text": "Plan PR is ready for review.",\n` +
+			`  "message": "Plan PR is ready for review.",\n` +
 			`  "data": {\n` +
 			`    "prUrl": "<PR URL>",\n` +
 			`    "prNumber": <PR number>\n` +
@@ -610,7 +610,7 @@ export function buildPlannerNodeAgentPrompt(): string {
 	);
 
 	// Step 5 — workflow context awareness
-	sections.push(`\n### Using workflow context (\`injectWorkflowContext\`)\n`);
+	sections.push(`\n### Step 5 — Aligning the plan with workflow steps\n`);
 	sections.push(
 		`When a \`## Workflow Structure\` section appears in your task message, use it to ` +
 			`align your plan with the declared workflow steps. Each step in the workflow ` +

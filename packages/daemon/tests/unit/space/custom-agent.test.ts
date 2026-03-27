@@ -1153,10 +1153,16 @@ describe('buildPlannerNodeAgentPrompt', () => {
 		expect(prompt).toContain('reviewer');
 	});
 
-	it('mentions injectWorkflowContext usage', () => {
+	it('send_message example uses "message" field (not "text")', () => {
 		const prompt = buildPlannerNodeAgentPrompt();
-		expect(prompt).toContain('injectWorkflowContext');
+		expect(prompt).toContain('"message"');
+		expect(prompt).not.toContain('"text"');
+	});
+
+	it('mentions workflow structure alignment (step 5)', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
 		expect(prompt).toContain('Workflow Structure');
+		expect(prompt).toContain('Step 5');
 	});
 });
 
