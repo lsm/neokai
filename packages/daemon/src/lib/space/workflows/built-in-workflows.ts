@@ -311,9 +311,9 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			agentId: 'qa',
 			instructions:
 				'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. ' +
-				'Always write an explicit result to qa-result-gate on every QA pass — do not assume the gate was reset. ' +
-				'Write "result: passed" if everything is green, or "result: failed" with details if issues are found. ' +
-				'Writing is required on every pass because qa-result-gate retains its previous value across cycles.',
+				'Write "result: passed" to qa-result-gate if everything is green, or ' +
+				'"result: failed" with a summary to qa-fail-gate if issues are found. ' +
+				'If QA fails, the coder will fix the issues and all reviewers must re-vote before QA runs again.',
 		},
 		{
 			id: V2_DONE_STEP,
@@ -346,11 +346,14 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		},
 		{
 			id: 'code-pr-gate',
-			description: 'Code has been implemented and a pull request has been opened',
+			description:
+				'Code has been implemented and a pull request has been opened. ' +
+				'resetOnCycle is false: the same PR is updated across fix cycles — coder pushes ' +
+				'new commits to the existing branch rather than opening a new PR each time.',
 			condition: { type: 'check', field: 'pr_url', op: 'exists' },
 			data: {},
 			allowedWriterRoles: ['coder'],
-			resetOnCycle: true,
+			resetOnCycle: false,
 		},
 		{
 			id: 'review-votes-gate',
@@ -380,12 +383,11 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			id: 'qa-result-gate',
 			description:
 				'QA verification has passed — tests, CI, and PR are green. ' +
-				'resetOnCycle is intentionally false: this gate is only referenced by the non-cyclic QA→Done ' +
-				'channel, so it never auto-resets. QA must write an explicit "result" on every pass.',
+				'Resets on each QA→Coding cycle so QA always starts from a clean state.',
 			condition: { type: 'check', field: 'result', op: '==', value: 'passed' },
 			data: {},
 			allowedWriterRoles: ['qa'],
-			resetOnCycle: false,
+			resetOnCycle: true,
 		},
 		{
 			id: 'qa-fail-gate',
