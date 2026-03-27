@@ -916,6 +916,123 @@ describe('RoomRuntime leader tools', () => {
 			expect(updatedTask!.status).toBe('in_progress');
 		});
 
+		it('should persist progress_summary alongside no_pr completion', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+			const summary = 'Investigated flaky CI. Root cause: stale lock file.';
+
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'CI investigation done',
+				no_pr: true,
+				progress_summary: summary,
+			});
+
+			const row = ctx.db
+				.prepare('SELECT metadata FROM session_groups WHERE id = ?')
+				.get(group.id) as { metadata: string };
+			const meta = JSON.parse(row.metadata);
+			expect(meta.leaderProgressSummary).toBe(summary);
+		});
+
+		it('should NOT emit goal.task.auto_completed for supervised goals', async () => {
+			// Default autonomyLevel is 'supervised'
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Supervised goal',
+				description: 'desc',
+			});
+			const task = await ctx.taskManager.createTask({
+				title: 'Research task',
+				description: 'Investigate',
+				assignedAgent: 'general',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, task.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			ctx.hub.emittedEvents.length = 0;
+
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Research done',
+				no_pr: true,
+			});
+
+			const autoEvents = ctx.hub.emittedEvents.filter(
+				(e) => e.event === 'goal.task.auto_completed'
+			);
+			expect(autoEvents).toHaveLength(0);
+		});
+
+		it('should work for coder-assigned tasks (not only general)', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'coder' });
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Config change committed directly',
+				no_pr: true,
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('completed');
+		});
+
+		it('should promote draft tasks when completing a planning task with no_pr', async () => {
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Plan with no_pr',
+				description: 'desc',
+			});
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+			const tasks = await ctx.taskManager.listTasks({ status: 'in_progress' });
+			const planTask = tasks.find((t) => t.taskType === 'planning')!;
+
+			// Create draft children (required by lifecycle gate)
+			const draft1 = await ctx.taskManager.createTask({
+				title: 'Impl auth',
+				description: 'desc',
+				status: 'draft',
+				createdByTaskId: planTask.id,
+			});
+			const draft2 = await ctx.taskManager.createTask({
+				title: 'Impl API',
+				description: 'desc',
+				status: 'draft',
+				createdByTaskId: planTask.id,
+			});
+
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Plan created',
+				no_pr: true,
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+
+			// Draft tasks should be promoted to pending
+			const updated1 = await ctx.taskManager.getTask(draft1.id);
+			const updated2 = await ctx.taskManager.getTask(draft2.id);
+			expect(updated1!.status).toBe('pending');
+			expect(updated2!.status).toBe('pending');
+		});
+
 		it('should emit goal.task.auto_completed with leader_no_pr for semi-autonomous goals', async () => {
 			// Create a semi-autonomous goal
 			const goal = await ctx.goalManager.createGoal({
