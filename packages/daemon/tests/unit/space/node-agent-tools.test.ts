@@ -17,13 +17,14 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
+import { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
 import {
 	createNodeAgentToolHandlers,
 	createNodeAgentMcpServer,
 	type NodeAgentToolsConfig,
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { ResolvedChannel, SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -217,6 +218,9 @@ function makeConfig(
 			injectedMessages.push({ sessionId, message });
 		},
 		taskManager: ctx.taskManager,
+		// New M1.3 fields — default to null/no-op so existing tests are unaffected
+		workflow: null,
+		gateDataRepo: new GateDataRepository(ctx.db),
 		...overrides,
 	};
 }

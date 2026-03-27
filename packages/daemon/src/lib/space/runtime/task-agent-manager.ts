@@ -60,6 +60,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type {
 	SubSessionFactory,
@@ -98,6 +99,8 @@ export interface TaskAgentManagerConfig {
 	taskRepo: SpaceTaskRepository;
 	/** Workflow run repository — reading and updating runs */
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
+	gateDataRepo: GateDataRepository;
 	/** DaemonHub — event bus for session state change subscriptions */
 	daemonHub: DaemonHub;
 	/** MessageHub — used to write SDK messages */
@@ -1317,6 +1320,11 @@ export class TaskAgentManager {
 			run?.config as Record<string, unknown> | undefined
 		);
 
+		// Load the workflow definition so node agents can access channel/gate metadata.
+		const workflow = run?.workflowId
+			? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
+			: null;
+
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myRole: role,
@@ -1331,6 +1339,8 @@ export class TaskAgentManager {
 				this.injectSubSessionMessage(targetSessionId, message),
 			taskManager,
 			daemonHub: this.config.daemonHub,
+			workflow,
+			gateDataRepo: this.config.gateDataRepo,
 		});
 	}
 }
