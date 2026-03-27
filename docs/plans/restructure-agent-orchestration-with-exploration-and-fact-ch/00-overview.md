@@ -56,7 +56,7 @@ Note: `plan-writer` keeps its existing name since it is already established in t
 
 ## Breaking Changes
 
-- **Plan-writer loses Task/TaskOutput/TaskStop tools**: The current plan-writer has Task tools and its prompt instructs it to "spawn Explore sub-agents." This is broken (sub-agents can't spawn sub-agents in the SDK). Removing these tools is intentional — the plan-writer now receives pre-gathered explorer and fact-checker findings as context. Existing tests (`planner-agent.test.ts` line 302-307, "has Task tool for spawning Explore sub-agents") must be updated to assert the opposite.
+- **Plan-writer loses Task/TaskOutput/TaskStop tools**: The current plan-writer has Task tools and its prompt instructs it to "spawn Explore sub-agents." This is broken (sub-agents can't spawn sub-agents in the SDK). Removing these tools is intentional — the plan-writer now receives pre-gathered explorer and fact-checker findings as context. Two existing tests must be updated to assert the opposite: (1) `planner-agent.test.ts` line 302-307, "has Task tool for spawning Explore sub-agents" in the `buildPlanWriterAgentDef` describe block, and (2) line 514 in the `createPlannerAgentInit` describe block which also asserts plan-writer has Task tools.
 
 ## Risks and Mitigations
 
@@ -70,4 +70,4 @@ Note: `plan-writer` keeps its existing name since it is already established in t
 
 ## Total Estimated Task Count
 
-17 tasks across 6 milestones
+18 tasks across 6 milestones

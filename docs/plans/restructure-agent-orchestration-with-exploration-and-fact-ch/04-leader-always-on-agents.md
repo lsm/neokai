@@ -32,7 +32,7 @@ Update the leader agent to always use the agent/agents pattern, even when no rev
 4. Always construct the Leader agent definition with `agent: 'Leader'`
 5. Always build agents map with: `Leader`, `leader-explorer`, `leader-fact-checker`, plus any reviewer agents, plus any helper agents from room config
 6. Embed `buildLeaderSystemPrompt()` in the Leader agent definition's `prompt` field (not in top-level `systemPrompt.append`), matching the existing agent/agents path behavior
-7. Update `buildLeaderSystemPrompt()` to always mention available built-in sub-agents (`leader-explorer`, `leader-fact-checker`) and any configured reviewers/helpers
+7. Update `buildLeaderSystemPrompt()` to always mention available built-in sub-agents (`leader-explorer`, `leader-fact-checker`) and any configured reviewers/helpers. Implementation approach: hardcode the built-in sub-agent names within the function (since they are always present), rather than passing them as a parameter. This matches the "always-on" semantics — unlike `buildCoderSystemPrompt()` which takes a names array, the leader prompt function already reads config internally
 8. Remove the "simple path" code that returns init without agent/agents
 9. Handle name collisions: if a user-configured helper has the same name as a built-in (`leader-explorer`, `leader-fact-checker`), prefix the user's helper with `custom-`
 

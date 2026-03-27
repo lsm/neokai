@@ -43,7 +43,7 @@ Verify that the room runtime correctly wires all restructured agents. Ensure the
 1. Review `room-runtime.ts` `startGoalAutonomous()` (around line 4120) — verify it calls `createCoderAgentInit()` and `createPlannerAgentInit()` correctly
 2. Review `room-runtime.ts` leader creation paths — verify they call `createLeaderAgentInit()` correctly
 3. Check if any code in room-runtime inspects `agentSubagents.worker` separately from the agent factory — if so, it may need updating
-4. Review `room-runtime.ts` lines 1304, 1420, 1553 where `agentSubagents` is directly accessed — verify these are for reviewer/leader config checks, not coder agent checks
+4. Review `room-runtime.ts` lines 1304, 1420, 1553 where `agentSubagents` is directly accessed — verify these are for reviewer/leader config checks, not coder agent checks. **Important:** Verify and document that `hasReviewers` (derived from `room.config.agentSubagents.leader`) checks user-configured reviewers only, not built-in `leader-explorer`/`leader-fact-checker` sub-agents. The gate logic (PR review requirement) should only depend on user intent, not on runtime agent map contents
 5. Add integration-style unit test: mock the room runtime's agent spawning and verify the correct init objects are produced for coder, planner, and leader agents
 6. Document any edge cases or assumptions found
 

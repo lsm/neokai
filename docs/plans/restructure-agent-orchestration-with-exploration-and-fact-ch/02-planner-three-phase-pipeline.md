@@ -132,7 +132,7 @@ Restructure the planner agent to use a 3-phase sequential pipeline: planner-expl
 1. Add tests for `buildPlannerExplorerAgentDef()` — verify tools, model, prompt, no Task tools
 2. Add tests for `buildPlannerFactCheckerAgentDef()` — verify tools are `['WebSearch', 'WebFetch']` only (no Read/Grep/Glob), model, prompt, no Task tools
 3. Update plan-writer prompt tests to verify no Explore sub-agent references
-4. **Update existing test** "has Task tool for spawning Explore sub-agents" (line 302-307) — change to assert that plan-writer does NOT have Task/TaskOutput/TaskStop tools
+4. **Update existing tests** that assert plan-writer has Task tools — there are two: "has Task tool for spawning Explore sub-agents" at line 302-307 in the `buildPlanWriterAgentDef` describe block, and a second test at line 514 in the `createPlannerAgentInit` describe block. Both must be updated to assert that plan-writer does NOT have Task/TaskOutput/TaskStop tools
 5. Update planner system prompt tests to verify 3-phase pipeline description and prompt construction template
 6. Update `createPlannerAgentInit` tests to verify agents map contains all four agents (Planner, `planner-explorer`, `planner-fact-checker`, `plan-writer`)
 7. Add test verifying none of the three sub-agents have Task tools
