@@ -66,11 +66,12 @@ function seedSpaceTask(
 	db.exec('PRAGMA foreign_keys = OFF');
 	db.prepare(
 		`INSERT INTO space_tasks
-         (id, space_id, title, description, status, priority, agent_name, completion_summary,
+         (id, space_id, task_number, title, description, status, priority, agent_name, completion_summary,
           workflow_run_id, workflow_node_id, depends_on, created_at, updated_at)
-         VALUES (?, ?, ?, '', ?, 'normal', ?, ?, ?, ?, '[]', ?, ?)`
+         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, ?, ?, '[]', ?, ?)`
 	).run(
 		id,
+		spaceId,
 		spaceId,
 		`Task for ${agentName}`,
 		status,

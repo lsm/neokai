@@ -146,6 +146,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		CREATE TABLE IF NOT EXISTS space_tasks (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
+			task_number INTEGER NOT NULL,
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'pending'
@@ -185,4 +186,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
 		)
 	`);
+
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
+	);
 }

@@ -465,4 +465,126 @@ describe('SpaceTaskRepository', () => {
 			expect(tasks.map((t) => t.title)).toEqual(['First', 'Second', 'Third']);
 		});
 	});
+
+	describe('taskNumber (numeric task IDs)', () => {
+		it('auto-assigns taskNumber starting at 1', () => {
+			const task = repo.createTask({ spaceId, title: 'First', description: '' });
+			expect(task.taskNumber).toBe(1);
+		});
+
+		it('auto-increments taskNumber within a space', () => {
+			const t1 = repo.createTask({ spaceId, title: 'A', description: '' });
+			const t2 = repo.createTask({ spaceId, title: 'B', description: '' });
+			const t3 = repo.createTask({ spaceId, title: 'C', description: '' });
+			expect(t1.taskNumber).toBe(1);
+			expect(t2.taskNumber).toBe(2);
+			expect(t3.taskNumber).toBe(3);
+		});
+
+		it('scopes taskNumber per space (two spaces get independent sequences)', () => {
+			const space2 = spaceRepo.createSpace({
+				workspacePath: '/workspace/test2',
+				name: 'Space 2',
+			});
+
+			const s1t1 = repo.createTask({ spaceId, title: 'S1-A', description: '' });
+			const s1t2 = repo.createTask({ spaceId, title: 'S1-B', description: '' });
+			const s2t1 = repo.createTask({ spaceId: space2.id, title: 'S2-A', description: '' });
+			const s2t2 = repo.createTask({ spaceId: space2.id, title: 'S2-B', description: '' });
+
+			expect(s1t1.taskNumber).toBe(1);
+			expect(s1t2.taskNumber).toBe(2);
+			expect(s2t1.taskNumber).toBe(1);
+			expect(s2t2.taskNumber).toBe(2);
+		});
+
+		it('leaves gaps when non-highest task is deleted', () => {
+			repo.createTask({ spaceId, title: 'A', description: '' });
+			const t2 = repo.createTask({ spaceId, title: 'B', description: '' });
+			repo.createTask({ spaceId, title: 'C', description: '' });
+			repo.deleteTask(t2.id);
+
+			// After deleting #2, next task gets MAX(1,3)+1 = 4, leaving a gap at #2
+			const t4 = repo.createTask({ spaceId, title: 'D', description: '' });
+			expect(t4.taskNumber).toBe(4);
+		});
+
+		it('is monotonically increasing (MAX+1 strategy)', () => {
+			const t1 = repo.createTask({ spaceId, title: 'A', description: '' });
+			const t2 = repo.createTask({ spaceId, title: 'B', description: '' });
+			expect(t1.taskNumber).toBeLessThan(t2.taskNumber);
+		});
+
+		it('enforces UNIQUE(space_id, task_number) constraint', () => {
+			repo.createTask({ spaceId, title: 'A', description: '' });
+			// Manually inserting a duplicate task_number should throw
+			expect(() => {
+				(db as any)
+					.prepare(
+						`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, depends_on, created_at, updated_at)
+						VALUES ('dup-id', ?, 1, 'Dup', '', 'pending', 'normal', '[]', ?, ?)`
+					)
+					.run(spaceId, Date.now(), Date.now());
+			}).toThrow();
+		});
+
+		it('taskNumber is returned by getTask', () => {
+			const created = repo.createTask({ spaceId, title: 'T', description: '' });
+			const fetched = repo.getTask(created.id);
+			expect(fetched!.taskNumber).toBe(1);
+		});
+
+		it('taskNumber is returned in list queries', () => {
+			repo.createTask({ spaceId, title: 'A', description: '' });
+			repo.createTask({ spaceId, title: 'B', description: '' });
+
+			const tasks = repo.listBySpace(spaceId);
+			const numbers = tasks.map((t) => t.taskNumber).sort();
+			expect(numbers).toEqual([1, 2]);
+		});
+	});
+
+	describe('getTaskByNumber', () => {
+		it('returns the correct task by (spaceId, taskNumber)', () => {
+			const t1 = repo.createTask({ spaceId, title: 'A', description: '' });
+			repo.createTask({ spaceId, title: 'B', description: '' });
+
+			const found = repo.getTaskByNumber(spaceId, 1);
+			expect(found).not.toBeNull();
+			expect(found!.id).toBe(t1.id);
+			expect(found!.taskNumber).toBe(1);
+		});
+
+		it('returns null for a non-existent taskNumber', () => {
+			repo.createTask({ spaceId, title: 'A', description: '' });
+			expect(repo.getTaskByNumber(spaceId, 999)).toBeNull();
+		});
+
+		it('returns null when taskNumber exists in a different space', () => {
+			repo.createTask({ spaceId, title: 'A', description: '' });
+
+			const space2 = spaceRepo.createSpace({
+				workspacePath: '/workspace/test3',
+				name: 'Space 3',
+			});
+			expect(repo.getTaskByNumber(space2.id, 1)).toBeNull();
+		});
+	});
+
+	describe('bulk task creation', () => {
+		it('assigns unique monotonically increasing taskNumbers for many tasks', () => {
+			// Repo-level createTask is synchronous (bun:sqlite), so this tests
+			// sequential bulk creation. Concurrent (Promise.all) tests live in
+			// space-task-manager.test.ts where createTask is async.
+			const tasks = Array.from({ length: 20 }, (_, i) =>
+				repo.createTask({ spaceId, title: `Task ${i}`, description: '' })
+			);
+
+			const numbers = tasks.map((t) => t.taskNumber);
+			const uniqueNumbers = new Set(numbers);
+			expect(uniqueNumbers.size).toBe(20);
+			expect(Math.min(...numbers)).toBe(1);
+			expect(Math.max(...numbers)).toBe(20);
+		});
+	});
 });

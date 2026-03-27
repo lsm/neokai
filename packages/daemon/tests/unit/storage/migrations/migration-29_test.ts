@@ -278,8 +278,8 @@ describe('Migration 29: Space system tables', () => {
 
 		// Insert a task
 		db.exec(
-			`INSERT INTO space_tasks (id, space_id, title, created_at, updated_at)
-			 VALUES ('task-1', 'sp-1', 'Task 1', ${now}, ${now})`
+			`INSERT INTO space_tasks (id, space_id, task_number, title, created_at, updated_at)
+			 VALUES ('task-1', 'sp-1', 1, 'Task 1', ${now}, ${now})`
 		);
 
 		// Note: space_session_groups and space_session_group_members were dropped by migration 60.
@@ -323,8 +323,8 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('wr-2', 'sp-2', 'wf-2', 'Run 2', ${now}, ${now})`
 		);
 		db.exec(
-			`INSERT INTO space_tasks (id, space_id, title, workflow_run_id, created_at, updated_at)
-			 VALUES ('task-2', 'sp-2', 'Task 2', 'wr-2', ${now}, ${now})`
+			`INSERT INTO space_tasks (id, space_id, task_number, title, workflow_run_id, created_at, updated_at)
+			 VALUES ('task-2', 'sp-2', 1, 'Task 2', 'wr-2', ${now}, ${now})`
 		);
 
 		// Delete the workflow run
@@ -353,6 +353,7 @@ describe('Migration 29: Space system tables', () => {
 		);
 
 		// Valid status values
+		let taskNum = 0;
 		for (const status of [
 			'draft',
 			'pending',
@@ -362,10 +363,11 @@ describe('Migration 29: Space system tables', () => {
 			'needs_attention',
 			'cancelled',
 		]) {
+			taskNum++;
 			expect(() => {
 				db.exec(
-					`INSERT INTO space_tasks (id, space_id, title, status, created_at, updated_at)
-					 VALUES ('t-${status}', 'sp-3', 'Task', '${status}', ${now}, ${now})`
+					`INSERT INTO space_tasks (id, space_id, task_number, title, status, created_at, updated_at)
+					 VALUES ('t-${status}', 'sp-3', ${taskNum}, 'Task', '${status}', ${now}, ${now})`
 				);
 			}).not.toThrow();
 		}
@@ -373,8 +375,8 @@ describe('Migration 29: Space system tables', () => {
 		// Invalid status
 		expect(() => {
 			db.exec(
-				`INSERT INTO space_tasks (id, space_id, title, status, created_at, updated_at)
-				 VALUES ('t-bad', 'sp-3', 'Task', 'invalid', ${now}, ${now})`
+				`INSERT INTO space_tasks (id, space_id, task_number, title, status, created_at, updated_at)
+				 VALUES ('t-bad', 'sp-3', ${taskNum + 1}, 'Task', 'invalid', ${now}, ${now})`
 			);
 		}).toThrow();
 	});
@@ -390,15 +392,15 @@ describe('Migration 29: Space system tables', () => {
 
 		expect(() => {
 			db.exec(
-				`INSERT INTO space_tasks (id, space_id, title, priority, created_at, updated_at)
-				 VALUES ('t-urgent', 'sp-4', 'Task', 'urgent', ${now}, ${now})`
+				`INSERT INTO space_tasks (id, space_id, task_number, title, priority, created_at, updated_at)
+				 VALUES ('t-urgent', 'sp-4', 1, 'Task', 'urgent', ${now}, ${now})`
 			);
 		}).not.toThrow();
 
 		expect(() => {
 			db.exec(
-				`INSERT INTO space_tasks (id, space_id, title, priority, created_at, updated_at)
-				 VALUES ('t-bad-pri', 'sp-4', 'Task', 'extreme', ${now}, ${now})`
+				`INSERT INTO space_tasks (id, space_id, task_number, title, priority, created_at, updated_at)
+				 VALUES ('t-bad-pri', 'sp-4', 2, 'Task', 'extreme', ${now}, ${now})`
 			);
 		}).toThrow();
 	});
@@ -449,8 +451,8 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('step-s1', 'wf-step', 'Step 1', 0, ${now}, ${now})`
 		);
 		db.exec(
-			`INSERT INTO space_tasks (id, space_id, title, workflow_node_id, created_at, updated_at)
-			 VALUES ('task-step', 'sp-step', 'Task Step', 'step-s1', ${now}, ${now})`
+			`INSERT INTO space_tasks (id, space_id, task_number, title, workflow_node_id, created_at, updated_at)
+			 VALUES ('task-step', 'sp-step', 1, 'Task Step', 'step-s1', ${now}, ${now})`
 		);
 
 		// Delete the workflow node

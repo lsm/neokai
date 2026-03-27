@@ -43,10 +43,12 @@ function makeSpace(id = 'space-1'): Space {
 	};
 }
 
+let _taskCounter = 0;
 function makeTask(id: string, status = 'pending', workflowRunId?: string): SpaceTask {
 	return {
 		id,
 		spaceId: 'space-1',
+		taskNumber: ++_taskCounter,
 		title: `Task ${id}`,
 		description: '',
 		status: status as SpaceTask['status'],

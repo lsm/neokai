@@ -68,12 +68,13 @@ function seedTask(
 	const now = Date.now();
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, title, description, status, priority, depends_on,
+       (id, space_id, task_number, title, description, status, priority, depends_on,
         task_agent_session_id, started_at, workflow_run_id, workflow_node_id,
         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'normal', '[]', ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, ?, ?, 'normal', '[]', ?, ?, ?, ?, ?, ?)`
 	).run(
 		id,
+		spaceId,
 		spaceId,
 		`Task ${id}`,
 		'',

@@ -30,6 +30,7 @@ const NOW = Date.now();
 const mockTaskWithSession: SpaceTask = {
 	id: 'task-1',
 	spaceId: 'space-1',
+	taskNumber: 1,
 	title: 'Test Task',
 	description: 'A task description',
 	status: 'in_progress',
@@ -43,6 +44,7 @@ const mockTaskWithSession: SpaceTask = {
 const mockTaskWithoutSession: SpaceTask = {
 	id: 'task-2',
 	spaceId: 'space-1',
+	taskNumber: 2,
 	title: 'Pending Task',
 	description: 'Not yet spawned',
 	status: 'pending',

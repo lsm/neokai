@@ -24,32 +24,49 @@ export class SpaceTaskRepository {
 		const id = generateUUID();
 		const now = Date.now();
 
-		const stmt = this.db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, agent_name, completion_summary, workflow_run_id, workflow_node_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		);
+		// Wrap SELECT MAX + INSERT in an explicit transaction to prevent concurrent
+		// requests from computing the same task_number. SQLite serialises write
+		// transactions, so the UNIQUE index is the safety net, but the transaction
+		// ensures correctness without relying on constraint errors.
+		const insertTx = this.db.transaction(() => {
+			const nextNumber = (
+				this.db
+					.prepare(
+						`SELECT COALESCE(MAX(task_number), 0) + 1 AS next FROM space_tasks WHERE space_id = ?`
+					)
+					.get(params.spaceId) as { next: number }
+			).next;
 
-		stmt.run(
-			id,
-			params.spaceId,
-			params.title,
-			params.description,
-			params.status ?? 'pending',
-			params.priority ?? 'normal',
-			params.taskType ?? null,
-			params.assignedAgent ?? 'coder',
-			params.customAgentId ?? null,
-			params.agentName ?? null,
-			null,
-			params.workflowRunId ?? null,
-			params.workflowNodeId ?? null,
-			params.createdByTaskId ?? null,
-			params.goalId ?? null,
-			JSON.stringify(params.dependsOn ?? []),
-			params.taskAgentSessionId ?? null,
-			now,
-			now
-		);
+			this.db
+				.prepare(
+					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, task_type, assigned_agent, custom_agent_id, agent_name, completion_summary, workflow_run_id, workflow_node_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					id,
+					params.spaceId,
+					nextNumber,
+					params.title,
+					params.description,
+					params.status ?? 'pending',
+					params.priority ?? 'normal',
+					params.taskType ?? null,
+					params.assignedAgent ?? 'coder',
+					params.customAgentId ?? null,
+					params.agentName ?? null,
+					null,
+					params.workflowRunId ?? null,
+					params.workflowNodeId ?? null,
+					params.createdByTaskId ?? null,
+					params.goalId ?? null,
+					JSON.stringify(params.dependsOn ?? []),
+					params.taskAgentSessionId ?? null,
+					now,
+					now
+				);
+		});
+
+		insertTx();
 
 		return this.getTask(id)!;
 	}
@@ -334,6 +351,17 @@ export class SpaceTaskRepository {
 	}
 
 	/**
+	 * Get a task by its space-scoped numeric ID
+	 */
+	getTaskByNumber(spaceId: string, taskNumber: number): SpaceTask | null {
+		const row = this.db
+			.prepare(`SELECT * FROM space_tasks WHERE space_id = ? AND task_number = ?`)
+			.get(spaceId, taskNumber) as Record<string, unknown> | undefined;
+		if (!row) return null;
+		return this.rowToSpaceTask(row);
+	}
+
+	/**
 	 * Get draft tasks created by a specific planning task
 	 */
 	getDraftTasksByCreator(createdByTaskId: string): SpaceTask[] {
@@ -352,6 +380,7 @@ export class SpaceTaskRepository {
 		return {
 			id: row.id as string,
 			spaceId: row.space_id as string,
+			taskNumber: (row.task_number as number | null) ?? 0,
 			title: row.title as string,
 			description: (row.description as string) ?? '',
 			status: row.status as SpaceTask['status'],

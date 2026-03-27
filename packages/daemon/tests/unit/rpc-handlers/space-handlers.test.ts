@@ -46,6 +46,7 @@ const mockSpace: Space = {
 const mockTask: SpaceTask = {
 	id: 'task-1',
 	spaceId: 'space-1',
+	taskNumber: 1,
 	title: 'Test Task',
 	description: 'desc',
 	status: 'pending',
