@@ -278,7 +278,10 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			agentId: 'reviewer',
 			instructions:
 				'Review the pull request for correctness, style, and test coverage. ' +
-				'Write your vote to review-votes-gate and review-reject-gate (field: votes, key: your name, value: "approved" or "rejected").',
+				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+				'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
+				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
 		},
 		{
 			id: V2_REVIEWER2_STEP,
@@ -286,7 +289,10 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			agentId: 'reviewer',
 			instructions:
 				'Review the pull request for correctness, style, and test coverage. ' +
-				'Write your vote to review-votes-gate and review-reject-gate (field: votes, key: your name, value: "approved" or "rejected").',
+				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+				'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
+				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
 		},
 		{
 			id: V2_REVIEWER3_STEP,
@@ -294,7 +300,10 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			agentId: 'reviewer',
 			instructions:
 				'Review the pull request for correctness, style, and test coverage. ' +
-				'Write your vote to review-votes-gate and review-reject-gate (field: votes, key: your name, value: "approved" or "rejected").',
+				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+				'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
+				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
 		},
 		{
 			id: V2_QA_STEP,
@@ -302,7 +311,9 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			agentId: 'qa',
 			instructions:
 				'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. ' +
-				'Write to qa-result-gate: "result: passed" if everything is green, or "result: failed" with details if issues are found.',
+				'Always write an explicit result to qa-result-gate on every QA pass — do not assume the gate was reset. ' +
+				'Write "result: passed" if everything is green, or "result: failed" with details if issues are found. ' +
+				'Writing is required on every pass because qa-result-gate retains its previous value across cycles.',
 		},
 		{
 			id: V2_DONE_STEP,
@@ -343,7 +354,11 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		},
 		{
 			id: 'review-votes-gate',
-			description: 'All three reviewers have approved the code changes',
+			description:
+				'All three reviewers have approved the code changes. ' +
+				'Agents must read the current votes map first, add their entry, then write the full map back ' +
+				'(read-merge-write) — write_gate performs a shallow merge so writing only your own entry ' +
+				"would overwrite all other reviewers' votes.",
 			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
 			data: {},
 			allowedWriterRoles: ['reviewer'],
@@ -351,7 +366,11 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		},
 		{
 			id: 'review-reject-gate',
-			description: 'At least one reviewer has rejected the code changes',
+			description:
+				'At least one reviewer has rejected the code changes. ' +
+				'Agents must read the current votes map first, add their entry, then write the full map back ' +
+				'(read-merge-write) — write_gate performs a shallow merge so writing only your own entry ' +
+				"would overwrite all other reviewers' votes.",
 			condition: { type: 'count', field: 'votes', matchValue: 'rejected', min: 1 },
 			data: {},
 			allowedWriterRoles: ['reviewer'],
@@ -359,7 +378,10 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		},
 		{
 			id: 'qa-result-gate',
-			description: 'QA verification has passed — tests, CI, and PR are green',
+			description:
+				'QA verification has passed — tests, CI, and PR are green. ' +
+				'resetOnCycle is intentionally false: this gate is only referenced by the non-cyclic QA→Done ' +
+				'channel, so it never auto-resets. QA must write an explicit "result" on every pass.',
 			condition: { type: 'check', field: 'result', op: '==', value: 'passed' },
 			data: {},
 			allowedWriterRoles: ['qa'],
@@ -510,7 +532,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 }
 
 /**
- * Seeds all three built-in workflow templates into the given space.
+ * Seeds all four built-in workflow templates into the given space.
  *
  * Each template step's `agentId` placeholder (e.g., `'planner'`, `'coder'`,
  * `'general'`) is resolved to a real SpaceAgent UUID via `resolveAgentId`.

@@ -444,6 +444,33 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		}
 	});
 
+	test('reviewer nodes instruct read-merge-write for votes (not bare write)', () => {
+		for (const name of ['Reviewer 1', 'Reviewer 2', 'Reviewer 3']) {
+			const node = CODING_WORKFLOW_V2.nodes.find((n) => n.name === name)!;
+			expect(node.instructions).toContain('read_gate');
+			expect(node.instructions).toContain('write_gate');
+			// Must warn against writing only own entry to prevent overwriting peers
+			expect(node.instructions).toContain('overwriting');
+		}
+	});
+
+	test('QA node instructions require explicit result write on every pass', () => {
+		const qa = CODING_WORKFLOW_V2.nodes.find((n) => n.name === 'QA')!;
+		expect(qa.instructions).toContain('every pass');
+		expect(qa.instructions).toMatch(/do not assume/i);
+	});
+
+	test('review-votes-gate description mentions read-merge-write requirement', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'review-votes-gate')!;
+		expect(gate.description).toContain('read-merge-write');
+	});
+
+	test('qa-result-gate description explains why resetOnCycle is false', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'qa-result-gate')!;
+		expect(gate.description).toContain('resetOnCycle');
+		expect(gate.description).toMatch(/intentionally false/i);
+	});
+
 	test('does not reference leader', () => {
 		expect(hasLeaderAgentId(CODING_WORKFLOW_V2)).toBe(false);
 	});
