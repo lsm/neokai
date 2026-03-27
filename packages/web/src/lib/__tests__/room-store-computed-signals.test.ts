@@ -1,6 +1,6 @@
 /**
  * Tests for RoomStore computed signals:
- * - tasksByGoalId: Map of goal ID → linked TaskSummary[]
+ * - tasksByGoalId: Map of goal ID → linked NeoTask[]
  * - orphanTasks: Tasks not linked to any goal
  * - orphanTasksActive: Orphan tasks with draft/pending/in_progress
  * - orphanTasksReview: Orphan tasks with review/needs_attention/rate_limited/usage_limited
@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { TaskSummary, TaskStatus, RoomGoal } from '@neokai/shared';
+import type { NeoTask, TaskStatus, RoomGoal } from '@neokai/shared';
 
 // -------------------------------------------------------
 // Mocks
@@ -53,8 +53,19 @@ vi.mock('../connection-manager.ts', () => ({
 // Helpers
 // -------------------------------------------------------
 
-function makeTask(id: string, status: TaskStatus, title = `Task ${id}`): TaskSummary {
-	return { id, title, status, priority: 'normal', progress: 0, dependsOn: [], updatedAt: 0 };
+function makeTask(id: string, status: TaskStatus, title = `Task ${id}`): NeoTask {
+	return {
+		id,
+		roomId: 'room-1',
+		title,
+		status,
+		priority: 'normal',
+		description: '',
+		progress: 0,
+		dependsOn: [],
+		createdAt: 0,
+		updatedAt: 0,
+	};
 }
 
 function makeGoal(id: string, linkedTaskIds: string[] = []): RoomGoal {
