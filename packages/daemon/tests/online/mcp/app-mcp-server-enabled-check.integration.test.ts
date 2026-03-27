@@ -127,7 +127,7 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
 		expect(server!.enabled).toBe(false);
 	}, 60_000);
 
-	test('normal session creation succeeds with globally-enabled skill + AppMcpServer', async () => {
+	test('normal session gets enabled AppMcpServer injected into its skill MCP servers', async () => {
 		// Create an AppMcpServer with enabled=true
 		const serverResult = (await daemon.messageHub.request('mcp.registry.create', {
 			name: 'test-echo-server-3',
@@ -149,30 +149,61 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
 			enabled: true,
 		});
 
-		// Create a normal session — QueryOptionsBuilder will inject the MCP server
+		// Create a normal session
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			title: 'App MCP Server Test Session',
 		})) as { sessionId: string };
 		daemon.trackSession(createResult.sessionId);
-
-		// Session creation should succeed
 		expect(createResult.sessionId).toBeString();
 
-		// Verify session is accessible and the skill registry state is correct
-		const skillListResult = (await daemon.messageHub.request('skill.list', {})) as {
-			skills: AppSkill[];
-		};
-		const injectedSkill = skillListResult.skills.find((s) => s.name === 'test-echo-skill-3');
-		expect(injectedSkill).toBeDefined();
-		expect(injectedSkill!.enabled).toBe(true);
+		// Directly verify that the session's QueryOptionsBuilder includes the MCP server
+		// from the enabled skill + enabled AppMcpServer
+		const skillMcpResult = (await daemon.messageHub.request('session.getSkillMcpServers', {
+			sessionId: createResult.sessionId,
+		})) as { servers: Record<string, unknown> };
+		expect(skillMcpResult.servers['test-echo-skill-3']).toBeDefined();
+		expect((skillMcpResult.servers['test-echo-skill-3'] as { command: string }).command).toBe(
+			'echo'
+		);
+	}, 60_000);
 
-		// Verify AppMcpServer is enabled (so QueryOptionsBuilder will include it)
-		const registryResult = (await daemon.messageHub.request('mcp.registry.list', {})) as {
-			servers: AppMcpServer[];
-		};
-		const registryServer = registryResult.servers.find((s) => s.id === serverId);
-		expect(registryServer).toBeDefined();
-		expect(registryServer!.enabled).toBe(true);
+	test('normal session does not inject disabled AppMcpServer even when skill is enabled', async () => {
+		// Create an AppMcpServer initially enabled, then disable it
+		const serverResult = (await daemon.messageHub.request('mcp.registry.create', {
+			name: 'test-echo-server-4',
+			description: 'Echo server to be disabled',
+			sourceType: 'stdio',
+			command: 'echo',
+			args: ['disabled'],
+			enabled: true,
+		})) as { server: AppMcpServer };
+		const serverId = serverResult.server.id;
+
+		// Create + enable skill referencing this server
+		await daemon.messageHub.request('skill.create', {
+			name: 'test-echo-skill-4',
+			displayName: 'Test Echo Skill 4',
+			description: 'Skill backed by disabled server',
+			sourceType: 'mcp_server',
+			config: { type: 'mcp_server', appMcpServerId: serverId },
+			enabled: true,
+		});
+
+		// Disable the AppMcpServer — skill stays enabled
+		await daemon.messageHub.request('mcp.registry.setEnabled', { id: serverId, enabled: false });
+
+		// Create a normal session
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath,
+			title: 'Disabled App MCP Server Test Session',
+		})) as { sessionId: string };
+		daemon.trackSession(createResult.sessionId);
+
+		// The disabled AppMcpServer must not appear in the session's skill MCP servers
+		const skillMcpResult = (await daemon.messageHub.request('session.getSkillMcpServers', {
+			sessionId: createResult.sessionId,
+		})) as { servers: Record<string, unknown> };
+		expect(skillMcpResult.servers['test-echo-skill-4']).toBeUndefined();
 	}, 60_000);
 });

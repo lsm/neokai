@@ -73,6 +73,15 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
+	 * Return MCP servers contributed by enabled skills for this session.
+	 * Skips skills that are room-disabled and AppMcpServer entries that are disabled.
+	 * Useful for inspecting effective skill injection without running a full build.
+	 */
+	getSkillMcpServers(): Record<string, McpServerConfig> {
+		return this.getMcpServersFromSkills();
+	}
+
+	/**
 	 * Build complete SDK query options
 	 *
 	 * Maps all SessionConfig (which extends SDKConfig) options to SDK Options
