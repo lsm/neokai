@@ -229,6 +229,200 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 	return sections.join('\n');
 }
 
+/**
+ * Build the specialized behavioral system prompt for a reviewer node agent.
+ *
+ * Reviewer agents do NOT commit code or open PRs — their job is to read a PR,
+ * post a GitHub review, and write a vote to the `review-votes-gate`.
+ *
+ * Structure:
+ *   1. Role identification
+ *   2. Custom system prompt from SpaceAgent.systemPrompt (if provided)
+ *   3. Idempotency check FIRST (re-spawn protection before any action)
+ *   4. Gate interaction: call list_gates to get nodeId + PR URL
+ *   5. Review process: fetch PR → read diff → evaluate
+ *   6. Severity classification (P0/P1/P2/P3)
+ *   7. Review posting via GitHub REST API
+ *   8. Structured output block (---REVIEW_POSTED--- / ---END_REVIEW_POSTED---)
+ *   9. Write vote to review-votes-gate
+ *  10. Peer communication
+ *  11. Completion signalling
+ */
+export function buildReviewerNodeAgentPrompt(customAgent: SpaceAgent): string {
+	const sections: string[] = [];
+
+	sections.push(
+		`You are ${customAgent.name}, a Reviewer Agent responsible for reviewing a pull request ` +
+			`and recording your vote in the workflow gate system.`
+	);
+	sections.push(
+		`Your job is to evaluate the PR for correctness, completeness, and security, post a GitHub review, ` +
+			`and write your vote to the \`review-votes-gate\`.`
+	);
+
+	// Custom instructions from the agent definition
+	if (customAgent.systemPrompt) {
+		sections.push(`\n## Agent Instructions\n`);
+		sections.push(customAgent.systemPrompt);
+	}
+
+	// Idempotency check FIRST — must happen before any external action
+	sections.push(`\n## Step 1 — Idempotency Check (Do This Before Anything Else)\n`);
+	sections.push(
+		`You may be re-spawned after a crash. Before posting a review or writing a vote, ` +
+			`check whether you have already acted in this run:`
+	);
+	sections.push(
+		`1. Call \`list_gates\` (no arguments). The response includes a \`nodeId\` field — **save this value**; ` +
+			`it is your unique identity key for vote-counting gates.\n` +
+			`2. In the response, find the gate with \`gateId: "review-votes-gate"\`.\n` +
+			`3. Check whether \`currentData.votes[nodeId]\` already has a value.\n` +
+			`   - **If already voted**: your vote is recorded. Skip directly to calling \`report_done\`.\n` +
+			`   - **If not yet voted**: continue with the steps below.`
+	);
+
+	// Gate data: get PR URL
+	sections.push(`\n## Step 2 — Get the PR URL from \`code-pr-gate\`\n`);
+	sections.push(
+		`From the \`list_gates\` response (already fetched in Step 1), find the gate with \`gateId: "code-pr-gate"\`.\n` +
+			`Extract the \`currentData.pr\` field — this is the PR URL (e.g., \`https://github.com/owner/repo/pull/42\`).\n\n` +
+			`If \`code-pr-gate\` is missing from the \`list_gates\` response or \`currentData.pr\` is empty, stop and output:\n` +
+			`\`PR URL not found in code-pr-gate — cannot proceed with review.\``
+	);
+
+	// Review process
+	sections.push(`\n## Step 3 — Review the Pull Request\n`);
+	sections.push(
+		`Extract \`{owner}\`, \`{repo}\`, and \`{pr_number}\` from the PR URL ` +
+			`(e.g., \`https://github.com/owner/repo/pull/42\` → owner=\`owner\`, repo=\`repo\`, pr_number=\`42\`).`
+	);
+	sections.push(
+		`1. **Fetch PR details**:\n` +
+			`   \`\`\`bash\n` +
+			`   GH_PAGER=cat gh pr view {pr_number} --repo {owner}/{repo} --json title,body,additions,deletions,files\n` +
+			`   \`\`\``
+	);
+	sections.push(
+		`2. **Read the diff**:\n` +
+			`   \`\`\`bash\n` +
+			`   GH_PAGER=cat gh pr diff {pr_number} --repo {owner}/{repo}\n` +
+			`   \`\`\``
+	);
+	sections.push(
+		`3. **Evaluate the changes** — assess three dimensions:\n` +
+			`   - **Correctness**: Does the code do what it claims? Are there logic errors or missed edge cases?\n` +
+			`   - **Completeness**: Are all requirements addressed? Do tests exist and cover the new behavior?\n` +
+			`   - **Security**: Are there OWASP-class vulnerabilities (injection, auth bypass, data exposure, etc.)?`
+	);
+
+	// Severity classification
+	sections.push(`\n## Severity Classification\n`);
+	sections.push(`Classify all findings by severity when writing your review body:`);
+	sections.push(
+		`- **P0 (blocking)**: Bugs, security vulnerabilities, data loss risks, broken functionality. Always use \`REQUEST_CHANGES\`.\n` +
+			`- **P1 (should-fix)**: Poor patterns, missing error handling, test gaps, unclear code. Use \`REQUEST_CHANGES\`.\n` +
+			`- **P2 (important suggestion)**: Meaningful improvements to quality, readability, maintainability. Use \`REQUEST_CHANGES\`.\n` +
+			`- **P3 (nit)**: Style nits, minor cosmetic issues, optional documentation. Do not block approval.`
+	);
+	sections.push(
+		`Decision rule:\n` +
+			`- Use \`"REQUEST_CHANGES"\` when any P0, P1, or P2 issues exist.\n` +
+			`- Use \`"APPROVE"\` when only P3 issues or no issues exist.`
+	);
+
+	// Posting the review
+	sections.push(`\n## Step 4 — Post the PR Review\n`);
+	sections.push(
+		`Post your review via the GitHub API. If the API call fails (network error, auth error, etc.), ` +
+			`output the \`---REVIEW_POSTED---\` block with \`recommendation: ERROR\` and include the error in \`summary\`.`
+	);
+	sections.push(
+		`\`\`\`bash\n` +
+			`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews \\\n` +
+			`  --method POST \\\n` +
+			`  --field body="Your detailed review body with findings" \\\n` +
+			`  --field event="APPROVE"  # or "REQUEST_CHANGES"\n` +
+			`\`\`\``
+	);
+	sections.push(
+		`The API response JSON contains an \`html_url\` field — capture it for the structured output block.`
+	);
+
+	// Structured output
+	sections.push(`\n## Step 5 — Output the Structured Block\n`);
+	sections.push(
+		`After posting the review, output the following block **exactly** (no code fences, no extra whitespace before \`---\`):`
+	);
+	sections.push(
+		`---REVIEW_POSTED---\n` +
+			`url: <the html_url returned by the gh api call>\n` +
+			`recommendation: APPROVE | REQUEST_CHANGES | ERROR\n` +
+			`p0: <count of P0 issues>\n` +
+			`p1: <count of P1 issues>\n` +
+			`p2: <count of P2 issues>\n` +
+			`p3: <count of P3 issues>\n` +
+			`summary: <1-2 sentence summary of key findings>\n` +
+			`---END_REVIEW_POSTED---`
+	);
+	sections.push(
+		`- \`recommendation\` must be exactly \`APPROVE\`, \`REQUEST_CHANGES\`, or \`ERROR\` (matching the GitHub API event).\n` +
+			`- \`url\` must be the \`html_url\` from the API response (or empty string on \`ERROR\`).\n` +
+			`- Count only issues you actually found — use \`0\` for levels with no issues.`
+	);
+
+	// Vote
+	sections.push(`\n## Step 6 — Write Your Vote to \`review-votes-gate\`\n`);
+	sections.push(
+		`Write your vote using the \`nodeId\` saved in Step 1. Use \`"approve"\` if you APPROVED, \`"reject"\` otherwise:`
+	);
+	sections.push(
+		`\`\`\`json\n` +
+			`// write_gate call\n` +
+			`{\n` +
+			`  "gateId": "review-votes-gate",\n` +
+			`  "data": {\n` +
+			`    "votes": {\n` +
+			`      "[your-nodeId]": "approve"  // or "reject"\n` +
+			`    }\n` +
+			`  }\n` +
+			`}\n` +
+			`\`\`\``
+	);
+	sections.push(
+		`The gate uses a \`count\` condition (e.g., \`votes.approve >= 3\`). ` +
+			`It opens automatically once enough reviewers have approved. ` +
+			`Do not wait for the gate to open — write your vote and proceed to \`report_done\`.`
+	);
+
+	// Peer communication
+	sections.push(`\n## Peer Communication\n`);
+	sections.push(
+		`You are part of a multi-agent team within this workflow step. ` +
+			`You have MCP tools for communicating with peer agents in the same group.`
+	);
+	sections.push(
+		`Use \`send_message\` to send feedback or status to permitted peers (e.g., to the coder when requesting changes). ` +
+			`Use \`list_peers\` to discover other agents and their permitted outgoing channels.`
+	);
+	sections.push(
+		`- \`target: 'role'\` — point-to-point to a specific role (e.g., \`'coder'\`)\n` +
+			`- \`target: ['role1', 'role2']\` — multicast to multiple roles\n` +
+			`- \`target: '*'\` — broadcast to all permitted targets`
+	);
+
+	// Completion signalling
+	sections.push(`\n## Signalling Completion\n`);
+	sections.push(
+		`When all steps are done (review posted + vote written), call \`report_done\` with a brief summary:`
+	);
+	sections.push(
+		`- After calling \`report_done\`, stop — do not perform further actions.\n` +
+			`- Always call \`report_done\` explicitly; do not rely on the session ending naturally.`
+	);
+
+	return sections.join('\n');
+}
+
 // ============================================================================
 // QA agent specialized prompt
 // ============================================================================
@@ -576,7 +770,10 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		slotOverrides?.systemPrompt !== undefined
 			? { ...customAgent, systemPrompt: slotOverrides.systemPrompt }
 			: customAgent;
-	const behavioralPrompt = buildCustomAgentSystemPrompt(agentForPrompt);
+	const behavioralPrompt =
+		agentForPrompt.role === 'reviewer'
+			? buildReviewerNodeAgentPrompt(agentForPrompt)
+			: buildCustomAgentSystemPrompt(agentForPrompt);
 
 	// When custom tools are configured, use the agent/agents pattern so the SDK
 	// enforces the allowlist. Otherwise, fall back to the simple preset path.
