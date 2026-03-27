@@ -43,6 +43,8 @@ export interface SpaceConfig {
 export interface Space {
 	/** Unique identifier */
 	id: string;
+	/** URL-safe, human-readable identifier (unique, auto-generated from name) */
+	slug: string;
 	/** Absolute path to the workspace this Space operates on (required, unique) */
 	workspacePath: string;
 	/** Human-readable name */

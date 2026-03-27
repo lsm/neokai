@@ -257,6 +257,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 62: Add task_number column to space_tasks for human-friendly numeric IDs.
 	// Scoped per space via UNIQUE(space_id, task_number). Backfills existing rows.
 	runMigration62(db);
+
+	// Migration 63: Add slug column to spaces table for human-readable URL identifiers.
+	// Auto-generates slugs from existing space names and adds a UNIQUE index.
+	runMigration63(db);
 }
 
 /**
@@ -4069,4 +4073,76 @@ function runMigration61(db: BunDatabase): void {
 		db.exec(`ROLLBACK`);
 		throw err;
 	}
+}
+
+/**
+ * Migration 63: Add slug column to spaces table.
+ *
+ * - Adds `slug TEXT` column (nullable initially for backfill)
+ * - Backfills existing spaces with slugs derived from their name
+ * - Adds UNIQUE index on slug
+ * - Sets column to NOT NULL via table rebuild after backfill
+ */
+export function runMigration63(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+
+	// Check if slug column already exists (idempotent guard)
+	const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{ name: string }>;
+	if (tableInfo.some((col) => col.name === 'slug')) return;
+
+	// Step 1: Add nullable slug column
+	db.exec(`ALTER TABLE spaces ADD COLUMN slug TEXT`);
+
+	// Step 2: Backfill slugs from existing space names
+	const rows = db.prepare('SELECT id, name FROM spaces').all() as Array<{
+		id: string;
+		name: string;
+	}>;
+
+	// Collect assigned slugs to avoid collisions during backfill
+	const usedSlugs = new Set<string>();
+	const updateStmt = db.prepare('UPDATE spaces SET slug = ? WHERE id = ? AND slug IS NULL');
+
+	for (const row of rows) {
+		const base = generateBaseMigrationSlug(row.name);
+		let slug = base;
+		let counter = 2;
+		while (usedSlugs.has(slug)) {
+			slug = `${base}-${counter}`;
+			counter++;
+		}
+		usedSlugs.add(slug);
+		updateStmt.run(slug, row.id);
+	}
+
+	// Step 3: Add unique index
+	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
+}
+
+/**
+ * Inline slugify for migration — avoids importing from slug.ts which may change.
+ * Mirrors the same rules: lowercase, replace non-alphanumeric with hyphens,
+ * collapse, strip, truncate to 60 chars.
+ */
+function generateBaseMigrationSlug(input: string): string {
+	const fallback = 'unnamed-space';
+	if (!input || !input.trim()) return fallback;
+
+	let slug = input
+		.toLowerCase()
+		.replace(/[^a-z0-9\s-]/g, '-')
+		.replace(/[\s]+/g, '-')
+		.replace(/-{2,}/g, '-')
+		.replace(/^-+/, '')
+		.replace(/-+$/, '');
+
+	if (!slug) return fallback;
+
+	if (slug.length > 60) {
+		const truncated = slug.slice(0, 60);
+		const lastHyphen = truncated.lastIndexOf('-');
+		slug = lastHyphen > 0 ? truncated.slice(0, lastHyphen) : truncated.replace(/-+$/, '');
+	}
+
+	return slug;
 }

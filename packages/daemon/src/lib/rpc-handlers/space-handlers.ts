@@ -107,17 +107,46 @@ export function setupSpaceHandlers(
 	});
 
 	// ─── space.get ──────────────────────────────────────────────────────────────
+	// Accepts either { id } or { slug } to look up a space.
 	messageHub.onRequest('space.get', async (data) => {
-		const params = data as { id: string };
+		const params = data as { id?: string; slug?: string };
+
+		if (!params.id && !params.slug) {
+			throw new Error('id or slug is required');
+		}
+
+		let space;
+		if (params.id) {
+			space = await spaceManager.getSpace(params.id);
+		} else {
+			space = await spaceManager.getSpaceBySlug(params.slug!);
+		}
+
+		if (!space) {
+			throw new Error(`Space not found: ${params.id ?? params.slug}`);
+		}
+
+		return space;
+	});
+
+	// ─── space.updateSlug ──────────────────────────────────────────────────────
+	messageHub.onRequest('space.updateSlug', async (data) => {
+		const params = data as { id: string; slug: string };
 
 		if (!params.id) {
 			throw new Error('id is required');
 		}
-
-		const space = await spaceManager.getSpace(params.id);
-		if (!space) {
-			throw new Error(`Space not found: ${params.id}`);
+		if (!params.slug) {
+			throw new Error('slug is required');
 		}
+
+		const space = await spaceManager.updateSlug(params.id, params.slug);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
 
 		return space;
 	});
@@ -205,20 +234,27 @@ export function setupSpaceHandlers(
 	});
 
 	// ─── space.overview ─────────────────────────────────────────────────────────
+	// Accepts either { id } or { slug } to look up the space.
 	messageHub.onRequest('space.overview', async (data) => {
-		const params = data as { id: string };
+		const params = data as { id?: string; slug?: string };
 
-		if (!params.id) {
-			throw new Error('id is required');
+		if (!params.id && !params.slug) {
+			throw new Error('id or slug is required');
 		}
 
-		const space = await spaceManager.getSpace(params.id);
+		let space;
+		if (params.id) {
+			space = await spaceManager.getSpace(params.id);
+		} else {
+			space = await spaceManager.getSpaceBySlug(params.slug!);
+		}
+
 		if (!space) {
-			throw new Error(`Space not found: ${params.id}`);
+			throw new Error(`Space not found: ${params.id ?? params.slug}`);
 		}
 
-		const tasks = taskRepo.listBySpace(params.id);
-		const workflowRuns = workflowRunRepo.listBySpace(params.id);
+		const tasks = taskRepo.listBySpace(space.id);
+		const workflowRuns = workflowRunRepo.listBySpace(space.id);
 
 		const result: SpaceOverviewResult = {
 			space,

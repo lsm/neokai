@@ -306,6 +306,7 @@ function makeTaskCtx(): TaskCtx {
 
 	const space: Space = {
 		id: spaceId,
+		slug: 'test-space',
 		workspacePath: '/tmp/workspace',
 		name: 'Test Space',
 		description: '',

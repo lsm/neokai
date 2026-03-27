@@ -35,9 +35,10 @@ const INBOX_ROUTE_PATTERN = /^\/inbox$/;
 const SPACES_ROUTE_PATTERN = /^\/spaces$/;
 /** Legacy: /room/:id/chat was removed — treat as plain room route for backwards compat */
 const ROOM_CHAT_COMPAT_PATTERN = /^\/room\/([a-f0-9-]+)\/chat$/;
-const SPACE_ROUTE_PATTERN = /^\/space\/([a-f0-9-]+)$/;
-const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
-const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-f0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/;
+/** Space routes accept both UUIDs (a-f0-9-) and slugs (a-z0-9-) */
+const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/;
+const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-f0-9-]+)$/;
+const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/;
 
 /**
  * Router state and configuration

@@ -184,6 +184,7 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
 	return {
 		id: spaceId,
+		slug: `space-${spaceId}`,
 		workspacePath,
 		name: `Space ${spaceId}`,
 		description: '',
