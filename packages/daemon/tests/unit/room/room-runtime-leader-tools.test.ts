@@ -763,4 +763,185 @@ describe('RoomRuntime leader tools', () => {
 			expect(updated.leaderProgressSummary).toBe('Second iteration: tests fixed, docs missing.');
 		});
 	});
+
+	describe('complete_task with no_pr', () => {
+		it('should succeed without group.approved when no_pr=true', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+			// NOT approved — normal complete_task would fail
+			expect(group.approved).toBe(false);
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Investigated CI failures',
+				no_pr: true,
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+			expect(parsed.message).toContain('no PR');
+
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('completed');
+		});
+
+		it('should still require approval when no_pr is absent', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'coder' });
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Done',
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Human approval');
+		});
+
+		it('should still require approval when no_pr=false', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'coder' });
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Done',
+				no_pr: false,
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Human approval');
+		});
+
+		it('should store combined summary+artifacts in task result', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Created 3 fix tasks',
+				no_pr: true,
+				artifacts: 'Tasks: fix-auth, fix-api, fix-ui',
+			});
+
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.result).toBe('Created 3 fix tasks\n\nTasks: fix-auth, fix-api, fix-ui');
+		});
+
+		it('should store only summary when artifacts is empty', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Research complete',
+				no_pr: true,
+			});
+
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.result).toBe('Research complete');
+		});
+
+		it('should leave prUrl and prNumber null/undefined', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Investigated',
+				no_pr: true,
+			});
+
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.prUrl ?? null).toBeNull();
+			expect(updatedTask!.prNumber ?? null).toBeNull();
+		});
+
+		it('should set approvalSource to leader_no_pr on the group', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Done',
+				no_pr: true,
+			});
+
+			// Group is completed, so verify via raw DB metadata
+			const row = ctx.db
+				.prepare('SELECT metadata FROM session_groups WHERE id = ?')
+				.get(group.id) as { metadata: string };
+			const meta = JSON.parse(row.metadata);
+			expect(meta.approvalSource).toBe('leader_no_pr');
+		});
+
+		it('should roll back approvalSource when lifecycle gate fails', async () => {
+			// Planning task with no draft children — lifecycle gate should block
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Build app',
+				description: 'desc',
+			});
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+			const tasks = await ctx.taskManager.listTasks({ status: 'in_progress' });
+			const planTask = tasks.find((t) => t.taskType === 'planning')!;
+
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Try no_pr complete on a planning task without draft children
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Plan done',
+				no_pr: true,
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(false);
+
+			// approvalSource should have been rolled back to null
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup?.approvalSource).toBeNull();
+
+			// Task should NOT be completed
+			const updatedTask = await ctx.taskManager.getTask(planTask.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+
+		it('should emit goal.task.auto_completed with leader_no_pr for semi-autonomous goals', async () => {
+			// Create a semi-autonomous goal
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Auto goal',
+				description: 'desc',
+				autonomyLevel: 'semi_autonomous',
+			});
+			const task = await ctx.taskManager.createTask({
+				title: 'Research task',
+				description: 'Investigate',
+				assignedAgent: 'general',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, task.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Clear any events from tick/route
+			ctx.hub.emittedEvents.length = 0;
+
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Research done',
+				no_pr: true,
+				artifacts: 'Found 5 issues',
+			});
+
+			const autoEvents = ctx.hub.emittedEvents.filter(
+				(e) => e.event === 'goal.task.auto_completed'
+			);
+			expect(autoEvents).toHaveLength(1);
+			const data = autoEvents[0].data as Record<string, unknown>;
+			expect(data.approvalSource).toBe('leader_no_pr');
+			expect(data.goalId).toBe(goal.id);
+			expect(data.taskId).toBe(task.id);
+		});
+	});
 });

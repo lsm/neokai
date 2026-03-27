@@ -1212,6 +1212,8 @@ export class RoomRuntime {
 			reason?: string;
 			pr_url?: string;
 			progress_summary?: string;
+			no_pr?: boolean;
+			artifacts?: string;
 		}
 	): Promise<LeaderToolResult> {
 		const group = this.groupRepo.getGroup(groupId);
@@ -1281,6 +1283,101 @@ export class RoomRuntime {
 
 			case 'complete_task': {
 				const summary = params.summary ?? '';
+
+				// --- no_pr bypass: for tasks that produce no PR (research, investigation, etc.) ---
+				if (params.no_pr) {
+					const artifacts = params.artifacts ?? '';
+					const combinedResult = [summary, artifacts].filter(Boolean).join('\n\n');
+
+					// CRITICAL: set approvalSource BEFORE complete() so the group
+					// metadata is persisted before the task status changes.
+					this.groupRepo.setApprovalSource(groupId, 'leader_no_pr');
+
+					// Lifecycle gate still runs for no_pr — blocks planning tasks without draft children
+					{
+						const hookTask = await this.taskManager.getTask(group.taskId);
+						if (hookTask) {
+							const currentRoom = this.getCurrentRoom();
+							const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
+							const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
+							const hasReviewers = !!agentSubs?.leader?.length;
+
+							const hookCtx: LeaderCompleteHookContext = {
+								workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+								rootWorkspacePath: this.taskGroupManager.workspacePath,
+								taskType: hookTask.taskType ?? 'coding',
+								workerRole: group.workerRole,
+								taskId: group.taskId,
+								groupId,
+								hasReviewers,
+								approved: group.approved,
+								workerBypassed: group.workerBypassed,
+							};
+							if (hookTask.taskType === 'planning') {
+								const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
+								hookCtx.draftTaskCount = draftTasks.length;
+							}
+							const gateResult = await runLeaderCompleteGate(hookCtx, this.hookOptions);
+							if (!gateResult.pass) {
+								this.groupRepo.setApprovalSource(groupId, null); // roll back on gate failure
+								log.info(`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`);
+								this.appendGroupEvent(groupId, 'status', {
+									text: `Leader complete gate: ${gateResult.reason}`,
+								});
+
+								if (
+									await this.recordAndCheckDeadLoop(
+										groupId,
+										group.taskId,
+										'leader_complete',
+										gateResult.reason ?? 'Gate check failed'
+									)
+								) {
+									return jsonResult({ success: false, error: 'Dead loop detected.' });
+								}
+
+								this.groupRepo.setLeaderCalledTool(groupId, false);
+								return jsonResult({
+									success: false,
+									error: gateResult.reason ?? 'Precondition not met.',
+									action_required: gateResult.bounceMessage,
+								});
+							}
+						}
+					}
+
+					await this.taskGroupManager.complete(groupId, combinedResult);
+					this.cleanupMirroring(groupId, 'Task completed (no PR).');
+					await this.emitTaskUpdateById(group.taskId);
+					await this.emitGoalProgressForTask(group.taskId);
+
+					// Semi-autonomous goal handling
+					{
+						const completeGoals = await this.goalManager.getGoalsForTask(group.taskId);
+						const completeGoal = completeGoals[0] ?? null;
+						if (completeGoal?.autonomyLevel === 'semi_autonomous') {
+							if ((completeGoal.consecutiveFailures ?? 0) > 0) {
+								await this.goalManager.updateConsecutiveFailures(completeGoal.id, 0);
+							}
+							if (this.daemonHub) {
+								const completedTask = await this.taskManager.getTask(group.taskId);
+								void this.daemonHub.emit('goal.task.auto_completed', {
+									sessionId: `room:${this.roomId}`,
+									roomId: this.roomId,
+									goalId: completeGoal.id,
+									taskId: group.taskId,
+									taskTitle: completedTask?.title ?? '',
+									prUrl: completedTask?.prUrl ?? '',
+									approvalSource: 'leader_no_pr',
+								});
+							}
+						}
+					}
+
+					await this.promoteDraftTasksIfPlanning(group.taskId);
+					this.scheduleTick();
+					return jsonResult({ success: true, message: 'Task completed successfully (no PR).' });
+				}
 
 				// State machine enforcement: PR/planning tasks require human approval before complete_task.
 				// They follow a two-phase flow: work → submit_for_review → human approval → merge/create tasks → complete.
@@ -1371,7 +1468,11 @@ export class RoomRuntime {
 							await this.goalManager.updateConsecutiveFailures(completeGoal.id, 0);
 						}
 						// Emit auto_completed notification if this was auto-approved.
-						if (group.approvalSource === 'leader_semi_auto' && this.daemonHub) {
+						if (
+							(group.approvalSource === 'leader_semi_auto' ||
+								group.approvalSource === 'leader_no_pr') &&
+							this.daemonHub
+						) {
 							const completedTask = await this.taskManager.getTask(group.taskId);
 							void this.daemonHub.emit('goal.task.auto_completed', {
 								sessionId: `room:${this.roomId}`,
@@ -1380,7 +1481,7 @@ export class RoomRuntime {
 								taskId: group.taskId,
 								taskTitle: completedTask?.title ?? '',
 								prUrl: completedTask?.prUrl ?? '',
-								approvalSource: 'leader_semi_auto',
+								approvalSource: group.approvalSource!,
 							});
 						}
 					}
@@ -1582,10 +1683,18 @@ export class RoomRuntime {
 					progress_summary: progressSummary,
 				});
 			},
-			completeTask: async (_groupId: string, summary: string, progressSummary?: string) => {
+			completeTask: async (
+				_groupId: string,
+				summary: string,
+				progressSummary?: string,
+				no_pr?: boolean,
+				artifacts?: string
+			) => {
 				return this.handleLeaderTool(groupId, 'complete_task', {
 					summary,
 					progress_summary: progressSummary,
+					no_pr,
+					artifacts,
 				});
 			},
 			failTask: async (_groupId: string, reason: string, progressSummary?: string) => {
