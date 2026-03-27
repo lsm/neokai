@@ -6,7 +6,12 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { SpaceWorkflowRun, WorkflowRunStatus, CreateWorkflowRunParams } from '@neokai/shared';
+import type {
+	SpaceWorkflowRun,
+	WorkflowRunStatus,
+	CreateWorkflowRunParams,
+	WorkflowRunFailureReason,
+} from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
 
@@ -234,6 +239,7 @@ export class SpaceWorkflowRunRepository {
 			iterationCount: (row.iteration_count as number | undefined) ?? 0,
 			maxIterations: (row.max_iterations as number | undefined) ?? 5,
 			goalId: (row.goal_id as string | null) ?? undefined,
+			failureReason: (row.failure_reason as WorkflowRunFailureReason | null) ?? undefined,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 			completedAt: (row.completed_at as number | null) ?? undefined,

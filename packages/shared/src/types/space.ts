@@ -334,6 +334,11 @@ export interface SpaceWorkflowRun {
 	maxIterations: number;
 	/** Optional goal/mission ID this run is associated with */
 	goalId?: string;
+	/**
+	 * Reason for workflow run failure. Only set when the run reaches a terminal
+	 * failure state (e.g. `needs_attention` or `cancelled`).
+	 */
+	failureReason?: WorkflowRunFailureReason;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -446,20 +451,18 @@ export interface UpdateSpaceAgentParams {
 // Workflow Types (M3)
 // ============================================================================
 
+// ---- Legacy condition types (kept for backward compatibility) ----
+
 /**
- * Primitive condition type for workflow channel gates.
+ * @deprecated Use `GateCondition` instead. Will be removed in a future milestone.
  *
- * - `always`: The gate opens unconditionally.
- * - `human`: Blocks until a human explicitly approves (via a signal / run config update).
- * - `condition`: A user-supplied shell expression; the gate opens when it exits with code 0.
- *   NeoKai is a framework — no allowlist is applied. Users are responsible for what they run.
- * - `task_result`: Matches against the `result` field of the most recently completed task on the
- *   current node. The gate opens when the task result starts with or equals the condition's
- *   `expression` value (e.g., `'passed'`, `'failed'`).
+ * Primitive condition type for workflow channel gates.
  */
 export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
 /**
+ * @deprecated Use `GateCondition` instead. Will be removed in a future milestone.
+ *
  * A condition that guards a workflow channel gate.
  * Conditions determine whether a channel may deliver a message.
  */
@@ -468,12 +471,6 @@ export interface WorkflowCondition {
 	type: WorkflowConditionType;
 	/**
 	 * Expression to evaluate for the `condition` and `task_result` types.
-	 *
-	 * - For `condition`: a shell expression; the gate opens when it exits with code 0.
-	 *   No allowlist is applied — users are responsible for the expression content.
-	 * - For `task_result`: the match value to compare against the completed task's `result`
-	 *   field (e.g., `'passed'`, `'failed'`). The gate opens when the task result
-	 *   starts with or equals this value.
 	 */
 	expression?: string;
 	/** Human-readable description of what this condition checks */
@@ -486,6 +483,164 @@ export interface WorkflowCondition {
 	/** Timeout for condition evaluation in milliseconds (0 = use default) */
 	timeoutMs?: number;
 }
+
+// ============================================================================
+// Gate System (M1.1) — separated from channels
+// ============================================================================
+
+/**
+ * A `check` condition evaluates a named key in the gate's data store.
+ *
+ * The gate opens when `data[field]` equals `value`.
+ *
+ * Examples:
+ *   - Human approval: `{ type: 'check', field: 'approved', value: true }`
+ *   - Task result:    `{ type: 'check', field: 'result', value: 'passed' }`
+ */
+export interface GateConditionCheck {
+	type: 'check';
+	/** Key in the gate's data store to evaluate. */
+	field: string;
+	/** Expected value. Gate opens when `data[field] === value`. */
+	value: unknown;
+}
+
+/**
+ * A `count` condition checks the numeric value of a field against a threshold.
+ *
+ * The gate opens when `data[field] >= threshold`.
+ *
+ * Examples:
+ *   - Require 2 approvals: `{ type: 'count', field: 'approvals', threshold: 2 }`
+ */
+export interface GateConditionCount {
+	type: 'count';
+	/** Key in the gate's data store whose numeric value to compare. */
+	field: string;
+	/** Gate opens when the field value ≥ threshold. */
+	threshold: number;
+}
+
+/**
+ * Composite `all` condition — logical AND. Gate opens when ALL nested conditions pass.
+ *
+ * Conditions are evaluated in order; short-circuits on first failure.
+ */
+export interface GateConditionAll {
+	type: 'all';
+	/** Nested conditions that must all pass. */
+	conditions: GateCondition[];
+}
+
+/**
+ * Composite `any` condition — logical OR. Gate opens when ANY nested condition passes.
+ *
+ * Conditions are evaluated in order; short-circuits on first success.
+ */
+export interface GateConditionAny {
+	type: 'any';
+	/** Nested conditions — at least one must pass. */
+	conditions: GateCondition[];
+}
+
+/**
+ * Discriminated union of gate condition types.
+ *
+ * Four types cover all gate behaviors:
+ * - `check`  — field equality check against gate data
+ * - `count`  — numeric threshold check against gate data
+ * - `all`    — composite AND (recursive)
+ * - `any`    — composite OR (recursive)
+ *
+ * No `always` type — a channel without a `gateId` is always open.
+ */
+export type GateCondition =
+	| GateConditionCheck
+	| GateConditionCount
+	| GateConditionAll
+	| GateConditionAny;
+
+/**
+ * A Gate — an independent entity that controls passage through channels.
+ *
+ * Gates are referenced by channels via `gateId`. A gate has no back-reference
+ * to any channel — the same gate can guard multiple channels.
+ *
+ * Gate data is a key-value store persisted per `(run_id, gate_id)` in the
+ * `gate_data` SQLite table. Agents write to gate data via `write_gate`;
+ * the runtime evaluates the condition against current data to decide passage.
+ */
+export interface Gate {
+	/** Unique identifier */
+	id: string;
+	/** Condition that must be satisfied for the gate to open. */
+	condition: GateCondition;
+	/**
+	 * Default data values for the gate. Populated into `gate_data` when a
+	 * workflow run starts. Keys not present here default to `undefined`.
+	 */
+	data: Record<string, unknown>;
+	/**
+	 * Roles allowed to write to this gate's data store.
+	 * An empty array means no role can write (effectively read-only).
+	 * Use `['*']` to allow all roles.
+	 */
+	allowedWriterRoles: string[];
+	/** Human-readable description of what this gate checks. */
+	description?: string;
+	/**
+	 * When true, gate data is reset to `data` (defaults) each time the workflow
+	 * cycles through a channel referencing this gate. Used for cyclic workflows.
+	 */
+	resetOnCycle: boolean;
+}
+
+/**
+ * A Channel — a simple unidirectional pipe between agents in a workflow.
+ *
+ * Channels define messaging topology. A channel without a `gateId` is always open.
+ * When `gateId` is set, the channel is gated — messages are held until the
+ * referenced Gate's condition passes.
+ *
+ * This is the separated Channel type (M1.1). The legacy `WorkflowChannel` type
+ * with its inline `gate?: WorkflowCondition` is preserved for backward compatibility
+ * but new code should use `Channel` + `Gate`.
+ */
+export interface Channel {
+	/** Unique identifier */
+	id: string;
+	/**
+	 * Source agent name string (`WorkflowNodeAgent.name`), node name,
+	 * or `'*'` for all agents. Cross-node format: `"nodeId/agentName"`.
+	 */
+	from: string;
+	/**
+	 * Target agent name string, array of name strings, or `'*'` for all agents.
+	 * An array enables fan-out or hub-spoke topologies.
+	 */
+	to: string | string[];
+	/**
+	 * Optional reference to a Gate entity. When absent, the channel is always open.
+	 * When present, message delivery is blocked until the gate's condition passes.
+	 */
+	gateId?: string;
+	/**
+	 * When true, each delivery on this channel increments the run's iteration counter.
+	 * Used for cyclic workflows.
+	 */
+	isCyclic?: boolean;
+	/** Optional human-readable label for display in the visual editor. */
+	label?: string;
+}
+
+/**
+ * Failure reason for a workflow run that entered a terminal failure state.
+ */
+export type WorkflowRunFailureReason =
+	| 'humanRejected'
+	| 'maxIterationsReached'
+	| 'nodeTimeout'
+	| 'agentCrash';
 
 /**
  * A single agent entry within a multi-agent workflow node.
@@ -701,6 +856,12 @@ export interface SpaceWorkflow {
 	 */
 	channels?: WorkflowChannel[];
 	/**
+	 * Gate definitions for this workflow.
+	 * Gates are independent entities referenced by channels via `gateId`.
+	 * Persisted as JSON in the `gates` column of `space_workflows`.
+	 */
+	gates?: Gate[];
+	/**
 	 * @deprecated isDefault is no longer used for workflow selection.
 	 * Workflow selection uses only two modes: explicit workflowId or AI auto-select.
 	 * This field is retained for backward compatibility but has no runtime effect.
@@ -745,6 +906,8 @@ export interface CreateSpaceWorkflowParams {
 	 * Workflow-level messaging channels. `id` is optional — backend generates one when omitted.
 	 */
 	channels?: WorkflowChannel[];
+	/** Gate definitions for this workflow. */
+	gates?: Gate[];
 	/**
 	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
 	 */
@@ -786,6 +949,10 @@ export interface UpdateSpaceWorkflowParams {
 	 * Replaces the channel list. Pass `[]` or `null` to clear all channels.
 	 */
 	channels?: WorkflowChannel[] | null;
+	/**
+	 * Replaces the gate list. Pass `[]` or `null` to clear all gates.
+	 */
+	gates?: Gate[] | null;
 	/**
 	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
 	 */

@@ -59,6 +59,17 @@ export const SendMessageSchema = z.object({
 		),
 	/** The message to send to the target(s). */
 	message: z.string().min(1).describe('The message content to send to the target peer(s)'),
+	/**
+	 * Optional structured data payload attached to the message.
+	 * Used for machine-readable data (gate writes, task results, structured feedback)
+	 * alongside the human-readable `message` text.
+	 */
+	data: z
+		.record(z.string(), z.unknown())
+		.describe(
+			'Optional structured data payload (key-value pairs) attached to the message. Used for gate writes, task results, and structured feedback.'
+		)
+		.optional(),
 });
 
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;

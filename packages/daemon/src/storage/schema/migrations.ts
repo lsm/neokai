@@ -248,6 +248,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Session groups are replaced by direct space_tasks queries.
 	// currentNodeId is replaced by the agent-centric model where tasks track state.
 	runMigration60(db);
+
+	// Migration 61: Add gate_data table, gates column to space_workflows,
+	// and failure_reason column to space_workflow_runs.
+	// Part of M1.1 — separated Channel + Gate types.
+	runMigration61(db);
 }
 
 /**
@@ -3855,5 +3860,52 @@ export function runMigration60(db: BunDatabase): void {
 		throw err;
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Migration 61: Add gate_data table, gates column to space_workflows,
+ * and failure_reason column to space_workflow_runs.
+ *
+ * Part of M1.1 — separated Channel + Gate types.
+ *
+ * - `gate_data`: Persistent data store for gates, keyed by `(run_id, gate_id)`.
+ *   Stores JSON data that gate conditions evaluate against at runtime.
+ * - `gates` column on `space_workflows`: JSON array of Gate definitions.
+ * - `failure_reason` column on `space_workflow_runs`: Enum-like TEXT for run failure reasons.
+ */
+function runMigration61(db: BunDatabase): void {
+	const migrated = db
+		.prepare(
+			"SELECT COUNT(*) as count FROM pragma_table_info('space_workflows') WHERE name = 'gates'"
+		)
+		.get() as { count: number } | null;
+	if (migrated && migrated.count > 0) return;
+
+	db.exec(`BEGIN TRANSACTION`);
+	try {
+		// 1. Create gate_data table
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS gate_data (
+				run_id TEXT NOT NULL,
+				gate_id TEXT NOT NULL,
+				data TEXT NOT NULL DEFAULT '{}',
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (run_id, gate_id),
+				FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
+
+		// 2. Add gates column to space_workflows
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN gates TEXT`);
+
+		// 3. Add failure_reason column to space_workflow_runs
+		db.exec(`ALTER TABLE space_workflow_runs ADD COLUMN failure_reason TEXT`);
+
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
 	}
 }
