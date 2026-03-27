@@ -2374,6 +2374,307 @@ describe('ChannelRouter', () => {
 		});
 
 		// -----------------------------------------------------------------------
+		// Parallel activation — shared gate → multiple independent nodes
+		// -----------------------------------------------------------------------
+
+		test('parallel activation: shared gate opens → all target nodes activated simultaneously', async () => {
+			// Mirrors the code-pr-gate scenario: one gate controls three channels,
+			// each pointing to a different reviewer node.
+			const gate: Gate = {
+				id: 'code-pr-gate',
+				condition: { type: 'check', field: 'pr_url', op: '!=', value: undefined },
+				data: {},
+				allowedWriterRoles: ['coder'],
+				resetOnCycle: false,
+			};
+
+			const NODE_REVIEWER1 = 'node-reviewer1';
+			const NODE_REVIEWER2 = 'node-reviewer2';
+			const NODE_REVIEWER3 = 'node-reviewer3';
+			const AGENT_REVIEWER1 = 'agent-reviewer1';
+			const AGENT_REVIEWER2 = 'agent-reviewer2';
+			const AGENT_REVIEWER3 = 'agent-reviewer3';
+
+			for (const [id, name] of [
+				[AGENT_REVIEWER1, 'Reviewer 1'],
+				[AGENT_REVIEWER2, 'Reviewer 2'],
+				[AGENT_REVIEWER3, 'Reviewer 3'],
+			]) {
+				db.prepare(
+					`INSERT INTO space_agents (id, space_id, name, role, description, model, tools,
+					 system_prompt, config, created_at, updated_at)
+					 VALUES (?, ?, ?, 'general', '', null, '[]', '', null, ?, ?)`
+				).run(id, SPACE_ID, name, Date.now(), Date.now());
+			}
+
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'reviewer-1', direction: 'one-way', gateId: 'code-pr-gate' },
+				{ from: 'coder', to: 'reviewer-2', direction: 'one-way', gateId: 'code-pr-gate' },
+				{ from: 'coder', to: 'reviewer-3', direction: 'one-way', gateId: 'code-pr-gate' },
+			];
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_REVIEWER1,
+						name: 'Reviewer 1 Node',
+						agents: [{ agentId: AGENT_REVIEWER1, name: 'reviewer-1' }],
+					},
+					{
+						id: NODE_REVIEWER2,
+						name: 'Reviewer 2 Node',
+						agents: [{ agentId: AGENT_REVIEWER2, name: 'reviewer-2' }],
+					},
+					{
+						id: NODE_REVIEWER3,
+						name: 'Reviewer 3 Node',
+						agents: [{ agentId: AGENT_REVIEWER3, name: 'reviewer-3' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Parallel Reviewer Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			gateDataRepo.initializeForRun(run.id, [gate]);
+
+			// Gate closed — no nodes activated
+			const noneYet = await router.onGateDataChanged(run.id, 'code-pr-gate');
+			expect(noneYet).toHaveLength(0);
+
+			// Open the gate by writing a pr_url
+			gateDataRepo.merge(run.id, 'code-pr-gate', { pr_url: 'https://github.com/org/repo/pull/42' });
+
+			// All 3 reviewer nodes should activate simultaneously
+			const activated = await router.onGateDataChanged(run.id, 'code-pr-gate');
+			expect(activated.length).toBe(3);
+
+			const activatedNodeIds = new Set(activated.map((t) => t.workflowNodeId));
+			expect(activatedNodeIds).toContain(NODE_REVIEWER1);
+			expect(activatedNodeIds).toContain(NODE_REVIEWER2);
+			expect(activatedNodeIds).toContain(NODE_REVIEWER3);
+		});
+
+		test('parallel activation: second call is idempotent — already-active nodes not re-activated', async () => {
+			const gate: Gate = {
+				id: 'shared-gate',
+				condition: { type: 'check', field: 'ready', op: '==', value: true },
+				data: {},
+				allowedWriterRoles: ['*'],
+				resetOnCycle: false,
+			};
+
+			const NODE_C = 'node-c';
+			const AGENT_C = 'agent-c';
+
+			db.prepare(
+				`INSERT INTO space_agents (id, space_id, name, role, description, model, tools,
+				 system_prompt, config, created_at, updated_at)
+				 VALUES (?, ?, 'Agent C', 'general', '', null, '[]', '', null, ?, ?)`
+			).run(AGENT_C, SPACE_ID, Date.now(), Date.now());
+
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'shared-gate' },
+				{ from: 'coder', to: 'agent-c', direction: 'one-way', gateId: 'shared-gate' },
+			];
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+					{ id: NODE_C, name: 'C Node', agents: [{ agentId: AGENT_C, name: 'agent-c' }] },
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Idempotent Parallel Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			gateDataRepo.initializeForRun(run.id, [gate]);
+			gateDataRepo.merge(run.id, 'shared-gate', { ready: true });
+
+			// First call: both nodes activated
+			const first = await router.onGateDataChanged(run.id, 'shared-gate');
+			expect(first.length).toBe(2);
+
+			// Second call: gate still open but nodes already active → nothing new
+			const second = await router.onGateDataChanged(run.id, 'shared-gate');
+			expect(second).toHaveLength(0);
+		});
+
+		// -----------------------------------------------------------------------
+		// 3-reviewer vote-counting gate (review-votes-gate pattern)
+		// -----------------------------------------------------------------------
+
+		test('review-votes-gate: QA blocked until all 3 reviewers approve (min: 3)', async () => {
+			// Mirrors the CODING_WORKFLOW_V2 review-votes-gate:
+			// Each of the 3 reviewer nodes writes independently to review-votes-gate.
+			// QA only activates when vote count reaches 3.
+			const gate: Gate = {
+				id: 'review-votes-gate',
+				condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+				data: { votes: {} },
+				allowedWriterRoles: ['reviewer'],
+				resetOnCycle: false,
+			};
+
+			const NODE_QA = 'node-qa';
+			const AGENT_QA = 'agent-qa';
+
+			db.prepare(
+				`INSERT INTO space_agents (id, space_id, name, role, description, model, tools,
+				 system_prompt, config, created_at, updated_at)
+				 VALUES (?, ?, 'QA Agent', 'general', '', null, '[]', '', null, ?, ?)`
+			).run(AGENT_QA, SPACE_ID, Date.now(), Date.now());
+
+			// All 3 reviewer channels share the same review-votes-gate
+			const channels: WorkflowChannel[] = [
+				{
+					from: 'reviewer-1',
+					to: 'qa-agent',
+					direction: 'one-way',
+					gateId: 'review-votes-gate',
+				},
+				{
+					from: 'reviewer-2',
+					to: 'qa-agent',
+					direction: 'one-way',
+					gateId: 'review-votes-gate',
+				},
+				{
+					from: 'reviewer-3',
+					to: 'qa-agent',
+					direction: 'one-way',
+					gateId: 'review-votes-gate',
+				},
+			];
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_QA, name: 'QA Node', agents: [{ agentId: AGENT_QA, name: 'qa-agent' }] },
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: '3-Reviewer Vote Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			gateDataRepo.initializeForRun(run.id, [gate]);
+
+			// Reviewer 1 votes — gate still closed (1/3)
+			gateDataRepo.merge(run.id, 'review-votes-gate', { votes: { 'reviewer-1': 'approved' } });
+			let activated = await router.onGateDataChanged(run.id, 'review-votes-gate');
+			expect(activated).toHaveLength(0);
+
+			// Reviewer 2 votes — gate still closed (2/3, partial completion)
+			const after1 = gateDataRepo.get(run.id, 'review-votes-gate')!.data;
+			gateDataRepo.merge(run.id, 'review-votes-gate', {
+				votes: { ...(after1.votes as Record<string, string>), 'reviewer-2': 'approved' },
+			});
+			activated = await router.onGateDataChanged(run.id, 'review-votes-gate');
+			expect(activated).toHaveLength(0); // QA still blocked: only 2/3 approved
+
+			// Reviewer 3 votes — quorum reached (3/3), QA activates
+			const after2 = gateDataRepo.get(run.id, 'review-votes-gate')!.data;
+			gateDataRepo.merge(run.id, 'review-votes-gate', {
+				votes: { ...(after2.votes as Record<string, string>), 'reviewer-3': 'approved' },
+			});
+			activated = await router.onGateDataChanged(run.id, 'review-votes-gate');
+			expect(activated.length).toBeGreaterThan(0);
+			expect(activated[0].workflowNodeId).toBe(NODE_QA);
+
+			// Verify all 3 votes are preserved in the gate data
+			const finalData = gateDataRepo.get(run.id, 'review-votes-gate')!.data;
+			const votes = finalData.votes as Record<string, string>;
+			expect(Object.keys(votes)).toHaveLength(3);
+			expect(votes['reviewer-1']).toBe('approved');
+			expect(votes['reviewer-2']).toBe('approved');
+			expect(votes['reviewer-3']).toBe('approved');
+		});
+
+		test('review-votes-gate: partial completion (2/3) keeps QA blocked', async () => {
+			// Explicitly verifies the partial-completion guard: the gate condition
+			// min: 3 means 2 votes are insufficient to unblock downstream QA.
+			const gate: Gate = {
+				id: 'review-votes-gate',
+				condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+				data: { votes: {} },
+				allowedWriterRoles: ['reviewer'],
+				resetOnCycle: false,
+			};
+
+			const NODE_QA = 'node-qa-partial';
+			const AGENT_QA = 'agent-qa-partial';
+
+			db.prepare(
+				`INSERT INTO space_agents (id, space_id, name, role, description, model, tools,
+				 system_prompt, config, created_at, updated_at)
+				 VALUES (?, ?, 'QA Agent', 'general', '', null, '[]', '', null, ?, ?)`
+			).run(AGENT_QA, SPACE_ID, Date.now(), Date.now());
+
+			const channels: WorkflowChannel[] = [
+				{ from: 'reviewer-1', to: 'qa', direction: 'one-way', gateId: 'review-votes-gate' },
+			];
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_QA, name: 'QA Node', agents: [{ agentId: AGENT_QA, name: 'qa' }] },
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Partial Completion Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			gateDataRepo.initializeForRun(run.id, [gate]);
+
+			// Write 2 approvals — gate needs 3, so QA stays blocked
+			gateDataRepo.set(run.id, 'review-votes-gate', {
+				votes: { 'reviewer-1': 'approved', 'reviewer-2': 'approved' },
+			});
+			const activated = await router.onGateDataChanged(run.id, 'review-votes-gate');
+			expect(activated).toHaveLength(0);
+
+			// Confirm QA node has no active tasks
+			const qaTasks = taskRepo
+				.listByWorkflowRun(run.id)
+				.filter((t) => t.workflowNodeId === NODE_QA);
+			expect(qaTasks).toHaveLength(0);
+		});
+
+		// -----------------------------------------------------------------------
 		// gateId takes precedence over legacy inline gate
 		// -----------------------------------------------------------------------
 
