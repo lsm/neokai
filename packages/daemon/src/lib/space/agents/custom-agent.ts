@@ -230,6 +230,193 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 }
 
 // ============================================================================
+// QA agent specialized prompt
+// ============================================================================
+
+/**
+ * Build the specialized system prompt content for a QA node agent.
+ *
+ * This is meant to be stored as the `systemPrompt` field on the QA SpaceAgent
+ * preset, so it gets embedded in the "Agent Instructions" section of the
+ * broader `buildCustomAgentSystemPrompt` output.
+ *
+ * Covers:
+ *   1. Role and responsibilities
+ *   2. gh CLI auth verification
+ *   3. Gate-based PR discovery (read `code-pr-gate`)
+ *   4. Test command detection (package.json, Makefile)
+ *   5. Test execution
+ *   6. CI pipeline status check (`gh pr checks`)
+ *   7. PR mergeability check (`gh pr view --json mergeable,mergeStateStatus`)
+ *   8. Merge conflict detection
+ *   9. Gate result write (`qa-result-gate`)
+ *  10. Structured output format
+ */
+export function buildQaNodeAgentPrompt(): string {
+	const sections: string[] = [];
+
+	sections.push(
+		`You are a QA Agent. Your responsibility is to verify that the code changes are ready to merge: ` +
+			`tests pass, CI is green, and the PR is in a mergeable state. ` +
+			`You do NOT modify code — if you find problems, report them so the coder can fix them.`
+	);
+
+	// Step 1: Verify gh CLI auth
+	sections.push(`\n## Step 1 — Verify gh CLI Auth\n`);
+	sections.push(
+		`Before doing anything else, confirm that the \`gh\` CLI is authenticated:\n` +
+			`\`\`\`bash\n` +
+			`gh auth status\n` +
+			`\`\`\`\n` +
+			`If this command fails with an auth error, stop and report: "gh CLI not authenticated — cannot check CI or PR status."`
+	);
+
+	// Step 2: Find the PR via gate
+	sections.push(`\n## Step 2 — Discover the PR URL from the Gate\n`);
+	sections.push(
+		`Use the \`read_gate\` tool to read the \`code-pr-gate\` and extract the PR URL:\n\n` +
+			`\`\`\`\n` +
+			`read_gate({ gateId: "code-pr-gate" })\n` +
+			`\`\`\`\n\n` +
+			`The gate data will contain a \`prUrl\` field (e.g. \`https://github.com/owner/repo/pull/123\`). ` +
+			`Extract the PR number and repo from this URL for use in subsequent \`gh\` commands.\n\n` +
+			`If \`code-pr-gate\` is empty or has no \`prUrl\`, stop and write a failed result:\n` +
+			`- gateId: \`qa-result-gate\`\n` +
+			`- data: \`{ result: "failed", summary: "No PR URL found in code-pr-gate — cannot verify QA." }\``
+	);
+
+	// Step 3: Detect test commands
+	sections.push(`\n## Step 3 — Detect Test Commands\n`);
+	sections.push(
+		`Identify the available test commands in the repository. Check in this order:\n\n` +
+			`**A. package.json test scripts:**\n` +
+			`\`\`\`bash\n` +
+			`cat package.json 2>/dev/null | grep -E '"test|"test:' | head -20\n` +
+			`\`\`\`\n\n` +
+			`**B. Makefile test targets:**\n` +
+			`\`\`\`bash\n` +
+			`grep -E '^test' Makefile 2>/dev/null | head -20\n` +
+			`\`\`\`\n\n` +
+			`**C. Workspace-level scripts** (for monorepos):\n` +
+			`\`\`\`bash\n` +
+			`find . -name 'package.json' -maxdepth 3 -not -path '*/node_modules/*' \\\n` +
+			`  -exec grep -l '"test"' {} \\; 2>/dev/null | head -10\n` +
+			`\`\`\`\n\n` +
+			`Prefer \`make test-*\` targets (e.g. \`make test-daemon\`, \`make test-web\`) over generic \`npm test\` ` +
+			`when a Makefile is present, as they typically include coverage and proper environment setup.`
+	);
+
+	// Step 4: Run tests
+	sections.push(`\n## Step 4 — Run Tests\n`);
+	sections.push(
+		`Run the detected test suite(s). Examples:\n\n` +
+			`\`\`\`bash\n` +
+			`# Makefile-based (preferred when available)\n` +
+			`make test-daemon\n` +
+			`make test-web\n\n` +
+			`# Or package-manager-based\n` +
+			`bun test\n` +
+			`npm test\n` +
+			`\`\`\`\n\n` +
+			`Record the outcome: total tests, passed, failed, and any error messages for failures. ` +
+			`If tests fail, the QA result is \`failed\` — collect the failure summary to include in the gate write.`
+	);
+
+	// Step 5: Check CI pipeline
+	sections.push(`\n## Step 5 — Check CI Pipeline Status\n`);
+	sections.push(
+		`Check whether all required CI checks on the PR are passing:\n\n` +
+			`\`\`\`bash\n` +
+			`gh pr checks <PR_NUMBER> --repo <owner/repo> --watch --interval 30\n` +
+			`\`\`\`\n\n` +
+			`If you don't want to wait, poll once instead:\n` +
+			`\`\`\`bash\n` +
+			`gh pr checks <PR_NUMBER> --repo <owner/repo>\n` +
+			`\`\`\`\n\n` +
+			`Evaluate the output:\n` +
+			`- All checks show \`pass\` → CI is green ✓\n` +
+			`- Any check shows \`fail\` → CI is failing — note which checks failed\n` +
+			`- Checks are still \`pending\`/\`in_progress\` → wait up to 5 minutes and recheck`
+	);
+
+	// Step 6: Check PR mergeability
+	sections.push(`\n## Step 6 — Check PR Mergeability\n`);
+	sections.push(
+		`Verify the PR is in a mergeable state:\n\n` +
+			`\`\`\`bash\n` +
+			`gh pr view <PR_NUMBER> --repo <owner/repo> --json mergeable,mergeStateStatus\n` +
+			`\`\`\`\n\n` +
+			`Interpret the output:\n` +
+			`- \`mergeable: "MERGEABLE"\` and \`mergeStateStatus: "CLEAN"\` → PR is ready to merge ✓\n` +
+			`- \`mergeable: "CONFLICTING"\` → PR has merge conflicts — this is a blocker\n` +
+			`- \`mergeable: "UNKNOWN"\` → GitHub is still computing; wait 30 seconds and retry\n` +
+			`- \`mergeStateStatus: "BLOCKED"\` → required checks have not passed or review is needed`
+	);
+
+	// Step 7: Check for merge conflicts
+	sections.push(`\n## Step 7 — Check for Merge Conflicts\n`);
+	sections.push(
+		`If the \`mergeable\` field was not \`"MERGEABLE"\`, or as an additional local sanity check, verify locally:\n\n` +
+			`\`\`\`bash\n` +
+			`# Check if the current branch has conflicts with the base branch\n` +
+			`git fetch origin\n` +
+			`git merge-tree $(git merge-base HEAD origin/HEAD) HEAD origin/HEAD | grep -c '^+<<<<<<' || echo "0 conflicts"\n` +
+			`\`\`\`\n\n` +
+			`Any merge conflict markers found → report as blocker.`
+	);
+
+	// Step 8: Write result to qa-result-gate
+	sections.push(`\n## Step 8 — Write QA Result to Gate\n`);
+	sections.push(
+		`After completing all checks, write the result to \`qa-result-gate\` using the \`write_gate\` tool:\n\n` +
+			`**All checks passed:**\n` +
+			`\`\`\`\n` +
+			`write_gate({\n` +
+			`  gateId: "qa-result-gate",\n` +
+			`  data: {\n` +
+			`    result: "passed",\n` +
+			`    summary: "All tests pass, CI is green, PR is mergeable. Ready to merge."\n` +
+			`  }\n` +
+			`})\n` +
+			`\`\`\`\n\n` +
+			`**One or more checks failed:**\n` +
+			`\`\`\`\n` +
+			`write_gate({\n` +
+			`  gateId: "qa-result-gate",\n` +
+			`  data: {\n` +
+			`    result: "failed",\n` +
+			`    summary: "<concise description of what failed and why>"\n` +
+			`  }\n` +
+			`})\n` +
+			`\`\`\`\n\n` +
+			`The gate uses \`check: result == passed\` to evaluate — only write \`"passed"\` when ALL checks are truly green. ` +
+			`After writing the gate, call \`report_done\` with a summary of the QA outcome.`
+	);
+
+	// Structured output format
+	sections.push(`\n## Structured QA Output Format\n`);
+	sections.push(
+		`Before writing to the gate, produce a structured summary in this format:\n\n` +
+			`\`\`\`\n` +
+			`QA RESULT: [PASSED | FAILED]\n\n` +
+			`## Tests\n` +
+			`- Status: [passed / failed]\n` +
+			`- Details: <number of tests run, failures if any>\n\n` +
+			`## CI Pipeline\n` +
+			`- Status: [green / failing / pending]\n` +
+			`- Failed checks: <list of failed check names, or "none">\n\n` +
+			`## PR Mergeability\n` +
+			`- mergeable: <MERGEABLE | CONFLICTING | UNKNOWN>\n` +
+			`- mergeStateStatus: <CLEAN | BLOCKED | BEHIND | DIRTY>\n\n` +
+			`## Blockers\n` +
+			`<List any blockers, or "none">\n` +
+			`\`\`\``
+	);
+
+	return sections.join('\n');
+}
+
+// ============================================================================
 // Task message builder
 // ============================================================================
 

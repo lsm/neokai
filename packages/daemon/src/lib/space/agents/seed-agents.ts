@@ -18,6 +18,7 @@
 import type { SpaceAgent, SessionFeatures } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
+import { buildQaNodeAgentPrompt } from './custom-agent';
 
 // ---------------------------------------------------------------------------
 // Feature flag profiles per role
@@ -113,6 +114,7 @@ interface PresetDefinition {
 	description: string;
 	tools: string[];
 	injectWorkflowContext?: boolean;
+	systemPrompt?: string;
 }
 
 const PRESET_AGENTS: PresetDefinition[] = [
@@ -153,6 +155,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		description:
 			'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
 		tools: QA_TOOLS,
+		systemPrompt: buildQaNodeAgentPrompt(),
 	},
 ];
 
@@ -193,6 +196,7 @@ export async function seedPresetAgents(
 			description: preset.description,
 			tools: preset.tools,
 			injectWorkflowContext: preset.injectWorkflowContext,
+			systemPrompt: preset.systemPrompt,
 		});
 
 		if (result.ok) {
