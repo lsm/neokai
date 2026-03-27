@@ -191,6 +191,50 @@ export class SpaceWorktreeManager {
 	}
 
 	/**
+	 * Mark a task's worktree as completed so the TTL reaper can clean it up later.
+	 *
+	 * Called when a task finishes normally (not cancelled).  The worktree is NOT
+	 * removed immediately — the TTL reaper will delete it after `ttlMs` has elapsed.
+	 *
+	 * Idempotent: calling more than once for the same task is a no-op after the
+	 * first call sets `completed_at`.
+	 */
+	markTaskWorktreeCompleted(spaceId: string, taskId: string): void {
+		this.worktreeRepo.markCompleted(spaceId, taskId);
+	}
+
+	/**
+	 * Remove all worktrees that were completed more than `ttlMs` milliseconds ago.
+	 *
+	 * Iterates over every expired record, removes the git worktree + branch, and
+	 * deletes the SQLite row.  Errors for individual worktrees are logged and
+	 * skipped so one bad worktree cannot block the rest of the cleanup pass.
+	 *
+	 * @param ttlMs - TTL in milliseconds (default: 7 days)
+	 */
+	async reapExpiredWorktrees(ttlMs: number = 7 * 24 * 60 * 60 * 1000): Promise<void> {
+		const cutoff = Date.now() - ttlMs;
+		const expired = this.worktreeRepo.listCompletedBefore(cutoff);
+
+		for (const record of expired) {
+			try {
+				await this.removeTaskWorktree(record.spaceId, record.taskId);
+				this.logger.info(
+					`TTL reaper: removed expired worktree for task ${record.taskId} (completed_at: ${record.completedAt})`
+				);
+			} catch (err) {
+				this.logger.warn(
+					`TTL reaper: failed to remove worktree for task ${record.taskId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		}
+
+		if (expired.length > 0) {
+			this.logger.info(`TTL reaper: removed ${expired.length} expired worktree(s)`);
+		}
+	}
+
+	/**
 	 * Return the filesystem path for a task's worktree, or null if none exists.
 	 */
 	async getTaskWorktreePath(spaceId: string, taskId: string): Promise<string | null> {

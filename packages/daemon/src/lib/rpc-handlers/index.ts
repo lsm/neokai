@@ -49,6 +49,7 @@ import { setupSpaceHandlers } from './space-handlers';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
+import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import { setupSpaceWorkflowHandlers } from './space-workflow-handlers';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { SpaceTaskManager } from '../space/managers/space-task-manager';
@@ -127,6 +128,7 @@ export interface RPCHandlerSetupResult {
 	cleanup: RPCHandlerCleanup;
 	spaceRuntimeService: SpaceRuntimeService;
 	taskAgentManager: TaskAgentManager;
+	spaceWorktreeManager: SpaceWorktreeManager;
 }
 
 /**
@@ -368,6 +370,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 	});
 
+	// Space Worktree Manager — one worktree per task, shared by all node agents.
+	const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
+
 	// Task Agent Manager — manages Task Agent session lifecycle and message injection.
 	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
 	// spaceRuntimeService.createOrGetRuntime(spaceId).
@@ -386,6 +391,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		defaultModel: deps.config.defaultModel,
 		appMcpManager: deps.appMcpManager,
+		worktreeManager: spaceWorktreeManager,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
@@ -488,5 +494,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		},
 		spaceRuntimeService,
 		taskAgentManager,
+		spaceWorktreeManager,
 	};
 }

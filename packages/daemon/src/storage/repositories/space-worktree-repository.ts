@@ -15,6 +15,8 @@ export interface SpaceWorktreeRecord {
 	slug: string;
 	path: string;
 	createdAt: number;
+	/** Unix epoch ms when the task completed. NULL while the task is still active. */
+	completedAt?: number;
 }
 
 export class SpaceWorktreeRepository {
@@ -73,6 +75,33 @@ export class SpaceWorktreeRepository {
 	}
 
 	/**
+	 * Set completed_at on the worktree record for a task.
+	 * Called when a task finishes normally — worktree is kept for TTL-based cleanup.
+	 * Returns true if a row was updated.
+	 */
+	markCompleted(spaceId: string, taskId: string, completedAt: number = Date.now()): boolean {
+		const result = this.db
+			.prepare(
+				`UPDATE space_worktrees SET completed_at = ? WHERE space_id = ? AND task_id = ? AND completed_at IS NULL`
+			)
+			.run(completedAt, spaceId, taskId);
+		return result.changes > 0;
+	}
+
+	/**
+	 * List all worktree records whose completed_at is older than the given cutoff.
+	 * Used by the TTL reaper to find expired worktrees across all spaces.
+	 */
+	listCompletedBefore(cutoffMs: number): SpaceWorktreeRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM space_worktrees WHERE completed_at IS NOT NULL AND completed_at < ? ORDER BY completed_at ASC`
+			)
+			.all(cutoffMs) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToRecord(r));
+	}
+
+	/**
 	 * Remove the worktree record for a specific task.
 	 * Returns true if a row was deleted.
 	 */
@@ -99,6 +128,7 @@ export class SpaceWorktreeRepository {
 			slug: row.slug as string,
 			path: row.path as string,
 			createdAt: row.created_at as number,
+			completedAt: (row.completed_at as number | null) ?? undefined,
 		};
 	}
 }

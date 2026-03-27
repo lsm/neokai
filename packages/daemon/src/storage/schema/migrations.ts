@@ -265,6 +265,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 64: Create space_worktrees table for persisting task ↔ git worktree mappings.
 	// One row per task; keyed by (space_id, task_id) with a per-space unique slug constraint.
 	runMigration64(db);
+
+	// Migration 65: Add completed_at column to space_worktrees for TTL-based reaper.
+	// Worktrees are not removed on task completion; instead they are timestamped and
+	// removed by the reaper after a configurable TTL (default: 7 days).
+	runMigration65(db);
 }
 
 /**
@@ -4243,4 +4248,20 @@ function runMigration64(db: BunDatabase): void {
 		)
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
+}
+
+/**
+ * Migration 65: Add completed_at to space_worktrees.
+ *
+ * Adds a nullable `completed_at` INTEGER column so the TTL-based reaper can
+ * identify worktrees whose tasks have finished and remove them after 7 days.
+ * NULL = task still active; non-NULL = Unix epoch ms when the task completed.
+ */
+function runMigration65(db: BunDatabase): void {
+	try {
+		db.prepare(`SELECT completed_at FROM space_worktrees LIMIT 1`).all();
+	} catch {
+		// Column doesn't exist yet — add it
+		db.exec(`ALTER TABLE space_worktrees ADD COLUMN completed_at INTEGER`);
+	}
 }
