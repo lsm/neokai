@@ -113,8 +113,17 @@ function makeCallbacks(): LeaderToolCallbacks & {
 			calls.push({ method: 'sendToWorker', args: [groupId, message, mode, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async completeTask(groupId: string, summary: string, progressSummary?: string) {
-			calls.push({ method: 'completeTask', args: [groupId, summary, progressSummary] });
+		async completeTask(
+			groupId: string,
+			summary: string,
+			progressSummary?: string,
+			no_pr?: boolean,
+			artifacts?: string
+		) {
+			calls.push({
+				method: 'completeTask',
+				args: [groupId, summary, progressSummary, no_pr, artifacts],
+			});
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
 		async failTask(groupId: string, reason: string, progressSummary?: string) {
@@ -145,11 +154,22 @@ describe('Leader Agent', () => {
 
 		it('should document no_pr and artifacts for complete_task', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
-			expect(prompt).toContain('no_pr');
-			expect(prompt).toContain('artifacts');
-			expect(prompt).toContain('research');
-			expect(prompt).toContain('investigation');
-			expect(prompt).toContain('meta-tasks');
+			// Verify the documentation appears under complete_task in Review Tools
+			const completeTaskIdx = prompt.indexOf('`complete_task`');
+			const noPrIdx = prompt.indexOf('`no_pr`');
+			const artifactsIdx = prompt.indexOf('`artifacts`');
+			// no_pr and artifacts docs must appear after complete_task
+			expect(completeTaskIdx).toBeGreaterThan(-1);
+			expect(noPrIdx).toBeGreaterThan(completeTaskIdx);
+			expect(artifactsIdx).toBeGreaterThan(completeTaskIdx);
+			// Both must appear before the next tool section (Task Management Tools)
+			const taskMgmtIdx = prompt.indexOf('Task Management Tools');
+			expect(noPrIdx).toBeLessThan(taskMgmtIdx);
+			expect(artifactsIdx).toBeLessThan(taskMgmtIdx);
+			// Verify usage guidance content
+			expect(prompt).toContain('research, investigation, meta-tasks');
+			expect(prompt).toContain('Do NOT set for coding tasks');
+			expect(prompt).toContain('description of what was produced or accomplished');
 		});
 
 		it('should include task management tools in tool contract', () => {
