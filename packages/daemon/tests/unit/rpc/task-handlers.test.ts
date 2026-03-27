@@ -309,14 +309,16 @@ describe('Task RPC Handlers', () => {
 			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Task title is required');
 		});
 
-		it('emits room overview event on creation', async () => {
+		it('returns created task without emitting room.overview (LiveQuery handles task data)', async () => {
 			const handler = messageHubData.handlers.get('task.create');
 			expect(handler).toBeDefined();
 
-			await handler!({ roomId: 'room-123', title: 'Test Task' }, {});
+			const result = (await handler!({ roomId: 'room-123', title: 'Test Task' }, {})) as {
+				task: NeoTask;
+			};
 
-			expect(roomManagerData.getRoomOverview).toHaveBeenCalledWith('room-123');
-			expect(daemonHubData.emit).toHaveBeenCalled();
+			expect(result.task).toBeDefined();
+			expect(roomManagerData.getRoomOverview).not.toHaveBeenCalled();
 		});
 	});
 
@@ -448,20 +450,18 @@ describe('Task RPC Handlers', () => {
 			);
 		});
 
-		it('emits room.overview but NOT room.task.update (redundant after LiveQuery)', async () => {
+		it('does not emit room.task.update or room.overview (LiveQuery handles task data)', async () => {
 			const handler = messageHubData.handlers.get('task.fail');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', taskId: TASK_UUID, error: 'Failed' }, {});
 
-			// room.overview must still fire so clients get updated session/task metadata
-			expect(roomManagerData.getRoomOverview).toHaveBeenCalledWith('room-123');
-
-			// room.task.update must NOT be emitted — LiveQuery deltas replace this channel
+			// Neither room.task.update nor room.overview should be emitted — LiveQuery covers it
 			const taskUpdateCalls = (daemonHubData.emit as ReturnType<typeof mock>).mock.calls.filter(
 				(args: unknown[]) => args[0] === 'room.task.update'
 			);
 			expect(taskUpdateCalls).toHaveLength(0);
+			expect(roomManagerData.getRoomOverview).not.toHaveBeenCalled();
 		});
 	});
 });

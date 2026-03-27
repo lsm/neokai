@@ -1364,7 +1364,7 @@ describe('task.setStatus RPC Handler', () => {
 			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith(TASK_UUID, undefined);
 		});
 
-		it('emits task update and room overview after archiving via runtime', async () => {
+		it('does not emit room.task.update after archiving (LiveQuery handles task data)', async () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			const { service } = makeRuntimeService();
 
@@ -1383,10 +1383,10 @@ describe('task.setStatus RPC Handler', () => {
 			const handler = mh.handlers.get('task.setStatus')!;
 			await handler({ roomId: 'room-1', taskId: TASK_UUID, status: 'archived' }, {});
 
-			expect(daemonHub.emit).toHaveBeenCalledWith(
-				'room.task.update',
-				expect.objectContaining({ roomId: 'room-1' })
+			const taskUpdateCalls = (daemonHub.emit as ReturnType<typeof mock>).mock.calls.filter(
+				(args: unknown[]) => args[0] === 'room.task.update'
 			);
+			expect(taskUpdateCalls).toHaveLength(0);
 		});
 
 		it('calls taskManager.archiveTask when no runtime is available', async () => {
