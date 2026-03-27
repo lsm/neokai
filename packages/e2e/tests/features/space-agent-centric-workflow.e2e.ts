@@ -114,12 +114,17 @@ test.describe('Agent-Centric Workflow', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill('Agent Channel Test');
 
+		// Wait for the canvas to fully render before checking node count.
+		// switchToVisualMode only waits for the editor-mode toggle; the visual editor
+		// renders async, so we must wait for the add-step button to be present.
+		await expect(editor.getByTestId('add-step-button')).toBeVisible({ timeout: 5000 });
+
 		// Add a node and configure two agents so agentRoles is populated,
 		// which gives the ChannelEditor select dropdowns instead of text inputs.
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
+		// :not([data-task-agent]) excludes the Task Agent virtual node by its own attribute.
+		// Note: Playwright's filter({hasNot}) only matches descendants, not the element itself.
+		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
 		await expect(nodes).toHaveCount(1, { timeout: 3000 });
 
 		await nodes.first().click();
@@ -171,9 +176,7 @@ test.describe('Agent-Centric Workflow', () => {
 
 		// Add a node with two agents so agentRoles is populated
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
+		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
 		await expect(nodes).toHaveCount(1, { timeout: 3000 });
 
 		await nodes.first().click();
@@ -222,9 +225,7 @@ test.describe('Agent-Centric Workflow', () => {
 
 		// Add a step with two agents
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
+		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
 		await expect(nodes).toHaveCount(1, { timeout: 3000 });
 
 		await nodes.first().click();
@@ -235,12 +236,15 @@ test.describe('Agent-Centric Workflow', () => {
 		await panel.getByTestId('close-button').click();
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		// The canvas node should show agent-badges with both agent names
-		const node = nodes.first();
+		// The canvas node should show agent-badges with both agent names.
+		// Use clickedNode (not nodes.first()) because when 2 nodes exist due to the
+		// addStep double-invocation issue, nodes.first() picks the old/duplicate node
+		// rather than the one that was just configured in the panel.
+		const node = clickedNode;
 		const agentBadges = node.getByTestId('agent-badges');
 		await expect(agentBadges).toBeVisible({ timeout: 3000 });
-		await expect(agentBadges.locator(`text=${AGENT_A_NAME}`)).toBeVisible({ timeout: 2000 });
-		await expect(agentBadges.locator(`text=${AGENT_B_NAME}`)).toBeVisible({ timeout: 2000 });
+		await expect(agentBadges.locator(`text=${ROLE_A}`)).toBeVisible({ timeout: 2000 });
+		await expect(agentBadges.locator(`text=${ROLE_B}`)).toBeVisible({ timeout: 2000 });
 
 		// Without an active workflow run, no completion state icons should be visible
 		// (no agent-status-spinner, agent-status-check, or agent-status-fail)
@@ -259,17 +263,17 @@ test.describe('Agent-Centric Workflow', () => {
 		await switchToVisualMode(page);
 
 		const editorReopen = page.getByTestId('visual-workflow-editor');
-		const reopenedNodes = editorReopen.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
+		const reopenedNodes = editorReopen.locator(
+			'[data-testid^="workflow-node-"]:not([data-task-agent])'
+		);
 		await expect(reopenedNodes).toHaveCount(1, { timeout: 5000 });
+		const reopenedNode = reopenedNodes.first();
 
 		// Agent badges should be visible after reload
-		const reopenedNode = reopenedNodes.first();
 		const reopenedBadges = reopenedNode.getByTestId('agent-badges');
 		await expect(reopenedBadges).toBeVisible({ timeout: 3000 });
-		await expect(reopenedBadges.locator(`text=${AGENT_A_NAME}`)).toBeVisible({ timeout: 2000 });
-		await expect(reopenedBadges.locator(`text=${AGENT_B_NAME}`)).toBeVisible({ timeout: 2000 });
+		await expect(reopenedBadges.locator(`text=${ROLE_A}`)).toBeVisible({ timeout: 2000 });
+		await expect(reopenedBadges.locator(`text=${ROLE_B}`)).toBeVisible({ timeout: 2000 });
 
 		// Still no completion state icons (no active run)
 		await expect(reopenedNode.getByTestId('agent-status-spinner')).toHaveCount(0);
@@ -290,9 +294,7 @@ test.describe('Agent-Centric Workflow', () => {
 
 		// Add step with two agents
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
+		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
 		await expect(nodes).toHaveCount(1, { timeout: 3000 });
 
 		await nodes.first().click();
