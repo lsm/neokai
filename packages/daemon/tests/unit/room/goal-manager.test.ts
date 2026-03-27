@@ -910,17 +910,18 @@ describe('GoalManager.patchGoal — schedule nextRunAt auto-computation', () => 
 		expect(goal.nextRunAt).toBeDefined();
 		const originalNextRunAt = goal.nextRunAt!;
 
-		// Patch the schedule to a new expression
+		// Patch the schedule to @weekly — guaranteed different nextRunAt than @daily
+		// (they can coincide at midnight for @hourly or @daily).
 		const before = Math.floor(Date.now() / 1000);
 		const patched = await goalManager.patchGoal(goal.id, {
-			schedule: { expression: '@hourly', timezone: 'UTC' },
+			schedule: { expression: '@weekly', timezone: 'UTC' },
 		});
-		const after = Math.floor(Date.now() / 1000) + 3700; // up to 1 hour + buffer
+		const after = Math.floor(Date.now() / 1000) + 7 * 24 * 3600 + 100; // @weekly = up to 7 days
 
-		expect(patched.schedule?.expression).toBe('@hourly');
+		expect(patched.schedule?.expression).toBe('@weekly');
 		expect(patched.nextRunAt).toBeDefined();
 		expect(patched.nextRunAt!).toBeGreaterThan(before);
-		// @hourly fires within the next hour
+		// @weekly fires within the next week
 		expect(patched.nextRunAt!).toBeLessThanOrEqual(after);
 		// nextRunAt should change when the cron expression changes
 		expect(patched.nextRunAt!).not.toBe(originalNextRunAt);
