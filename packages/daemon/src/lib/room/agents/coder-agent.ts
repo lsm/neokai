@@ -5,9 +5,12 @@
  * with context from the goal and room, then works using standard coding tools
  * (bash, edit, read, write, glob, grep) until it reaches a terminal state.
  *
- * When worker sub-agents are configured via room.config.agentSubagents.worker,
- * the Coder gets access to the Task/TaskOutput/TaskStop tools to spawn helper
- * sub-agents for heavy tasks, keeping the main agent context clean.
+ * The Coder always uses the agent/agents pattern with built-in sub-agents:
+ * - coder-explorer: read-only codebase exploration before implementation
+ * - coder-tester: writes and runs tests for changes just implemented
+ *
+ * When worker sub-agents are additionally configured via room.config.agentSubagents.worker,
+ * those helpers are also included in the agents map for delegating heavy subtasks.
  */
 
 import type { AgentSessionInit } from '../../agent/agent-session';
@@ -245,16 +248,20 @@ export function buildWorkerHelperAgents(
 /**
  * Build the behavioral system prompt for the Coder agent.
  *
- * Contains ONLY role definition, git workflow instructions, and behavioral rules.
- * Task-specific context (title, description, goal, room background) is delivered
- * via the initial user message built by buildCoderTaskMessage().
+ * Contains ONLY role definition, git workflow instructions, behavioral rules,
+ * and sub-agent usage guidance. Task-specific context (title, description, goal,
+ * room background) is delivered via the initial user message built by
+ * buildCoderTaskMessage().
  *
- * @param helperAgentNames - Names of available helper sub-agents. When provided,
- *   the prompt includes sub-agent usage instructions to help avoid context overflow.
+ * The prompt always includes sub-agent usage instructions since the Coder always
+ * operates in agent/agents mode with built-in coder-explorer and coder-tester.
+ *
+ * @param customHelperNames - Names of user-configured helper sub-agents. When
+ *   provided, the prompt includes an additional section listing those helpers.
  */
-export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
+export function buildCoderSystemPrompt(customHelperNames?: string[]): string {
 	const sections: string[] = [];
-	const hasHelpers = helperAgentNames && helperAgentNames.length > 0;
+	const hasCustomHelpers = customHelperNames && customHelperNames.length > 0;
 
 	sections.push(`You are a Coder Agent working on a specific task within a larger goal.`);
 	sections.push(`Your job is to complete the task described below to the best of your ability.`);
@@ -342,44 +349,60 @@ export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
 		`7. Finish your response — the leader will re-dispatch reviewers for the next round`
 	);
 
-	// Sub-agent usage instructions (only when in agent/agents mode)
-	if (hasHelpers) {
-		sections.push(`\n## Sub-Agent Usage (Available)\n`);
-		sections.push(
-			`Sub-agents are available to delegate heavy subtasks and keep your context clean.`
-		);
+	// Sub-agent usage instructions — always present since Coder always uses agent/agents mode
+	sections.push(`\n## Sub-Agent Usage\n`);
+	sections.push(
+		`Sub-agents are available to handle exploration, testing, and heavy subtasks. ` +
+			`Choose your strategy based on task complexity:`
+	);
 
-		// Tester is always available in agent mode
-		sections.push(`\n### Built-in: \`tester\``);
-		sections.push(`Writes and runs tests for changes you just implemented.`);
-		sections.push(
-			`**Spawn after implementation** — before committing, run the tester to cover new code:`
-		);
-		sections.push(
-			`\`\`\`\nTask(subagent_type: "tester", prompt: "Just implemented: <summary of changes>. Write and run tests for: <specific targets>.")\n\`\`\``
-		);
-		sections.push(
-			`The tester commits test files to the current branch and returns a \`---TEST_RESULT---\` block.`
-		);
+	// Task complexity strategy guidance
+	sections.push(`\n### Strategy by Task Complexity\n`);
+	sections.push(
+		`**Simple tasks** (single file, well-scoped — e.g., "fix typo in error message", "add a CSS class to button component"):\n` +
+			`→ Implement directly without spawning sub-agents. No exploration needed.`
+	);
+	sections.push(
+		`**Complex tasks** (touches 3-8 files across 1-2 packages — e.g., "add validation to the settings form", "refactor session cleanup logic"):\n` +
+			`→ Spawn \`coder-explorer\` first to understand the code structure, then implement with clean context.`
+	);
+	sections.push(
+		`**Large multi-component tasks** (spans multiple packages, 8+ files — e.g., "add WebSocket reconnection with exponential backoff", "implement new RPC handler with frontend integration"):\n` +
+			`→ Delegate exploration and implementation subtasks to sub-agents, then review and integrate results.`
+	);
 
-		// Explorer is always available in agent mode
-		sections.push(`\n### Built-in: \`explorer\``);
-		sections.push(
-			`Read-only codebase exploration. Use before implementing complex or unfamiliar changes.`
-		);
-		sections.push(`**Spawn before implementation** when you need to understand the codebase:`);
-		sections.push(
-			`\`\`\`\nTask(subagent_type: "explorer", prompt: "Explore <area/pattern/file> to understand <what you need to know>.")\n\`\`\``
-		);
-		sections.push(
-			`The explorer returns an \`---EXPLORE_RESULT---\` block with relevant files, patterns, dependencies, and findings.`
-		);
-		sections.push(
-			`**Do not spawn explorer for simple single-file tasks** — only for unfamiliar areas.`
-		);
+	// Built-in: coder-tester
+	sections.push(`\n### Built-in: \`coder-tester\``);
+	sections.push(`Writes and runs tests for changes you just implemented.`);
+	sections.push(
+		`**Spawn after implementation** — before committing, run the tester to cover new code:`
+	);
+	sections.push(
+		`\`\`\`\nTask(subagent_type: "coder-tester", prompt: "Just implemented: <summary of changes>. Write and run tests for: <specific targets>.")\n\`\`\``
+	);
+	sections.push(
+		`The tester commits test files to the current branch and returns a \`---TEST_RESULT---\` block.`
+	);
 
-		// Custom helpers (if configured)
-		const helperList = helperAgentNames!.join(', ');
+	// Built-in: coder-explorer
+	sections.push(`\n### Built-in: \`coder-explorer\``);
+	sections.push(
+		`Read-only codebase exploration. Use before implementing complex or unfamiliar changes.`
+	);
+	sections.push(`**Spawn before implementation** when you need to understand the codebase:`);
+	sections.push(
+		`\`\`\`\nTask(subagent_type: "coder-explorer", prompt: "Explore <area/pattern/file> to understand <what you need to know>.")\n\`\`\``
+	);
+	sections.push(
+		`The explorer returns an \`---EXPLORE_RESULT---\` block with relevant files, patterns, dependencies, and findings.`
+	);
+	sections.push(
+		`**Do not spawn coder-explorer for simple single-file tasks** — only for complex or unfamiliar areas.`
+	);
+
+	// Custom helpers (if configured)
+	if (hasCustomHelpers) {
+		const helperList = customHelperNames!.join(', ');
 		sections.push(`\n### Custom helpers: ${helperList}`);
 		sections.push(`**Spawn helpers for:**`);
 		sections.push(`- Analyzing large files (>500 lines) or many files at once`);
@@ -393,12 +416,12 @@ export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
 		sections.push(
 			`The helper commits changes to the current branch and returns a \`---SUBTASK_RESULT---\` block.`
 		);
-
-		sections.push(
-			`\nStore only the result summary — do NOT re-read every file the sub-agent touched.`
-		);
-		sections.push(`**Limit:** max 3 concurrent sub-agents per turn.`);
 	}
+
+	sections.push(
+		`\nStore only the result summary — do NOT re-read every file the sub-agent touched.`
+	);
+	sections.push(`**Limit:** max 3 concurrent sub-agents per turn.`);
 
 	return sections.join('\n');
 }
@@ -466,82 +489,68 @@ export function buildCoderTaskMessage(config: CoderAgentConfig): string {
 /**
  * Create an AgentSessionInit for a Coder agent session.
  *
- * The Coder agent uses the Claude Code preset (standard coding tools)
- * with a behavioral system prompt appended. Task-specific context is
- * delivered via the initial user message (buildCoderTaskMessage).
+ * Always uses the agent/agents pattern so the Coder has access to
+ * Task/TaskOutput/TaskStop tools for spawning the built-in coder-explorer
+ * and coder-tester sub-agents (and any user-configured helpers).
  *
- * When worker sub-agents are configured via room.config.agentSubagents.worker,
- * the session uses the agent/agents pattern so the Coder has access to the
- * Task/TaskOutput/TaskStop tools for spawning helper sub-agents.
+ * The system prompt is embedded in the Coder agent definition's `prompt` field.
+ * Task-specific context is delivered via the initial user message
+ * (buildCoderTaskMessage).
+ *
+ * Note: name collisions between user helpers and built-ins cannot occur because
+ * `buildWorkerHelperAgents` always prefixes helper names with `helper-`, so
+ * generated keys like `helper-haiku` can never equal `coder-explorer` or
+ * `coder-tester`. The spread order (built-ins then helpers) is an additional
+ * safeguard that would prevent overwriting even if that invariant changed.
  */
 export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit {
 	const roomConfig = config.room.config ?? {};
 	const workerSubagents = getWorkerSubagents(roomConfig);
-	const helperAgents = workerSubagents ? buildWorkerHelperAgents(workerSubagents) : undefined;
-	const helperNames = helperAgents ? Object.keys(helperAgents) : undefined;
+	const helperAgents = workerSubagents ? buildWorkerHelperAgents(workerSubagents) : {};
 
-	// When helper sub-agents are configured, use the agent/agents pattern so
-	// the Coder has access to Task/TaskOutput/TaskStop tools. Otherwise use
-	// the simple preset path (no task-spawning capability).
-	if (helperAgents && helperNames && helperNames.length > 0) {
-		const coderAgentDef = {
-			description:
-				'Implementation agent that writes code, runs tests, and creates PRs. Can delegate heavy subtasks to helper sub-agents to avoid context overflow.',
-			prompt: buildCoderSystemPrompt(helperNames),
-			// Coder has all Claude Code tools plus Task for spawning helpers
-			tools: [
-				'Task',
-				'TaskOutput',
-				'TaskStop',
-				'Read',
-				'Write',
-				'Edit',
-				'Bash',
-				'Grep',
-				'Glob',
-				'WebFetch',
-				'WebSearch',
-			],
-			model: 'inherit' as const,
-		};
+	const customHelperNames =
+		Object.keys(helperAgents).length > 0 ? Object.keys(helperAgents) : undefined;
 
-		return {
-			sessionId: config.sessionId,
-			workspacePath: config.workspacePath,
-			systemPrompt: {
-				type: 'preset',
-				preset: 'claude_code',
-			},
-			features: CODER_FEATURES,
-			context: { roomId: config.room.id },
-			type: 'coder',
-			model: config.model ?? DEFAULT_CODER_MODEL,
-			provider: config.provider,
-			agent: 'Coder',
-			agents: {
-				Coder: coderAgentDef,
-				tester: buildTesterAgentDef(),
-				explorer: buildCoderExplorerAgentDef(),
-				...helperAgents,
-			},
-			contextAutoQueue: false,
-		};
-	}
+	const coderAgentDef: AgentDefinition = {
+		description:
+			'Implementation agent that writes code, runs tests, and creates PRs. Uses built-in coder-explorer and coder-tester sub-agents for complex tasks.',
+		prompt: buildCoderSystemPrompt(customHelperNames),
+		// Coder has all Claude Code tools plus Task/TaskOutput/TaskStop for spawning sub-agents
+		tools: [
+			'Task',
+			'TaskOutput',
+			'TaskStop',
+			'Read',
+			'Write',
+			'Edit',
+			'Bash',
+			'Grep',
+			'Glob',
+			'WebFetch',
+			'WebSearch',
+		],
+		model: 'inherit',
+	};
 
-	// Simple path: no helper sub-agents
 	return {
 		sessionId: config.sessionId,
 		workspacePath: config.workspacePath,
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildCoderSystemPrompt(),
 		},
 		features: CODER_FEATURES,
 		context: { roomId: config.room.id },
 		type: 'coder',
 		model: config.model ?? DEFAULT_CODER_MODEL,
 		provider: config.provider,
+		agent: 'Coder',
+		agents: {
+			Coder: coderAgentDef,
+			'coder-explorer': buildCoderExplorerAgentDef(),
+			'coder-tester': buildTesterAgentDef(),
+			...helperAgents,
+		},
 		contextAutoQueue: false,
 	};
 }
