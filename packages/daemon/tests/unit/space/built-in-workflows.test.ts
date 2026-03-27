@@ -19,6 +19,7 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
 	CODING_WORKFLOW,
+	CODING_WORKFLOW_V2,
 	RESEARCH_WORKFLOW,
 	REVIEW_ONLY_WORKFLOW,
 	getBuiltInWorkflows,
@@ -68,7 +69,7 @@ function seedAgent(
 }
 
 /** Valid builtin roles — 'leader' must NOT appear in any template step. */
-const VALID_BUILTIN_ROLES = new Set<string>(['planner', 'coder', 'general', 'reviewer']);
+const VALID_BUILTIN_ROLES = new Set<string>(['planner', 'coder', 'general', 'reviewer', 'qa']);
 
 /**
  * Returns true if any step in the workflow has 'leader' as its agentId placeholder.
@@ -249,18 +250,266 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 	});
 });
 
+describe('CODING_WORKFLOW_V2 template', () => {
+	test('has eight nodes', () => {
+		expect(CODING_WORKFLOW_V2.nodes).toHaveLength(8);
+	});
+
+	test('node names are correct', () => {
+		expect(CODING_WORKFLOW_V2.nodes.map((n) => n.name)).toEqual([
+			'Planning',
+			'Plan Review',
+			'Coding',
+			'Reviewer 1',
+			'Reviewer 2',
+			'Reviewer 3',
+			'QA',
+			'Done',
+		]);
+	});
+
+	test('node agentId placeholders are correct', () => {
+		const nodes = CODING_WORKFLOW_V2.nodes;
+		expect(nodes[0].agentId).toBe('planner'); // Planning
+		expect(nodes[1].agentId).toBe('reviewer'); // Plan Review
+		expect(nodes[2].agentId).toBe('coder'); // Coding
+		expect(nodes[3].agentId).toBe('reviewer'); // Reviewer 1
+		expect(nodes[4].agentId).toBe('reviewer'); // Reviewer 2
+		expect(nodes[5].agentId).toBe('reviewer'); // Reviewer 3
+		expect(nodes[6].agentId).toBe('qa'); // QA
+		expect(nodes[7].agentId).toBe('general'); // Done
+	});
+
+	test('startNodeId points to the Planning (planner) node', () => {
+		const planningNode = CODING_WORKFLOW_V2.nodes.find((n) => n.name === 'Planning');
+		expect(CODING_WORKFLOW_V2.startNodeId).toBe(planningNode?.id);
+	});
+
+	test('has seven gates', () => {
+		expect(CODING_WORKFLOW_V2.gates).toHaveLength(7);
+	});
+
+	test('gate IDs are correct', () => {
+		const ids = CODING_WORKFLOW_V2.gates!.map((g) => g.id);
+		expect(ids).toContain('plan-pr-gate');
+		expect(ids).toContain('plan-approval-gate');
+		expect(ids).toContain('code-pr-gate');
+		expect(ids).toContain('review-votes-gate');
+		expect(ids).toContain('review-reject-gate');
+		expect(ids).toContain('qa-result-gate');
+		expect(ids).toContain('qa-fail-gate');
+	});
+
+	test('plan-pr-gate has check condition and planner writer role', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'plan-pr-gate')!;
+		expect(gate.condition.type).toBe('check');
+		expect((gate.condition as { field: string }).field).toBe('plan_submitted');
+		expect(gate.allowedWriterRoles).toContain('planner');
+		expect(gate.resetOnCycle).toBe(false);
+	});
+
+	test('plan-approval-gate has check==true condition and reviewer writer role', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'plan-approval-gate')!;
+		expect(gate.condition.type).toBe('check');
+		expect((gate.condition as { field: string; value: unknown }).value).toBe(true);
+		expect(gate.allowedWriterRoles).toContain('reviewer');
+		expect(gate.resetOnCycle).toBe(true);
+	});
+
+	test('code-pr-gate has check-exists condition and coder writer role', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'code-pr-gate')!;
+		expect(gate.condition.type).toBe('check');
+		expect((gate.condition as { op: string }).op).toBe('exists');
+		expect(gate.allowedWriterRoles).toContain('coder');
+		expect(gate.resetOnCycle).toBe(true);
+	});
+
+	test('review-votes-gate has count condition requiring min 3 approved', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'review-votes-gate')!;
+		expect(gate.condition.type).toBe('count');
+		const cond = gate.condition as { matchValue: unknown; min: number };
+		expect(cond.matchValue).toBe('approved');
+		expect(cond.min).toBe(3);
+		expect(gate.allowedWriterRoles).toContain('reviewer');
+		expect(gate.resetOnCycle).toBe(true);
+	});
+
+	test('review-reject-gate has count condition requiring min 1 rejected', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'review-reject-gate')!;
+		expect(gate.condition.type).toBe('count');
+		const cond = gate.condition as { matchValue: unknown; min: number };
+		expect(cond.matchValue).toBe('rejected');
+		expect(cond.min).toBe(1);
+		expect(gate.allowedWriterRoles).toContain('reviewer');
+		expect(gate.resetOnCycle).toBe(true);
+	});
+
+	test('qa-result-gate has check==passed condition and qa writer role', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'qa-result-gate')!;
+		expect(gate.condition.type).toBe('check');
+		expect((gate.condition as { value: unknown }).value).toBe('passed');
+		expect(gate.allowedWriterRoles).toContain('qa');
+		expect(gate.resetOnCycle).toBe(false);
+	});
+
+	test('qa-fail-gate has check==failed condition and qa writer role', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'qa-fail-gate')!;
+		expect(gate.condition.type).toBe('check');
+		expect((gate.condition as { value: unknown }).value).toBe('failed');
+		expect(gate.allowedWriterRoles).toContain('qa');
+		expect(gate.resetOnCycle).toBe(true);
+	});
+
+	test('has 15 channels', () => {
+		expect(CODING_WORKFLOW_V2.channels).toHaveLength(15);
+	});
+
+	test('main progression channels have correct gateIds', () => {
+		const ch = CODING_WORKFLOW_V2.channels!;
+
+		const planToReview = ch.find((c) => c.from === 'Planning' && c.to === 'Plan Review');
+		expect(planToReview?.gateId).toBe('plan-pr-gate');
+
+		const reviewToCoding = ch.find((c) => c.from === 'Plan Review' && c.to === 'Coding');
+		expect(reviewToCoding?.gateId).toBe('plan-approval-gate');
+
+		const codingToRev1 = ch.find((c) => c.from === 'Coding' && c.to === 'Reviewer 1');
+		expect(codingToRev1?.gateId).toBe('code-pr-gate');
+
+		const codingToRev2 = ch.find((c) => c.from === 'Coding' && c.to === 'Reviewer 2');
+		expect(codingToRev2?.gateId).toBe('code-pr-gate');
+
+		const codingToRev3 = ch.find((c) => c.from === 'Coding' && c.to === 'Reviewer 3');
+		expect(codingToRev3?.gateId).toBe('code-pr-gate');
+	});
+
+	test('reviewer-to-QA channels share review-votes-gate', () => {
+		const ch = CODING_WORKFLOW_V2.channels!;
+		const rev1ToQA = ch.find((c) => c.from === 'Reviewer 1' && c.to === 'QA');
+		const rev2ToQA = ch.find((c) => c.from === 'Reviewer 2' && c.to === 'QA');
+		const rev3ToQA = ch.find((c) => c.from === 'Reviewer 3' && c.to === 'QA');
+		expect(rev1ToQA?.gateId).toBe('review-votes-gate');
+		expect(rev2ToQA?.gateId).toBe('review-votes-gate');
+		expect(rev3ToQA?.gateId).toBe('review-votes-gate');
+	});
+
+	test('QA-to-Done uses qa-result-gate', () => {
+		const ch = CODING_WORKFLOW_V2.channels!.find((c) => c.from === 'QA' && c.to === 'Done');
+		expect(ch?.gateId).toBe('qa-result-gate');
+		expect(ch?.isCyclic).toBeUndefined();
+	});
+
+	test('cyclic channels are marked isCyclic', () => {
+		const ch = CODING_WORKFLOW_V2.channels!;
+
+		const qaToCoding = ch.find((c) => c.from === 'QA' && c.to === 'Coding');
+		expect(qaToCoding?.gateId).toBe('qa-fail-gate');
+		expect(qaToCoding?.isCyclic).toBe(true);
+
+		const rev1ToCoding = ch.find((c) => c.from === 'Reviewer 1' && c.to === 'Coding');
+		expect(rev1ToCoding?.gateId).toBe('review-reject-gate');
+		expect(rev1ToCoding?.isCyclic).toBe(true);
+
+		const rev2ToCoding = ch.find((c) => c.from === 'Reviewer 2' && c.to === 'Coding');
+		expect(rev2ToCoding?.gateId).toBe('review-reject-gate');
+		expect(rev2ToCoding?.isCyclic).toBe(true);
+
+		const rev3ToCoding = ch.find((c) => c.from === 'Reviewer 3' && c.to === 'Coding');
+		expect(rev3ToCoding?.gateId).toBe('review-reject-gate');
+		expect(rev3ToCoding?.isCyclic).toBe(true);
+	});
+
+	test('ungated feedback channels have no gateId', () => {
+		const ch = CODING_WORKFLOW_V2.channels!;
+		const reviewToPlanning = ch.find((c) => c.from === 'Plan Review' && c.to === 'Planning');
+		expect(reviewToPlanning).toBeDefined();
+		expect(reviewToPlanning?.gateId).toBeUndefined();
+
+		const codingToPlanning = ch.find((c) => c.from === 'Coding' && c.to === 'Planning');
+		expect(codingToPlanning).toBeDefined();
+		expect(codingToPlanning?.gateId).toBeUndefined();
+	});
+
+	test('all channels have direction one-way', () => {
+		for (const ch of CODING_WORKFLOW_V2.channels!) {
+			expect(ch.direction).toBe('one-way');
+		}
+	});
+
+	test('all channel from/to fields reference valid node names', () => {
+		const nodeNames = new Set(CODING_WORKFLOW_V2.nodes.map((n) => n.name));
+		for (const ch of CODING_WORKFLOW_V2.channels!) {
+			expect(nodeNames.has(ch.from as string)).toBe(true);
+			expect(nodeNames.has(ch.to as string)).toBe(true);
+		}
+	});
+
+	test('reviewer nodes instruct read-merge-write for votes (not bare write)', () => {
+		for (const name of ['Reviewer 1', 'Reviewer 2', 'Reviewer 3']) {
+			const node = CODING_WORKFLOW_V2.nodes.find((n) => n.name === name)!;
+			expect(node.instructions).toContain('read_gate');
+			expect(node.instructions).toContain('write_gate');
+			// Must warn against writing only own entry to prevent overwriting peers
+			expect(node.instructions).toContain('overwriting');
+		}
+	});
+
+	test('QA node instructions require explicit result write on every pass', () => {
+		const qa = CODING_WORKFLOW_V2.nodes.find((n) => n.name === 'QA')!;
+		expect(qa.instructions).toContain('every pass');
+		expect(qa.instructions).toMatch(/do not assume/i);
+	});
+
+	test('review-votes-gate description mentions read-merge-write requirement', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'review-votes-gate')!;
+		expect(gate.description).toContain('read-merge-write');
+	});
+
+	test('qa-result-gate description explains why resetOnCycle is false', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'qa-result-gate')!;
+		expect(gate.description).toContain('resetOnCycle');
+		expect(gate.description).toMatch(/intentionally false/i);
+	});
+
+	test('does not reference leader', () => {
+		expect(hasLeaderAgentId(CODING_WORKFLOW_V2)).toBe(false);
+	});
+
+	test('template id and spaceId are empty (not space-specific)', () => {
+		expect(CODING_WORKFLOW_V2.id).toBe('');
+		expect(CODING_WORKFLOW_V2.spaceId).toBe('');
+	});
+
+	test('maxIterations is set to 5', () => {
+		expect(CODING_WORKFLOW_V2.maxIterations).toBe(5);
+	});
+
+	test('has the default tag so workflow selector ranks it first for coding requests', () => {
+		expect(CODING_WORKFLOW_V2.tags).toContain('default');
+	});
+
+	test('has the coding tag', () => {
+		expect(CODING_WORKFLOW_V2.tags).toContain('coding');
+	});
+});
+
 // ---------------------------------------------------------------------------
 // getBuiltInWorkflows()
 // ---------------------------------------------------------------------------
 
 describe('getBuiltInWorkflows()', () => {
-	test('returns exactly three templates', () => {
-		expect(getBuiltInWorkflows()).toHaveLength(3);
+	test('returns exactly four templates', () => {
+		expect(getBuiltInWorkflows()).toHaveLength(4);
 	});
 
 	test('includes CODING_WORKFLOW', () => {
 		const names = getBuiltInWorkflows().map((w) => w.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
+	});
+
+	test('includes CODING_WORKFLOW_V2', () => {
+		const names = getBuiltInWorkflows().map((w) => w.name);
+		expect(names).toContain(CODING_WORKFLOW_V2.name);
 	});
 
 	test('includes RESEARCH_WORKFLOW', () => {
@@ -306,11 +555,13 @@ describe('seedBuiltInWorkflows()', () => {
 	const GENERAL_ID = 'agent-general-uuid';
 
 	// Role resolver — mirrors what the real call site does
+	const QA_ID = 'agent-qa-uuid';
 	const roleMap: Record<string, string> = {
 		planner: PLANNER_ID,
 		coder: CODER_ID,
 		general: GENERAL_ID,
 		reviewer: 'agent-reviewer-uuid',
+		qa: QA_ID,
 	};
 	const resolveAgentId = (role: string): string | undefined => roleMap[role];
 
@@ -321,6 +572,7 @@ describe('seedBuiltInWorkflows()', () => {
 		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner', 'planner');
 		seedAgent(db, CODER_ID, SPACE_ID, 'Coder', 'coder');
 		seedAgent(db, GENERAL_ID, SPACE_ID, 'General', 'general');
+		seedAgent(db, QA_ID, SPACE_ID, 'QA', 'qa');
 
 		const repo = new SpaceWorkflowRepository(db);
 		// No agentLookup — seeder bypasses lookup by passing real IDs directly
@@ -340,16 +592,17 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('seeds all three built-in templates for an empty space', async () => {
+	test('seeds all four built-in templates for an empty space', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
-		expect(workflows).toHaveLength(3);
+		expect(workflows).toHaveLength(4);
 	});
 
-	test('seeded workflow names match all three templates', async () => {
+	test('seeded workflow names match all four templates', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
+		expect(names).toContain(CODING_WORKFLOW_V2.name);
 		expect(names).toContain(RESEARCH_WORKFLOW.name);
 		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
 	});
@@ -473,6 +726,80 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[0].agentId).toBe(CODER_ID);
 	});
 
+	test('CODING_WORKFLOW_V2 seeded correctly — eight nodes with real agent IDs', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name);
+		expect(wf).toBeDefined();
+		expect(wf!.nodes).toHaveLength(8);
+		expect(wf!.nodes[0].agentId).toBe(PLANNER_ID); // Planning
+		expect(wf!.nodes[1].agentId).toBe(roleMap.reviewer); // Plan Review
+		expect(wf!.nodes[2].agentId).toBe(CODER_ID); // Coding
+		expect(wf!.nodes[3].agentId).toBe(roleMap.reviewer); // Reviewer 1
+		expect(wf!.nodes[4].agentId).toBe(roleMap.reviewer); // Reviewer 2
+		expect(wf!.nodes[5].agentId).toBe(roleMap.reviewer); // Reviewer 3
+		expect(wf!.nodes[6].agentId).toBe(QA_ID); // QA
+		expect(wf!.nodes[7].agentId).toBe(GENERAL_ID); // Done
+	});
+
+	test('CODING_WORKFLOW_V2 seeded with 15 channels', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
+		expect(wf.channels).toHaveLength(15);
+	});
+
+	test('CODING_WORKFLOW_V2 seeded with 7 gates', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
+		expect(wf.gates).toHaveLength(7);
+		const gateIds = wf.gates!.map((g) => g.id);
+		expect(gateIds).toContain('plan-pr-gate');
+		expect(gateIds).toContain('plan-approval-gate');
+		expect(gateIds).toContain('code-pr-gate');
+		expect(gateIds).toContain('review-votes-gate');
+		expect(gateIds).toContain('review-reject-gate');
+		expect(gateIds).toContain('qa-result-gate');
+		expect(gateIds).toContain('qa-fail-gate');
+	});
+
+	test('CODING_WORKFLOW_V2 seeded channels use gateId (not legacy gate)', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
+		const gatedChannels = wf.channels!.filter((c) => c.gateId !== undefined);
+		// 13 channels have gateIds (15 total minus 2 ungated feedback channels)
+		expect(gatedChannels).toHaveLength(13);
+	});
+
+	test('CODING_WORKFLOW_V2 seeded cyclic channels are marked isCyclic', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
+		const cyclicChannels = wf.channels!.filter((c) => c.isCyclic === true);
+		// 4 cyclic: QA→Coding, Reviewer1→Coding, Reviewer2→Coding, Reviewer3→Coding
+		expect(cyclicChannels).toHaveLength(4);
+	});
+
+	test('CODING_WORKFLOW_V2 seeded channels from/to fields are node names (not UUIDs)', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
+		const nodeNames = new Set(wf.nodes.map((n) => n.name));
+		for (const ch of wf.channels!) {
+			expect(nodeNames.has(ch.from as string)).toBe(true);
+			expect(nodeNames.has(ch.to as string)).toBe(true);
+		}
+	});
+
+	test('CODING_WORKFLOW_V2 seeded with default tag for workflow selector ranking', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
+		expect(wf.tags).toContain('default');
+	});
+
+	test('CODING_WORKFLOW_V2 seeded alongside CODING_WORKFLOW_V1 — both present', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
+		expect(names).toContain(CODING_WORKFLOW.name);
+		expect(names).toContain(CODING_WORKFLOW_V2.name);
+	});
+
 	test('all seeded workflows have the real spaceId assigned', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		for (const wf of manager.listWorkflows(SPACE_ID)) {
@@ -491,7 +818,7 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
-		expect(workflows).toHaveLength(3);
+		expect(workflows).toHaveLength(4);
 	});
 
 	test('is idempotent — leaves user-created workflows untouched', async () => {
@@ -562,12 +889,14 @@ describe('Coding Workflow export/import round-trip', () => {
 	const PLANNER_ID = 'agent-planner-uuid';
 	const CODER_ID = 'agent-coder-uuid';
 	const GENERAL_ID = 'agent-general-uuid';
+	const QA_ID = 'agent-qa-uuid';
 
 	const roleMap: Record<string, string> = {
 		planner: PLANNER_ID,
 		coder: CODER_ID,
 		general: GENERAL_ID,
 		reviewer: 'agent-reviewer-uuid',
+		qa: QA_ID,
 	};
 	const resolveAgentId = (role: string): string | undefined => roleMap[role];
 
@@ -620,6 +949,7 @@ describe('Coding Workflow export/import round-trip', () => {
 		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner', 'planner');
 		seedAgent(db, CODER_ID, SPACE_ID, 'Coder', 'coder');
 		seedAgent(db, GENERAL_ID, SPACE_ID, 'General', 'general');
+		seedAgent(db, QA_ID, SPACE_ID, 'QA', 'qa');
 
 		const repo = new SpaceWorkflowRepository(db);
 		manager = new SpaceWorkflowManager(repo);

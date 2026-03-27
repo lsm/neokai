@@ -689,6 +689,85 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflows).toHaveLength(1);
 	});
+
+	test('V2 workflow preferred over V1 when both match equally (coding task)', async () => {
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Coding Workflow',
+			['coding', 'default'],
+			'For writing code'
+		);
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Coding Workflow V2',
+			['coding', 'v2', 'parallel-review', 'default'],
+			'For writing code with parallel review'
+		);
+
+		const result = await makeHandlers(ctx).suggest_workflow({
+			description: 'implement a new coding feature',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflows).toHaveLength(2);
+		// V2 must be ranked first (tiebreaker: 'v2' tag)
+		expect(parsed.workflows[0].name).toBe('Coding Workflow V2');
+		expect(parsed.workflows[1].name).toBe('Coding Workflow');
+	});
+
+	test('V1 fallback when V2 is not seeded (backward compatibility)', async () => {
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Coding Workflow',
+			['coding', 'default'],
+			'For writing code'
+		);
+
+		const result = await makeHandlers(ctx).suggest_workflow({
+			description: 'implement a new coding feature',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflows).toHaveLength(1);
+		expect(parsed.workflows[0].name).toBe('Coding Workflow');
+	});
+
+	test('non-coding workflows unaffected by v2 tiebreaker', async () => {
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Research Workflow',
+			['research'],
+			'For research tasks'
+		);
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Deploy Workflow',
+			['deploy', 'v2'],
+			'For deployment tasks'
+		);
+
+		// A research query — deploy v2 workflow should NOT hijack top spot
+		const result = await makeHandlers(ctx).suggest_workflow({
+			description: 'research competitors',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		// Research Workflow has more hits; Deploy Workflow should not outrank it
+		expect(parsed.workflows[0].name).toBe('Research Workflow');
+	});
 });
 
 // ---------------------------------------------------------------------------

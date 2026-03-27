@@ -8,7 +8,11 @@
 import { describe, it, expect, mock } from 'bun:test';
 import {
 	buildCustomAgentSystemPrompt,
+	buildReviewerNodeAgentPrompt,
 	buildCustomAgentTaskMessage,
+	buildPlannerNodeAgentPrompt,
+	buildCoderNodeAgentPrompt,
+	buildQaNodeAgentPrompt,
 	createCustomAgentInit,
 	resolveAgentInit,
 	type CustomAgentConfig,
@@ -181,6 +185,171 @@ describe('buildCustomAgentSystemPrompt', () => {
 		const agent = makeAgent();
 		const prompt = buildCustomAgentSystemPrompt(agent);
 		expect(prompt).toContain('Do NOT commit directly to the main/dev/master branch');
+	});
+});
+
+// ============================================================================
+// buildReviewerNodeAgentPrompt
+// ============================================================================
+
+describe('buildReviewerNodeAgentPrompt', () => {
+	it('identifies agent as a Reviewer Agent', () => {
+		const agent = makeAgent({ name: 'PRBot', role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('PRBot');
+		expect(prompt).toContain('Reviewer Agent');
+	});
+
+	it('includes custom systemPrompt when provided', () => {
+		const agent = makeAgent({ role: 'reviewer', systemPrompt: 'Focus on security.' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Focus on security.');
+		expect(prompt).toContain('Agent Instructions');
+	});
+
+	it('omits Agent Instructions section when systemPrompt is unset', () => {
+		const agent = makeAgent({ role: 'reviewer', systemPrompt: undefined });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).not.toContain('Agent Instructions');
+	});
+
+	it('uses list_gates to discover nodeId, does not mention read_gate', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// nodeId is returned by list_gates, NOT read_gate — prompt must use list_gates
+		expect(prompt).toContain('list_gates');
+		expect(prompt).toContain('nodeId');
+		// read_gate does NOT return nodeId; remove it to avoid LLM confusion
+		expect(prompt).not.toContain('read_gate');
+	});
+
+	it('retrieves PR URL from list_gates response (code-pr-gate currentData.pr_url)', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('code-pr-gate');
+		expect(prompt).toContain('currentData');
+		expect(prompt).toContain('currentData.pr_url');
+	});
+
+	it('includes review process steps', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('gh pr diff');
+		expect(prompt).toContain('Evaluate the changes');
+	});
+
+	it('includes P0/P1/P2/P3 severity classification', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Severity Classification');
+		expect(prompt).toContain('P0');
+		expect(prompt).toContain('P1');
+		expect(prompt).toContain('P2');
+		expect(prompt).toContain('P3');
+	});
+
+	it('includes PR review posting via GitHub REST API', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews');
+		expect(prompt).toContain('--method POST');
+		expect(prompt).toContain('APPROVE');
+		expect(prompt).toContain('REQUEST_CHANGES');
+	});
+
+	it('includes guidance for API failure handling', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('ERROR');
+	});
+
+	it('includes ---REVIEW_POSTED--- and ---END_REVIEW_POSTED--- structured output block', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('---REVIEW_POSTED---');
+		expect(prompt).toContain('---END_REVIEW_POSTED---');
+	});
+
+	it('structured output uses flat key-value format with p0/p1/p2/p3 fields', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// Flat format — NOT JSON with severityCounts
+		expect(prompt).toContain('p0:');
+		expect(prompt).toContain('p1:');
+		expect(prompt).toContain('p2:');
+		expect(prompt).toContain('p3:');
+		expect(prompt).toContain('summary:');
+		expect(prompt).toContain('url:');
+		expect(prompt).toContain('recommendation:');
+		// Should NOT use old nested JSON format
+		expect(prompt).not.toContain('"severityCounts"');
+		expect(prompt).not.toContain('"critical"');
+	});
+
+	it('recommendation vocabulary is APPROVE / REQUEST_CHANGES (uppercase), not approve/reject', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// Flat block: recommendation: APPROVE | REQUEST_CHANGES
+		expect(prompt).toContain('recommendation: APPROVE | REQUEST_CHANGES');
+		// Should NOT use lowercase "approve"/"reject" as recommendation values
+		expect(prompt).not.toContain('"recommendation": "approve"');
+		expect(prompt).not.toContain('"recommendation": "reject"');
+	});
+
+	it('includes gate interaction: write vote to review-votes-gate using nodeId', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('review-votes-gate');
+		expect(prompt).toContain('write_gate');
+		expect(prompt).toContain('"votes"');
+		expect(prompt).toContain('"approve"');
+		expect(prompt).toContain('"reject"');
+	});
+
+	it('idempotency check comes before any action (Step 1 position)', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Idempotency Check');
+		expect(prompt).toContain('already voted');
+		// Idempotency section must appear before the PR review posting section
+		const idempotencyPos = prompt.indexOf('Idempotency Check');
+		const postReviewPos = prompt.indexOf('Post the PR Review');
+		expect(idempotencyPos).toBeLessThan(postReviewPos);
+	});
+
+	it('list_gates call appears in idempotency section (nodeId discovery is part of idempotency)', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// The idempotency section tells agent to call list_gates to get nodeId
+		const idempotencyPos = prompt.indexOf('Idempotency Check');
+		const listGatesPos = prompt.indexOf('list_gates');
+		expect(idempotencyPos).toBeGreaterThanOrEqual(0);
+		expect(listGatesPos).toBeGreaterThan(idempotencyPos);
+	});
+
+	it('includes peer communication section with all target modes including multicast', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Peer Communication');
+		expect(prompt).toContain('send_message');
+		expect(prompt).toContain('list_peers');
+		// Must include multicast target form
+		expect(prompt).toContain("['role1', 'role2']");
+	});
+
+	it('includes completion signalling via report_done', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Signalling Completion');
+		expect(prompt).toContain('report_done');
+	});
+
+	it('does NOT include git commit/push workflow instructions', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).not.toContain('Git Workflow (MANDATORY)');
+		expect(prompt).not.toContain('git push -u origin HEAD');
+		expect(prompt).not.toContain('gh pr create');
 	});
 });
 
@@ -393,7 +562,7 @@ describe('createCustomAgentInit', () => {
 		expect(init.features?.sessionInfo).toBe(false);
 	});
 
-	it('builds correct init for reviewer role (no role-specific instructions)', () => {
+	it('builds correct init for reviewer role (uses reviewer-specific prompt)', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ role: 'reviewer', name: 'CodeReviewer' }),
 		});
@@ -401,7 +570,9 @@ describe('createCustomAgentInit', () => {
 
 		expect(init.type).toBe('worker');
 		expect(init.systemPrompt?.append).toContain('Reviewer Agent');
-		expect(init.systemPrompt?.append).not.toContain('Review Responsibilities');
+		// Reviewer prompt contains gate interaction instructions, not generic git workflow
+		expect(init.systemPrompt?.append).toContain('code-pr-gate');
+		expect(init.systemPrompt?.append).toContain('review-votes-gate');
 	});
 
 	it('builds correct init for planner role (treated as worker)', () => {
@@ -1089,5 +1260,427 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 		const msg = buildCustomAgentTaskMessage(config);
 
 		expect(msg).toContain('Workflow Structure');
+	});
+});
+
+// ============================================================================
+// buildPlannerNodeAgentPrompt
+// ============================================================================
+
+describe('buildPlannerNodeAgentPrompt', () => {
+	it('returns a non-empty string', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(typeof prompt).toBe('string');
+		expect(prompt.length).toBeGreaterThan(0);
+	});
+
+	it('includes plan document creation instructions', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('Planner Responsibilities');
+		expect(prompt).toContain('plan document');
+		expect(prompt).toContain('docs/plans/');
+	});
+
+	it('includes codebase exploration instructions', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('explore the codebase');
+	});
+
+	it('includes plan document structure guidance', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('Objective');
+		expect(prompt).toContain('Approach');
+		expect(prompt).toContain('Test strategy');
+	});
+
+	it('instructs to commit, push, and open a plan PR', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('plan PR');
+		expect(prompt).toContain('plan:');
+	});
+
+	it('instructs to call write_gate with plan-pr-gate', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('write_gate');
+		expect(prompt).toContain('plan-pr-gate');
+	});
+
+	it('specifies the required gate data fields: plan_submitted, pr_number, branch', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('plan_submitted');
+		expect(prompt).toContain('pr_number');
+		expect(prompt).toContain('branch');
+	});
+
+	it('explains the gate condition (plan_submitted exists)', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('plan_submitted exists');
+	});
+
+	it('instructs to notify reviewers via send_message', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('send_message');
+		expect(prompt).toContain('reviewer');
+	});
+
+	it('send_message example uses "message" field (not "text")', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('"message"');
+		expect(prompt).not.toContain('"text"');
+	});
+
+	it('mentions workflow structure alignment (step 5)', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('Workflow Structure');
+		expect(prompt).toContain('Step 5');
+	});
+});
+
+// ============================================================================
+// buildCustomAgentSystemPrompt — planner role integration
+// ============================================================================
+
+describe('buildCustomAgentSystemPrompt planner integration', () => {
+	it('includes planner-specific sections for planner role', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Planner Responsibilities');
+		expect(prompt).toContain('plan-pr-gate');
+		expect(prompt).toContain('write_gate');
+	});
+
+	it('does NOT include planner sections for coder role', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		// Planner Responsibilities heading must not appear — coder has its own section
+		expect(prompt).not.toContain('Planner Responsibilities');
+	});
+
+	it('does NOT include planner sections for reviewer role', () => {
+		const agent = makeAgent({ role: 'reviewer', name: 'Reviewer' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Planner Responsibilities');
+		expect(prompt).not.toContain('plan-pr-gate');
+	});
+
+	it('does NOT include planner sections for qa role', () => {
+		const agent = makeAgent({ role: 'qa', name: 'QA' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Planner Responsibilities');
+		expect(prompt).not.toContain('plan-pr-gate');
+	});
+
+	it('planner prompt still includes mandatory git workflow', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Git Workflow (MANDATORY)');
+		expect(prompt).toContain('git push -u origin HEAD');
+	});
+
+	it('planner prompt still includes completion signalling', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Signalling Completion');
+		expect(prompt).toContain('report_done');
+	});
+
+	it('planner prompt still includes peer communication', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Peer Communication');
+		expect(prompt).toContain('list_peers');
+	});
+
+	it('planner-specific sections appear before completion signalling', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		const plannerIdx = prompt.indexOf('Planner Responsibilities');
+		const completionIdx = prompt.indexOf('Signalling Completion');
+		expect(plannerIdx).toBeLessThan(completionIdx);
+	});
+});
+
+// ============================================================================
+// buildCoderNodeAgentPrompt
+// ============================================================================
+
+describe('buildCoderNodeAgentPrompt', () => {
+	it('returns a non-empty string', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(typeof prompt).toBe('string');
+		expect(prompt.length).toBeGreaterThan(0);
+	});
+
+	it('includes Coder Responsibilities heading', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('Coder Responsibilities');
+	});
+
+	it('instructs to read plan-pr-gate before starting implementation', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('plan-pr-gate');
+		expect(prompt).toContain('read_gate');
+	});
+
+	it('instructs to read plan before writing code', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('Before starting implementation');
+	});
+
+	it('handles missing plan-pr-gate gracefully', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('plan-pr-gate');
+		// Should mention fallback when gate is empty
+		expect(prompt).toContain('no plan PR is required');
+	});
+
+	it('instructs to write code-pr-gate after creating PR', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('write_gate');
+		expect(prompt).toContain('code-pr-gate');
+	});
+
+	it('specifies the required gate data fields: pr_url, pr_number, branch', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('pr_url');
+		expect(prompt).toContain('pr_number');
+		expect(prompt).toContain('branch');
+	});
+
+	it('explains the gate condition (pr_url exists)', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('pr_url exists');
+	});
+
+	it('explains that write_gate unblocks reviewer agents', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('reviewer');
+		expect(prompt).toContain('mandatory');
+	});
+
+	it('does NOT include Planner Responsibilities content', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).not.toContain('Planner Responsibilities');
+		expect(prompt).not.toContain('plan-pr-gate\` gate.');
+	});
+});
+
+// ============================================================================
+// buildCustomAgentSystemPrompt — coder role integration
+// ============================================================================
+
+describe('buildCustomAgentSystemPrompt coder integration', () => {
+	it('includes coder-specific sections for coder role', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Coder Responsibilities');
+		expect(prompt).toContain('code-pr-gate');
+		expect(prompt).toContain('write_gate');
+	});
+
+	it('includes plan-pr-gate read instruction for coder role', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('plan-pr-gate');
+		expect(prompt).toContain('read_gate');
+	});
+
+	it('does NOT include coder sections for planner role', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Coder Responsibilities');
+		expect(prompt).not.toContain('code-pr-gate');
+	});
+
+	it('does NOT include coder sections for general role', () => {
+		const agent = makeAgent({ role: 'general', name: 'General' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Coder Responsibilities');
+		expect(prompt).not.toContain('code-pr-gate');
+	});
+
+	it('does NOT include coder sections for qa role', () => {
+		const agent = makeAgent({ role: 'qa', name: 'QA' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Coder Responsibilities');
+		expect(prompt).not.toContain('code-pr-gate');
+	});
+
+	it('coder prompt still includes mandatory git workflow', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Git Workflow (MANDATORY)');
+		expect(prompt).toContain('git push -u origin HEAD');
+	});
+
+	it('coder prompt still includes bypass markers', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Bypassing Git/PR Gates for Research-Only Tasks');
+		expect(prompt).toContain('RESEARCH_ONLY:');
+	});
+
+	it('coder prompt still includes review feedback section', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Addressing Review Feedback');
+		expect(prompt).toContain('pullrequestreview');
+	});
+
+	it('coder prompt still includes completion signalling', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Signalling Completion');
+		expect(prompt).toContain('report_done');
+	});
+
+	it('coder-specific sections appear before completion signalling', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		const coderIdx = prompt.indexOf('Coder Responsibilities');
+		const completionIdx = prompt.indexOf('Signalling Completion');
+		expect(coderIdx).toBeLessThan(completionIdx);
+	});
+
+	it('plan-pr-gate read appears before code-pr-gate write in coder prompt', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		const readIdx = prompt.indexOf('plan-pr-gate');
+		const writeIdx = prompt.indexOf('code-pr-gate');
+		expect(readIdx).toBeLessThan(writeIdx);
+	});
+});
+
+// ============================================================================
+// buildQaNodeAgentPrompt
+// ============================================================================
+
+describe('buildQaNodeAgentPrompt', () => {
+	it('returns a non-empty string', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(typeof prompt).toBe('string');
+		expect(prompt.length).toBeGreaterThan(0);
+	});
+
+	it('includes role and responsibility description', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('QA Agent');
+		expect(prompt).toContain('verify');
+	});
+
+	it('includes gh CLI auth verification step', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('gh auth status');
+		expect(prompt).toContain('not authenticated');
+	});
+
+	it('includes read_gate instruction for code-pr-gate with pr_url field', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('read_gate');
+		expect(prompt).toContain('code-pr-gate');
+		expect(prompt).toContain('pr_url');
+	});
+
+	it('includes test command detection for package.json', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('package.json');
+	});
+
+	it('includes test command detection for Makefile', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('Makefile');
+	});
+
+	it('includes CI pipeline check via gh pr checks', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('gh pr checks');
+	});
+
+	it('includes PR mergeability check via gh pr view', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('gh pr view');
+		expect(prompt).toContain('mergeable');
+		expect(prompt).toContain('mergeStateStatus');
+	});
+
+	it('includes merge conflict detection using git merge dry-run (not deprecated git merge-tree)', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('git merge --no-commit --no-ff');
+		expect(prompt).toContain('git merge --abort');
+		expect(prompt).toContain('CONFLICT');
+		// Must NOT use the deprecated 3-argument git merge-tree form
+		expect(prompt).not.toContain('git merge-tree $(git merge-base');
+	});
+
+	it('includes write_gate instruction for qa-result-gate', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('write_gate');
+		expect(prompt).toContain('qa-result-gate');
+	});
+
+	it('specifies result field with passed and failed values', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('"passed"');
+		expect(prompt).toContain('"failed"');
+		expect(prompt).toContain('result');
+	});
+
+	it('specifies summary field in gate write', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('summary');
+	});
+
+	it('mentions gate check condition', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('check: result == passed');
+	});
+
+	it('includes VERIFICATION_COMPLETE bypass marker instruction', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('VERIFICATION_COMPLETE:');
+	});
+
+	it('explicitly warns not to create commits, push, or open PRs', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('NOT create commits');
+		expect(prompt).toContain('push branches');
+		expect(prompt).toContain('open pull requests');
+	});
+
+	it('references the Git Workflow MANDATORY section to explain bypass', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('Git Workflow (MANDATORY)');
+	});
+
+	it('includes structured QA output format', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('QA RESULT');
+		expect(prompt).toContain('CI Pipeline');
+		expect(prompt).toContain('PR Mergeability');
+		expect(prompt).toContain('Blockers');
+	});
+
+	it('embeds into custom agent system prompt as Agent Instructions when set as systemPrompt', () => {
+		const agent = makeAgent({ role: 'qa', systemPrompt: buildQaNodeAgentPrompt() });
+		const fullPrompt = buildCustomAgentSystemPrompt(agent);
+		expect(fullPrompt).toContain('Agent Instructions');
+		expect(fullPrompt).toContain('QA Agent');
+		expect(fullPrompt).toContain('code-pr-gate');
+		expect(fullPrompt).toContain('qa-result-gate');
+		// The assembled prompt must include the bypass marker so the agent knows to use it
+		expect(fullPrompt).toContain('VERIFICATION_COMPLETE:');
+	});
+
+	it('assembled prompt does not instruct QA agent to commit code', () => {
+		const agent = makeAgent({ role: 'qa', systemPrompt: buildQaNodeAgentPrompt() });
+		const fullPrompt = buildCustomAgentSystemPrompt(agent);
+		// The QA prompt must explicitly counter the git workflow section's commit instruction
+		expect(fullPrompt).toContain('NOT create commits');
+	});
+
+	it('is deterministic — returns the same string on multiple calls', () => {
+		const prompt1 = buildQaNodeAgentPrompt();
+		const prompt2 = buildQaNodeAgentPrompt();
+		expect(prompt1).toBe(prompt2);
 	});
 });

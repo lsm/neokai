@@ -475,6 +475,11 @@ export class ChannelRouter {
 	 * and when enough votes accumulate to satisfy the condition, the target node is
 	 * automatically activated.
 	 *
+	 * When multiple channels share the same gate (e.g., three reviewer nodes all
+	 * gated by `code-pr-gate`), all target nodes are activated in parallel via
+	 * `Promise.allSettled()`. This ensures that reviewer1, reviewer2, and reviewer3
+	 * activate simultaneously rather than sequentially.
+	 *
 	 * @param runId  - Workflow run ID
 	 * @param gateId - ID of the gate whose data changed
 	 * @returns Array of newly activated SpaceTask records (may be empty)
@@ -496,8 +501,10 @@ export class ChannelRouter {
 		const gateResult = this.evaluateGateById(runId, gateId, workflow);
 		if (!gateResult.open) return [];
 
-		// Gate is open → activate target nodes for all gated channels
-		const activatedTasks: SpaceTask[] = [];
+		// Gate is open → collect all unique node IDs that need activation.
+		// Multiple channels may point to the same target (e.g. fan-out via node name),
+		// so deduplicate before spawning to avoid redundant activateNode() calls.
+		const nodeIdsToActivate = new Set<string>();
 		for (const channel of channels) {
 			const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
 			for (const target of targets) {
@@ -511,15 +518,27 @@ export class ChannelRouter {
 				// Only activate if no active tasks for this node
 				const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
 				if (activeTasks.length === 0) {
-					try {
-						const tasks = await this.activateNode(runId, targetNode.id);
-						activatedTasks.push(...tasks);
-					} catch {
-						// Run may have transitioned to terminal state between the check above
-						// and the activation attempt — silently skip.
-					}
+					nodeIdsToActivate.add(targetNode.id);
 				}
 			}
+		}
+
+		if (nodeIdsToActivate.size === 0) return [];
+
+		// Activate all target nodes in parallel. When a shared gate controls multiple
+		// independent nodes (e.g., code-pr-gate → reviewer1, reviewer2, reviewer3),
+		// this ensures they all become active simultaneously rather than sequentially.
+		const results = await Promise.allSettled(
+			[...nodeIdsToActivate].map((nodeId) => this.activateNode(runId, nodeId))
+		);
+
+		const activatedTasks: SpaceTask[] = [];
+		for (const result of results) {
+			if (result.status === 'fulfilled') {
+				activatedTasks.push(...result.value);
+			}
+			// Rejected: run may have transitioned to terminal state between the
+			// nodeIdsToActivate check above and the activation attempt — silently skip.
 		}
 
 		return activatedTasks;
