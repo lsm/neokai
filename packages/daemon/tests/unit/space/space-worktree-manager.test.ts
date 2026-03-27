@@ -182,6 +182,41 @@ describe('createTaskWorktree', () => {
 		expect(existsSync(result.path)).toBe(true);
 	});
 
+	test('is safe with shell-special characters in baseBranch', async () => {
+		// Create a feature branch with characters that are valid for git refs but have
+		// special meaning in shells (e.g., ~ and ^ are valid in git rev-parse but
+		// have special shell meaning). This verifies execFileSync passes them literally.
+		execSync('git checkout -B base-branch-special', { cwd: repoDir });
+		writeFileSync(join(repoDir, 'special.txt'), 'special\n');
+		execSync('git add .', { cwd: repoDir });
+		execSync('git commit -m "special test commit"', { cwd: repoDir });
+		// Go back to the initial branch
+		const branches = execSync('git branch', { cwd: repoDir }).toString();
+		const initialBranch = branches
+			.split('\n')
+			.map((b) => b.replace(/^\*/, '').trim())
+			.find((b) => b !== '' && b !== 'base-branch-special');
+		if (initialBranch) {
+			execSync(`git checkout "${initialBranch}"`, { cwd: repoDir });
+		}
+
+		const taskId = seedTask(db, spaceId, 'task-injection', 99);
+		// Use baseBranch with characters that would be interpreted by a shell
+		// but are passed literally via execFileSync array args
+		const result = await manager.createTaskWorktree(
+			spaceId,
+			taskId,
+			'Injection Test',
+			99,
+			'base-branch-special~1'
+		);
+
+		// Worktree should be created successfully
+		// The ~1 suffix is valid for git (means "1 commit before base-branch-special")
+		// but would be interpreted by a shell if passed through execSync template string
+		expect(existsSync(result.path)).toBe(true);
+	});
+
 	test('throws when space does not exist', async () => {
 		await expect(
 			manager.createTaskWorktree('nonexistent-space', 'any-task-id', 'Title', 1)

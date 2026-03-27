@@ -10,7 +10,7 @@
  * Does NOT extend Room's WorktreeManager — uses execSync directly.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -82,21 +82,34 @@ export class SpaceWorktreeManager {
 		// If a stale branch with the same name exists (from a previous crashed run),
 		// delete it so we can recreate it cleanly.
 		try {
-			const branches = execSync(`git branch --list "${branchName}"`, {
+			const branches = execFileSync('git', ['branch', '--list', branchName], {
 				cwd: space.workspacePath,
-			}).toString();
+				encoding: 'utf8',
+				timeout: 30_000,
+			});
 			if (branches.trim().length > 0) {
 				this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
-				execSync(`git branch -D "${branchName}"`, { cwd: space.workspacePath });
+				execFileSync('git', ['branch', '-D', branchName], {
+					cwd: space.workspacePath,
+					timeout: 30_000,
+				});
 			}
-		} catch {
+		} catch (err) {
 			// Non-fatal: branch check/delete failure should not block worktree creation
+			this.logger.warn(
+				`Failed to check/delete stale branch ${branchName}: ${err instanceof Error ? err.message : String(err)}`
+			);
 		}
 
 		try {
-			execSync(`git worktree add "${worktreePath}" -b "${branchName}" ${baseBranch ?? 'HEAD'}`, {
-				cwd: space.workspacePath,
-			});
+			execFileSync(
+				'git',
+				['worktree', 'add', worktreePath, '-b', branchName, baseBranch ?? 'HEAD'],
+				{
+					cwd: space.workspacePath,
+					timeout: 30_000,
+				}
+			);
 		} catch (err) {
 			// Clean up the directory if it was partially created
 			if (existsSync(worktreePath)) {
@@ -139,7 +152,10 @@ export class SpaceWorktreeManager {
 
 		// Remove the worktree directory via git
 		try {
-			execSync(`git worktree remove "${record.path}" --force`, { cwd: space.workspacePath });
+			execFileSync('git', ['worktree', 'remove', record.path, '--force'], {
+				cwd: space.workspacePath,
+				timeout: 30_000,
+			});
 		} catch (err) {
 			this.logger.warn(
 				`Failed to remove git worktree at ${record.path} (continuing with cleanup): ${err instanceof Error ? err.message : String(err)}`
@@ -149,9 +165,15 @@ export class SpaceWorktreeManager {
 		// Delete the branch
 		const branchName = `space/${record.slug}`;
 		try {
-			execSync(`git branch -D "${branchName}"`, { cwd: space.workspacePath });
-		} catch {
+			execFileSync('git', ['branch', '-D', branchName], {
+				cwd: space.workspacePath,
+				timeout: 30_000,
+			});
+		} catch (err) {
 			// Branch may already be gone; non-fatal
+			this.logger.warn(
+				`Failed to delete branch ${branchName}: ${err instanceof Error ? err.message : String(err)}`
+			);
 		}
 
 		// Remove the SQLite record
@@ -184,9 +206,22 @@ export class SpaceWorktreeManager {
 	 */
 	async cleanupOrphaned(spaceId: string): Promise<void> {
 		const records = this.worktreeRepo.listBySpace(spaceId);
+		const space = this.spaceRepo.getSpace(spaceId);
 
 		for (const record of records) {
 			if (!existsSync(record.path)) {
+				// Also delete the orphaned branch to match removeTaskWorktree behavior
+				if (space) {
+					const branchName = `space/${record.slug}`;
+					try {
+						execFileSync('git', ['branch', '-D', branchName], {
+							cwd: space.workspacePath,
+							timeout: 30_000,
+						});
+					} catch {
+						// Branch may already be gone; non-fatal
+					}
+				}
 				this.worktreeRepo.delete(spaceId, record.taskId);
 				this.logger.info(
 					`Cleaned up orphaned worktree record for task ${record.taskId} (path was: ${record.path})`
@@ -195,10 +230,12 @@ export class SpaceWorktreeManager {
 		}
 
 		// Prune git's internal worktree state as well
-		const space = this.spaceRepo.getSpace(spaceId);
 		if (space) {
 			try {
-				execSync('git worktree prune', { cwd: space.workspacePath });
+				execFileSync('git', ['worktree', 'prune'], {
+					cwd: space.workspacePath,
+					timeout: 30_000,
+				});
 			} catch (err) {
 				this.logger.warn(
 					`git worktree prune failed for space ${spaceId}: ${err instanceof Error ? err.message : String(err)}`
