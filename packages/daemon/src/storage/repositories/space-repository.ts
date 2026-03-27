@@ -21,17 +21,18 @@ export class SpaceRepository {
 	/**
 	 * Create a new space
 	 */
-	createSpace(params: CreateSpaceParams): Space {
+	createSpace(params: CreateSpaceParams & { slug: string }): Space {
 		const id = generateUUID();
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
 			id,
+			params.slug,
 			params.workspacePath,
 			params.name,
 			params.description ?? '',
@@ -75,6 +76,36 @@ export class SpaceRepository {
 
 		if (!row) return null;
 		return this.rowToSpace(row);
+	}
+
+	/**
+	 * Get a space by slug
+	 */
+	getSpaceBySlug(slug: string): Space | null {
+		const stmt = this.db.prepare(`SELECT * FROM spaces WHERE slug = ?`);
+		const row = stmt.get(slug) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+		return this.rowToSpace(row);
+	}
+
+	/**
+	 * Update a space's slug
+	 */
+	updateSlug(id: string, slug: string): Space | null {
+		const stmt = this.db.prepare(`UPDATE spaces SET slug = ?, updated_at = ? WHERE id = ?`);
+		stmt.run(slug, Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Get all slugs currently in use (for collision detection)
+	 */
+	getAllSlugs(): string[] {
+		const rows = this.db.prepare(`SELECT slug FROM spaces WHERE slug IS NOT NULL`).all() as Array<{
+			slug: string;
+		}>;
+		return rows.map((r) => r.slug);
 	}
 
 	/**
@@ -220,6 +251,7 @@ export class SpaceRepository {
 
 		return {
 			id: row.id as string,
+			slug: (row.slug as string) ?? '',
 			workspacePath: row.workspace_path as string,
 			name: row.name as string,
 			description: (row.description as string) ?? '',

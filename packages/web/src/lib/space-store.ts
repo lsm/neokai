@@ -36,7 +36,7 @@ import type {
 	CreateWorkflowRunParams,
 	UpdateSpaceParams,
 } from '@neokai/shared';
-import { Logger } from '@neokai/shared';
+import { Logger, isUUID } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 
 const logger = new Logger('kai:web:spacestore');
@@ -348,10 +348,12 @@ class SpaceStore {
 	}
 
 	/**
-	 * Internal selection logic (called within promise chain)
+	 * Internal selection logic (called within promise chain).
+	 * The spaceIdOrSlug parameter can be either a UUID or a slug — both are resolved
+	 * to the canonical UUID during initial state fetch.
 	 */
-	private async doSelect(spaceId: string | null): Promise<void> {
-		if (this.spaceId.value === spaceId) {
+	private async doSelect(spaceIdOrSlug: string | null): Promise<void> {
+		if (this.spaceId.value === spaceIdOrSlug) {
 			return;
 		}
 
@@ -374,14 +376,22 @@ class SpaceStore {
 		this.runtimeState.value = null;
 		this.error.value = null;
 
-		// 3. Update active space
-		this.spaceId.value = spaceId;
+		// 3. Update active space (may be updated to real UUID after fetch)
+		this.spaceId.value = spaceIdOrSlug;
 
 		// 4. Start new subscriptions if space selected
-		if (spaceId) {
+		if (spaceIdOrSlug) {
 			this.loading.value = true;
 			try {
-				await this.startSubscriptions(spaceId);
+				// Resolve slug to UUID via overview fetch, then subscribe with the real UUID
+				const resolvedId = await this.fetchAndResolveSpace(spaceIdOrSlug);
+				if (resolvedId) {
+					// Update spaceId to the canonical UUID if it was a slug
+					if (resolvedId !== spaceIdOrSlug) {
+						this.spaceId.value = resolvedId;
+					}
+					await this.startSubscriptions(resolvedId);
+				}
 			} catch (err) {
 				logger.error('Failed to start space subscriptions:', err);
 				this.error.value = err instanceof Error ? err.message : 'Failed to load space';
@@ -618,36 +628,37 @@ class SpaceStore {
 			}
 		});
 		this.cleanupFunctions.push(unsubWorkflowDeleted);
-
-		// Fetch initial state via RPC
-		await this.fetchInitialState(hub, spaceId);
 	}
 
 	/**
-	 * Fetch initial state via RPC (pure WebSocket)
+	 * Fetch initial state and resolve slug to UUID.
+	 * Returns the resolved space UUID, or null if not found.
 	 */
-	private async fetchInitialState(
-		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-		spaceId: string
-	): Promise<void> {
+	private async fetchAndResolveSpace(spaceIdOrSlug: string): Promise<string | null> {
+		const hub = await connectionManager.getHub();
+
 		const overview = await hub.request<{
 			space: Space;
 			tasks: SpaceTask[];
 			workflowRuns: SpaceWorkflowRun[];
 			sessions: string[];
-		}>('space.overview', { id: spaceId });
+		}>('space.overview', isUUID(spaceIdOrSlug) ? { id: spaceIdOrSlug } : { slug: spaceIdOrSlug });
 
 		if (!overview) {
 			this.error.value = 'Space not found';
-			return;
+			return null;
 		}
 
 		this.space.value = overview.space;
 		this.tasks.value = overview.tasks ?? [];
 		this.workflowRuns.value = overview.workflowRuns ?? [];
 
+		const resolvedId = overview.space.id;
+
 		// Fetch agents and workflows in parallel
-		await Promise.all([this.fetchAgents(hub, spaceId), this.fetchWorkflows(hub, spaceId)]);
+		await Promise.all([this.fetchAgents(hub, resolvedId), this.fetchWorkflows(hub, resolvedId)]);
+
+		return resolvedId;
 	}
 
 	/**
@@ -726,8 +737,7 @@ class SpaceStore {
 		if (!spaceId) return;
 
 		try {
-			const hub = await connectionManager.getHub();
-			await this.fetchInitialState(hub, spaceId);
+			await this.fetchAndResolveSpace(spaceId);
 		} catch (err) {
 			logger.error('Failed to refresh space state:', err);
 		}

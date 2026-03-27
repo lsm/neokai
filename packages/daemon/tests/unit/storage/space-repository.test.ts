@@ -25,6 +25,7 @@ describe('SpaceRepository', () => {
 		it('creates a space with required fields', () => {
 			const space = repo.createSpace({
 				workspacePath: '/workspace/project',
+				slug: 'my-project',
 				name: 'My Project',
 			});
 
@@ -45,6 +46,7 @@ describe('SpaceRepository', () => {
 		it('creates a space with all optional fields', () => {
 			const space = repo.createSpace({
 				workspacePath: '/workspace/project',
+				slug: 'my-project',
 				name: 'My Project',
 				description: 'A description',
 				backgroundContext: 'Some context',
@@ -65,21 +67,21 @@ describe('SpaceRepository', () => {
 		});
 
 		it("defaults autonomyLevel to 'supervised' when not specified", () => {
-			const space = repo.createSpace({ workspacePath: '/workspace/project', name: 'P' });
+			const space = repo.createSpace({ workspacePath: '/workspace/project', slug: 'p', name: 'P' });
 			expect(space.autonomyLevel).toBe('supervised');
 		});
 
 		it('enforces unique workspace_path', () => {
-			repo.createSpace({ workspacePath: '/workspace/project', name: 'A' });
+			repo.createSpace({ workspacePath: '/workspace/project', slug: 'project-a', name: 'A' });
 			expect(() => {
-				repo.createSpace({ workspacePath: '/workspace/project', name: 'B' });
+				repo.createSpace({ workspacePath: '/workspace/project', slug: 'project-b', name: 'B' });
 			}).toThrow();
 		});
 	});
 
 	describe('getSpace', () => {
 		it('returns space by ID', () => {
-			const created = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const created = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 			const found = repo.getSpace(created.id);
 			expect(found).not.toBeNull();
 			expect(found!.id).toBe(created.id);
@@ -92,7 +94,7 @@ describe('SpaceRepository', () => {
 
 	describe('getSpaceByPath', () => {
 		it('returns space by workspace path', () => {
-			const created = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const created = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 			const found = repo.getSpaceByPath('/workspace/a');
 			expect(found).not.toBeNull();
 			expect(found!.id).toBe(created.id);
@@ -105,8 +107,8 @@ describe('SpaceRepository', () => {
 
 	describe('listSpaces', () => {
 		it('lists active spaces by default', () => {
-			repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
-			const b = repo.createSpace({ workspacePath: '/workspace/b', name: 'B' });
+			repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			const b = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });
 			repo.archiveSpace(b.id);
 
 			const spaces = repo.listSpaces();
@@ -115,8 +117,8 @@ describe('SpaceRepository', () => {
 		});
 
 		it('includes archived spaces when requested', () => {
-			repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
-			const b = repo.createSpace({ workspacePath: '/workspace/b', name: 'B' });
+			repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			const b = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });
 			repo.archiveSpace(b.id);
 
 			const spaces = repo.listSpaces(true);
@@ -126,7 +128,7 @@ describe('SpaceRepository', () => {
 
 	describe('updateSpace', () => {
 		it('updates name and description', () => {
-			const space = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 			const updated = repo.updateSpace(space.id, { name: 'A Updated', description: 'New desc' });
 
 			expect(updated).not.toBeNull();
@@ -137,6 +139,7 @@ describe('SpaceRepository', () => {
 		it('clears defaultModel when set to null', () => {
 			const space = repo.createSpace({
 				workspacePath: '/workspace/a',
+				slug: 'a',
 				name: 'A',
 				defaultModel: 'claude-opus',
 			});
@@ -145,7 +148,7 @@ describe('SpaceRepository', () => {
 		});
 
 		it("updates autonomyLevel to 'semi_autonomous'", () => {
-			const space = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 			expect(space.autonomyLevel).toBe('supervised');
 
 			const updated = repo.updateSpace(space.id, { autonomyLevel: 'semi_autonomous' });
@@ -155,6 +158,7 @@ describe('SpaceRepository', () => {
 		it("updates autonomyLevel back to 'supervised'", () => {
 			const space = repo.createSpace({
 				workspacePath: '/workspace/a',
+				slug: 'a',
 				name: 'A',
 				autonomyLevel: 'semi_autonomous',
 			});
@@ -163,7 +167,7 @@ describe('SpaceRepository', () => {
 		});
 
 		it('updates typed config fields', () => {
-			const space = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 			const updated = repo.updateSpace(space.id, {
 				config: { maxConcurrentTasks: 5, taskTimeoutMs: 30000 },
 			});
@@ -177,7 +181,7 @@ describe('SpaceRepository', () => {
 
 	describe('archiveSpace', () => {
 		it('sets status to archived', () => {
-			const space = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 			const archived = repo.archiveSpace(space.id);
 			expect(archived!.status).toBe('archived');
 		});
@@ -185,7 +189,7 @@ describe('SpaceRepository', () => {
 
 	describe('addSessionToSpace / removeSessionFromSpace', () => {
 		it('adds and removes sessions idempotently', () => {
-			const space = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 
 			// Add
 			const withSession = repo.addSessionToSpace(space.id, 'session-1');
@@ -212,7 +216,7 @@ describe('SpaceRepository', () => {
 
 	describe('deleteSpace', () => {
 		it('deletes a space', () => {
-			const space = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 			expect(repo.deleteSpace(space.id)).toBe(true);
 			expect(repo.getSpace(space.id)).toBeNull();
 		});

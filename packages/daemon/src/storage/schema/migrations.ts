@@ -257,6 +257,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 62: Add task_number column to space_tasks for human-friendly numeric IDs.
 	// Scoped per space via UNIQUE(space_id, task_number). Backfills existing rows.
 	runMigration62(db);
+
+	// Migration 63: Add slug column to spaces table for human-readable URL identifiers.
+	// Auto-generates slugs from existing space names and adds a UNIQUE index.
+	runMigration63(db);
 }
 
 /**
@@ -4069,4 +4073,136 @@ function runMigration61(db: BunDatabase): void {
 		db.exec(`ROLLBACK`);
 		throw err;
 	}
+}
+
+/**
+ * Migration 63: Add slug column to spaces table.
+ *
+ * - Adds nullable `slug TEXT` column (required for ALTER TABLE ADD COLUMN in SQLite)
+ * - Backfills existing spaces with slugs derived from their name
+ * - Rebuilds table with `slug TEXT NOT NULL` to enforce the constraint
+ * - Adds UNIQUE index on slug
+ */
+export function runMigration63(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+
+	// Check if slug column already exists (idempotent guard)
+	const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{
+		name: string;
+		notnull: number;
+	}>;
+	const slugCol = tableInfo.find((col) => col.name === 'slug');
+	if (slugCol && slugCol.notnull === 1) return; // Already migrated with NOT NULL
+
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	db.exec(`BEGIN`);
+
+	try {
+		// Step 1: Add nullable slug column if it doesn't exist yet
+		if (!slugCol) {
+			db.exec(`ALTER TABLE spaces ADD COLUMN slug TEXT`);
+		}
+
+		// Step 2: Backfill slugs only for rows that don't have one yet.
+		// Use WHERE slug IS NULL so we don't overwrite slugs that were already set
+		// (e.g., if a space was created between a partial migration run and this fix).
+		const existingSlugs = db
+			.prepare('SELECT slug FROM spaces WHERE slug IS NOT NULL')
+			.all() as Array<{ slug: string }>;
+		const usedSlugs = new Set<string>(existingSlugs.map((r) => r.slug));
+
+		const rows = db.prepare('SELECT id, name FROM spaces WHERE slug IS NULL').all() as Array<{
+			id: string;
+			name: string;
+		}>;
+
+		const updateStmt = db.prepare('UPDATE spaces SET slug = ? WHERE id = ? AND slug IS NULL');
+
+		for (const row of rows) {
+			const base = generateBaseMigrationSlug(row.name);
+			let slug = base;
+			let counter = 2;
+			while (usedSlugs.has(slug)) {
+				slug = `${base}-${counter}`;
+				counter++;
+			}
+			usedSlugs.add(slug);
+			updateStmt.run(slug, row.id);
+		}
+
+		// Step 3: Table rebuild to enforce NOT NULL on slug
+		// SQLite does not support ALTER COLUMN, so we recreate the table.
+		db.exec(`DROP TABLE IF EXISTS spaces_m63_new`);
+		db.exec(`
+			CREATE TABLE spaces_m63_new (
+				id TEXT PRIMARY KEY,
+				slug TEXT NOT NULL,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '',
+				instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT,
+				allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'archived')),
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+				config TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`
+			INSERT INTO spaces_m63_new (id, slug, workspace_path, name, description,
+				background_context, instructions, default_model, allowed_models,
+				session_ids, status, autonomy_level, config, created_at, updated_at)
+			SELECT id, slug, workspace_path, name, description,
+				background_context, instructions, default_model, allowed_models,
+				session_ids, status, COALESCE(autonomy_level, 'supervised'),
+				config, created_at, updated_at
+			FROM spaces
+		`);
+		db.exec(`DROP TABLE spaces`);
+		db.exec(`ALTER TABLE spaces_m63_new RENAME TO spaces`);
+
+		// Step 4: Recreate indexes
+		db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
+
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Inline slugify for migration — avoids importing from slug.ts which may change.
+ * Mirrors the same rules: lowercase, replace non-alphanumeric with hyphens,
+ * collapse, strip, truncate to 60 chars.
+ */
+function generateBaseMigrationSlug(input: string): string {
+	const fallback = 'unnamed-space';
+	if (!input || !input.trim()) return fallback;
+
+	let slug = input
+		.toLowerCase()
+		.replace(/[^a-z0-9\s-]/g, '-')
+		.replace(/[\s]+/g, '-')
+		.replace(/-{2,}/g, '-')
+		.replace(/^-+/, '')
+		.replace(/-+$/, '');
+
+	if (!slug) return fallback;
+
+	if (slug.length > 60) {
+		const truncated = slug.slice(0, 60);
+		const lastHyphen = truncated.lastIndexOf('-');
+		slug = lastHyphen > 0 ? truncated.slice(0, lastHyphen) : truncated.replace(/-+$/, '');
+	}
+
+	return slug;
 }

@@ -31,6 +31,7 @@ function fireMockEvent(eventName: string, data: unknown): void {
 function makeSpace(id = 'space-1'): Space {
 	return {
 		id,
+		slug: 'test-space',
 		name: 'Test Space',
 		workspacePath: '/workspace',
 		description: '',
@@ -116,10 +117,11 @@ function makeMockHub() {
 				mockEventHandlerSets.get(eventName)?.delete(handler);
 			};
 		}),
-		request: vi.fn(async (method: string, _params?: unknown) => {
+		request: vi.fn(async (method: string, params?: Record<string, unknown>) => {
 			if (method === 'space.overview') {
+				const spaceId = (params?.id ?? params?.slug ?? 'space-1') as string;
 				return {
-					space: makeSpace(),
+					space: makeSpace(spaceId),
 					tasks: [],
 					workflowRuns: [],
 					sessions: [],
@@ -202,7 +204,8 @@ describe('SpaceStore — space selection', () => {
 
 	it('fetches initial state on selectSpace()', async () => {
 		await spaceStore.selectSpace('space-1');
-		expect(mockHub.request).toHaveBeenCalledWith('space.overview', { id: 'space-1' });
+		// 'space-1' is not a UUID, so the store sends it as a slug
+		expect(mockHub.request).toHaveBeenCalledWith('space.overview', { slug: 'space-1' });
 		expect(spaceStore.space.value?.id).toBe('space-1');
 	});
 
@@ -1043,7 +1046,8 @@ describe('SpaceStore — refresh', () => {
 
 		await spaceStore.refresh();
 
-		expect(mockHub.request).toHaveBeenCalledWith('space.overview', { id: 'space-1' });
+		// 'space-1' is not a UUID, so the store sends it as a slug
+		expect(mockHub.request).toHaveBeenCalledWith('space.overview', { slug: 'space-1' });
 	});
 
 	it('is a no-op for space state when no space is selected', async () => {

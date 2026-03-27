@@ -81,8 +81,8 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/project', 'Test Space', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
 		db.prepare(
 			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 		).run('agent-1', 'space-1', 'Coder', 'coder', now, now);
@@ -98,8 +98,8 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/project', 'Test Space', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
 		db.prepare(
 			`INSERT INTO space_agents (id, space_id, name, role, inject_workflow_context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
 		).run('agent-1', 'space-1', 'Planner', 'planner', 1, now, now);
@@ -231,8 +231,8 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
 
 		const now = Date.now();
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace', 'S', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 's', '/workspace', 'S', now, now);
 		db.prepare(
 			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 		).run('agent-1', 'space-1', 'Coder', 'coder', now, now);

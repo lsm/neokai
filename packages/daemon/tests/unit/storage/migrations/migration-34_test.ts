@@ -120,9 +120,9 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 		const now = Date.now();
 		// Create a space first (FK requirement)
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace', 'Test Space', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace', 'Test Space', now, now);
 
 		expect(() => {
 			db.prepare(

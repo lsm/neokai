@@ -74,9 +74,9 @@ function makeDb(): { db: BunDatabase; dir: string } {
 function seedSpace(db: BunDatabase, spaceId: string): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 function seedAgent(
@@ -306,6 +306,7 @@ function makeTaskCtx(): TaskCtx {
 
 	const space: Space = {
 		id: spaceId,
+		slug: 'test-space',
 		workspacePath: '/tmp/workspace',
 		name: 'Test Space',
 		description: '',
