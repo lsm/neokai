@@ -19,7 +19,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import simpleGit from 'simple-git';
+import { execSync } from 'node:child_process';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorktreeManager } from '../../../src/lib/space/managers/space-worktree-manager.ts';
@@ -39,15 +39,14 @@ async function makeGitRepo(label: string): Promise<string> {
 	const dir = join(TMP_ROOT, `${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 
-	const git = simpleGit(dir);
-	await git.init();
-	await git.addConfig('user.name', 'Test User');
-	await git.addConfig('user.email', 'test@example.com');
+	execSync('git init', { cwd: dir });
+	execSync('git config user.name "Test User"', { cwd: dir });
+	execSync('git config user.email "test@example.com"', { cwd: dir });
 
 	// Create an initial commit so HEAD exists and worktrees can be based on it
 	writeFileSync(join(dir, 'README.md'), '# test\n');
-	await git.add('.');
-	await git.commit('initial commit');
+	execSync('git add .', { cwd: dir });
+	execSync('git commit -m "initial commit"', { cwd: dir });
 
 	return dir;
 }
@@ -125,9 +124,8 @@ describe('createTaskWorktree', () => {
 		const taskId = seedTask(db, spaceId, 'task-002', 2);
 		const { slug } = await manager.createTaskWorktree(spaceId, taskId, 'Fix parser bug', 2);
 
-		const git = simpleGit(repoDir);
-		const branches = await git.raw(['branch', '--list', `space/${slug}`]);
-		expect(branches.trim()).toContain(`space/${slug}`);
+		const branches = execSync('git branch --list', { cwd: repoDir }).toString();
+		expect(branches).toContain(`space/${slug}`);
 	});
 
 	test('is idempotent — second call returns same path without error', async () => {
@@ -159,15 +157,19 @@ describe('createTaskWorktree', () => {
 	test('uses custom baseBranch when provided', async () => {
 		// Create a feature branch to base the worktree on; use -B to force-create
 		// so the test is not sensitive to the repo's default branch name.
-		const git = simpleGit(repoDir);
-		await git.raw(['checkout', '-B', 'base-branch-for-test']);
+		execSync('git checkout -B base-branch-for-test', { cwd: repoDir });
 		writeFileSync(join(repoDir, 'base.txt'), 'base\n');
-		await git.add('.');
-		await git.commit('base commit');
+		execSync('git add .', { cwd: repoDir });
+		execSync('git commit -m "base commit"', { cwd: repoDir });
 		// Go back to the initial branch (main/master/dev — whatever init defaulted to)
-		const branches = await git.branchLocal();
-		const initialBranch = branches.all.find((b) => b !== 'base-branch-for-test') ?? 'HEAD';
-		await git.checkout(initialBranch);
+		const branches = execSync('git branch', { cwd: repoDir }).toString();
+		const initialBranch = branches
+			.split('\n')
+			.map((b) => b.replace(/^\*/, '').trim())
+			.find((b) => b !== '' && b !== 'base-branch-for-test');
+		if (initialBranch) {
+			execSync(`git checkout ${initialBranch}`, { cwd: repoDir });
+		}
 
 		const taskId = seedTask(db, spaceId, 'task-004', 4);
 		const result = await manager.createTaskWorktree(
@@ -203,9 +205,8 @@ describe('removeTaskWorktree', () => {
 		expect(existsSync(path)).toBe(false);
 
 		// Branch should be gone
-		const git = simpleGit(repoDir);
-		const branchList = await git.raw(['branch', '--list', `space/${slug}`]);
-		expect(branchList.trim()).toBe('');
+		const branchList = execSync('git branch', { cwd: repoDir }).toString();
+		expect(branchList).not.toContain(`space/${slug}`);
 
 		// DB record should be gone
 		const retrieved = await manager.getTaskWorktreePath(spaceId, taskId);
