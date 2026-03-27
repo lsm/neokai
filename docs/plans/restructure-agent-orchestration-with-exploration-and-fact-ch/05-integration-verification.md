@@ -1,4 +1,4 @@
-# Milestone 6: Integration Verification
+# Milestone 5: Integration Verification
 
 ## Milestone Goal
 
@@ -12,7 +12,7 @@ Verify that the room runtime correctly wires all restructured agents. Ensure the
 
 ## Tasks
 
-### Task 6.1: Verify QueryOptionsBuilder propagates always-on agents correctly
+### Task 5.1: Verify QueryOptionsBuilder propagates always-on agents correctly
 
 **Description:** Review and test that `QueryOptionsBuilder.build()` correctly handles the agent/agents configuration from the always-on pattern. When `session.config.agent` and `session.config.agents` are set (which they always are now), they should flow through to the SDK `Options` correctly. Verify there are no edge cases where the agents map is dropped or overwritten.
 
@@ -30,12 +30,12 @@ Verify that the room runtime correctly wires all restructured agents. Ensure the
 - Worktree isolation works correctly with always-on agents
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
-**Dependencies:** Milestones 1-4 (all implementation complete)
+**Dependencies:** Milestones 1-3 (all implementation complete)
 **Agent type:** coder
 
 ---
 
-### Task 6.2: Verify room-runtime agent spawning paths
+### Task 5.2: Verify room-runtime agent spawning paths
 
 **Description:** Review the room runtime's agent spawning paths to ensure they work correctly with the restructured agents. The key integration points are: `startGoalAutonomous()` which spawns coder/planner sessions, and `createLeaderCallbacks()` which creates leader sessions. Verify no code paths assume the old conditional pattern.
 
@@ -54,5 +54,5 @@ Verify that the room runtime correctly wires all restructured agents. Ensure the
 - Any necessary fixes applied
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
-**Dependencies:** Task 6.1
+**Dependencies:** Task 5.1
 **Agent type:** coder

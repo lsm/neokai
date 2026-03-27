@@ -1,4 +1,4 @@
-# Milestone 5: Online Tests for Agent Orchestration
+# Milestone 4: Online Tests for Agent Orchestration
 
 ## Milestone Goal
 
@@ -10,7 +10,7 @@ Create dev-proxy-based online tests that verify the restructured agent orchestra
 
 ## Tasks
 
-### Task 5.1: Online test for coder agent with built-in sub-agents
+### Task 4.1: Online test for coder agent with built-in sub-agents
 
 **Description:** Create an online test that verifies the coder agent correctly uses the always-on agent/agents pattern. The test should create a coder session and verify that the SDK receives the correct agent/agents configuration with built-in `coder-explorer` and `coder-tester` sub-agents.
 
@@ -33,7 +33,7 @@ Create dev-proxy-based online tests that verify the restructured agent orchestra
 
 ---
 
-### Task 5.2: Online test for planner 3-phase pipeline
+### Task 4.2: Online test for planner 3-phase pipeline
 
 **Description:** Create an online test that verifies the planner's 3-phase pipeline (`planner-explorer` -> `planner-fact-checker` -> `plan-writer`). The test should verify that the planner session is configured with all three sub-agents and that the planner agent definition correctly describes the 3-phase orchestration.
 
@@ -63,7 +63,7 @@ Create dev-proxy-based online tests that verify the restructured agent orchestra
 
 ---
 
-### Task 5.3: Online test for reviewer and leader with exploration sub-agents
+### Task 4.3: Online test for reviewer and leader with exploration sub-agents
 
 **Description:** Create an online test that verifies reviewers have exploration and fact-checking sub-agents and the leader always uses the agent/agents pattern. Test both SDK-based and CLI-based reviewer configurations.
 
@@ -83,5 +83,5 @@ Create dev-proxy-based online tests that verify the restructured agent orchestra
 - Tests cover both with and without reviewer configuration
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
-**Dependencies:** Milestone 3 (all tasks), Milestone 4 (all tasks)
+**Dependencies:** Milestone 3 (all tasks)
 **Agent type:** coder

@@ -6,8 +6,7 @@ Restructure the planner, coder, and reviewer agents to support proper multi-stag
 
 1. **Planner** gains a 3-phase sequential pipeline: explorer -> fact-checker -> plan-writer (replacing the broken "spawn Explore agents" instruction)
 2. **Coder** always uses the agent/agents pattern with built-in explorer and tester sub-agents (removing the conditional branch on `room.config.agentSubagents.worker`)
-3. **Reviewer** gains exploration and fact-checking sub-agents for deeper code understanding
-4. **Leader** always uses the agent/agents pattern with built-in explorer and fact-checker sub-agents, even when no user-configured reviewers or helpers are present
+3. **Leader & Reviewer** — Leader always uses the agent/agents pattern with built-in explorer and fact-checker sub-agents, even when no user-configured reviewers or helpers are present. Reviewers (which are sub-agents of the leader, built via `buildReviewerAgents()`) gain their own explorer and fact-checker sub-agents for deeper code understanding
 
 ## High-Level Approach
 
@@ -34,24 +33,23 @@ Note: `plan-writer` keeps its existing name since it is already established in t
 
 1. **Coder always-on agent/agents** — Remove conditional branching, always provide Task/TaskOutput/TaskStop with built-in coder-explorer and coder-tester sub-agents. Unit tests included.
 2. **Planner 3-phase pipeline** — Replace plan-writer's broken Explore instruction with sequential planner-explorer -> planner-fact-checker -> plan-writer sub-agents. Unit tests included.
-3. **Reviewer exploration and fact-checking** — Add reviewer-explorer and reviewer-fact-checker sub-agents to reviewer, always use agent/agents pattern. Unit tests included.
-4. **Leader always-on agent/agents** — Update leader to always use agent/agents pattern with leader-explorer and leader-fact-checker, even without room-configured reviewers. Unit tests included.
-5. **Online tests** — Dev-proxy-based online tests verifying agent orchestration behavior and context-passing between sub-agents.
-6. **Integration verification** — Verify room runtime and QueryOptionsBuilder correctly wire all restructured agents.
+3. **Leader & Reviewer always-on agent/agents** — Update leader to always use agent/agents pattern with leader-explorer and leader-fact-checker. Add reviewer-explorer and reviewer-fact-checker sub-agents to reviewers (which are sub-agents of the leader, built via `buildReviewerAgents()`). Unit tests included.
+4. **Online tests** — Dev-proxy-based online tests verifying agent orchestration behavior and context-passing between sub-agents.
+5. **Integration verification** — Verify room runtime and QueryOptionsBuilder correctly wire all restructured agents.
 
 ## Cross-Milestone Dependencies
 
 - Milestone 1 (Coder) and Milestone 2 (Planner) are independent and can proceed in parallel
-- Milestone 3 (Reviewer) has no code-level dependency on Milestone 1 (they modify separate files: `leader-agent.ts` vs `coder-agent.ts`), but follows the same always-on pattern established there
-- Milestone 4 (Leader) depends on Milestone 3 (reviewer sub-agents are defined in the same file, `leader-agent.ts`)
-- Milestone 5 (Online tests) depends on Milestones 1-4 (all implementation + unit tests complete)
-- Milestone 6 (Integration) depends on Milestone 5
+- Milestone 3 (Leader & Reviewer) has no code-level dependency on Milestone 1 (they modify separate files: `leader-agent.ts` vs `coder-agent.ts`), but follows the same always-on pattern established there
+- Milestone 4 (Online tests) depends on Milestones 1-3 (all implementation + unit tests complete)
+- Milestone 5 (Integration) depends on Milestone 4
 
 ## Key Sequencing Decisions
 
-- The coder is restructured first because it establishes the always-on pattern that reviewer and leader will follow
+- The coder is restructured first because it establishes the always-on pattern that leader and reviewer will follow
 - The planner is restructured independently since its 3-phase pipeline is a distinct pattern
-- Unit tests are included in each implementation milestone (Tasks X.3 / X.5 / X.3 / X.2) to keep implementation and tests in the same PR for easier review
+- Leader and reviewer changes are in a single milestone since reviewers are sub-agents of the leader, both defined in `leader-agent.ts`
+- Unit tests are included in each implementation milestone to keep implementation and tests in the same PR for easier review
 - Online tests and integration verification are separate milestones because they test cross-cutting behavior after all implementations are complete
 
 ## Breaking Changes
@@ -65,9 +63,9 @@ Note: `plan-writer` keeps its existing name since it is already established in t
 | Always-on agent/agents increases session init latency | Low — agent definitions are data, not API calls; they are included in the initial SDK options, not spawned eagerly | Monitor SDK session creation time in online tests |
 | Planner 3-phase pipeline triples planning API cost | Medium — three sequential sub-agent calls instead of one | Explorer and fact-checker are cheap (read-only/web-only); the overall planning quality improvement should offset cost. Can skip fact-checker for simple goals in a follow-up |
 | Sub-agent name collisions with user-configured helpers | Medium — user may name a custom helper `explorer` | Built-in names take precedence; colliding user-defined names are auto-prefixed with `custom-` |
-| Each milestone is independently revertible | N/A — this is a benefit | Each milestone modifies a separate agent factory file (`coder-agent.ts`, `planner-agent.ts`, `leader-agent.ts`). Milestones 1-4 can be reverted independently by reverting the PR. Milestones 5-6 (tests only) can be reverted without affecting production behavior |
+| Each milestone is independently revertible | N/A — this is a benefit | Each milestone modifies a separate agent factory file (`coder-agent.ts`, `planner-agent.ts`, `leader-agent.ts`). Milestones 1-3 can be reverted independently by reverting the PR. Milestones 4-5 (tests only) can be reverted without affecting production behavior |
 | Sub-agent errors (timeout, rate limit) in planner pipeline | Medium — a failing explorer or fact-checker blocks plan creation | Planner prompt includes error-handling guidance: if a sub-agent fails, log the error and proceed to the next phase with partial context rather than aborting |
 
 ## Total Estimated Task Count
 
-18 tasks across 6 milestones
+17 tasks across 5 milestones
