@@ -4078,45 +4078,99 @@ function runMigration61(db: BunDatabase): void {
 /**
  * Migration 63: Add slug column to spaces table.
  *
- * - Adds `slug TEXT` column (nullable initially for backfill)
+ * - Adds nullable `slug TEXT` column (required for ALTER TABLE ADD COLUMN in SQLite)
  * - Backfills existing spaces with slugs derived from their name
+ * - Rebuilds table with `slug TEXT NOT NULL` to enforce the constraint
  * - Adds UNIQUE index on slug
- * - Sets column to NOT NULL via table rebuild after backfill
  */
 export function runMigration63(db: BunDatabase): void {
 	if (!tableExists(db, 'spaces')) return;
 
 	// Check if slug column already exists (idempotent guard)
-	const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{ name: string }>;
-	if (tableInfo.some((col) => col.name === 'slug')) return;
-
-	// Step 1: Add nullable slug column
-	db.exec(`ALTER TABLE spaces ADD COLUMN slug TEXT`);
-
-	// Step 2: Backfill slugs from existing space names
-	const rows = db.prepare('SELECT id, name FROM spaces').all() as Array<{
-		id: string;
+	const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{
 		name: string;
+		notnull: number;
 	}>;
+	const slugCol = tableInfo.find((col) => col.name === 'slug');
+	if (slugCol && slugCol.notnull === 1) return; // Already migrated with NOT NULL
 
-	// Collect assigned slugs to avoid collisions during backfill
-	const usedSlugs = new Set<string>();
-	const updateStmt = db.prepare('UPDATE spaces SET slug = ? WHERE id = ? AND slug IS NULL');
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	db.exec(`BEGIN`);
 
-	for (const row of rows) {
-		const base = generateBaseMigrationSlug(row.name);
-		let slug = base;
-		let counter = 2;
-		while (usedSlugs.has(slug)) {
-			slug = `${base}-${counter}`;
-			counter++;
+	try {
+		// Step 1: Add nullable slug column if it doesn't exist yet
+		if (!slugCol) {
+			db.exec(`ALTER TABLE spaces ADD COLUMN slug TEXT`);
 		}
-		usedSlugs.add(slug);
-		updateStmt.run(slug, row.id);
-	}
 
-	// Step 3: Add unique index
-	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
+		// Step 2: Backfill slugs from existing space names
+		const rows = db.prepare('SELECT id, name FROM spaces').all() as Array<{
+			id: string;
+			name: string;
+		}>;
+
+		const usedSlugs = new Set<string>();
+		const updateStmt = db.prepare('UPDATE spaces SET slug = ? WHERE id = ? AND slug IS NULL');
+
+		for (const row of rows) {
+			const base = generateBaseMigrationSlug(row.name);
+			let slug = base;
+			let counter = 2;
+			while (usedSlugs.has(slug)) {
+				slug = `${base}-${counter}`;
+				counter++;
+			}
+			usedSlugs.add(slug);
+			updateStmt.run(slug, row.id);
+		}
+
+		// Step 3: Table rebuild to enforce NOT NULL on slug
+		// SQLite does not support ALTER COLUMN, so we recreate the table.
+		db.exec(`DROP TABLE IF EXISTS spaces_m63_new`);
+		db.exec(`
+			CREATE TABLE spaces_m63_new (
+				id TEXT PRIMARY KEY,
+				slug TEXT NOT NULL,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '',
+				instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT,
+				allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'archived')),
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+				config TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`
+			INSERT INTO spaces_m63_new (id, slug, workspace_path, name, description,
+				background_context, instructions, default_model, allowed_models,
+				session_ids, status, autonomy_level, config, created_at, updated_at)
+			SELECT id, slug, workspace_path, name, description,
+				background_context, instructions, default_model, allowed_models,
+				session_ids, status, COALESCE(autonomy_level, 'supervised'),
+				config, created_at, updated_at
+			FROM spaces
+		`);
+		db.exec(`DROP TABLE spaces`);
+		db.exec(`ALTER TABLE spaces_m63_new RENAME TO spaces`);
+
+		// Step 4: Recreate indexes
+		db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
+
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
 }
 
 /**

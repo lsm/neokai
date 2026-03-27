@@ -258,6 +258,47 @@ describe('Migration 61 — slug backfill', () => {
 		expect(rows[1].slug).toBe('my-project-2');
 	});
 
+	test('enforces NOT NULL constraint on slug after migration', () => {
+		const db = new Database(':memory:');
+		db.exec(`
+			CREATE TABLE spaces (
+				id TEXT PRIMARY KEY,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '',
+				instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT,
+				allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active',
+				autonomy_level TEXT DEFAULT 'supervised',
+				config TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+
+		runMigration61(db);
+
+		// Verify slug column has NOT NULL constraint
+		const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{
+			name: string;
+			notnull: number;
+		}>;
+		const slugCol = tableInfo.find((col) => col.name === 'slug');
+		expect(slugCol).toBeDefined();
+		expect(slugCol!.notnull).toBe(1);
+
+		// Verify inserting a NULL slug throws
+		const now = Date.now();
+		expect(() => {
+			db.prepare(
+				`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+			).run('s-null', '/tmp/ws-null', 'Null Slug', now, now);
+		}).toThrow();
+	});
+
 	test('is idempotent — running twice does not error', () => {
 		const db = new Database(':memory:');
 		db.exec(`
