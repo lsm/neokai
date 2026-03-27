@@ -58,6 +58,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			start_node_id TEXT,
 			config TEXT,
 			channels TEXT,
+			gates TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,

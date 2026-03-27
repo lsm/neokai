@@ -65,6 +65,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			start_node_id TEXT,
 			config TEXT,
 			channels TEXT,
+			gates TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,
@@ -119,6 +120,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			iteration_count INTEGER NOT NULL DEFAULT 0,
 			max_iterations INTEGER NOT NULL DEFAULT 5,
 			goal_id TEXT,
+			failure_reason TEXT
+				CHECK(failure_reason IN ('humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
@@ -126,6 +129,18 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
 		)
 	`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS gate_data (
+			run_id TEXT NOT NULL,
+			gate_id TEXT NOT NULL,
+			data TEXT NOT NULL DEFAULT '{}',
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, gate_id),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_tasks (
