@@ -62,22 +62,26 @@ G4 (per-space skill overrides) is deferred as low priority -- spaces can be addr
 
 **Subtasks:**
 1. Add `skillsManager` and `appMcpServerRepo` as **required** fields to the `TaskAgentManagerConfig` interface in `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`
-2. Pass them as positional args 7 and 8 to `AgentSession.fromInit()` at ~line 304 (task agent creation) and ~line 444 (sub-session creation)
-3. Extend `AgentSession.restore()` signature (`agent-session.ts` ~line 468) to accept optional `skillsManager` and `appMcpServerRepo` parameters
-4. Pass them through in `rehydrateTaskAgent()` (~line 993) and sub-session rehydration (~line 1142)
-5. Update `SpaceRuntimeService` (or wherever `TaskAgentManager` is instantiated) to provide the new config fields from the daemon app context
-6. Add unit tests verifying that `AgentSession.fromInit()` receives `skillsManager` and `appMcpServerRepo` when creating space task agent sessions
-7. Add unit tests verifying that rehydrated task agent sessions also receive skills injection
-8. Add an online test confirming that a space task agent session has access to a globally-enabled MCP server skill
-9. Changes must be on a feature branch with a GitHub PR created via `gh pr create`
+2. Pass them as positional args 7 and 8 to `AgentSession.fromInit()` at ~line 304 (task agent creation) and ~line 444 (sub-session creation via `createSubSession()`)
+3. Add `setRuntimeMcpServers()` call with `appMcpManager.getEnabledMcpConfigs()` for sub-sessions in `createSubSession()` (~line 444), matching the pattern used for main task agents (~line 376-388). Currently main task agents get registry MCPs via `setRuntimeMcpServers()` but sub-sessions do not.
+4. Extend `AgentSession.restore()` signature (`agent-session.ts` ~line 468) to accept optional `skillsManager` and `appMcpServerRepo` parameters
+5. Pass them through in `rehydrateTaskAgent()` (~line 993) and sub-session rehydration (~line 1142)
+6. Update `packages/daemon/src/lib/rpc-handlers/index.ts` (~line 384, where `TaskAgentManager` is instantiated) to provide the new config fields from the daemon app context
+7. Add unit tests verifying that `AgentSession.fromInit()` receives `skillsManager` and `appMcpServerRepo` when creating space task agent sessions
+8. Add unit tests verifying that sub-sessions receive both skills injection AND `appMcpManager` registry MCPs via `setRuntimeMcpServers()`
+9. Add unit tests verifying that rehydrated task agent sessions also receive skills injection
+10. Add an online test confirming that a space task agent session has access to a globally-enabled MCP server skill
+11. Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Acceptance criteria:**
 - `TaskAgentManagerConfig` includes **required** `skillsManager` and `appMcpServerRepo` fields (build-time enforcement that callers provide them)
 - Both main task agent sessions and sub-sessions pass these through to `AgentSession.fromInit()`
+- Sub-sessions also receive `appMcpManager` registry MCPs via `setRuntimeMcpServers()`, matching the main task agent pattern
 - `AgentSession.restore()` accepts optional `skillsManager` and `appMcpServerRepo` parameters
 - Rehydrated task agent and sub-sessions pass these through via `AgentSession.restore()`
 - Existing space tests continue to pass
 - New unit tests confirm skills are threaded through for both fresh and rehydrated sessions
+- New unit tests confirm sub-sessions receive registry MCPs
 - New online test confirms an enabled MCP server skill appears in SDK options for a space task agent
 
 **Dependencies:** None
