@@ -11,6 +11,7 @@ import {
 	buildReviewerNodeAgentPrompt,
 	buildCustomAgentTaskMessage,
 	buildPlannerNodeAgentPrompt,
+	buildCoderNodeAgentPrompt,
 	buildQaNodeAgentPrompt,
 	createCustomAgentInit,
 	resolveAgentInit,
@@ -1350,8 +1351,8 @@ describe('buildCustomAgentSystemPrompt planner integration', () => {
 	it('does NOT include planner sections for coder role', () => {
 		const agent = makeAgent({ role: 'coder', name: 'Coder' });
 		const prompt = buildCustomAgentSystemPrompt(agent);
+		// Planner Responsibilities heading must not appear — coder has its own section
 		expect(prompt).not.toContain('Planner Responsibilities');
-		expect(prompt).not.toContain('plan-pr-gate');
 	});
 
 	it('does NOT include planner sections for reviewer role', () => {
@@ -1395,6 +1396,157 @@ describe('buildCustomAgentSystemPrompt planner integration', () => {
 		const plannerIdx = prompt.indexOf('Planner Responsibilities');
 		const completionIdx = prompt.indexOf('Signalling Completion');
 		expect(plannerIdx).toBeLessThan(completionIdx);
+	});
+});
+
+// ============================================================================
+// buildCoderNodeAgentPrompt
+// ============================================================================
+
+describe('buildCoderNodeAgentPrompt', () => {
+	it('returns a non-empty string', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(typeof prompt).toBe('string');
+		expect(prompt.length).toBeGreaterThan(0);
+	});
+
+	it('includes Coder Responsibilities heading', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('Coder Responsibilities');
+	});
+
+	it('instructs to read plan-pr-gate before starting implementation', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('plan-pr-gate');
+		expect(prompt).toContain('read_gate');
+	});
+
+	it('instructs to read plan before writing code', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('Before starting implementation');
+	});
+
+	it('handles missing plan-pr-gate gracefully', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('plan-pr-gate');
+		// Should mention fallback when gate is empty
+		expect(prompt).toContain('no plan PR is required');
+	});
+
+	it('instructs to write code-pr-gate after creating PR', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('write_gate');
+		expect(prompt).toContain('code-pr-gate');
+	});
+
+	it('specifies the required gate data fields: prUrl, prNumber, branch', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('prUrl');
+		expect(prompt).toContain('prNumber');
+		expect(prompt).toContain('branch');
+	});
+
+	it('explains the gate condition (prUrl exists)', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('prUrl exists');
+	});
+
+	it('explains that write_gate unblocks reviewer agents', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).toContain('reviewer');
+		expect(prompt).toContain('mandatory');
+	});
+
+	it('does NOT include Planner Responsibilities content', () => {
+		const prompt = buildCoderNodeAgentPrompt();
+		expect(prompt).not.toContain('Planner Responsibilities');
+		expect(prompt).not.toContain('plan-pr-gate\` gate.');
+	});
+});
+
+// ============================================================================
+// buildCustomAgentSystemPrompt — coder role integration
+// ============================================================================
+
+describe('buildCustomAgentSystemPrompt coder integration', () => {
+	it('includes coder-specific sections for coder role', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Coder Responsibilities');
+		expect(prompt).toContain('code-pr-gate');
+		expect(prompt).toContain('write_gate');
+	});
+
+	it('includes plan-pr-gate read instruction for coder role', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('plan-pr-gate');
+		expect(prompt).toContain('read_gate');
+	});
+
+	it('does NOT include coder sections for planner role', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Coder Responsibilities');
+		expect(prompt).not.toContain('code-pr-gate');
+	});
+
+	it('does NOT include coder sections for general role', () => {
+		const agent = makeAgent({ role: 'general', name: 'General' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Coder Responsibilities');
+		expect(prompt).not.toContain('code-pr-gate');
+	});
+
+	it('does NOT include coder sections for qa role', () => {
+		const agent = makeAgent({ role: 'qa', name: 'QA' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Coder Responsibilities');
+		expect(prompt).not.toContain('code-pr-gate');
+	});
+
+	it('coder prompt still includes mandatory git workflow', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Git Workflow (MANDATORY)');
+		expect(prompt).toContain('git push -u origin HEAD');
+	});
+
+	it('coder prompt still includes bypass markers', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Bypassing Git/PR Gates for Research-Only Tasks');
+		expect(prompt).toContain('RESEARCH_ONLY:');
+	});
+
+	it('coder prompt still includes review feedback section', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Addressing Review Feedback');
+		expect(prompt).toContain('pullrequestreview');
+	});
+
+	it('coder prompt still includes completion signalling', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Signalling Completion');
+		expect(prompt).toContain('report_done');
+	});
+
+	it('coder-specific sections appear before completion signalling', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		const coderIdx = prompt.indexOf('Coder Responsibilities');
+		const completionIdx = prompt.indexOf('Signalling Completion');
+		expect(coderIdx).toBeLessThan(completionIdx);
+	});
+
+	it('plan-pr-gate read appears before code-pr-gate write in coder prompt', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		const readIdx = prompt.indexOf('plan-pr-gate');
+		const writeIdx = prompt.indexOf('code-pr-gate');
+		expect(readIdx).toBeLessThan(writeIdx);
 	});
 });
 

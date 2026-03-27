@@ -189,6 +189,11 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 			`- All communication is scoped to this group — you cannot message agents in other tasks`
 	);
 
+	// Coder-specific instructions (injected before completion signalling)
+	if (customAgent.role === 'coder') {
+		sections.push(buildCoderNodeAgentPrompt());
+	}
+
 	// Planner-specific instructions (injected before completion signalling)
 	if (customAgent.role === 'planner') {
 		sections.push(buildPlannerNodeAgentPrompt());
@@ -904,6 +909,76 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		previousTaskSummaries,
 		slotOverrides,
 	});
+}
+
+// ============================================================================
+// Coder-specific prompt builder
+// ============================================================================
+
+/**
+ * Build the coder-specific section of the system prompt.
+ *
+ * Injected into the full system prompt when the agent's role is 'coder'.
+ * Covers:
+ *   1. Reading the plan from `plan-pr-gate` before starting implementation
+ *   2. Writing the PR data to `code-pr-gate` after opening the PR, to unblock
+ *      downstream reviewer channels
+ *
+ * This function is intentionally exported so that it can be unit-tested
+ * independently of the full `buildCustomAgentSystemPrompt` output.
+ */
+export function buildCoderNodeAgentPrompt(): string {
+	const sections: string[] = [];
+
+	sections.push(`\n## Coder Responsibilities\n`);
+	sections.push(
+		`As a Coder Agent you are responsible for implementing the task according to the approved plan, ` +
+			`opening a pull request, and unblocking the downstream review channels via the gate system.`
+	);
+
+	// Step 1 — read plan gate
+	sections.push(`\n### Step 1 — Read the plan from \`plan-pr-gate\`\n`);
+	sections.push(
+		`Before starting implementation, read the approved plan from the \`plan-pr-gate\` gate ` +
+			`to understand what to implement:`
+	);
+	sections.push(`\`\`\`\n` + `read_gate({ gateId: "plan-pr-gate" })\n` + `\`\`\``);
+	sections.push(
+		`The gate data contains:\n` +
+			`- \`prUrl\` — the plan PR URL (fetch the diff to read the full plan)\n` +
+			`- \`prNumber\` — the plan PR number\n` +
+			`- \`branch\` — the branch containing the plan document\n\n` +
+			`Read the plan document (e.g. via \`gh pr diff <prNumber>\` or \`Read docs/plans/<slug>.md\`) ` +
+			`to understand the implementation approach before writing any code.\n\n` +
+			`If \`plan-pr-gate\` is empty or has no \`prUrl\`, proceed with the task description ` +
+			`from the task message — no plan PR is required in that case.`
+	);
+
+	// Step 2 — write code-pr-gate
+	sections.push(`\n### Step 2 — Write PR data to \`code-pr-gate\` after opening the PR\n`);
+	sections.push(
+		`After you have created the pull request (step 5 of the Git Workflow above), ` +
+			`call \`write_gate\` to unblock the code-review channel for the downstream reviewer agents. ` +
+			`This is **mandatory** — reviewers cannot start until the gate is open.`
+	);
+	sections.push(
+		`\`\`\`json\n` +
+			`write_gate({\n` +
+			`  "gateId": "code-pr-gate",\n` +
+			`  "data": {\n` +
+			`    "prUrl": "<PR URL from gh pr create>",\n` +
+			`    "prNumber": <PR number as integer>,\n` +
+			`    "branch": "<feature branch name>"\n` +
+			`  }\n` +
+			`})\n` +
+			`\`\`\``
+	);
+	sections.push(
+		`The gate condition is \`check: prUrl exists\`. Once \`prUrl\` is present in the ` +
+			`gate data, the condition passes and the code-review channel opens automatically.`
+	);
+
+	return sections.join('\n');
 }
 
 // ============================================================================
