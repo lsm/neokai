@@ -201,9 +201,15 @@ function gateIcon(
 	return page.locator(`[data-testid="gate-icon-${status}"][data-gate-id="${gateId}"]`);
 }
 
-/** Returns a locator for the vote-count badge for a specific gate. */
-function voteBadge(page: Parameters<typeof waitForWebSocketConnected>[0], text: string) {
-	return page.locator(`[data-testid="gate-vote-count"]:has-text("${text}")`).first();
+/** Returns a locator for the vote-count badge scoped to a specific gate. */
+function voteBadge(
+	page: Parameters<typeof waitForWebSocketConnected>[0],
+	gateId: string,
+	text: string
+) {
+	return page
+		.locator(`[data-gate-id="${gateId}"] [data-testid="gate-vote-count"]:has-text("${text}")`)
+		.first();
 }
 
 // ─── Test suites ──────────────────────────────────────────────────────────────
@@ -262,7 +268,7 @@ test.describe
 				await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
 
 				// The review-reject-gate (min: 1) should show "1/1" vote count badge
-				await expect(voteBadge(page, '1/1')).toBeVisible({ timeout: 10000 });
+				await expect(voteBadge(page, 'review-reject-gate', '1/1')).toBeVisible({ timeout: 10000 });
 			});
 		});
 
@@ -355,7 +361,7 @@ test.describe
 
 				// review-votes-gate has 3 channels sharing it (Reviewer 1/2/3 → QA)
 				// Each shows the same "2/3" badge — expect at least one
-				await expect(voteBadge(page, '2/3')).toBeVisible({ timeout: 10000 });
+				await expect(voteBadge(page, 'review-votes-gate', '2/3')).toBeVisible({ timeout: 10000 });
 			});
 		});
 
@@ -407,7 +413,7 @@ test.describe
 
 				await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
 
-				await expect(voteBadge(page, '3/3')).toBeVisible({ timeout: 10000 });
+				await expect(voteBadge(page, 'review-votes-gate', '3/3')).toBeVisible({ timeout: 10000 });
 			});
 		});
 
@@ -506,7 +512,7 @@ test.describe
 				await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
 
 				// With no votes written, the review-votes-gate shows 0/3
-				await expect(voteBadge(page, '0/3')).toBeVisible({ timeout: 10000 });
+				await expect(voteBadge(page, 'review-votes-gate', '0/3')).toBeVisible({ timeout: 10000 });
 			});
 		});
 
@@ -548,7 +554,7 @@ test.describe
 
 				// Step 2: After cycle reset — votes cleared, badge shows 0/3
 				await writeGateData(page, runId, 'review-votes-gate', { votes: {} });
-				await expect(voteBadge(page, '0/3')).toBeVisible({ timeout: 10000 });
+				await expect(voteBadge(page, 'review-votes-gate', '0/3')).toBeVisible({ timeout: 10000 });
 
 				// Step 3: All 3 reviewers approve the revised code
 				await writeGateData(page, runId, 'review-votes-gate', {
@@ -561,7 +567,7 @@ test.describe
 				await expect(gateIcon(page, 'review-votes-gate', 'open')).toBeVisible({
 					timeout: 10000,
 				});
-				await expect(voteBadge(page, '3/3')).toBeVisible({ timeout: 10000 });
+				await expect(voteBadge(page, 'review-votes-gate', '3/3')).toBeVisible({ timeout: 10000 });
 			});
 		});
 	});

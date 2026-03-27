@@ -786,6 +786,39 @@ describe('space-workflow-run gate handlers', () => {
 			).rejects.toThrow('WorkflowRun not found: run-1');
 		});
 
+		it('throws if run is completed (status guard)', async () => {
+			setup({ run: { ...mockRun, status: 'completed' } });
+			await expect(
+				call('spaceWorkflowRun.writeGateData', {
+					runId: 'run-1',
+					gateId: 'review-votes-gate',
+					data: { votes: { 'Reviewer 1': 'approved' } },
+				})
+			).rejects.toThrow('Cannot write gate data on a completed workflow run');
+		});
+
+		it('throws if run is cancelled (status guard)', async () => {
+			setup({ run: { ...mockRun, status: 'cancelled' } });
+			await expect(
+				call('spaceWorkflowRun.writeGateData', {
+					runId: 'run-1',
+					gateId: 'review-votes-gate',
+					data: { votes: { 'Reviewer 1': 'approved' } },
+				})
+			).rejects.toThrow('Cannot write gate data on a cancelled workflow run');
+		});
+
+		it('throws if run is pending (status guard)', async () => {
+			setup({ run: { ...mockRun, status: 'pending' } });
+			await expect(
+				call('spaceWorkflowRun.writeGateData', {
+					runId: 'run-1',
+					gateId: 'review-votes-gate',
+					data: { votes: { 'Reviewer 1': 'approved' } },
+				})
+			).rejects.toThrow('Cannot write gate data on a pending workflow run');
+		});
+
 		it('merges gate data via gateDataRepo.merge', async () => {
 			await call('spaceWorkflowRun.writeGateData', {
 				runId: 'run-1',
