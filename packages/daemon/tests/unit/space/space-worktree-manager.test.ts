@@ -232,6 +232,44 @@ describe('createTaskWorktree', () => {
 		expect(existsSync(result.path)).toBe(true);
 	});
 
+	test('recovers stale branch via git worktree prune when branch is in a prunable worktree', async () => {
+		// Simulate a previous crash: create a worktree, then delete its directory
+		// without pruning, leaving git with a stale worktree reference. The branch
+		// `git branch -D` will fail on the first attempt ("used by worktree"), but
+		// after `git worktree prune` the stale reference is removed and the second
+		// attempt should succeed, allowing a fresh worktree to be created.
+		const stalePath = join(repoDir, '.worktrees', 'prune-test-stale');
+		execSync(`git worktree add "${stalePath}" -b space/prune-test HEAD`, { cwd: repoDir });
+		// Verify the branch exists
+		const branchesBeforeRm = execSync('git branch --list', { cwd: repoDir }).toString();
+		expect(branchesBeforeRm).toContain('space/prune-test');
+
+		// Simulate crash: remove the directory but leave the git worktree reference
+		rmSync(stalePath, { recursive: true, force: true });
+
+		// git worktree list should still show the stale entry (path gone, ref alive)
+		const wtList = execSync('git worktree list', { cwd: repoDir }).toString();
+		expect(wtList).toContain('prune-test-stale');
+
+		// Now call createTaskWorktree for a task that resolves to the same slug.
+		// The manager should:
+		//   1. Detect the stale branch via git branch --list
+		//   2. Fail on the first git branch -D (worktree path deleted but ref alive)
+		//   3. Run git worktree prune to clear the stale ref
+		//   4. Succeed on the second git branch -D
+		//   5. Create the new worktree successfully
+		const slug = 'prune-test';
+		const taskId = seedTask(db, spaceId, 'task-prune', 77);
+		// Use a title that slugifies to 'prune-test' so it maps to the same branch
+		const result = await manager.createTaskWorktree(spaceId, taskId, 'prune test', 77);
+		expect(result.slug).toBe(slug);
+		expect(existsSync(result.path)).toBe(true);
+
+		// Branch should be recreated
+		const branchesAfter = execSync('git branch --list', { cwd: repoDir }).toString();
+		expect(branchesAfter).toContain('space/prune-test');
+	});
+
 	test('throws when space does not exist', async () => {
 		await expect(
 			manager.createTaskWorktree('nonexistent-space', 'any-task-id', 'Title', 1)

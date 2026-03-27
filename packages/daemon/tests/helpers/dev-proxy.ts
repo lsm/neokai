@@ -360,6 +360,29 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 		});
 	};
 
+	// Helper to get the running proxy's config file path via the devproxy REST API.
+	// Only applicable when the proxy is listening on the default port (8000), since that
+	// is the only port on which the devproxy API (port 8897) is meaningful. For non-default
+	// ports (e.g., unit-test fake TCP servers), this returns null to skip the check.
+	const fetchRunningProxyConfigFile = async (): Promise<string | null> => {
+		// Only check config for the default devproxy port. Non-default ports are used in unit
+		// tests with fake TCP servers; they should always be adopted as-is.
+		if (port !== 8000) return null;
+
+		// The devproxy REST API listens on port 8897 by default (not the proxy port).
+		const apiPort = 8897;
+		try {
+			const response = await fetch(`http://127.0.0.1:${apiPort}/proxy`, {
+				signal: AbortSignal.timeout(2000),
+			});
+			if (!response.ok) return null;
+			const data = (await response.json()) as { configFile?: string };
+			return data.configFile ?? null;
+		} catch {
+			return null;
+		}
+	};
+
 	// Helper to check if proxy is responding
 	const checkProxyReady = async (): Promise<boolean> => {
 		// Try to connect to the proxy port using a TCP connection check
@@ -434,12 +457,30 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 			// If so, adopt it as an external instance instead of trying to start a new
 			// one (which would fail with "already running" and cause test failures).
 			if (await checkProxyReady()) {
-				running = true;
-				external = true;
-				if (setEnvVars) {
-					setProxyEnvVars();
+				// Before adopting the running proxy, verify it was started with the same
+				// config file as we expect. When running across multiple git worktrees
+				// (e.g., concurrent coder agents), each worktree has its own mocks.json.
+				// If the running proxy was started from a different worktree, its mocks
+				// will be stale — stop it so we can restart with the correct config.
+				const runningConfig = await fetchRunningProxyConfigFile();
+				if (runningConfig !== null && runningConfig !== configPath) {
+					// Stale proxy from a different context — stop it and restart below.
+					await runDevProxyCommand(['stop'], 5000);
+					const stopStart = Date.now();
+					while (Date.now() - stopStart < 5000) {
+						if (!(await checkProxyReady())) break;
+						await sleep(100);
+					}
+					// Fall through to start a fresh proxy with our config.
+				} else {
+					// Same config (or couldn't determine) — adopt as external.
+					running = true;
+					external = true;
+					if (setEnvVars) {
+						setProxyEnvVars();
+					}
+					return;
 				}
-				return;
 			}
 
 			// Check if devproxy is installed
