@@ -237,10 +237,7 @@ test.describe('Agent-Centric Workflow', () => {
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
 		// The canvas node should show agent-badges with both agent names.
-		// Use clickedNode (not nodes.first()) because when 2 nodes exist due to the
-		// addStep double-invocation issue, nodes.first() picks the old/duplicate node
-		// rather than the one that was just configured in the panel.
-		const node = clickedNode;
+		const node = nodes.first();
 		const agentBadges = node.getByTestId('agent-badges');
 		await expect(agentBadges).toBeVisible({ timeout: 3000 });
 		await expect(agentBadges.locator(`text=${ROLE_A}`)).toBeVisible({ timeout: 2000 });
