@@ -1,7 +1,7 @@
 /**
  * seedPresetAgents Unit Tests
  *
- * Verifies that the four preset SpaceAgent records are created with correct
+ * Verifies that the five preset SpaceAgent records are created with correct
  * defaults (role, tools, description) and that seeding is idempotent (errors
  * on name collision are captured but do not abort remaining seeds).
  */
@@ -32,10 +32,10 @@ describe('seedPresetAgents', () => {
 		setModelsCache(new Map());
 	});
 
-	it('creates exactly four preset agents', async () => {
+	it('creates exactly five preset agents', async () => {
 		const result = await seedPresetAgents('space-1', manager);
 
-		expect(result.seeded).toHaveLength(4);
+		expect(result.seeded).toHaveLength(5);
 		expect(result.errors).toHaveLength(0);
 	});
 
@@ -43,14 +43,14 @@ describe('seedPresetAgents', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const roles = seeded.map((a) => a.role).sort();
-		expect(roles).toEqual(['coder', 'general', 'planner', 'reviewer']);
+		expect(roles).toEqual(['coder', 'general', 'planner', 'qa', 'reviewer']);
 	});
 
 	it('creates agents with correct names', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const names = seeded.map((a) => a.name).sort();
-		expect(names).toEqual(['Coder', 'General', 'Planner', 'Reviewer']);
+		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Reviewer']);
 	});
 
 	it('sets tools on each preset agent', async () => {
@@ -108,7 +108,7 @@ describe('seedPresetAgents', () => {
 		const second = await seedPresetAgents('space-1', manager);
 
 		expect(second.seeded).toHaveLength(0);
-		expect(second.errors).toHaveLength(4);
+		expect(second.errors).toHaveLength(5);
 		for (const err of second.errors) {
 			expect(err.error).toMatch(/already exists/i);
 		}
@@ -120,8 +120,8 @@ describe('seedPresetAgents', () => {
 		const r1 = await seedPresetAgents('space-1', manager);
 		const r2 = await seedPresetAgents('space-2', manager);
 
-		expect(r1.seeded).toHaveLength(4);
-		expect(r2.seeded).toHaveLength(4);
+		expect(r1.seeded).toHaveLength(5);
+		expect(r2.seeded).toHaveLength(5);
 		expect(r1.errors).toHaveLength(0);
 		expect(r2.errors).toHaveLength(0);
 
@@ -137,7 +137,7 @@ describe('seedPresetAgents', () => {
 		const result = await seedPresetAgents('space-1', manager);
 
 		// Coder fails, others succeed
-		expect(result.seeded).toHaveLength(3);
+		expect(result.seeded).toHaveLength(4);
 		expect(result.errors).toHaveLength(1);
 		expect(result.errors[0].name).toBe('Coder');
 	});
@@ -157,5 +157,18 @@ describe('seedPresetAgents', () => {
 		for (const agent of nonPlanners) {
 			expect(agent.injectWorkflowContext).toBeUndefined();
 		}
+	});
+
+	it('QA agent has restricted tools (no Write or Edit)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const qa = seeded.find((a) => a.role === 'qa');
+
+		expect(qa).toBeDefined();
+		expect(qa?.tools).not.toContain('Write');
+		expect(qa?.tools).not.toContain('Edit');
+		expect(qa?.tools).toContain('Read');
+		expect(qa?.tools).toContain('Bash');
+		expect(qa?.tools).toContain('Grep');
+		expect(qa?.tools).toContain('Glob');
 	});
 });
