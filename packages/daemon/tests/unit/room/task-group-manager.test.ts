@@ -757,6 +757,121 @@ describe('TaskGroupManager', () => {
 			expect(failedTask!.status).toBe('needs_attention');
 			expect(failedTask!.error).toContain('Leader session lost during restart');
 		});
+
+		it('should retry injectMessage on transient failure and succeed', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a factory that fails injectMessage on the first call to the leader
+			// but succeeds on the second
+			let injectAttempts = 0;
+			const retryFactory = createMockSessionFactory();
+			const origInject = retryFactory.injectMessage.bind(retryFactory);
+			retryFactory.injectMessage = async (
+				sessionId: string,
+				message: string,
+				opts?: { deliveryMode?: 'immediate' | 'defer' }
+			) => {
+				// Only fail inject to leader session on the first attempt
+				if (sessionId.startsWith('leader:')) {
+					injectAttempts++;
+					if (injectAttempts === 1) {
+						throw new Error('Transient inject failure');
+					}
+				}
+				return origInject(sessionId, message, opts);
+			};
+
+			const retryManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: retryFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await retryManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			const result = await retryManager.routeWorkerToLeader(
+				group.id,
+				'Worker output',
+				(_groupId) => callbacks
+			);
+
+			// Should succeed after retry
+			expect(result).not.toBeNull();
+			expect(injectAttempts).toBe(2); // first failed, second succeeded
+			expect(result!.feedbackIteration).toBe(1);
+		});
+
+		it('should fail task after all inject retries are exhausted', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a factory that always fails injectMessage for the leader
+			const failFactory = createMockSessionFactory();
+			const origInject = failFactory.injectMessage.bind(failFactory);
+			failFactory.injectMessage = async (
+				sessionId: string,
+				message: string,
+				opts?: { deliveryMode?: 'immediate' | 'defer' }
+			) => {
+				if (sessionId.startsWith('leader:')) {
+					throw new Error('Persistent inject failure');
+				}
+				return origInject(sessionId, message, opts);
+			};
+
+			const failManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: failFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await failManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			const result = await failManager.routeWorkerToLeader(
+				group.id,
+				'Worker output',
+				(_groupId) => callbacks
+			);
+
+			// Should return null (failed)
+			expect(result).toBeNull();
+
+			// Task should be marked as failed
+			const failedTask = await taskManager.getTask(task.id);
+			expect(failedTask!.status).toBe('needs_attention');
+			expect(failedTask!.error).toContain('Failed to deliver worker output to leader');
+		});
 	});
 
 	describe('routeLeaderToWorker', () => {

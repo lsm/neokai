@@ -470,14 +470,49 @@ export class TaskGroupManager {
 			? `${deferredLeader.leaderTaskContext}\n\n---\n\n${workerOutput}`
 			: workerOutput;
 
-		// Inject worker output into Leader session
+		// Inject worker output into Leader session with retry.
+		// The injectMessage call can fail due to race conditions (e.g., stale queue state,
+		// timeout during SDK startup). Retry with backoff to ensure delivery.
 		log.debug(
 			`[routeWorkerToLeader] Group ${groupId}: injecting worker output into leader session`
 		);
 		// Mark leader as having work before injecting so onLeaderTerminalState won't drop
 		// the resulting idle event even if the leader completes synchronously.
 		this.groupRepo.setLeaderHasWork(groupId);
-		await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
+
+		const MAX_INJECT_RETRIES = 2;
+		const RETRY_DELAY_MS = 1000;
+		let lastError: Error | null = null;
+		for (let attempt = 0; attempt <= MAX_INJECT_RETRIES; attempt++) {
+			try {
+				if (attempt > 0) {
+					log.warn(
+						`[routeWorkerToLeader] Group ${groupId}: retry attempt ${attempt}/${MAX_INJECT_RETRIES} ` +
+							`after ${RETRY_DELAY_MS * attempt}ms delay`
+					);
+					await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+				}
+				await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
+				lastError = null;
+				break;
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: injectMessage failed ` +
+						`(attempt ${attempt + 1}/${MAX_INJECT_RETRIES + 1}): ${lastError.message}`
+				);
+			}
+		}
+
+		if (lastError) {
+			log.error(
+				`[routeWorkerToLeader] Group ${groupId}: all ${MAX_INJECT_RETRIES + 1} inject attempts failed, ` +
+					`failing task: ${lastError.message}`
+			);
+			await this.fail(groupId, `Failed to deliver worker output to leader: ${lastError.message}`);
+			return null;
+		}
+
 		log.info(
 			`[routeWorkerToLeader] Group ${groupId}: worker output injected into leader session successfully`
 		);

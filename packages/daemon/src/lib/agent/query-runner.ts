@@ -98,12 +98,21 @@ export class QueryRunner {
 	 * Start the streaming query (called from AgentSession.startStreamingQuery)
 	 */
 	async start(): Promise<void> {
-		const { messageQueue } = this.ctx;
+		const { messageQueue, logger } = this.ctx;
 
 		if (messageQueue.isRunning()) {
+			logger.warn(
+				`QueryRunner.start(): messageQueue already running for session ${this.ctx.session.id}, ` +
+					`skipping start (generation=${messageQueue.getGeneration()}, ` +
+					`queryPromise=${this.ctx.queryPromise ? 'active' : 'null'})`
+			);
 			return;
 		}
 
+		logger.debug(
+			`QueryRunner.start(): starting query for session ${this.ctx.session.id} ` +
+				`(generation=${messageQueue.getGeneration()})`
+		);
 		messageQueue.start();
 
 		// Increment query generation for this new query
