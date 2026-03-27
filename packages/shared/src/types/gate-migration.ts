@@ -99,7 +99,8 @@ export function migrateLegacyCondition(
 		}
 
 		default: {
-			// Unknown type — create a conservative check gate
+			// Unknown type — fail open (no gate). Forward migration is lossy for
+			// unrecognized types; callers should handle this case explicitly.
 			return { gate: null, gateId: undefined };
 		}
 	}

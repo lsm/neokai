@@ -13,7 +13,11 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { evaluateGate, evaluateCondition } from '../../../src/lib/space/runtime/gate-evaluator.ts';
+import {
+	evaluateGate,
+	evaluateCondition,
+	validateGateCondition,
+} from '../../../src/lib/space/runtime/gate-evaluator.ts';
 import type { Gate, GateCondition } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -205,10 +209,11 @@ describe('GateEvaluator — any condition (OR)', () => {
 		expect(result.reason).toContain('None of the conditions passed');
 	});
 
-	test('blocks with empty conditions list', () => {
+	test('blocks with empty conditions list and provides reason', () => {
 		const condition: GateCondition = { type: 'any', conditions: [] };
 		const result = evaluateCondition(condition, {});
 		expect(result.open).toBe(false);
+		expect(result.reason).toContain('no sub-conditions');
 	});
 });
 
@@ -292,5 +297,96 @@ describe('evaluateGate', () => {
 		};
 		const result = evaluateGate(gate, { approvals: 1 });
 		expect(result.open).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Runtime validation — validateGateCondition
+// ---------------------------------------------------------------------------
+
+describe('validateGateCondition', () => {
+	test('valid check condition passes', () => {
+		const errors = validateGateCondition({ type: 'check', field: 'approved', value: true });
+		expect(errors).toEqual([]);
+	});
+
+	test('valid count condition passes', () => {
+		const errors = validateGateCondition({ type: 'count', field: 'approvals', threshold: 2 });
+		expect(errors).toEqual([]);
+	});
+
+	test('valid all condition passes', () => {
+		const errors = validateGateCondition({
+			type: 'all',
+			conditions: [{ type: 'check', field: 'ok', value: true }],
+		});
+		expect(errors).toEqual([]);
+	});
+
+	test('valid any condition passes', () => {
+		const errors = validateGateCondition({
+			type: 'any',
+			conditions: [{ type: 'count', field: 'x', threshold: 1 }],
+		});
+		expect(errors).toEqual([]);
+	});
+
+	test('rejects null', () => {
+		const errors = validateGateCondition(null);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected an object');
+	});
+
+	test('rejects non-object', () => {
+		const errors = validateGateCondition('not an object');
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('rejects unknown type', () => {
+		const errors = validateGateCondition({ type: 'unknown_type' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected one of');
+	});
+
+	test('rejects check with missing field', () => {
+		const errors = validateGateCondition({ type: 'check', value: true });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('field');
+	});
+
+	test('rejects count with non-numeric threshold', () => {
+		const errors = validateGateCondition({ type: 'count', field: 'x', threshold: 'not a number' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('threshold');
+	});
+
+	test('rejects all with non-array conditions', () => {
+		const errors = validateGateCondition({ type: 'all', conditions: 'not an array' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected array');
+	});
+
+	test('validates nested conditions recursively', () => {
+		const errors = validateGateCondition({
+			type: 'all',
+			conditions: [{ type: 'check', value: true }], // missing field
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('conditions[0].field');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Malformed JSON — runtime fallback for unknown condition type
+// ---------------------------------------------------------------------------
+
+describe('evaluateCondition — malformed input', () => {
+	test('unknown condition type returns closed with descriptive reason', () => {
+		// Simulate malformed JSON deserialized from the database
+		const malformed = { type: 'nonexistent' } as unknown as GateCondition;
+		const result = evaluateCondition(malformed, {});
+		expect(result.open).toBe(false);
+		expect(result.reason).toContain('unknown condition type');
+		expect(result.reason).toContain('nonexistent');
 	});
 });

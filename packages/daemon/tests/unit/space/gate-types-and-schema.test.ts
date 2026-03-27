@@ -242,6 +242,80 @@ describe('SpaceWorkflowRunRepository — failureReason', () => {
 		});
 		expect(run.failureReason).toBeUndefined();
 	});
+
+	test('failureReason persists through updateRun and round-trips correctly', () => {
+		const workflowRepo = new SpaceWorkflowRepository(db);
+		const workflow = workflowRepo.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'FR Persist Test',
+		});
+
+		const runRepo = new SpaceWorkflowRunRepository(db);
+		const run = runRepo.createRun({
+			spaceId: SPACE_ID,
+			workflowId: workflow.id,
+			title: 'Failure Test Run',
+		});
+
+		// Set failureReason
+		const updated = runRepo.updateRun(run.id, {
+			status: 'needs_attention',
+			failureReason: 'maxIterationsReached',
+		});
+		expect(updated).not.toBeNull();
+		expect(updated!.failureReason).toBe('maxIterationsReached');
+
+		// Verify round-trip through getRun
+		const fetched = runRepo.getRun(run.id);
+		expect(fetched!.failureReason).toBe('maxIterationsReached');
+	});
+
+	test('failureReason can be cleared by setting to null', () => {
+		const workflowRepo = new SpaceWorkflowRepository(db);
+		const workflow = workflowRepo.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'FR Clear Test',
+		});
+
+		const runRepo = new SpaceWorkflowRunRepository(db);
+		const run = runRepo.createRun({
+			spaceId: SPACE_ID,
+			workflowId: workflow.id,
+			title: 'Clear Test Run',
+		});
+
+		// Set then clear
+		runRepo.updateRun(run.id, { failureReason: 'humanRejected' });
+		const cleared = runRepo.updateRun(run.id, { failureReason: null });
+		expect(cleared!.failureReason).toBeUndefined();
+	});
+
+	test('all four failureReason values persist correctly', () => {
+		const workflowRepo = new SpaceWorkflowRepository(db);
+		const workflow = workflowRepo.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'FR All Values',
+		});
+		const runRepo = new SpaceWorkflowRunRepository(db);
+
+		const reasons: WorkflowRunFailureReason[] = [
+			'humanRejected',
+			'maxIterationsReached',
+			'nodeTimeout',
+			'agentCrash',
+		];
+
+		for (const reason of reasons) {
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: `Run for ${reason}`,
+			});
+			runRepo.updateRun(run.id, { failureReason: reason });
+			const fetched = runRepo.getRun(run.id);
+			expect(fetched!.failureReason).toBe(reason);
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------

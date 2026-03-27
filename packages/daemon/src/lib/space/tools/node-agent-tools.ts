@@ -215,7 +215,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * available targets if not permitted.
 		 */
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
-			const { target, message } = args;
+			const { target, message, data } = args;
 
 			// --- New path: delegate to AgentMessageRouter when available ---
 			if (agentMessageRouter) {
@@ -224,6 +224,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					fromSessionId: mySessionId,
 					target,
 					message,
+					data,
 				});
 
 				if (!result.success) {
@@ -327,7 +328,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					continue;
 				}
 				for (const targetMember of targetSessions) {
-					const prefixedMessage = `[Message from ${myRole}]: ${message}`;
+					// Include structured data as a JSON appendix when present
+					const dataAppendix =
+						data && Object.keys(data).length > 0
+							? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
+							: '';
+					const prefixedMessage = `[Message from ${myRole}]: ${message}${dataAppendix}`;
 					try {
 						await messageInjector(targetMember.sessionId, prefixedMessage);
 						delivered.push({ role: targetRole, sessionId: targetMember.sessionId });

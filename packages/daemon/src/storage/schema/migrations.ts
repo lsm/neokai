@@ -3875,12 +3875,33 @@ export function runMigration60(db: BunDatabase): void {
  * - `failure_reason` column on `space_workflow_runs`: Enum-like TEXT for run failure reasons.
  */
 function runMigration61(db: BunDatabase): void {
-	const migrated = db
+	// Check all 3 schema additions for idempotency
+	const hasGatesCol = db
 		.prepare(
 			"SELECT COUNT(*) as count FROM pragma_table_info('space_workflows') WHERE name = 'gates'"
 		)
 		.get() as { count: number } | null;
-	if (migrated && migrated.count > 0) return;
+	const hasFailureReasonCol = db
+		.prepare(
+			"SELECT COUNT(*) as count FROM pragma_table_info('space_workflow_runs') WHERE name = 'failure_reason'"
+		)
+		.get() as { count: number } | null;
+	const hasGateDataTable = db
+		.prepare(
+			"SELECT COUNT(*) as count FROM sqlite_master WHERE type = 'table' AND name = 'gate_data'"
+		)
+		.get() as { count: number } | null;
+
+	if (
+		hasGatesCol &&
+		hasGatesCol.count > 0 &&
+		hasFailureReasonCol &&
+		hasFailureReasonCol.count > 0 &&
+		hasGateDataTable &&
+		hasGateDataTable.count > 0
+	) {
+		return;
+	}
 
 	db.exec(`BEGIN TRANSACTION`);
 	try {
@@ -3897,11 +3918,18 @@ function runMigration61(db: BunDatabase): void {
 		`);
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
 
-		// 2. Add gates column to space_workflows
-		db.exec(`ALTER TABLE space_workflows ADD COLUMN gates TEXT`);
+		// 2. Add gates column to space_workflows (if not already present)
+		if (!hasGatesCol || hasGatesCol.count === 0) {
+			db.exec(`ALTER TABLE space_workflows ADD COLUMN gates TEXT`);
+		}
 
-		// 3. Add failure_reason column to space_workflow_runs
-		db.exec(`ALTER TABLE space_workflow_runs ADD COLUMN failure_reason TEXT`);
+		// 3. Add failure_reason column to space_workflow_runs (if not already present)
+		// CHECK constraint restricts values to the WorkflowRunFailureReason union.
+		if (!hasFailureReasonCol || hasFailureReasonCol.count === 0) {
+			db.exec(
+				`ALTER TABLE space_workflow_runs ADD COLUMN failure_reason TEXT CHECK(failure_reason IN ('humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash'))`
+			);
+		}
 
 		db.exec(`COMMIT`);
 	} catch (err) {

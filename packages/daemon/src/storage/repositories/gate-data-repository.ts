@@ -62,6 +62,11 @@ export class GateDataRepository {
 	/**
 	 * Merge partial data into an existing gate data record.
 	 * Creates the record with the provided partial data if it does not exist.
+	 *
+	 * **Shallow merge only**: top-level keys in `partial` overwrite existing keys.
+	 * Nested objects are replaced wholesale, not merged recursively.
+	 * Example: merging `{ nested: { b: 2 } }` into `{ nested: { a: 1 } }`
+	 * yields `{ nested: { b: 2 } }` — `a` is lost.
 	 */
 	merge(runId: string, gateId: string, partial: Record<string, unknown>): GateDataRecord {
 		const existing = this.get(runId, gateId);

@@ -120,7 +120,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			iteration_count INTEGER NOT NULL DEFAULT 0,
 			max_iterations INTEGER NOT NULL DEFAULT 5,
 			goal_id TEXT,
-			failure_reason TEXT,
+			failure_reason TEXT
+				CHECK(failure_reason IN ('humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,

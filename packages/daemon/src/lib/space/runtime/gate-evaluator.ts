@@ -5,6 +5,10 @@
  * It reads gate data from the data store and evaluates the gate's condition
  * tree to determine whether the gate is open or closed.
  *
+ * Since conditions are deserialized from JSON at runtime, the evaluator
+ * includes runtime validation via `validateGateCondition` to catch malformed
+ * objects before they reach the evaluation logic.
+ *
  * Condition types:
  *   check — field equality: data[field] === value
  *   count — numeric threshold: data[field] >= threshold
@@ -27,6 +31,68 @@ export interface GateEvalResult {
 }
 
 // ---------------------------------------------------------------------------
+// Runtime validation
+// ---------------------------------------------------------------------------
+
+const VALID_CONDITION_TYPES = new Set(['check', 'count', 'all', 'any']);
+
+/**
+ * Validates a GateCondition object at runtime.
+ *
+ * Since conditions are deserialized from JSON (SQLite, RPC), they may be
+ * malformed. This function checks structural validity before evaluation.
+ *
+ * @returns Array of human-readable error strings. Empty array = valid.
+ */
+export function validateGateCondition(condition: unknown, path = 'condition'): string[] {
+	const errors: string[] = [];
+
+	if (!condition || typeof condition !== 'object') {
+		errors.push(`${path}: expected an object, got ${typeof condition}`);
+		return errors;
+	}
+
+	const cond = condition as Record<string, unknown>;
+	if (typeof cond.type !== 'string' || !VALID_CONDITION_TYPES.has(cond.type)) {
+		errors.push(
+			`${path}.type: expected one of [check, count, all, any], got ${JSON.stringify(cond.type)}`
+		);
+		return errors;
+	}
+
+	switch (cond.type) {
+		case 'check':
+			if (typeof cond.field !== 'string' || cond.field.length === 0) {
+				errors.push(`${path}.field: expected non-empty string`);
+			}
+			// value can be anything — no validation needed
+			break;
+
+		case 'count':
+			if (typeof cond.field !== 'string' || cond.field.length === 0) {
+				errors.push(`${path}.field: expected non-empty string`);
+			}
+			if (typeof cond.threshold !== 'number') {
+				errors.push(`${path}.threshold: expected number, got ${typeof cond.threshold}`);
+			}
+			break;
+
+		case 'all':
+		case 'any':
+			if (!Array.isArray(cond.conditions)) {
+				errors.push(`${path}.conditions: expected array, got ${typeof cond.conditions}`);
+			} else {
+				for (let i = 0; i < cond.conditions.length; i++) {
+					errors.push(...validateGateCondition(cond.conditions[i], `${path}.conditions[${i}]`));
+				}
+			}
+			break;
+	}
+
+	return errors;
+}
+
+// ---------------------------------------------------------------------------
 // GateEvaluator
 // ---------------------------------------------------------------------------
 
@@ -34,6 +100,8 @@ export interface GateEvalResult {
  * Evaluates a Gate's condition tree against the current gate data.
  *
  * Stateless — all data is passed in. No I/O or side effects.
+ * Callers should validate condition structure with `validateGateCondition`
+ * before calling this function with data from untrusted JSON sources.
  */
 export function evaluateGate(gate: Gate, data: Record<string, unknown>): GateEvalResult {
 	return evaluateCondition(gate.condition, data);
@@ -42,6 +110,9 @@ export function evaluateGate(gate: Gate, data: Record<string, unknown>): GateEva
 /**
  * Evaluates a single GateCondition node against the provided data.
  * Recursive for composite conditions (`all`, `any`).
+ *
+ * If the condition has an unrecognized `type`, returns `{ open: false }`
+ * with a descriptive reason. This handles malformed JSON gracefully at runtime.
  */
 export function evaluateCondition(
 	condition: GateCondition,
@@ -71,15 +142,20 @@ export function evaluateCondition(
 			}
 			return {
 				open: false,
-				reason: `None of the conditions passed: [${reasons.join('; ')}]`,
+				reason:
+					reasons.length > 0
+						? `None of the conditions passed: [${reasons.join('; ')}]`
+						: 'Gate blocked: "any" condition has no sub-conditions to evaluate',
 			};
 		}
 
 		default: {
-			const _exhaustive: never = condition;
+			// Runtime fallback for malformed JSON — condition.type is not in the union.
+			// The `never` assertion is compile-time only; at runtime unknown types land here.
+			const unknownType = (condition as { type: string }).type;
 			return {
 				open: false,
-				reason: `Unknown condition type: ${(_exhaustive as GateCondition).type}`,
+				reason: `Gate blocked: unknown condition type "${unknownType}"`,
 			};
 		}
 	}

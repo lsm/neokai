@@ -22,6 +22,7 @@ export interface UpdateWorkflowRunParams {
 	config?: Record<string, unknown>;
 	iterationCount?: number;
 	maxIterations?: number;
+	failureReason?: WorkflowRunFailureReason | null;
 }
 
 export class SpaceWorkflowRunRepository {
@@ -149,6 +150,10 @@ export class SpaceWorkflowRunRepository {
 		if (params.maxIterations !== undefined) {
 			fields.push('max_iterations = ?');
 			values.push(params.maxIterations);
+		}
+		if (params.failureReason !== undefined) {
+			fields.push('failure_reason = ?');
+			values.push(params.failureReason);
 		}
 
 		if (fields.length > 0) {
