@@ -10,6 +10,7 @@
  * - spaceWorkflowRun.listGateData   - Returns all gate data records for a run
  * - spaceWorkflowRun.getGateArtifacts - Returns changed files and diff summary for a run's worktree
  * - spaceWorkflowRun.getFileDiff    - Returns unified diff for a specific file in the worktree
+ * - spaceWorkflowRun.writeGateData  - Writes arbitrary gate data (E2E test infrastructure only)
  */
 
 import { execFile } from 'node:child_process';
@@ -427,41 +428,44 @@ export function setupSpaceWorkflowRunHandlers(
 	// Used by test helpers to simulate agent behavior (e.g. planner writing
 	// plan_submitted to plan-pr-gate) without spinning up a real agent session.
 	// Does NOT enforce allowedWriterRoles — callers are trusted.
-	messageHub.onRequest('spaceWorkflowRun.writeGateData', async (data) => {
-		const params = data as { runId: string; gateId: string; data: Record<string, unknown> };
+	//
+	// Disabled in production to prevent unauthorized gate manipulation.
+	if (process.env.NODE_ENV !== 'production')
+		messageHub.onRequest('spaceWorkflowRun.writeGateData', async (data) => {
+			const params = data as { runId: string; gateId: string; data: Record<string, unknown> };
 
-		if (!params.runId) throw new Error('runId is required');
-		if (!params.gateId) throw new Error('gateId is required');
-		if (!params.data || typeof params.data !== 'object' || Array.isArray(params.data)) {
-			throw new Error('data must be an object');
-		}
+			if (!params.runId) throw new Error('runId is required');
+			if (!params.gateId) throw new Error('gateId is required');
+			if (!params.data || typeof params.data !== 'object' || Array.isArray(params.data)) {
+				throw new Error('data must be an object');
+			}
 
-		const run = workflowRunRepo.getRun(params.runId);
-		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+			const run = workflowRunRepo.getRun(params.runId);
+			if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
-			throw new Error(`Cannot write gate data on a ${run.status} workflow run`);
-		}
+			if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
+				throw new Error(`Cannot write gate data on a ${run.status} workflow run`);
+			}
 
-		const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
+			const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
 
-		daemonHub
-			.emit('space.gateData.updated', {
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				runId: params.runId,
-				gateId: params.gateId,
-				data: gateData.data,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit space.gateData.updated:', err);
-			});
+			daemonHub
+				.emit('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: params.runId,
+					gateId: params.gateId,
+					data: gateData.data,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.gateData.updated:', err);
+				});
 
-		// Trigger channel re-evaluation so downstream nodes activate if the gate is now open.
-		fireGateChanged(params.runId, params.gateId);
+			// Trigger channel re-evaluation so downstream nodes activate if the gate is now open.
+			fireGateChanged(params.runId, params.gateId);
 
-		return { gateData };
-	});
+			return { gateData };
+		});
 
 	// ─── spaceWorkflowRun.listGateData ───────────────────────────────────────
 	//

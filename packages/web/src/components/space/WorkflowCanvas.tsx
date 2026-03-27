@@ -95,6 +95,26 @@ function isHumanApprovalGate(condition: GateCondition): boolean {
 }
 
 /**
+ * Compute the current matching vote count for a count-type gate condition.
+ * Returns `{ current, min }` so the UI can render "N/M" progress.
+ * Returns `undefined` for non-count conditions.
+ */
+function computeVoteCount(
+	condition: GateCondition,
+	data: Record<string, unknown>
+): { current: number; min: number } | undefined {
+	if (condition.type !== 'count') return undefined;
+	const map = data[condition.field];
+	if (!map || typeof map !== 'object' || Array.isArray(map)) {
+		return { current: 0, min: condition.min };
+	}
+	const current = Object.values(map as Record<string, unknown>).filter(
+		(v) => v === condition.matchValue
+	).length;
+	return { current, min: condition.min };
+}
+
+/**
  * Evaluate gate status from current gate data.
  *
  * Simplified frontend evaluation (no recursion needed for most gates):
@@ -295,9 +315,11 @@ interface GateIconProps {
 	y: number;
 	status: GateStatus;
 	isRuntimeMode: boolean;
+	gateId?: string;
 	onApprove?: () => void;
 	onReject?: () => void;
 	onViewArtifacts?: () => void;
+	voteCount?: { current: number; min: number };
 }
 
 const GATE_ICON_R = 11; // radius
@@ -307,9 +329,11 @@ function GateIcon({
 	y,
 	status,
 	isRuntimeMode,
+	gateId,
 	onApprove,
 	onReject,
 	onViewArtifacts,
+	voteCount,
 }: GateIconProps): JSX.Element {
 	const [showActions, setShowActions] = useState(false);
 
@@ -401,6 +425,7 @@ function GateIcon({
 	return (
 		<g
 			data-testid={`gate-icon-${status}`}
+			data-gate-id={gateId}
 			style={{ cursor: isRuntimeMode && status === 'waiting_human' ? 'pointer' : 'default' }}
 			onClick={handleClick}
 		>
@@ -414,6 +439,19 @@ function GateIcon({
 				class={pulseClass}
 			/>
 			<g transform={`translate(${x}, ${y})`}>{icon}</g>
+
+			{voteCount !== undefined && isRuntimeMode && (
+				<text
+					x={x}
+					y={y + GATE_ICON_R + 11}
+					textAnchor="middle"
+					dominantBaseline="middle"
+					style={{ fontSize: '9px', fill: '#a8a29e', fontFamily: 'monospace' }}
+					data-testid="gate-vote-count"
+				>
+					{voteCount.current}/{voteCount.min}
+				</text>
+			)}
 
 			{showActions && isRuntimeMode && (
 				<foreignObject x={x - 65} y={y + 14} width={130} height={onViewArtifacts ? 84 : 56}>
@@ -1146,6 +1184,8 @@ export function WorkflowCanvas({
 
 					// Channels without gates are always available (plain arrows)
 					const isHumanGate = gate ? isHumanApprovalGate(gate.condition) : false;
+					const voteCount =
+						gate && isRuntimeMode ? computeVoteCount(gate.condition, gateData) : undefined;
 
 					return (
 						<g key={`ch-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>
@@ -1175,6 +1215,8 @@ export function WorkflowCanvas({
 									y={pts.my}
 									status={gateStatus}
 									isRuntimeMode={isRuntimeMode}
+									gateId={ch.gateId}
+									voteCount={voteCount}
 									onApprove={
 										isHumanGate ? () => void handleApproveGate(ch.gateId!, true) : undefined
 									}
