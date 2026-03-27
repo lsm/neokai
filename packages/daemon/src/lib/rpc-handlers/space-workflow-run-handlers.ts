@@ -7,6 +7,7 @@
  * - spaceWorkflowRun.get            - Gets a run by ID
  * - spaceWorkflowRun.cancel         - Cancels a run and all pending tasks
  * - spaceWorkflowRun.approveGate    - Approves or rejects a human approval gate
+ * - spaceWorkflowRun.listGateData   - Returns all gate data records for a run
  * - spaceWorkflowRun.getGateArtifacts - Returns changed files and diff summary for a run's worktree
  * - spaceWorkflowRun.getFileDiff    - Returns unified diff for a specific file in the worktree
  */
@@ -343,6 +344,18 @@ export function setupSpaceWorkflowRunHandlers(
 					log.warn('Failed to emit space.workflowRun.updated:', err);
 				});
 
+			daemonHub
+				.emit('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: params.runId,
+					gateId: params.gateId,
+					data: gateData.data,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.gateData.updated:', err);
+				});
+
 			return { run: updatedRun, gateData };
 		} else {
 			// Rejection — idempotent: gate data already shows rejected
@@ -377,8 +390,37 @@ export function setupSpaceWorkflowRunHandlers(
 					log.warn('Failed to emit space.workflowRun.updated:', err);
 				});
 
+			daemonHub
+				.emit('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: params.runId,
+					gateId: params.gateId,
+					data: gateData.data,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.gateData.updated:', err);
+				});
+
 			return { run: updated, gateData };
 		}
+	});
+
+	// ─── spaceWorkflowRun.listGateData ───────────────────────────────────────
+	//
+	// Returns all gate data records for a workflow run.
+	// Used by the WorkflowCanvas component to show gate status on channel lines.
+	messageHub.onRequest('spaceWorkflowRun.listGateData', async (data) => {
+		const params = data as { runId: string };
+
+		if (!params.runId) throw new Error('runId is required');
+
+		const run = workflowRunRepo.getRun(params.runId);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		const gateDataRecords = gateDataRepo.listByRun(params.runId);
+
+		return { gateData: gateDataRecords };
 	});
 
 	// ─── spaceWorkflowRun.getGateArtifacts ───────────────────────────────────

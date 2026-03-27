@@ -12,6 +12,8 @@ export { SpaceSettings } from './SpaceSettings';
 export { SpaceTaskPane } from './SpaceTaskPane';
 export { WorkflowEditor, filterAgents, initFromWorkflow } from './WorkflowEditor';
 export { WorkflowList } from './WorkflowList';
+export { WorkflowCanvas } from './WorkflowCanvas';
+export type { WorkflowCanvasProps } from './WorkflowCanvas';
 export { WorkflowRulesEditor, makeEmptyRule, rulesToDrafts } from './WorkflowRulesEditor';
 export { WorkflowNodeCard } from './WorkflowNodeCard';
 export { ImportPreviewDialog } from './ImportPreviewDialog';

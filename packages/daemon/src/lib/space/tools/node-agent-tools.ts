@@ -685,6 +685,21 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				});
 			}
 
+			// Notify UI about gate data change for real-time canvas updates.
+			if (daemonHub) {
+				void daemonHub
+					.emit('space.gateData.updated', {
+						sessionId: 'global',
+						spaceId,
+						runId: workflowRunId,
+						gateId,
+						data: updated.data,
+					})
+					.catch((err) => {
+						log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
+					});
+			}
+
 			return jsonResult({
 				success: true,
 				gateId,

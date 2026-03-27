@@ -451,6 +451,41 @@ describe('space-workflow-run gate handlers', () => {
 			});
 			expect(gateDataRepo.merge).toHaveBeenCalledTimes(1);
 		});
+
+		it('approveGate emits space.gateData.updated with gate data on approval', async () => {
+			await call('spaceWorkflowRun.approveGate', {
+				runId: 'run-1',
+				gateId: 'gate-approval',
+				approved: true,
+			});
+			expect(daemonHub.emit).toHaveBeenCalledWith(
+				'space.gateData.updated',
+				expect.objectContaining({
+					spaceId: 'space-1',
+					runId: 'run-1',
+					gateId: 'gate-approval',
+					data: expect.objectContaining({ approved: true }),
+				})
+			);
+		});
+
+		it('approveGate emits space.gateData.updated with gate data on rejection', async () => {
+			await call('spaceWorkflowRun.approveGate', {
+				runId: 'run-1',
+				gateId: 'gate-approval',
+				approved: false,
+				reason: 'Not ready',
+			});
+			expect(daemonHub.emit).toHaveBeenCalledWith(
+				'space.gateData.updated',
+				expect.objectContaining({
+					spaceId: 'space-1',
+					runId: 'run-1',
+					gateId: 'gate-approval',
+					data: expect.objectContaining({ approved: false }),
+				})
+			);
+		});
 	});
 
 	// ─── spaceWorkflowRun.getGateArtifacts ────────────────────────────────
