@@ -850,6 +850,8 @@ CRITICAL RULES:
 			const appServer = this.ctx.appMcpServerRepo.get(skill.config.appMcpServerId);
 			// Skip silently if the referenced app_mcp_servers entry was deleted or no longer exists
 			if (!appServer) continue;
+			// Skip if the AppMcpServer itself is disabled, even if the wrapping skill is enabled
+			if (!appServer.enabled) continue;
 
 			servers[skill.name] = this.appMcpServerToSdkConfig(appServer);
 		}
