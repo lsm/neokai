@@ -100,7 +100,7 @@ interface TaskGroupMetadata {
 	 * with approved=true. Set to 'leader_semi_auto' when runtime auto-approves in
 	 * semi-autonomous mode. Used as idempotency guard for auto-approve deferred callbacks.
 	 */
-	approvalSource?: 'human' | 'leader_semi_auto';
+	approvalSource?: 'human' | 'leader_semi_auto' | 'leader_no_pr';
 	/**
 	 * Links this session group to a specific mission_executions row for recurring missions.
 	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
@@ -174,9 +174,9 @@ export interface SessionGroup {
 	 */
 	workerBypassed: boolean;
 	/**
-	 * Who approved this task ('human' or 'leader_semi_auto'), or null if not yet approved.
+	 * Who approved this task ('human', 'leader_semi_auto', or 'leader_no_pr'), or null if not yet approved.
 	 */
-	approvalSource: 'human' | 'leader_semi_auto' | null;
+	approvalSource: 'human' | 'leader_semi_auto' | 'leader_no_pr' | null;
 	/**
 	 * Links this session group to a specific mission_executions row for recurring missions.
 	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
@@ -669,7 +669,10 @@ export class SessionGroupRepository {
 	 * the deferred auto-approve callback (skip if already set).
 	 * Pass null to clear (roll back after a failed resumeWorkerFromHuman).
 	 */
-	setApprovalSource(groupId: string, source: 'human' | 'leader_semi_auto' | null): void {
+	setApprovalSource(
+		groupId: string,
+		source: 'human' | 'leader_semi_auto' | 'leader_no_pr' | null
+	): void {
 		const raw = (
 			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
 				string,

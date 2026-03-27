@@ -61,7 +61,9 @@ export interface LeaderToolCallbacks {
 	completeTask(
 		groupId: string,
 		summary: string,
-		progressSummary?: string
+		progressSummary?: string,
+		no_pr?: boolean,
+		artifacts?: string
 	): Promise<LeaderToolResult>;
 	failTask(groupId: string, reason: string, progressSummary?: string): Promise<LeaderToolResult>;
 	replanGoal(groupId: string, reason: string, progressSummary?: string): Promise<LeaderToolResult>;
@@ -518,8 +520,16 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 		async complete_task(args: {
 			summary: string;
 			progress_summary?: string;
+			no_pr?: boolean;
+			artifacts?: string;
 		}): Promise<LeaderToolResult> {
-			return callbacks.completeTask(groupId, args.summary, args.progress_summary);
+			return callbacks.completeTask(
+				groupId,
+				args.summary,
+				args.progress_summary,
+				args.no_pr,
+				args.artifacts
+			);
 		},
 		async fail_task(args: {
 			reason: string;
@@ -578,6 +588,18 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 					.string()
 					.describe('Summary of what was accomplished and how it meets requirements'),
 				progress_summary: progressSummaryField,
+				no_pr: z
+					.boolean()
+					.optional()
+					.describe(
+						'Set to true when the task produced no PR (e.g., research, investigation, task creation)'
+					),
+				artifacts: z
+					.string()
+					.optional()
+					.describe(
+						'Free-form description of what was produced or accomplished (use with no_pr=true)'
+					),
 			},
 			(args) => handlers.complete_task(args)
 		),
