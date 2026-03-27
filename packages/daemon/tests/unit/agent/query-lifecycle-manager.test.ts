@@ -557,16 +557,43 @@ describe('QueryLifecycleManager', () => {
 	});
 
 	describe('ensureQueryStarted', () => {
-		test('returns early if message queue is already running', async () => {
+		test('returns early if message queue is already running and queryPromise is active', async () => {
 			messageQueue.start(async function* () {
 				yield 'test';
 			});
 			mockContext = createMockContext();
+			// Set queryPromise to indicate an active query
+			mockContext.queryPromise = Promise.resolve();
 			manager = new QueryLifecycleManager(mockContext);
 
 			await manager.ensureQueryStarted();
 
 			expect(startStreamingCalled).toBe(false);
+		});
+
+		test('detects stale running state and restarts when isRunning=true but queryPromise=null', async () => {
+			// Simulate stale state: messageQueue thinks it's running but queryPromise is null
+			// This is a defensive check for edge cases (e.g., restored sessions with stale flags).
+			// The primary race (between for-await loop ending and finally block) is handled by
+			// the early messageQueue.stop() in QueryRunner.runQuery().
+			messageQueue.start(async function* () {
+				yield 'test';
+			});
+			mockContext = createMockContext();
+			// queryPromise is null (default) — this is the stale state
+			mockContext.queryPromise = null;
+			// Set a stale queryObject to verify it gets cleared
+			mockContext.queryObject = { close: () => {} } as unknown as typeof mockContext.queryObject;
+			manager = new QueryLifecycleManager(mockContext);
+
+			const stopSpy = spyOn(messageQueue, 'stop');
+
+			await manager.ensureQueryStarted();
+
+			// Should have force-stopped the stale queue, cleared queryObject, and started a new query
+			expect(stopSpy).toHaveBeenCalled();
+			expect(mockContext.queryObject).toBeNull();
+			expect(startStreamingCalled).toBe(true);
 		});
 
 		test('starts streaming query when queue is not running', async () => {

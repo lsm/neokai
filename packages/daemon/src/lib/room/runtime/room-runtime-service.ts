@@ -389,12 +389,19 @@ export class RoomRuntimeService {
 			injectMessage: async (sessionId, message, opts) => {
 				const session = agentSessions.get(sessionId);
 				if (!session) {
+					log.error(`[injectMessage] Session ${sessionId}: not found in service cache`);
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
 
 				const deliveryMode = opts?.deliveryMode ?? 'immediate';
 				const state = session.getProcessingState();
 				const isBusy = state.status === 'processing' || state.status === 'queued';
+
+				log.debug(
+					`[injectMessage] Session ${sessionId}: deliveryMode=${deliveryMode}, ` +
+						`status=${state.status}, isBusy=${isBusy}, ` +
+						`messageLength=${message.length}`
+				);
 
 				const messageId = generateUUID();
 				const sdkUserMessage: SDKUserMessage = {
@@ -412,6 +419,7 @@ export class RoomRuntimeService {
 				// - defer + busy => persist as 'deferred' (replayed after current turn)
 				// - otherwise => enqueue now ('enqueued') so worker can start ASAP when idle
 				if (deliveryMode === 'defer' && isBusy) {
+					log.debug(`[injectMessage] Session ${sessionId}: deferring message ${messageId} (busy)`);
 					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred');
 					return;
 				}
@@ -419,9 +427,19 @@ export class RoomRuntimeService {
 				// Ensure the SDK query is running before enqueuing. After daemon
 				// restart, restored sessions are in cache but haven't started
 				// their query yet (lazy start to avoid startup timeout).
+				log.debug(
+					`[injectMessage] Session ${sessionId}: calling ensureQueryStarted before enqueue`
+				);
 				await session.ensureQueryStarted();
 				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+				log.debug(
+					`[injectMessage] Session ${sessionId}: saved user message ${messageId}, ` +
+						`enqueuing into messageQueue (isRunning=${session.messageQueue.isRunning?.() ?? 'unknown'})`
+				);
 				await session.messageQueue.enqueueWithId(messageId, message);
+				log.debug(
+					`[injectMessage] Session ${sessionId}: message ${messageId} enqueued successfully`
+				);
 			},
 			hasSession: (sessionId) => {
 				return agentSessions.has(sessionId);
