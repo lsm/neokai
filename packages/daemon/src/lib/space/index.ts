@@ -5,6 +5,8 @@
 export { SpaceManager } from './managers/space-manager';
 export { SpaceWorktreeManager } from './managers/space-worktree-manager';
 export type { SpaceWorktreeInfo } from './managers/space-worktree-manager';
+export { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository';
+export type { SpaceWorktreeRecord } from '../../storage/repositories/space-worktree-repository';
 export {
 	SpaceTaskManager,
 	VALID_SPACE_TASK_TRANSITIONS,

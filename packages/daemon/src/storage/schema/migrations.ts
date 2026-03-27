@@ -4237,7 +4237,9 @@ function runMigration64(db: BunDatabase): void {
 			path       TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			UNIQUE(space_id, task_id),
-			UNIQUE(space_id, slug)
+			UNIQUE(space_id, slug),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE
 		)
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
