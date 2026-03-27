@@ -87,8 +87,8 @@ describe('Gate and Channel type validation', () => {
 	test('Gate with count condition', () => {
 		const gate: Gate = {
 			id: 'gate-2',
-			condition: { type: 'count', field: 'approvals', threshold: 2 },
-			data: { approvals: 0 },
+			condition: { type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
+			data: { reviews: {} },
 			allowedWriterRoles: ['reviewer-1', 'reviewer-2'],
 			resetOnCycle: true,
 		};
@@ -100,7 +100,7 @@ describe('Gate and Channel type validation', () => {
 			type: 'all',
 			conditions: [
 				{ type: 'check', field: 'approved', value: true },
-				{ type: 'count', field: 'reviews', threshold: 2 },
+				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
 			],
 		};
 		const gate: Gate = {
@@ -121,7 +121,7 @@ describe('Gate and Channel type validation', () => {
 			type: 'any',
 			conditions: [
 				{ type: 'check', field: 'fast_track', value: true },
-				{ type: 'count', field: 'approvals', threshold: 3 },
+				{ type: 'count', field: 'approvals', matchValue: 'approved', min: 3 },
 			],
 		};
 		const gate: Gate = {
@@ -164,8 +164,8 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 			},
 			{
 				id: 'gate-review-count',
-				condition: { type: 'count', field: 'approvals', threshold: 2 },
-				data: { approvals: 0 },
+				condition: { type: 'count', field: 'approvals', matchValue: 'approved', min: 2 },
+				data: { approvals: {} },
 				allowedWriterRoles: ['reviewer-1', 'reviewer-2'],
 				resetOnCycle: true,
 			},

@@ -495,34 +495,58 @@ export interface WorkflowCondition {
 /**
  * A `check` condition evaluates a named key in the gate's data store.
  *
- * The gate opens when `data[field]` equals `value`.
+ * The `op` field determines the comparison:
+ *   - `'exists'` — gate opens when the field is present (not `undefined`)
+ *   - `'=='`     — gate opens when `data[field] === value` (default)
+ *   - `'!='`     — gate opens when `data[field] !== value`
  *
  * Examples:
- *   - Human approval: `{ type: 'check', field: 'approved', value: true }`
- *   - Task result:    `{ type: 'check', field: 'result', value: 'passed' }`
+ *   - Human approval: `{ type: 'check', field: 'approved', op: '==', value: true }`
+ *   - Field exists:   `{ type: 'check', field: 'plan', op: 'exists' }`
+ *   - Not rejected:   `{ type: 'check', field: 'status', op: '!=', value: 'rejected' }`
+ *   - Legacy compat:  `{ type: 'check', field: 'approved', value: true }` (op defaults to '==')
  */
 export interface GateConditionCheck {
 	type: 'check';
 	/** Key in the gate's data store to evaluate. */
 	field: string;
-	/** Expected value. Gate opens when `data[field] === value`. */
-	value: unknown;
+	/**
+	 * Comparison operator. Defaults to `'=='` when omitted (backward compatible).
+	 *   - `'exists'` — passes when the field is present in data (not `undefined`)
+	 *   - `'=='`     — passes when `data[field] === value`
+	 *   - `'!='`     — passes when `data[field] !== value`
+	 */
+	op?: 'exists' | '==' | '!=';
+	/** Expected value. Used by `==` and `!=` ops. Ignored by `exists`. */
+	value?: unknown;
 }
 
 /**
- * A `count` condition checks the numeric value of a field against a threshold.
+ * A `count` condition reads a map (Record) from the gate's data store, counts
+ * entries whose value matches `matchValue`, and checks `>= min`.
  *
- * The gate opens when `data[field] >= threshold`.
+ * This is designed for multi-reviewer approval gates: each reviewer writes their
+ * decision into a map keyed by their name, and the gate counts how many have
+ * the expected value.
  *
  * Examples:
- *   - Require 2 approvals: `{ type: 'count', field: 'approvals', threshold: 2 }`
+ *   - Require 2 "approved" reviews:
+ *     `{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 }`
+ *     with data: `{ reviews: { alice: 'approved', bob: 'approved', carol: 'pending' } }`
+ *     → count = 2 (alice + bob), 2 >= 2 → open
+ *
+ * Edge cases:
+ *   - Missing field → count = 0
+ *   - Field is not an object → count = 0
  */
 export interface GateConditionCount {
 	type: 'count';
-	/** Key in the gate's data store whose numeric value to compare. */
+	/** Key in the gate's data store — expected to hold a Record/map. */
 	field: string;
-	/** Gate opens when the field value ≥ threshold. */
-	threshold: number;
+	/** Value to match against map entries. Count of entries where `value === matchValue`. */
+	matchValue: unknown;
+	/** Minimum number of matching entries required for the gate to open. */
+	min: number;
 }
 
 /**
@@ -551,8 +575,8 @@ export interface GateConditionAny {
  * Discriminated union of gate condition types.
  *
  * Four types cover all gate behaviors:
- * - `check`  — field equality check against gate data
- * - `count`  — numeric threshold check against gate data
+ * - `check`  — field check against gate data (exists / == / !=)
+ * - `count`  — map-counting: count matching entries >= min
  * - `all`    — composite AND (recursive)
  * - `any`    — composite OR (recursive)
  *

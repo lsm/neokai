@@ -1,22 +1,22 @@
 /**
- * GateEvaluator — evaluates GateCondition trees against gate data.
+ * Unified Gate Evaluator (M1.2)
  *
- * This evaluator works with the new separated Gate/Channel system (M1.1).
- * It reads gate data from the data store and evaluates the gate's condition
- * tree to determine whether the gate is open or closed.
+ * Single `evaluateGate(gate)` function that handles all four condition types
+ * (check, count, all, any) including recursive all/any.
  *
- * Since conditions are deserialized from JSON at runtime, the evaluator
- * includes runtime validation via `validateGateCondition` to catch malformed
- * objects before they reach the evaluation logic.
+ * The evaluator reads from the gate's own `data` store — callers populate
+ * `gate.data` with runtime data from the `gate_data` table before evaluation.
  *
  * Condition types:
- *   check — field equality: data[field] === value
- *   count — numeric threshold: data[field] >= threshold
+ *   check — field check with operator: exists / == / !=
+ *   count — map-counting: count entries matching matchValue, check >= min
  *   all   — composite AND: all sub-conditions must pass (short-circuits on failure)
  *   any   — composite OR: at least one sub-condition must pass (short-circuits on success)
+ *
+ * Channels without a gate are always open — use `isChannelOpen()` as the entry point.
  */
 
-import type { Gate, GateCondition } from '@neokai/shared';
+import type { Gate, Channel, GateCondition } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -35,6 +35,7 @@ export interface GateEvalResult {
 // ---------------------------------------------------------------------------
 
 const VALID_CONDITION_TYPES = new Set(['check', 'count', 'all', 'any']);
+const VALID_CHECK_OPS = new Set(['exists', '==', '!=']);
 
 /**
  * Validates a GateCondition object at runtime.
@@ -65,15 +66,24 @@ export function validateGateCondition(condition: unknown, path = 'condition'): s
 			if (typeof cond.field !== 'string' || cond.field.length === 0) {
 				errors.push(`${path}.field: expected non-empty string`);
 			}
-			// value can be anything — no validation needed
+			if (cond.op !== undefined && (typeof cond.op !== 'string' || !VALID_CHECK_OPS.has(cond.op))) {
+				errors.push(`${path}.op: expected one of [exists, ==, !=], got ${JSON.stringify(cond.op)}`);
+			}
+			// Warn when value is set but op is 'exists' (value is ignored by exists)
+			if (cond.op === 'exists' && cond.value !== undefined) {
+				errors.push(`${path}: "value" is set but ignored when op is "exists"`);
+			}
 			break;
 
 		case 'count':
 			if (typeof cond.field !== 'string' || cond.field.length === 0) {
 				errors.push(`${path}.field: expected non-empty string`);
 			}
-			if (typeof cond.threshold !== 'number') {
-				errors.push(`${path}.threshold: expected number, got ${typeof cond.threshold}`);
+			if (typeof cond.min !== 'number') {
+				errors.push(`${path}.min: expected number, got ${typeof cond.min}`);
+			}
+			if (cond.matchValue === undefined) {
+				errors.push(`${path}.matchValue: required but missing`);
 			}
 			break;
 
@@ -93,18 +103,55 @@ export function validateGateCondition(condition: unknown, path = 'condition'): s
 }
 
 // ---------------------------------------------------------------------------
-// GateEvaluator
+// Channel helper
 // ---------------------------------------------------------------------------
 
 /**
- * Evaluates a Gate's condition tree against the current gate data.
+ * Checks whether a channel is open for message delivery.
  *
- * Stateless — all data is passed in. No I/O or side effects.
- * Callers should validate condition structure with `validateGateCondition`
- * before calling this function with data from untrusted JSON sources.
+ * - Channels without a `gateId` are always open (no evaluation needed).
+ * - Channels with a `gateId` look up the gate in `gates` and evaluate it.
+ * - If the gate is not found in the map, the channel is treated as closed
+ *   (missing gate = misconfiguration, fail closed).
+ *
+ * @param channel  The channel to check.
+ * @param gates    Map of gate ID → Gate (with runtime data already populated).
  */
-export function evaluateGate(gate: Gate, data: Record<string, unknown>): GateEvalResult {
-	return evaluateCondition(gate.condition, data);
+export function isChannelOpen(
+	channel: Channel,
+	gates: ReadonlyMap<string, Gate> | Record<string, Gate>
+): GateEvalResult {
+	if (!channel.gateId) {
+		return { open: true };
+	}
+
+	const gate =
+		gates instanceof Map
+			? gates.get(channel.gateId)
+			: (gates as Record<string, Gate>)[channel.gateId];
+	if (!gate) {
+		return {
+			open: false,
+			reason: `Gate "${channel.gateId}" not found — channel "${channel.id}" is closed (misconfiguration)`,
+		};
+	}
+
+	return evaluateGate(gate);
+}
+
+// ---------------------------------------------------------------------------
+// Gate evaluator
+// ---------------------------------------------------------------------------
+
+/**
+ * Evaluates a Gate's condition tree against the gate's own data store.
+ *
+ * Stateless — reads from `gate.data`. No I/O or side effects.
+ * Callers should populate `gate.data` with runtime data from the `gate_data`
+ * table before calling this function.
+ */
+export function evaluateGate(gate: Gate): GateEvalResult {
+	return evaluateCondition(gate.condition, gate.data);
 }
 
 /**
@@ -120,10 +167,10 @@ export function evaluateCondition(
 ): GateEvalResult {
 	switch (condition.type) {
 		case 'check':
-			return evaluateCheck(condition.field, condition.value, data);
+			return evaluateCheck(condition.field, condition.op ?? '==', condition.value, data);
 
 		case 'count':
-			return evaluateCount(condition.field, condition.threshold, data);
+			return evaluateCount(condition.field, condition.matchValue, condition.min, data);
 
 		case 'all': {
 			for (const sub of condition.conditions) {
@@ -150,8 +197,6 @@ export function evaluateCondition(
 		}
 
 		default: {
-			// Runtime fallback for malformed JSON — condition.type is not in the union.
-			// The `never` assertion is compile-time only; at runtime unknown types land here.
 			const unknownType = (condition as { type: string }).type;
 			return {
 				open: false,
@@ -167,31 +212,74 @@ export function evaluateCondition(
 
 function evaluateCheck(
 	field: string,
+	op: 'exists' | '==' | '!=',
 	expected: unknown,
 	data: Record<string, unknown>
 ): GateEvalResult {
-	const actual = data[field];
-	if (actual === expected) {
-		return { open: true };
+	switch (op) {
+		case 'exists': {
+			if (data[field] !== undefined) {
+				return { open: true };
+			}
+			return {
+				open: false,
+				reason: `Gate check failed: data["${field}"] does not exist`,
+			};
+		}
+
+		case '==': {
+			const actual = data[field];
+			if (actual === expected) {
+				return { open: true };
+			}
+			return {
+				open: false,
+				reason: `Gate check failed: data["${field}"] is ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`,
+			};
+		}
+
+		case '!=': {
+			const actual = data[field];
+			if (actual !== expected) {
+				return { open: true };
+			}
+			return {
+				open: false,
+				reason: `Gate check failed: data["${field}"] is ${JSON.stringify(actual)}, expected != ${JSON.stringify(expected)}`,
+			};
+		}
+
+		default: {
+			return {
+				open: false,
+				reason: `Gate check failed: unknown op "${op as string}"`,
+			};
+		}
 	}
-	return {
-		open: false,
-		reason: `Gate check failed: data["${field}"] is ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`,
-	};
 }
 
 function evaluateCount(
 	field: string,
-	threshold: number,
+	matchValue: unknown,
+	min: number,
 	data: Record<string, unknown>
 ): GateEvalResult {
 	const raw = data[field];
-	const value = typeof raw === 'number' ? raw : 0;
-	if (value >= threshold) {
+
+	// Field must be a non-null object (Record/map). Missing or non-object → count 0.
+	let count = 0;
+	if (raw !== null && raw !== undefined && typeof raw === 'object' && !Array.isArray(raw)) {
+		const map = raw as Record<string, unknown>;
+		for (const val of Object.values(map)) {
+			if (val === matchValue) count++;
+		}
+	}
+
+	if (count >= min) {
 		return { open: true };
 	}
 	return {
 		open: false,
-		reason: `Gate count failed: data["${field}"] is ${value}, need >= ${threshold}`,
+		reason: `Gate count failed: data["${field}"] has ${count} entries matching ${JSON.stringify(matchValue)}, need >= ${min}`,
 	};
 }
