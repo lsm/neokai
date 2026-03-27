@@ -932,7 +932,7 @@ blockers: <security issues or API misuse that must be fixed>
 	};
 }
 
-/** Restricted tools for reviewer sub-agents (read-only + gh CLI) */
+/** Restricted tools for reviewer sub-agents (read-only + gh CLI + sub-agent spawning) */
 const REVIEWER_TOOLS: AgentDefinition['tools'] = [
 	'Read',
 	'Grep',
@@ -940,6 +940,9 @@ const REVIEWER_TOOLS: AgentDefinition['tools'] = [
 	'Bash',
 	'WebFetch',
 	'WebSearch',
+	'Task',
+	'TaskOutput',
+	'TaskStop',
 ];
 
 const REVIEWER_OUTPUT_FORMAT = `
@@ -982,16 +985,38 @@ function buildSdkReviewerPrompt(model: string, provider?: string): string {
 - **Provider:** ${displayProvider}
 You MUST include this identity block at the top of every PR comment you post.
 
+## Sub-Agent Support
+
+You have two specialist sub-agents available via the Task tool. Use them when reviewing non-trivial changes — skip them for straightforward, isolated edits.
+
+- **reviewer-explorer**: Explores callers, callees, related tests, and architectural patterns around changed files. Use it to build full context before evaluating the implementation. Invoke with the list of changed files and the PR description.
+- **reviewer-fact-checker**: Validates implementation against current API documentation, best practices, and known pitfalls. Use it when you are unsure whether an API is used correctly, whether a pattern follows current community standards, or whether there are version-compatibility issues.
+
+**When to use sub-agents:**
+- Non-trivial changes touching multiple files or architectural boundaries → use \`reviewer-explorer\` first
+- Implementation uses external APIs, third-party libraries, or patterns you want to verify → use \`reviewer-fact-checker\`
+- Simple, self-contained changes (single function, obvious correctness) → skip sub-agents
+
+**How to invoke:**
+\`\`\`
+Task: Use reviewer-explorer to explore the context around <changed files>
+Task: Use reviewer-fact-checker to validate that <implementation description> follows current best practices
+\`\`\`
+
+Wait for each sub-agent to complete and incorporate its findings into your review.
+
 ## Review Process
 
 1. Read the task prompt carefully — it describes what was requested and what was implemented
 2. Understand the original ask: what was the goal? What should the final result look like?
-3. Explore the codebase thoroughly (use Read, Grep, Glob to understand the full picture):
+3. For non-trivial changes, spawn \`reviewer-explorer\` to understand the full context (callers, callees, tests, integration points) before reading files yourself
+4. Explore the codebase thoroughly (use Read, Grep, Glob to understand the full picture):
    - Read the changed/new files completely, not just diffs
    - Read surrounding code to understand integration points
    - Check imports, exports, and cross-file dependencies
    - Look at test files to verify coverage
-4. Evaluate the implementation holistically:
+5. If unsure about API correctness or best practices, spawn \`reviewer-fact-checker\` to validate against current documentation
+6. Evaluate the implementation holistically:
    - **Correctness**: Does the code actually achieve the original ask?
    - **Completeness**: Are all aspects of the request addressed? Any missing pieces?
    - **Bugs & edge cases**: Logic errors, off-by-one, null handling, race conditions
@@ -1002,7 +1027,7 @@ You MUST include this identity block at the top of every PR comment you post.
    - **Over-engineering**: Is there unnecessary complexity, dead code, or premature abstraction?
 
    The most critical bugs are often **omissions** — missing error handling, uncovered edge cases, absent validation at system boundaries. Prioritize what's NOT there over what is.
-5. Post your review via the REST API, which returns the review URL directly:
+7. Post your review via the REST API, which returns the review URL directly:
    \`\`\`bash
    # For APPROVE:
    GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
@@ -1032,7 +1057,7 @@ You MUST include this identity block at the top of every PR comment you post.
 
    > **Model:** ${model} | **Client:** NeoKai | **Provider:** ${displayProvider}
    \`\`\`
-6. The \`--jq '.html_url'\` output is the review URL — use it in the structured output block below
+8. The \`--jq '.html_url'\` output is the review URL — use it in the structured output block below
 
 ## Guidelines
 
@@ -1156,6 +1181,10 @@ You MUST include this identity block at the top of every PR comment you post.
 5. **ALWAYS run the CLI tool synchronously** — set \`timeout: 600000\` (10 minutes) on the Bash call. Do NOT use \`run_in_background\`. The output will be returned when the command completes. Do NOT poll, sleep, or check for output in separate steps.
 6. If the CLI tool times out or errors, do NOT retry. Do NOT post a GitHub review. Instead, output the structured block with \`recommendation: TIMEOUT\` (or \`ERROR\`), \`url: none\`, and a summary describing what happened. The leader will decide how to proceed.
 
+## Sub-Agent Support
+
+Two specialist sub-agents are available in the agent namespace: \`reviewer-explorer\` (codebase context) and \`reviewer-fact-checker\` (API/best-practice validation). As a relay, you should NOT use these to supplement the CLI tool's findings — the CLI tool does ALL reviewing. Do not spawn sub-agents.
+
 ## Review Process
 
 1. Read the task prompt carefully — extract the PR number and task description
@@ -1274,7 +1303,10 @@ export function buildReviewerAgents(
 	reviewers: SubagentConfig[],
 	leaderModel?: string
 ): Record<string, AgentDefinition> {
-	const agents: Record<string, AgentDefinition> = {};
+	const agents: Record<string, AgentDefinition> = {
+		'reviewer-explorer': buildReviewerExplorerAgentDef(),
+		'reviewer-fact-checker': buildReviewerFactCheckerAgentDef(),
+	};
 	const usedNames = new Set<string>();
 	const runtimeModelLabel = leaderModel ?? 'sonnet';
 
