@@ -1307,7 +1307,9 @@ export function buildReviewerAgents(
 		'reviewer-explorer': buildReviewerExplorerAgentDef(),
 		'reviewer-fact-checker': buildReviewerFactCheckerAgentDef(),
 	};
-	const usedNames = new Set<string>();
+	// Pre-populate usedNames with reserved sub-agent names so toReviewerName()
+	// never generates a name that overwrites the built-in definitions.
+	const usedNames = new Set<string>(['reviewer-explorer', 'reviewer-fact-checker']);
 	const runtimeModelLabel = leaderModel ?? 'sonnet';
 
 	for (const reviewer of reviewers) {

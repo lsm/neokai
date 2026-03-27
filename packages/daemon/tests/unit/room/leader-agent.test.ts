@@ -933,6 +933,16 @@ describe('Leader Agent', () => {
 			expect(agent.prompt).toContain('Do not spawn sub-agents');
 		});
 
+		it('should not overwrite built-in sub-agents if reviewer model maps to same short name', () => {
+			// A model named 'explorer' would normally produce 'reviewer-explorer' via toShortModelName,
+			// which would collide with the built-in definition. usedNames must prevent this.
+			const agents = buildReviewerAgents([{ model: 'explorer' }]);
+			// Built-in reviewer-explorer must be the real sub-agent definition (has CONTEXT_FINDINGS format)
+			expect(agents['reviewer-explorer'].prompt).toContain('---CONTEXT_FINDINGS---');
+			// The colliding reviewer must be renamed with a counter suffix
+			expect(agents['reviewer-explorer-2']).toBeDefined();
+		});
+
 		it('should detect GLM provider label for SDK reviewers', () => {
 			const agents = buildReviewerAgents([{ model: 'glm-5' }]);
 			const agent = agents['reviewer-glm-5'];
