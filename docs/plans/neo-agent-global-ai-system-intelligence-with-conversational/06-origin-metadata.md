@@ -10,6 +10,15 @@ Add an `origin` field to messages so the system can distinguish between human-in
 - Propagate origin through message injection pipeline
 - Room/space agents receive origin in message metadata
 
+### Origin Propagation Model (Single-Hop)
+
+Origin is a **single-hop** attribute -- it marks who initiated a specific message, but does NOT propagate transitively:
+- Neo sends a message to Room A with `origin: 'neo'` → Room A's agent sees `origin: 'neo'` on that message
+- Room A's agent then acts on it and creates its own messages → those messages have `origin: 'human'` (default) because the room agent is acting on its own
+- Same for space task agents triggered by Neo-initiated actions -- their responses are their own
+
+This keeps the model simple and avoids complex provenance chains. Full causal tracing (e.g., "this task was created because Neo told Room A to do X") is a future concern that would require a separate audit trail, not origin field chaining.
+
 ## Tasks
 
 ### Task 6.1: Origin Field in Shared Types and Message Pipeline

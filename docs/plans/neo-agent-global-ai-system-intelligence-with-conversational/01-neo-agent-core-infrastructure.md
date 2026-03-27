@@ -7,8 +7,8 @@ Establish the foundational infrastructure for the Neo agent: session type, DB sc
 ## Scope
 
 - Add `'neo'` to `SessionType` union
-- Create `neo_activity_log` table and `neo_settings` in the DB schema
-- Create `NeoAgentManager` class that owns Neo's lifecycle
+- Create `neo_activity_log` table in the DB schema (no separate `neo_settings` table -- settings use `SettingsManager` with `neo.*` keys)
+- Create `NeoAgentManager` class that owns Neo's lifecycle, including health monitoring and auto-recovery
 - Create provisioning logic following `provisionGlobalSpacesAgent` pattern
 - Wire Neo into `DaemonAppContext` and `createDaemonApp`
 - Create Neo system prompt
@@ -25,6 +25,7 @@ Establish the foundational infrastructure for the Neo agent: session type, DB sc
 3. Create DB migration in `packages/daemon/src/storage/schema/migrations.ts`:
    - `neo_activity_log` table: `id TEXT PRIMARY KEY, tool_name TEXT NOT NULL, input TEXT, output TEXT, status TEXT NOT NULL DEFAULT 'success', error TEXT, target_type TEXT, target_id TEXT, undoable INTEGER DEFAULT 0, undo_data TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))`
    - Index on `created_at` for activity feed queries
+   - No `neo_settings` table -- settings use existing `SettingsManager` with keys: `neo.securityMode` (default `'balanced'`), `neo.model` (default `null`)
 4. Create `NeoActivityLogRepository` in `packages/daemon/src/storage/repositories/neo-activity-log-repository.ts` with CRUD methods: `insert`, `list` (paginated, newest first), `getById`, `getLatestUndoable`
 5. Register the repository in the `Database` facade class
 6. Add unit tests for the repository
@@ -55,10 +56,13 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Include security tier behavior instructions
    - Include activity logging instructions
 3. Create `packages/daemon/src/lib/neo/neo-agent-manager.ts`:
-   - `NeoAgentManager` class with `provision()`, `getSession()`, `cleanup()` methods
+   - `NeoAgentManager` class with `provision()`, `getSession()`, `cleanup()`, `healthCheck()` methods
    - Manages the singleton `neo:global` session
    - Handles first-run creation and restart re-attachment
-   - Exposes Neo settings (security mode, model) from SettingsManager
+   - **Session resilience**: `healthCheck()` detects crashed/corrupted sessions (SDK errors, unresponsive state) and auto-recovers by destroying and re-provisioning the session
+   - Health check runs on `neo.send` before message injection -- if session is unhealthy, auto-recover and retry
+   - `neo.clearSession` also provides manual recovery path
+   - Exposes Neo settings (security mode, model) from SettingsManager via `neo.securityMode` and `neo.model` keys
 4. Create `packages/daemon/src/lib/neo/index.ts` barrel export
 5. Add unit tests for `NeoAgentManager` (mock SessionManager)
 
@@ -66,7 +70,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - System prompt covers Neo's full role and behavior
 - NeoAgentManager can provision the Neo session
 - On restart, existing session is re-attached (not duplicated)
-- Unit tests verify provision and re-attach flows
+- Health check detects unhealthy sessions and auto-recovers
+- Unit tests verify provision, re-attach, and health-check/recovery flows
 
 **Dependencies**: Task 1.1
 

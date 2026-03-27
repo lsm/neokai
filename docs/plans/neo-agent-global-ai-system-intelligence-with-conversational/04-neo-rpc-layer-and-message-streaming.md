@@ -63,7 +63,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Supports pagination params
 2. Add `neo.activity` named query:
    - SQL query: select from `neo_activity_log` ordered by `created_at` DESC
-   - Supports pagination params
+   - Supports pagination params (`limit`, `offset`)
+   - Default limit of 50 entries per page to prevent unbounded result sets
 3. Register the named queries in the LiveQuery handler setup
 4. Add unit tests verifying query registration and result shape
 

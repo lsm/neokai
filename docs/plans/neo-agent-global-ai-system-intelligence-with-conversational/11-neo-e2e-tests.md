@@ -18,14 +18,14 @@ Playwright end-to-end tests covering the full Neo user experience: NavRail input
 
 **Subtasks**:
 1. Create `packages/e2e/tests/features/neo-panel.e2e.ts`
-2. Test: NavRail input visible and focusable
-3. Test: Typing in NavRail input and pressing Enter opens the Neo panel
+2. Test: NavRail Neo icon button visible and clickable
+3. Test: Clicking NavRail Neo button opens the Neo panel and focuses the panel's text input
 4. Test: Neo panel displays with Chat tab active
 5. Test: Can switch between Chat and Activity tabs
 6. Test: Close button dismisses the panel
 7. Test: Click outside dismisses the panel
 8. Test: Panel state persists across page navigation (localStorage)
-9. Test: Cmd+K keyboard shortcut focuses the NavRail input
+9. Test: `Cmd+J` / `Ctrl+J` keyboard shortcut toggles the Neo panel
 
 **Acceptance Criteria**:
 - All panel interaction tests pass

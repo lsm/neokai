@@ -9,6 +9,8 @@ Record every action Neo takes into an activity log, and support undoing the most
 - Action logging hooks in tool execution pipeline
 - Undo data capture for reversible operations
 - `undo_last_action` tool implementation
+- Activity log retention policy (auto-prune old entries)
+- `explain` diagnostic tool (separated from undo -- purely informational)
 
 ## Tasks
 
@@ -20,8 +22,9 @@ Record every action Neo takes into an activity log, and support undoing the most
 1. Create `packages/daemon/src/lib/neo/activity-logger.ts`:
    - `NeoActivityLogger` class wrapping `NeoActivityLogRepository`
    - `logAction(entry)` method: records tool name, input, output, status, target, undoable flag
-   - `getRecentActivity(limit)` method: returns paginated activity entries
+   - `getRecentActivity(limit, offset)` method: returns paginated activity entries
    - `getLatestUndoable()` method: returns the most recent undoable action
+   - `pruneOldEntries()` method: deletes entries older than 30 days AND trims to max 10,000 rows (called on logger init and periodically)
 2. Create tool execution wrapper that intercepts MCP tool calls:
    - Before execution: log intent
    - After execution: update log with result/error
@@ -30,10 +33,18 @@ Record every action Neo takes into an activity log, and support undoing the most
    - `toggle_skill`: capture previous enabled state
    - `toggle_mcp_server`: capture previous enabled state
    - `update_app_settings`: capture previous settings values
+   - `create_room`: capture room ID for deletion
    - `create_goal`: capture goal ID for deletion
    - `create_task`: capture task ID for deletion
    - `set_goal_status`: capture previous status
    - `set_task_status`: capture previous status
+   - `update_room_settings`: capture previous settings values
+4. Document intentionally **non-undoable** operations and rationale:
+   - `delete_room` / `delete_space`: destructive -- data is permanently deleted, cannot reconstruct
+   - `send_message_to_room` / `send_message_to_task`: messages are injected into other agent sessions and may have already been processed/acted upon
+   - `start_workflow_run` / `cancel_workflow_run`: workflow runs create cascading side effects (tasks, agent sessions) that cannot be cleanly reversed
+   - `approve_gate` / `reject_gate`: gate decisions may have triggered downstream workflow steps
+   - `approve_task` / `reject_task`: task review decisions may have triggered agent actions
 4. Wire `NeoActivityLogger` into `NeoAgentManager`
 5. Add unit tests for logging and undo data capture
 
@@ -51,9 +62,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 5.2: Undo Tool Implementation
+### Task 5.2: Undo and Explain Tool Implementation
 
-**Description**: Implement the `undo_last_action` MCP tool that reverses Neo's most recent undoable action.
+**Description**: Implement the `undo_last_action` MCP tool that reverses Neo's most recent undoable action, and the `explain` diagnostic tool.
 
 **Subtasks**:
 1. Add `undo_last_action` tool to the Neo action tools MCP server:
@@ -63,17 +74,22 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. Implement undo handlers for each undoable operation type:
    - Toggle skill/MCP back to previous state
    - Restore previous settings values
-   - Delete created goal/task
+   - Delete created room/goal/task
    - Restore previous goal/task status
-3. Add `explain` meta-tool: Neo describes what it would do without executing
-4. Handle edge cases: nothing to undo, undo target no longer exists, undo already performed
-5. Add unit tests for undo logic including edge cases
+   - Restore previous room settings
+3. Handle edge cases: nothing to undo, undo target no longer exists, undo already performed
+4. Add `explain` tool (separate from undo -- purely diagnostic):
+   - `explain({ action, target })`: Neo describes what the action would do, what risk level it carries, and whether confirmation would be required under the current security mode
+   - This is an informational tool only -- it does not execute or queue any action
+   - Useful for users to preview what Neo will do before asking it to proceed
+5. Add unit tests for undo logic including edge cases, and for explain output
 
 **Acceptance Criteria**:
 - `undo_last_action` reverses the most recent undoable action
 - Undo itself is logged in the activity feed
 - Edge cases produce clear error messages
-- `explain` tool returns action description without executing
+- `explain` tool returns action description, risk level, and confirmation requirement without executing
+- Activity log pruning keeps table bounded (30 days / 10,000 rows max)
 - Unit tests pass
 
 **Dependencies**: Task 5.1

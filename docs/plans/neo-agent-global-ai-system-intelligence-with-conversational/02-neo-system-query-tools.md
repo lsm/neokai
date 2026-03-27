@@ -7,6 +7,7 @@ Implement read-only MCP tools that give Neo full visibility into the NeoKai syst
 ## Scope
 
 - Create MCP tool handlers following the two-layer pattern from `global-spaces-tools.ts`
+- **Reuse existing handlers**: Space-related query tools delegate to the same handler functions used by `global-spaces-tools.ts` rather than reimplementing. Neo wraps them in its own MCP server with Neo-specific formatting.
 - Wrap handlers in an MCP server and attach to Neo session
 - All tools are read-only (no security tier enforcement needed)
 
@@ -53,8 +54,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `list_space_agents` tool: returns agents for a space
    - `list_space_workflows` tool: returns workflows for a space
    - `list_space_runs` tool: returns workflow runs with status, tasks
-2. Reuse existing `SpaceManager`, `SpaceAgentManager`, `SpaceWorkflowManager` dependencies
-3. Add unit tests for each tool handler
+2. **Delegate to existing handlers**: Import and reuse the handler functions from `global-spaces-tools.ts` (e.g., `listSpacesHandler`, `getSpaceHandler`, `listWorkflowsHandler`) rather than reimplementing space queries. Neo's MCP tool wrappers call the same handler functions with the same dependencies.
+3. Reuse existing `SpaceManager`, `SpaceAgentManager`, `SpaceWorkflowManager` dependencies
+4. Add unit tests for each tool handler (can be thin since underlying handlers are already tested)
 
 **Acceptance Criteria**:
 - Space query tools return accurate data

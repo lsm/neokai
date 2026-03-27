@@ -19,12 +19,12 @@ Show subtle attribution badges in the UI where Neo has taken actions, so users c
 **Subtasks**:
 1. Create `packages/web/src/components/neo/ViaNeoIndicator.tsx`:
    - Small, non-intrusive badge/icon (e.g., sparkle icon + "via Neo" text)
-   - Shown on hover or as subtle metadata (configurable via prop)
+   - Always-visible but subtle (small font, muted color) -- do NOT rely on hover-only display since hover doesn't work on touch devices
    - Dark theme styling consistent with the app
 2. Update room chat message rendering (`packages/web/src/components/chat/` area):
    - Check message `origin` field
    - If `origin === 'neo'`, render `ViaNeoIndicator` alongside the message
-   - Show on hover to keep the UI clean
+   - Show as subtle always-visible badge (small sparkle icon + muted text)
 3. Update space workflow gate approval view:
    - If a gate was approved/rejected by Neo (check origin metadata), show indicator
 4. Update task detail view:

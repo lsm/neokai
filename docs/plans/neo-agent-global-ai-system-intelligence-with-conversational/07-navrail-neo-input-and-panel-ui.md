@@ -6,8 +6,8 @@ Build the frontend conversational interface for Neo: a persistent input in the N
 
 ## Scope
 
-- NavRail persistent text input
-- Slide-out Neo panel with Chat and Activity Feed tabs
+- NavRail icon button (the rail is 64px/`w-16` -- too narrow for a text input; text entry happens inside the panel)
+- Slide-out Neo panel with Chat and Activity Feed tabs, including the primary text input at the bottom of the panel
 - Neo store for frontend state management
 - Message display with structured data support
 - Confirmation card UI for action approval
@@ -49,29 +49,30 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 7.2: NavRail Neo Input Component
+### Task 7.2: NavRail Neo Icon Button
 
-**Description**: Add a persistent text input to the NavRail for quick Neo interactions.
+**Description**: Add a persistent icon button to the NavRail that toggles the Neo panel. The NavRail is 64px wide (`w-16`), which cannot fit a text input -- so we use an icon button instead. All text input happens inside the panel.
 
 **Subtasks**:
-1. Create `packages/web/src/components/neo/NeoNavInput.tsx`:
-   - Small text input at the bottom of the NavRail (above settings icon)
-   - Neo icon/branding (sparkles icon or similar, distinct from other nav items)
-   - On Enter: sends message via `neoStore.sendMessage()` and opens the panel
-   - On click (when panel closed): opens the panel
-   - Keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Win) to focus the input
+1. Create `packages/web/src/components/neo/NeoNavButton.tsx`:
+   - Icon button (sparkles icon or similar, distinct from other nav items) fitting within the 64px rail
+   - On click: toggles `neoStore.togglePanel()` and auto-focuses the panel's text input when opening
+   - Active/highlighted state when panel is open
+   - Tooltip: "Neo (⌘J)" on hover
+   - Keyboard shortcut: `Cmd+J` (Mac) / `Ctrl+J` (Win) to toggle the panel (avoids Cmd+K conflicts with VS Code, Slack, browser address bars)
 2. Update `packages/web/src/islands/NavRail.tsx`:
-   - Import and render `NeoNavInput` between nav items and settings button
-   - Wire keyboard shortcut handler at the app level
-3. Update `packages/web/src/lib/nav-config.tsx` if nav items config needs updating
-4. Style with Tailwind: dark theme, subtle border, placeholder text "Ask Neo..."
-5. Add component unit test (renders, handles input, triggers store methods)
+   - Import and render `NeoNavButton` between nav items and settings button (same position as other nav icons)
+3. Register global keyboard shortcut handler at the app level (in `App.tsx` or a dedicated hook):
+   - `Cmd+J` / `Ctrl+J`: toggle Neo panel
+   - Verify no conflicts with existing shortcuts in the codebase (currently none registered)
+4. Style with Tailwind: dark theme, consistent with other NavRail icon buttons
+5. Add component unit test (renders, handles click, triggers store methods)
 
 **Acceptance Criteria**:
-- Input is visible at all times in the NavRail
-- Typing and pressing Enter sends message and opens panel
-- Cmd+K focuses the input from anywhere
-- Visually distinct from navigation items
+- Icon button is visible at all times in the NavRail, fitting the 64px width
+- Clicking opens the Neo panel and focuses the panel's text input
+- `Cmd+J` / `Ctrl+J` toggles the panel from anywhere
+- Visually distinct from navigation items but consistent with NavRail style
 - Unit test passes
 
 **Dependencies**: Task 7.1
@@ -96,7 +97,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Message list: renders user messages and Neo responses
    - Auto-scrolls to newest message
    - Supports text responses and structured data (JSON rendered as formatted cards/tables)
-   - Input bar at bottom for continued conversation
+   - Input bar at bottom (this is the primary text input for Neo -- the NavRail only has an icon button)
 3. Create `packages/web/src/components/neo/NeoActivityView.tsx`:
    - Scrollable list of Neo's past actions from `neoStore.activity`
    - Each entry: timestamp, tool name, target description, status (success/error), outcome summary
@@ -105,7 +106,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Inline card in chat when Neo needs confirmation
    - Shows: action description, target, risk level
    - Confirm / Cancel buttons
-   - Also accepts text input ("yes" / "no" / "confirm")
+   - User can also type "yes" / "no" / "confirm" in the panel's input bar (the LLM maps these to `confirm_action` / `cancel_action` tool calls)
 5. Wire panel into `packages/web/src/islands/MainContent.tsx` or appropriate layout component
 6. Handle click-outside-to-dismiss
 7. Add component unit tests

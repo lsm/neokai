@@ -24,8 +24,8 @@ Add a settings section where users can configure Neo's behavior: security mode, 
    - Description text for each mode explaining the behavior
    - Model selector: dropdown using the same model list as room settings
    - "Clear Session" button: calls `neoStore.clearSession()` with a confirmation dialog
-2. Read current settings via `neo.getSettings` RPC on mount
-3. Persist changes via `neo.updateSettings` RPC on change
+2. Read current settings via `neo.getSettings` RPC on mount (returns `{ securityMode, model }` from `SettingsManager` keys `neo.securityMode` and `neo.model`)
+3. Persist changes via `neo.updateSettings` RPC on change (writes to `SettingsManager` with the same keys; defaults: `securityMode = 'balanced'`, `model = null` meaning app primary model)
 4. Wire into the Settings page component alongside existing sections (General, Providers, MCP, Skills)
 5. Add the settings section to the SettingsSection navigation
 6. Add unit test for the component (renders, handles changes, calls RPC)

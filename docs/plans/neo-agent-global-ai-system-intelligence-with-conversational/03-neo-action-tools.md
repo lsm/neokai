@@ -9,6 +9,18 @@ Implement write MCP tools that allow Neo to take actions across the system (room
 - Create action tool handlers with security tier checks
 - Implement tiered confirmation logic (auto-execute, confirm, require-explicit)
 - Tools modify system state: create/delete rooms, manage goals/tasks, configure MCP/skills
+- **Reuse existing handlers**: Space-related action tools delegate to `global-spaces-tools.ts` handler functions, wrapped with Neo's security tier layer
+
+### Confirmation Protocol (Two-Message Pattern)
+
+The confirmation flow does **not** pause the SDK session. Instead it uses a standard two-message LLM pattern:
+
+1. **Action tool returns early**: When a tool requires confirmation, it returns `{ confirmationRequired: true, pendingActionId: '<uuid>', description: '...', riskLevel: 'medium' }` as a normal tool result (no execution happens)
+2. **LLM renders confirmation**: The system prompt instructs Neo to present confirmation results as user-facing cards (the frontend renders these as `NeoConfirmationCard` components)
+3. **User responds**: User clicks Confirm/Cancel or types "yes"/"no" in the chat
+4. **LLM calls confirm/cancel tool**: `confirm_action({ actionId })` executes the pending action; `cancel_action({ actionId })` discards it
+5. **Pending action storage**: Pending actions are stored in-memory in `NeoAgentManager` with a TTL (5 minutes). Expired actions return an error on confirm.
+6. **Panel close / navigate away**: Pending actions remain valid until TTL expires. User can return to the panel and confirm later within the window.
 
 ## Tasks
 
@@ -29,8 +41,15 @@ Implement write MCP tools that allow Neo to take actions across the system (room
    - Balanced: low-risk auto-executes, medium confirms, high requires explicit
    - Autonomous: everything auto-executes
 3. Create `getConfirmationRequired(securityMode, toolName)` function
-4. Define `NeoActionResult` type: `{ success: boolean, confirmationRequired?: boolean, actionDescription?: string, result?: unknown, error?: string }`
-5. Add unit tests for all security mode/risk level combinations
+4. Define `NeoActionResult` type: `{ success: boolean, confirmationRequired?: boolean, pendingActionId?: string, actionDescription?: string, riskLevel?: ActionRiskLevel, result?: unknown, error?: string }`
+5. Create `PendingActionStore` class in the same file:
+   - In-memory map of `pendingActionId -> { toolName, input, createdAt }`
+   - TTL of 5 minutes -- expired actions are rejected on confirm
+   - `store(action)`, `retrieve(actionId)`, `remove(actionId)`, `cleanup()` methods
+6. Create `confirm_action` and `cancel_action` meta-tools:
+   - `confirm_action({ actionId })`: retrieves pending action, executes it, removes from store
+   - `cancel_action({ actionId })`: removes pending action without executing
+7. Add unit tests for all security mode/risk level combinations, including pending action TTL expiry
 
 **Acceptance Criteria**:
 - Every action tool has a risk classification
@@ -90,7 +109,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `create_space` / `delete_space` / `update_space`
    - `start_workflow_run` / `cancel_workflow_run`
    - `approve_gate` / `reject_gate`
-2. Wire through SpaceManager, SpaceRuntimeService, GateDataRepository
+2. **Delegate to existing handlers**: Import and reuse handler functions from `global-spaces-tools.ts` (e.g., `createSpaceHandler`, `deleteSpaceHandler`, `startWorkflowRunHandler`). Neo wraps these with security tier checks before delegating to the shared handler.
 3. `delete_space` is medium risk; `cancel_workflow_run` is medium risk
 4. Each tool checks security tier, returns confirmation if needed
 5. Add unit tests
