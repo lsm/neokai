@@ -10,6 +10,7 @@ import {
 	buildCustomAgentSystemPrompt,
 	buildCustomAgentTaskMessage,
 	buildPlannerNodeAgentPrompt,
+	buildQaNodeAgentPrompt,
 	createCustomAgentInit,
 	resolveAgentInit,
 	type CustomAgentConfig,
@@ -1227,5 +1228,139 @@ describe('buildCustomAgentSystemPrompt planner integration', () => {
 		const plannerIdx = prompt.indexOf('Planner Responsibilities');
 		const completionIdx = prompt.indexOf('Signalling Completion');
 		expect(plannerIdx).toBeLessThan(completionIdx);
+	});
+});
+
+// ============================================================================
+// buildQaNodeAgentPrompt
+// ============================================================================
+
+describe('buildQaNodeAgentPrompt', () => {
+	it('returns a non-empty string', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(typeof prompt).toBe('string');
+		expect(prompt.length).toBeGreaterThan(0);
+	});
+
+	it('includes role and responsibility description', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('QA Agent');
+		expect(prompt).toContain('verify');
+	});
+
+	it('includes gh CLI auth verification step', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('gh auth status');
+		expect(prompt).toContain('not authenticated');
+	});
+
+	it('includes read_gate instruction for code-pr-gate', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('read_gate');
+		expect(prompt).toContain('code-pr-gate');
+		expect(prompt).toContain('prUrl');
+	});
+
+	it('includes test command detection for package.json', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('package.json');
+	});
+
+	it('includes test command detection for Makefile', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('Makefile');
+	});
+
+	it('includes CI pipeline check via gh pr checks', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('gh pr checks');
+	});
+
+	it('includes PR mergeability check via gh pr view', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('gh pr view');
+		expect(prompt).toContain('mergeable');
+		expect(prompt).toContain('mergeStateStatus');
+	});
+
+	it('includes merge conflict detection using git merge dry-run (not deprecated git merge-tree)', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('git merge --no-commit --no-ff');
+		expect(prompt).toContain('git merge --abort');
+		expect(prompt).toContain('CONFLICT');
+		// Must NOT use the deprecated 3-argument git merge-tree form
+		expect(prompt).not.toContain('git merge-tree $(git merge-base');
+	});
+
+	it('includes write_gate instruction for qa-result-gate', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('write_gate');
+		expect(prompt).toContain('qa-result-gate');
+	});
+
+	it('specifies result field with passed and failed values', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('"passed"');
+		expect(prompt).toContain('"failed"');
+		expect(prompt).toContain('result');
+	});
+
+	it('specifies summary field in gate write', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('summary');
+	});
+
+	it('mentions gate check condition', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('check: result == passed');
+	});
+
+	it('includes VERIFICATION_COMPLETE bypass marker instruction', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('VERIFICATION_COMPLETE:');
+	});
+
+	it('explicitly warns not to create commits, push, or open PRs', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('NOT create commits');
+		expect(prompt).toContain('push branches');
+		expect(prompt).toContain('open pull requests');
+	});
+
+	it('references the Git Workflow MANDATORY section to explain bypass', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('Git Workflow (MANDATORY)');
+	});
+
+	it('includes structured QA output format', () => {
+		const prompt = buildQaNodeAgentPrompt();
+		expect(prompt).toContain('QA RESULT');
+		expect(prompt).toContain('CI Pipeline');
+		expect(prompt).toContain('PR Mergeability');
+		expect(prompt).toContain('Blockers');
+	});
+
+	it('embeds into custom agent system prompt as Agent Instructions when set as systemPrompt', () => {
+		const agent = makeAgent({ role: 'qa', systemPrompt: buildQaNodeAgentPrompt() });
+		const fullPrompt = buildCustomAgentSystemPrompt(agent);
+		expect(fullPrompt).toContain('Agent Instructions');
+		expect(fullPrompt).toContain('QA Agent');
+		expect(fullPrompt).toContain('code-pr-gate');
+		expect(fullPrompt).toContain('qa-result-gate');
+		// The assembled prompt must include the bypass marker so the agent knows to use it
+		expect(fullPrompt).toContain('VERIFICATION_COMPLETE:');
+	});
+
+	it('assembled prompt does not instruct QA agent to commit code', () => {
+		const agent = makeAgent({ role: 'qa', systemPrompt: buildQaNodeAgentPrompt() });
+		const fullPrompt = buildCustomAgentSystemPrompt(agent);
+		// The QA prompt must explicitly counter the git workflow section's commit instruction
+		expect(fullPrompt).toContain('NOT create commits');
+	});
+
+	it('is deterministic — returns the same string on multiple calls', () => {
+		const prompt1 = buildQaNodeAgentPrompt();
+		const prompt2 = buildQaNodeAgentPrompt();
+		expect(prompt1).toBe(prompt2);
 	});
 });
