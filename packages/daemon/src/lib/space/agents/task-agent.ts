@@ -56,6 +56,7 @@ import type {
 	WorkflowCondition,
 	WorkflowRule,
 	SessionFeatures,
+	Gate,
 } from '@neokai/shared';
 import { resolveNodeAgents } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
@@ -133,6 +134,19 @@ function formatChannel(ch: WorkflowChannel): string {
 	const gateLabel = ch.gate ? formatGateCondition(ch.gate) : '';
 	const label = ch.label ? ` (${ch.label})` : '';
 	return `- \`${ch.from}\` ${dir} \`${to}\`${label}${gateLabel}`;
+}
+
+function formatGate(gate: Gate): string {
+	const desc = gate.description ? ` — ${gate.description}` : '';
+	const writers =
+		gate.allowedWriterRoles.length > 0 ? gate.allowedWriterRoles.join(', ') : '(none)';
+	const condType = gate.condition.type;
+	return (
+		`- **Gate \`${gate.id}\`**${desc}\n` +
+		`  - Condition type: \`${condType}\`\n` +
+		`  - Allowed writer roles: ${writers}\n` +
+		`  - Reset on cycle: ${gate.resetOnCycle}`
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,7 +345,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 
 	// ---- Task context -------------------------------------------------------
-	sections.push(`\n## Task Details\n`);
+	sections.push(`\n## Task #${context.task.taskNumber} Details\n`);
 	sections.push(`**Title:** ${context.task.title}`);
 	sections.push(`**Priority:** ${context.task.priority}`);
 	sections.push(`**Status:** ${context.task.status}`);
@@ -363,7 +377,7 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 
 	// ---- Task assignment -----------------------------------------------------
 	parts.push(
-		`## Task Assignment\n` +
+		`## Task #${context.task.taskNumber} Assignment\n` +
 			`\n` +
 			`You have been assigned the following task:\n` +
 			`\n` +
@@ -446,6 +460,22 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 				`No channels are declared for this workflow. ` +
 					`Agents are fully isolated — \`send_message\` is unavailable unless channels are added.`
 			);
+		}
+
+		// ---- Gates (M1.1 separated Gate entities) ----------------------------
+		const gates = context.workflow.gates;
+		if (gates && gates.length > 0) {
+			parts.push(`\n## Workflow Gates\n`);
+			parts.push(
+				`Gates guard channels — a message on a gated channel is held until the gate's condition passes. ` +
+					`Node agents use \`list_gates\`, \`read_gate\`, and \`write_gate\` tools to inspect and update gate state.\n` +
+					`\n` +
+					`**Vote counting:** for \`count\` condition gates, node agents use their \`nodeId\` ` +
+					`(workflow node ID) as the map key — each node votes exactly once.\n`
+			);
+			for (const gate of gates) {
+				parts.push(formatGate(gate));
+			}
 		}
 	}
 

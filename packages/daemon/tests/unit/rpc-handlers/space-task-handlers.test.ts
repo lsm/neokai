@@ -28,6 +28,7 @@ const NOW = Date.now();
 
 const mockSpace: Space = {
 	id: 'space-1',
+	slug: 'test-space',
 	workspacePath: '/tmp/test-workspace',
 	name: 'Test Space',
 	description: '',
@@ -42,6 +43,7 @@ const mockSpace: Space = {
 const mockTask: SpaceTask = {
 	id: 'task-1',
 	spaceId: 'space-1',
+	taskNumber: 1,
 	title: 'Test Task',
 	description: 'A task description',
 	status: 'pending',

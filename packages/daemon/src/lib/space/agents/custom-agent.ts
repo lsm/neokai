@@ -13,21 +13,13 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	Space,
-	SessionFeatures,
 	AgentDefinition,
 } from '@neokai/shared';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
+import { getFeaturesForRole } from './seed-agents';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
-
-const CUSTOM_AGENT_FEATURES: SessionFeatures = {
-	rewind: false,
-	worktree: false,
-	coordinator: false,
-	archive: false,
-	sessionInfo: false,
-};
 
 // ============================================================================
 // Config
@@ -252,7 +244,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 	const sections: string[] = [];
 
 	// Task context
-	sections.push(`## Task\n`);
+	sections.push(`## Task #${task.taskNumber}\n`);
 	sections.push(`**Title:** ${task.title}`);
 	sections.push(`**Description:** ${task.description}`);
 	if (task.priority) {
@@ -397,7 +389,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 				type: 'preset',
 				preset: 'claude_code',
 			},
-			features: CUSTOM_AGENT_FEATURES,
+			features: getFeaturesForRole(customAgent.role),
 			context: { spaceId: space.id },
 			type: 'worker',
 			model,
@@ -417,7 +409,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			preset: 'claude_code',
 			append: behavioralPrompt,
 		},
-		features: CUSTOM_AGENT_FEATURES,
+		features: getFeaturesForRole(customAgent.role),
 		context: { spaceId: space.id },
 		type: 'worker',
 		model,

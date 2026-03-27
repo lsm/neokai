@@ -68,13 +68,22 @@ function insertTask(
 	// without needing to create all referenced parent rows.
 	db.exec('PRAGMA foreign_keys = OFF');
 	try {
+		const spaceId = opts.spaceId ?? 'sp-1';
+		const nextNumber = (
+			db
+				.prepare(
+					`SELECT COALESCE(MAX(task_number), 0) + 1 AS next FROM space_tasks WHERE space_id = ?`
+				)
+				.get(spaceId) as { next: number }
+		).next;
 		db.prepare(
 			`INSERT INTO space_tasks
-		 (id, space_id, title, description, status, priority, depends_on, workflow_run_id, workflow_node_id, agent_name, created_at, updated_at)
-		 VALUES (?, ?, 'Task', '', ?, 'normal', '[]', ?, ?, ?, ?, ?)`
+		 (id, space_id, task_number, title, description, status, priority, depends_on, workflow_run_id, workflow_node_id, agent_name, created_at, updated_at)
+		 VALUES (?, ?, ?, 'Task', '', ?, 'normal', '[]', ?, ?, ?, ?, ?)`
 		).run(
 			opts.id,
-			opts.spaceId ?? 'sp-1',
+			spaceId,
+			nextNumber,
 			opts.status ?? 'pending',
 			opts.runId ?? null,
 			opts.nodeId ?? null,

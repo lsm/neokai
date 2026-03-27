@@ -172,6 +172,7 @@ describe('planner-agent', () => {
 		it('should instruct to merge PR before creating tasks in Phase 2', () => {
 			const prompt = buildPlannerSystemPrompt('Test');
 			expect(prompt).toContain('gh pr merge');
+			expect(prompt).toContain('do NOT use --delete-branch');
 			expect(prompt).toContain('pr_number');
 		});
 

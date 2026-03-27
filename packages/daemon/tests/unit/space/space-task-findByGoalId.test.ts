@@ -33,9 +33,9 @@ const SPACE_ID = 'space-1';
 function seedSpace(db: BunDatabase): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(SPACE_ID, '/tmp/ws', 'Test Space', Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(SPACE_ID, '/tmp/ws', 'Test Space', SPACE_ID, Date.now(), Date.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -224,9 +224,9 @@ describe('SpaceTaskRepository.findByGoalId', () => {
 		const space2 = 'space-2';
 		db.prepare(
 			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-       allowed_models, session_ids, status, created_at, updated_at)
-       VALUES (?, ?, ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-		).run(space2, '/tmp/ws2', 'Space 2', Date.now(), Date.now());
+       allowed_models, session_ids, slug, status, created_at, updated_at)
+       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+		).run(space2, '/tmp/ws2', 'Space 2', space2, Date.now(), Date.now());
 
 		repo.createTask({
 			spaceId: SPACE_ID,

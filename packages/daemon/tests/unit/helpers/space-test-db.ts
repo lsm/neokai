@@ -20,6 +20,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS spaces (
 			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
 			workspace_path TEXT NOT NULL UNIQUE,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
@@ -36,6 +37,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
+
+	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agents (
@@ -65,6 +68,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			start_node_id TEXT,
 			config TEXT,
 			channels TEXT,
+			gates TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,
@@ -119,6 +123,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			iteration_count INTEGER NOT NULL DEFAULT 0,
 			max_iterations INTEGER NOT NULL DEFAULT 5,
 			goal_id TEXT,
+			failure_reason TEXT
+				CHECK(failure_reason IN ('humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
@@ -128,9 +134,22 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
 	db.exec(`
+		CREATE TABLE IF NOT EXISTS gate_data (
+			run_id TEXT NOT NULL,
+			gate_id TEXT NOT NULL,
+			data TEXT NOT NULL DEFAULT '{}',
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, gate_id),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
+
+	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_tasks (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
+			task_number INTEGER NOT NULL,
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'pending'
@@ -170,4 +189,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
 		)
 	`);
+
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
+	);
 }

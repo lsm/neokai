@@ -54,9 +54,9 @@ function makeDb(): { db: BunDatabase; dir: string } {
 function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 function seedWorkflowRunWithChannels(
@@ -129,14 +129,22 @@ function seedPeerTask(
 	db.exec('PRAGMA foreign_keys = OFF');
 	const now = Date.now();
 	const id = `task-${Math.random().toString(36).slice(2)}`;
+	const nextNumber = (
+		db
+			.prepare(
+				`SELECT COALESCE(MAX(task_number), 0) + 1 AS next FROM space_tasks WHERE space_id = ?`
+			)
+			.get(spaceId) as { next: number }
+	).next;
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, title, description, status, priority, agent_name,
+       (id, space_id, task_number, title, description, status, priority, agent_name,
         workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, '', 'in_progress', 'normal', ?, ?, ?, '[]', ?, ?, ?)`
+       VALUES (?, ?, ?, ?, '', 'in_progress', 'normal', ?, ?, ?, '[]', ?, ?, ?)`
 	).run(
 		id,
 		spaceId,
+		nextNumber,
 		`Task for ${agentName}`,
 		agentName,
 		workflowRunId,

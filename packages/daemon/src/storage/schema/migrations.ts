@@ -248,6 +248,28 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Session groups are replaced by direct space_tasks queries.
 	// currentNodeId is replaced by the agent-centric model where tasks track state.
 	runMigration60(db);
+
+	// Migration 61: Add gate_data table, gates column to space_workflows,
+	// and failure_reason column to space_workflow_runs.
+	// Part of M1.1 — separated Channel + Gate types.
+	runMigration61(db);
+
+	// Migration 62: Add task_number column to space_tasks for human-friendly numeric IDs.
+	// Scoped per space via UNIQUE(space_id, task_number). Backfills existing rows.
+	runMigration62(db);
+
+	// Migration 63: Add slug column to spaces table for human-readable URL identifiers.
+	// Auto-generates slugs from existing space names and adds a UNIQUE index.
+	runMigration63(db);
+
+	// Migration 64: Create space_worktrees table for persisting task ↔ git worktree mappings.
+	// One row per task; keyed by (space_id, task_id) with a per-space unique slug constraint.
+	runMigration64(db);
+
+	// Migration 65: Add completed_at column to space_worktrees for TTL-based reaper.
+	// Worktrees are not removed on task completion; instead they are timestamped and
+	// removed by the reaper after a configurable TTL (default: 7 days).
+	runMigration65(db);
 }
 
 /**
@@ -3785,6 +3807,135 @@ export function runMigration59(db: BunDatabase): void {
  *
  * currentNodeId is replaced by the agent-centric model where tasks track state.
  */
+export function runMigration62(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+
+	// Check if column already exists (idempotent guard)
+	const cols = db.prepare('PRAGMA table_info(space_tasks)').all() as Array<{ name: string }>;
+	if (cols.some((c) => c.name === 'task_number')) return;
+
+	// SQLite cannot ALTER a column to NOT NULL, so we:
+	// 1. Add nullable column and backfill existing rows
+	// 2. Rebuild table with NOT NULL constraint via rename pattern
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	db.exec(`BEGIN`);
+	try {
+		// Step 1: Add nullable column and backfill
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN task_number INTEGER`);
+
+		const spaces = db.prepare(`SELECT DISTINCT space_id FROM space_tasks`).all() as Array<{
+			space_id: string;
+		}>;
+		for (const { space_id } of spaces) {
+			const tasks = db
+				.prepare(`SELECT id FROM space_tasks WHERE space_id = ? ORDER BY created_at ASC`)
+				.all(space_id) as Array<{ id: string }>;
+			const updateStmt = db.prepare(`UPDATE space_tasks SET task_number = ? WHERE id = ?`);
+			let num = 1;
+			for (const { id } of tasks) {
+				updateStmt.run(num++, id);
+			}
+		}
+
+		// Step 2: Rebuild table with NOT NULL on task_number
+		db.exec(`DROP TABLE IF EXISTS space_tasks_m61_new`);
+		db.exec(`
+			CREATE TABLE space_tasks_m61_new (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				task_number INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed',
+						'needs_attention', 'cancelled', 'archived', 'rate_limited', 'usage_limited')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				task_type TEXT
+					CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
+				assigned_agent TEXT
+					CHECK(assigned_agent IN ('coder', 'general', 'planner')),
+				custom_agent_id TEXT,
+				agent_name TEXT,
+				completion_summary TEXT,
+				workflow_run_id TEXT,
+				workflow_node_id TEXT,
+				created_by_task_id TEXT,
+				goal_id TEXT,
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				input_draft TEXT,
+				active_session TEXT
+					CHECK(active_session IN ('worker', 'leader')),
+				task_agent_session_id TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER,
+				archived_at INTEGER,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
+				FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
+			)
+		`);
+
+		db.exec(`
+			INSERT INTO space_tasks_m61_new
+			SELECT id, space_id, task_number, title, description, status, priority, task_type,
+				assigned_agent, custom_agent_id, agent_name, completion_summary,
+				workflow_run_id, workflow_node_id, created_by_task_id, goal_id,
+				progress, current_step, result, error, depends_on, input_draft,
+				active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+				archived_at, created_at, started_at, completed_at, updated_at
+			FROM space_tasks
+		`);
+
+		db.exec(`DROP TABLE space_tasks`);
+		db.exec(`ALTER TABLE space_tasks_m61_new RENAME TO space_tasks`);
+
+		// Recreate all indexes (dropped with the old table)
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)`
+		);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+		);
+		db.exec(`
+			CREATE UNIQUE INDEX IF NOT EXISTS uq_space_tasks_run_node_agent
+			ON space_tasks (workflow_run_id, workflow_node_id, agent_name)
+			WHERE workflow_run_id IS NOT NULL
+				AND workflow_node_id IS NOT NULL
+				AND agent_name IS NOT NULL
+				AND status IN ('pending', 'in_progress', 'review', 'rate_limited', 'usage_limited')
+		`);
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
+		);
+
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
 export function runMigration60(db: BunDatabase): void {
 	// Disable FK enforcement before any DDL so that:
 	// - DROP TABLE space_workflow_runs does NOT fire ON DELETE SET NULL on space_tasks.workflow_run_id
@@ -3855,5 +4006,262 @@ export function runMigration60(db: BunDatabase): void {
 		throw err;
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Migration 61: Add gate_data table, gates column to space_workflows,
+ * and failure_reason column to space_workflow_runs.
+ *
+ * Part of M1.1 — separated Channel + Gate types.
+ *
+ * - `gate_data`: Persistent data store for gates, keyed by `(run_id, gate_id)`.
+ *   Stores JSON data that gate conditions evaluate against at runtime.
+ * - `gates` column on `space_workflows`: JSON array of Gate definitions.
+ * - `failure_reason` column on `space_workflow_runs`: Enum-like TEXT for run failure reasons.
+ */
+function runMigration61(db: BunDatabase): void {
+	// Check all 3 schema additions for idempotency
+	const hasGatesCol = db
+		.prepare(
+			"SELECT COUNT(*) as count FROM pragma_table_info('space_workflows') WHERE name = 'gates'"
+		)
+		.get() as { count: number } | null;
+	const hasFailureReasonCol = db
+		.prepare(
+			"SELECT COUNT(*) as count FROM pragma_table_info('space_workflow_runs') WHERE name = 'failure_reason'"
+		)
+		.get() as { count: number } | null;
+	const hasGateDataTable = db
+		.prepare(
+			"SELECT COUNT(*) as count FROM sqlite_master WHERE type = 'table' AND name = 'gate_data'"
+		)
+		.get() as { count: number } | null;
+
+	if (
+		hasGatesCol &&
+		hasGatesCol.count > 0 &&
+		hasFailureReasonCol &&
+		hasFailureReasonCol.count > 0 &&
+		hasGateDataTable &&
+		hasGateDataTable.count > 0
+	) {
+		return;
+	}
+
+	db.exec(`BEGIN TRANSACTION`);
+	try {
+		// 1. Create gate_data table
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS gate_data (
+				run_id TEXT NOT NULL,
+				gate_id TEXT NOT NULL,
+				data TEXT NOT NULL DEFAULT '{}',
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (run_id, gate_id),
+				FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
+
+		// 2. Add gates column to space_workflows (if not already present)
+		if (!hasGatesCol || hasGatesCol.count === 0) {
+			db.exec(`ALTER TABLE space_workflows ADD COLUMN gates TEXT`);
+		}
+
+		// 3. Add failure_reason column to space_workflow_runs (if not already present)
+		// CHECK constraint restricts values to the WorkflowRunFailureReason union.
+		if (!hasFailureReasonCol || hasFailureReasonCol.count === 0) {
+			db.exec(
+				`ALTER TABLE space_workflow_runs ADD COLUMN failure_reason TEXT CHECK(failure_reason IN ('humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash'))`
+			);
+		}
+
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
+	}
+}
+
+/**
+ * Migration 63: Add slug column to spaces table.
+ *
+ * - Adds nullable `slug TEXT` column (required for ALTER TABLE ADD COLUMN in SQLite)
+ * - Backfills existing spaces with slugs derived from their name
+ * - Rebuilds table with `slug TEXT NOT NULL` to enforce the constraint
+ * - Adds UNIQUE index on slug
+ */
+export function runMigration63(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+
+	// Check if slug column already exists (idempotent guard)
+	const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{
+		name: string;
+		notnull: number;
+	}>;
+	const slugCol = tableInfo.find((col) => col.name === 'slug');
+	if (slugCol && slugCol.notnull === 1) return; // Already migrated with NOT NULL
+
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	db.exec(`BEGIN`);
+
+	try {
+		// Step 1: Add nullable slug column if it doesn't exist yet
+		if (!slugCol) {
+			db.exec(`ALTER TABLE spaces ADD COLUMN slug TEXT`);
+		}
+
+		// Step 2: Backfill slugs only for rows that don't have one yet.
+		// Use WHERE slug IS NULL so we don't overwrite slugs that were already set
+		// (e.g., if a space was created between a partial migration run and this fix).
+		const existingSlugs = db
+			.prepare('SELECT slug FROM spaces WHERE slug IS NOT NULL')
+			.all() as Array<{ slug: string }>;
+		const usedSlugs = new Set<string>(existingSlugs.map((r) => r.slug));
+
+		const rows = db.prepare('SELECT id, name FROM spaces WHERE slug IS NULL').all() as Array<{
+			id: string;
+			name: string;
+		}>;
+
+		const updateStmt = db.prepare('UPDATE spaces SET slug = ? WHERE id = ? AND slug IS NULL');
+
+		for (const row of rows) {
+			const base = generateBaseMigrationSlug(row.name);
+			let slug = base;
+			let counter = 2;
+			while (usedSlugs.has(slug)) {
+				slug = `${base}-${counter}`;
+				counter++;
+			}
+			usedSlugs.add(slug);
+			updateStmt.run(slug, row.id);
+		}
+
+		// Step 3: Table rebuild to enforce NOT NULL on slug
+		// SQLite does not support ALTER COLUMN, so we recreate the table.
+		db.exec(`DROP TABLE IF EXISTS spaces_m63_new`);
+		db.exec(`
+			CREATE TABLE spaces_m63_new (
+				id TEXT PRIMARY KEY,
+				slug TEXT NOT NULL,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '',
+				instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT,
+				allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'archived')),
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+				config TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`
+			INSERT INTO spaces_m63_new (id, slug, workspace_path, name, description,
+				background_context, instructions, default_model, allowed_models,
+				session_ids, status, autonomy_level, config, created_at, updated_at)
+			SELECT id, slug, workspace_path, name, description,
+				background_context, instructions, default_model, allowed_models,
+				session_ids, status, COALESCE(autonomy_level, 'supervised'),
+				config, created_at, updated_at
+			FROM spaces
+		`);
+		db.exec(`DROP TABLE spaces`);
+		db.exec(`ALTER TABLE spaces_m63_new RENAME TO spaces`);
+
+		// Step 4: Recreate indexes
+		db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
+
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Inline slugify for migration — avoids importing from slug.ts which may change.
+ * Mirrors the same rules: lowercase, replace non-alphanumeric with hyphens,
+ * collapse, strip, truncate to 60 chars.
+ */
+function generateBaseMigrationSlug(input: string): string {
+	const fallback = 'unnamed-space';
+	if (!input || !input.trim()) return fallback;
+
+	let slug = input
+		.toLowerCase()
+		.replace(/[^a-z0-9\s-]/g, '-')
+		.replace(/[\s]+/g, '-')
+		.replace(/-{2,}/g, '-')
+		.replace(/^-+/, '')
+		.replace(/-+$/, '');
+
+	if (!slug) return fallback;
+
+	if (slug.length > 60) {
+		const truncated = slug.slice(0, 60);
+		const lastHyphen = truncated.lastIndexOf('-');
+		slug = lastHyphen > 0 ? truncated.slice(0, lastHyphen) : truncated.replace(/-+$/, '');
+	}
+
+	return slug;
+}
+
+/**
+ * Migration 64: Create space_worktrees table.
+ *
+ * Persists the mapping between space tasks and the git worktrees created for them.
+ * Schema:
+ *   id          - UUID primary key
+ *   space_id    - owning space
+ *   task_id     - the task this worktree was created for
+ *   slug        - human-readable folder/branch slug (unique per space)
+ *   path        - absolute filesystem path to the worktree directory
+ *   created_at  - Unix epoch ms
+ *
+ * Constraints:
+ *   UNIQUE(space_id, task_id)  — one worktree per task
+ *   UNIQUE(space_id, slug)     — no two tasks share the same slug within a space
+ */
+function runMigration64(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_worktrees (
+			id         TEXT PRIMARY KEY,
+			space_id   TEXT NOT NULL,
+			task_id    TEXT NOT NULL,
+			slug       TEXT NOT NULL,
+			path       TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			UNIQUE(space_id, task_id),
+			UNIQUE(space_id, slug),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
+}
+
+/**
+ * Migration 65: Add completed_at to space_worktrees.
+ *
+ * Adds a nullable `completed_at` INTEGER column so the TTL-based reaper can
+ * identify worktrees whose tasks have finished and remove them after 7 days.
+ * NULL = task still active; non-NULL = Unix epoch ms when the task completed.
+ */
+function runMigration65(db: BunDatabase): void {
+	try {
+		db.prepare(`SELECT completed_at FROM space_worktrees LIMIT 1`).all();
+	} catch {
+		// Column doesn't exist yet — add it
+		db.exec(`ALTER TABLE space_worktrees ADD COLUMN completed_at INTEGER`);
 	}
 }

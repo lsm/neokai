@@ -119,6 +119,7 @@ describe('QueryRunner', () => {
 			clear: clearSpy,
 			stop: stopSpy,
 			size: sizeSpy,
+			getGeneration: mock(() => 0),
 			messageGenerator: mock(async function* () {
 				// Empty generator for tests
 			}),

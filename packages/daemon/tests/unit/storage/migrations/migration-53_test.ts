@@ -96,8 +96,8 @@ describe('Migration 53: channels column on space_workflows', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-no-ch', '/workspace/m53a', 'Space A', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-no-ch', 'm53a', '/workspace/m53a', 'Space A', ${now}, ${now})`
 		);
 		db.exec(
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
@@ -115,8 +115,8 @@ describe('Migration 53: channels column on space_workflows', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-rt', '/workspace/m53b', 'Space B', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-rt', 'm53b', '/workspace/m53b', 'Space B', ${now}, ${now})`
 		);
 
 		const repo = new SpaceWorkflowRepository(db);
@@ -163,8 +163,8 @@ describe('Migration 53: channels column on space_workflows', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-cfg', '/workspace/m53c', 'Space C', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-cfg', 'm53c', '/workspace/m53c', 'Space C', ${now}, ${now})`
 		);
 
 		const repo = new SpaceWorkflowRepository(db);
@@ -186,8 +186,8 @@ describe('Migration 53: channels column on space_workflows', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-upd', '/workspace/m53d', 'Space D', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-upd', 'm53d', '/workspace/m53d', 'Space D', ${now}, ${now})`
 		);
 
 		const repo = new SpaceWorkflowRepository(db);
@@ -214,8 +214,8 @@ describe('Migration 53: channels column on space_workflows', () => {
 
 		const now = Date.now();
 		db.exec(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES ('sp-clr', '/workspace/m53e', 'Space E', ${now}, ${now})`
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-clr', 'm53e', '/workspace/m53e', 'Space E', ${now}, ${now})`
 		);
 
 		const repo = new SpaceWorkflowRepository(db);

@@ -52,9 +52,9 @@ function makeDb(): { db: BunDatabase; dir: string } {
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, workspacePath, `Space ${spaceId}`, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 function seedAgentRow(
@@ -392,11 +392,12 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 		ctx.db
 			.prepare(
 				`INSERT INTO space_tasks
-         (id, space_id, title, description, status, priority, task_type, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'needs_attention', 'normal', 'coding', ?, ?)`
+         (id, space_id, task_number, title, description, status, priority, task_type, created_at, updated_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, ?, 'needs_attention', 'normal', 'coding', ?, ?)`
 			)
 			.run(
 				taskId,
+				ctx.spaceId,
 				ctx.spaceId,
 				'Failing task',
 				'Task that needs attention',

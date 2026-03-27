@@ -331,12 +331,23 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * Get the full detail of a task by ID.
+		 * Get the full detail of a task by UUID or by numeric task number (e.g. #5).
 		 */
-		async get_task_detail(args: { task_id: string }): Promise<ToolResult> {
-			const task = await taskManager.getTask(args.task_id);
+		async get_task_detail(args: { task_id?: string; task_number?: number }): Promise<ToolResult> {
+			let task = null;
+			if (args.task_number !== undefined) {
+				task = await taskManager.getTaskByNumber(args.task_number);
+			} else if (args.task_id) {
+				task = await taskManager.getTask(args.task_id);
+			} else {
+				return jsonResult({
+					success: false,
+					error: 'Either task_id or task_number is required',
+				});
+			}
 			if (!task) {
-				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+				const ref = args.task_number !== undefined ? `#${args.task_number}` : args.task_id;
+				return jsonResult({ success: false, error: `Task not found: ${ref}` });
 			}
 			return jsonResult({ success: true, task });
 		},
@@ -588,9 +599,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'get_task_detail',
-			'Get the full detail of a task by ID, including error, result, PR URL, PR number, progress, and current step.',
+			'Get the full detail of a task by its numeric ID (e.g. task #5) or UUID. Includes error, result, PR URL, PR number, progress, and current step.',
 			{
-				task_id: z.string().describe('ID of the task to retrieve'),
+				task_id: z.string().optional().describe('UUID of the task to retrieve'),
+				task_number: z
+					.number()
+					.optional()
+					.describe('Numeric task ID (e.g. 5 for task #5) — preferred over task_id'),
 			},
 			(args) => handlers.get_task_detail(args)
 		),

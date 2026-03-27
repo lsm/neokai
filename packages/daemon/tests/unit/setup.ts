@@ -60,6 +60,23 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
 			for (const { name, def } of _toolBatch) {
 				server._registeredTools[name] = def;
 			}
+			// Fallback: if _toolBatch was empty (e.g. module isolation in CI causes
+			// tool() and createSdkMcpServer to reference different closures), recover
+			// tool defs from the `tools` option passed by the caller.  Each element is
+			// the return value of tool() which is { name, description, inputSchema, handler }.
+			if (Object.keys(server._registeredTools).length === 0 && Array.isArray(_options.tools)) {
+				for (const t of _options.tools) {
+					const td = t as {
+						name?: string;
+						description?: string;
+						inputSchema?: unknown;
+						handler?: unknown;
+					};
+					if (td.name) {
+						server._registeredTools[td.name] = td;
+					}
+				}
+			}
 			_toolBatch = [];
 
 			return {

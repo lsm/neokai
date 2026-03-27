@@ -59,6 +59,17 @@ export const SendMessageSchema = z.object({
 		),
 	/** The message to send to the target(s). */
 	message: z.string().min(1).describe('The message content to send to the target peer(s)'),
+	/**
+	 * Optional structured data payload attached to the message.
+	 * Used for machine-readable data (gate writes, task results, structured feedback)
+	 * alongside the human-readable `message` text.
+	 */
+	data: z
+		.record(z.string(), z.unknown())
+		.describe(
+			'Optional structured data payload (key-value pairs) attached to the message. Used for gate writes, task results, and structured feedback.'
+		)
+		.optional(),
 });
 
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
@@ -100,6 +111,78 @@ export const ListReachableAgentsSchema = z.object({});
 export type ListReachableAgentsInput = z.infer<typeof ListReachableAgentsSchema>;
 
 // ---------------------------------------------------------------------------
+// list_channels
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_channels` input.
+ * Lists all channels declared in the current workflow.
+ * No arguments — channels are derived from the workflow run context.
+ */
+export const ListChannelsSchema = z.object({});
+
+export type ListChannelsInput = z.infer<typeof ListChannelsSchema>;
+
+// ---------------------------------------------------------------------------
+// list_gates
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_gates` input.
+ * Lists all gates declared in the current workflow with their current data.
+ * No arguments — gates are derived from the workflow run context.
+ */
+export const ListGatesSchema = z.object({});
+
+export type ListGatesInput = z.infer<typeof ListGatesSchema>;
+
+// ---------------------------------------------------------------------------
+// read_gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `read_gate` input.
+ * Reads the current runtime data for a specific gate from the gate_data table.
+ */
+export const ReadGateSchema = z.object({
+	/** The ID of the gate to read data for. */
+	gateId: z.string().min(1).describe('The gate ID to read current data for'),
+});
+
+export type ReadGateInput = z.infer<typeof ReadGateSchema>;
+
+// ---------------------------------------------------------------------------
+// write_gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `write_gate` input.
+ *
+ * Merges key-value data into a gate's runtime data store. The caller's role must
+ * be listed in the gate's `allowedWriterRoles` (or the list contains `'*'`).
+ *
+ * For vote-counting gates (count conditions): use your `nodeId` (returned in the
+ * tool response) as the key in the vote map so each node's vote counts only once
+ * even if multiple agents in the node send votes.
+ */
+export const WriteGateSchema = z.object({
+	/** The ID of the gate to write data to. */
+	gateId: z.string().min(1).describe('The gate ID to write data to'),
+	/**
+	 * Key-value data to merge (shallow) into the gate's data store.
+	 * For vote-counting (count conditions), use your nodeId (provided in the response)
+	 * as the map key: e.g. { votes: { [nodeId]: "approved" } }
+	 */
+	data: z
+		.record(z.string(), z.unknown())
+		.describe(
+			'Key-value data to merge into the gate data store. Shallow merge: top-level keys overwrite existing entries.'
+		),
+});
+
+export type WriteGateInput = z.infer<typeof WriteGateSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -111,6 +194,10 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	send_message: SendMessageSchema,
 	report_done: ReportDoneSchema,
 	list_reachable_agents: ListReachableAgentsSchema,
+	list_channels: ListChannelsSchema,
+	list_gates: ListGatesSchema,
+	read_gate: ReadGateSchema,
+	write_gate: WriteGateSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;

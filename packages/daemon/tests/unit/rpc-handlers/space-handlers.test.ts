@@ -31,6 +31,7 @@ const NOW = Date.now();
 
 const mockSpace: Space = {
 	id: 'space-1',
+	slug: 'test-space',
 	workspacePath: '/tmp/test-workspace',
 	name: 'Test Space',
 	description: 'A test space',
@@ -46,6 +47,7 @@ const mockSpace: Space = {
 const mockTask: SpaceTask = {
 	id: 'task-1',
 	spaceId: 'space-1',
+	taskNumber: 1,
 	title: 'Test Task',
 	description: 'desc',
 	status: 'pending',
@@ -310,8 +312,8 @@ describe('space-handlers', () => {
 			expect(result).toEqual(mockSpace);
 		});
 
-		it('throws when id is missing', async () => {
-			await expect(call('space.get', {})).rejects.toThrow('id is required');
+		it('throws when id and slug are both missing', async () => {
+			await expect(call('space.get', {})).rejects.toThrow('id or slug is required');
 		});
 
 		it('throws when space is not found', async () => {
@@ -471,8 +473,8 @@ describe('space-handlers', () => {
 			expect(result.sessions).toEqual(mockSpace.sessionIds);
 		});
 
-		it('throws when id is missing', async () => {
-			await expect(call('space.overview', {})).rejects.toThrow('id is required');
+		it('throws when id and slug are both missing', async () => {
+			await expect(call('space.overview', {})).rejects.toThrow('id or slug is required');
 		});
 
 		it('throws when space is not found', async () => {

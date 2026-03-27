@@ -83,9 +83,9 @@ function makeDb(): { db: BunDatabase; dir: string } {
 function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 /**
@@ -107,11 +107,12 @@ function seedTask(
 	const id = `task-int-${Math.random().toString(36).slice(2)}`;
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, title, description, status, priority, agent_name,
+       (id, space_id, task_number, title, description, status, priority, agent_name,
         workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
 	).run(
 		id,
+		spaceId,
 		spaceId,
 		`Task for ${agentName}`,
 		status,

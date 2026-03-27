@@ -20,6 +20,7 @@ import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
+import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
@@ -71,6 +72,8 @@ export interface DaemonAppContext {
 	spaceRuntimeService: SpaceRuntimeService;
 	/** Task Agent Manager — manages Task Agent session lifecycle for space tasks */
 	taskAgentManager: TaskAgentManager;
+	/** Space Worktree Manager — one git worktree per task, shared by all node agents */
+	spaceWorktreeManager: SpaceWorktreeManager;
 	/** Persistent job queue repository */
 	jobQueue: JobQueueRepository;
 	/** Persistent job queue processor */
@@ -288,6 +291,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		cleanup: rpcHandlerCleanup,
 		spaceRuntimeService,
 		taskAgentManager,
+		spaceWorktreeManager,
 	} = setupRPCHandlers({
 		messageHub,
 		sessionManager,
@@ -444,6 +448,41 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	jobProcessor.start();
 	logInfo('[Daemon] Job queue processor started');
 
+	// On startup: clean up orphaned worktrees (directories missing from disk) and run the TTL reaper.
+	// Both are non-blocking — errors are logged but never propagate to block server start.
+	let reaperTimer: ReturnType<typeof setInterval> | null = null;
+	if (process.env.NODE_ENV !== 'test') {
+		const worktreeStartupCleanup = async () => {
+			try {
+				const spaces = await spaceManager.listSpaces(false);
+				for (const space of spaces) {
+					await spaceWorktreeManager.cleanupOrphaned(space.id);
+				}
+				logInfo('[Daemon] Worktree orphan cleanup complete');
+			} catch (err) {
+				logError('[Daemon] Worktree orphan cleanup failed:', err);
+			}
+
+			try {
+				await spaceWorktreeManager.reapExpiredWorktrees();
+				logInfo('[Daemon] Worktree TTL reaper complete');
+			} catch (err) {
+				logError('[Daemon] Worktree TTL reaper failed:', err);
+			}
+		};
+		void worktreeStartupCleanup();
+
+		// Run TTL reaper periodically (every hour) for long-running daemon processes.
+		const WORKTREE_REAPER_INTERVAL_MS = 60 * 60 * 1000;
+		reaperTimer = setInterval(() => {
+			spaceWorktreeManager.reapExpiredWorktrees().catch((err) => {
+				logError('[Daemon] Periodic worktree TTL reaper failed:', err);
+			});
+		}, WORKTREE_REAPER_INTERVAL_MS);
+		// Allow the process to exit even if this timer is still pending.
+		reaperTimer.unref();
+	}
+
 	// Cleanup function for graceful shutdown
 	let isCleanedUp = false;
 	const cleanup = async () => {
@@ -451,6 +490,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			return;
 		}
 		isCleanedUp = true;
+
+		// Stop the hourly worktree TTL reaper before shutting down other resources.
+		if (reaperTimer !== null) {
+			clearInterval(reaperTimer);
+			reaperTimer = null;
+		}
 
 		try {
 			try {
@@ -561,6 +606,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		spaceManager,
 		spaceRuntimeService,
 		taskAgentManager,
+		spaceWorktreeManager,
 		jobQueue,
 		jobProcessor,
 		appMcpManager,

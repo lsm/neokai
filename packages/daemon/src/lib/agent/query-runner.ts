@@ -98,12 +98,21 @@ export class QueryRunner {
 	 * Start the streaming query (called from AgentSession.startStreamingQuery)
 	 */
 	async start(): Promise<void> {
-		const { messageQueue } = this.ctx;
+		const { messageQueue, logger } = this.ctx;
 
 		if (messageQueue.isRunning()) {
+			logger.warn(
+				`QueryRunner.start(): messageQueue already running for session ${this.ctx.session.id}, ` +
+					`skipping start (generation=${messageQueue.getGeneration()}, ` +
+					`queryPromise=${this.ctx.queryPromise ? 'active' : 'null'})`
+			);
 			return;
 		}
 
+		logger.debug(
+			`QueryRunner.start(): starting query for session ${this.ctx.session.id} ` +
+				`(generation=${messageQueue.getGeneration()})`
+		);
 		messageQueue.start();
 
 		// Increment query generation for this new query
@@ -305,6 +314,15 @@ export class QueryRunner {
 						{ messageType: (message as SDKMessage).type }
 					);
 				}
+			}
+
+			// Stop the queue immediately after the query ends to close the race window
+			// between the for-await loop ending and the finally block calling stop().
+			// Without this, ensureQueryStarted() can see isRunning()=true while no
+			// generator is consuming messages, causing enqueued messages to be orphaned.
+			// Guard: only stop if this is still the current query (not stale from a restart).
+			if (this.ctx.getQueryGeneration() === queryGeneration) {
+				messageQueue.stop();
 			}
 
 			// If startup timed out before first message, surface as timeout error

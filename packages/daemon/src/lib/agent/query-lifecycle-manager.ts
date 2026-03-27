@@ -313,6 +313,11 @@ export class QueryLifecycleManager {
 	 *
 	 * Waits for any pending interrupt, validates SDK session file,
 	 * and starts the streaming query if not already running.
+	 *
+	 * Detects stale running state: if messageQueue.isRunning() is true but
+	 * queryPromise is null, the queue was not properly stopped after the previous
+	 * query ended (race between SDK query completion and finally block cleanup).
+	 * In this case, force-stop the queue and restart.
 	 */
 	async ensureQueryStarted(): Promise<void> {
 		const { session, db, messageQueue, interruptHandler } = this.ctx;
@@ -328,7 +333,31 @@ export class QueryLifecycleManager {
 		}
 
 		if (messageQueue.isRunning()) {
-			return;
+			// Defensive stale state detection: if the queue thinks it's running but
+			// there's no active query promise, the session is in an inconsistent state
+			// (e.g., restored session with stale queue flag, or cleanup was interrupted).
+			// The primary race (between for-await loop ending and finally block cleanup)
+			// is handled by the early messageQueue.stop() in QueryRunner.runQuery().
+			// This check catches residual edge cases where queryPromise has already
+			// been nulled but the queue wasn't stopped.
+			if (!this.ctx.queryPromise) {
+				this.logger.warn(
+					`Stale running state detected for session ${session.id}: ` +
+						`messageQueue.isRunning()=true but queryPromise=null. Force-stopping and restarting.`
+				);
+				messageQueue.stop();
+				// Clear stale query reference to prevent concurrent callers from
+				// seeing a dead query object during the restart window.
+				this.ctx.queryObject = null;
+				// Fall through to start a fresh query below
+			} else {
+				this.logger.debug(
+					`ensureQueryStarted: session ${session.id} already running, skipping start`
+				);
+				return;
+			}
+		} else {
+			this.logger.debug(`ensureQueryStarted: session ${session.id} not running, starting query`);
 		}
 
 		// Validate SDK session file

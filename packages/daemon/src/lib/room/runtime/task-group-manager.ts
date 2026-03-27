@@ -470,14 +470,27 @@ export class TaskGroupManager {
 			? `${deferredLeader.leaderTaskContext}\n\n---\n\n${workerOutput}`
 			: workerOutput;
 
-		// Inject worker output into Leader session
+		// Inject worker output into Leader session with retry.
+		// The injectMessage call can fail due to race conditions (e.g., stale queue state,
+		// timeout during SDK startup). Retry with backoff to ensure delivery.
 		log.debug(
 			`[routeWorkerToLeader] Group ${groupId}: injecting worker output into leader session`
 		);
 		// Mark leader as having work before injecting so onLeaderTerminalState won't drop
 		// the resulting idle event even if the leader completes synchronously.
 		this.groupRepo.setLeaderHasWork(groupId);
-		await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
+
+		const injectError = await this.injectMessageWithRetry(
+			group.leaderSessionId,
+			leaderMessage,
+			`routeWorkerToLeader:${groupId}`
+		);
+
+		if (injectError) {
+			await this.fail(groupId, `Failed to deliver worker output to leader: ${injectError.message}`);
+			return null;
+		}
+
 		log.info(
 			`[routeWorkerToLeader] Group ${groupId}: worker output injected into leader session successfully`
 		);
@@ -541,12 +554,22 @@ export class TaskGroupManager {
 		}
 
 		// If worker is waiting for input (AskUserQuestion), answer the question.
-		// Otherwise inject feedback as a regular message.
+		// Otherwise inject feedback as a regular message with retry.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);
 		if (!answered) {
-			await this.sessionFactory.injectMessage(group.workerSessionId, message, {
-				deliveryMode: opts?.deliveryMode,
-			});
+			const injectError = await this.injectMessageWithRetry(
+				group.workerSessionId,
+				message,
+				`routeLeaderToWorker:${groupId}`,
+				{ deliveryMode: opts?.deliveryMode }
+			);
+			if (injectError) {
+				await this.fail(
+					groupId,
+					`Failed to deliver leader feedback to worker: ${injectError.message}`
+				);
+				return null;
+			}
 		}
 
 		return this.groupRepo.getGroup(groupId);
@@ -792,6 +815,49 @@ export class TaskGroupManager {
 		await this.cleanupWorktree(group);
 
 		return group;
+	}
+
+	/**
+	 * Inject a message into a session with retry and backoff.
+	 *
+	 * Retries transient failures (e.g., stale queue state, SDK startup timeout)
+	 * but bails immediately on permanent errors (e.g., session not in cache).
+	 *
+	 * @returns null on success, or the last Error if all attempts failed
+	 */
+	private async injectMessageWithRetry(
+		sessionId: string,
+		message: string,
+		context: string,
+		opts?: { deliveryMode?: MessageDeliveryMode }
+	): Promise<Error | null> {
+		const MAX_ATTEMPTS = 3;
+		const BASE_DELAY_MS = 500;
+		const NON_RETRYABLE_PATTERNS = ['not in service cache', 'not found in service cache'];
+
+		let lastError: Error | null = null;
+		for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+			try {
+				if (attempt > 0) {
+					const delayMs = BASE_DELAY_MS * 2 ** (attempt - 1);
+					log.warn(`[${context}] retry ${attempt}/${MAX_ATTEMPTS - 1} after ${delayMs}ms`);
+					await new Promise((r) => setTimeout(r, delayMs));
+				}
+				await this.sessionFactory.injectMessage(sessionId, message, opts);
+				return null; // success
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+				log.error(
+					`[${context}] injectMessage failed (attempt ${attempt + 1}/${MAX_ATTEMPTS}): ${lastError.message}`
+				);
+				// Bail immediately on non-retryable errors (e.g., session doesn't exist)
+				if (NON_RETRYABLE_PATTERNS.some((p) => lastError!.message.includes(p))) {
+					log.error(`[${context}] non-retryable error, skipping remaining retries`);
+					break;
+				}
+			}
+		}
+		return lastError;
 	}
 
 	/**

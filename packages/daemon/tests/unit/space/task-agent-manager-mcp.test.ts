@@ -23,6 +23,7 @@ import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -122,9 +123,9 @@ function makeDb(): { db: BunDatabase; dir: string } {
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, workspacePath, `Space ${spaceId}`, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
@@ -172,6 +173,7 @@ function buildManager(opts: {
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(bunDb);
 	const taskRepo = new SpaceTaskRepository(bunDb);
+	const gateDataRepo = new GateDataRepository(bunDb);
 	const spaceManager = new SpaceManager(bunDb);
 	const taskManager = new SpaceTaskManager(bunDb, spaceId);
 	const runtime = new SpaceRuntime({
@@ -234,6 +236,7 @@ function buildManager(opts: {
 		} as unknown as import('../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 		taskRepo,
 		workflowRunRepo,
+		gateDataRepo,
 		daemonHub: daemonHub as unknown as import('../../../src/lib/daemon-hub.ts').DaemonHub,
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
@@ -530,7 +533,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 	});
 
 	test('buildNodeAgentMcpServerForSession injects ChannelResolver with declared channels', () => {
-		const { manager, fromInitSpy, bunDb, dir, space } = buildManager({});
+		const { manager, fromInitSpy, bunDb, dir, space, taskManager } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
 
@@ -559,7 +562,9 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				subSessionId: string,
 				role: string,
 				spaceId: string,
-				workflowRunId: string
+				workflowRunId: string,
+				stepTaskId: string,
+				taskManager: SpaceTaskManager
 			): unknown;
 		};
 		mgr.buildNodeAgentMcpServerForSession(
@@ -567,7 +572,9 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			'sub-session-1',
 			'coder',
 			space.id,
-			workflowRunId
+			workflowRunId,
+			'step-task-1',
+			taskManager
 		);
 
 		expect(capturedConfig).not.toBeNull();
@@ -581,7 +588,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 	});
 
 	test('buildNodeAgentMcpServerForSession injects empty ChannelResolver when run has no channels', () => {
-		const { manager, fromInitSpy, bunDb, dir, space } = buildManager({});
+		const { manager, fromInitSpy, bunDb, dir, space, taskManager } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
 
@@ -605,7 +612,9 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				subSessionId: string,
 				role: string,
 				spaceId: string,
-				workflowRunId: string
+				workflowRunId: string,
+				stepTaskId: string,
+				taskManager: SpaceTaskManager
 			): unknown;
 		};
 		mgr.buildNodeAgentMcpServerForSession(
@@ -613,7 +622,9 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			'sub-session-1',
 			'coder',
 			space.id,
-			workflowRunId
+			workflowRunId,
+			'step-task-1',
+			taskManager
 		);
 
 		expect(capturedConfig).not.toBeNull();
@@ -624,7 +635,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 	});
 
 	test('buildNodeAgentMcpServerForSession injects empty ChannelResolver when workflowRunId is empty', () => {
-		const { manager, fromInitSpy, dir, space } = buildManager({});
+		const { manager, fromInitSpy, dir, space, taskManager } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
 
@@ -645,11 +656,21 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				subSessionId: string,
 				role: string,
 				spaceId: string,
-				workflowRunId: string
+				workflowRunId: string,
+				stepTaskId: string,
+				taskManager: SpaceTaskManager
 			): unknown;
 		};
 		// Empty workflowRunId — no run will be found
-		mgr.buildNodeAgentMcpServerForSession('task-1', 'sub-session-1', 'coder', space.id, '');
+		mgr.buildNodeAgentMcpServerForSession(
+			'task-1',
+			'sub-session-1',
+			'coder',
+			space.id,
+			'',
+			'step-task-1',
+			taskManager
+		);
 
 		expect(capturedConfig).not.toBeNull();
 		const resolver = (capturedConfig as { channelResolver: { isEmpty: () => boolean } })
@@ -659,9 +680,22 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 	});
 
 	test('buildNodeAgentMcpServerForSession passes correct mySessionId, myRole, and taskId', () => {
-		const { manager, fromInitSpy, dir, space } = buildManager({});
+		const { manager, fromInitSpy, bunDb, dir, space, taskManager, taskRepo } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
+
+		// Seed a step task with a known workflowNodeId so the P0 fix is regression-tested
+		const stepTask = taskRepo.createTask({
+			spaceId: space.id,
+			title: 'Step Task',
+			description: '',
+			status: 'in_progress',
+		});
+		bunDb.exec('PRAGMA foreign_keys = OFF');
+		bunDb
+			.prepare('UPDATE space_tasks SET workflow_node_id = ? WHERE id = ?')
+			.run('node-p0-regression', stepTask.id);
+		bunDb.exec('PRAGMA foreign_keys = ON');
 
 		let capturedConfig: Record<string, unknown> | null = null;
 		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
@@ -680,7 +714,9 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				subSessionId: string,
 				role: string,
 				spaceId: string,
-				workflowRunId: string
+				workflowRunId: string,
+				stepTaskId: string,
+				taskManager: SpaceTaskManager
 			): unknown;
 		};
 		mgr.buildNodeAgentMcpServerForSession(
@@ -688,12 +724,16 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			'my-sub-session-id',
 			'reviewer',
 			space.id,
-			''
+			'',
+			stepTask.id,
+			taskManager
 		);
 
 		expect(capturedConfig).not.toBeNull();
 		expect(capturedConfig!['mySessionId']).toBe('my-sub-session-id');
 		expect(capturedConfig!['myRole']).toBe('reviewer');
 		expect(capturedConfig!['taskId']).toBe('my-task-id');
+		// Regression test for P0: workflowNodeId must come from the step task, not the parent task
+		expect(capturedConfig!['workflowNodeId']).toBe('node-p0-regression');
 	});
 });

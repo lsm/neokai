@@ -34,6 +34,7 @@ function createSchema(db: Database): void {
 	db.exec(`
 		CREATE TABLE spaces (
 			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
 			workspace_path TEXT NOT NULL UNIQUE,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
@@ -48,6 +49,7 @@ function createSchema(db: Database): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
+	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
 	db.exec(`
 		CREATE TABLE space_agents (
@@ -77,6 +79,7 @@ function createSchema(db: Database): void {
 			start_node_id TEXT,
 			config TEXT,
 			channels TEXT,
+			gates TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,
@@ -121,8 +124,8 @@ function createSchema(db: Database): void {
 function insertSpace(db: Database, id: string, name = `Space ${id}`): void {
 	const now = Date.now();
 	db.prepare(
-		`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-	).run(id, `/workspace/${id}`, name, now, now);
+		`INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+	).run(id, `/workspace/${id}`, name, id, now, now);
 }
 
 // ─── Mock helpers ─────────────────────────────────────────────────────────────

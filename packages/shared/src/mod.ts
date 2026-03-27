@@ -18,6 +18,7 @@ export * from './types/neo.ts';
 export * from './types/github.ts';
 export * from './types/space.ts';
 export * from './types/space-utils.ts';
+export * from './types/gate-migration.ts';
 export * from './types/tools.ts';
 export * from './types/app-mcp-server.ts';
 export * from './types/skills.ts';

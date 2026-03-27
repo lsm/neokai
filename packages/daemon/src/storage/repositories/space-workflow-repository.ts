@@ -22,6 +22,7 @@ import type {
 	WorkflowRuleInput,
 	WorkflowNodeAgent,
 	WorkflowChannel,
+	Gate,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 } from '@neokai/shared';
@@ -38,6 +39,7 @@ interface WorkflowRow {
 	start_node_id: string | null;
 	config: string | null;
 	channels: string | null;
+	gates: string | null;
 	layout: string | null;
 	max_iterations: number | null;
 	created_at: number;
@@ -113,6 +115,8 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 	const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
 	// Read channels from the dedicated column (Migration 53+).
 	const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
+	// Read gates from the dedicated column (Migration 61+).
+	const gates = parseJson<Gate[] | null>(row.gates, null);
 	return {
 		id: row.id,
 		spaceId: row.space_id,
@@ -123,6 +127,7 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
 		channels: channels && channels.length > 0 ? channels : undefined,
+		gates: gates && gates.length > 0 ? gates : undefined,
 		config: cfg.extra,
 		maxIterations: row.max_iterations ?? undefined,
 		layout: layout ?? undefined,
@@ -166,12 +171,13 @@ export class SpaceWorkflowRepository {
 
 		const channelsJson =
 			params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
+		const gatesJson = params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null;
 		const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, channels, layout, max_iterations, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, channels, gates, layout, max_iterations, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -181,6 +187,7 @@ export class SpaceWorkflowRepository {
 				startNodeId,
 				JSON.stringify(cfg),
 				channelsJson,
+				gatesJson,
 				layoutJson,
 				params.maxIterations ?? null,
 				now,
@@ -271,6 +278,11 @@ export class SpaceWorkflowRepository {
 			values.push(
 				params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null
 			);
+		}
+
+		if (params.gates !== undefined) {
+			fields.push('gates = ?');
+			values.push(params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null);
 		}
 
 		if (params.maxIterations !== undefined) {

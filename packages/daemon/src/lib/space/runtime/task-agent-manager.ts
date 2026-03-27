@@ -36,6 +36,7 @@
  * registered `onComplete` callbacks are fired.
  */
 
+import { existsSync } from 'node:fs';
 import { generateUUID } from '@neokai/shared';
 import type {
 	Space,
@@ -59,6 +60,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type {
 	SubSessionFactory,
 	SubSessionMemberInfo,
@@ -96,6 +99,8 @@ export interface TaskAgentManagerConfig {
 	taskRepo: SpaceTaskRepository;
 	/** Workflow run repository — reading and updating runs */
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
+	gateDataRepo: GateDataRepository;
 	/** DaemonHub — event bus for session state change subscriptions */
 	daemonHub: DaemonHub;
 	/** MessageHub — used to write SDK messages */
@@ -111,6 +116,12 @@ export interface TaskAgentManagerConfig {
 	 * over registry entries on name collision.
 	 */
 	appMcpManager?: AppMcpLifecycleManager;
+	/**
+	 * Space worktree manager for creating and cleaning up task worktrees.
+	 * When provided, each task gets its own isolated git worktree at run start.
+	 * All sub-sessions (node agents) share the same worktree path as their workspace.
+	 */
+	worktreeManager?: SpaceWorktreeManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +167,14 @@ export class TaskAgentManager {
 	 * Key: session ID.
 	 */
 	private sessionListeners = new Map<string, () => void>();
+
+	/**
+	 * Maps taskId → absolute worktree path for active tasks.
+	 * Populated in spawnTaskAgent() after worktree creation.
+	 * Used by createSubSessionFactory() to forward the worktree path to sub-sessions.
+	 * Also populated during rehydrateTaskAgent() from the workflow run config.
+	 */
+	private taskWorktreePaths = new Map<string, string>();
 
 	constructor(private readonly config: TaskAgentManagerConfig) {}
 
@@ -239,6 +258,38 @@ export class TaskAgentManager {
 			const baseSessionId = `space:${spaceId}:task:${taskId}`;
 			const sessionId = this.resolveSessionId(baseSessionId);
 
+			// --- Create task worktree (one per task, shared by all node agents).
+			// Falls back to space.workspacePath when worktreeManager is not configured.
+			let workspacePath = space.workspacePath;
+			if (this.config.worktreeManager) {
+				try {
+					const result = await this.config.worktreeManager.createTaskWorktree(
+						spaceId,
+						taskId,
+						task.title,
+						task.taskNumber
+					);
+					workspacePath = result.path;
+					this.taskWorktreePaths.set(taskId, result.path);
+					log.info(
+						`TaskAgentManager: created worktree for task ${taskId} at ${result.path} (slug: ${result.slug})`
+					);
+
+					// Persist worktree path in workflow run config for M6 artifacts RPC.
+					if (workflowRun) {
+						const updatedConfig = {
+							...workflowRun.config,
+							worktreePath: result.path,
+						};
+						this.config.workflowRunRepo.updateRun(workflowRun.id, { config: updatedConfig });
+					}
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager: failed to create worktree for task ${taskId}, falling back to space workspace: ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+			}
+
 			// --- Create AgentSessionInit
 			const init = createTaskAgentInit({
 				task,
@@ -246,7 +297,7 @@ export class TaskAgentManager {
 				workflow,
 				workflowRun,
 				sessionId,
-				workspacePath: space.workspacePath,
+				workspacePath,
 			});
 
 			// --- Create the session in DB via AgentSession.fromInit()
@@ -281,7 +332,7 @@ export class TaskAgentManager {
 				taskId,
 				space,
 				workflowRunId,
-				workspacePath: space.workspacePath,
+				workspacePath,
 				workflowManager: this.config.spaceWorkflowManager,
 				taskRepo: this.config.taskRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
@@ -474,6 +525,14 @@ export class TaskAgentManager {
 		);
 	}
 
+	/**
+	 * Returns the worktree path for a task, or undefined if no worktree was created.
+	 * Useful for test assertions and M6 artifact RPCs.
+	 */
+	getTaskWorktreePath(taskId: string): string | undefined {
+		return this.taskWorktreePaths.get(taskId);
+	}
+
 	/** Returns the Task Agent's AgentSession, or undefined if not spawned. */
 	getTaskAgent(taskId: string): AgentSession | undefined {
 		return this.taskAgentSessions.get(taskId);
@@ -565,8 +624,12 @@ export class TaskAgentManager {
 	 *
 	 * Stops the Task Agent session and all sub-sessions, removes DB records
 	 * via SessionManager.deleteSession(), and clears in-memory maps.
+	 *
+	 * @param taskId - The task to clean up.
+	 * @param reason - 'cancelled': remove the worktree immediately.
+	 *                 'completed' (default): mark the worktree as completed for TTL-based cleanup.
 	 */
-	async cleanup(taskId: string): Promise<void> {
+	async cleanup(taskId: string, reason: 'completed' | 'cancelled' = 'completed'): Promise<void> {
 		// Collect the exact session IDs that belong to this task so that
 		// the callback/listener cleanup in steps 3 & 4 uses precise matches
 		// rather than a fragile substring check.
@@ -607,7 +670,29 @@ export class TaskAgentManager {
 			}
 		}
 
-		log.info(`TaskAgentManager: cleaned up all sessions for task ${taskId}`);
+		// 5. Worktree lifecycle: remove on cancellation, mark completed otherwise.
+		if (this.config.worktreeManager) {
+			const spaceId = this.config.taskRepo.getTask(taskId)?.spaceId;
+			if (spaceId) {
+				if (reason === 'cancelled') {
+					try {
+						await this.config.worktreeManager.removeTaskWorktree(spaceId, taskId);
+						log.info(`TaskAgentManager: removed worktree for cancelled task ${taskId}`);
+					} catch (err) {
+						log.warn(
+							`TaskAgentManager: failed to remove worktree for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					}
+				} else {
+					this.config.worktreeManager.markTaskWorktreeCompleted(spaceId, taskId);
+					log.info(`TaskAgentManager: marked worktree completed for task ${taskId}`);
+				}
+			}
+		}
+		// Always remove from in-memory path map regardless of worktreeManager presence.
+		this.taskWorktreePaths.delete(taskId);
+
+		log.info(`TaskAgentManager: cleaned up all sessions for task ${taskId} (reason: ${reason})`);
 	}
 
 	// -------------------------------------------------------------------------
@@ -636,7 +721,17 @@ export class TaskAgentManager {
 				init: AgentSessionInit,
 				_memberInfo?: SubSessionMemberInfo
 			): Promise<string> => {
-				const sessionId = await this.createSubSession(taskId, init.sessionId, init);
+				// Forward the task's worktree path to every sub-session so all node
+				// agents share the same isolated git worktree for the duration of the run.
+				const worktreePath = this.taskWorktreePaths.get(taskId);
+				const effectiveInit: AgentSessionInit = worktreePath
+					? { ...init, workspacePath: worktreePath }
+					: init;
+				const sessionId = await this.createSubSession(
+					taskId,
+					effectiveInit.sessionId,
+					effectiveInit
+				);
 				return sessionId;
 			},
 
@@ -907,6 +1002,28 @@ export class TaskAgentManager {
 			return;
 		}
 
+		// --- Restore worktree path from workflow run config (persisted at spawn time).
+		// Only restores the path when the worktree directory still exists on disk —
+		// if the directory was deleted between restarts (manual cleanup, disk failure),
+		// fall back to space.workspacePath to avoid directing sub-sessions at a
+		// non-existent location.
+		const rehydrateWorkspacePath = (() => {
+			const storedPath =
+				workflowRun?.config && typeof workflowRun.config.worktreePath === 'string'
+					? workflowRun.config.worktreePath
+					: null;
+			if (storedPath && existsSync(storedPath)) {
+				this.taskWorktreePaths.set(taskId, storedPath);
+				return storedPath;
+			}
+			if (storedPath) {
+				log.warn(
+					`TaskAgentManager.rehydrate: worktree path ${storedPath} no longer exists on disk for task ${taskId} — falling back to space workspace`
+				);
+			}
+			return space.workspacePath;
+		})();
+
 		// --- Build the SpaceTaskManager for this space
 		const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
 
@@ -928,7 +1045,7 @@ export class TaskAgentManager {
 			taskId,
 			space,
 			workflowRunId: rehydrateWorkflowRunId,
-			workspacePath: space.workspacePath,
+			workspacePath: rehydrateWorkspacePath,
 			workflowManager: this.config.spaceWorkflowManager,
 			taskRepo: this.config.taskRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -979,7 +1096,7 @@ export class TaskAgentManager {
 			workflow,
 			workflowRun,
 			sessionId,
-			workspacePath: space.workspacePath,
+			workspacePath: rehydrateWorkspacePath,
 		});
 		if (init.systemPrompt) {
 			agentSession.setRuntimeSystemPrompt(init.systemPrompt);
@@ -1194,7 +1311,7 @@ export class TaskAgentManager {
 		stepTaskId: string,
 		taskManager: SpaceTaskManager
 	) {
-		const workflowNodeId = this.config.taskRepo.getTask(taskId)?.workflowNodeId ?? '';
+		const workflowNodeId = this.config.taskRepo.getTask(stepTaskId)?.workflowNodeId ?? '';
 		// Build the ChannelResolver from the workflow run's stored config at spawn time.
 		// Channels are written once at step-start by SpaceRuntime.storeResolvedChannels(),
 		// so reading them here gives the correct topology for this sub-session's lifetime.
@@ -1202,6 +1319,11 @@ export class TaskAgentManager {
 		const channelResolver = ChannelResolver.fromRunConfig(
 			run?.config as Record<string, unknown> | undefined
 		);
+
+		// Load the workflow definition so node agents can access channel/gate metadata.
+		const workflow = run?.workflowId
+			? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
+			: null;
 
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
@@ -1217,6 +1339,8 @@ export class TaskAgentManager {
 				this.injectSubSessionMessage(targetSessionId, message),
 			taskManager,
 			daemonHub: this.config.daemonHub,
+			workflow,
+			gateDataRepo: this.config.gateDataRepo,
 		});
 	}
 }

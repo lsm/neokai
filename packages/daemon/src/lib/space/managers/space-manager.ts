@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceRepository } from '../../../storage/repositories/space-repository';
 import { Logger } from '../../logger';
+import { slugify, validateSlug } from '../slug';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@neokai/shared';
 
 const execAsync = promisify(exec);
@@ -47,7 +48,11 @@ export class SpaceManager {
 			log.warn(`workspace path is not a git repository: ${resolvedPath}`);
 		}
 
-		return this.spaceRepo.createSpace({ ...params, workspacePath: resolvedPath });
+		// Auto-generate slug from space name
+		const existingSlugs = this.spaceRepo.getAllSlugs();
+		const slug = slugify(params.name, existingSlugs);
+
+		return this.spaceRepo.createSpace({ ...params, workspacePath: resolvedPath, slug });
 	}
 
 	/**
@@ -129,6 +134,42 @@ export class SpaceManager {
 		if (!updated) {
 			throw new Error(`Space not found: ${spaceId}`);
 		}
+		return updated;
+	}
+
+	/**
+	 * Get a space by slug
+	 */
+	async getSpaceBySlug(slug: string): Promise<Space | null> {
+		return this.spaceRepo.getSpaceBySlug(slug);
+	}
+
+	/**
+	 * Update a space's slug with validation and uniqueness check.
+	 */
+	async updateSlug(spaceId: string, newSlug: string): Promise<Space> {
+		const space = this.spaceRepo.getSpace(spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${spaceId}`);
+		}
+
+		// Validate slug format
+		const validationError = validateSlug(newSlug);
+		if (validationError) {
+			throw new Error(`Invalid slug: ${validationError}`);
+		}
+
+		// Check uniqueness (allow the space to keep its own slug)
+		const existing = this.spaceRepo.getSpaceBySlug(newSlug);
+		if (existing && existing.id !== spaceId) {
+			throw new Error(`Slug already in use: ${newSlug}`);
+		}
+
+		const updated = this.spaceRepo.updateSlug(spaceId, newSlug);
+		if (!updated) {
+			throw new Error(`Failed to update slug for space: ${spaceId}`);
+		}
+
 		return updated;
 	}
 

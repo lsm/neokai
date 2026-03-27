@@ -82,9 +82,9 @@ function makeDb(): { db: BunDatabase; dir: string } {
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, workspacePath, `Space ${spaceId}`, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 function setSpaceTaskTimeoutMs(db: BunDatabase, spaceId: string, timeoutMs: number): void {

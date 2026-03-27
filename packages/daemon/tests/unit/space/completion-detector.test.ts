@@ -78,9 +78,9 @@ function makeDb(): { db: BunDatabase; dir: string } {
 function seedSpace(db: BunDatabase, spaceId: string): void {
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 let taskCounter = 0;
@@ -98,11 +98,12 @@ function seedTask(
 	const now = Date.now();
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, title, description, status, priority, depends_on,
+       (id, space_id, task_number, title, description, status, priority, depends_on,
         workflow_run_id, workflow_node_id, created_at, updated_at)
-       VALUES (?, ?, ?, '', ?, 'normal', '[]', ?, ?, ?, ?)`
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', '[]', ?, ?, ?, ?)`
 	).run(
 		id,
+		spaceId,
 		spaceId,
 		`Task ${id}`,
 		overrides.status ?? 'in_progress',

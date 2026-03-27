@@ -49,6 +49,7 @@ import { setupSpaceHandlers } from './space-handlers';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
+import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import { setupSpaceWorkflowHandlers } from './space-workflow-handlers';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { SpaceTaskManager } from '../space/managers/space-task-manager';
@@ -56,6 +57,7 @@ import { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
@@ -127,6 +129,7 @@ export interface RPCHandlerSetupResult {
 	cleanup: RPCHandlerCleanup;
 	spaceRuntimeService: SpaceRuntimeService;
 	taskAgentManager: TaskAgentManager;
+	spaceWorktreeManager: SpaceWorktreeManager;
 }
 
 /**
@@ -313,6 +316,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
+	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
@@ -368,6 +372,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 	});
 
+	// Space Worktree Manager — one worktree per task, shared by all node agents.
+	const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
+
 	// Task Agent Manager — manages Task Agent session lifecycle and message injection.
 	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
 	// spaceRuntimeService.createOrGetRuntime(spaceId).
@@ -381,11 +388,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceRuntimeService,
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
+		gateDataRepo,
 		daemonHub: deps.daemonHub,
 		messageHub: deps.messageHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		defaultModel: deps.config.defaultModel,
 		appMcpManager: deps.appMcpManager,
+		worktreeManager: spaceWorktreeManager,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
@@ -488,5 +497,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		},
 		spaceRuntimeService,
 		taskAgentManager,
+		spaceWorktreeManager,
 	};
 }

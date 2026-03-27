@@ -120,15 +120,15 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 		const now = Date.now();
 		// Create a space first (FK requirement)
 		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace', 'Test Space', now, now);
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test-space', '/workspace', 'Test Space', now, now);
 
 		expect(() => {
 			db.prepare(
-				`INSERT INTO space_tasks (id, space_id, title, description, status, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)`
-			).run('st-1', 'space-1', 'Test Task', 'desc', 'archived', now, now);
+				`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('st-1', 'space-1', 1, 'Test Task', 'desc', 'archived', now, now);
 		}).not.toThrow();
 
 		const row = db.prepare(`SELECT status FROM space_tasks WHERE id = 'st-1'`).get() as {

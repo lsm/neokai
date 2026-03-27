@@ -50,6 +50,13 @@ export interface AgentMessageParams {
 	target: string | string[];
 	/** Message content to deliver. */
 	message: string;
+	/**
+	 * Optional structured data payload attached to the message.
+	 * Included in the delivered message as a JSON appendix when present,
+	 * making it available to the receiving agent for programmatic use
+	 * (e.g. gate writes, task results, structured feedback).
+	 */
+	data?: Record<string, unknown>;
 }
 
 export interface AgentMessageResult {
@@ -91,7 +98,7 @@ export class AgentMessageRouter {
 	 * Returns a structured result — never throws.
 	 */
 	async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
-		const { fromRole, fromSessionId, target, message } = params;
+		const { fromRole, fromSessionId, target, message, data } = params;
 		const {
 			spaceTaskRepo,
 			workflowNodeId,
@@ -201,7 +208,12 @@ export class AgentMessageRouter {
 				continue;
 			}
 			for (const member of roleSessions) {
-				const prefixedMessage = `[Message from ${fromRole}]: ${message}`;
+				// Include structured data as a JSON appendix when present
+				const dataAppendix =
+					data && Object.keys(data).length > 0
+						? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
+						: '';
+				const prefixedMessage = `[Message from ${fromRole}]: ${message}${dataAppendix}`;
 				try {
 					await messageInjector(member.sessionId, prefixedMessage);
 					delivered.push({ role, sessionId: member.sessionId });

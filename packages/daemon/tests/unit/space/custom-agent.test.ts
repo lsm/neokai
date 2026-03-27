@@ -53,6 +53,7 @@ function makeTask(overrides?: Partial<SpaceTask>): SpaceTask {
 	return {
 		id: 'task-1',
 		spaceId: 'space-1',
+		taskNumber: 1,
 		title: 'Implement feature X',
 		description: 'Add feature X to the codebase',
 		status: 'pending',
