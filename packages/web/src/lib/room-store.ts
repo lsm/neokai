@@ -398,7 +398,9 @@ class RoomStore {
 						}
 					}
 				}
-				this.taskStore.applyDelta(event as { added?: NeoTask[]; removed?: NeoTask[]; updated?: NeoTask[] });
+				this.taskStore.applyDelta(
+					event as { added?: NeoTask[]; removed?: NeoTask[]; updated?: NeoTask[] }
+				);
 			});
 			cleanups.push(unsubTaskDelta);
 
@@ -466,7 +468,9 @@ class RoomStore {
 			const unsubGoalDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== goalsSubId) return;
 				if (!this.activeSubscriptionIds.has(goalsSubId)) return; // stale-event guard
-				this.goalStore.applyDelta(event as { added?: RoomGoal[]; removed?: RoomGoal[]; updated?: RoomGoal[] });
+				this.goalStore.applyDelta(
+					event as { added?: RoomGoal[]; removed?: RoomGoal[]; updated?: RoomGoal[] }
+				);
 			});
 			cleanups.push(unsubGoalDelta);
 

@@ -247,7 +247,6 @@ describe('RoomStore — computed goal/task signals', () => {
 		});
 	});
 
-
 	describe('filtered orphan tasks exclude linked tasks', () => {
 		it('does not include linked tasks in any orphan bucket', () => {
 			roomStore.taskStore.applySnapshot([

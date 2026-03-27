@@ -1312,7 +1312,9 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 
 	it('does NOT show cancel button for needs_attention tasks', async () => {
-		roomStore.taskStore.applySnapshot([makeTask('task-1', 'needs_attention') as unknown as NeoTask]);
+		roomStore.taskStore.applySnapshot([
+			makeTask('task-1', 'needs_attention') as unknown as NeoTask,
+		]);
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.getGroup') return { group: null };
 			return {};
@@ -2267,7 +2269,9 @@ describe('TaskView — Reactivate and Archive actions', () => {
 	});
 
 	it('shows Archive action in dropdown for needs_attention task', async () => {
-		roomStore.taskStore.applySnapshot([makeTask('task-1', 'needs_attention') as unknown as NeoTask]);
+		roomStore.taskStore.applySnapshot([
+			makeTask('task-1', 'needs_attention') as unknown as NeoTask,
+		]);
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.getGroup') return { group: null };
 			return {};
