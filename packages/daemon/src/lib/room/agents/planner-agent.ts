@@ -120,6 +120,102 @@ export function toPlanSlug(goalTitle: string): string {
 }
 
 /**
+ * Build the AgentDefinition for the planner-explorer sub-agent.
+ *
+ * Read-only codebase exploration agent — explores the codebase areas relevant to the goal
+ * and returns structured findings. No write tools, no web tools, no sub-agent spawning.
+ */
+export function buildPlannerExplorerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Read-only codebase exploration agent. Explores relevant files, patterns, and dependencies, ' +
+			'then returns structured findings for the plan-writer to use.',
+		tools: ['Read', 'Grep', 'Glob', 'Bash'],
+		model: 'inherit',
+		prompt: `You are a Codebase Explorer sub-agent. Your sole job is to explore the codebase areas relevant to the given goal and return structured findings.
+
+## Instructions
+
+1. Use Read, Grep, Glob, and Bash (read-only commands only) to explore relevant parts of the codebase.
+2. Focus on: file paths, code patterns, existing implementations, dependencies, architecture, and complexity.
+3. Do NOT write, edit, or delete any files.
+4. Do NOT spawn further sub-agents.
+5. Do NOT implement anything — only explore and report.
+
+## Required Output Format
+
+End your response with an \`---EXPLORER_FINDINGS---\` block exactly as shown:
+
+\`\`\`
+---EXPLORER_FINDINGS---
+## Relevant Files
+<list of file paths with brief description of each>
+
+## Patterns Found
+<existing code patterns, conventions, and architectural patterns observed>
+
+## Dependencies
+<external packages, internal modules, and cross-package dependencies relevant to the goal>
+
+## Estimated Complexity
+<assessment: low / medium / high, with brief justification>
+
+## Key Concerns
+<potential blockers, gotchas, breaking changes, or areas that need careful attention>
+---END_EXPLORER_FINDINGS---
+\`\`\``,
+	};
+}
+
+/**
+ * Build the AgentDefinition for the planner-fact-checker sub-agent.
+ *
+ * Web-based validation agent — receives explorer findings and validates assumptions
+ * about external technologies, API versions, library patterns, and flags stale information.
+ * Has only WebSearch/WebFetch — no codebase tools, no sub-agent spawning.
+ */
+export function buildPlannerFactCheckerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Web research and validation agent. Receives explorer findings and validates assumptions ' +
+			'about external technologies, API versions, and library patterns against current documentation.',
+		tools: ['WebSearch', 'WebFetch'],
+		model: 'inherit',
+		prompt: `You are a Fact-Checker sub-agent. You receive codebase explorer findings and validate assumptions about external technologies, APIs, and libraries using web search and documentation.
+
+## Instructions
+
+1. Review the explorer findings provided in the prompt.
+2. Use WebSearch to look up current documentation, changelogs, and best practices for any external technologies mentioned.
+3. Use WebFetch to retrieve specific documentation pages or release notes when a URL is known.
+4. Focus on: API version compatibility, deprecated patterns, breaking changes since the codebase was last updated, and recommended current patterns.
+5. Do NOT read any local files — that is the explorer's responsibility.
+6. Do NOT spawn further sub-agents.
+7. Only search for things that require up-to-date external knowledge — skip general patterns you already know.
+
+## Required Output Format
+
+End your response with a \`---FACT_CHECK_RESULT---\` block exactly as shown:
+
+\`\`\`
+---FACT_CHECK_RESULT---
+## Validated Assumptions
+<list of assumptions from explorer findings that are confirmed correct>
+
+## Flagged Issues
+<list of issues found: stale API patterns, deprecated methods, version mismatches, breaking changes>
+
+## Recommended Versions/Patterns
+<current recommended versions or patterns for libraries/APIs mentioned in the findings>
+
+## Corrections to Explorer Findings
+<any specific corrections or updates to the explorer's findings based on current docs>
+---END_FACT_CHECK_RESULT---
+\`\`\``,
+	};
+}
+
+/**
  * Build the system prompt for the Plan Writer sub-agent.
  *
  * The plan-writer explores the codebase using its own tools (Read/Grep/Glob/Bash),
