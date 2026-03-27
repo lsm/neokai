@@ -603,4 +603,68 @@ describe('space-workflow-run-handlers', () => {
 			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
 		});
 	});
+
+	describe('spaceWorkflowRun.listGateData', () => {
+		it('throws if runId is missing', async () => {
+			setup();
+			await expect(call('spaceWorkflowRun.listGateData', {})).rejects.toThrow('runId is required');
+		});
+
+		it('throws if run not found', async () => {
+			setup({ run: null });
+			await expect(call('spaceWorkflowRun.listGateData', { runId: 'nonexistent' })).rejects.toThrow(
+				'WorkflowRun not found: nonexistent'
+			);
+		});
+
+		it('returns empty gateData when no records exist', async () => {
+			setup();
+			const result = await call('spaceWorkflowRun.listGateData', { runId: 'run-1' });
+			expect(result).toEqual({ gateData: [] });
+		});
+
+		it('returns all gate data records for the run via listByRun', async () => {
+			const gateRecords = [
+				{ runId: 'run-1', gateId: 'gate-1', data: { approved: true }, updatedAt: NOW },
+				{
+					runId: 'run-1',
+					gateId: 'gate-2',
+					data: { reviews: { alice: 'approved' } },
+					updatedAt: NOW,
+				},
+			];
+
+			// Set up with a custom gateDataRepo that has the test records
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			daemonHub = createMockDaemonHub();
+			spaceManager = createMockSpaceManager(mockSpace);
+			workflowManager = createMockWorkflowManager([mockWorkflow], mockWorkflow);
+			runRepo = createMockRunRepo(mockRun, [mockRun]);
+			runtime = createMockRuntime(mockRun);
+			runtimeService = createMockRuntimeService(mockSpace, runtime);
+			taskManagerFactory = mock(() => createMockTaskManager([]));
+
+			const customGateRepo = {
+				...createMockGateDataRepo(),
+				listByRun: mock(() => gateRecords),
+			} as unknown as GateDataRepository;
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				spaceManager,
+				workflowManager,
+				runRepo,
+				customGateRepo,
+				runtimeService,
+				taskManagerFactory,
+				daemonHub
+			);
+
+			const result = await call('spaceWorkflowRun.listGateData', { runId: 'run-1' });
+			expect(result).toEqual({ gateData: gateRecords });
+			expect(customGateRepo.listByRun).toHaveBeenCalledWith('run-1');
+		});
+	});
 });

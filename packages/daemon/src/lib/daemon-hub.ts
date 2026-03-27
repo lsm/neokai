@@ -485,6 +485,14 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		runId: string;
 		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
 	};
+	/** Emitted when gate data changes (agent write_gate, or human approveGate). */
+	'space.gateData.updated': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		gateId: string;
+		data: Record<string, unknown>;
+	};
 
 	// Space Agent events (channel: 'space:${spaceId}')
 	'spaceAgent.created': {
