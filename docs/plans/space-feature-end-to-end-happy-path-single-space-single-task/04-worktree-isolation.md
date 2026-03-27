@@ -16,31 +16,24 @@ Implement git worktree isolation for Space tasks. Each task gets **one worktree*
 
 ## Tasks
 
-### Task 4.1: Implement Task Title Slugification
+### Task 4.1: Worktree Slug Generation (Wraps Shared Slugify)
 
-**Description**: Create a shared slugification utility that converts names/titles into valid slug strings. Used by worktree naming (task title → folder/branch), space slugs (M1 Task 1.6), and potentially other areas.
+**Description**: Create a worktree-specific slug generation wrapper that uses the shared `slugify()` utility from M1 Task 1.6 and adds worktree-specific behavior (empty title fallback to `task-{taskNumber}`).
 
 **Subtasks**:
-1. Create `packages/daemon/src/lib/space/slug.ts` with:
-   - `slugify(input: string, existingSlugs: string[]): string` — converts any input string to a valid slug, appending `-2`/`-3`/etc. if the base slug already exists. This is a shared utility used by both worktree naming and space slug generation (M1 Task 1.6).
-2. Slugification rules:
-   - Lowercase the input
-   - Replace spaces and non-alphanumeric characters with hyphens
-   - Collapse consecutive hyphens into one
-   - Strip leading/trailing hyphens
-   - Truncate to max 60 characters at a word boundary (don't cut mid-word)
-   - If the resulting slug already exists in `existingSlugs`, append `-2`, `-3`, etc. until unique
-   - If the title is empty or results in an empty slug after processing, fall back to `task-{taskNumber}` (the numeric task ID from M1 Task 1.5)
-3. The same slug is used for both the worktree folder name and the git branch name (prefixed with `space/`)
-4. Unit tests: basic slugification, special characters, long titles (truncation), collision handling (suffix incrementing), empty/whitespace-only titles, unicode handling
+1. Create `packages/daemon/src/lib/space/worktree-slug.ts` that imports `slugify()` from `./slug.ts` (created in M1 Task 1.6) and wraps it with worktree-specific fallback behavior:
+   - `worktreeSlug(taskTitle: string, taskNumber: number, existingSlugs: string[]): string`
+   - Calls `slugify(taskTitle, existingSlugs)` for the core slugification
+   - If the title is empty or results in an empty slug after processing, falls back to `task-{taskNumber}` (the numeric task ID from M1 Task 1.5)
+2. The returned slug is used for both the worktree folder name and the git branch name (prefixed with `space/`)
+3. Unit tests: empty/whitespace-only titles produce `task-{taskNumber}` fallback, normal titles delegate to `slugify()`, collision handling with existing worktree slugs
 
 **Acceptance Criteria**:
-- Slugs are lowercase, hyphen-separated, max 60 chars (e.g., `add-dark-mode-support`)
-- Collisions resolved with incrementing suffix (`-2`, `-3`)
-- Empty titles produce valid fallback slugs
-- Unit tests verify all edge cases
+- Reuses shared `slugify()` from M1 Task 1.6 (no duplication of slugification logic)
+- Empty titles produce valid fallback slugs using `task-{taskNumber}`
+- Unit tests verify worktree-specific behavior
 
-**Depends on**: nothing
+**Depends on**: M1 Task 1.5 (numeric task IDs for fallback), M1 Task 1.6 (shared slugify utility)
 
 **Agent type**: coder
 

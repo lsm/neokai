@@ -147,7 +147,8 @@ Tasks use **auto-incrementing numeric IDs** instead of UUIDs, scoped per space:
 ```typescript
 // SpaceTask table
 interface SpaceTask {
-  id: number;              // INTEGER PRIMARY KEY AUTOINCREMENT — space-scoped numeric ID
+  id: string;              // UUID — internal primary key for FK references (workflow runs, worktrees, etc.)
+  taskNumber: number;      // space-scoped numeric ID — human-facing (auto-assigned via MAX+1)
   spaceId: string;         // UUID of the parent space
   title: string;
   // ... other fields
@@ -155,8 +156,8 @@ interface SpaceTask {
 ```
 
 - **Human-friendly**: "task 5" instead of "task 550e8400-e29b-41d4-a716-446655440000"
-- **Space-scoped**: uniqueness within a space is sufficient. Cross-space refs use `spaceId + taskId`.
-- **Shared sequence**: single auto-incrementing counter across all tasks in a space (like GitHub issues/PRs sharing the same number sequence)
+- **Space-scoped**: uniqueness within a space is sufficient. Cross-space refs use `spaceId + taskNumber`.
+- **Monotonically increasing**: auto-assigned via `MAX(task_number) + 1` per space. Numbers are NOT contiguous — gaps may appear when tasks are deleted (e.g., 1, 2, 5 if tasks 3 and 4 were deleted). Like GitHub issue numbers.
 - **Easy to reference**: in UI, agent prompts, logs, messages, and GitHub-style references (`neokai-dev#5`)
 
 #### Space Slugs
@@ -352,4 +353,4 @@ Planning ──[check: prUrl exists]──► Plan Review (1 reviewer) ──[ch
 
 ## Total Estimated Task Count
 
-~32 tasks across 9 milestones
+~37 tasks across 9 milestones

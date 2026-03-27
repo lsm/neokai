@@ -260,7 +260,7 @@ For channels without a gate: no evaluation needed — always open.
 
 **Acceptance Criteria**:
 - Tasks have auto-incrementing numeric IDs scoped per space
-- Numeric IDs are contiguous within a space (1, 2, 3, ...)
+- Numeric IDs are monotonically increasing within a space (gaps may appear on deletion, like GitHub issue numbers)
 - Agents and UI reference tasks by number ("task #5")
 - UUID remains as internal primary key for FK references
 - Lookup by `(spaceId, taskNumber)` works
@@ -278,7 +278,11 @@ For channels without a gate: no evaluation needed — always open.
 
 **Subtasks**:
 1. Add `slug TEXT NOT NULL UNIQUE` column to the `spaces` table. Add a unique index for fast lookup.
-2. Reuse the `slugifyTaskTitle()` function from M4 Task 4.1 (or extract into a shared `slugify()` utility in `packages/daemon/src/lib/space/slug.ts` that both space slugs and worktree slugs can use)
+2. Create the shared `slugify()` utility in `packages/daemon/src/lib/space/slug.ts`:
+   - `slugify(input: string, existingSlugs: string[]): string` — converts any input string to a valid slug, appending `-2`/`-3`/etc. if the base slug already exists
+   - Slugification rules: lowercase, replace spaces/non-alphanumeric with hyphens, collapse consecutive hyphens, strip leading/trailing hyphens, truncate to max 60 chars at word boundary, collision suffix (`-2`, `-3`)
+   - If input is empty or produces an empty slug, fall back to `unnamed-space`
+   - This utility is reused by M4 Task 4.1 (worktree naming) and any future slug needs
 3. Auto-generate slug from space name on creation: `slugify(spaceName, existingSlugs)`
 4. Add `updateSlug(spaceId, newSlug)` method to `SpaceManager` — validates uniqueness, format (lowercase, hyphens, max 60 chars)
 5. Add `getSpaceBySlug(slug)` lookup method to `SpaceManager`
