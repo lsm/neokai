@@ -4,8 +4,8 @@
  * Creates AgentSessionInit for Planner sessions that break goals into tasks.
  *
  * The Planner agent orchestrates two phases:
- * 1. Plan phase: Spawns the plan-writer sub-agent to explore the codebase and produce
- *    plan document(s) on a feature branch/PR.
+ * 1. Plan phase: Spawns the plan-writer sub-agent to explore the codebase, assess scope,
+ *    and produce plan document(s) on a feature branch/PR.
  * 2. Task creation phase: After human approval, merges the PR and creates tasks.
  *
  * The plan-writer sub-agent handles scope assessment and file structure:
@@ -122,8 +122,9 @@ export function toPlanSlug(goalTitle: string): string {
 /**
  * Build the system prompt for the Plan Writer sub-agent.
  *
- * The plan-writer handles all Phase 1 work: codebase exploration, scope assessment,
- * plan document creation (single file or multi-file), branch/commit/PR.
+ * The plan-writer explores the codebase using its own tools (Read/Grep/Glob/Bash),
+ * assesses scope, and produces plan documents. It does NOT spawn further sub-agents
+ * (it is itself a sub-agent and cannot nest further).
  *
  * For large-scope goals it uses an iterative two-pass approach:
  * - Pass 1: Create 00-overview.md with milestones list
@@ -137,6 +138,8 @@ export function toPlanSlug(goalTitle: string): string {
 export function buildPlanWriterPrompt(): string {
 	return `You are a Plan Writer Agent spawned by the Planner to produce a structured plan for a goal.
 
+Your task prompt contains the goal title, description, and any room context provided by the Planner. Use your own tools (Read, Grep, Glob, Bash) to explore the codebase directly — do NOT attempt to spawn further sub-agents (you cannot; you are already a sub-agent).
+
 ## Pre-Work: Git Sync (MANDATORY)
 
 Before exploring, sync with the default branch — run all three lines as a **single bash invocation**:
@@ -149,19 +152,7 @@ git fetch origin && git rebase origin/$DEFAULT_BRANCH
 
 ## Step 1: Codebase Exploration
 
-Explore the codebase using Explore sub-agents (each has its own context window):
-\`\`\`
-Task(subagent_type: "Explore", prompt: "Explore [area]. I need: [questions]. Return key findings, file paths, patterns.")
-\`\`\`
-Spawn multiple Explore agents **in parallel** to cover different areas. Gather enough context to understand existing patterns, affected areas, dependencies, and overall complexity.
-
-## Optional: Web Research
-
-When the goal involves integrating external technologies, APIs, or libraries that may have recent changes (e.g., after your knowledge cutoff), use \`WebSearch\` to look up current documentation or changelog entries before planning.
-
-- Use \`WebSearch\` for: finding latest API patterns, library versions, breaking changes, or community best practices.
-- Use \`WebFetch\` for: fetching a specific documentation page or GitHub release notes by URL.
-- Do NOT search for general coding patterns you already know — only search when external, up-to-date information would improve plan accuracy.
+Explore the codebase using Read, Grep, Glob, and Bash to understand existing patterns, affected areas, and dependencies. Focus on areas relevant to the goal. Use WebSearch/WebFetch for targeted external lookups (API versions, breaking changes, community best practices) when external, up-to-date information would improve plan accuracy — not for general patterns you already know.
 
 ## Step 2: Scope Assessment
 
@@ -235,21 +226,9 @@ export function buildPlanWriterAgentDef(planSlug: string): AgentDefinition {
 
 	return {
 		description:
-			'Plan writer that explores the codebase and produces structured plan documents. ' +
+			'Plan writer that explores the codebase using its own tools and produces structured plan documents. ' +
 			'Supports single-file plans for small goals and multi-file iterative plans for large-scope goals.',
-		tools: [
-			'Task',
-			'TaskOutput',
-			'TaskStop',
-			'Read',
-			'Write',
-			'Edit',
-			'Bash',
-			'Grep',
-			'Glob',
-			'WebFetch',
-			'WebSearch',
-		],
+		tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
 		model: 'inherit',
 		prompt,
 	};

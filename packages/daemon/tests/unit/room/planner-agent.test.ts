@@ -195,15 +195,17 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('rebase fails with conflicts, stop immediately');
 		});
 
-		it('should include Explore sub-agent guidance for codebase exploration', () => {
+		it('should instruct to explore using own tools, not spawn sub-agents', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('Explore');
-			expect(prompt).toContain('subagent_type');
+			expect(prompt).toContain('do NOT attempt to spawn further sub-agents');
+			expect(prompt).not.toContain('Task(subagent_type:');
+			expect(prompt).not.toContain('subagent_type: "Explore"');
 		});
 
-		it('should recommend spawning multiple Explore agents in parallel', () => {
+		it('should describe codebase exploration using Read/Grep/Glob/Bash', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('parallel');
+			expect(prompt).toContain('Read, Grep, Glob, and Bash');
+			expect(prompt).toContain('Step 1: Codebase Exploration');
 		});
 
 		it('should define small vs large scope thresholds', () => {
@@ -259,28 +261,24 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('git checkout -b plan/<plan_slug>');
 		});
 
-		it('should include optional web research section', () => {
+		it('should include web research guidance (WebSearch/WebFetch) for verification', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('Optional: Web Research');
 			expect(prompt).toContain('WebSearch');
 			expect(prompt).toContain('WebFetch');
 		});
 
-		it('should position web research section after codebase exploration and before scope assessment', () => {
+		it('should position codebase exploration step before scope assessment', () => {
 			const prompt = buildPlanWriterPrompt();
-			const explorationIdx = prompt.indexOf('Step 1: Codebase Exploration');
-			const webResearchIdx = prompt.indexOf('Optional: Web Research');
+			const exploreIdx = prompt.indexOf('Step 1: Codebase Exploration');
 			const scopeIdx = prompt.indexOf('Step 2: Scope Assessment');
-			expect(explorationIdx).toBeGreaterThanOrEqual(0);
-			expect(webResearchIdx).toBeGreaterThanOrEqual(0);
+			expect(exploreIdx).toBeGreaterThanOrEqual(0);
 			expect(scopeIdx).toBeGreaterThanOrEqual(0);
-			expect(explorationIdx).toBeLessThan(webResearchIdx);
-			expect(webResearchIdx).toBeLessThan(scopeIdx);
+			expect(exploreIdx).toBeLessThan(scopeIdx);
 		});
 
-		it('should clarify when NOT to use web search', () => {
+		it('should clarify when NOT to use web search for general patterns', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('Do NOT search');
+			expect(prompt).toContain('not for general patterns you already know');
 		});
 	});
 
@@ -299,11 +297,11 @@ describe('planner-agent', () => {
 			expect(def.prompt).not.toContain('<plan_slug>');
 		});
 
-		it('has Task tool for spawning Explore sub-agents', () => {
+		it('does NOT have Task/TaskOutput/TaskStop tools (cannot spawn sub-agents)', () => {
 			const def = buildPlanWriterAgentDef('my-goal');
-			expect(def.tools).toContain('Task');
-			expect(def.tools).toContain('TaskOutput');
-			expect(def.tools).toContain('TaskStop');
+			expect(def.tools).not.toContain('Task');
+			expect(def.tools).not.toContain('TaskOutput');
+			expect(def.tools).not.toContain('TaskStop');
 		});
 
 		it('has standard codebase tools', () => {
@@ -511,10 +509,12 @@ describe('planner-agent', () => {
 			expect(init.agents).toHaveProperty('plan-writer');
 		});
 
-		it('plan-writer agent has Task tool for spawning Explore sub-agents', () => {
+		it('plan-writer agent does NOT have Task tool (cannot spawn sub-agents)', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
 			const planWriter = init.agents?.['plan-writer'];
-			expect(planWriter?.tools).toContain('Task');
+			expect(planWriter?.tools).not.toContain('Task');
+			expect(planWriter?.tools).not.toContain('TaskOutput');
+			expect(planWriter?.tools).not.toContain('TaskStop');
 		});
 
 		it('plan-writer agent uses inherit model', () => {
