@@ -47,6 +47,8 @@ import type {
 	McpServerConfig,
 } from '@neokai/shared';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
+import type { SkillsManager } from '../../skills-manager';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
 import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
@@ -122,6 +124,10 @@ export interface TaskAgentManagerConfig {
 	 * All sub-sessions (node agents) share the same worktree path as their workspace.
 	 */
 	worktreeManager?: SpaceWorktreeManager;
+	/** Skills manager — injected into agent sessions so enabled skills (plugins and MCP servers) are available. */
+	skillsManager: SkillsManager;
+	/** App MCP server repository — used by QueryOptionsBuilder to resolve skills-based MCP configs. */
+	appMcpServerRepo: AppMcpServerRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -307,7 +313,9 @@ export class TaskAgentManager {
 				this.config.messageHub,
 				this.config.daemonHub,
 				this.config.getApiKey,
-				this.config.defaultModel
+				this.config.defaultModel,
+				this.config.skillsManager,
+				this.config.appMcpServerRepo
 			);
 
 			// --- Build the SpaceTaskManager for this space (needed by tool handlers)
@@ -447,8 +455,17 @@ export class TaskAgentManager {
 			this.config.messageHub,
 			this.config.daemonHub,
 			this.config.getApiKey,
-			this.config.defaultModel
+			this.config.defaultModel,
+			this.config.skillsManager,
+			this.config.appMcpServerRepo
 		);
+
+		// Inject registry-sourced MCP servers so sub-sessions have the same skills-based
+		// MCP access as the parent task agent session.
+		const subSessionRegistryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		if (Object.keys(subSessionRegistryMcpServers).length > 0) {
+			subSession.setRuntimeMcpServers(subSessionRegistryMcpServers);
+		}
 
 		// Determine step ID from session convention or task context.
 		// The subSessions map uses the actual session ID as both the map key and session ID.
@@ -995,7 +1012,9 @@ export class TaskAgentManager {
 			this.config.db,
 			this.config.messageHub,
 			this.config.daemonHub,
-			this.config.getApiKey
+			this.config.getApiKey,
+			this.config.skillsManager,
+			this.config.appMcpServerRepo
 		);
 		if (!agentSession) {
 			log.warn(
@@ -1144,7 +1163,9 @@ export class TaskAgentManager {
 					this.config.db,
 					this.config.messageHub,
 					this.config.daemonHub,
-					this.config.getApiKey
+					this.config.getApiKey,
+					this.config.skillsManager,
+					this.config.appMcpServerRepo
 				);
 				if (!subSession) continue;
 
@@ -1161,7 +1182,13 @@ export class TaskAgentManager {
 					stepTask.id,
 					taskManager
 				);
+				// Merge registry-sourced MCP servers alongside the in-process node-agent server,
+				// matching the createSubSession() pattern so rehydrated sub-sessions have the
+				// same MCP configuration as freshly created ones.
+				const subSessionRehydrateRegistryMcpServers =
+					this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
 				subSession.setRuntimeMcpServers({
+					...subSessionRehydrateRegistryMcpServers,
 					'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
 				});
 
