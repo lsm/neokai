@@ -154,6 +154,49 @@ summary: <1-3 sentence description of what was tested and the outcome>
 }
 
 /**
+ * Build the AgentDefinition for the built-in Explorer sub-agent.
+ *
+ * The Explorer is a read-only codebase exploration agent automatically included
+ * whenever the Coder is in agent/agents mode. It uses Grep/Glob/Read/Bash to
+ * explore the codebase and returns structured findings about file paths, patterns,
+ * dependencies, and architecture.
+ *
+ * The Explorer MUST NOT modify files and MUST NOT spawn further sub-agents.
+ */
+export function buildCoderExplorerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Read-only codebase explorer. Spawned by the Coder to gather structured findings about file paths, patterns, dependencies, and architecture before implementation.',
+		tools: ['Read', 'Grep', 'Glob', 'Bash'],
+		model: 'inherit',
+		prompt: `You are an Explorer Agent spawned by the main Coder Agent to explore the codebase and return structured findings.
+
+Your job is to gather accurate, focused information about the codebase and return it in a structured format.
+
+## Rules
+
+1. **Read-only** — you MUST NOT create, edit, or delete any files. No Write, Edit, or file-mutating Bash commands (no rm, mv, cp to new paths, git commit, etc.)
+2. **No sub-agents** — you MUST NOT spawn further sub-agents. Do not use the Task tool.
+3. **Focused exploration** — explore only what is relevant to the question asked; do not wander
+4. **Concise summary** — return findings in the structured format below; omit irrelevant detail
+5. **Bash for read-only operations only** — e.g., \`git log\`, \`git grep\`, \`wc -l\`, listing directory contents
+
+## Output Format
+
+End your response with a structured result block:
+
+---EXPLORE_RESULT---
+relevant_files: <comma-separated list of file paths most relevant to the task>
+patterns: <key patterns, conventions, or idioms observed (e.g., "uses Hono router", "signals for state")>
+dependencies: <relevant imports, external packages, or internal modules involved>
+architecture_notes: <brief description of how the relevant area is structured>
+findings: <1-5 sentences summarizing what you found and what the Coder should know before implementing>
+---END_EXPLORE_RESULT---
+`,
+	};
+}
+
+/**
  * Build the AgentDefinition map for worker helper sub-agents.
  * Returns a map of helper name to AgentDefinition.
  */
@@ -319,6 +362,22 @@ export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
 			`The tester commits test files to the current branch and returns a \`---TEST_RESULT---\` block.`
 		);
 
+		// Explorer is always available in agent mode
+		sections.push(`\n### Built-in: \`explorer\``);
+		sections.push(
+			`Read-only codebase exploration. Use before implementing complex or unfamiliar changes.`
+		);
+		sections.push(`**Spawn before implementation** when you need to understand the codebase:`);
+		sections.push(
+			`\`\`\`\nTask(subagent_type: "explorer", prompt: "Explore <area/pattern/file> to understand <what you need to know>.")\n\`\`\``
+		);
+		sections.push(
+			`The explorer returns an \`---EXPLORE_RESULT---\` block with relevant files, patterns, dependencies, and findings.`
+		);
+		sections.push(
+			`**Do not spawn explorer for simple single-file tasks** — only for unfamiliar areas.`
+		);
+
 		// Custom helpers (if configured)
 		const helperList = helperAgentNames!.join(', ');
 		sections.push(`\n### Custom helpers: ${helperList}`);
@@ -462,6 +521,7 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 			agents: {
 				Coder: coderAgentDef,
 				tester: buildTesterAgentDef(),
+				explorer: buildCoderExplorerAgentDef(),
 				...helperAgents,
 			},
 			contextAutoQueue: false,
