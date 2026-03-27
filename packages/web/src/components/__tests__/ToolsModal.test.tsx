@@ -5,7 +5,6 @@
  * the actual code used by the component, not re-implementations.
  */
 import { describe, it, expect } from 'vitest';
-import { signal } from '@preact/signals';
 import {
 	isServerEnabled,
 	toggleServer,
@@ -178,36 +177,19 @@ describe('resolveSettingSources', () => {
 });
 
 describe('ToolsModal Logic', () => {
-	describe('Save / Cancel state', () => {
-		it('Save button is disabled when no changes', () => {
-			const hasChanges = signal(false);
-			const saving = signal(false);
-			expect(!hasChanges.value || saving.value).toBe(true);
+	describe('File-based vs app-level state separation', () => {
+		it('toggleServer only modifies the disabledMcpServers list', () => {
+			// File-based server toggles go through toggleServer → disabledMcpServers
+			const disabled = toggleServer([], 'file-server');
+			expect(disabled).toContain('file-server');
+			// The returned list contains only the server name, nothing else
+			expect(disabled).toHaveLength(1);
 		});
 
-		it('Save button is disabled while saving even with changes', () => {
-			const hasChanges = signal(true);
-			const saving = signal(true);
-			expect(!hasChanges.value || saving.value).toBe(true);
-		});
-
-		it('Save button is enabled when there are pending changes and not saving', () => {
-			const hasChanges = signal(true);
-			const saving = signal(false);
-			expect(!hasChanges.value || saving.value).toBe(false);
-		});
-
-		it('toggleServer sets hasChanges (file-based scope)', () => {
-			// toggleServer returns new array; caller also sets hasChanges = true
-			const disabled = toggleServer([], 'server1');
-			expect(disabled).toContain('server1');
-			// The component sets hasChanges.value = true after this call
-		});
-
-		it('app-level skill toggles do not affect disabledMcpServers', () => {
+		it('app-level skill ids are not mixed into disabledMcpServers', () => {
 			// App-level skills use skillsStore.setEnabled — completely separate state
+			// File-based servers only — toggleServer does not know about skill ids
 			let disabled: string[] = [];
-			// Simulate: only file-based toggles touch this array
 			disabled = toggleServer(disabled, 'file-server');
 			expect(disabled).toContain('file-server');
 			expect(disabled).not.toContain('app-skill-id');

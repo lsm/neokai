@@ -93,26 +93,39 @@ test.describe('Tools Modal - Redesigned', () => {
 		await expect(page.getByText('This session').first()).toBeVisible();
 	});
 
-	test('should collapse App MCP Servers group via header button', async ({ page }) => {
+	test('should collapse NeoKai Tools group and hide Memory child', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 		await openToolsModal(page);
 
-		const appMcpHeader = page.locator('button:has-text("App MCP Servers")');
-		await expect(appMcpHeader).toBeVisible();
+		const neoKaiHeader = page.locator('button:has-text("NeoKai Tools")');
+		await expect(neoKaiHeader).toBeVisible();
 
-		// Initially expanded (aria-expanded="true")
-		await expect(appMcpHeader).toHaveAttribute('aria-expanded', 'true');
+		// Initially expanded — Memory child should be visible
+		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'true');
+		await expect(page.locator('label:has-text("Memory")').first()).toBeVisible();
 
 		// Collapse
-		await appMcpHeader.click();
+		await neoKaiHeader.click();
 
-		// Should now be collapsed
-		await expect(appMcpHeader).toHaveAttribute('aria-expanded', 'false');
+		// Header reports collapsed
+		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'false');
+		// Child content is removed from DOM (Preact conditional render)
+		await expect(page.locator('label:has-text("Memory")').first()).not.toBeAttached();
+
+		// Re-expand — child reappears
+		await neoKaiHeader.click();
+		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'true');
+		await expect(page.locator('label:has-text("Memory")').first()).toBeVisible();
 	});
 
-	test('should collapse Project MCP Servers group via header button', async ({ page }) => {
+	test('should collapse Project MCP Servers group and hide content', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 		await openToolsModal(page);
+
+		// Wait for MCP loading to finish before checking collapse
+		await expect(page.locator('[role="dialog"]').getByText('Loading servers...')).not.toBeVisible({
+			timeout: 10000,
+		});
 
 		const fileMcpHeader = page.locator('button:has-text("Project MCP Servers")');
 		await expect(fileMcpHeader).toBeVisible();
@@ -120,15 +133,17 @@ test.describe('Tools Modal - Redesigned', () => {
 		// Initially expanded
 		await expect(fileMcpHeader).toHaveAttribute('aria-expanded', 'true');
 
+		// The content div (div.mt-1.ml-5) is a sibling of the GroupHeader div — it should be attached
+		// XPath: from button → parent (GroupHeader div) → parent (section div) → child div.ml-5
+		const fileMcpContent = fileMcpHeader.locator('xpath=../../div[contains(@class,"ml-5")]');
+		await expect(fileMcpContent.first()).toBeAttached();
+
 		// Collapse
 		await fileMcpHeader.click();
-
-		// Should now be collapsed
 		await expect(fileMcpHeader).toHaveAttribute('aria-expanded', 'false');
 
-		// Re-expand
-		await fileMcpHeader.click();
-		await expect(fileMcpHeader).toHaveAttribute('aria-expanded', 'true');
+		// Content div is removed from DOM
+		await expect(fileMcpContent.first()).not.toBeAttached({ timeout: 2000 });
 	});
 
 	test('should show NeoKai Tools with Memory toggle', async ({ page }) => {
@@ -142,29 +157,22 @@ test.describe('Tools Modal - Redesigned', () => {
 		await expect(page.getByText('Persistent key-value storage')).toBeVisible();
 	});
 
-	test('should enable Save button when file-based server is toggled', async ({ page }) => {
+	test('should enable Save button when session-local setting is toggled', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
 		await openToolsModal(page);
 
-		// Save should be disabled initially
+		// Save should be disabled initially (no changes)
 		const saveBtn = page.getByRole('button', { name: 'Save' });
 		await expect(saveBtn).toBeDisabled();
 
-		// If there are file-based MCP servers, toggle one
-		const fileMcpCheckboxes = page
-			.locator('[role="dialog"]')
-			.locator('input[type="checkbox"]')
-			.first();
+		// Toggle Memory (always present in NeoKai Tools group)
+		const memoryLabel = page.locator('label:has-text("Memory")').first();
+		await expect(memoryLabel).toBeVisible();
+		await memoryLabel.click();
 
-		if ((await fileMcpCheckboxes.count()) > 0) {
-			// Toggle NeoKai Tools Memory (always present)
-			const memoryLabel = page.locator('label:has-text("Memory")').first();
-			if ((await memoryLabel.count()) > 0) {
-				await memoryLabel.click();
-				await expect(saveBtn).toBeEnabled({ timeout: 2000 });
-			}
-		}
+		// Save button must now be enabled
+		await expect(saveBtn).toBeEnabled({ timeout: 2000 });
 	});
 
 	test('should close modal with Cancel without saving', async ({ page }) => {
