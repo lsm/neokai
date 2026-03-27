@@ -8,6 +8,7 @@
 import { describe, it, expect, mock } from 'bun:test';
 import {
 	buildCustomAgentSystemPrompt,
+	buildReviewerNodeAgentPrompt,
 	buildCustomAgentTaskMessage,
 	createCustomAgentInit,
 	resolveAgentInit,
@@ -181,6 +182,129 @@ describe('buildCustomAgentSystemPrompt', () => {
 		const agent = makeAgent();
 		const prompt = buildCustomAgentSystemPrompt(agent);
 		expect(prompt).toContain('Do NOT commit directly to the main/dev/master branch');
+	});
+});
+
+// ============================================================================
+// buildReviewerNodeAgentPrompt
+// ============================================================================
+
+describe('buildReviewerNodeAgentPrompt', () => {
+	it('identifies agent as a Reviewer Agent', () => {
+		const agent = makeAgent({ name: 'PRBot', role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('PRBot');
+		expect(prompt).toContain('Reviewer Agent');
+	});
+
+	it('includes custom systemPrompt when provided', () => {
+		const agent = makeAgent({ role: 'reviewer', systemPrompt: 'Focus on security.' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Focus on security.');
+		expect(prompt).toContain('Agent Instructions');
+	});
+
+	it('omits Agent Instructions section when systemPrompt is unset', () => {
+		const agent = makeAgent({ role: 'reviewer', systemPrompt: undefined });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).not.toContain('Agent Instructions');
+	});
+
+	it('includes review process steps', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Review Process');
+		expect(prompt).toContain('read_gate');
+		expect(prompt).toContain('gh pr diff');
+		expect(prompt).toContain('Evaluate the changes');
+	});
+
+	it('includes severity classification', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Severity Classification');
+		expect(prompt).toContain('Critical');
+		expect(prompt).toContain('Major');
+		expect(prompt).toContain('Minor');
+	});
+
+	it('includes PR review posting via GitHub REST API', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Posting the PR Review');
+		expect(prompt).toContain('gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews');
+		expect(prompt).toContain('--method POST');
+		expect(prompt).toContain('APPROVE');
+		expect(prompt).toContain('REQUEST_CHANGES');
+	});
+
+	it('includes ---REVIEW_POSTED--- structured output block', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('---REVIEW_POSTED---');
+		expect(prompt).toContain('"recommendation"');
+		expect(prompt).toContain('"severityCounts"');
+		expect(prompt).toContain('"critical"');
+		expect(prompt).toContain('"major"');
+		expect(prompt).toContain('"minor"');
+		expect(prompt).toContain('"url"');
+	});
+
+	it('includes gate interaction: read code-pr-gate for PR URL', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('code-pr-gate');
+		expect(prompt).toContain('Gate Interaction');
+	});
+
+	it('includes gate interaction: write vote to review-votes-gate using nodeId', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('review-votes-gate');
+		expect(prompt).toContain('write_gate');
+		expect(prompt).toContain('nodeId');
+		expect(prompt).toContain('"votes"');
+	});
+
+	it('includes idempotency / re-spawn protection instructions', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Idempotency');
+		expect(prompt).toContain('already voted');
+		expect(prompt).toContain('skip');
+	});
+
+	it('includes peer communication section', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Peer Communication');
+		expect(prompt).toContain('send_message');
+		expect(prompt).toContain('list_peers');
+	});
+
+	it('includes completion signalling via report_done', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		expect(prompt).toContain('Signalling Completion');
+		expect(prompt).toContain('report_done');
+	});
+
+	it('does NOT include git commit/push workflow instructions', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// Reviewer should not be committing/pushing code
+		expect(prompt).not.toContain('Git Workflow (MANDATORY)');
+		expect(prompt).not.toContain('git push -u origin HEAD');
+		expect(prompt).not.toContain('gh pr create');
+	});
+
+	it('vote data shape uses nodeId key and approve/reject values', () => {
+		const agent = makeAgent({ role: 'reviewer' });
+		const prompt = buildReviewerNodeAgentPrompt(agent);
+		// The data shape for the vote: { votes: { [nodeId]: "approve" | "reject" } }
+		expect(prompt).toContain('"votes"');
+		expect(prompt).toContain('"approve"');
+		expect(prompt).toContain('"reject"');
 	});
 });
 
@@ -393,7 +517,7 @@ describe('createCustomAgentInit', () => {
 		expect(init.features?.sessionInfo).toBe(false);
 	});
 
-	it('builds correct init for reviewer role (no role-specific instructions)', () => {
+	it('builds correct init for reviewer role (uses reviewer-specific prompt)', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ role: 'reviewer', name: 'CodeReviewer' }),
 		});
@@ -401,7 +525,9 @@ describe('createCustomAgentInit', () => {
 
 		expect(init.type).toBe('worker');
 		expect(init.systemPrompt?.append).toContain('Reviewer Agent');
-		expect(init.systemPrompt?.append).not.toContain('Review Responsibilities');
+		// Reviewer prompt contains gate interaction instructions, not generic git workflow
+		expect(init.systemPrompt?.append).toContain('code-pr-gate');
+		expect(init.systemPrompt?.append).toContain('review-votes-gate');
 	});
 
 	it('builds correct init for planner role (treated as worker)', () => {
