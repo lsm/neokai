@@ -552,7 +552,11 @@ class RoomStore {
 				if (event.subscriptionId !== skillsSubId) return;
 				if (!this.activeSubscriptionIds.has(skillsSubId)) return; // stale-event guard
 				this.skillStore.applyDelta(
-					event as { added?: EffectiveRoomSkill[]; removed?: EffectiveRoomSkill[]; updated?: EffectiveRoomSkill[] }
+					event as {
+						added?: EffectiveRoomSkill[];
+						removed?: EffectiveRoomSkill[];
+						updated?: EffectiveRoomSkill[];
+					}
 				);
 			});
 			cleanups.push(unsubSkillDelta);
