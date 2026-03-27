@@ -33,6 +33,7 @@ import type {
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager';
 import { cn } from '../../lib/utils';
+import { GateArtifactsView } from './GateArtifactsView';
 
 // ============================================================================
 // Constants
@@ -296,6 +297,7 @@ interface GateIconProps {
 	isRuntimeMode: boolean;
 	onApprove?: () => void;
 	onReject?: () => void;
+	onViewArtifacts?: () => void;
 }
 
 const GATE_ICON_R = 11; // radius
@@ -307,8 +309,17 @@ function GateIcon({
 	isRuntimeMode,
 	onApprove,
 	onReject,
+	onViewArtifacts,
 }: GateIconProps): JSX.Element {
 	const [showActions, setShowActions] = useState(false);
+
+	// Dismiss the popup when the user clicks anywhere outside the gate icon
+	useEffect(() => {
+		if (!showActions) return;
+		const dismiss = () => setShowActions(false);
+		document.addEventListener('click', dismiss, { once: true });
+		return () => document.removeEventListener('click', dismiss);
+	}, [showActions]);
 
 	let fill: string;
 	let strokeColor: string;
@@ -405,7 +416,7 @@ function GateIcon({
 			<g transform={`translate(${x}, ${y})`}>{icon}</g>
 
 			{showActions && isRuntimeMode && (
-				<foreignObject x={x - 60} y={y + 14} width={120} height={56}>
+				<foreignObject x={x - 65} y={y + 14} width={130} height={onViewArtifacts ? 84 : 56}>
 					<div
 						style={{
 							background: '#1c1917',
@@ -413,37 +424,57 @@ function GateIcon({
 							borderRadius: 6,
 							padding: '6px',
 							display: 'flex',
+							flexDirection: 'column',
 							gap: '4px',
 						}}
 					>
-						<button
-							class={cn(
-								'flex-1 text-xs py-1 rounded font-medium',
-								'bg-green-900/60 text-green-300 border border-green-700/50',
-								'hover:bg-green-800/60'
-							)}
-							onClick={(e) => {
-								e.stopPropagation();
-								setShowActions(false);
-								onApprove?.();
-							}}
-						>
-							Approve
-						</button>
-						<button
-							class={cn(
-								'flex-1 text-xs py-1 rounded font-medium',
-								'bg-red-900/60 text-red-300 border border-red-700/50',
-								'hover:bg-red-800/60'
-							)}
-							onClick={(e) => {
-								e.stopPropagation();
-								setShowActions(false);
-								onReject?.();
-							}}
-						>
-							Reject
-						</button>
+						<div style={{ display: 'flex', gap: '4px' }}>
+							<button
+								class={cn(
+									'flex-1 text-xs py-1 rounded font-medium',
+									'bg-green-900/60 text-green-300 border border-green-700/50',
+									'hover:bg-green-800/60'
+								)}
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowActions(false);
+									onApprove?.();
+								}}
+							>
+								Approve
+							</button>
+							<button
+								class={cn(
+									'flex-1 text-xs py-1 rounded font-medium',
+									'bg-red-900/60 text-red-300 border border-red-700/50',
+									'hover:bg-red-800/60'
+								)}
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowActions(false);
+									onReject?.();
+								}}
+							>
+								Reject
+							</button>
+						</div>
+						{onViewArtifacts && (
+							<button
+								class={cn(
+									'w-full text-xs py-1 rounded font-medium',
+									'bg-stone-800/80 text-stone-300 border border-stone-700/50',
+									'hover:bg-stone-700/80'
+								)}
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowActions(false);
+									onViewArtifacts();
+								}}
+								data-testid="view-artifacts-btn"
+							>
+								View Artifacts
+							</button>
+						)}
 					</div>
 				</foreignObject>
 			)}
@@ -843,6 +874,9 @@ export function WorkflowCanvas({
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>>>(new Map());
 	const [gateDataLoading, setGateDataLoading] = useState(false);
 
+	// ---- Artifacts panel state (gateId of the panel open, null = closed) ----
+	const [artifactsPanelGateId, setArtifactsPanelGateId] = useState<string | null>(null);
+
 	// ---- Template-mode: local gate assignments (channelId → gateId) ----
 	const [localGateAssignments, setLocalGateAssignments] = useState<Map<string, string>>(new Map());
 
@@ -1147,6 +1181,11 @@ export function WorkflowCanvas({
 									onReject={
 										isHumanGate ? () => void handleApproveGate(ch.gateId!, false) : undefined
 									}
+									onViewArtifacts={
+										isHumanGate && gateStatus === 'waiting_human'
+											? () => setArtifactsPanelGateId(ch.gateId!)
+											: undefined
+									}
 								/>
 							)}
 
@@ -1226,6 +1265,27 @@ export function WorkflowCanvas({
 					);
 				})}
 			</svg>
+
+			{/* Artifacts panel overlay (shown when a human gate requests it) */}
+			{artifactsPanelGateId && runId && (
+				<div
+					class="absolute inset-0 bg-stone-950/95 z-20 flex flex-col"
+					data-testid="artifacts-panel-overlay"
+				>
+					<GateArtifactsView
+						runId={runId}
+						gateId={artifactsPanelGateId}
+						spaceId={spaceId}
+						gateData={gateDataMap.get(artifactsPanelGateId)}
+						onClose={() => setArtifactsPanelGateId(null)}
+						onDecision={() => {
+							setArtifactsPanelGateId(null);
+							void fetchGateData();
+						}}
+						class="h-full"
+					/>
+				</div>
+			)}
 		</div>
 	);
 }
