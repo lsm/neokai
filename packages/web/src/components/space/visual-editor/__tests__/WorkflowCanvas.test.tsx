@@ -52,6 +52,7 @@ const NODES: WorkflowNodeData[] = [
 		stepIndex: 1,
 		position: { x: 10, y: 10 },
 		agents: AGENTS,
+		workflowChannels: [],
 		isStartNode: false,
 	},
 	{
@@ -59,6 +60,7 @@ const NODES: WorkflowNodeData[] = [
 		stepIndex: 2,
 		position: { x: 200, y: 10 },
 		agents: AGENTS,
+		workflowChannels: [],
 		isStartNode: false,
 	},
 ];
@@ -485,12 +487,12 @@ describe('computeChannelEdges', () => {
 				name,
 				agentId: agents[0]?.id ?? '',
 				agents: agents.map((a) => ({ agentId: a.id })),
-				channels,
 				instructions: '',
 			},
 			stepIndex: 0,
 			position: { x: 0, y: 0 },
 			agents,
+			workflowChannels: channels ?? [],
 			isStartNode: false,
 		};
 	}
@@ -636,18 +638,18 @@ describe('WorkflowCanvas — channel edge rendering', () => {
 	});
 
 	it('renders channel edges when nodes have task-agent channels', () => {
-		// Create nodes with task-agent channels
+		// Create nodes with task-agent channels (now passed via workflowChannels prop)
 		const agents = [makeAgent('agent-1', 'Coder')];
 		const nodesWithChannels: WorkflowNodeData[] = [
 			{
 				step: {
 					...makeStep('step-1', 'Step One'),
 					agentId: 'agent-1',
-					channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 				},
 				stepIndex: 1,
 				position: { x: 10, y: 10 },
 				agents,
+				workflowChannels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 				isStartNode: false,
 			},
 		];
@@ -710,7 +712,7 @@ describe('WorkflowCanvas — explicit channels prop', () => {
 	});
 
 	it('deduplicates explicit channels with computed node channels', () => {
-		// Node has a channel from step-1 to step-2
+		// Node has a channel from step-1 to step-2 (via workflowChannels prop)
 		const agentWithRole = makeAgent('agent-1', 'Coder');
 		agentWithRole.role = 'coder';
 		const nodesWithChannels: WorkflowNodeData[] = [
@@ -718,11 +720,11 @@ describe('WorkflowCanvas — explicit channels prop', () => {
 				step: {
 					...makeStep('step-1', 'Step One'),
 					agentId: 'agent-1',
-					channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 				},
 				stepIndex: 1,
 				position: { x: 10, y: 10 },
 				agents: [agentWithRole],
+				workflowChannels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 				isStartNode: false,
 			},
 			{
@@ -730,6 +732,7 @@ describe('WorkflowCanvas — explicit channels prop', () => {
 				stepIndex: 2,
 				position: { x: 200, y: 10 },
 				agents: [makeAgent('agent-2', 'Reviewer')],
+				workflowChannels: [],
 				isStartNode: false,
 			},
 		];
