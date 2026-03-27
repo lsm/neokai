@@ -1,98 +1,137 @@
-# Space UI/UX Audit — Overview
+# Space UI/UX Redesign — Overview
 
 ## Goal
 
-Identify and fix UI/UX gaps in the Space feature based on a comprehensive code audit and analysis of the live application's components, routing, data flow, and existing E2E test coverage.
+Redesign the Space UI to follow the same **three-column layout paradigm** (NavRail → ContextPanel → ContentPanel) used by the Room system, with a clear **two-layer interaction model**: Spaces List level and Individual Space level. Each layer defines what appears in the ContextPanel and ContentPanel, how agents are accessed, and how tasks are managed.
 
-## Audit Methodology
+## Design Philosophy
 
-This audit was conducted through:
-1. Deep code review of all Space-related frontend components, stores, and routing
-2. Review of all Space-related daemon RPC handlers and data models
-3. Analysis of existing E2E tests (space-creation, space-happy-path-pipeline, space-approval-gate-rejection, space-export-import, space-workflow-rules, space-multi-agent-editor, space-agent-centric-workflow)
-4. Running the dev server and verifying the SPA renders at http://localhost:8989
-5. Cross-referencing the SpaceDashboard TODO comments and space-store stub methods
+The Room system provides the proven interaction pattern:
+- **RoomContextPanel** (level 2) has: stats strip → pinned items (Dashboard, Room Agent) → collapsible sections (Missions, Tasks, Sessions)
+- **Room ContentPanel** renders different views based on route: dashboard tabs (default), ChatContainer (session/agent view), TaskViewToggle (task view)
+- Agent chat is a **first-class navigation target** (`/room/:id/agent`) accessed from the ContextPanel
 
-## Audit Findings Summary
+Spaces should follow this exact paradigm, adapted for workflow-driven multi-agent orchestration.
 
-### What Works (Confirmed via Code + E2E Tests)
+## Audit Findings (from Live Testing)
 
-1. **Navigation**: NavRail "Spaces" button navigates to `/spaces`, ContextPanel shows SpaceContextPanel with space thread list, filter tabs (active/archived), and "Create Space" button
-2. **Space Creation**: SpaceCreateDialog renders in a modal with workspace path (auto-suggests name from basename), name, description fields; submits via `space.create` RPC; navigates to `/space/:id` on success
-3. **Space Detail Layout**: SpaceIsland renders 4-tab view (Dashboard, Agents, Workflows, Settings) with tab bar; right column shows SpaceTaskPane when a task ID is in the URL
-4. **Dashboard Tab**: SpaceDashboard shows space header (name, truncated workspace path, description), active status banner, Quick Actions cards, and recent activity list
-5. **Agents Tab**: SpaceAgentList shows agent cards with role badges, model info, tool chips; supports create/edit/delete with SpaceAgentEditor modal; delete-blocking when agent is referenced by workflows
-6. **Workflows Tab**: WorkflowList shows workflow cards with mini step visualization, step count, tags; supports create/edit/delete/export per card; import/export-all toolbar; list and visual editor modes with toggle
-7. **Workflow Editor**: Both list-mode (WorkflowEditor) and visual-mode (VisualWorkflowEditor) are fully implemented with node config, edge config, gate config, rules editor
-8. **Settings Tab**: SpaceSettings shows space metadata (name, description, workspace path, status, ID, created date) and Export Bundle button
-9. **WorkflowCanvas**: SVG-based canvas with runtime mode (live task status) and template mode (editable gates); gate artifacts view for human approval
-10. **SpaceTaskPane**: Full task detail pane with status badge, priority, workflow step indicator, description, current step, progress bar, result, error, PR link, and human input area for needs_attention tasks
-11. **SpaceContextPanel**: Thread-style navigation with collapsible spaces, nested active tasks, task status dots, navigate-to-space arrows
-12. **Real-time Updates**: SpaceStore subscribes to space.*, spaceAgent.*, spaceWorkflow.*, space.task.*, space.workflowRun.* events for live state sync
-13. **Export/Import**: Full bundle export/import with preview dialog and conflict resolution
-14. **Space Store**: Complete CRUD methods for spaces, tasks, agents, workflows, and workflow runs; promise-chain locking for atomic space switching; slug-to-UUID resolution
+### What Works (14 features confirmed)
+1. NavRail "Spaces" button + SpaceContextPanel thread list
+2. Space creation with auto-naming from workspace path
+3. SpaceIsland tabbed layout (Dashboard/Agents/Workflows/Settings)
+4. Agents CRUD with role badges, model info, delete-blocking
+5. Workflow list + visual editor (list mode and visual mode)
+6. Settings tab with metadata display
+7. WorkflowCanvas (runtime + template modes)
+8. SpaceTaskPane with task detail
+9. SpaceContextPanel thread-style navigation
+10. Real-time WebSocket event subscriptions
+11. Export/Import with preview and conflict resolution
+12. Space store with full CRUD + slug resolution
+13. Workflow rules editor
+14. Gate approval/rejection UI on WorkflowCanvas
 
-### What's Broken or Has Issues
+### What's Broken
+| # | Issue | Severity | Root Cause |
+|---|-------|----------|------------|
+| B1 | Quick Actions "Start Workflow Run" and "Create Task" are unwired scaffolding | P1 | `SpaceIsland.tsx` never passes `onStartWorkflow`/`onCreateTask` to `SpaceDashboard` |
+| B2 | RPC naming mismatch: frontend calls `spaceWorkflowRun.create`, daemon registers `spaceWorkflowRun.start` | P1 | `space-store.ts:857` vs `space-workflow-run-handlers.ts:124`. TODO(M6) is stale |
+| B3 | SpaceNavPanel built but never rendered | P2 | Component exists with tests/exports but isn't used; tab layout replaced left-panel nav |
+| B4 | SpaceAgentList lacks padding consistency | P3 | No `p-6` wrapper like Dashboard and Settings tabs |
+| B5 | Emoji in SpaceContextPanel + ContextPanel.tsx empty states | P3 | Rocket emoji violates no-emoji rule |
 
-| # | Issue | Severity | Location |
-|---|-------|----------|----------|
-| B1 | Quick Actions "Start Workflow Run" and "Create Task" buttons are unwired scaffolding — `onStartWorkflow` and `onCreateTask` props are never passed from SpaceIsland | P1 | `SpaceIsland.tsx` line 241, `SpaceDashboard.tsx` line 149 comment |
-| B2 | SpaceNavPanel component is built but NOT rendered anywhere — SpaceIsland uses a tab-based layout without a left navigation column | P2 | `SpaceNavPanel.tsx` is imported nowhere except its own file |
-| B3 | RPC naming mismatch: frontend `space-store.ts` calls `spaceWorkflowRun.create` but daemon registers handler as `spaceWorkflowRun.start` (in `space-workflow-run-handlers.ts` line 124). The TODO(M6) comment on line 842 is stale — the backend is implemented, just under a different name | P1 | `space-store.ts` line 857, `space-workflow-run-handlers.ts` line 124 |
-| B4 | SpaceAgentList has no padding wrapper — the component starts with `<div class="flex flex-col h-full">` but header uses `mb-4` without outer padding, while other tabs (Dashboard, Settings) use `p-6` | P3 | `SpaceAgentList.tsx` line 194 |
-| B5 | SpaceContextPanel uses a rocket emoji in empty state which conflicts with the project's no-emoji rule | P3 | `SpaceContextPanel.tsx` line 262 |
+### What's Missing — The Core Gap
 
-### What's Missing from the User Journey
+**The fundamental problem isn't individual bugs — it's that Spaces doesn't follow the Room system's two-layer interaction model.** Specifically:
 
-| # | Gap | Severity | Description |
-|---|-----|----------|-------------|
-| G1 | No space edit/rename UI | P2 | SpaceSettings shows metadata read-only; no inline edit for name/description. The `spaceStore.updateSpace()` method exists but no UI invokes it |
-| G2 | No space delete/archive UI | P2 | No delete or archive buttons in Settings or anywhere. The store methods `archiveSpace()` and `deleteSpace()` exist but no UI invokes them |
-| G3 | No standalone task creation UI | P1 | Dashboard "Create Task" button is unwired. No dialog/form exists for creating a standalone task despite `spaceStore.createTask()` being implemented |
-| G4 | No workflow run start UI from dashboard | P1 | Dashboard "Start Workflow Run" button is unwired. No dialog exists for selecting a workflow and starting a run despite `spaceStore.startWorkflowRun()` being implemented |
-| G5 | No chat interface within space detail | P2 | SpacesPage (the `/spaces` route) renders a ChatContainer for the Global Spaces Agent, but individual space views have no chat/agent interaction panel |
-| G6 | Deep links for space sessions not fully connected | P3 | Router defines `/space/:id/session/:sessionId` pattern and `navigateToSpaceSession()` but SpaceIsland doesn't handle session sub-routes — only task sub-routes are handled via `currentSpaceTaskIdSignal` |
-| G7 | No task status transition UI in task pane | P2 | SpaceTaskPane only shows "Human Input Required" for `needs_attention` status. No buttons to manually mark tasks as completed, cancelled, or change priority |
-| G8 | No mobile/responsive consideration for space detail | P3 | WorkflowCanvas is hidden on mobile (`hidden md:flex`), Dashboard fallback shows, but tab content like Agents and Workflows has no mobile-specific layout adjustments |
-| G9 | No breadcrumb or back navigation from space detail | P2 | When viewing `/space/:id`, there's no visible breadcrumb trail or back button to return to the spaces list (relies on NavRail + ContextPanel) |
-| G10 | Workflow run history/logs not visible | P2 | Recent activity in dashboard shows run titles and status but no way to view run details, logs, or task breakdown for a specific run |
+1. **No Space Agent chat** — Rooms have "Room Agent" as a pinned item in RoomContextPanel with full ChatContainer. Spaces have no equivalent. Users can't converse with the space agent.
+2. **No Space-level ContextPanel** — When inside a space, the ContextPanel still shows SpaceContextPanel (the global spaces list), not a space-specific panel with tasks, runs, and pinned items like RoomContextPanel.
+3. **No route-driven content switching** — Room ContentPanel switches between dashboard/session/task views based on URL. SpaceIsland uses tabs + a side pane, which is a different and less consistent pattern.
+4. **No task agent interaction** — Tasks have detail panes but no way to chat with the task's agent or view agent sessions.
 
-## Prioritized Improvement Plan
+## Two-Layer Design
 
-### P0 (Critical) — None identified
+### Layer 1: Spaces List (`/spaces`, no space selected)
 
-### P1 (High) — Wire up core user actions
-- Wire Quick Actions buttons (Start Workflow Run, Create Task)
-- Create Task creation dialog
-- Create Workflow Run start dialog
-- Fix RPC naming mismatch: rename frontend call from `spaceWorkflowRun.create` to `spaceWorkflowRun.start`
+| Column | Component | Content |
+|--------|-----------|---------|
+| **NavRail** | "Spaces" icon selected | Same as now |
+| **ContextPanel** | `SpaceContextPanel` (existing) | Thread-style space list with expandable tasks, active/archived filter, "Create Space" button |
+| **ContentPanel** | `SpacesPage` (existing) | ChatContainer for `spaces:global` session — chat with Global Spaces Agent |
 
-### P2 (Medium) — Complete the user journey
-- Add space edit/rename functionality in Settings
-- Add space delete/archive UI with confirmation
-- Add task status management controls in SpaceTaskPane
-- Add breadcrumb/back navigation for space detail
-- Add workflow run detail view with task breakdown
-### P3 (Low) — Polish
-- Fix SpaceAgentList padding consistency
-- Remove emoji from SpaceContextPanel empty state and ContextPanel.tsx (`emptyIcon: '🚀'` on line 207)
-- Remove unused SpaceNavPanel component (has tests and export but is not rendered anywhere; deliberate removal with cleanup)
+**This layer already works correctly.** The Global Spaces Agent can create/list/manage spaces via MCP tools.
 
-### Deferred to Future Iteration
-- **G5 — Chat interface within space detail**: SpacesPage renders a ChatContainer for the Global Spaces Agent, but individual space views have no chat panel. This is a significant feature requiring architectural decisions (embedded chat vs. sidebar, agent scope per space) and is deferred to a dedicated follow-up plan.
-- **G6 — Deep links for space sessions**: Session sub-routes exist in the router but SpaceIsland doesn't handle them. Deferred as P3.
-- **G8 — Mobile responsiveness**: WorkflowCanvas hides on mobile but other tabs lack mobile layout. Deferred as P3.
+### Layer 2: Individual Space (`/space/:id`, space selected)
+
+| Column | Component | Content |
+|--------|-----------|---------|
+| **NavRail** | "Spaces" icon selected | Same |
+| **ContextPanel** | **`SpaceDetailPanel`** (NEW) | Stats strip → Pinned (Dashboard, Space Agent) → Workflow Runs → Tasks → Sessions |
+| **ContentPanel** | `SpaceIsland` (refactored) | Route-driven: Dashboard tabs (default), ChatContainer (agent/session), SpaceTaskPane (task) |
+
+#### SpaceDetailPanel Design (mirrors RoomContextPanel)
+
+```
+┌─────────────────────────┐
+│ 3 active · 1 review     │  ← Task stats strip
+├─────────────────────────┤
+│ 📊 Dashboard            │  ← Pinned: /space/:id
+│ 💬 Space Agent          │  ← Pinned: /space/:id/agent
+├─────────────────────────┤
+│ ▼ Workflow Runs (2)     │  ← Collapsible section
+│   ● Deploy v2.1 [run]   │    Active run with status dot
+│     ├ Task: Build API    │    Nested tasks under run
+│     └ Task: Write tests  │
+│   ● Setup CI [done]     │    Completed run
+├─────────────────────────┤
+│ ▼ Tasks                 │  ← Collapsible, tab-filtered
+│  [active] [review] [done]│
+│   ● Standalone task 1   │    Tasks not linked to runs
+├─────────────────────────┤
+│ ▼ Sessions (3)       [+]│  ← Collapsible, default collapsed
+│   ● Session abc123      │
+└─────────────────────────┘
+```
+
+#### ContentPanel Route Mapping
+
+| Route | Content | Trigger |
+|-------|---------|---------|
+| `/space/:id` | Dashboard tabs (Dashboard/Agents/Workflows/Settings) | Click "Dashboard" in SpaceDetailPanel |
+| `/space/:id/agent` | ChatContainer for space agent session | Click "Space Agent" in SpaceDetailPanel |
+| `/space/:id/session/:sid` | ChatContainer for specific session | Click session in SpaceDetailPanel |
+| `/space/:id/task/:tid` | SpaceTaskPane (full-width, not side pane) | Click task in SpaceDetailPanel |
+
+### Agent Interaction Model
+
+| Agent | How to Access | Session ID Pattern |
+|-------|--------------|-------------------|
+| **Global Spaces Agent** | SpacesPage (Level 1 ContentPanel) | `spaces:global` (pre-provisioned) |
+| **Space Agent** | "Space Agent" pinned item in SpaceDetailPanel | `space:chat:{spaceId}` (mirrors `room:chat:{roomId}`) |
+| **Task Agent** | Task detail view (future) | Via task's linked session |
+
+The Space Agent chat enables users to:
+- Ask about space status, task progress, workflow state
+- Trigger actions conversationally ("start the deploy workflow", "create a task for...")
+- Review and approve gate decisions
+- Get summaries and reports
 
 ## Milestones
 
-1. **Wire Quick Actions and Create Task Dialog** — Connect existing dashboard buttons and build the task creation form (2 tasks)
-2. **Workflow Run Start Dialog and RPC Fix** — Fix RPC naming mismatch and build the workflow run start UI (3 tasks)
-3. **Space Settings CRUD** — Add edit, archive, and delete functionality to SpaceSettings (2 tasks)
-4. **Task Pane Enhancements** — Add task status management and workflow run detail view (2 tasks)
-5. **Navigation and Polish** — Breadcrumbs, padding fix, emoji/icon cleanup, SpaceNavPanel removal, comprehensive E2E test (4 tasks)
+1. **SpaceDetailPanel + ContextPanel Switching** — Build the space-specific ContextPanel and wire ContextPanel.tsx to switch between SpaceContextPanel (level 1) and SpaceDetailPanel (level 2) based on `currentSpaceIdSignal` (3 tasks)
+2. **Space Agent Chat** — Add `navigateToSpaceAgent()` router function, wire SpaceIsland to render ChatContainer for agent sessions, provision space agent session (3 tasks)
+3. **Route-Driven Content Switching** — Refactor SpaceIsland to use route-based content rendering (dashboard/agent/task) instead of tabs-only, make task view full-width instead of side pane (2 tasks)
+4. **Wire Quick Actions + Task Creation** — Connect dashboard buttons, build SpaceTaskCreateDialog, fix RPC naming mismatch (3 tasks)
+5. **Space Settings CRUD + Polish** — Add edit/archive/delete UI, fix padding, remove emojis, remove SpaceNavPanel (3 tasks)
 
-Note: M1, M2, and M3 have no inter-milestone dependencies and can be parallelized.
+Note: M1 and M2 can be developed in parallel. M3 depends on M2 (needs agent route). M4 depends on M3 (content routing). M5 is independent.
 
 ## Estimated Task Count
 
-Total: 13 tasks across 5 milestones
+Total: 14 tasks across 5 milestones
+
+## Deferred to Future Iteration
+- **Task agent chat**: Viewing a task's linked agent sessions requires backend support for task-session association. Deferred.
+- **Mobile responsiveness**: WorkflowCanvas hides on mobile but other views lack mobile layouts. Deferred as P3.
+- **Workflow run detail view**: Drill-down into a run's task breakdown. Deferred until SpaceDetailPanel establishes the navigation pattern.
+- **Deep links for space sessions**: Session sub-routes exist in router but need SpaceIsland handling. Addressed in M3.
