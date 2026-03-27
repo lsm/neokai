@@ -434,7 +434,7 @@ export class RoomRuntimeService {
 				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
 				log.debug(
 					`[injectMessage] Session ${sessionId}: saved user message ${messageId}, ` +
-						`enqueuing into messageQueue (isRunning=${session.messageQueue.isRunning()})`
+						`enqueuing into messageQueue (isRunning=${session.messageQueue.isRunning?.() ?? 'unknown'})`
 				);
 				await session.messageQueue.enqueueWithId(messageId, message);
 				log.debug(
