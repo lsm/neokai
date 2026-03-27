@@ -101,6 +101,21 @@ describe('message_start input_tokens', () => {
 		expect(usage['input_tokens']).toBe(0);
 	});
 
+	it('includes cache token fields for SDK 0.2.84+ compatibility', () => {
+		const { written, res } = makeRes();
+		const writer = new AnthropicStreamWriter();
+		writer.start(res, 'model', 10);
+		const events = parseEvents(written);
+		const start = events.find((e) => e.type === 'message_start');
+		const msg = (start!.data as Record<string, unknown>)['message'] as Record<string, unknown>;
+		const usage = msg['usage'] as Record<string, unknown>;
+		// SDK 0.2.84+ expects these fields to be present (not undefined)
+		expect(usage['cache_creation_input_tokens']).toBe(0);
+		expect(usage['cache_read_input_tokens']).toBe(0);
+		// Also verify stop_sequence is present
+		expect(msg['stop_sequence']).toBeNull();
+	});
+
 	it('is non-zero for a non-empty inputTokens value', () => {
 		const { written, res } = makeRes();
 		const writer = new AnthropicStreamWriter();

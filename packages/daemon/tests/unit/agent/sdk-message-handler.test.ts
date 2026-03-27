@@ -580,6 +580,26 @@ describe('SDKMessageHandler', () => {
 			);
 		});
 
+		it('should handle result message with missing usage (bridge provider edge case)', async () => {
+			// SDK 0.2.84+ may produce result messages without usage when using bridge
+			// providers like anthropic-copilot. The handler must not crash.
+			const message: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'no-usage-uuid',
+				// Deliberately omit `usage` to simulate the bridge provider edge case
+				total_cost_usd: 0,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			// Should not throw
+			await handler.handleMessage(message);
+
+			// Metadata should still be updated (with zero tokens)
+			expect(updateSessionSpy).toHaveBeenCalled();
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
+
 		it('should not queue /context for zero-token result', async () => {
 			const message: SDKMessage = {
 				type: 'result',
