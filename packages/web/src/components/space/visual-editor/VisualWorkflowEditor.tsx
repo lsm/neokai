@@ -115,6 +115,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
 	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
 	const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
+	// Guard against double-invocation: setNodes updater may be called twice in development
+	// (e.g. React StrictMode, Bun hot reload). Toggle the flag so the second call skips.
+	const addStepGuardRef = useRef(false);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -364,18 +367,25 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function addStep() {
+		// Guard: skip if already called this cycle (e.g. double-invoked by React/StictMode).
+		if (addStepGuardRef.current) return;
+		addStepGuardRef.current = true;
+		// Reset on next paint so the guard is fresh for the next click.
+		void Promise.resolve().then(() => {
+			addStepGuardRef.current = false;
+		});
+
 		const newLocalId = generateUUID();
 		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
-		// Capture emptiness before the setNodes call so we can call setStartStepId
-		// outside the updater. State setter calls inside updater functions are side
-		// effects and violate the purity requirement (React StrictMode double-invokes
-		// updaters to catch exactly this pattern).
-		// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
-		const isFirstNode =
-			nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID)
-				.length === 0;
 		setNodes((prev) => {
+			// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
+			const isFirstNode =
+				prev.filter(
+					(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
+				).length === 0;
+			if (isFirstNode) setStartStepId(newLocalId);
+
 			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px).
 			// Count only regular nodes so the Task Agent's fixed slot doesn't offset the stagger.
 			const regularCount = prev.filter(
@@ -384,7 +394,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			const position: Point = { x: 120, y: 80 + regularCount * 100 };
 			return [...prev, { step: newStep, position }];
 		});
-		if (isFirstNode) setStartStepId(newLocalId);
 	}
 
 	const handleNodePositionChange = useCallback((localId: string, newPosition: Point) => {
