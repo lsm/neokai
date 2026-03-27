@@ -101,6 +101,15 @@ export class SpaceWorktreeManager {
 			);
 		}
 
+		// If a stale directory exists at the worktree path (from a previous crashed run),
+		// remove it so git worktree add can proceed cleanly.
+		if (existsSync(worktreePath)) {
+			this.logger.warn(
+				`Stale directory detected at ${worktreePath} — removing before recreating worktree`
+			);
+			rmSync(worktreePath, { recursive: true, force: true });
+		}
+
 		try {
 			execFileSync(
 				'git',

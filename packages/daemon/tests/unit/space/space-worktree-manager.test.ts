@@ -9,6 +9,7 @@
  * - createTaskWorktree: creates filesystem worktree + DB record
  * - createTaskWorktree: idempotent (returns existing record on second call)
  * - createTaskWorktree: stale branch cleanup before recreation
+ * - createTaskWorktree: recovers from stale directory left by crashed run
  * - removeTaskWorktree: removes worktree dir, branch, and DB record
  * - removeTaskWorktree: no-op when no record exists
  * - getTaskWorktreePath: returns path for existing task, null for missing
@@ -214,6 +215,20 @@ describe('createTaskWorktree', () => {
 		// Worktree should be created successfully
 		// The ~1 suffix is valid for git (means "1 commit before base-branch-special")
 		// but would be interpreted by a shell if passed through execSync template string
+		expect(existsSync(result.path)).toBe(true);
+	});
+
+	test('recovers from stale directory left by a crashed previous run', async () => {
+		const taskId = seedTask(db, spaceId, 'task-stale-dir', 99);
+		const slug = worktreeSlug('Stale Dir Task', 99);
+		const expectedPath = join(repoDir, '.worktrees', slug);
+
+		// Simulate a partial previous run: directory exists but no DB record
+		mkdirSync(expectedPath, { recursive: true });
+
+		// Should succeed without throwing
+		const result = await manager.createTaskWorktree(spaceId, taskId, 'Stale Dir Task', 99);
+		expect(result.path).toBe(expectedPath);
 		expect(existsSync(result.path)).toBe(true);
 	});
 
