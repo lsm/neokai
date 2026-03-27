@@ -2,7 +2,7 @@
 
 ## Goal and Scope
 
-Implement the core Gate + Channel architecture: a single unified Gate entity with a persistent data store and composable conditions. No class hierarchy of gate types — one Gate concept, three condition types, one set of MCP tools. This is the foundation that all other milestones build on.
+Implement the core Gate + Channel architecture: a single unified Gate entity with a persistent data store and composable conditions. No class hierarchy of gate types — one Gate concept, five condition types (including `all`/`any` composition), one set of MCP tools. This is the foundation that all other milestones build on.
 
 ## Architecture
 
@@ -92,7 +92,7 @@ One `evaluate(gate)` function with a switch on `condition.type`:
 
 ### Task 1.2: Implement Unified Gate Evaluator
 
-**Description**: Implement a single `evaluate(gate)` function that handles all three condition types. Replace the existing per-type evaluator logic in `ChannelGateEvaluator`.
+**Description**: Implement a single `evaluate(gate)` function that handles all five condition types (including recursive `all`/`any`). Replace the existing per-type evaluator logic in `ChannelGateEvaluator`.
 
 **Subtasks**:
 1. Create `evaluateGate(gate: Gate): boolean` function:

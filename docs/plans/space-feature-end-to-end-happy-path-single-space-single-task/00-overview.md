@@ -157,7 +157,7 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 1. **Unified Gate with data store**: The existing `ChannelGateEvaluator` has separate gate type handling but lacks the **gate data store** concept. Refactor to a single unified Gate entity with composable conditions and persistent data stores.
 
-2. **Composable conditions**: Replace the current per-type evaluator logic with the three condition types (`always`, `check`, `count`) that cover all workflow behaviors.
+2. **Composable conditions**: Replace the current per-type evaluator logic with five condition types (`always`, `check`, `count`, `all`, `any`) that cover all workflow behaviors including AND/OR composition.
 
 3. **Extended workflow template**: Create `CODING_WORKFLOW_V2` matching the target pipeline with gates configured via conditions.
 
