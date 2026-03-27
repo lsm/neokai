@@ -4103,8 +4103,15 @@ export function runMigration63(db: BunDatabase): void {
 			db.exec(`ALTER TABLE spaces ADD COLUMN slug TEXT`);
 		}
 
-		// Step 2: Backfill slugs from existing space names
-		const rows = db.prepare('SELECT id, name FROM spaces').all() as Array<{
+		// Step 2: Backfill slugs only for rows that don't have one yet.
+		// Use WHERE slug IS NULL so we don't overwrite slugs that were already set
+		// (e.g., if a space was created between a partial migration run and this fix).
+		const existingSlugs = db
+			.prepare('SELECT slug FROM spaces WHERE slug IS NOT NULL')
+			.all() as Array<{ slug: string }>;
+		const usedSlugs = new Set<string>(existingSlugs.map((r) => r.slug));
+
+		const rows = db.prepare('SELECT id, name FROM spaces WHERE slug IS NULL').all() as Array<{
 			id: string;
 			name: string;
 		}>;
