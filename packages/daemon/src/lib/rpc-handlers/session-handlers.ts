@@ -156,6 +156,21 @@ export function setupSessionHandlers(
 		}
 	});
 
+	/**
+	 * Return MCP servers injected from enabled skills for the given session.
+	 * Reflects the AppMcpServer.enabled flag: disabled servers are excluded even
+	 * if the wrapping skill is enabled. Useful for testing and debugging injection.
+	 */
+	messageHub.onRequest('session.getSkillMcpServers', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error(`Session not found: ${targetSessionId}`);
+		}
+		const servers = agentSession.optionsBuilder.getSkillMcpServers();
+		return { servers };
+	});
+
 	messageHub.onRequest('session.update', async (data, _ctx) => {
 		const { sessionId: targetSessionId, ...updates } = data as UpdateSessionRequest & {
 			sessionId: string;

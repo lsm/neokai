@@ -932,6 +932,33 @@ describe('QueryOptionsBuilder', () => {
 			});
 		});
 
+		it('should skip disabled AppMcpServer entries even when the wrapping skill is enabled', async () => {
+			const disabledAppMcpServer = {
+				...mockAppMcpServer,
+				enabled: false,
+			};
+			const mockAppMcpServerRepo = {
+				get: mock(() => disabledAppMcpServer),
+			};
+			const mockSkillsManager = {
+				// Skill itself is enabled (getEnabledSkills returns it)
+				getEnabledSkills: mock(() => [enabledSkills[1]]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Disabled AppMcpServer must not be injected even though the skill is enabled
+			expect(options.mcpServers).toBeUndefined();
+		});
+
 		it('should skip MCP server skills when referenced app_mcp_servers entry is deleted', async () => {
 			const mockAppMcpServerRepo = {
 				get: mock(() => null), // Simulates deleted entry
@@ -1138,9 +1165,12 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.mcpServers?.['web-search-mcp']).toBeUndefined();
 		});
 
-		it('injects web-search-mcp MCP server into session options when skill is enabled', async () => {
+		it('injects web-search-mcp MCP server into session options when skill and AppMcpServer are both enabled', async () => {
 			const skill = skillsManager.listSkills().find((s) => s.name === 'web-search-mcp')!;
 			skillsManager.setSkillEnabled(skill.id, true);
+			// The backing AppMcpServer is created with enabled=false (opt-in); enable it too
+			const braveServer = appMcpServerRepo.getByName('brave-search')!;
+			appMcpServerRepo.update(braveServer.id, { enabled: true });
 
 			const context: QueryOptionsBuilderContext = {
 				session: mockSession,
