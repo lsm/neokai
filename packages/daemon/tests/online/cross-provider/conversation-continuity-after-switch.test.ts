@@ -154,7 +154,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Re-read sdkSessionId — it should be the same
 		const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
 		expect(sdkIdAfter).toBe(sdkIdBefore);
-	}, 60000);
+	}, 90000);
 
 	test('sdkSessionId is preserved after cross-provider model switch (GLM -> MiniMax)', async () => {
 		// Create session with GLM
@@ -188,7 +188,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// sdkSessionId should be preserved
 		const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
 		expect(sdkIdAfter).toBe(sdkIdBefore);
-	}, 60000);
+	}, 90000);
 
 	test('message count does not reset after model switch', async () => {
 		// Create session with GLM
@@ -222,7 +222,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Get message count after switch — should not reset
 		const countAfter = await getMessageCount(daemon, sessionId);
 		expect(countAfter).toBeGreaterThanOrEqual(countBefore);
-	}, 60000);
+	}, 90000);
 
 	test('sdkSessionId unchanged after post-switch message completes (cross-provider)', async () => {
 		// Create session with MiniMax
@@ -349,5 +349,5 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		})) as { session: { sdkSessionId?: string } };
 
 		expect(sessionResult.session.sdkSessionId).toBe(sdkIdBefore);
-	}, 60000);
+	}, 90000);
 });
