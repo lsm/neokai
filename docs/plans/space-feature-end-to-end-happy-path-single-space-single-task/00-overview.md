@@ -2,21 +2,85 @@
 
 ## Goal Summary
 
-Make the happy path for a single space with a single task using a single workflow work end-to-end: human converses with Space Agent, creates a task, Space Agent selects the default coding workflow, and the workflow runs through Plan → (human gate) → Code → Review → QA → Done with proper gate enforcement, agent-to-agent messaging, and completion detection.
+Make the happy path for a single space with a single task using a single workflow work end-to-end: human converses with Space Agent, creates a task, Space Agent selects the default coding workflow, and the workflow runs through the full pipeline with proper gate enforcement, agent-to-agent messaging, and completion detection.
 
-**Scope constraints**: Single task, single space, single workflow run. No goals/missions involved. No parallel reviewers (that comes later).
+**Scope constraints**: Single task, single space, single workflow run. No goals/missions involved.
+
+## Target Workflow Pipeline
+
+```
+Planning → [PR Gate] → Plan Review (reviewer agents) → [Human Gate] → Coding Agent → [PR Gate] → 3 Coding Reviewers (parallel) → [Aggregate Gate: 3 yes votes required] → QA → Task Agent (Done)
+```
+
+**Gate types**:
+- **PR Gate**: Blocks until a PR is created. Stores the PR URL. Agents downstream can read it.
+- **Human Gate**: Blocks until a human approves. Shows artifacts view with all changes in the worktree.
+- **Aggregate Gate**: Blocks until a quorum is met (e.g., 3/3 reviewers vote "yes"). Stores each reviewer's vote.
+- **Task Result Gate**: Simple pass/fail based on agent's `report_done` result.
+
+## Core Architecture: Gates + Channels
+
+**CRITICAL DESIGN DECISION**: The Space workflow uses a Gate + Channel model instead of a complex state machine. This is fundamentally simpler and more composable than tracking many states with complex transition rules.
+
+### Gates
+
+A **Gate** is a simple condition that can pass or not, **with a data store**. Gates hold the data they need (PR URLs, review results, approval status). Agents can read and write gate data.
+
+```typescript
+interface Gate {
+  id: string;
+  type: 'pr' | 'human' | 'aggregate' | 'task_result' | 'always';
+  // The gate's data store — agents can read/write this
+  data: Record<string, unknown>;
+  // Evaluate whether the gate passes
+  evaluate(): boolean;
+}
+```
+
+**Gate data examples**:
+- PR Gate: `{ prUrl: 'https://github.com/...', prNumber: 123, branch: 'feat/xyz' }`
+- Human Gate: `{ approved: true, approvedBy: 'user123', approvedAt: '2025-...' }`
+- Aggregate Gate: `{ votes: { reviewer1: 'approve', reviewer2: 'approve', reviewer3: 'approve' }, quorum: 3 }`
+- Task Result Gate: `{ result: 'passed', summary: '...' }`
+
+**Key property**: Gates persist their data to SQLite. Agents read/write gate data via MCP tools (`read_gate`, `write_gate`). The gate's `evaluate()` checks its own data store — no external state machine needed.
+
+### Channels
+
+A **Channel** controls who can talk to whom (communication flow). A channel connects two nodes and has a gate that controls when messages can flow.
+
+```typescript
+interface Channel {
+  id: string;
+  from: string;  // source node ID
+  to: string;    // target node ID
+  gate: Gate;    // controls when this channel opens
+  isCyclic?: boolean;  // for feedback loops
+}
+```
+
+### Why This Is Simpler
+
+Instead of a state machine with states like `planning`, `waiting_for_plan_review`, `waiting_for_human_approval`, `coding`, `waiting_for_code_review`, `waiting_for_qa`, `done`, `failed`, `needs_attention` — each with complex transition rules — we have:
+
+1. **Nodes** execute agents (one at a time or in parallel)
+2. **Channels** connect nodes with gates
+3. **Gates** are simple conditions with data stores
+4. The workflow "state" is just: which nodes are active + what data is in each gate
+
+Adding new behaviors = adding new gates and channels, not new states and transition rules.
 
 ## Current State Analysis
 
 ### What Already Exists (Working Infrastructure)
 
-1. **Space data model**: `Space`, `SpaceTask`, `SpaceWorkflow`, `SpaceWorkflowRun`, `SpaceAgent` types in `packages/shared/src/types/space.ts` -- fully defined with channels, gates, multi-agent nodes.
+1. **Space data model**: `Space`, `SpaceTask`, `SpaceWorkflow`, `SpaceWorkflowRun`, `SpaceAgent` types in `packages/shared/src/types/space.ts` — fully defined with channels, gates, multi-agent nodes.
 
-2. **Space CRUD**: `SpaceManager`, `SpaceAgentManager`, `SpaceWorkflowManager`, `SpaceTaskManager` -- all backed by SQLite repos with reactive DB notifications.
+2. **Space CRUD**: `SpaceManager`, `SpaceAgentManager`, `SpaceWorkflowManager`, `SpaceTaskManager` — all backed by SQLite repos with reactive DB notifications.
 
 3. **Built-in workflows**: `CODING_WORKFLOW` (Plan -> Code -> Verify -> Done with human gate), `RESEARCH_WORKFLOW`, `REVIEW_ONLY_WORKFLOW` in `packages/daemon/src/lib/space/workflows/built-in-workflows.ts`. Seeded at space creation time.
 
-4. **Preset agents**: Coder, General, Planner, Reviewer -- seeded via `seedPresetAgents()` at space creation.
+4. **Preset agents**: Coder, General, Planner, Reviewer — seeded via `seedPresetAgents()` at space creation.
 
 5. **Channel routing**: `ChannelRouter` with gate evaluation (`always`, `human`, `condition`, `task_result`), `ChannelResolver` for channel topology, `ChannelGateEvaluator`.
 
@@ -36,100 +100,121 @@ Make the happy path for a single space with a single task using a single workflo
 
 ### What Needs to Be Built / Fixed
 
-1. **Extended workflow template**: The current `CODING_WORKFLOW` is a simple 4-node graph (Plan -> Code -> Verify -> Done). The goal asks for a richer pipeline (Plan -> Code -> Review -> QA -> Done). We need to **create a new V2 workflow** that replaces Verify with a proper Review → QA chain.
+1. **Gate + Channel architecture refactor**: The existing `ChannelGateEvaluator` supports basic gate types but lacks the **gate data store** concept. Gates need to persist data (PR URLs, review votes, approval status) that agents can read/write. This is the core architectural change.
 
-2. **End-to-end integration testing**: No single test exercises the full happy path from conversation -> task creation -> workflow run start -> agent execution -> gate enforcement -> completion. The existing tests are unit/online tests for individual components.
+2. **New gate types**: PR Gate (checks PR exists, stores URL), Aggregate Gate (quorum voting), and enhanced Human Gate (stores approval + shows artifacts).
 
-3. **Node agent prompt specialization**: Node agents (planner, coder, reviewer, QA) need proper system prompts that include git workflow, review posting, PR creation, bypass markers, and review feedback handling -- currently only the custom agent factory provides a basic git workflow prompt.
+3. **Extended workflow template**: Create `CODING_WORKFLOW_V2` matching the target pipeline with PR gates, parallel reviewers, and aggregate gate.
 
-4. **Single-pass reviewer support**: The goal description wants eventual parallel async reviewers, but we start with single-pass to prove gate mechanism. Need to add a "single reviewer" step that the existing reviewer agent can fill.
+4. **Node agent prompt specialization**: Node agents need proper system prompts with git workflow, PR creation, review posting, gate data writing.
 
-5. **QA agent step**: A verification agent that checks test coverage, CI pipeline status, and PR mergeability. Currently `CODING_WORKFLOW` has a "Verify & Test" step using a general agent, but the prompt is minimal. QA replaces Verify entirely.
+5. **Parallel reviewer support**: The workflow needs 3 reviewer nodes that run in parallel, with an aggregate gate requiring all 3 to approve before QA runs.
 
-6. **Human gate UX**: The human gate mechanism exists in the backend (ChannelGateEvaluator supports `human` type gates), but there is no frontend UI for humans to see the gate, understand what's being requested, and approve/reject. This needs a full stack implementation.
+6. **QA agent step**: Verification agent that checks test coverage, CI status, and PR mergeability.
 
-7. **Worktree isolation for node agents**: Currently `TaskAgentManager.spawnSubSession()` passes `workspacePath: space.workspacePath` directly with no worktree isolation. All node agents share the same working directory. Need to investigate and implement proper git worktree isolation.
+7. **Human gate UI with canvas visualization**: Live workflow visualization on a canvas. Clicking a human gate opens an artifacts view showing all changes in the worktree. Clicking individual changes renders file diffs. Similar to GitHub Actions visualization but with human-in-the-loop nodes.
 
-8. **Task Agent summary step**: A "Done" step where the Task Agent summarizes work and PR status for the human.
+8. **Worktree isolation (one per task)**: Currently no worktree isolation exists. Need ONE worktree per task (shared by all agents in that task), with short human-readable folder names (e.g., `alpha-3`, `nova-7`).
 
-9. **Online integration test for the full workflow**: Exercise the pipeline with mocked SDK (dev proxy) to prove the end-to-end flow.
+9. **Gate data MCP tools**: Agents need `read_gate` and `write_gate` MCP tools to interact with gate data stores.
+
+10. **End-to-end integration testing**: No single test exercises the full pipeline.
 
 ## High-Level Approach
 
-**Phase 1 -- Extend the workflow and enhance agents** (Milestones 1-3):
-- Enhance node agent prompts (git workflow, review posting, PR management)
-- Create extended CODING_WORKFLOW_V2: Plan → Code → Review → Done (4 nodes)
-- Implement worktree isolation and session factory improvements
+**Phase 1 — Gate + Channel architecture and workflow template** (Milestones 1-3):
+- Implement gate data store and new gate types (PR, Aggregate, enhanced Human)
+- Enhance node agent prompts (git workflow, review posting, PR management, gate interaction)
+- Create extended CODING_WORKFLOW_V2 with the full pipeline
+- Implement worktree isolation (one per task, short names)
 
-**Phase 2 -- Add QA, human gate, and completion verification** (Milestones 4-6):
-- Add QA node to workflow: Plan → Code → Review → QA → Done (5 nodes)
-- Build human gate UX (frontend widget + backend RPC + state transitions)
-- Wire completion flow so Task Agent reports final status to human
+**Phase 2 — QA, human gate UI, and completion** (Milestones 4-6):
+- Add QA node to the pipeline
+- Build human gate canvas UI with artifacts view and diff rendering
+- Wire completion flow so Task Agent reports final status
 - Implement conversation-to-task entry point
 
-**Phase 3 -- End-to-end testing and hardening** (Milestones 7-9):
-- Online integration tests with dev proxy (broken into focused sub-tests)
-- E2E test exercising the full UI flow
-- Fix bugs found during integration and E2E testing
+**Phase 3 — End-to-end testing and hardening** (Milestones 7-9):
+- Online integration tests with dev proxy
+- E2E Playwright test exercising the full UI flow
+- Bug fixes and hardening
 
 ## Milestones
 
-1. **Enhanced node agent prompts** -- Add git/PR/review-specific system prompts for planner, coder, and reviewer node agents (mirrors the room system's prompt quality)
+1. **Gate data store and new gate types** — Implement the gate data store (persisted to SQLite), `read_gate`/`write_gate` MCP tools, and new gate types: PR Gate, Aggregate Gate, enhanced Human Gate
 
-2. **Extended coding workflow (Phase 1)** -- Create CODING_WORKFLOW_V2 with 4 nodes: Plan → Code → Review → Done, with Review→Code feedback loop
+2. **Enhanced node agent prompts** — Add git/PR/review-specific system prompts for planner, coder, reviewer, and QA agents, including gate data interaction instructions
 
-3. **Node agent session factory improvements** -- Implement worktree isolation, configure feature flags, and ensure MCP tool access for node agent sessions
+3. **Extended coding workflow (V2)** — Create CODING_WORKFLOW_V2 with the full pipeline: Planning → [PR Gate] → Plan Review → [Human Gate] → Coding → [PR Gate] → 3 Reviewers (parallel) → [Aggregate Gate] → QA → Done
 
-4. **QA agent node** -- Add QA as the 5th node (replaces Verify): Plan → Code → Review → QA → Done, with QA→Code and Review→Code feedback loops
+4. **Worktree isolation (one per task)** — Implement single worktree per task with short human-readable names (e.g., `alpha-3`, `nova-7`), shared by all agents in the task
 
-5. **Human gate and completion flow** -- Build full-stack human gate UX (backend + frontend) and wire completion notifications to human
+5. **QA agent node** — Add QA as the verification step before Done, with QA→Code feedback loop
 
-6. **Online integration test** -- Exercise the full happy path with dev proxy, broken into focused per-component sub-tests
+6. **Human gate canvas UI** — Build live workflow canvas visualization with clickable human gates that show artifacts view with file diffs (GitHub Actions-style but with human-in-the-loop)
 
-7. **E2E test** -- Playwright test exercising the full UI flow from space chat through task creation and workflow execution
+7. **Online integration test** — Exercise the full happy path with dev proxy, broken into focused per-component sub-tests
 
-8. **Bug fixes and hardening** -- Fix issues discovered during testing; add error handling, iteration cap exhaustion, and edge case coverage
+8. **E2E test** — Playwright test exercising the full UI flow from space chat through task creation and workflow execution
+
+9. **Bug fixes and hardening** — Fix issues discovered during testing; add error handling and edge case coverage
 
 ## Final Workflow Graph
 
 ```
-Plan ---[human gate]--> Code ---[always gate]--> Review ---[task_result gate: passed]--> QA ---[task_result gate: passed]--> Done
-                                              ^                    |                          |
-                                              |                    | [task_result: failed]     | [task_result: failed]
-                                              +--------------------+                          |
-                                                                   (reviewer feedback         +------------------+
-                                                                    to coder via send_message)                    |
-                                                                                                                       |
-                                              +----------------------------------------------+
-                                              | (QA feedback to coder via channel)
+Planning ──[PR Gate]──► Plan Review (reviewers) ──[Human Gate]──► Coding ──[PR Gate]──► Reviewer 1 ─┐
+                                                                    ▲                    Reviewer 2 ─┼─[Aggregate Gate: 3 yes]──► QA ──[Task Result: pass]──► Done
+                                                                    │                    Reviewer 3 ─┘                            │
+                                                                    │                                                             │
+                                                                    └──────────── [Task Result: fail, cyclic] ────────────────────┘
+                                                                    │                         │
+                                                                    └── [Review reject, cyclic]┘
 ```
 
-**All cyclic channels route back to Code, never to Plan.** This ensures:
-- Code-level issues (review feedback, QA failures) are fixed by the Coder directly without requiring re-planning
-- The human gate only fires once (Plan → Code), not on every iteration
-- The Coder can iterate on feedback from both Reviewer and QA independently
+**Gate data flow**:
+- Planner writes to PR Gate: `{ prUrl, prNumber, branch }`
+- Plan reviewers read PR Gate data to find the plan PR
+- Human reads gate artifacts view, clicks approve → Human Gate data: `{ approved: true }`
+- Coder writes to PR Gate: `{ prUrl, prNumber, branch }`
+- Each reviewer writes to Aggregate Gate: `{ votes: { [reviewerId]: 'approve' | 'reject' } }`
+- Aggregate Gate evaluates: passes when `Object.values(votes).filter(v => v === 'approve').length >= quorum`
+- QA reads PR Gate data, runs tests, writes Task Result Gate data
 
-**Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow run transitions to `failed` status with a `failureReason` of `'maxIterationsReached'` (see M5 Task 5.1 for the `WorkflowRunStatus` type expansion and `failureReason` field addition). A notification is sent to the human requesting manual intervention. Note: the current `WorkflowRunStatus` type in `packages/shared/src/types/space.ts` does not include `'failed'` — until M5 lands, this uses `needs_attention` with error metadata as an interim.
+**All cyclic channels route back to Coding, never to Planning.** This ensures:
+- Code-level issues (review feedback, QA failures) are fixed by the Coder directly without re-planning
+- The human gate only fires once (Plan Review → Coding), not on every iteration
+- The Coder can iterate on feedback from both reviewers and QA independently
+
+**Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow transitions to `failed` with a `failureReason` of `'maxIterationsReached'`.
 
 ## Cross-Milestone Dependencies
 
-- Milestone 1 (prompts) and Milestone 2 (extended workflow) can be developed in parallel
-- Milestone 3 (session factory) can start in parallel with M2; depends on M1 only for Task 3.1 (coder prompt defines git workflow needs)
-- Milestone 4 (QA agent) depends on Milestone 2 (V2 workflow template provides the base to extend) -- does NOT depend on M3
-- Milestone 5 (human gate/completion) depends on Milestone 4 (full 5-node pipeline must exist)
-- Milestone 6 (online test) depends on Milestone 5 (full pipeline with human gate must work)
-- Milestone 7 (E2E test) depends on Milestone 5 (full pipeline with human gate must work); can start in parallel with M6
-- Milestone 8 (hardening) depends on M6 and M7
+- Milestone 1 (gate data store) is the foundation — M2 and M3 depend on it
+- Milestone 2 (prompts) depends on M1 (agents need `read_gate`/`write_gate` instructions)
+- Milestone 3 (V2 workflow) depends on M1 (new gate types must exist)
+- Milestone 4 (worktree) can start in parallel with M2/M3
+- Milestone 5 (QA) depends on M3 (V2 workflow template must exist)
+- Milestone 6 (human gate UI) depends on M1 (gate data store) and M3 (V2 workflow with human gate)
+- Milestone 7 (online test) depends on M5 and M6
+- Milestone 8 (E2E test) depends on M6; can start in parallel with M7
+- Milestone 9 (hardening) depends on M7 and M8
 
 ## V2 Workflow Seeding Strategy
 
-- `CODING_WORKFLOW_V2` is seeded alongside the existing workflows (additive, not replacing)
+- `CODING_WORKFLOW_V2` is seeded alongside existing workflows (additive, not replacing)
 - Existing spaces are not affected (idempotent seeding)
-- The V2 workflow gets a `tag: 'default'` so `workflow-selector.ts` ranks it first for coding-type requests
-- The existing `CODING_WORKFLOW` (V1) is kept for backward compatibility but is no longer the default
-- New spaces created after the V2 seed will have both V1 and V2 available, with V2 as the suggested default
-- **V1→V2 migration is out of scope for this PR.** Existing spaces that were seeded with V1 retain the V1 workflow. V1's `Verify → Plan (on fail)` loop remains (which sends failures back to the Planner, not the Coder — this is intentional for V1's simpler topology). A future PR can add a migration that switches existing spaces to V2.
+- V2 gets `tag: 'default'` so workflow selector ranks it first for coding-type requests
+- Existing `CODING_WORKFLOW` (V1) kept for backward compatibility
+- **V1→V2 migration is out of scope**
+
+## Worktree Strategy
+
+- **One worktree per task** (shared by all agents in that task — planner, coder, reviewer, QA all work in the same worktree)
+- **Short, human-readable folder names**: `alpha-3`, `nova-7`, `flux-2` — short adjective + dash + number (similar to Codex naming)
+- The worktree name does NOT need to associate with session IDs — the DB links everything
+- Folder name just needs to be unique and memorable
+- Agents work sequentially in the task worktree, so no conflicts
 
 ## Total Estimated Task Count
 
-28 tasks across 8 milestones
+~30 tasks across 9 milestones
