@@ -432,10 +432,16 @@ export function setupSpaceWorkflowRunHandlers(
 
 		if (!params.runId) throw new Error('runId is required');
 		if (!params.gateId) throw new Error('gateId is required');
-		if (!params.data || typeof params.data !== 'object') throw new Error('data must be an object');
+		if (!params.data || typeof params.data !== 'object' || Array.isArray(params.data)) {
+			throw new Error('data must be an object');
+		}
 
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
+			throw new Error(`Cannot write gate data on a ${run.status} workflow run`);
+		}
 
 		const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
 
