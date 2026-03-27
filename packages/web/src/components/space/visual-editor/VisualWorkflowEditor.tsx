@@ -395,6 +395,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
 			).length;
 			const position: Point = { x: 120, y: 80 + regularCount * 100 };
+
+			// Auto-set start step for the first regular node (pure — reads from prev).
+			const isFirstRegular = regularCount === 0;
+			if (isFirstRegular) setStartStepId(newLocalId);
+
 			return [...prev, { step: newStep, position }];
 		});
 	}

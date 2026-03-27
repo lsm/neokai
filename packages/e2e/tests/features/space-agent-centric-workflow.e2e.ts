@@ -122,19 +122,12 @@ test.describe('Agent-Centric Workflow', () => {
 		// Add a node and configure two agents so agentRoles is populated,
 		// which gives the ChannelEditor select dropdowns instead of text inputs.
 		await editor.getByTestId('add-step-button').click();
-		// Wait for exactly 1 non-Task-Agent node. If 2 appear (product bug: addStep
-		// double-invokes in dev), wait briefly then use .last() (the newly added node).
-		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
-		try {
-			await expect(nodes).toHaveCount(1, { timeout: 2000 });
-		} catch {
-			// 2 nodes appeared (known product issue). Use the last one (most recent).
-			await page.waitForTimeout(200);
-		}
-		const clickedNode = (await nodes.count()) > 1 ? nodes.last() : nodes.first();
-		await clickedNode.click();
+		// :not([data-task-agent]) excludes the Task Agent virtual node by its own attribute.
+		// Note: Playwright's filter({hasNot}) only matches descendants, not the element itself.
+		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+		await nodes.first().click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Parallel Step');
@@ -183,16 +176,10 @@ test.describe('Agent-Centric Workflow', () => {
 
 		// Add a node with two agents so agentRoles is populated
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
-		try {
-			await expect(nodes).toHaveCount(1, { timeout: 2000 });
-		} catch {
-			await page.waitForTimeout(200);
-		}
-		const clickedNode = (await nodes.count()) > 1 ? nodes.last() : nodes.first();
-		await clickedNode.click();
+		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+		await nodes.first().click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Gate Step');
@@ -238,16 +225,10 @@ test.describe('Agent-Centric Workflow', () => {
 
 		// Add a step with two agents
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
-		try {
-			await expect(nodes).toHaveCount(1, { timeout: 2000 });
-		} catch {
-			await page.waitForTimeout(200);
-		}
-		const clickedNode = (await nodes.count()) > 1 ? nodes.last() : nodes.first();
-		await clickedNode.click();
+		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+		await nodes.first().click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Parallel Agents');
@@ -282,18 +263,11 @@ test.describe('Agent-Centric Workflow', () => {
 		await switchToVisualMode(page);
 
 		const editorReopen = page.getByTestId('visual-workflow-editor');
-		const reopenedNodes = editorReopen.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
-		// The saved workflow may have been serialized with a double-invocation node artifact.
-		// Apply the same try/catch workaround used during creation.
-		try {
-			await expect(reopenedNodes).toHaveCount(1, { timeout: 3000 });
-		} catch {
-			await page.waitForTimeout(200);
-		}
-		const reopenedNode =
-			(await reopenedNodes.count()) > 1 ? reopenedNodes.last() : reopenedNodes.first();
+		const reopenedNodes = editorReopen.locator(
+			'[data-testid^="workflow-node-"]:not([data-task-agent])'
+		);
+		await expect(reopenedNodes).toHaveCount(1, { timeout: 5000 });
+		const reopenedNode = reopenedNodes.first();
 
 		// Agent badges should be visible after reload
 		const reopenedBadges = reopenedNode.getByTestId('agent-badges');
@@ -320,16 +294,10 @@ test.describe('Agent-Centric Workflow', () => {
 
 		// Add step with two agents
 		await editor.getByTestId('add-step-button').click();
-		const nodes = editor.locator('[data-testid^="workflow-node-"]').filter({
-			hasNot: page.locator('[data-task-agent="true"]'),
-		});
-		try {
-			await expect(nodes).toHaveCount(1, { timeout: 2000 });
-		} catch {
-			await page.waitForTimeout(200);
-		}
-		const clickedNode = (await nodes.count()) > 1 ? nodes.last() : nodes.first();
-		await clickedNode.click();
+		const nodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent])');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+		await nodes.first().click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Collab Step');

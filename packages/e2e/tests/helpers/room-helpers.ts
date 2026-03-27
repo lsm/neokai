@@ -73,7 +73,14 @@ export async function createTask(
 		async ({ rId, t, d }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
-			const res = await hub.request('task.create', { roomId: rId, title: t, description: d });
+			const res = await hub.request('task.create', {
+				roomId: rId,
+				title: t,
+				description: d,
+				// Use 'draft' to prevent the scheduler from spawning a worktree
+				// (the E2E workspace is not a git repo, so worktree creation fails).
+				status: 'draft',
+			});
 			return (res as { task: { id: string } }).task.id;
 		},
 		{ rId: roomId, t: title, d: description }

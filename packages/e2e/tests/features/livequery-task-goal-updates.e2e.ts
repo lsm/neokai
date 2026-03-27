@@ -47,6 +47,9 @@ async function createTask(
 				roomId: rId,
 				title: t,
 				description: 'LiveQuery E2E test task',
+				// Use 'draft' to prevent the scheduler from spawning a worktree
+				// (the E2E workspace is not a git repo, so worktree creation fails).
+				status: 'draft',
 			});
 			return (res as { task: { id: string } }).task.id;
 		},
