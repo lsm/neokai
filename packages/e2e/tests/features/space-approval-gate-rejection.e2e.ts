@@ -27,9 +27,14 @@
  * because its condition is `{ type: 'check', field: 'approved' }` and no gate data has
  * been written yet. Rejection sets approved=false → gate becomes `blocked`, and the run
  * transitions to `needs_attention` with failureReason `humanRejected`.
+ *
+ * Timeout conventions:
+ *   - 10000ms: state transitions requiring a server round-trip (gate data load, run status)
+ *   - 5000ms: UI-only changes (popup visibility, overlay open/close, tab content)
  */
 
 import { test, expect } from '../../fixtures';
+import type { Page } from '@playwright/test';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
@@ -111,6 +116,34 @@ async function deleteSpace(
 	}
 }
 
+// ─── UI action helpers ────────────────────────────────────────────────────────
+
+/**
+ * Waits for the canvas to be fully initialized (SVG rendered + gate data loaded),
+ * then rejects the waiting_human gate via the action popup.
+ * Resolves once the gate-icon-blocked state is visible on the canvas.
+ */
+async function rejectViaPopup(page: Page): Promise<void> {
+	// Wait for canvas to be in runtime mode with gate data fetched.
+	// Both the container and SVG must be visible before gate icons appear.
+	await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
+
+	// Gate data is fetched async after canvas renders; wait for the gate icon.
+	const waitingGate = page.getByTestId('gate-icon-waiting_human');
+	await expect(waitingGate).toBeVisible({ timeout: 10000 });
+
+	// Open the action popup.
+	await waitingGate.click();
+	await expect(page.locator('button:has-text("Reject")').first()).toBeVisible({ timeout: 5000 });
+
+	// Click Reject in the popup.
+	await page.locator('button:has-text("Reject")').first().click();
+
+	// Wait for the server round-trip: run transitions to needs_attention + gate becomes blocked.
+	await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Approval Gate Rejection', () => {
@@ -145,8 +178,9 @@ test.describe('Approval Gate Rejection', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
-		// Wait for canvas in runtime mode.
+		// Wait for canvas to be fully initialized (container + SVG + gate data).
 		await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
 
 		// The plan-approval-gate starts in waiting_human (amber pulsing).
 		const waitingGate = page.getByTestId('gate-icon-waiting_human');
@@ -154,7 +188,7 @@ test.describe('Approval Gate Rejection', () => {
 
 		// Open the action popup.
 		await waitingGate.click();
-		await expect(page.getByTestId('view-artifacts-btn')).toBeVisible({ timeout: 3000 });
+		await expect(page.getByTestId('view-artifacts-btn')).toBeVisible({ timeout: 5000 });
 
 		// Open the artifacts overlay.
 		await page.getByTestId('view-artifacts-btn').click();
@@ -168,12 +202,12 @@ test.describe('Approval Gate Rejection', () => {
 		await page.getByTestId('reject-button').click();
 
 		// Overlay should close after the rejection decision.
-		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 10000 });
+		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 5000 });
 
 		// The gate should now show as "blocked" (red lock) on the canvas.
 		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
 
-		// Canvas banner: "Workflow paused — awaiting approval".
+		// Canvas banner: "Workflow paused — awaiting approval" (run.failureReason === 'humanRejected').
 		await expect(page.locator('text=Workflow paused — awaiting approval')).toBeVisible({
 			timeout: 10000,
 		});
@@ -187,22 +221,10 @@ test.describe('Approval Gate Rejection', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
-		// Wait for the amber approval gate.
-		const waitingGate = page.getByTestId('gate-icon-waiting_human');
-		await expect(waitingGate).toBeVisible({ timeout: 10000 });
+		await rejectViaPopup(page);
 
-		// Open the action popup.
-		await waitingGate.click();
-		await expect(page.locator('button:has-text("Reject")').first()).toBeVisible({ timeout: 3000 });
-
-		// Click Reject in the popup (not inside the artifacts overlay).
-		await page.locator('button:has-text("Reject")').first().click();
-
-		// Overlay must NOT appear (we didn't open it).
-		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 3000 });
-
-		// Gate should become blocked on the canvas.
-		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
+		// Overlay must NOT have appeared (we never opened it).
+		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 5000 });
 
 		// Canvas banner should indicate needs_attention.
 		await expect(page.locator('text=Workflow paused — awaiting approval')).toBeVisible({
@@ -216,26 +238,16 @@ test.describe('Approval Gate Rejection', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
-		// Wait for canvas and reject via the popup.
-		const waitingGate = page.getByTestId('gate-icon-waiting_human');
-		await expect(waitingGate).toBeVisible({ timeout: 10000 });
-		await waitingGate.click();
-		await expect(page.locator('button:has-text("Reject")').first()).toBeVisible({ timeout: 3000 });
-		await page.locator('button:has-text("Reject")').first().click();
+		await rejectViaPopup(page);
 
-		// Wait for transition to complete.
-		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
-
-		// The waiting_human gate should no longer be visible for this gate
-		// (the plan-approval-gate has transitioned to blocked).
-		// We verify the blocked gate is visible and the canvas shows the attention banner.
+		// Canvas shows the needs_attention banner.
 		await expect(page.locator('text=Workflow paused — awaiting approval')).toBeVisible({
 			timeout: 5000,
 		});
 
-		// The canvas container itself should still be present (not replaced by error fallback).
-		await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 3000 });
-		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 3000 });
+		// The canvas container and SVG are still present (not replaced by an error fallback).
+		await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 5000 });
 	});
 
 	// ─── Test 4: Space remains usable after rejection ─────────────────────────
@@ -244,15 +256,7 @@ test.describe('Approval Gate Rejection', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
-		// Reject via the popup.
-		const waitingGate = page.getByTestId('gate-icon-waiting_human');
-		await expect(waitingGate).toBeVisible({ timeout: 10000 });
-		await waitingGate.click();
-		await expect(page.locator('button:has-text("Reject")').first()).toBeVisible({ timeout: 3000 });
-		await page.locator('button:has-text("Reject")').first().click();
-
-		// Wait for the rejection to register.
-		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
+		await rejectViaPopup(page);
 
 		// Navigate to the Agents tab — space navigation should still work.
 		await page.locator('button:has-text("Agents")').click();
@@ -270,7 +274,7 @@ test.describe('Approval Gate Rejection', () => {
 
 		// The attention banner must still be present.
 		await expect(page.locator('text=Workflow paused — awaiting approval')).toBeVisible({
-			timeout: 3000,
+			timeout: 5000,
 		});
 	});
 
@@ -282,20 +286,20 @@ test.describe('Approval Gate Rejection', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
-		// Initially: amber waiting_human gate.
+		// Initially: amber waiting_human gate is visible.
+		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
 		await expect(page.getByTestId('gate-icon-waiting_human')).toBeVisible({ timeout: 10000 });
 
-		// Reject via popup.
-		await page.getByTestId('gate-icon-waiting_human').click();
-		await expect(page.locator('button:has-text("Reject")').first()).toBeVisible({ timeout: 3000 });
-		await page.locator('button:has-text("Reject")').first().click();
+		await rejectViaPopup(page);
 
-		// After rejection: blocked gate visible, waiting_human gate gone.
+		// After rejection: blocked gate is visible.
 		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
 
-		// The waiting_human gate with this specific plan-approval-gate ID should be gone.
-		// Since the gate transitioned to blocked, no waiting_human gate should be present
-		// (this is the only human approval gate in the pre-coding phase of CODING_WORKFLOW_V2).
+		// The waiting_human gate should no longer be visible.
+		// Assumption: CODING_WORKFLOW_V2 has exactly one human-approval gate in the
+		// pre-coding phase (plan-approval-gate). If the workflow adds more human gates
+		// in the future, this assertion would need revisiting — but for the current
+		// template it confirms the gate correctly transitioned away from waiting_human.
 		await expect(page.getByTestId('gate-icon-waiting_human')).toBeHidden({ timeout: 5000 });
 	});
 });
