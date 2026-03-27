@@ -370,6 +370,35 @@ describe('Coder Agent', () => {
 				expect(prompt).toContain('---TEST_RESULT---');
 			});
 
+			it('includes built-in explorer agent in agents map', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				expect(init.agents).toHaveProperty('explorer');
+			});
+
+			it('explorer agent has only Read, Grep, Glob, Bash tools', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				const explorer = init.agents?.['explorer'];
+				expect(explorer?.tools).toContain('Read');
+				expect(explorer?.tools).toContain('Grep');
+				expect(explorer?.tools).toContain('Glob');
+				expect(explorer?.tools).toContain('Bash');
+				expect(explorer?.tools).not.toContain('Write');
+				expect(explorer?.tools).not.toContain('Edit');
+				expect(explorer?.tools).not.toContain('Task');
+			});
+
+			it('explorer agent uses inherit model', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				expect(init.agents?.['explorer']?.model).toBe('inherit');
+			});
+
+			it('Coder system prompt includes explorer sub-agent instructions', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				const prompt = init.agents?.['Coder']?.prompt ?? '';
+				expect(prompt).toContain('explorer');
+				expect(prompt).toContain('---EXPLORE_RESULT---');
+			});
+
 			it('uses simple preset path when no worker sub-agents configured', () => {
 				const init = createCoderAgentInit(makeConfig());
 				expect(init.agent).toBeUndefined();
@@ -381,8 +410,10 @@ describe('Coder Agent', () => {
 				const init = createCoderAgentInit(
 					makeConfigWithWorkers([{ model: 'haiku' }, { model: 'haiku' }])
 				);
-				// Filter out built-in Coder and tester; count only the helper sub-agents
-				const keys = Object.keys(init.agents ?? {}).filter((k) => k !== 'Coder' && k !== 'tester');
+				// Filter out built-ins (Coder, tester, explorer); count only the helper sub-agents
+				const keys = Object.keys(init.agents ?? {}).filter(
+					(k) => k !== 'Coder' && k !== 'tester' && k !== 'explorer'
+				);
 				// Two haiku configs should produce unique names
 				expect(keys.length).toBe(2);
 				expect(new Set(keys).size).toBe(2);
@@ -529,6 +560,12 @@ describe('Coder Agent', () => {
 		it('does NOT have Task tool (no sub-agent spawning)', () => {
 			const def = buildCoderExplorerAgentDef();
 			expect(def.tools).not.toContain('Task');
+		});
+
+		it('does NOT have WebFetch or WebSearch tools (local exploration only)', () => {
+			const def = buildCoderExplorerAgentDef();
+			expect(def.tools).not.toContain('WebFetch');
+			expect(def.tools).not.toContain('WebSearch');
 		});
 
 		it('uses inherit model', () => {

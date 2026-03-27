@@ -175,7 +175,7 @@ Your job is to gather accurate, focused information about the codebase and retur
 
 ## Rules
 
-1. **Read-only** — you MUST NOT create, edit, or delete any files. No Write, Edit, or file-mutating Bash commands (no \`rm\`, \`mv\`, \`cp\` to new paths, \`git commit\`, etc.)
+1. **Read-only** — you MUST NOT create, edit, or delete any files. No Write, Edit, or file-mutating Bash commands (no rm, mv, cp to new paths, git commit, etc.)
 2. **No sub-agents** — you MUST NOT spawn further sub-agents. Do not use the Task tool.
 3. **Focused exploration** — explore only what is relevant to the question asked; do not wander
 4. **Concise summary** — return findings in the structured format below; omit irrelevant detail
@@ -362,6 +362,22 @@ export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
 			`The tester commits test files to the current branch and returns a \`---TEST_RESULT---\` block.`
 		);
 
+		// Explorer is always available in agent mode
+		sections.push(`\n### Built-in: \`explorer\``);
+		sections.push(
+			`Read-only codebase exploration. Use before implementing complex or unfamiliar changes.`
+		);
+		sections.push(`**Spawn before implementation** when you need to understand the codebase:`);
+		sections.push(
+			`\`\`\`\nTask(subagent_type: "explorer", prompt: "Explore <area/pattern/file> to understand <what you need to know>.")\n\`\`\``
+		);
+		sections.push(
+			`The explorer returns an \`---EXPLORE_RESULT---\` block with relevant files, patterns, dependencies, and findings.`
+		);
+		sections.push(
+			`**Do not spawn explorer for simple single-file tasks** — only for unfamiliar areas.`
+		);
+
 		// Custom helpers (if configured)
 		const helperList = helperAgentNames!.join(', ');
 		sections.push(`\n### Custom helpers: ${helperList}`);
@@ -505,6 +521,7 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 			agents: {
 				Coder: coderAgentDef,
 				tester: buildTesterAgentDef(),
+				explorer: buildCoderExplorerAgentDef(),
 				...helperAgents,
 			},
 			contextAutoQueue: false,
