@@ -159,6 +159,19 @@ describe('seedPresetAgents', () => {
 		}
 	});
 
+	it('General agent has restricted tools (no Write or Edit) — read-only Done node', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.role === 'general');
+
+		expect(general).toBeDefined();
+		expect(general?.tools).not.toContain('Write');
+		expect(general?.tools).not.toContain('Edit');
+		expect(general?.tools).toContain('Read');
+		expect(general?.tools).toContain('Bash');
+		expect(general?.tools).toContain('Grep');
+		expect(general?.tools).toContain('Glob');
+	});
+
 	it('QA agent has restricted tools (no Write or Edit)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const qa = seeded.find((a) => a.role === 'qa');
@@ -179,5 +192,24 @@ describe('seedPresetAgents', () => {
 		expect(qa).toBeDefined();
 		expect(typeof qa?.systemPrompt).toBe('string');
 		expect((qa?.systemPrompt?.length ?? 0) > 0).toBe(true);
+	});
+
+	it('General agent has a system prompt set (Done node summarizer)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.role === 'general');
+
+		expect(general).toBeDefined();
+		expect(typeof general?.systemPrompt).toBe('string');
+		expect((general?.systemPrompt?.length ?? 0) > 0).toBe(true);
+	});
+
+	it('General agent system prompt references done node summarization behavior', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.role === 'general');
+
+		expect(general?.systemPrompt).toContain('Done Node Agent');
+		expect(general?.systemPrompt).toContain('code-pr-gate');
+		expect(general?.systemPrompt).toContain('qa-result-gate');
+		expect(general?.systemPrompt).toContain('ANALYSIS_COMPLETE:');
 	});
 });

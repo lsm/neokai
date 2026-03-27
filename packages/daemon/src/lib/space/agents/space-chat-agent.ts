@@ -220,8 +220,10 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push('');
 	sections.push(
 		`- **\`workflow_run_completed\`** — A workflow run has finished (success or failure summary).\n` +
-			`  Payload fields: \`runId\`, \`reason\`, \`autonomyLevel\`\n` +
-			`  Action: Summarize the outcome to the user and suggest next steps if relevant.`
+			`  Payload fields: \`runId\`, \`summary\` (full Markdown summary from Done node), \`autonomyLevel\`\n` +
+			`  Action: Present the \`summary\` field verbatim to the user (it contains PR link, review outcome, ` +
+			`QA status, and next steps). If \`summary\` is empty, retrieve the run details via \`get_task_detail\` ` +
+			`and compose a brief status update.`
 	);
 
 	// Autonomy level section

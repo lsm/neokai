@@ -13,6 +13,7 @@ import {
 	buildPlannerNodeAgentPrompt,
 	buildCoderNodeAgentPrompt,
 	buildQaNodeAgentPrompt,
+	buildDoneNodeAgentPrompt,
 	createCustomAgentInit,
 	resolveAgentInit,
 	type CustomAgentConfig,
@@ -1681,6 +1682,113 @@ describe('buildQaNodeAgentPrompt', () => {
 	it('is deterministic — returns the same string on multiple calls', () => {
 		const prompt1 = buildQaNodeAgentPrompt();
 		const prompt2 = buildQaNodeAgentPrompt();
+		expect(prompt1).toBe(prompt2);
+	});
+});
+
+// ============================================================================
+// buildDoneNodeAgentPrompt
+// ============================================================================
+
+describe('buildDoneNodeAgentPrompt', () => {
+	it('returns a non-empty string', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(typeof prompt).toBe('string');
+		expect(prompt.length).toBeGreaterThan(0);
+	});
+
+	it('identifies role as Done Node Agent', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('Done Node Agent');
+	});
+
+	it('declares read-only summarization role', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('read-only summarization role');
+	});
+
+	it('explicitly warns not to create commits, push, or open PRs', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('NOT create commits');
+		expect(prompt).toContain('push branches');
+		expect(prompt).toContain('open pull requests');
+	});
+
+	it('references the Git Workflow MANDATORY section to explain bypass', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('Git Workflow (MANDATORY)');
+	});
+
+	it('includes ANALYSIS_COMPLETE bypass marker instruction', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('ANALYSIS_COMPLETE:');
+	});
+
+	it('includes read_gate instruction for code-pr-gate with pr_url field', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('read_gate');
+		expect(prompt).toContain('code-pr-gate');
+		expect(prompt).toContain('pr_url');
+	});
+
+	it('includes read_gate instruction for review-votes-gate with votes field', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('review-votes-gate');
+		expect(prompt).toContain('votes');
+	});
+
+	it('includes read_gate instruction for qa-result-gate with result field', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('qa-result-gate');
+		expect(prompt).toContain('result');
+	});
+
+	it('includes summary Markdown structure with required sections', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('## Workflow Complete');
+		expect(prompt).toContain('### What Was Implemented');
+		expect(prompt).toContain('### Pull Request');
+		expect(prompt).toContain('### Code Review');
+		expect(prompt).toContain('### QA Verification');
+		expect(prompt).toContain('### Suggested Next Steps');
+	});
+
+	it('instructs agent to call report_done with summary', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		expect(prompt).toContain('report_done');
+		expect(prompt).toContain('summary');
+	});
+
+	it('instructs to call report_done BEFORE outputting final response', () => {
+		const prompt = buildDoneNodeAgentPrompt();
+		// Step 5 must explicitly require calling report_done before the final output
+		expect(prompt).toContain('report_done');
+		expect(prompt.toLowerCase()).toContain('before');
+		// The step that mentions calling report_done should precede the bypass marker usage instruction
+		const step5Text = prompt.slice(prompt.indexOf('## Step 5'));
+		expect(step5Text).toContain('report_done');
+		expect(step5Text).toContain('ANALYSIS_COMPLETE:');
+	});
+
+	it('embeds into custom agent system prompt as Agent Instructions when set as systemPrompt', () => {
+		const agent = makeAgent({ role: 'general', systemPrompt: buildDoneNodeAgentPrompt() });
+		const fullPrompt = buildCustomAgentSystemPrompt(agent);
+		expect(fullPrompt).toContain('Agent Instructions');
+		expect(fullPrompt).toContain('Done Node Agent');
+		expect(fullPrompt).toContain('code-pr-gate');
+		expect(fullPrompt).toContain('qa-result-gate');
+		expect(fullPrompt).toContain('ANALYSIS_COMPLETE:');
+	});
+
+	it('assembled prompt explicitly warns against committing code', () => {
+		const agent = makeAgent({ role: 'general', systemPrompt: buildDoneNodeAgentPrompt() });
+		const fullPrompt = buildCustomAgentSystemPrompt(agent);
+		expect(fullPrompt).toContain('NOT create commits');
+	});
+
+	it('is deterministic — returns the same string on multiple calls', () => {
+		const prompt1 = buildDoneNodeAgentPrompt();
+		const prompt2 = buildDoneNodeAgentPrompt();
 		expect(prompt1).toBe(prompt2);
 	});
 });

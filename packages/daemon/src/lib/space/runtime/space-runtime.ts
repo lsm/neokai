@@ -788,6 +788,88 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Finds the result summary from the terminal (Done) node agent task for a
+	 * completed workflow run. Used to populate the `workflow_run_completed`
+	 * notification summary so the Space Chat Agent can surface it to the human.
+	 *
+	 * Strategy:
+	 * 1. Find terminal node IDs — workflow nodes that do not appear as the
+	 *    `from` source in any channel (no outbound channels).
+	 * 2. Look up completed tasks for those node IDs.
+	 * 3. Return the first non-empty result string found.
+	 *
+	 * Channel `from`/`to` values are agent slot names or node names (NOT node UUIDs).
+	 * Cross-node format `"nodeId/agentName"` encodes the node UUID before the slash.
+	 * We resolve all references to node UUIDs before comparing against `node.id`.
+	 *
+	 * Falls back to `undefined` when no terminal task result is available
+	 * (e.g. the Done node hasn't run yet, or the result field was not set).
+	 */
+	private resolveCompletionSummary(runId: string, workflow: SpaceWorkflow): string | undefined {
+		const channels = workflow.channels ?? [];
+		const nodes = workflow.nodes;
+
+		// Build name → nodeId map: node names and per-node agent slot names both resolve
+		// to the containing node's UUID.
+		const nameToNodeId = new Map<string, string>();
+		for (const node of nodes) {
+			nameToNodeId.set(node.name, node.id);
+			if (node.agents) {
+				for (const agent of node.agents) {
+					nameToNodeId.set(agent.name, node.id);
+				}
+			}
+		}
+
+		// Resolve a channel endpoint reference to a node UUID.
+		// Handles: plain names (node/agent-slot), cross-node "nodeId/agentName", '*' wildcard.
+		const resolveRef = (ref: string): string | undefined => {
+			if (ref === '*') return undefined;
+			const slashIdx = ref.indexOf('/');
+			if (slashIdx !== -1) {
+				// Cross-node format — the part before the slash is the node UUID
+				return ref.slice(0, slashIdx);
+			}
+			return nameToNodeId.get(ref);
+		};
+
+		// Collect node IDs that appear as channel sources (have outbound channels).
+		// Bidirectional channels flow both ways, so both endpoints are non-terminal.
+		const nodesWithOutbound = new Set<string>();
+		for (const ch of channels) {
+			const fromId = resolveRef(ch.from);
+			if (fromId) nodesWithOutbound.add(fromId);
+			if (ch.direction === 'bidirectional') {
+				const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
+				for (const target of targets) {
+					const toId = resolveRef(target);
+					if (toId) nodesWithOutbound.add(toId);
+				}
+			}
+		}
+
+		// Terminal nodes are those with no outbound channels
+		const terminalNodeIds = new Set<string>();
+		for (const node of nodes) {
+			if (!nodesWithOutbound.has(node.id)) {
+				terminalNodeIds.add(node.id);
+			}
+		}
+
+		if (terminalNodeIds.size === 0) return undefined;
+
+		// Look up completed tasks for terminal nodes and return the first result
+		const runTasks = this.config.taskRepo.listByWorkflowRun(runId);
+		for (const task of runTasks) {
+			if (task.workflowNodeId != null && terminalNodeIds.has(task.workflowNodeId) && task.result) {
+				return task.result;
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
 	 * Removes from the executors map any executor whose run has reached a
 	 * terminal state (completed or cancelled).
 	 *
@@ -797,6 +879,8 @@ export class SpaceRuntime {
 	 *
 	 * Emits a `workflow_run_completed` notification for runs that reached the
 	 * `completed` state (set by the CompletionDetector or external cancellation).
+	 * Includes the Done node agent's result summary (if available) so the
+	 * Space Chat Agent can surface it to the human.
 	 */
 	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
@@ -805,11 +889,13 @@ export class SpaceRuntime {
 				if (run?.status === 'completed') {
 					const meta = this.executorMeta.get(runId);
 					if (meta) {
+						const summary = this.resolveCompletionSummary(runId, meta.workflow);
 						await this.safeNotify({
 							kind: 'workflow_run_completed',
 							spaceId: meta.spaceId,
 							runId,
 							status: 'completed',
+							summary,
 							timestamp: new Date().toISOString(),
 						});
 					}

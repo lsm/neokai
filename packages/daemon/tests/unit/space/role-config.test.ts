@@ -191,8 +191,14 @@ describe('ROLE_TOOLS', () => {
 		expect(tools).toContain('Glob');
 	});
 
-	it('general has the same tools as coder', () => {
-		expect(ROLE_TOOLS.general).toEqual(ROLE_TOOLS.coder);
+	it('general (Done node) has read-only tools — no Write or Edit', () => {
+		const tools = ROLE_TOOLS.general;
+		expect(tools).not.toContain('Write');
+		expect(tools).not.toContain('Edit');
+		expect(tools).toContain('Read');
+		expect(tools).toContain('Bash');
+		expect(tools).toContain('Grep');
+		expect(tools).toContain('Glob');
 	});
 });
 
