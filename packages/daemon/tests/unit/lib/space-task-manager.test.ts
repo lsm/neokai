@@ -751,5 +751,22 @@ describe('SpaceTaskManager', () => {
 			const otherManager = new SpaceTaskManager(db as any, otherSpace.id);
 			expect(await otherManager.getTaskByNumber(1)).toBeNull();
 		});
+
+		it('concurrent createTask assigns unique taskNumbers', async () => {
+			// Fire 20 async createTask calls concurrently via Promise.all.
+			// The db.transaction() in the repository serialises the SELECT MAX + INSERT,
+			// so each task should get a unique, monotonically increasing taskNumber.
+			const results = await Promise.all(
+				Array.from({ length: 20 }, (_, i) =>
+					manager.createTask({ title: `Concurrent ${i}`, description: '' })
+				)
+			);
+
+			const numbers = results.map((t) => t.taskNumber);
+			const uniqueNumbers = new Set(numbers);
+			expect(uniqueNumbers.size).toBe(20);
+			expect(Math.min(...numbers)).toBe(1);
+			expect(Math.max(...numbers)).toBe(20);
+		});
 	});
 });
