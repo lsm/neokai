@@ -370,6 +370,49 @@ export async function getTasksForNode(
 }
 
 /**
+ * Poll spaceTask.list until a NEW task appears for the given node name.
+ * A "new" task is one whose ID is NOT in `excludeTaskIds` AND has an active
+ * (non-terminal) status: pending or in_progress.
+ *
+ * Use this instead of `waitForNodeActivated` when the node was previously
+ * activated (and those tasks are now completed). `waitForNodeActivated` accepts
+ * 'completed' as a match, so it can return the old completed task instead of
+ * the freshly created one. This helper avoids that by explicitly excluding
+ * known task IDs.
+ */
+export async function waitForNewNodeTask(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	runId: string,
+	nodeNameOrId: string,
+	excludeTaskIds: Set<string>,
+	timeout: number
+): Promise<SpaceTask> {
+	const deadline = Date.now() + timeout;
+	while (Date.now() < deadline) {
+		const tasks = (await daemon.messageHub.request('spaceTask.list', {
+			spaceId,
+		})) as SpaceTask[];
+
+		const match = tasks.find(
+			(t) =>
+				t.workflowRunId === runId &&
+				(t.title === nodeNameOrId ||
+					t.workflowNodeId === nodeNameOrId ||
+					t.agentName === nodeNameOrId) &&
+				!excludeTaskIds.has(t.id) &&
+				(t.status === 'pending' || t.status === 'in_progress')
+		);
+		if (match) return match;
+		await new Promise((resolve) => setTimeout(resolve, 300));
+	}
+	throw new Error(
+		`No new active task for node "${nodeNameOrId}" appeared within ${timeout}ms ` +
+			`(excluding ${excludeTaskIds.size} known task IDs)`
+	);
+}
+
+/**
  * Find tasks for a given workflow node UUID in a run.
  * Unlike getTasksForNode, this does an exact UUID match on workflowNodeId.
  */
