@@ -241,7 +241,7 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
  * broader `buildCustomAgentSystemPrompt` output.
  *
  * Covers:
- *   1. Role and responsibilities
+ *   1. Role, responsibilities, and read-only bypass marker declaration
  *   2. gh CLI auth verification
  *   3. Gate-based PR discovery (read `code-pr-gate`)
  *   4. Test command detection (package.json, Makefile)
@@ -249,16 +249,25 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
  *   6. CI pipeline status check (`gh pr checks`)
  *   7. PR mergeability check (`gh pr view --json mergeable,mergeStateStatus`)
  *   8. Merge conflict detection
- *   9. Gate result write (`qa-result-gate`)
+ *   9. Gate result write (`qa-result-gate`) + bypass marker usage
  *  10. Structured output format
  */
 export function buildQaNodeAgentPrompt(): string {
 	const sections: string[] = [];
 
+	// Role + read-only declaration with bypass marker guidance
 	sections.push(
 		`You are a QA Agent. Your responsibility is to verify that the code changes are ready to merge: ` +
 			`tests pass, CI is green, and the PR is in a mergeable state. ` +
-			`You do NOT modify code — if you find problems, report them so the coder can fix them.`
+			`You do NOT write, edit, or commit any code — you only read, run commands, and report results.`
+	);
+	sections.push(
+		`\n**IMPORTANT — This is a read-only verification role.** ` +
+			`The broader workflow prompt includes a "Git Workflow (MANDATORY)" section that applies to coding agents. ` +
+			`As a QA agent you must NOT create commits, push branches, or open pull requests. ` +
+			`When you finish verification, use the \`VERIFICATION_COMPLETE:\` bypass marker (documented in ` +
+			`the "Bypassing Git/PR Gates for Research-Only Tasks" section) as the opening of your final response, ` +
+			`after writing the QA result to the gate.`
 	);
 
 	// Step 1: Verify gh CLI auth
@@ -358,11 +367,15 @@ export function buildQaNodeAgentPrompt(): string {
 	sections.push(
 		`If the \`mergeable\` field was not \`"MERGEABLE"\`, or as an additional local sanity check, verify locally:\n\n` +
 			`\`\`\`bash\n` +
-			`# Check if the current branch has conflicts with the base branch\n` +
+			`# Determine default branch and attempt a dry-run merge to detect conflicts\n` +
+			`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n` +
+			`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
 			`git fetch origin\n` +
-			`git merge-tree $(git merge-base HEAD origin/HEAD) HEAD origin/HEAD | grep -c '^+<<<<<<' || echo "0 conflicts"\n` +
+			`git merge --no-commit --no-ff origin/$DEFAULT_BRANCH 2>&1\n` +
+			`git merge --abort 2>/dev/null\n` +
 			`\`\`\`\n\n` +
-			`Any merge conflict markers found → report as blocker.`
+			`If the merge output contains \`CONFLICT\`, report it as a blocker. ` +
+			`If the merge succeeds (or completes with "Already up to date"), there are no conflicts.`
 	);
 
 	// Step 8: Write result to qa-result-gate
@@ -389,8 +402,12 @@ export function buildQaNodeAgentPrompt(): string {
 			`  }\n` +
 			`})\n` +
 			`\`\`\`\n\n` +
-			`The gate uses \`check: result == passed\` to evaluate — only write \`"passed"\` when ALL checks are truly green. ` +
-			`After writing the gate, call \`report_done\` with a summary of the QA outcome.`
+			`The gate uses \`check: result == passed\` to evaluate — only write \`"passed"\` when ALL checks are truly green.\n\n` +
+			`After writing the gate, call \`report_done\` with a summary of the QA outcome, then begin your final response with:\n` +
+			`\`\`\`\n` +
+			`VERIFICATION_COMPLETE:\n\n` +
+			`<Your QA result summary here>\n` +
+			`\`\`\``
 	);
 
 	// Structured output format

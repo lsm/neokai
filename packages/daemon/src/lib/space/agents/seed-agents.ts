@@ -155,7 +155,8 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		description:
 			'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
 		tools: QA_TOOLS,
-		systemPrompt: buildQaNodeAgentPrompt(),
+		// systemPrompt is populated lazily in seedPresetAgents() to avoid
+		// calling buildQaNodeAgentPrompt() at module-init time.
 	},
 ];
 
@@ -189,6 +190,9 @@ export async function seedPresetAgents(
 	const errors: Array<{ name: string; error: string }> = [];
 
 	for (const preset of PRESET_AGENTS) {
+		// Resolve role-specific system prompts lazily (at seed time, not module-init).
+		const systemPrompt = preset.role === 'qa' ? buildQaNodeAgentPrompt() : preset.systemPrompt;
+
 		const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
 			spaceId,
 			name: preset.name,
@@ -196,7 +200,7 @@ export async function seedPresetAgents(
 			description: preset.description,
 			tools: preset.tools,
 			injectWorkflowContext: preset.injectWorkflowContext,
-			systemPrompt: preset.systemPrompt,
+			systemPrompt,
 		});
 
 		if (result.ok) {
