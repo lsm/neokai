@@ -285,6 +285,36 @@ describe('RoomStore — tasks.byRoom LiveQuery subscription', () => {
 		expect(roomStore.tasks.value).toEqual([]);
 	});
 
+	it('task derived from LiveQuery reflects status change without room.task.update event', () => {
+		// Verify the fix: when Runtime calls notifyChange('tasks'), the LiveQuery delta
+		// path updates roomStore.tasks reactively — no room.task.update event required.
+
+		// 1. Seed a pending task via snapshot (simulates initial LiveQuery delivery)
+		const pendingTask = makeTask('t-runtime', { status: 'pending' });
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: TASKS_SUB_ID,
+			rows: [pendingTask],
+			version: 1,
+		});
+		expect(roomStore.tasks.value[0].status).toBe('pending');
+
+		// 2. No room.task.update handler should be registered (architecture check)
+		expect(hub._handlers.has('room.task.update')).toBe(false);
+
+		// 3. Runtime triggers notifyChange('tasks') → daemon emits liveQuery.delta
+		const updatedTask = makeTask('t-runtime', { status: 'in_progress' });
+		hub.fire('liveQuery.delta', {
+			subscriptionId: TASKS_SUB_ID,
+			updated: [updatedTask],
+			version: 2,
+		});
+
+		// 4. roomStore.tasks reflects the new status — no room.task.update event was needed
+		expect(roomStore.tasks.value).toHaveLength(1);
+		expect(roomStore.tasks.value[0].id).toBe('t-runtime');
+		expect(roomStore.tasks.value[0].status).toBe('in_progress');
+	});
+
 	it('does not optimistically append task after task.create RPC', async () => {
 		hub.fire('liveQuery.snapshot', {
 			subscriptionId: TASKS_SUB_ID,
