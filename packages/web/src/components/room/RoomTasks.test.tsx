@@ -3,25 +3,15 @@
  *
  * Tests task filter tabs, tab switching, task grouping by status,
  * empty states, click handling, and section rendering for all tabs:
- * Active (draft + pending + in_progress), Review (review + needs_attention),
+ * Active (draft + pending + in_progress),
+ * Review (needs_attention → rate_limited/usage_limited → review),
  * Done (completed + cancelled), Archived (archived, hidden by default).
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, cleanup, act } from '@testing-library/preact';
+import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { TaskSummary, RoomGoal } from '@neokai/shared';
 import { RoomTasks, selectedTabSignal, getInitialTab } from './RoomTasks';
-
-// Mock toast to prevent side effects from toast.rejected() calls
-vi.mock('../../lib/toast.ts', () => ({
-	toast: {
-		rejected: vi.fn(),
-		approved: vi.fn(),
-		error: vi.fn(),
-		success: vi.fn(),
-		info: vi.fn(),
-	},
-}));
 
 describe('RoomTasks', () => {
 	afterEach(() => {
@@ -117,6 +107,24 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Active');
 			expect(container.textContent).toContain('3');
 		});
+
+		it('should include rate_limited and usage_limited in review tab count', () => {
+			const tasks = [
+				createTask('t1', 'review'),
+				createTask('t2', 'needs_attention'),
+				createTask('t3', 'rate_limited'),
+				createTask('t4', 'usage_limited'),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Review tab count: 4 (review + needs_attention + rate_limited + usage_limited)
+			const tabBar = container.querySelector('.border-b.border-dark-700');
+			const reviewTabBtn = Array.from(tabBar?.querySelectorAll('button') ?? []).find((b) =>
+				b.textContent?.includes('Review')
+			);
+			expect(reviewTabBtn?.textContent).toContain('4');
+		});
 	});
 
 	describe('Active Tab', () => {
@@ -175,73 +183,6 @@ describe('RoomTasks', () => {
 			expect(header?.textContent).toContain('Review');
 		});
 
-		it('should show View details link for review tasks when onView is provided', () => {
-			const onView = vi.fn();
-			const tasks = [createTask('t1', 'review', { title: 'Review me' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			);
-			expect(viewBtn).toBeTruthy();
-		});
-
-		it('should NOT show View details link when onView is not provided', () => {
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			);
-			expect(viewBtn).toBeFalsy();
-		});
-
-		it('should call onView with task id when View details link is clicked', () => {
-			const onView = vi.fn();
-			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			) as HTMLButtonElement;
-			fireEvent.click(viewBtn);
-
-			expect(onView).toHaveBeenCalledWith('task-42');
-		});
-
-		it('should NOT show View details link for non-review tasks', () => {
-			const onView = vi.fn();
-			const tasks = [createTask('t1', 'in_progress')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			);
-			expect(viewBtn).toBeFalsy();
-		});
-
-		it('should NOT call onTaskClick when View details link is clicked (stopPropagation)', () => {
-			const onView = vi.fn();
-			const onTaskClick = vi.fn();
-			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
-
-			const { container } = render(
-				<RoomTasks tasks={tasks} onView={onView} onTaskClick={onTaskClick} />
-			);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			) as HTMLButtonElement;
-			fireEvent.click(viewBtn);
-
-			expect(onView).toHaveBeenCalledWith('task-42');
-			expect(onTaskClick).not.toHaveBeenCalled();
-		});
-
 		it('should show needs_attention tasks under Review tab', () => {
 			const tasks = [
 				createTask('t1', 'review', { title: 'Review task' }),
@@ -254,6 +195,67 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Needs Attention');
 			expect(container.textContent).toContain('Review task');
 			expect(container.textContent).toContain('Attention task');
+		});
+
+		it('should show rate_limited tasks under Review tab with orange styling', () => {
+			const tasks = [createTask('t1', 'rate_limited', { title: 'Rate limited task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Rate / Usage Limited');
+			expect(container.textContent).toContain('Rate limited task');
+			const header = container.querySelector('.text-orange-400');
+			expect(header).toBeTruthy();
+		});
+
+		it('should show usage_limited tasks under Review tab with orange styling', () => {
+			const tasks = [createTask('t1', 'usage_limited', { title: 'Usage limited task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Rate / Usage Limited');
+			expect(container.textContent).toContain('Usage limited task');
+		});
+
+		it('should show rate_limited and usage_limited tasks together in the same group', () => {
+			const tasks = [
+				createTask('t1', 'rate_limited', { title: 'Rate task' }),
+				createTask('t2', 'usage_limited', { title: 'Usage task' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Rate / Usage Limited (2)');
+		});
+
+		it('should display rate_limited error message in orange', () => {
+			const tasks = [
+				createTask('t1', 'rate_limited', { title: 'Rate task', error: 'API rate limit hit' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const errorEl = container.querySelector('p.text-orange-400');
+			expect(errorEl).toBeTruthy();
+			expect(errorEl?.textContent).toContain('API rate limit hit');
+		});
+
+		it('should display visual order: needs_attention above rate/usage limited above review', () => {
+			const tasks = [
+				createTask('t1', 'review', { title: 'Normal review' }),
+				createTask('t2', 'rate_limited', { title: 'Rate limited' }),
+				createTask('t3', 'needs_attention', { title: 'Needs attention' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const headers = Array.from(container.querySelectorAll('h3')).map((h) => h.textContent ?? '');
+			const needsIdx = headers.findIndex((t) => t.includes('Needs Attention'));
+			const rateIdx = headers.findIndex((t) => t.includes('Rate / Usage Limited'));
+			const reviewIdx = headers.findIndex((t) => t.includes('Awaiting Review'));
+
+			expect(needsIdx).toBeLessThan(rateIdx);
+			expect(rateIdx).toBeLessThan(reviewIdx);
 		});
 
 		it('should show empty state when no review tasks', () => {
@@ -464,21 +466,28 @@ describe('RoomTasks', () => {
 			selectedTabSignal.value = 'active';
 		});
 
-		it('should show progress percentage when defined', () => {
+		it('should show circular progress indicator when progress is defined', () => {
 			const tasks = [createTask('t1', 'in_progress', { progress: 75 })];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			expect(container.textContent).toContain('75%');
+			// Circular indicator renders an SVG, not a percentage text
+			const svg = container.querySelector('svg[width="24"]');
+			expect(svg).toBeTruthy();
 		});
 
-		it('should show progress bar when progress is defined', () => {
+		it('should show circular progress indicator instead of flat bar when progress is defined', () => {
 			const tasks = [createTask('t1', 'in_progress', { progress: 50 })];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const progressBar = container.querySelector('.bg-blue-500');
-			expect(progressBar).toBeTruthy();
+			// No flat blue progress bar
+			const flatBar = container.querySelector('.bg-blue-500');
+			expect(flatBar).toBeFalsy();
+
+			// Circular indicator renders an SVG
+			const svg = container.querySelector('svg[width="24"]');
+			expect(svg).toBeTruthy();
 		});
 	});
 
@@ -518,112 +527,6 @@ describe('RoomTasks', () => {
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
 			expect(container.textContent).not.toContain('Worker working');
-		});
-	});
-
-	describe('PR Button', () => {
-		beforeEach(() => {
-			selectedTabSignal.value = 'review';
-		});
-
-		it('should render PR button when prUrl is set', () => {
-			const tasks = [
-				createTask('t1', 'review', {
-					prUrl: 'https://github.com/org/repo/pull/42',
-					prNumber: 42,
-				}),
-			];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/42"]');
-			expect(prLink).toBeTruthy();
-			expect(container.textContent).toContain('PR #42');
-		});
-
-		it('should not render PR button when prUrl is not set', () => {
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const prLinks = container.querySelectorAll('a[href*="/pull/"]');
-			expect(prLinks).toHaveLength(0);
-		});
-
-		it('should open PR link in new tab', () => {
-			const tasks = [
-				createTask('t1', 'review', {
-					prUrl: 'https://github.com/org/repo/pull/7',
-					prNumber: 7,
-				}),
-			];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const prLink = container.querySelector('a[href*="/pull/"]') as HTMLAnchorElement;
-			expect(prLink?.target).toBe('_blank');
-			expect(prLink?.rel).toContain('noopener');
-		});
-
-		it('should show PR number in button text', () => {
-			const tasks = [
-				createTask('t1', 'review', {
-					prUrl: 'https://github.com/org/repo/pull/99',
-					prNumber: 99,
-				}),
-			];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			expect(container.textContent).toContain('PR #99');
-		});
-
-		it('should render PR button for in_progress task with prUrl', () => {
-			selectedTabSignal.value = 'active';
-			const tasks = [
-				createTask('t1', 'in_progress', {
-					prUrl: 'https://github.com/org/repo/pull/10',
-					prNumber: 10,
-				}),
-			];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/10"]');
-			expect(prLink).toBeTruthy();
-			expect(container.textContent).toContain('PR #10');
-		});
-
-		it('should render PR button for completed task with prUrl', () => {
-			selectedTabSignal.value = 'done';
-			const tasks = [
-				createTask('t1', 'completed', {
-					prUrl: 'https://github.com/org/repo/pull/20',
-					prNumber: 20,
-				}),
-			];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/20"]');
-			expect(prLink).toBeTruthy();
-			expect(container.textContent).toContain('PR #20');
-		});
-
-		it('should render PR button for needs_attention task with prUrl', () => {
-			selectedTabSignal.value = 'review';
-			const tasks = [
-				createTask('t1', 'needs_attention', {
-					prUrl: 'https://github.com/org/repo/pull/30',
-					prNumber: 30,
-				}),
-			];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/30"]');
-			expect(prLink).toBeTruthy();
-			expect(container.textContent).toContain('PR #30');
 		});
 	});
 
@@ -696,314 +599,6 @@ describe('RoomTasks', () => {
 
 			const item = container.querySelector('.border-l-gray-800');
 			expect(item).toBeTruthy();
-		});
-	});
-
-	describe('Inline Reject Form', () => {
-		beforeEach(() => {
-			selectedTabSignal.value = 'review';
-		});
-
-		it('should show Reject button for review tasks when onReject is provided', () => {
-			const onReject = vi.fn();
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
-
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			);
-			expect(rejectBtn).toBeTruthy();
-		});
-
-		it('should NOT show Reject button when onReject is not provided', () => {
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			);
-			expect(rejectBtn).toBeFalsy();
-		});
-
-		it('should NOT show Reject button for non-review tasks', () => {
-			selectedTabSignal.value = 'active';
-			const onReject = vi.fn();
-			const tasks = [createTask('t1', 'in_progress')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
-
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			);
-			expect(rejectBtn).toBeFalsy();
-		});
-
-		it('should expand inline form when Reject button is clicked', () => {
-			const onReject = vi.fn();
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
-
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			) as HTMLButtonElement;
-			fireEvent.click(rejectBtn);
-
-			// Form wrapper should be expanded (max-h-48 replaces max-h-0)
-			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
-			expect(formWrapper?.classList.contains('max-h-48')).toBe(true);
-			expect(container.textContent).toContain('Confirm Reject');
-			expect(container.textContent).toContain('Cancel');
-		});
-
-		it('should hide inline form when Cancel is clicked', () => {
-			const onReject = vi.fn();
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
-
-			// Open form
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			) as HTMLButtonElement;
-			fireEvent.click(rejectBtn);
-			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
-			expect(formWrapper?.classList.contains('max-h-48')).toBe(true);
-
-			// Cancel — form should collapse (max-h-0)
-			const cancelBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Cancel'
-			) as HTMLButtonElement;
-			fireEvent.click(cancelBtn);
-
-			expect(formWrapper?.classList.contains('max-h-0')).toBe(true);
-		});
-
-		it('Confirm Reject button should be disabled when feedback is empty', () => {
-			const onReject = vi.fn();
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
-
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			) as HTMLButtonElement;
-			fireEvent.click(rejectBtn);
-
-			const confirmBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Confirm Reject'
-			) as HTMLButtonElement;
-			expect(confirmBtn.disabled).toBe(true);
-		});
-
-		it('should call onReject with taskId and feedback when Confirm Reject is clicked', () => {
-			const onReject = vi.fn();
-			const tasks = [createTask('task-99', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
-
-			// Open form
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			) as HTMLButtonElement;
-			fireEvent.click(rejectBtn);
-
-			// Type feedback
-			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-			fireEvent.input(textarea, { target: { value: 'Needs more work' } });
-
-			// Confirm
-			const confirmBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Confirm Reject'
-			) as HTMLButtonElement;
-			fireEvent.click(confirmBtn);
-
-			expect(onReject).toHaveBeenCalledWith('task-99', 'Needs more work');
-		});
-
-		it('should collapse form after Confirm Reject is clicked', () => {
-			const onReject = vi.fn();
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
-
-			// Open form
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			) as HTMLButtonElement;
-			fireEvent.click(rejectBtn);
-
-			// Type feedback and confirm
-			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-			fireEvent.input(textarea, { target: { value: 'Feedback here' } });
-			const confirmBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Confirm Reject'
-			) as HTMLButtonElement;
-			fireEvent.click(confirmBtn);
-
-			// Form should be collapsed (max-h-0)
-			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
-			expect(formWrapper?.classList.contains('max-h-0')).toBe(true);
-		});
-
-		it('should NOT call onTaskClick when Reject button is clicked', () => {
-			const onReject = vi.fn();
-			const onTaskClick = vi.fn();
-			const tasks = [createTask('task-42', 'review')];
-
-			const { container } = render(
-				<RoomTasks tasks={tasks} onReject={onReject} onTaskClick={onTaskClick} />
-			);
-
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Reject'
-			) as HTMLButtonElement;
-			fireEvent.click(rejectBtn);
-
-			expect(onTaskClick).not.toHaveBeenCalled();
-		});
-	});
-	describe('Approve Button', () => {
-		beforeEach(() => {
-			selectedTabSignal.value = 'review';
-		});
-
-		it('should show Approve button for review tasks when onApprove is provided', () => {
-			const onApprove = vi.fn();
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			);
-			expect(approveBtn).toBeTruthy();
-		});
-
-		it('should NOT show Approve button when onApprove is not provided', () => {
-			const tasks = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			);
-			expect(approveBtn).toBeFalsy();
-		});
-
-		it('should call onApprove with task id when Approve button is clicked', () => {
-			const onApprove = vi.fn();
-			const tasks = [createTask('task-77', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			) as HTMLButtonElement;
-			fireEvent.click(approveBtn);
-
-			expect(onApprove).toHaveBeenCalledWith('task-77');
-		});
-
-		it('should NOT show Approve button for non-review tasks', () => {
-			selectedTabSignal.value = 'active';
-			const onApprove = vi.fn();
-			const tasks = [createTask('t1', 'in_progress')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			);
-			expect(approveBtn).toBeFalsy();
-		});
-
-		it('should NOT call onTaskClick when Approve button is clicked (stopPropagation)', () => {
-			const onApprove = vi.fn();
-			const onTaskClick = vi.fn();
-			const tasks = [createTask('task-55', 'review')];
-
-			const { container } = render(
-				<RoomTasks tasks={tasks} onApprove={onApprove} onTaskClick={onTaskClick} />
-			);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			) as HTMLButtonElement;
-			fireEvent.click(approveBtn);
-
-			expect(onApprove).toHaveBeenCalledWith('task-55');
-			expect(onTaskClick).not.toHaveBeenCalled();
-		});
-
-		it('should show "✓ Approved" on button and disable it immediately after click', () => {
-			const onApprove = vi.fn();
-			const tasks = [createTask('task-99', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			) as HTMLButtonElement;
-			fireEvent.click(approveBtn);
-
-			expect(approveBtn.textContent?.trim()).toContain('Approved');
-			expect(approveBtn.disabled).toBe(true);
-		});
-
-		it('should add opacity-40 to card after Approve is clicked', () => {
-			const onApprove = vi.fn();
-			const tasks = [createTask('task-98', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			) as HTMLButtonElement;
-			fireEvent.click(approveBtn);
-
-			const fadedCard = container.querySelector('.opacity-40');
-			expect(fadedCard).toBeTruthy();
-		});
-
-		it('should add border-l-green-500 to card after Approve is clicked', () => {
-			const onApprove = vi.fn();
-			const tasks = [createTask('task-97', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			) as HTMLButtonElement;
-			fireEvent.click(approveBtn);
-
-			const greenCard = container.querySelector('.border-l-green-500');
-			expect(greenCard).toBeTruthy();
-		});
-
-		it('should revert Approve button text to "Approve" after 300ms', async () => {
-			vi.useFakeTimers();
-			const onApprove = vi.fn();
-			const tasks = [createTask('task-96', 'review')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent?.trim() === 'Approve'
-			) as HTMLButtonElement;
-			fireEvent.click(approveBtn);
-
-			expect(approveBtn.textContent?.trim()).toContain('Approved');
-
-			await act(async () => {
-				vi.advanceTimersByTime(310);
-			});
-			expect(approveBtn.textContent?.trim()).toBe('Approve');
-			expect(approveBtn.disabled).toBe(false);
-
-			vi.useRealTimers();
 		});
 	});
 
@@ -1116,6 +711,27 @@ describe('RoomTasks', () => {
 
 			expect(container.textContent).toContain('Draft (1)');
 			expect(container.textContent).toContain('Draft task');
+		});
+
+		it('rate_limited tasks appear under review tab, not active tab', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'rate_limited', { title: 'Rate limited task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Active tab should show empty state since rate_limited is not active
+			expect(container.textContent).toContain('No active tasks');
+			expect(container.textContent).not.toContain('Rate limited task');
+		});
+
+		it('usage_limited tasks appear under review tab, not active tab', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'usage_limited', { title: 'Usage limited task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('No active tasks');
+			expect(container.textContent).not.toContain('Usage limited task');
 		});
 
 		it('there is no needs_attention tab button in the tab bar', () => {
@@ -1364,6 +980,189 @@ describe('RoomTasks', () => {
 
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
 			expect(badge?.getAttribute('title')).toBe('Mission: Specific Goal Name');
+		});
+
+		it('should render goal badge on a separate line below the title row', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			const titleEl = container.querySelector('h4');
+			// The badge must NOT be inside the same element as the title (it is on its own line)
+			expect(titleEl?.parentElement?.contains(badge)).toBe(false);
+			// The badge must share a common ancestor with the title (both inside the task card)
+			expect(titleEl?.closest('[class*="flex-1"]')?.contains(badge)).toBe(true);
+		});
+
+		it('should use target icon (concentric circles) not lightning bolt on goal badge', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			// Target icon uses SVG circle elements (concentric circles)
+			const circles = badge?.querySelectorAll('circle');
+			expect(circles?.length).toBeGreaterThanOrEqual(2);
+			// Lightning bolt used a path element, not circles
+			const lightningPath = badge?.querySelector('path[d*="M13 10V3L4 14h7v7l9-11h-7z"]');
+			expect(lightningPath).toBeNull();
+		});
+	});
+
+	describe('PR Badge', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
+		it('should show purple PR badge when task has prUrl and prNumber', () => {
+			const tasks = [
+				createTask('t1', 'in_progress', {
+					prUrl: 'https://github.com/org/repo/pull/42',
+					prNumber: 42,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/42"]');
+			expect(prLink).toBeTruthy();
+			expect(prLink?.textContent).toContain('PR #42');
+			expect(prLink?.getAttribute('target')).toBe('_blank');
+		});
+
+		it('should show PR badge with "?" when prNumber is not set', () => {
+			const tasks = [
+				createTask('t1', 'in_progress', { prUrl: 'https://github.com/org/repo/pull/99' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/99"]');
+			expect(prLink).toBeTruthy();
+			expect(prLink?.textContent).toContain('PR #?');
+		});
+
+		it('should NOT show PR badge when task has no prUrl', () => {
+			const tasks = [createTask('t1', 'in_progress')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLinks = container.querySelectorAll('a[href*="github.com"]');
+			expect(prLinks).toHaveLength(0);
+		});
+
+		it('should NOT propagate click on PR badge to task item', () => {
+			const onTaskClick = vi.fn();
+			const tasks = [
+				createTask('t1', 'in_progress', {
+					prUrl: 'https://github.com/org/repo/pull/5',
+					prNumber: 5,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			const prLink = container.querySelector(
+				'a[href="https://github.com/org/repo/pull/5"]'
+			) as HTMLAnchorElement;
+			fireEvent.click(prLink);
+
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+
+		it('should not render prUrl as plain text', () => {
+			const prUrl = 'https://github.com/org/repo/pull/42';
+			const tasks = [createTask('t1', 'in_progress', { prUrl, prNumber: 42 })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// The URL itself should not appear as visible text
+			expect(container.textContent).not.toContain(prUrl);
+		});
+	});
+
+	describe('Short ID Badge', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
+		it('should show short ID badge when task has shortId', () => {
+			const tasks = [createTask('uuid-123', 'pending', { shortId: 't-42' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const badge = container.querySelector('[data-testid="short-id-badge-t-42"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toContain('#t-42');
+		});
+
+		it('should NOT show short ID badge when task has no shortId', () => {
+			const tasks = [createTask('uuid-123', 'pending')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// No badge elements with the short-id-badge prefix
+			const badges = container.querySelectorAll('[data-testid^="short-id-badge-"]');
+			expect(badges).toHaveLength(0);
+		});
+
+		it('should have tooltip "Click to copy short ID" on the badge', () => {
+			const tasks = [createTask('uuid-123', 'pending', { shortId: 't-7' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const badge = container.querySelector('[data-testid="short-id-badge-t-7"]');
+			expect(badge?.getAttribute('title')).toBe('Click to copy short ID');
+		});
+
+		it('should NOT call onTaskClick when short ID badge is clicked (stopPropagation)', () => {
+			const onTaskClick = vi.fn();
+			// Mock clipboard since jsdom doesn't implement it
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText: vi.fn().mockResolvedValue(undefined) },
+				configurable: true,
+			});
+			const tasks = [createTask('uuid-123', 'pending', { shortId: 't-5', title: 'My task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			const badge = container.querySelector(
+				'[data-testid="short-id-badge-t-5"]'
+			) as HTMLButtonElement;
+			fireEvent.click(badge);
+
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+
+		it('should use shortId when calling onTaskClick (prefers short ID for navigation)', () => {
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('uuid-123', 'pending', { shortId: 't-42', title: 'My task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			const taskItem = container.querySelector('.cursor-pointer');
+			fireEvent.click(taskItem!);
+
+			expect(onTaskClick).toHaveBeenCalledWith('t-42');
+		});
+
+		it('should fall back to UUID when calling onTaskClick if no shortId', () => {
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('uuid-123', 'pending', { title: 'My task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			const taskItem = container.querySelector('.cursor-pointer');
+			fireEvent.click(taskItem!);
+
+			expect(onTaskClick).toHaveBeenCalledWith('uuid-123');
 		});
 	});
 });

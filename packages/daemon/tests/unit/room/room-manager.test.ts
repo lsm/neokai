@@ -26,7 +26,7 @@ describe('RoomManager', () => {
 		db = new Database(':memory:');
 		const reactiveDb = createReactiveDatabase(db);
 		await db.initialize(reactiveDb);
-		roomManager = new RoomManager(db.getDatabase());
+		roomManager = new RoomManager(db.getDatabase(), reactiveDb);
 	});
 
 	afterEach(() => {
@@ -172,6 +172,45 @@ describe('RoomManager', () => {
 			expect(overview?.sessions[1].title).toBe('Test Session 2');
 		});
 
+		it('should exclude archived (deleted) sessions from overview', () => {
+			const room = roomManager.createRoom({ name: 'Room With Archived Session' });
+			const dbRaw = db.getDatabase();
+			const now = new Date().toISOString();
+
+			// Create one active and one archived session
+			dbRaw
+				.prepare(
+					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run('session-active', 'Active Session', '/workspace', now, now, 'active', '{}', '{}');
+			dbRaw
+				.prepare(
+					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'session-archived',
+					'Archived Session',
+					'/workspace',
+					now,
+					now,
+					'archived',
+					'{}',
+					'{}'
+				);
+
+			roomManager.assignSession(room.id, 'session-active');
+			roomManager.assignSession(room.id, 'session-archived');
+
+			const overview = roomManager.getRoomOverview(room.id);
+
+			// Only the active session should appear
+			expect(overview?.sessions).toHaveLength(1);
+			expect(overview?.sessions[0].id).toBe('session-active');
+			expect(overview?.sessions[0].status).toBe('active');
+		});
+
 		it('should return ended status for non-existent sessions', () => {
 			const room = roomManager.createRoom({ name: 'Room With Missing Sessions' });
 			// Assign sessions that don't exist in the database
@@ -230,6 +269,88 @@ describe('RoomManager', () => {
 			expect(overview?.activeTasks[0].title).toBe('Active Task');
 			expect(overview?.activeTasks[0].status).toBe('in_progress');
 			expect(overview?.activeTasks[0].priority).toBe('high');
+		});
+
+		it('should include shortId in task summaries when present', () => {
+			const room = roomManager.createRoom({ name: 'Room With ShortId Tasks' });
+			const dbRaw = db.getDatabase();
+
+			// Insert a task with a short_id
+			dbRaw
+				.prepare(
+					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, short_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'task-short-1',
+					room.id,
+					'Task With Short ID',
+					'Desc',
+					'pending',
+					'normal',
+					'[]',
+					Date.now(),
+					't-1'
+				);
+
+			// Insert a task without a short_id (legacy task)
+			dbRaw
+				.prepare(
+					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'task-no-short',
+					room.id,
+					'Task Without Short ID',
+					'Desc',
+					'in_progress',
+					'normal',
+					'[]',
+					Date.now()
+				);
+
+			const overview = roomManager.getRoomOverview(room.id);
+
+			expect(overview?.activeTasks).toHaveLength(2);
+
+			const withShort = overview?.activeTasks.find((t) => t.id === 'task-short-1');
+			expect(withShort?.shortId).toBe('t-1');
+
+			const withoutShort = overview?.activeTasks.find((t) => t.id === 'task-no-short');
+			expect(withoutShort).toBeDefined();
+			// RoomManager creates TaskRepository without a ShortIdAllocator, so lazy backfill
+			// never fires — legacy tasks without short_id in DB always return undefined shortId
+			expect(withoutShort?.shortId).toBeUndefined();
+		});
+
+		it('should include shortId in allTasks summaries', () => {
+			const room = roomManager.createRoom({ name: 'Room allTasks ShortId' });
+			const dbRaw = db.getDatabase();
+
+			dbRaw
+				.prepare(
+					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, short_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'task-done',
+					room.id,
+					'Completed Task',
+					'Desc',
+					'completed',
+					'normal',
+					'[]',
+					Date.now(),
+					't-2'
+				);
+
+			const overview = roomManager.getRoomOverview(room.id);
+
+			// Completed tasks are excluded from activeTasks but included in allTasks
+			expect(overview?.activeTasks).toHaveLength(0);
+			const inAll = overview?.allTasks?.find((t) => t.id === 'task-done');
+			expect(inAll?.shortId).toBe('t-2');
 		});
 	});
 

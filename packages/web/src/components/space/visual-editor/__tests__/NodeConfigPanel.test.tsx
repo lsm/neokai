@@ -19,10 +19,11 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
+import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
-import type { StepDraft } from '../../WorkflowStepCard';
+import type { NodeDraft } from '../../WorkflowNodeCard';
 import type { ConditionDraft } from '../GateConfig';
 
 afterEach(() => cleanup());
@@ -35,7 +36,7 @@ function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
 	return { id, spaceId: 'space-1', name, role, createdAt: Date.now(), updatedAt: Date.now() };
 }
 
-function makeStep(overrides: Partial<StepDraft> = {}): StepDraft {
+function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
 	return {
 		localId: 'step-local-1',
 		name: 'My Step',
@@ -211,26 +212,23 @@ describe('NodeConfigPanel', () => {
 
 		it('calls onUpdateEntryCondition when entry gate type changes', () => {
 			const onUpdateEntryCondition = vi.fn();
-			const { container } = render(
+			const { getByTestId } = render(
 				<NodeConfigPanel
 					{...makeProps({ onUpdateEntryCondition, entryCondition: { type: 'always' } })}
 				/>
 			);
-			// selects: agent (index 0), entry gate (index 1), exit gate (index 2)
-			const selects = container.querySelectorAll('select');
-			fireEvent.change(selects[1], { target: { value: 'human' } });
+			fireEvent.change(getByTestId('entry-gate-select'), { target: { value: 'human' } });
 			expect(onUpdateEntryCondition).toHaveBeenCalledWith({ type: 'human', expression: undefined });
 		});
 
 		it('calls onUpdateExitCondition when exit gate type changes', () => {
 			const onUpdateExitCondition = vi.fn();
-			const { container } = render(
+			const { getByTestId } = render(
 				<NodeConfigPanel
 					{...makeProps({ onUpdateExitCondition, exitCondition: { type: 'always' } })}
 				/>
 			);
-			const selects = container.querySelectorAll('select');
-			fireEvent.change(selects[2], { target: { value: 'condition' } });
+			fireEvent.change(getByTestId('exit-gate-select'), { target: { value: 'condition' } });
 			expect(onUpdateExitCondition).toHaveBeenCalledWith({ type: 'condition', expression: '' });
 		});
 	});
@@ -387,7 +385,10 @@ describe('NodeConfigPanel', () => {
 		it('shows agents list in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', name: 'planner' },
+					{ agentId: 'agent-2', name: 'coder' },
+				],
 			});
 			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			expect(getByTestId('agents-list')).toBeTruthy();
@@ -398,7 +399,10 @@ describe('NodeConfigPanel', () => {
 		it('renders one entry per agent in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', name: 'planner' },
+					{ agentId: 'agent-2', name: 'coder' },
+				],
 			});
 			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			expect(getAllByTestId('agent-entry')).toHaveLength(2);
@@ -407,19 +411,25 @@ describe('NodeConfigPanel', () => {
 		it('shows agent name and role in each agent entry', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }],
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			const entry = getByTestId('agents-list');
+			// Agent name appears as text in a <p> element
 			expect(entry.textContent).toContain('Planner');
-			expect(entry.textContent).toContain('planner');
+			// Role appears as the value of the role input field
+			const roleInput = getByTestId('agent-role-input') as HTMLInputElement;
+			expect(roleInput.value).toBe('planner');
 		});
 
 		it('remove agent button calls onUpdate without that agent', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', name: 'planner' },
+					{ agentId: 'agent-2', name: 'coder' },
+				],
 			});
 			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			fireEvent.click(getAllByTestId('remove-agent-button')[0]);
@@ -432,7 +442,7 @@ describe('NodeConfigPanel', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }],
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
 				channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
@@ -446,96 +456,259 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.channels).toBeUndefined();
 		});
 
-		it('shows add-agent-select dropdown for agents not yet in step', () => {
+		it('shows add-agent-select dropdown with all agents (same agent may be added multiple times)', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }],
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			// agent-2 is not in step yet, should appear in dropdown
+			// All agents appear in the dropdown regardless of whether they are already in the step
 			const select = getByTestId('add-agent-select');
 			expect(select.textContent).toContain('Coder');
 		});
 
-		it('shows channels section in multi-agent mode', () => {
+		it('does not auto-create channels when adding an agent (channels are managed at workflow level)', () => {
+			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			expect(getByTestId('channels-section')).toBeTruthy();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			// 2 agents added, but no auto-created channels (channels are workflow-level now)
+			expect(updatedStep.agents).toHaveLength(2);
+			expect(updatedStep.channels).toBeUndefined();
 		});
 
-		it('does not show channels section in single-agent mode', () => {
-			const { queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(queryByTestId('channels-section')).toBeNull();
-		});
-
-		it('renders existing channels in channels list', () => {
+		it('adding the same agent twice generates a unique slot role with numeric suffix', () => {
+			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
-				channels: [
-					{ from: 'coder', to: 'reviewer', direction: 'one-way' },
-					{ from: 'reviewer', to: 'coder', direction: 'bidirectional' },
+				agents: [{ agentId: 'agent-2', name: 'coder' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			// Add agent-2 (Coder) a second time
+			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents).toHaveLength(2);
+			expect(updatedStep.agents[0].name).toBe('coder');
+			// Second slot must get a unique suffix to avoid duplicate-role validation error
+			expect(updatedStep.agents[1].name).toBe('coder-2');
+		});
+
+		it('adding the same agent three times produces coder, coder-2, coder-3', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-2', name: 'coder' },
+					{ agentId: 'agent-2', name: 'coder-2' },
+				],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents).toHaveLength(3);
+			expect(updatedStep.agents[2].name).toBe('coder-3');
+		});
+	});
+
+	// ============================================================================
+	// Per-slot override fields: role, model, systemPrompt
+	// ============================================================================
+
+	describe('per-slot override fields', () => {
+		it('renders a role input for each agent slot in multi-agent mode', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-1', name: 'planner' },
+					{ agentId: 'agent-2', name: 'coder' },
 				],
 			});
 			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			expect(getAllByTestId('channel-entry')).toHaveLength(2);
+			const roleInputs = getAllByTestId('agent-role-input');
+			expect(roleInputs).toHaveLength(2);
+			expect((roleInputs[0] as HTMLInputElement).value).toBe('planner');
+			expect((roleInputs[1] as HTMLInputElement).value).toBe('coder');
 		});
 
-		it('remove channel button calls onUpdate without that channel', () => {
+		it('editing role input calls onUpdate with updated role', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
-				channels: [
-					{ from: 'coder', to: 'reviewer', direction: 'one-way' },
-					{ from: 'reviewer', to: 'coder', direction: 'bidirectional' },
-				],
-			});
-			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.click(getAllByTestId('remove-channel-button')[0]);
-			const updatedStep = onUpdate.mock.calls[0][0];
-			expect(updatedStep.channels).toHaveLength(1);
-			expect(updatedStep.channels[0].from).toBe('reviewer');
-		});
-
-		it('add channel button is disabled when from or to is empty', () => {
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			const addBtn = getByTestId('add-channel-button');
-			expect(addBtn.hasAttribute('disabled')).toBe(true);
-		});
-
-		it('add channel adds a new channel entry', () => {
-			const onUpdate = vi.fn();
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			// Set from
-			act(() => {
-				fireEvent.change(getByTestId('channel-from-select'), { target: { value: 'coder' } });
+			fireEvent.input(getByTestId('agent-role-input'), { target: { value: 'lead-planner' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].name).toBe('lead-planner');
+		});
+
+		it('shows override-badge when slot has model override', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner', model: 'claude-opus-4-6' }],
 			});
-			// Set to
-			act(() => {
-				fireEvent.input(getByTestId('channel-to-input'), { target: { value: 'reviewer' } });
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('override-badge')).toBeTruthy();
+		});
+
+		it('shows override-badge when slot has systemPrompt override', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner', systemPrompt: 'You are strict.' }],
 			});
-			// Click add
-			act(() => {
-				fireEvent.click(getByTestId('add-channel-button'));
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('override-badge')).toBeTruthy();
+		});
+
+		it('does not show override-badge when slot has no overrides', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
-			expect(onUpdate).toHaveBeenCalled();
-			const updatedStep = onUpdate.mock.calls[0][0];
-			expect(updatedStep.channels).toHaveLength(1);
-			expect(updatedStep.channels[0].from).toBe('coder');
-			expect(updatedStep.channels[0].to).toBe('reviewer');
-			expect(updatedStep.channels[0].direction).toBe('one-way');
+			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(queryByTestId('override-badge')).toBeNull();
+		});
+
+		it('model and systemPrompt fields are hidden by default (before expanding)', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+			});
+			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(queryByTestId('agent-model-input')).toBeNull();
+			expect(queryByTestId('agent-system-prompt-input')).toBeNull();
+		});
+
+		it('clicking toggle-overrides-button reveals model and systemPrompt fields', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			expect(getByTestId('slot-overrides')).toBeTruthy();
+			expect(getByTestId('agent-model-input')).toBeTruthy();
+			expect(getByTestId('agent-system-prompt-input')).toBeTruthy();
+		});
+
+		it('clicking toggle-overrides-button twice collapses the override section', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+			});
+			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			expect(getByTestId('slot-overrides')).toBeTruthy();
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			expect(queryByTestId('slot-overrides')).toBeNull();
+		});
+
+		it('editing model input calls onUpdate with model field set', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			// Expand the overrides section first
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			fireEvent.input(getByTestId('agent-model-input'), {
+				target: { value: 'claude-opus-4-6' },
+			});
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].model).toBe('claude-opus-4-6');
+		});
+
+		it('clearing model input sets model to undefined', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner', model: 'claude-opus-4-6' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			fireEvent.input(getByTestId('agent-model-input'), { target: { value: '' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].model).toBeUndefined();
+		});
+
+		it('editing systemPrompt textarea calls onUpdate with systemPrompt set', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			fireEvent.input(getByTestId('agent-system-prompt-input'), {
+				target: { value: 'Be very strict.' },
+			});
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].systemPrompt).toBe('Be very strict.');
+		});
+
+		it('adding same agent twice with different roles: both slots shown', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-2', name: 'coder' },
+					{ agentId: 'agent-2', name: 'coder-2' },
+				],
+			});
+			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			const roleInputs = getAllByTestId('agent-role-input') as HTMLInputElement[];
+			expect(roleInputs).toHaveLength(2);
+			expect(roleInputs[0].value).toBe('coder');
+			expect(roleInputs[1].value).toBe('coder-2');
+		});
+
+		it('each slot can independently have overrides — override-badge appears only on overridden slot', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-2', name: 'coder', model: 'claude-opus-4-6' },
+					{ agentId: 'agent-2', name: 'coder-2' },
+				],
+			});
+			const { getAllByTestId, queryAllByTestId } = render(
+				<NodeConfigPanel {...makeProps({ step })} />
+			);
+			// One badge for the slot with model override
+			expect(getAllByTestId('override-badge')).toHaveLength(1);
+			// Confirm the overridden slot's entry has amber styling via data attribute
+			const entries = getAllByTestId('agent-entry');
+			expect(entries[0].getAttribute('data-has-overrides')).toBe('true');
+			expect(entries[1].getAttribute('data-has-overrides')).toBeNull();
+			// No stray badges in the second slot
+			expect(queryAllByTestId('override-badge')).toHaveLength(1);
+		});
+
+		it('override section stays expanded after the slot role is renamed', async () => {
+			// Use a controlled wrapper so onUpdate actually updates the step prop,
+			// matching how the real parent (VisualWorkflowEditor) behaves.
+			function Wrapper() {
+				const [step, setStep] = useState(
+					makeStep({ agentId: '', agents: [{ agentId: 'agent-1', name: 'planner' }] })
+				);
+				return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
+			}
+			const { getByTestId, queryByTestId } = render(<Wrapper />);
+
+			// Expand the overrides section
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			expect(getByTestId('slot-overrides')).toBeTruthy();
+
+			// Rename the role — expandedSlots must migrate the key from 'planner' to 'lead-planner'
+			await act(async () => {
+				fireEvent.input(getByTestId('agent-role-input'), { target: { value: 'lead-planner' } });
+			});
+
+			// Override section should still be visible after the rename (key migrated in expandedSlots)
+			expect(queryByTestId('slot-overrides')).toBeTruthy();
 		});
 	});
 });

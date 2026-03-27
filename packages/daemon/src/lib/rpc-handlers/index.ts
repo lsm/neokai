@@ -42,6 +42,7 @@ import { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 import { GoalManager } from '../room/managers/goal-manager';
 import { TaskManager } from '../room/managers/task-manager';
+import { TaskRepository } from '../../storage/repositories/task-repository';
 import { setupDialogHandlers } from './dialog-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
@@ -61,7 +62,6 @@ import { SpaceWorkflowRepository } from '../../storage/repositories/space-workfl
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
-import { SpaceSessionGroupRepository } from '../../storage/repositories/space-session-group-repository';
 import { enqueueRoomTick } from '../job-handlers/room-tick.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
@@ -70,9 +70,14 @@ import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
-import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
 import { setupLiveQueryHandlers } from './live-query-handlers';
+import { setupReferenceHandlers } from './reference-handlers';
+import { FileIndex } from '../file-index';
 import { LiveQueryEngine } from '../../storage/live-query';
+import type { AppMcpLifecycleManager } from '../mcp';
+import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers';
+import { registerSkillHandlers } from './skill-handlers';
+import type { SkillsManager } from '../skills-manager';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -101,6 +106,10 @@ export interface RPCHandlerDependencies {
 	reactiveDb: ReactiveDatabase;
 	/** Live query engine for reactive SQL subscriptions */
 	liveQueries: LiveQueryEngine;
+	/** Application-level MCP lifecycle manager */
+	appMcpManager: AppMcpLifecycleManager;
+	/** Application-level Skills manager */
+	skillsManager: SkillsManager;
 }
 
 const log = new Logger('rpc-handlers');
@@ -126,16 +135,28 @@ export interface RPCHandlerSetupResult {
  */
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
 	// Room handlers (create roomManager first as session handlers depend on it)
-	const roomManager = new RoomManager(deps.db.getDatabase());
+	const roomManager = new RoomManager(deps.db.getDatabase(), deps.reactiveDb);
 
 	// Create factory function for per-room goal managers
 	const goalManagerFactory: GoalManagerFactory = (roomId: string) => {
-		return new GoalManager(deps.db.getDatabase(), roomId, deps.reactiveDb);
+		return new GoalManager(
+			deps.db.getDatabase(),
+			roomId,
+			deps.reactiveDb,
+			deps.db.getShortIdAllocator()
+		);
 	};
 
 	// Create factory function for per-room task managers (used by goal review handlers)
 	const goalTaskManagerFactory: GoalTaskManagerFactory = (roomId: string) => {
-		return new TaskManager(deps.db.getDatabase(), roomId, deps.reactiveDb);
+		const taskManager = new TaskManager(
+			deps.db.getDatabase(),
+			roomId,
+			deps.reactiveDb,
+			deps.db.getShortIdAllocator()
+		);
+		const taskRepo = new TaskRepository(deps.db.getDatabase(), deps.reactiveDb);
+		return { taskManager, taskRepo };
 	};
 
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
@@ -148,10 +169,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// so that it can receive a runtime session lookup function. Room worker/leader
 	// sessions live in RoomRuntimeService.agentSessions (separate from SessionManager),
 	// so the handler needs to check the runtime pool first.
-	registerMcpHandlers(deps.messageHub, deps.sessionManager);
+	registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
 	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
-	setupTestHandlers(deps.messageHub, deps.db);
+	// Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
+	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
 	// Room handlers
@@ -161,12 +183,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.daemonHub,
 		deps.config.workspaceRoot,
 		deps.sessionManager,
-		deps.jobQueue
+		deps.jobQueue,
+		deps.db
 	);
 
 	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
 	const roomRuntimeService = new RoomRuntimeService({
-		db: deps.db,
+		// Use reactiveDb.db (proxied Database facade) so sdk_messages writes from
+		// room worker/leader sessions trigger LiveQuery invalidation immediately.
+		db: deps.reactiveDb.db,
 		messageHub: deps.messageHub,
 		daemonHub: deps.daemonHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
@@ -175,9 +200,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		defaultWorkspacePath: deps.config.workspaceRoot,
 		defaultModel: deps.config.defaultModel,
 		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
+		settingsManager: deps.settingsManager,
+		appMcpManager: deps.appMcpManager,
 		reactiveDb: deps.reactiveDb,
 		jobQueue: deps.jobQueue,
 		jobProcessor: deps.jobProcessor,
+		skillsManager: deps.skillsManager,
+		appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
+		roomSkillOverrideRepo: deps.reactiveDb.db.roomSkillOverrides,
 	});
 
 	// Seed an initial room.tick job for every room after startup, and for each
@@ -245,12 +275,40 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
 
+	// Reference handlers (@ mention system — search + resolve tasks, goals, files, folders)
+	const fileIndex = new FileIndex(deps.config.workspaceRoot);
+	fileIndex.init().catch((err) => {
+		log.warn('FileIndex init failed:', err);
+	});
+	setupReferenceHandlers(deps.messageHub, {
+		db: deps.db.getDatabase(),
+		reactiveDb: deps.reactiveDb,
+		shortIdAllocator: deps.db.getShortIdAllocator(),
+		sessionManager: deps.sessionManager,
+		taskRepo: new TaskRepository(deps.db.getDatabase(), deps.reactiveDb),
+		goalRepo: deps.db.getGoalRepo(),
+		workspaceRoot: deps.config.workspaceRoot,
+		fileIndex,
+	});
+
 	// LiveQuery subscribe/unsubscribe handlers
 	const unsubLiveQuery = setupLiveQueryHandlers(
 		deps.messageHub,
 		deps.liveQueries,
 		deps.db.getDatabase()
 	);
+
+	// App-level MCP registry handlers
+	registerAppMcpHandlers(deps.messageHub, {
+		db: deps.db,
+		daemonHub: deps.daemonHub,
+	});
+
+	// Per-room MCP enablement RPC handlers
+	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.db);
+
+	// Skills registry RPC handlers
+	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
@@ -310,15 +368,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 	});
 
-	// SpaceSessionGroupRepository — persists session groups for Task Agents and sub-sessions.
-	// Constructed once here and injected into TaskAgentManager.
-	const spaceSessionGroupRepo = new SpaceSessionGroupRepository(deps.db.getDatabase());
-
 	// Task Agent Manager — manages Task Agent session lifecycle and message injection.
 	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
 	// spaceRuntimeService.createOrGetRuntime(spaceId).
 	const taskAgentManager = new TaskAgentManager({
-		db: deps.db,
+		// Use reactiveDb.db so Task Agent session writes invalidate LiveQuery tables.
+		db: deps.reactiveDb.db,
 		sessionManager: deps.sessionManager,
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
@@ -330,7 +385,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		messageHub: deps.messageHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		defaultModel: deps.config.defaultModel,
-		sessionGroupRepo: spaceSessionGroupRepo,
+		appMcpManager: deps.appMcpManager,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
@@ -368,14 +423,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.daemonHub
 	);
 
-	// Space session group admin handlers
-	setupSpaceSessionGroupHandlers(
-		deps.messageHub,
-		deps.daemonHub,
-		deps.spaceManager,
-		spaceSessionGroupRepo
-	);
-
 	// Provision the Global Spaces Agent session (spaces:global)
 	// Create shared state synchronously so the RPC handler is available immediately.
 	// The actual session creation and MCP wiring happens asynchronously.
@@ -404,6 +451,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			setSessionMcpServers: () => false as const,
 			removeWorktree: async () => false as const,
 			getProcessingState: (_sessionId: string) => undefined,
+			switchModel: async (_sessionId: string, _model: string, _provider: string) => ({
+				success: false,
+				model: '',
+				error: 'switchModel not supported for global session factory',
+			}),
+			getCurrentModel: async (_sessionId: string) => null,
 		};
 
 		provisionGlobalSpacesAgent({
@@ -418,6 +471,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			db: deps.db.getDatabase(),
 			state: globalSpacesState,
 			daemonHub: deps.daemonHub,
+			appMcpManager: deps.appMcpManager,
 		}).catch((error) => {
 			log.error('Failed to provision global spaces agent:', error);
 		});
@@ -430,6 +484,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			unsubLiveQuery();
 			roomRuntimeService.stop();
 			spaceRuntimeService.stop();
+			fileIndex.dispose();
 		},
 		spaceRuntimeService,
 		taskAgentManager,

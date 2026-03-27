@@ -14,7 +14,14 @@ import {
 	type TaskAgentContext,
 	type PreviousTaskSummary,
 } from '../../../src/lib/space/agents/task-agent';
-import type { SpaceTask, SpaceWorkflow, SpaceWorkflowRun, Space, SpaceAgent } from '@neokai/shared';
+import type {
+	SpaceTask,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+	Space,
+	SpaceAgent,
+	WorkflowChannel,
+} from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -70,22 +77,12 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'Feature Workflow',
 		description: 'Plan, code, and review.',
-		steps: [
+		nodes: [
 			{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner' },
 			{ id: 'step-code', name: 'Code', agentId: 'agent-1', instructions: 'Write tests too.' },
 			{ id: 'step-review', name: 'Review', agentId: 'agent-reviewer' },
 		],
-		transitions: [
-			{ id: 't1', from: 'step-plan', to: 'step-code', order: 0 },
-			{
-				id: 't2',
-				from: 'step-code',
-				to: 'step-review',
-				order: 0,
-				condition: { type: 'human', description: 'Approve code before review' },
-			},
-		],
-		startStepId: 'step-plan',
+		startNodeId: 'step-plan',
 		rules: [
 			{
 				id: 'rule-1',
@@ -113,8 +110,9 @@ function makeWorkflowRun(overrides?: Partial<SpaceWorkflowRun>): SpaceWorkflowRu
 		spaceId: 'space-1',
 		workflowId: 'wf-1',
 		title: 'Feature X Run #1',
-		currentStepId: 'step-plan',
 		status: 'in_progress',
+		iterationCount: 0,
+		maxIterations: 5,
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -155,10 +153,10 @@ describe('buildTaskAgentSystemPrompt — basic structure', () => {
 		expect(prompt.length).toBeGreaterThan(0);
 	});
 
-	test('identifies agent as Task Agent orchestrator', () => {
+	test('identifies agent as Task Agent collaboration manager', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
 		expect(prompt).toContain('Task Agent');
-		expect(prompt).toContain('workflow orchestrator');
+		expect(prompt).toContain('collaboration manager');
 	});
 
 	test('does not throw on minimal context (no workflow, no agents, no previous tasks)', () => {
@@ -172,19 +170,14 @@ describe('buildTaskAgentSystemPrompt — basic structure', () => {
 });
 
 describe('buildTaskAgentSystemPrompt — MCP tools', () => {
-	test('includes spawn_step_agent tool', () => {
+	test('includes spawn_node_agent tool', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('spawn_step_agent');
+		expect(prompt).toContain('spawn_node_agent');
 	});
 
-	test('includes check_step_status tool', () => {
+	test('includes check_node_status tool', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('check_step_status');
-	});
-
-	test('includes advance_workflow tool', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('advance_workflow');
+		expect(prompt).toContain('check_node_status');
 	});
 
 	test('includes report_result tool', () => {
@@ -199,19 +192,14 @@ describe('buildTaskAgentSystemPrompt — MCP tools', () => {
 });
 
 describe('buildTaskAgentSystemPrompt — workflow execution instructions', () => {
-	test('mentions spawning step agents', () => {
+	test('mentions spawning node agents', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('spawn_step_agent');
+		expect(prompt).toContain('spawn_node_agent');
 	});
 
-	test('mentions monitoring completion via check_step_status', () => {
+	test('mentions monitoring completion via check_node_status', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('check_step_status');
-	});
-
-	test('mentions advancing the workflow', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('advance_workflow');
+		expect(prompt).toContain('check_node_status');
 	});
 
 	test('includes instructions to call report_result on terminal step', () => {
@@ -237,24 +225,7 @@ describe('buildTaskAgentSystemPrompt — human gate handling', () => {
 	});
 });
 
-describe('buildTaskAgentSystemPrompt — step_result vs report_result.status', () => {
-	test('includes section distinguishing step_result from report_result.status', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('step_result');
-		expect(prompt).toContain('report_result.status');
-	});
-
-	test('describes step_result as free-form string for transition evaluation', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('task_result');
-	});
-
-	test('advance_workflow description mentions passing step_result on verify/review/test steps', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('step_result');
-		expect(prompt).toContain('passed');
-	});
-
+describe('buildTaskAgentSystemPrompt — result handling', () => {
 	test('uses cancelled instead of failed for error handling in Workflow Execution Instructions', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
 		expect(prompt).toContain('cancelled');
@@ -413,7 +384,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('Review');
 	});
 
-	test('includes step agent names', () => {
+	test('includes node agent names', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
 		expect(msg).toContain('Coder');
 		expect(msg).toContain('Planner');
@@ -423,11 +394,6 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 	test('includes step instructions when present', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
 		expect(msg).toContain('Write tests too.');
-	});
-
-	test('includes human gate transition label', () => {
-		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('HUMAN GATE');
 	});
 
 	test('includes workflow rules', () => {
@@ -463,21 +429,6 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('all steps');
 	});
 
-	test('always condition transition produces no extra label', () => {
-		const ctx = makeContext({
-			workflow: makeWorkflow({
-				transitions: [
-					{ id: 't-always', from: 'step-plan', to: 'step-code', condition: { type: 'always' } },
-				],
-			}),
-		});
-		const msg = buildTaskAgentInitialMessage(ctx);
-		// The arrow line should appear without a bracketed condition label
-		expect(msg).toContain('`step-plan` → `step-code`');
-		expect(msg).not.toContain('[HUMAN GATE]');
-		expect(msg).not.toContain('[condition:');
-	});
-
 	test('includes workflow run details when present', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
 		expect(msg).toContain('run-1');
@@ -499,7 +450,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 
 	test('handles workflow with no steps — body shows no steps message', () => {
 		const ctx = makeContext({
-			workflow: makeWorkflow({ steps: [], transitions: [], startStepId: 'none' }),
+			workflow: makeWorkflow({ nodes: [], startNodeId: 'none' }),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('no steps defined');
@@ -509,9 +460,8 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
 				name: 'Empty Workflow',
-				steps: [],
-				transitions: [],
-				startStepId: 'none',
+				nodes: [],
+				startNodeId: 'none',
 			}),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
@@ -523,9 +473,8 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 	test('step with unresolvable agentId falls back to raw agent id', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
-				steps: [{ id: 'step-orphan', name: 'Orphan Step', agentId: 'agent-missing' }],
-				transitions: [],
-				startStepId: 'step-orphan',
+				nodes: [{ id: 'step-orphan', name: 'Orphan Step', agentId: 'agent-missing' }],
+				startNodeId: 'step-orphan',
 			}),
 			availableAgents: [],
 		});
@@ -537,12 +486,6 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		const ctx = makeContext({ workflow: makeWorkflow({ rules: [] }) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).not.toContain('Workflow Rules');
-	});
-
-	test('handles workflow with no transitions', () => {
-		const ctx = makeContext({ workflow: makeWorkflow({ transitions: [] }) });
-		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).not.toContain('→');
 	});
 });
 
@@ -635,48 +578,210 @@ describe('buildTaskAgentInitialMessage — previous task results', () => {
 });
 
 describe('buildTaskAgentInitialMessage — start instruction', () => {
-	test('instructs to begin with spawn_step_agent for workflow tasks', () => {
+	test('instructs to begin with spawn_node_agent for workflow tasks', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('spawn_step_agent');
+		expect(msg).toContain('spawn_node_agent');
 		expect(msg).toContain('step-plan');
 	});
 
 	test('instructs to spawn agent for tasks without workflow', () => {
 		const ctx = makeContext({ workflow: undefined, workflowRun: undefined });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('spawn_step_agent');
+		expect(msg).toContain('spawn_node_agent');
 	});
 });
 
-describe('buildTaskAgentInitialMessage — formatTransition task_result', () => {
-	test('formatTransition labels task_result transitions with result matches expression', () => {
-		// Create a workflow with a task_result transition
-		const wf: SpaceWorkflow = {
-			id: 'wf-task-result',
-			spaceId: 'space-1',
-			name: 'Task Result WF',
-			description: 'Test workflow',
-			steps: [
-				{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner' },
-				{ id: 'step-code', name: 'Code', agentId: 'agent-1' },
-			],
-			transitions: [
-				{
-					id: 't1',
-					from: 'step-plan',
-					to: 'step-code',
-					condition: { type: 'task_result', expression: 'passed' },
-				},
-			],
-			startStepId: 'step-plan',
-			rules: [],
-			isDefault: false,
-			tags: [],
-			createdAt: 1000,
-			updatedAt: 2000,
+// ===========================================================================
+// New agent-centric collaboration model tests
+// ===========================================================================
+
+describe('buildTaskAgentSystemPrompt — collaboration manager role', () => {
+	test('uses collaboration manager terminology', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('collaboration manager');
+	});
+
+	test('does not use workflow orchestrator terminology', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).not.toContain('workflow orchestrator');
+	});
+
+	test('mentions monitoring completion via list_group_members querying space_tasks', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('list_group_members');
+		expect(prompt).toContain('space_tasks');
+	});
+});
+
+describe('buildTaskAgentSystemPrompt — gate-blocked messages', () => {
+	test('includes guidance on handling gate-blocked messages', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('gate-blocked');
+	});
+
+	test('instructs to call request_human_input for human gates on channels', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		// gate condition guidance section
+		expect(prompt).toContain('human` gate');
+		expect(prompt).toContain('request_human_input');
+	});
+
+	test('mentions condition and task_result gates are evaluated automatically', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('condition` and `task_result` gates are evaluated automatically');
+	});
+});
+
+describe('buildTaskAgentSystemPrompt — string-based target addressing', () => {
+	test('explains agent name resolves to DM', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('DM');
+	});
+
+	test('explains node name resolves to fan-out', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('fan-out');
+	});
+
+	test('mentions broadcast target *', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('"*"');
+	});
+});
+
+describe('buildTaskAgentSystemPrompt — list_reachable_agents guidance', () => {
+	test('mentions list_reachable_agents as a node agent tool', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('list_reachable_agents');
+	});
+
+	test('mentions list_peers as a node agent tool for completion state', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('list_peers');
+	});
+});
+
+describe('buildTaskAgentInitialMessage — channel map', () => {
+	function makeWorkflowWithChannels(channels: WorkflowChannel[]): SpaceWorkflow {
+		return {
+			...makeWorkflow(),
+			channels,
 		};
-		const ctx = makeContext({ workflow: wf });
+	}
+
+	test('includes channel map section when workflow has channels', () => {
+		const channels: WorkflowChannel[] = [
+			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
+		];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('[result matches "passed"]');
+		expect(msg).toContain('Collaboration Channel Map');
+	});
+
+	test('shows channel from/to agents', () => {
+		const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'one-way' }];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('`coder`');
+		expect(msg).toContain('`reviewer`');
+	});
+
+	test('shows bidirectional arrow for bidirectional channels', () => {
+		const channels: WorkflowChannel[] = [
+			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
+		];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('↔');
+	});
+
+	test('shows one-way arrow for one-way channels', () => {
+		const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'one-way' }];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('→');
+	});
+
+	test('shows HUMAN GATE label for human-gated channels', () => {
+		const channels: WorkflowChannel[] = [
+			{
+				from: 'coder',
+				to: 'reviewer',
+				direction: 'one-way',
+				gate: { type: 'human', description: 'Approve before review' },
+			},
+		];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('HUMAN GATE');
+		expect(msg).toContain('request_human_input');
+	});
+
+	test('shows condition gate label for condition-gated channels', () => {
+		const channels: WorkflowChannel[] = [
+			{
+				from: 'coder',
+				to: 'reviewer',
+				direction: 'one-way',
+				gate: { type: 'condition', expression: 'ci_passed' },
+			},
+		];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('ci_passed');
+	});
+
+	test('shows task_result gate label for task_result-gated channels', () => {
+		const channels: WorkflowChannel[] = [
+			{
+				from: 'coder',
+				to: 'reviewer',
+				direction: 'one-way',
+				gate: { type: 'task_result', expression: 'passed' },
+			},
+		];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('passed');
+	});
+
+	test('shows channel label when present', () => {
+		const channels: WorkflowChannel[] = [
+			{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'code-review' },
+		];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('code-review');
+	});
+
+	test('shows no-channels message when workflow has empty channels', () => {
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels([]) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('No channels are declared');
+	});
+
+	test('shows no channel map when no workflow is assigned', () => {
+		const ctx = makeContext({ workflow: undefined });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).not.toContain('Collaboration Channel Map');
+	});
+
+	test('mentions target addressing guidance in channel map', () => {
+		const channels: WorkflowChannel[] = [
+			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
+		];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('list_reachable_agents');
+	});
+
+	test('handles fan-out channel with array of targets', () => {
+		const channels: WorkflowChannel[] = [
+			{ from: 'coder', to: ['reviewer', 'qa'], direction: 'one-way' },
+		];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('reviewer');
+		expect(msg).toContain('qa');
 	});
 });

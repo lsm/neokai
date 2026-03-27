@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
 import type {
 	RoomGoal,
 	GoalPriority,
@@ -109,7 +110,7 @@ const COMMON_TIMEZONES = [
 // ─── Helper Utilities ─────────────────────────────────────────────────────────
 
 function relativeTime(ts: number): string {
-	const diff = Date.now() - ts * 1000;
+	const diff = Date.now() - ts;
 	const mins = Math.floor(diff / 60000);
 	if (mins < 1) return 'just now';
 	if (mins < 60) return `${mins}m ago`;
@@ -255,6 +256,36 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 		>
 			{label}
 		</span>
+	);
+}
+
+// ─── Short ID Badge ───────────────────────────────────────────────────────────
+
+function GoalShortIdBadge({ shortId }: { shortId: string }) {
+	const copied = useSignal(false);
+
+	const handleCopy = (e: MouseEvent) => {
+		e.stopPropagation();
+		navigator.clipboard
+			.writeText(shortId)
+			.then(() => {
+				copied.value = true;
+				setTimeout(() => {
+					copied.value = false;
+				}, 1500);
+			})
+			.catch(() => {});
+	};
+
+	return (
+		<button
+			data-testid={`goal-short-id-badge-${shortId}`}
+			onClick={handleCopy}
+			title="Click to copy short ID"
+			class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0 transition-colors"
+		>
+			{copied.value ? '\u2713 copied' : `#${shortId}`}
+		</button>
 	);
 }
 
@@ -447,7 +478,7 @@ function GoalForm({
 					value={title}
 					onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
 					class="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-					placeholder="Enter goal title..."
+					placeholder="Enter mission title..."
 					required
 				/>
 			</div>
@@ -462,14 +493,14 @@ function GoalForm({
 					value={description}
 					onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
 					class="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-					placeholder="Describe the goal..."
+					placeholder="Describe the mission..."
 					rows={2}
 				/>
 			</div>
 
 			{/* Mission Type */}
 			<div>
-				<label class="block text-sm font-medium text-gray-300 mb-2">Goal Type</label>
+				<label class="block text-sm font-medium text-gray-300 mb-2">Mission Type</label>
 				<div class="grid grid-cols-3 gap-2">
 					{(
 						[
@@ -545,7 +576,7 @@ function GoalForm({
 						<div class="flex gap-2">
 							<select
 								value={schedulePreset}
-								onChange={(e) => setSchedulePreset((e.target as HTMLSelectElement).value)}
+								onInput={(e) => setSchedulePreset((e.currentTarget as HTMLSelectElement).value)}
 								class="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
 								data-testid="schedule-preset"
 							>
@@ -557,7 +588,7 @@ function GoalForm({
 							</select>
 							<select
 								value={timezone}
-								onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
+								onInput={(e) => setTimezone((e.currentTarget as HTMLSelectElement).value)}
 								class="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
 								data-testid="timezone-select"
 							>
@@ -596,7 +627,7 @@ function GoalForm({
 				<select
 					id="goal-priority"
 					value={priority}
-					onChange={(e) => setPriority((e.target as HTMLSelectElement).value as GoalPriority)}
+					onInput={(e) => setPriority((e.currentTarget as HTMLSelectElement).value as GoalPriority)}
 					class="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
 				>
 					<option value="low">Low</option>
@@ -752,7 +783,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 				{/* Goal title */}
 				<div>
 					<label for="wizard-goal-title" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Goal Name <span class="text-red-400">*</span>
+						Mission Name <span class="text-red-400">*</span>
 					</label>
 					<input
 						id="wizard-goal-title"
@@ -831,7 +862,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 
 			{/* Goal Type */}
 			<div>
-				<label class="block text-sm font-medium text-gray-300 mb-2">Goal Type</label>
+				<label class="block text-sm font-medium text-gray-300 mb-2">Mission Type</label>
 				<div class="space-y-2">
 					{(
 						[
@@ -924,7 +955,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 						<div class="flex gap-2">
 							<select
 								value={schedulePreset}
-								onChange={(e) => setSchedulePreset((e.target as HTMLSelectElement).value)}
+								onInput={(e) => setSchedulePreset((e.currentTarget as HTMLSelectElement).value)}
 								class="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
 								data-testid="schedule-preset"
 							>
@@ -936,7 +967,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 							</select>
 							<select
 								value={timezone}
-								onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
+								onInput={(e) => setTimezone((e.currentTarget as HTMLSelectElement).value)}
 								class="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
 								data-testid="timezone-select"
 							>
@@ -1256,15 +1287,11 @@ function GoalItem({
 					class="px-4 py-3 cursor-pointer hover:bg-dark-800/50 transition-colors active:bg-dark-800"
 					onClick={onToggleExpand}
 				>
-					{/* Row 1: Status indicator + priority badge + mission type badge + actions */}
-					<div class="flex items-center justify-between mb-2">
-						<div class="flex items-center gap-2 flex-wrap">
-							<StatusIndicator status={goal.status} />
-							<PriorityBadge priority={goal.priority} />
-							{missionType !== 'one_shot' && <MissionTypeBadge type={missionType} />}
-							{goal.autonomyLevel && goal.autonomyLevel !== 'supervised' && (
-								<AutonomyBadge level={goal.autonomyLevel} />
-							)}
+					{/* Row 1: Title + actions */}
+					<div class="flex items-start justify-between gap-2 mb-1.5">
+						<div class="flex items-center gap-2 min-w-0">
+							<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
+							{goal.shortId && <GoalShortIdBadge shortId={goal.shortId} />}
 						</div>
 						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
 							<Button variant="ghost" size="sm" onClick={() => setIsEditing(true)}>
@@ -1276,8 +1303,15 @@ function GoalItem({
 						</div>
 					</div>
 
-					{/* Row 2: Title */}
-					<h4 class="text-base font-semibold text-gray-100 leading-snug mb-1">{goal.title}</h4>
+					{/* Row 2: Status + badges */}
+					<div class="flex items-center gap-2 flex-wrap mb-2">
+						<StatusIndicator status={goal.status} />
+						<PriorityBadge priority={goal.priority} />
+						{missionType !== 'one_shot' && <MissionTypeBadge type={missionType} />}
+						{goal.autonomyLevel && goal.autonomyLevel !== 'supervised' && (
+							<AutonomyBadge level={goal.autonomyLevel} />
+						)}
+					</div>
 
 					{/* Row 3: Description (truncated, optional) */}
 					{goal.description && (
@@ -1582,7 +1616,7 @@ function GoalItem({
 				isOpen={showDeleteConfirm}
 				onClose={() => setShowDeleteConfirm(false)}
 				onConfirm={handleDelete}
-				title="Delete Goal"
+				title="Delete Mission"
 				message={`Are you sure you want to delete "${goal.title}"? This action cannot be undone.`}
 				confirmText="Delete"
 				isLoading={isUpdating}
@@ -1620,11 +1654,11 @@ function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
 			<div class="text-5xl mb-4" aria-hidden="true">
 				🎯
 			</div>
-			<h3 class="text-lg font-semibold text-gray-200 mb-2">No goals yet</h3>
+			<h3 class="text-lg font-semibold text-gray-200 mb-2">No missions yet</h3>
 			<p class="text-sm text-gray-400 max-w-xs mb-6 leading-relaxed">
-				Set clear goals to give your agent team direction and purpose.
+				Set clear missions to give your agent team direction and purpose.
 			</p>
-			<Button onClick={onCreateClick}>+ Create your first goal</Button>
+			<Button onClick={onCreateClick}>+ Create your first mission</Button>
 		</div>
 	);
 }
@@ -1804,12 +1838,12 @@ export function GoalsEditor({
 			{/* Header */}
 			<div class="flex items-center justify-between">
 				<div class="flex items-center gap-2">
-					<h2 class="text-lg font-semibold text-gray-100">Goals</h2>
+					<h2 class="text-lg font-semibold text-gray-100">Missions</h2>
 					<span class="px-2 py-0.5 text-xs font-medium bg-dark-700 text-gray-300 rounded">
 						{goals.length}
 					</span>
 				</div>
-				<Button onClick={() => setShowCreateModal(true)}>Create Goal</Button>
+				<Button onClick={() => setShowCreateModal(true)}>Create Mission</Button>
 			</div>
 
 			{/* Type filter (only when there are goals) */}
@@ -1828,7 +1862,7 @@ export function GoalsEditor({
 				<GoalsSkeleton />
 			) : sortedGoals.length === 0 && goals.length > 0 ? (
 				<div class="text-sm text-gray-500 text-center py-6">
-					No goals match the selected filter.
+					No missions match the selected filter.
 				</div>
 			) : goals.length === 0 ? (
 				<EmptyState onCreateClick={() => setShowCreateModal(true)} />
@@ -1852,7 +1886,11 @@ export function GoalsEditor({
 			)}
 
 			{/* Create Goal Modal — Two-step wizard */}
-			<Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create Goal">
+			<Modal
+				isOpen={showCreateModal}
+				onClose={() => setShowCreateModal(false)}
+				title="Create Mission"
+			>
 				<CreateGoalWizard onSubmit={onCreateGoal} onCancel={() => setShowCreateModal(false)} />
 			</Modal>
 		</div>

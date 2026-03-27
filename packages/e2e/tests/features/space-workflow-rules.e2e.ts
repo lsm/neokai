@@ -294,13 +294,12 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 					const planner = agents.find((a) => a.role === 'planner') ?? agents[0];
 					if (!planner) throw new Error('No agents seeded in space');
 
-					const step = { id: crypto.randomUUID(), name: 'Step 1', agentId: planner.id };
+					const node = { id: crypto.randomUUID(), name: 'Node 1', agentId: planner.id };
 					await hub.request('spaceWorkflow.create', {
 						spaceId: sid,
 						name: wname,
-						steps: [step],
-						transitions: [],
-						startStepId: step.id,
+						nodes: [node],
+						startNodeId: node.id,
 						rules: [],
 						tags: [],
 					});

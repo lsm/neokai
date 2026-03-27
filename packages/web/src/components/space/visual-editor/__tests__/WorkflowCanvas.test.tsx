@@ -19,10 +19,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceAgent, WorkflowTransition } from '@neokai/shared';
+import type { SpaceAgent } from '@neokai/shared';
+import type { VisualTransition } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
-import type { StepDraft } from '../../WorkflowStepCard';
+import type { NodeDraft } from '../../WorkflowNodeCard';
 import type { ViewportState } from '../types';
 
 vi.mock('../../../../lib/utils', () => ({
@@ -39,7 +40,7 @@ function makeAgent(id: string, name: string): SpaceAgent {
 	return { id, spaceId: 'space-1', name, role: 'coder', createdAt: 0, updatedAt: 0 };
 }
 
-function makeStep(localId: string, name: string): StepDraft {
+function makeStep(localId: string, name: string): NodeDraft {
 	return { localId, name, agentId: 'agent-1', instructions: '' };
 }
 
@@ -51,6 +52,7 @@ const NODES: WorkflowNodeData[] = [
 		stepIndex: 1,
 		position: { x: 10, y: 10 },
 		agents: AGENTS,
+		workflowChannels: [],
 		isStartNode: false,
 	},
 	{
@@ -58,6 +60,7 @@ const NODES: WorkflowNodeData[] = [
 		stepIndex: 2,
 		position: { x: 200, y: 10 },
 		agents: AGENTS,
+		workflowChannels: [],
 		isStartNode: false,
 	},
 ];
@@ -273,7 +276,7 @@ describe('WorkflowNode — isSelected prop via WorkflowCanvas', () => {
 
 // ---- Transitions / edge integration ----
 
-const TRANSITIONS: WorkflowTransition[] = [
+const TRANSITIONS: VisualTransition[] = [
 	{ id: 'tr1', from: 'step-1', to: 'step-2' },
 	{ id: 'tr2', from: 'step-2', to: 'step-1', condition: { type: 'human' } },
 ];
@@ -459,5 +462,303 @@ describe('WorkflowCanvas — edge delete', () => {
 		fireEvent.click(getByTestId('workflow-node-step-1'));
 		fireEvent.keyDown(document.body, { key: 'Delete' });
 		expect(onDeleteEdge).not.toHaveBeenCalled();
+	});
+});
+
+// ---- Channel edges ----
+
+import { computeChannelEdges } from '../WorkflowCanvas';
+import type { WorkflowChannel } from '@neokai/shared';
+
+describe('computeChannelEdges', () => {
+	function makeAgentWithRole(id: string, role: string): SpaceAgent {
+		return { id, spaceId: 'space-1', name: role, role, createdAt: 0, updatedAt: 0 };
+	}
+
+	function makeNodeWithAgentsAndChannels(
+		localId: string,
+		name: string,
+		agents: SpaceAgent[],
+		channels?: WorkflowChannel[]
+	) {
+		return {
+			step: {
+				localId,
+				name,
+				agentId: agents[0]?.id ?? '',
+				agents: agents.map((a) => ({ agentId: a.id })),
+				instructions: '',
+			},
+			stepIndex: 0,
+			position: { x: 0, y: 0 },
+			agents,
+			workflowChannels: channels ?? [],
+			isStartNode: false,
+		};
+	}
+
+	it('returns empty array when no nodes have channels', () => {
+		const agents = [makeAgentWithRole('agent-1', 'coder')];
+		const nodes = [
+			makeNodeWithAgentsAndChannels('step-1', 'Step One', agents),
+			makeNodeWithAgentsAndChannels('step-2', 'Step Two', agents),
+		];
+		const result = computeChannelEdges(nodes as any);
+		expect(result).toHaveLength(0);
+	});
+
+	it('extracts task-agent bidirectional channel as edge from task-agent to node', () => {
+		const agents = [makeAgentWithRole('agent-1', 'coder')];
+		const channels: WorkflowChannel[] = [
+			{ from: 'task-agent', to: 'coder', direction: 'bidirectional' },
+		];
+		const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
+		const result = computeChannelEdges(nodes as any);
+		expect(result).toHaveLength(1);
+		expect(result[0]).toEqual({
+			fromStepId: 'task-agent',
+			toStepId: 'step-1',
+			direction: 'bidirectional',
+		});
+	});
+
+	it('extracts task-agent one-way channel as edge from task-agent to node', () => {
+		const agents = [makeAgentWithRole('agent-1', 'coder')];
+		const channels: WorkflowChannel[] = [{ from: 'task-agent', to: 'coder', direction: 'one-way' }];
+		const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
+		const result = computeChannelEdges(nodes as any);
+		expect(result).toHaveLength(1);
+		expect(result[0]).toEqual({
+			fromStepId: 'task-agent',
+			toStepId: 'step-1',
+			direction: 'one-way',
+		});
+	});
+
+	it('skips intra-node channels (same from and to node)', () => {
+		const agents = [
+			makeAgentWithRole('agent-1', 'coder'),
+			makeAgentWithRole('agent-2', 'reviewer'),
+		];
+		// Channel within the same node - both coder and reviewer are in step-1
+		const channels: WorkflowChannel[] = [
+			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
+		];
+		const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
+		const result = computeChannelEdges(nodes as any);
+		expect(result).toHaveLength(0);
+	});
+
+	it('handles wildcard to/from within same node as intra-node (skipped)', () => {
+		const agents = [makeAgentWithRole('agent-1', 'coder')];
+		const channels: WorkflowChannel[] = [{ from: '*', to: 'coder', direction: 'bidirectional' }];
+		const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
+		const result = computeChannelEdges(nodes as any);
+		// * to a role in same node = intra-node = skipped
+		expect(result).toHaveLength(0);
+	});
+
+	it('creates edge when channel.to is an array of roles', () => {
+		const agents = [
+			makeAgentWithRole('agent-1', 'coder'),
+			makeAgentWithRole('agent-2', 'reviewer'),
+		];
+		const channels: WorkflowChannel[] = [
+			{ from: 'task-agent', to: ['coder', 'reviewer'], direction: 'bidirectional' },
+		];
+		const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
+		const result = computeChannelEdges(nodes as any);
+		// Both coder and reviewer roles are in the same node (step-1),
+		// so both resolve to the same target - only one edge is created
+		expect(result).toHaveLength(1);
+		expect(result[0]).toEqual({
+			fromStepId: 'task-agent',
+			toStepId: 'step-1',
+			direction: 'bidirectional',
+		});
+	});
+
+	it('returns empty array when node has agents but channel references unknown role', () => {
+		const agents = [makeAgentWithRole('agent-1', 'coder')];
+		const channels: WorkflowChannel[] = [
+			{ from: 'task-agent', to: 'unknown-role', direction: 'bidirectional' },
+		];
+		const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
+		const result = computeChannelEdges(nodes as any);
+		// Unknown role can't be resolved, so edge is skipped
+		expect(result).toHaveLength(0);
+	});
+
+	it('creates inter-node edge between two regular (non-task-agent) nodes', () => {
+		// Node A has coder, Node B has reviewer
+		// Channel: coder -> reviewer (bidirectional) defined on Node A
+		const nodeAAgents = [makeAgentWithRole('agent-1', 'coder')];
+		const nodeBAgents = [makeAgentWithRole('agent-2', 'reviewer')];
+		const nodeAChannels: WorkflowChannel[] = [
+			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
+		];
+		const nodes = [
+			makeNodeWithAgentsAndChannels('node-a', 'Node A', nodeAAgents, nodeAChannels),
+			makeNodeWithAgentsAndChannels('node-b', 'Node B', nodeBAgents, []),
+		];
+		const result = computeChannelEdges(nodes as any);
+		expect(result).toHaveLength(1);
+		expect(result[0]).toEqual({
+			fromStepId: 'node-a',
+			toStepId: 'node-b',
+			direction: 'bidirectional',
+		});
+	});
+
+	it('deduplicates edges when same (from, to) pair appears multiple times', () => {
+		// Two nodes both have channels to the same task-agent role
+		const nodeAAgents = [makeAgentWithRole('agent-1', 'coder')];
+		const nodeBAgents = [makeAgentWithRole('agent-2', 'reviewer')];
+		const nodeAChannels: WorkflowChannel[] = [
+			{ from: 'task-agent', to: 'coder', direction: 'bidirectional' },
+		];
+		const nodeBChannels: WorkflowChannel[] = [
+			{ from: 'task-agent', to: 'reviewer', direction: 'bidirectional' },
+		];
+		const nodes = [
+			makeNodeWithAgentsAndChannels('node-a', 'Node A', nodeAAgents, nodeAChannels),
+			makeNodeWithAgentsAndChannels('node-b', 'Node B', nodeBAgents, nodeBChannels),
+		];
+		const result = computeChannelEdges(nodes as any);
+		// Each node should have its own edge to task-agent - no duplicates
+		expect(result).toHaveLength(2);
+	});
+});
+
+describe('WorkflowCanvas — channel edge rendering', () => {
+	it('renders no channel edges when nodes have no channels', () => {
+		const { queryByTestId } = renderCanvas();
+		// No channel edges should be rendered
+		expect(queryByTestId('channel-edge-list')).toBeNull();
+	});
+
+	it('renders channel edges when nodes have task-agent channels', () => {
+		// Create nodes with task-agent channels (now passed via workflowChannels prop)
+		const agents = [makeAgent('agent-1', 'Coder')];
+		const nodesWithChannels: WorkflowNodeData[] = [
+			{
+				step: {
+					...makeStep('step-1', 'Step One'),
+					agentId: 'agent-1',
+				},
+				stepIndex: 1,
+				position: { x: 10, y: 10 },
+				agents,
+				workflowChannels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+				isStartNode: false,
+			},
+		];
+
+		function WrapperWithChannels() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={nodesWithChannels}
+					viewportState={vp}
+					onViewportChange={setVp}
+					onNodeSelect={() => {}}
+					onDeleteNode={() => {}}
+				/>
+			);
+		}
+
+		const { container } = render(<WrapperWithChannels />);
+		// Should have channel edge elements
+		const channelEdges = container.querySelectorAll('[data-channel-edge]');
+		expect(channelEdges.length).toBeGreaterThan(0);
+	});
+});
+
+// ---- Explicit channels prop ----
+
+import type { ResolvedWorkflowChannel } from '../EdgeRenderer';
+
+describe('WorkflowCanvas — explicit channels prop', () => {
+	const CHANNEL_EDGES: ResolvedWorkflowChannel[] = [
+		{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'bidirectional' },
+	];
+
+	function renderCanvasWithExplicitChannels(extra: Partial<WorkflowCanvasProps> = {}) {
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={NODES}
+					viewportState={vp}
+					onViewportChange={setVp}
+					channels={CHANNEL_EDGES}
+					{...extra}
+				/>
+			);
+		}
+		return render(<Wrapper />);
+	}
+
+	it('renders SVG overlay when explicit channels are provided', () => {
+		const { getByTestId } = renderCanvasWithExplicitChannels();
+		expect(getByTestId('visual-canvas-svg')).toBeTruthy();
+	});
+
+	it('renders channel edges from explicit channels prop', () => {
+		const { container } = renderCanvasWithExplicitChannels();
+		// Channel edges are rendered inside the SVG overlay
+		const channelEdges = container.querySelectorAll('[data-channel-edge]');
+		expect(channelEdges.length).toBeGreaterThan(0);
+	});
+
+	it('deduplicates explicit channels with computed node channels', () => {
+		// Node has a channel from step-1 to step-2 (via workflowChannels prop)
+		const agentWithRole = makeAgent('agent-1', 'Coder');
+		agentWithRole.role = 'coder';
+		const nodesWithChannels: WorkflowNodeData[] = [
+			{
+				step: {
+					...makeStep('step-1', 'Step One'),
+					agentId: 'agent-1',
+				},
+				stepIndex: 1,
+				position: { x: 10, y: 10 },
+				agents: [agentWithRole],
+				workflowChannels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+				isStartNode: false,
+			},
+			{
+				step: makeStep('step-2', 'Step Two'),
+				stepIndex: 2,
+				position: { x: 200, y: 10 },
+				agents: [makeAgent('agent-2', 'Reviewer')],
+				workflowChannels: [],
+				isStartNode: false,
+			},
+		];
+		// Pass duplicate of task-agent->step-1 edge explicitly
+		const duplicateChannels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+		];
+
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={nodesWithChannels}
+					viewportState={vp}
+					onViewportChange={setVp}
+					channels={duplicateChannels}
+					onNodeSelect={() => {}}
+					onDeleteNode={() => {}}
+				/>
+			);
+		}
+
+		const { container } = render(<Wrapper />);
+		// Should deduplicate: only one edge for task-agent->step-1
+		const taskAgentEdges = container.querySelectorAll('[data-channel-edge="task-agent:step-1"]');
+		expect(taskAgentEdges.length).toBeLessThanOrEqual(1);
+		cleanup();
 	});
 });

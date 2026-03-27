@@ -92,6 +92,8 @@ vi.mock('../../lib/room-store', () => ({
 				return mockAutoCompletedNotificationsSignal;
 			},
 			select: mockRoomStoreSelect,
+			subscribeRoom: vi.fn().mockResolvedValue(undefined),
+			unsubscribeRoom: vi.fn(),
 			createGoal: vi.fn(),
 			updateGoal: vi.fn(),
 			deleteGoal: vi.fn(),
@@ -280,10 +282,10 @@ describe('Room', () => {
 			expect(screen.getByTestId('room-agents')).toBeTruthy();
 		});
 
-		it('renders Goals tab content when Goals tab is clicked', () => {
+		it('renders Missions tab content when Missions tab is clicked', () => {
 			render(<Room roomId={roomId} />);
 
-			fireEvent.click(screen.getByText('Goals'));
+			fireEvent.click(screen.getByText('Missions'));
 			expect(screen.getByTestId('goals-editor')).toBeTruthy();
 		});
 

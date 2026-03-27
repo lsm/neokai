@@ -25,8 +25,8 @@ export class SpaceTaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, agent_name, completion_summary, workflow_run_id, workflow_node_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -39,8 +39,10 @@ export class SpaceTaskRepository {
 			params.taskType ?? null,
 			params.assignedAgent ?? 'coder',
 			params.customAgentId ?? null,
+			params.agentName ?? null,
+			null,
 			params.workflowRunId ?? null,
-			params.workflowStepId ?? null,
+			params.workflowNodeId ?? null,
 			params.createdByTaskId ?? null,
 			params.goalId ?? null,
 			JSON.stringify(params.dependsOn ?? []),
@@ -184,9 +186,9 @@ export class SpaceTaskRepository {
 			fields.push('workflow_run_id = ?');
 			values.push(params.workflowRunId ?? null);
 		}
-		if (params.workflowStepId !== undefined) {
-			fields.push('workflow_step_id = ?');
-			values.push(params.workflowStepId ?? null);
+		if (params.workflowNodeId !== undefined) {
+			fields.push('workflow_node_id = ?');
+			values.push(params.workflowNodeId ?? null);
 		}
 		if (params.progress !== undefined) {
 			fields.push('progress = ?');
@@ -199,6 +201,10 @@ export class SpaceTaskRepository {
 		if (params.result !== undefined) {
 			fields.push('result = ?');
 			values.push(params.result ?? null);
+		}
+		if (params.completionSummary !== undefined) {
+			fields.push('completion_summary = ?');
+			values.push(params.completionSummary ?? null);
 		}
 		if (params.error !== undefined) {
 			fields.push('error = ?');
@@ -353,13 +359,15 @@ export class SpaceTaskRepository {
 			taskType: (row.task_type as SpaceTask['taskType'] | null) ?? undefined,
 			assignedAgent: (row.assigned_agent as SpaceTask['assignedAgent'] | null) ?? undefined,
 			customAgentId: (row.custom_agent_id as string | null) ?? undefined,
+			agentName: (row.agent_name as string | null) ?? undefined,
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
-			workflowStepId: (row.workflow_step_id as string | null) ?? undefined,
+			workflowNodeId: (row.workflow_node_id as string | null) ?? undefined,
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
 			goalId: (row.goal_id as string | null) ?? undefined,
 			progress: (row.progress as number | null) ?? undefined,
 			currentStep: (row.current_step as string | null) ?? undefined,
 			result: (row.result as string | null) ?? undefined,
+			completionSummary: (row.completion_summary as string | null) ?? undefined,
 			error: (row.error as string | null) ?? undefined,
 			dependsOn: JSON.parse(row.depends_on as string) as string[],
 			inputDraft: (row.input_draft as string | null) ?? undefined,

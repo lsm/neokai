@@ -204,6 +204,38 @@ describe('SessionCache', () => {
 		it('should be idempotent for non-existent session', () => {
 			expect(() => cache.remove('nonexistent')).not.toThrow();
 		});
+
+		it('should allow fresh getAsync after remove (no stale lock)', async () => {
+			// Populate via set, then remove should clear any load locks too.
+			cache.set('test-session-id', mockAgentSession);
+			cache.remove('test-session-id');
+			// After remove, the session is gone and no load lock exists.
+			// A subsequent getAsync should fall through to loadFromDB.
+			const result = await cache.getAsync('test-session-id');
+			expect(mockLoadFromDB).toHaveBeenCalledWith('test-session-id');
+			expect(result).toBe(mockAgentSession);
+		});
+
+		it('should clear in-flight load lock so getAsync after remove does a fresh load', async () => {
+			// Start an async load that is in-flight (lock is set)
+			const firstLoadPromise = cache.getAsync('test-session-id');
+
+			// Remove the session while the load is in-flight — this clears the lock
+			cache.remove('test-session-id');
+
+			// The first load may still complete (lock was cleared from locks map but promise runs)
+			await firstLoadPromise;
+
+			// Now the cache may or may not have the session (depends on timing).
+			// The important thing is: a second getAsync after remove+first-completion should work.
+			// Reset the mock call count to verify a fresh load is attempted.
+			(mockLoadFromDB as ReturnType<typeof mock>).mockClear();
+			cache.remove('test-session-id'); // ensure clean state
+
+			const result = await cache.getAsync('test-session-id');
+			expect(result).toBe(mockAgentSession);
+			expect(mockLoadFromDB).toHaveBeenCalledWith('test-session-id');
+		});
 	});
 
 	describe('has', () => {

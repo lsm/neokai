@@ -114,6 +114,21 @@ export interface SessionFactory {
 	 * Returns true if worktree was removed, false if it didn't exist or was main repo.
 	 */
 	removeWorktree(workspacePath: string): Promise<boolean>;
+	/**
+	 * Switch the model for a session directly without going through RPC.
+	 * This avoids creating duplicate AgentSession instances via SessionManager.
+	 * Returns the result of the model switch operation.
+	 */
+	switchModel(
+		sessionId: string,
+		model: string,
+		provider: string
+	): Promise<{ success: boolean; model: string; error?: string }>;
+	/**
+	 * Get the current model/provider for a session from DB (source of truth).
+	 * Returns null if the session is not found.
+	 */
+	getCurrentModel(sessionId: string): Promise<{ currentModel: string; provider: string } | null>;
 }
 
 /**
@@ -156,10 +171,6 @@ export interface TaskGroupManagerConfig {
 	model?: string;
 	/** Leader provider (auto-detected from model if omitted) */
 	provider?: string;
-	/** Worker model (defaults to model if not set) */
-	workerModel?: string;
-	/** Worker provider (auto-detected from workerModel if omitted) */
-	workerProvider?: string;
 	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
 	getRoom: (roomId: string) => Room | null;
 	/** Fetch task from DB by ID. Used to get CURRENT task data at route time. */
@@ -183,8 +194,6 @@ export class TaskGroupManager {
 	readonly workspacePath: string;
 	private _model?: string;
 	private _provider?: string;
-	readonly workerModel?: string;
-	readonly workerProvider?: string;
 
 	constructor(config: TaskGroupManagerConfig) {
 		this.groupRepo = config.groupRepo;
@@ -198,8 +207,6 @@ export class TaskGroupManager {
 		this.workspacePath = config.workspacePath;
 		this._model = config.model;
 		this._provider = config.provider;
-		this.workerModel = config.workerModel;
-		this.workerProvider = config.workerProvider;
 		this.daemonHub = config.daemonHub;
 	}
 
@@ -217,14 +224,6 @@ export class TaskGroupManager {
 	updateModel(model: string | undefined, provider?: string): void {
 		this._model = model;
 		this._provider = provider;
-	}
-
-	/**
-	 * Get the effective model to use for worker sessions.
-	 * Returns workerModel if set, otherwise falls back to model.
-	 */
-	getWorkerModel(): string | undefined {
-		return this.workerModel ?? this._model;
 	}
 
 	/**

@@ -1,26 +1,34 @@
 /**
  * Task Agent — System prompt builder for Task Agent sessions.
  *
- * The Task Agent is a workflow orchestrator that manages the execution of a
- * specific Space task. It spawns sub-sessions for each workflow step, monitors
- * their completion, advances the workflow, and surfaces human gates to the user.
+ * The Task Agent is a collaboration manager that coordinates autonomous agents
+ * working together on a specific Space task. It spawns sub-sessions for each
+ * workflow node, monitors their completion via list_group_members (which queries
+ * space_tasks for live completion state), and surfaces human gates to the user.
+ * Agents drive workflow progression themselves via send_message and report_done.
  *
  * ## Behavioral contract
- * - The Task Agent does NOT execute code directly — it delegates to step agents.
- * - It does NOT bypass human gates — it surfaces them and waits.
- * - It does NOT make architectural decisions — the workflow defines the process.
+ * - The Task Agent does NOT execute code directly — it delegates to node agents.
+ * - It does NOT bypass human gates — it surfaces them via request_human_input and waits.
+ * - It does NOT make architectural decisions — the workflow defines the collaboration graph.
  *
  * ## Tool contract
  * The prompt references the following MCP tools by name. They must be registered
  * in the MCP server(s) composed with this agent's session at runtime:
  *
- *   - spawn_step_agent      — Start a sub-session for a workflow step's assigned agent
- *   - check_step_status     — Poll the status/output of a running step agent session
- *   - advance_workflow      — Evaluate transitions from the current step and move to next
+ *   - spawn_node_agent      — Start a sub-session for a workflow step's assigned agent
+ *   - check_node_status     — Poll the status/output of a running node agent session
  *   - report_result         — Mark the task complete/failed and record the result summary
  *   - request_human_input   — Surface a human gate and block until the user responds
- *   - list_group_members    — List all group members with session IDs and permitted channels
- *   - relay_message         — Inject a user-turn message into any group member (unrestricted)
+ *   - list_group_members    — List all group members with completion state from space_tasks
+ *   - send_message          — Send a message to peer node agents (string-based target)
+ *
+ * ## Node agent tools (for reference)
+ * Node agents have their own peer communication tools:
+ *   - list_peers            — Discover peers and their completion state (queries space_tasks)
+ *   - send_message          — Channel-validated messaging (agent name→DM, node name→fan-out)
+ *   - report_done           — Signal task completion with an optional summary
+ *   - list_reachable_agents — Discover which agents/nodes are reachable and gate status
  *
  * ## Content interpolation
  * All operator-supplied content (space.backgroundContext, space.instructions,
@@ -43,12 +51,13 @@ import type {
 	SpaceWorkflowRun,
 	Space,
 	SpaceAgent,
-	WorkflowStep,
-	WorkflowTransition,
+	WorkflowNode,
+	WorkflowChannel,
+	WorkflowCondition,
 	WorkflowRule,
 	SessionFeatures,
 } from '@neokai/shared';
-import { resolveStepAgents } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { inferProviderForModel } from '../../providers/registry';
 
@@ -84,14 +93,14 @@ export interface TaskAgentContext {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function formatStep(step: WorkflowStep, agents: SpaceAgent[]): string {
-	const stepAgents = resolveStepAgents(step);
+function formatStep(step: WorkflowNode, agents: SpaceAgent[]): string {
+	const nodeAgents = resolveNodeAgents(step);
 	let agentLabel: string;
-	if (stepAgents.length === 1) {
-		const a = agents.find((ag) => ag.id === stepAgents[0].agentId);
-		agentLabel = a ? `${a.name} (role: ${a.role})` : `agent id: ${stepAgents[0].agentId}`;
+	if (nodeAgents.length === 1) {
+		const a = agents.find((ag) => ag.id === nodeAgents[0].agentId);
+		agentLabel = a ? `${a.name} (role: ${a.role})` : `agent id: ${nodeAgents[0].agentId}`;
 	} else {
-		const labels = stepAgents.map((sa) => {
+		const labels = nodeAgents.map((sa) => {
 			const a = agents.find((ag) => ag.id === sa.agentId);
 			return a ? `${a.name} (role: ${a.role})` : `agent id: ${sa.agentId}`;
 		});
@@ -101,30 +110,29 @@ function formatStep(step: WorkflowStep, agents: SpaceAgent[]): string {
 	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})${instructions}`;
 }
 
-function formatTransition(t: WorkflowTransition): string {
-	let conditionLabel = '';
-	if (t.condition) {
-		if (t.condition.type === 'human') {
-			conditionLabel = ' [HUMAN GATE]';
-		} else if (t.condition.type === 'condition') {
-			conditionLabel = ` [condition: ${t.condition.expression ?? '?'}]`;
-		} else if (t.condition.type === 'task_result') {
-			conditionLabel = ` [result matches "${t.condition.expression ?? '?'}"]`;
-		}
-		// 'always' transitions produce no label — they are unconditional, semantically
-		// identical to a transition with no condition object. Any future WorkflowConditionType
-		// values not handled here will also produce no label; add a branch above when new
-		// types are introduced.
-	}
-	return `- \`${t.from}\` → \`${t.to}\`${conditionLabel}`;
-}
-
 function formatRule(rule: WorkflowRule): string {
 	const scope =
 		rule.appliesTo && rule.appliesTo.length > 0
 			? ` (steps: ${rule.appliesTo.join(', ')})`
 			: ' (all steps)';
 	return `- **${rule.name}**${scope}: ${rule.content}`;
+}
+
+function formatGateCondition(gate: WorkflowCondition): string {
+	if (gate.type === 'always') return '';
+	if (gate.type === 'human') return ' **[HUMAN GATE — call request_human_input]**';
+	if (gate.type === 'condition') return ` [condition gate: ${gate.expression ?? '?'}]`;
+	if (gate.type === 'task_result')
+		return ` [task_result gate: matches "${gate.expression ?? '?'}"]`;
+	return '';
+}
+
+function formatChannel(ch: WorkflowChannel): string {
+	const to = Array.isArray(ch.to) ? ch.to.join(', ') : ch.to;
+	const dir = ch.direction === 'bidirectional' ? '↔' : '→';
+	const gateLabel = ch.gate ? formatGateCondition(ch.gate) : '';
+	const label = ch.label ? ` (${ch.label})` : '';
+	return `- \`${ch.from}\` ${dir} \`${to}\`${label}${gateLabel}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,14 +155,14 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 
 	// ---- Role ----------------------------------------------------------------
 	sections.push(
-		`You are a Task Agent — a workflow orchestrator that manages the execution of a ` +
-			`specific task within NeoKai, an autonomous AI software development tool.\n` +
+		`You are a Task Agent — a collaboration manager that coordinates autonomous agents ` +
+			`working together on a task within NeoKai, an autonomous AI software development tool.\n` +
 			`\n` +
-			`Your job is to drive the assigned task to completion by:\n` +
-			`1. Running the task's workflow — spawning sub-sessions for each step's assigned agent\n` +
-			`2. Monitoring step completion and advancing the workflow to the next step\n` +
-			`3. Surfacing human gates when encountered and waiting for approval before continuing\n` +
-			`4. Reporting the final result when the workflow reaches a terminal step`
+			`Your job is to enable the collaboration to succeed by:\n` +
+			`1. Spawning node agents for each workflow node and providing them with the collaboration context\n` +
+			`2. Monitoring agent completion via \`list_group_members\` (queries space_tasks for live completion state)\n` +
+			`3. Surfacing human gates encountered during agent communication and waiting for approval via \`request_human_input\`\n` +
+			`4. Reporting the final result when all agents have completed their work`
 	);
 
 	// ---- Space context -------------------------------------------------------
@@ -174,24 +182,16 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push('');
 	sections.push(
-		`- **spawn_step_agent** — Start a sub-session for the current workflow step. ` +
+		`- **spawn_node_agent** — Start a sub-session for the current workflow step. ` +
 			`Pass the \`step_id\` and optional override instructions. ` +
 			`Returns a \`session_id\` for the spawned sub-session. ` +
-			`Call this when advancing to a new step that requires agent execution.`
+			`Call this when a new step task needs to be executed.`
 	);
 	sections.push(
-		`- **check_step_status** — Poll the status and output of a running step agent session. ` +
-			`Pass the \`session_id\` returned by \`spawn_step_agent\`. ` +
+		`- **check_node_status** — Poll the status and output of a running node agent session. ` +
+			`Pass the \`session_id\` returned by \`spawn_node_agent\`. ` +
 			`Returns the session's current status (\`running\`, \`completed\`, \`error\`) and output. ` +
-			`Call this to determine when a step has finished before advancing.`
-	);
-	sections.push(
-		`- **advance_workflow** — Evaluate transitions from the current workflow step and move ` +
-			`to the next step. Pass the \`step_result\` of the completed step. ` +
-			`Returns the next step ID (or indicates terminal state / human gate). ` +
-			`Call this after a step agent completes successfully. ` +
-			`When a verify, review, or test step completes, set \`step_result\` to 'passed' ` +
-			`if the work is acceptable, or 'failed: <reason>' if issues were found.`
+			`Call this to determine when a step has finished.`
 	);
 	sections.push(
 		`- **report_result** — Mark the task as completed or failed and record a result summary. ` +
@@ -199,63 +199,76 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`Call this when the workflow reaches a terminal step or an unrecoverable error occurs.`
 	);
 	sections.push(
+		`- **report_workflow_done** — Explicitly mark the entire workflow run as completed and close the main task. ` +
+			`Pass an optional \`summary\` string describing what the workflow accomplished. ` +
+			`Call this when all node agents have finished and you are certain the workflow is done. ` +
+			`This immediately marks the run completed without waiting for the automatic detector.`
+	);
+	sections.push(
 		`- **request_human_input** — Surface a human gate and block until the human responds. ` +
 			`Pass a \`question\` describing what decision or approval is needed. ` +
 			`Returns the human's response. ` +
-			`Call this when \`advance_workflow\` returns a \`human\` gate condition.`
+			`Call this when a node agent pauses for human input.`
 	);
 	sections.push(
 		`- **list_group_members** — List all members of the current task's session group. ` +
-			`Returns each member's \`sessionId\`, \`role\`, \`agentId\`, \`status\`, and ` +
-			`\`permittedTargets\` (which roles they can message per the declared channel topology). ` +
-			`Use this to discover active sub-sessions before calling \`relay_message\`.`
+			`Returns each member's \`sessionId\`, \`agentName\`, \`status\`, \`completionState\`, and ` +
+			`\`permittedTargets\`. Completion state is read from \`space_tasks\` — use this to monitor ` +
+			`when all agents have called \`report_done\`. Poll this after each check_node_status to detect ` +
+			`overall collaboration completion.`
 	);
 	sections.push(
-		`- **relay_message** — Inject a user-turn message into any group member's session. ` +
-			`Pass \`target_session_id\` (from \`list_group_members\`) and the \`message\` string. ` +
-			`You are NOT constrained by channel topology — you can relay to any member. ` +
-			`Cross-group messaging is rejected. Use this to route feedback, questions, or context ` +
-			`between step agents that cannot communicate directly.`
-	);
-
-	// ---- step_result vs report_result status ---------------------------------
-	sections.push(`\n## Result Fields: \`step_result\` vs \`report_result.status\`\n`);
-	sections.push(`These are two different fields with different purposes:\n`);
-	sections.push(
-		`- **\`step_result\`** (in \`advance_workflow\`): A free-form string ` +
-			`(e.g. 'passed', 'failed: tests failed') used to evaluate ` +
-			`\`task_result\` transition conditions. It controls which path the workflow takes next.\n`
+		`- **send_message** — Send a message to a peer node agent using a plain string target. ` +
+			`Target resolution: agent name (e.g. \`"coder"\`) → DM to that agent; ` +
+			`node name (e.g. \`"review-node"\`) → fan-out to all agents in that node; ` +
+			`\`"*"\` → broadcast to all permitted targets. ` +
+			`The Task Agent has default bidirectional channels to all node agents. ` +
+			`Use \`list_group_members\` to see permitted targets before sending.`
 	);
 	sections.push(
-		`- **\`report_result.status\`**: A named task status (completed/needs_attention/cancelled) ` +
-			`that marks the overall task outcome. Set via \`report_result\` when the workflow ends.\n`
+		`**Node agent tools (for reference):** Each spawned node agent also has access to: ` +
+			`\`list_peers\` (discover peers with completion state from space_tasks), ` +
+			`\`send_message\` (same string-based targeting), ` +
+			`\`report_done\` (signal task completion), and ` +
+			`\`list_reachable_agents\` (discover reachable agents and cross-node gate status). ` +
+			`Node agents drive their own progression — you do not need to manually route messages between them.`
 	);
 
 	// ---- Workflow execution instructions ------------------------------------
-	sections.push(`\n## Workflow Execution Instructions\n`);
-	sections.push(`Follow this execution loop until the workflow reaches a terminal state:\n`);
+	sections.push(`\n## Collaboration Execution Instructions\n`);
 	sections.push(
-		`1. **Start the first step** — Call \`spawn_step_agent\` for the workflow's start step.\n` +
-			`2. **Monitor completion** — Call \`check_step_status\` periodically until the step reaches ` +
-			`a terminal state (\`completed\` or \`error\`).\n` +
-			`3. **Advance the workflow** — Call \`advance_workflow\` with the step's result.\n` +
-			`   - If it returns a next step ID, go back to step 1 with the new step.\n` +
-			`   - If it returns a **human gate**, call \`request_human_input\` to get approval, then ` +
-			`resume from step 3.\n` +
-			`   - If it returns **terminal** (no outgoing transitions), call \`report_result\` to ` +
-			`complete the task.\n` +
-			`4. **Handle errors** — If a step agent errors, call \`report_result\` with ` +
+		`In the agent-centric model, node agents are self-directing participants that communicate ` +
+			`via declared channels and signal completion via \`report_done\`. Your role is to spawn agents, ` +
+			`monitor the collaboration, and handle gate events — you do not manually route messages between agents.\n`
+	);
+	sections.push(`Follow this loop until all agents have completed:\n`);
+	sections.push(
+		`1. **Spawn pending node agents** — Call \`spawn_node_agent\` for each pending step task ` +
+			`(visible in the task list). Multiple agents may run concurrently in the same node.\n` +
+			`2. **Monitor completion** — Call \`check_node_status\` periodically, then call ` +
+			`\`list_group_members\` to check each member's \`completionState\` (read from space_tasks). ` +
+			`A member is done when its \`completionState.status\` is \`completed\` or \`error\`.\n` +
+			`3. **Agents drive their own progression** — When a node agent sends a message to another ` +
+			`agent via \`send_message\` (using an agent name for DM or a node name for fan-out), ` +
+			`the target node is activated automatically. New pending tasks will appear — spawn their agents (return to step 1).\n` +
+			`4. **Handle gate-blocked messages** — Channels may have gate conditions that block delivery: ` +
+			`a \`human\` gate requires explicit approval (call \`request_human_input\`); ` +
+			`\`condition\` and \`task_result\` gates are evaluated automatically by the system. ` +
+			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
+			`5. **Detect completion** — When \`list_group_members\` shows all members have completed, ` +
+			`call \`report_workflow_done\` to mark the workflow run and task as completed. ` +
+			`You may also use \`report_result\` directly for finer-grained status control.\n` +
+			`6. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
 			`\`status: "cancelled"\` and the error details.`
 	);
 
 	// ---- Human gate handling -------------------------------------------------
 	sections.push(`\n## Human Gate Handling\n`);
 	sections.push(
-		`When \`advance_workflow\` returns a human gate condition:\n` +
+		`When a node agent requires human input or approval:\n` +
 			`1. Call \`request_human_input\` with a clear description of the decision needed.\n` +
 			`2. Wait — do not proceed until the tool returns the human's response.\n` +
-			`3. Use the human's response to decide which transition to take (if multiple exist).\n` +
-			`4. Call \`advance_workflow\` again with the human's decision as the result.\n` +
+			`3. Use the human's response to guide next steps.\n` +
 			`\n` +
 			`**Never bypass a human gate.** Surfacing decisions to the human is a core part of ` +
 			`the supervised autonomy model. Even if you believe you know the right answer, ` +
@@ -270,7 +283,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	sections.push(
 		`1. **Do not execute code directly.** You are an orchestrator, not an executor. ` +
 			`All code execution, file editing, and git operations must be delegated to ` +
-			`step agents via \`spawn_step_agent\`. You have no direct access to the filesystem.\n`
+			`node agents via \`spawn_node_agent\`. You have no direct access to the filesystem.\n`
 	);
 	sections.push(
 		`2. **Do not bypass human gates.** When a workflow transition requires human approval, ` +
@@ -286,36 +299,35 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`summary of what was accomplished. Do not embellish or speculate.\n`
 	);
 	sections.push(
-		`5. **One step at a time.** Do not spawn multiple step agents concurrently unless the ` +
-			`workflow explicitly defines parallel steps. Follow the linear execution loop above.`
+		`5. **Spawn pending agents promptly.** When new pending step tasks appear (activated by ` +
+			`agent-to-agent messaging), spawn their agents without unnecessary delay. ` +
+			`Multiple agents may run concurrently when the workflow activates parallel nodes.`
 	);
 
-	// ---- Channel topology and relay capabilities ----------------------------
-	sections.push(`\n## Channel Topology and Message Relay\n`);
+	// ---- Channel topology ----------------------------------------------------
+	sections.push(`\n## Channel-Based Messaging\n`);
 	sections.push(
-		`Workflow steps may declare a channel topology that governs which agent roles can communicate ` +
-			`with each other. Use \`list_group_members\` to see the active members and their ` +
-			`\`permittedTargets\` — roles they are allowed to message per the declared topology.\n`
+		`The workflow declares a channel topology — a graph of permitted communication paths between agents. ` +
+			`Channels enforce collaboration policies: only agents with a declared channel between them can exchange messages.\n`
 	);
 	sections.push(
-		`**You are NOT constrained by the channel topology.** As the Task Agent coordinator, ` +
-			`you can relay messages to any group member using \`relay_message\`, regardless of which ` +
-			`channels are declared. This allows you to:\n` +
-			`- Route feedback from a reviewer agent to a coder agent\n` +
-			`- Forward context or questions between parallel sub-sessions\n` +
-			`- Intervene when the declared topology does not cover a needed communication path\n`
+		`**String-based target addressing** — \`send_message\` uses a plain string \`target\`:\n` +
+			`- Agent name (e.g. \`"coder"\`) → direct message to that specific agent\n` +
+			`- Node name (e.g. \`"review-node"\`) → fan-out to all agents in that node\n` +
+			`- \`"*"\` → broadcast to all permitted targets\n` +
+			`Use \`list_group_members\` to see permitted targets, or node agents can use ` +
+			`\`list_reachable_agents\` to discover their full reachability graph including cross-node targets and gate status.\n`
 	);
 	sections.push(
-		`**Cross-group messaging is always rejected.** You can only relay to sessions that are ` +
-			`members of the same group as this task. Attempting to relay to a session in a different ` +
-			`group will return an error.\n`
+		`**Gate conditions** — Channels may declare a gate that blocks message delivery until a condition is met:\n` +
+			`- \`human\` gate: requires explicit human approval — call \`request_human_input\` with the gate context\n` +
+			`- \`condition\` gate: system evaluates the expression automatically\n` +
+			`- \`task_result\` gate: system checks whether the prior task result matches the expression\n` +
+			`- No gate (or \`always\`): message is delivered immediately\n`
 	);
 	sections.push(
-		`**When to use relay_message:**\n` +
-			`- A step agent produces output that another step agent needs as input\n` +
-			`- A reviewer step identifies issues that should be sent back to the coder step\n` +
-			`- You need to inject context or instructions mid-execution into a running sub-session\n` +
-			`- The channel topology does not permit direct communication between two agents\n`
+		`The Task Agent has default bidirectional channels to all node agent roles. ` +
+			`Node agents use \`list_reachable_agents\` to discover their full reachability graph.`
 	);
 
 	// ---- Task context -------------------------------------------------------
@@ -378,21 +390,14 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 			parts.push(`\n${wf.description}`);
 		}
 
-		if (wf.steps.length > 0) {
+		if (wf.nodes.length > 0) {
 			parts.push(`\n### Steps (execution order defined by transitions)\n`);
-			parts.push(`**Start step:** \`${wf.startStepId}\`\n`);
-			for (const step of wf.steps) {
+			parts.push(`**Start step:** \`${wf.startNodeId}\`\n`);
+			for (const step of wf.nodes) {
 				parts.push(formatStep(step, context.availableAgents));
 			}
 		} else {
 			parts.push(`\n_This workflow has no steps defined._`);
-		}
-
-		if (wf.transitions.length > 0) {
-			parts.push(`\n### Transitions\n`);
-			for (const t of wf.transitions) {
-				parts.push(formatTransition(t));
-			}
 		}
 
 		if (wf.rules && wf.rules.length > 0) {
@@ -410,11 +415,6 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 			if (run.description) {
 				parts.push(`**Run Description:** ${run.description}`);
 			}
-			if (run.currentStepId) {
-				const currentStep = wf.steps.find((s) => s.id === run.currentStepId);
-				const stepName = currentStep ? currentStep.name : run.currentStepId;
-				parts.push(`**Current Step:** ${stepName} (\`${run.currentStepId}\`)`);
-			}
 		}
 	} else {
 		parts.push(
@@ -422,6 +422,31 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 				`No workflow is assigned to this task. Execute the task directly using the ` +
 				`most appropriate agent from the available agents list below.`
 		);
+	}
+
+	// ---- Collaboration context: channel map ---------------------------------
+	if (context.workflow) {
+		const channels = context.workflow.channels;
+		if (channels && channels.length > 0) {
+			parts.push(`\n## Collaboration Channel Map\n`);
+			parts.push(
+				`The following channels define how agents may communicate in this workflow. ` +
+					`Channels with gates enforce delivery policies — messages are held until the gate condition passes.\n` +
+					`\n` +
+					`**Target addressing:** use an agent name for a direct message (DM) or a node name for ` +
+					`fan-out to all agents in that node. Node agents can call \`list_reachable_agents\` to ` +
+					`discover their full reachability graph.\n`
+			);
+			for (const ch of channels) {
+				parts.push(formatChannel(ch));
+			}
+		} else {
+			parts.push(`\n## Collaboration Channel Map\n`);
+			parts.push(
+				`No channels are declared for this workflow. ` +
+					`Agents are fully isolated — \`send_message\` is unavailable unless channels are added.`
+			);
+		}
 	}
 
 	// ---- Available agents ---------------------------------------------------
@@ -454,15 +479,15 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 
 	// ---- Start instruction --------------------------------------------------
 	parts.push(`\n---\n`);
-	if (context.workflow && context.workflow.steps.length > 0) {
+	if (context.workflow && context.workflow.nodes.length > 0) {
 		// Normal case: workflow with steps — spawn the start step's agent.
 		parts.push(
-			`Begin executing the workflow now. Start by calling \`spawn_step_agent\` ` +
-				`for the start step (\`${context.workflow.startStepId}\`).`
+			`Begin executing the workflow now. Start by calling \`spawn_node_agent\` ` +
+				`for the start step (\`${context.workflow.startNodeId}\`).`
 		);
-	} else if (context.workflow && context.workflow.steps.length === 0) {
+	} else if (context.workflow && context.workflow.nodes.length === 0) {
 		// Degenerate case: workflow exists but defines no steps.
-		// spawn_step_agent requires a step_id, so there is nothing to execute.
+		// spawn_node_agent requires a step_id, so there is nothing to execute.
 		// Surface this as an immediate failure rather than leaving the agent in
 		// an impossible state trying to spawn a step with no ID.
 		parts.push(
@@ -474,7 +499,7 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 		// No workflow assigned — spawn the most appropriate agent directly.
 		parts.push(
 			`Begin executing the task now. Spawn the most appropriate agent using ` +
-				`\`spawn_step_agent\` and monitor its completion.`
+				`\`spawn_node_agent\` and monitor its completion.`
 		);
 	}
 

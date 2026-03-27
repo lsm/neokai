@@ -8,24 +8,23 @@
 
 import { describe, test, expect } from 'bun:test';
 import {
-	SpawnStepAgentSchema,
-	CheckStepStatusSchema,
-	AdvanceWorkflowSchema,
+	SpawnNodeAgentSchema,
+	CheckNodeStatusSchema,
 	ReportResultSchema,
+	ReportWorkflowDoneSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
 	ListGroupMembersSchema,
-	RelayMessageSchema,
 } from '../../../src/lib/space/tools/task-agent-tool-schemas.ts';
 
 // ---------------------------------------------------------------------------
-// spawn_step_agent
+// spawn_node_agent
 // ---------------------------------------------------------------------------
 
-describe('SpawnStepAgentSchema', () => {
+describe('SpawnNodeAgentSchema', () => {
 	test('accepts valid input with step_id only', () => {
-		const result = SpawnStepAgentSchema.safeParse({ step_id: 'step-abc' });
+		const result = SpawnNodeAgentSchema.safeParse({ step_id: 'step-abc' });
 		expect(result.success).toBe(true);
 		if (result.success) {
 			expect(result.data.step_id).toBe('step-abc');
@@ -34,7 +33,7 @@ describe('SpawnStepAgentSchema', () => {
 	});
 
 	test('accepts valid input with step_id and instructions', () => {
-		const result = SpawnStepAgentSchema.safeParse({
+		const result = SpawnNodeAgentSchema.safeParse({
 			step_id: 'step-abc',
 			instructions: 'Focus on unit tests only',
 		});
@@ -45,33 +44,33 @@ describe('SpawnStepAgentSchema', () => {
 	});
 
 	test('rejects missing step_id', () => {
-		const result = SpawnStepAgentSchema.safeParse({ instructions: 'some instructions' });
+		const result = SpawnNodeAgentSchema.safeParse({ instructions: 'some instructions' });
 		expect(result.success).toBe(false);
 	});
 
 	test('rejects non-string step_id', () => {
-		const result = SpawnStepAgentSchema.safeParse({ step_id: 42 });
+		const result = SpawnNodeAgentSchema.safeParse({ step_id: 42 });
 		expect(result.success).toBe(false);
 	});
 
 	test('rejects non-string instructions', () => {
-		const result = SpawnStepAgentSchema.safeParse({ step_id: 'step-1', instructions: 123 });
+		const result = SpawnNodeAgentSchema.safeParse({ step_id: 'step-1', instructions: 123 });
 		expect(result.success).toBe(false);
 	});
 
 	test('rejects empty object', () => {
-		const result = SpawnStepAgentSchema.safeParse({});
+		const result = SpawnNodeAgentSchema.safeParse({});
 		expect(result.success).toBe(false);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// check_step_status
+// check_node_status
 // ---------------------------------------------------------------------------
 
-describe('CheckStepStatusSchema', () => {
+describe('CheckNodeStatusSchema', () => {
 	test('accepts empty object (check current active step)', () => {
-		const result = CheckStepStatusSchema.safeParse({});
+		const result = CheckNodeStatusSchema.safeParse({});
 		expect(result.success).toBe(true);
 		if (result.success) {
 			expect(result.data.step_id).toBeUndefined();
@@ -79,7 +78,7 @@ describe('CheckStepStatusSchema', () => {
 	});
 
 	test('accepts valid input with step_id', () => {
-		const result = CheckStepStatusSchema.safeParse({ step_id: 'step-xyz' });
+		const result = CheckNodeStatusSchema.safeParse({ step_id: 'step-xyz' });
 		expect(result.success).toBe(true);
 		if (result.success) {
 			expect(result.data.step_id).toBe('step-xyz');
@@ -87,39 +86,12 @@ describe('CheckStepStatusSchema', () => {
 	});
 
 	test('rejects non-string step_id', () => {
-		const result = CheckStepStatusSchema.safeParse({ step_id: true });
+		const result = CheckNodeStatusSchema.safeParse({ step_id: true });
 		expect(result.success).toBe(false);
 	});
 
 	test('rejects null step_id', () => {
-		const result = CheckStepStatusSchema.safeParse({ step_id: null });
-		expect(result.success).toBe(false);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// advance_workflow
-// ---------------------------------------------------------------------------
-
-describe('AdvanceWorkflowSchema', () => {
-	test('accepts empty object (no step_result)', () => {
-		const result = AdvanceWorkflowSchema.safeParse({});
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.step_result).toBeUndefined();
-		}
-	});
-
-	test('accepts valid input with step_result', () => {
-		const result = AdvanceWorkflowSchema.safeParse({ step_result: 'All tests passed.' });
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.step_result).toBe('All tests passed.');
-		}
-	});
-
-	test('rejects non-string step_result', () => {
-		const result = AdvanceWorkflowSchema.safeParse({ step_result: 42 });
+		const result = CheckNodeStatusSchema.safeParse({ step_id: null });
 		expect(result.success).toBe(false);
 	});
 });
@@ -272,26 +244,66 @@ describe('RequestHumanInputSchema', () => {
 });
 
 // ---------------------------------------------------------------------------
+// report_workflow_done
+// ---------------------------------------------------------------------------
+
+describe('ReportWorkflowDoneSchema', () => {
+	test('accepts empty object (summary is optional)', () => {
+		const result = ReportWorkflowDoneSchema.safeParse({});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.summary).toBeUndefined();
+		}
+	});
+
+	test('accepts valid input with summary', () => {
+		const result = ReportWorkflowDoneSchema.safeParse({
+			summary: 'All agents completed successfully. PR #42 merged.',
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.summary).toBe('All agents completed successfully. PR #42 merged.');
+		}
+	});
+
+	test('rejects non-string summary', () => {
+		const result = ReportWorkflowDoneSchema.safeParse({ summary: 123 });
+		expect(result.success).toBe(false);
+	});
+
+	test('rejects null summary', () => {
+		const result = ReportWorkflowDoneSchema.safeParse({ summary: null });
+		expect(result.success).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // TASK_AGENT_TOOL_SCHEMAS aggregate
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 7 tool schemas', () => {
+	test('contains all 6 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
-		expect(keys).toContain('spawn_step_agent');
-		expect(keys).toContain('check_step_status');
-		expect(keys).toContain('advance_workflow');
+		expect(keys).toContain('spawn_node_agent');
+		expect(keys).toContain('check_node_status');
 		expect(keys).toContain('report_result');
+		expect(keys).toContain('report_workflow_done');
 		expect(keys).toContain('request_human_input');
 		expect(keys).toContain('list_group_members');
-		expect(keys).toContain('relay_message');
-		expect(keys).toHaveLength(7);
+		expect(keys).toHaveLength(6);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {
 		for (const schema of Object.values(TASK_AGENT_TOOL_SCHEMAS)) {
 			expect(typeof schema.safeParse).toBe('function');
 		}
+	});
+
+	test('does not contain advance_workflow or any old step-advancement tool', () => {
+		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
+		expect(keys).not.toContain('advance_workflow');
+		expect(keys).not.toContain('spawn_step_agent');
+		expect(keys).not.toContain('check_step_status');
 	});
 });
 
@@ -309,51 +321,5 @@ describe('ListGroupMembersSchema', () => {
 		// Zod strips extra fields by default — just verify it does not throw
 		const result = ListGroupMembersSchema.safeParse({ extra: 'ignored' });
 		expect(result.success).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// relay_message
-// ---------------------------------------------------------------------------
-
-describe('RelayMessageSchema', () => {
-	test('accepts valid input with target_session_id and message', () => {
-		const result = RelayMessageSchema.safeParse({
-			target_session_id: 'session-abc',
-			message: 'Hello, please review this PR.',
-		});
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.target_session_id).toBe('session-abc');
-			expect(result.data.message).toBe('Hello, please review this PR.');
-		}
-	});
-
-	test('rejects missing target_session_id', () => {
-		const result = RelayMessageSchema.safeParse({ message: 'hello' });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects missing message', () => {
-		const result = RelayMessageSchema.safeParse({ target_session_id: 'session-abc' });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects non-string target_session_id', () => {
-		const result = RelayMessageSchema.safeParse({ target_session_id: 123, message: 'hello' });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects non-string message', () => {
-		const result = RelayMessageSchema.safeParse({
-			target_session_id: 'session-abc',
-			message: { text: 'object' },
-		});
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects empty object', () => {
-		const result = RelayMessageSchema.safeParse({});
-		expect(result.success).toBe(false);
 	});
 });

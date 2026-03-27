@@ -174,7 +174,7 @@ export class SpaceAgentRepository {
 		const rows = this.db
 			.prepare(
 				`SELECT DISTINCT sw.name
-				FROM space_workflow_steps sws
+				FROM space_workflow_nodes sws
 				JOIN space_workflows sw ON sw.id = sws.workflow_id
 				WHERE sws.agent_id = ?`
 			)

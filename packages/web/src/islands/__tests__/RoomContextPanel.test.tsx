@@ -298,7 +298,7 @@ describe('RoomContextPanel', () => {
 			makeGoal('g3', 'Archived Goal', [], 'archived'),
 		];
 		render(<RoomContextPanel roomId="room-1" />);
-		expect(screen.getByText('Goals')).toBeTruthy();
+		expect(screen.getByText('Missions')).toBeTruthy();
 		// Count matches active goals (excludes archived)
 		expect(screen.getByText('(2)')).toBeTruthy();
 	});
@@ -369,9 +369,9 @@ describe('RoomContextPanel', () => {
 		expect(taskBtn?.className).toContain('bg-dark-700');
 	});
 
-	it('shows "No goals" when goal list is empty', () => {
+	it('shows "No missions" when mission list is empty', () => {
 		render(<RoomContextPanel roomId="room-1" />);
-		expect(screen.getByText('No goals')).toBeTruthy();
+		expect(screen.getByText('No missions')).toBeTruthy();
 	});
 
 	// -- Goals section: completed tasks toggle --
@@ -595,14 +595,14 @@ describe('RoomContextPanel', () => {
 		expect(screen.queryByText('Session 1')).toBeNull();
 	});
 
-	it('renders Sessions section count badge excluding archived sessions', () => {
+	it('renders Sessions section count badge reflecting all server-provided sessions', () => {
+		// Archived sessions are filtered server-side; the client renders whatever it receives.
 		mockSessionsSignal.value = [
 			makeSession('s1', 'Active Session A', 'idle'),
-			makeSession('s2', 'Archived Session', 'archived'),
 			makeSession('s3', 'Active Session B', 'idle'),
 		];
 		render(<RoomContextPanel roomId="room-1" />);
-		// Count badge reflects only non-archived sessions (2, not 3)
+		// Count badge reflects all sessions received from the server (2)
 		expect(screen.getByText('(2)')).toBeTruthy();
 	});
 
@@ -669,29 +669,16 @@ describe('RoomContextPanel', () => {
 		expect(sessionBtn?.className).toContain('bg-dark-700');
 	});
 
-	it('filters out archived sessions by default', () => {
-		mockSessionsSignal.value = [
-			makeSession('s1', 'Active Session', 'idle'),
-			makeSession('s2', 'Archived Session', 'archived'),
-		];
+	it('renders all sessions received from the server (archived filtering is server-side)', () => {
+		// Archived sessions are excluded by the server before being sent to the client.
+		// The client renders all sessions it receives without any additional filtering.
+		mockSessionsSignal.value = [makeSession('s1', 'Active Session', 'idle')];
 		render(<RoomContextPanel roomId="room-1" />);
 
 		// Expand sessions
 		fireEvent.click(screen.getByLabelText('Sessions section'));
 		expect(screen.getByText('Active Session')).toBeTruthy();
-		expect(screen.queryByText('Archived Session')).toBeNull();
-	});
-
-	it('shows archived sessions when toggle is clicked', () => {
-		mockSessionsSignal.value = [
-			makeSession('s1', 'Active Session', 'idle'),
-			makeSession('s2', 'Archived Session', 'archived'),
-		];
-		render(<RoomContextPanel roomId="room-1" />);
-
-		// Expand sessions
-		fireEvent.click(screen.getByLabelText('Sessions section'));
-		fireEvent.click(screen.getByText('Show archived'));
-		expect(screen.getByText('Archived Session')).toBeTruthy();
+		// No archived toggle button since server handles the filtering
+		expect(screen.queryByText('Show archived')).toBeNull();
 	});
 });

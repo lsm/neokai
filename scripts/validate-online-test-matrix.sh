@@ -51,11 +51,14 @@ ROOM_FILES=(
   room-advanced-scenarios.test.ts
   room-chat-agent-tools.test.ts
   room-chat-constraints.test.ts
+  room-mcp-enablement.test.ts
   room-multi-agent-flow.test.ts
+  planner-websearch.test.ts
   room-planner-two-phase.test.ts
   room-replan-recovery.test.ts
   room-reviewer-flow.test.ts
   room-tick-job.test.ts
+  short-id-flow.test.ts
 )
 
 FEATURES_FILES=(
@@ -116,7 +119,7 @@ check_split_module "providers" "${PROVIDERS_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).
-KNOWN_DIRS="agent components convo coordinator features git glm lifecycle mcp providers rewind room rpc sandbox sdk space websocket"
+KNOWN_DIRS="agent components convo coordinator cross-provider features git glm lifecycle mcp providers rewind room rpc sandbox sdk space websocket"
 
 for dir in "$ONLINE_DIR"/*/; do
   [ -d "$dir" ] || continue

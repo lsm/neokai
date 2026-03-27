@@ -104,7 +104,7 @@ describe('QueryModeHandler', () => {
 	});
 
 	describe('handleQueryTrigger', () => {
-		it('should return success with 0 messages if no saved messages', async () => {
+		it('should return success with 0 messages if no deferred messages', async () => {
 			getMessagesByStatusSpy.mockReturnValue([]);
 			handler = createHandler();
 
@@ -113,7 +113,7 @@ describe('QueryModeHandler', () => {
 			expect(result).toEqual({ success: true, messageCount: 0 });
 		});
 
-		it('should update message status to queued', async () => {
+		it('should update message status to enqueued', async () => {
 			const savedMessages: SDKMessage[] = [
 				{
 					dbId: 'db-1',
@@ -127,7 +127,7 @@ describe('QueryModeHandler', () => {
 
 			await handler.handleQueryTrigger();
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'queued');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'enqueued');
 		});
 
 		it('should emit messages.statusChanged event', async () => {
@@ -147,7 +147,7 @@ describe('QueryModeHandler', () => {
 			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 				sessionId: 'test-session-id',
 				messageIds: ['db-1'],
-				status: 'queued',
+				status: 'enqueued',
 			});
 		});
 
@@ -272,18 +272,18 @@ describe('QueryModeHandler', () => {
 		});
 	});
 
-	describe('sendQueuedMessagesOnTurnEnd', () => {
-		it('should return early if no queued messages', async () => {
+	describe('sendEnqueuedMessagesOnTurnEnd', () => {
+		it('should return early if no enqueued messages', async () => {
 			getMessagesByStatusSpy.mockReturnValue([]);
 			handler = createHandler();
 
-			await handler.sendQueuedMessagesOnTurnEnd();
+			await handler.sendEnqueuedMessagesOnTurnEnd();
 
 			expect(enqueueWithIdSpy).not.toHaveBeenCalled();
 			expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
 		});
 
-		it('should enqueue queued messages', async () => {
+		it('should enqueue enqueued messages', async () => {
 			const queuedMessages: SDKMessage[] = [
 				{
 					dbId: 'db-1',
@@ -295,7 +295,7 @@ describe('QueryModeHandler', () => {
 			getMessagesByStatusSpy.mockReturnValue(queuedMessages);
 			handler = createHandler();
 
-			await handler.sendQueuedMessagesOnTurnEnd();
+			await handler.sendEnqueuedMessagesOnTurnEnd();
 
 			expect(ensureQueryStartedSpy).toHaveBeenCalled();
 			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'Queued message');
@@ -313,7 +313,7 @@ describe('QueryModeHandler', () => {
 			getMessagesByStatusSpy.mockReturnValue(queuedMessages);
 			handler = createHandler();
 
-			await handler.sendQueuedMessagesOnTurnEnd();
+			await handler.sendEnqueuedMessagesOnTurnEnd();
 
 			expect(enqueueWithIdSpy).not.toHaveBeenCalled();
 		});
@@ -325,15 +325,15 @@ describe('QueryModeHandler', () => {
 			handler = createHandler();
 
 			// Should not throw
-			await handler.sendQueuedMessagesOnTurnEnd();
+			await handler.sendEnqueuedMessagesOnTurnEnd();
 
 			expect(mockLogger.error).toHaveBeenCalledWith(
-				'Failed to send queued messages on turn end:',
+				'Failed to send enqueued messages on turn end:',
 				expect.any(Error)
 			);
 		});
 
-		it('should process multiple queued messages', async () => {
+		it('should process multiple enqueued messages', async () => {
 			const queuedMessages: SDKMessage[] = [
 				{ dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'First' } },
 				{
@@ -346,7 +346,7 @@ describe('QueryModeHandler', () => {
 			getMessagesByStatusSpy.mockReturnValue(queuedMessages);
 			handler = createHandler();
 
-			await handler.sendQueuedMessagesOnTurnEnd();
+			await handler.sendEnqueuedMessagesOnTurnEnd();
 
 			expect(enqueueWithIdSpy).toHaveBeenCalledTimes(2);
 			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'First');
@@ -355,33 +355,36 @@ describe('QueryModeHandler', () => {
 	});
 
 	describe('replayPendingMessagesForImmediateMode', () => {
-		it('should replay queued messages before saved messages', async () => {
+		it('should replay enqueued messages before deferred messages', async () => {
 			const queuedMessages: SDKMessage[] = [
 				{
-					dbId: 'db-queued-1',
-					uuid: 'uuid-queued-1',
+					dbId: 'db-enqueued-1',
+					uuid: 'uuid-enqueued-1',
 					type: 'user',
-					message: { role: 'user', content: 'Current turn (queued)' },
+					message: { role: 'user', content: 'Current turn (enqueued)' },
 				} as unknown as SDKMessage,
 			];
 			const savedMessages: SDKMessage[] = [
 				{
-					dbId: 'db-saved-1',
-					uuid: 'uuid-saved-1',
+					dbId: 'db-deferred-1',
+					uuid: 'uuid-deferred-1',
 					type: 'user',
-					message: { role: 'user', content: 'Next turn (saved)' },
+					message: { role: 'user', content: 'Next turn (deferred)' },
 				} as unknown as SDKMessage,
 			];
 			getMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
-				status === 'queued' ? queuedMessages : savedMessages
+				status === 'enqueued' ? queuedMessages : savedMessages
 			);
 			handler = createHandler();
 
 			await handler.replayPendingMessagesForImmediateMode();
 
 			expect(enqueueWithIdSpy).toHaveBeenCalledTimes(2);
-			expect(enqueueWithIdSpy.mock.calls[0]).toEqual(['uuid-queued-1', 'Current turn (queued)']);
-			expect(enqueueWithIdSpy.mock.calls[1]).toEqual(['uuid-saved-1', 'Next turn (saved)']);
+			expect(enqueueWithIdSpy.mock.calls[0]).toEqual([
+				'uuid-enqueued-1',
+				'Current turn (enqueued)',
+			]);
+			expect(enqueueWithIdSpy.mock.calls[1]).toEqual(['uuid-deferred-1', 'Next turn (deferred)']);
 		});
 	});
 });

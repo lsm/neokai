@@ -52,6 +52,24 @@ export interface TaskTimeoutEvent {
 	timestamp: string;
 }
 
+/**
+ * A stuck agent (alive but never called report_done) was auto-completed by the runtime.
+ *
+ * Emitted after the task is transitioned to `completed` with a system-generated result.
+ * Consumers can use this to log warnings or inform the Space Agent.
+ */
+export interface AgentAutoCompletedEvent {
+	kind: 'agent_auto_completed';
+	/** Space the task belongs to. */
+	spaceId: string;
+	/** Task that was auto-completed. */
+	taskId: string;
+	/** Milliseconds elapsed since the task started (i.e. how long it was stuck). */
+	elapsedMs: number;
+	/** ISO-8601 timestamp when the event was emitted. */
+	timestamp: string;
+}
+
 /** A workflow run has reached a terminal state (completed, cancelled, or needs_attention). */
 export interface WorkflowRunCompletedEvent {
 	kind: 'workflow_run_completed';
@@ -99,7 +117,8 @@ export type SpaceNotificationEvent =
 	| TaskNeedsAttentionEvent
 	| WorkflowRunNeedsAttentionEvent
 	| TaskTimeoutEvent
-	| WorkflowRunCompletedEvent;
+	| WorkflowRunCompletedEvent
+	| AgentAutoCompletedEvent;
 
 // ---------------------------------------------------------------------------
 // NotificationSink interface

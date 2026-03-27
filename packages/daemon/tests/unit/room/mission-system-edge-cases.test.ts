@@ -197,7 +197,8 @@ describe('Metrics: dual-write derivation', () => {
 				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
 				max_planning_attempts INTEGER NOT NULL DEFAULT 0,
 				consecutive_failures INTEGER NOT NULL DEFAULT 0,
-				replan_count INTEGER NOT NULL DEFAULT 0
+				replan_count INTEGER NOT NULL DEFAULT 0,
+				short_id TEXT
 			);
 			CREATE TABLE mission_metric_history (
 				id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, metric_name TEXT NOT NULL,
@@ -488,7 +489,8 @@ describe('Migration: legacy goals default to one_shot / supervised', () => {
 				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
 				max_planning_attempts INTEGER NOT NULL DEFAULT 0,
 				consecutive_failures INTEGER NOT NULL DEFAULT 0,
-				replan_count INTEGER NOT NULL DEFAULT 0
+				replan_count INTEGER NOT NULL DEFAULT 0,
+				short_id TEXT
 			);
 			CREATE TABLE mission_metric_history (
 				id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, metric_name TEXT NOT NULL,

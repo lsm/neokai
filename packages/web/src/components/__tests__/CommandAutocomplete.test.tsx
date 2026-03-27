@@ -238,6 +238,41 @@ describe('CommandAutocomplete', () => {
 
 			expect(mockOnClose).not.toHaveBeenCalled();
 		});
+
+		it('should call onClose when touching outside (touchend)', () => {
+			const { container } = render(
+				<div>
+					<CommandAutocomplete
+						commands={mockCommands}
+						selectedIndex={0}
+						onSelect={mockOnSelect}
+						onClose={mockOnClose}
+					/>
+					<div data-testid="outside">Outside</div>
+				</div>
+			);
+
+			const outside = container.querySelector('[data-testid="outside"]')!;
+			fireEvent.touchEnd(outside);
+
+			expect(mockOnClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('should not call onClose when touching inside dropdown (touchend)', () => {
+			const { container } = render(
+				<CommandAutocomplete
+					commands={mockCommands}
+					selectedIndex={0}
+					onSelect={mockOnSelect}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const dropdown = container.firstElementChild!;
+			fireEvent.touchEnd(dropdown);
+
+			expect(mockOnClose).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Positioning', () => {

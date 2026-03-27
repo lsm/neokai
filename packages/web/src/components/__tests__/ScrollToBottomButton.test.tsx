@@ -124,8 +124,8 @@ describe('ScrollToBottomButton', () => {
 		it('should have animation class', () => {
 			const { container } = render(<ScrollToBottomButton onClick={mockOnClick} />);
 
-			const button = container.querySelector('button')!;
-			expect(button.className).toContain('animate-slideIn');
+			const wrapper = container.querySelector('button')?.parentElement!;
+			expect(wrapper.className).toContain('animate-slideIn');
 		});
 
 		it('should have shadow styling', () => {

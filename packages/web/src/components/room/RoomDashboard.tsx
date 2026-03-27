@@ -6,7 +6,6 @@
  * - Model indicator showing current leader/worker model
  * - Archive button to archive the room
  * - Confirmation dialogs for pause, stop, and archive actions
- * - Sessions list
  * - Tasks list grouped by status (Active/Review/Done/Archived tabs)
  */
 
@@ -15,7 +14,6 @@ import type { RuntimeState } from '@neokai/shared';
 import { roomStore } from '../../lib/room-store';
 import { navigateToRooms, navigateToRoomTask } from '../../lib/router';
 import { currentRoomTabSignal } from '../../lib/signals';
-import { RoomSessions } from './RoomSessions';
 import { RoomTasks } from './RoomTasks';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { cn } from '../../lib/utils';
@@ -35,7 +33,6 @@ function RuntimeStateIndicator({ state }: { state: RuntimeState }) {
 
 export function RoomDashboard() {
 	const tasks = roomStore.tasks.value;
-	const sessions = roomStore.sessions.value;
 	const roomId = roomStore.roomId.value;
 	const runtimeState = roomStore.runtimeState.value;
 	const runtimeModels = roomStore.runtimeModels.value;
@@ -204,23 +201,8 @@ export function RoomDashboard() {
 					tasks={tasks}
 					goalByTaskId={roomStore.goalByTaskId.value}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
-					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 					onGoalClick={() => {
 						currentRoomTabSignal.value = 'goals';
-					}}
-					onReject={async (taskId, feedback) => {
-						try {
-							await roomStore.rejectTask(taskId, feedback);
-						} catch {
-							// Error handled by store
-						}
-					}}
-					onApprove={async (taskId) => {
-						try {
-							await roomStore.approveTask(taskId);
-						} catch {
-							// Error handled by store
-						}
 					}}
 					onReactivate={async (taskId) => {
 						try {
@@ -230,12 +212,6 @@ export function RoomDashboard() {
 						}
 					}}
 				/>
-			</div>
-
-			{/* Sessions list */}
-			<div class="space-y-2">
-				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Sessions</h2>
-				<RoomSessions sessions={sessions} />
 			</div>
 
 			{/* Pause Confirmation */}

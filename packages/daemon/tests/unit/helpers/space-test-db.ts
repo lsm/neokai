@@ -62,8 +62,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			start_step_id TEXT,
+			start_node_id TEXT,
 			config TEXT,
+			channels TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,
@@ -73,7 +74,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_workflow_steps (
+		CREATE TABLE IF NOT EXISTS space_workflow_nodes (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
@@ -91,16 +92,16 @@ export function createSpaceTables(db: BunDatabase): void {
 		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
-			from_step_id TEXT NOT NULL,
-			to_step_id TEXT NOT NULL,
+			from_node_id TEXT NOT NULL,
+			to_node_id TEXT NOT NULL,
 			condition TEXT,
 			order_index INTEGER NOT NULL DEFAULT 0,
 			is_cyclic INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
-			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
-			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
+			FOREIGN KEY (from_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE,
+			FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
 		)
 	`);
 
@@ -112,7 +113,6 @@ export function createSpaceTables(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			current_step_index INTEGER NOT NULL DEFAULT 0,
-			current_step_id TEXT,
 			status TEXT NOT NULL DEFAULT 'pending'
 				CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
 			config TEXT,
@@ -142,14 +142,16 @@ export function createSpaceTables(db: BunDatabase): void {
 			assigned_agent TEXT
 				CHECK(assigned_agent IN ('coder', 'general')),
 			custom_agent_id TEXT,
+			agent_name TEXT,
 			workflow_run_id TEXT,
-			workflow_step_id TEXT,
+			workflow_node_id TEXT,
 			created_by_task_id TEXT,
 			goal_id TEXT,
 			progress INTEGER,
 			current_step TEXT,
 			result TEXT,
 			error TEXT,
+			completion_summary TEXT,
 			depends_on TEXT NOT NULL DEFAULT '[]',
 			input_draft TEXT,
 			active_session TEXT
@@ -165,54 +167,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
 			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
-			FOREIGN KEY (workflow_step_id) REFERENCES space_workflow_steps(id) ON DELETE SET NULL
+			FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
 		)
 	`);
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_session_groups (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			description TEXT,
-			workflow_run_id TEXT,
-			current_step_id TEXT,
-			task_id TEXT,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'completed', 'failed')),
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
-
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_space_id ON space_session_groups(space_id)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_task_id ON space_session_groups(task_id)`
-	);
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_session_group_members (
-			id TEXT PRIMARY KEY,
-			group_id TEXT NOT NULL,
-			session_id TEXT NOT NULL,
-			role TEXT NOT NULL,
-			agent_id TEXT,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'completed', 'failed')),
-			order_index INTEGER NOT NULL DEFAULT 0,
-			created_at INTEGER NOT NULL,
-			FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE,
-			UNIQUE(group_id, session_id)
-		)
-	`);
-
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_group_id ON space_session_group_members(group_id)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
-	);
 }

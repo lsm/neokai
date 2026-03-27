@@ -1,15 +1,17 @@
 /**
- * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 5
- * tools available to the Task Agent session.
+ * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 6
+ * tools available to the Task Agent session (send_message schema is shared
+ * from node-agent-tool-schemas.ts, making 7 tools total in the MCP server).
  *
- * Tools:
- *   spawn_step_agent      — spawn a sub-session for a specific workflow step
- *   check_step_status     — check the status of the current or a specific step's sub-session
- *   advance_workflow      — advance the workflow to the next step after the current step completes
+ * Tools (defined in this file):
+ *   spawn_node_agent      — spawn a sub-session for a specific workflow node
+ *   check_node_status     — check the status of the current or a specific node's sub-session
  *   report_result         — report the final task result (terminal tool)
+ *   report_workflow_done  — explicitly mark the entire workflow run as completed
  *   request_human_input   — pause execution and surface a question to the human user
+ *   list_group_members    — list all members of the current task's session group
  *
- * This file is consumed by the MCP server factory (Milestone 3). It intentionally
+ * This file is consumed by the MCP server factory. It intentionally
  * contains only schema definitions — no runtime logic or side effects.
  *
  * Style conventions (matching space-agent-tools.ts):
@@ -21,35 +23,35 @@
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
-// spawn_step_agent
+// spawn_node_agent
 // ---------------------------------------------------------------------------
 
 /**
- * Schema for `spawn_step_agent` input.
- * Spawns a sub-session for the given workflow step.
+ * Schema for `spawn_node_agent` input.
+ * Spawns a sub-session for the given workflow node.
  */
-export const SpawnStepAgentSchema = z.object({
+export const SpawnNodeAgentSchema = z.object({
 	/** ID of the workflow step to execute. */
 	step_id: z.string().describe('ID of the workflow step to spawn a sub-session for'),
-	/** Optional override instructions to pass to the step agent. */
+	/** Optional override instructions to pass to the node agent. */
 	instructions: z
 		.string()
-		.describe('Optional instructions to pass to the step agent, overriding the default step prompt')
+		.describe('Optional instructions to pass to the node agent, overriding the default step prompt')
 		.optional(),
 });
 
-export type SpawnStepAgentInput = z.infer<typeof SpawnStepAgentSchema>;
+export type SpawnNodeAgentInput = z.infer<typeof SpawnNodeAgentSchema>;
 
 // ---------------------------------------------------------------------------
-// check_step_status
+// check_node_status
 // ---------------------------------------------------------------------------
 
 /**
- * Schema for `check_step_status` input.
+ * Schema for `check_node_status` input.
  * Checks the processing state, completion, and any errors for the current or
- * a specific step's sub-session.
+ * a specific node's sub-session.
  */
-export const CheckStepStatusSchema = z.object({
+export const CheckNodeStatusSchema = z.object({
 	/** Optional step ID to check. Omit to check the current active step. */
 	step_id: z
 		.string()
@@ -57,35 +59,7 @@ export const CheckStepStatusSchema = z.object({
 		.optional(),
 });
 
-export type CheckStepStatusInput = z.infer<typeof CheckStepStatusSchema>;
-
-// ---------------------------------------------------------------------------
-// advance_workflow
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `advance_workflow` input.
- * Advances the workflow to the next step after the current step completes.
- * When a `task_result` transition condition is present on the outgoing transitions,
- * supply `step_result` to evaluate it — e.g. `'passed'` or `'failed: <reason>'`.
- */
-export const AdvanceWorkflowSchema = z.object({
-	/**
-	 * Result from the completed step, used for `task_result` transition condition evaluation.
-	 * Example values: `'passed'`, `'failed: tests failed'`, `'approved'`.
-	 * When evaluating a `task_result` condition, the executor matches this value
-	 * (prefix match) against the condition's `expression` field.
-	 */
-	step_result: z
-		.string()
-		.describe(
-			"Result of the completed step — used for 'task_result' condition evaluation. " +
-				"Example: 'passed' or 'failed: <reason>'. Prefix-match against the condition's expression."
-		)
-		.optional(),
-});
-
-export type AdvanceWorkflowInput = z.infer<typeof AdvanceWorkflowSchema>;
+export type CheckNodeStatusInput = z.infer<typeof CheckNodeStatusSchema>;
 
 // ---------------------------------------------------------------------------
 // report_result
@@ -152,24 +126,24 @@ export const ListGroupMembersSchema = z.object({});
 export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 
 // ---------------------------------------------------------------------------
-// relay_message
+// report_workflow_done
 // ---------------------------------------------------------------------------
 
 /**
- * Schema for `relay_message` input.
- * Injects a user-turn message into a target sub-session in the same group.
- * The Task Agent is not constrained by channel topology — it can relay to any member.
+ * Schema for `report_workflow_done` input.
+ * Explicitly marks the entire workflow run as completed, bypassing the
+ * automatic all-agents-done detector. Use this when all node agents have
+ * finished and you are certain the run is complete.
  */
-export const RelayMessageSchema = z.object({
-	/** Session ID of the target sub-session to relay the message to. */
-	target_session_id: z
+export const ReportWorkflowDoneSchema = z.object({
+	/** Optional summary of what the workflow accomplished overall. */
+	summary: z
 		.string()
-		.describe('Session ID of the target sub-session to send the message to'),
-	/** The message to inject as a user turn in the target session. */
-	message: z.string().describe('The message content to inject into the target session'),
+		.describe('Optional human-readable summary of what the workflow accomplished')
+		.optional(),
 });
 
-export type RelayMessageInput = z.infer<typeof RelayMessageSchema>;
+export type ReportWorkflowDoneInput = z.infer<typeof ReportWorkflowDoneSchema>;
 
 // ---------------------------------------------------------------------------
 // Aggregate export for MCP server factory (Milestone 3)
@@ -180,13 +154,12 @@ export type RelayMessageInput = z.infer<typeof RelayMessageSchema>;
  * The MCP server factory can iterate this map to register tools.
  */
 export const TASK_AGENT_TOOL_SCHEMAS = {
-	spawn_step_agent: SpawnStepAgentSchema,
-	check_step_status: CheckStepStatusSchema,
-	advance_workflow: AdvanceWorkflowSchema,
+	spawn_node_agent: SpawnNodeAgentSchema,
+	check_node_status: CheckNodeStatusSchema,
 	report_result: ReportResultSchema,
+	report_workflow_done: ReportWorkflowDoneSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,
-	relay_message: RelayMessageSchema,
 } as const;
 
 export type TaskAgentToolName = keyof typeof TASK_AGENT_TOOL_SCHEMAS;

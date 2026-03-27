@@ -535,7 +535,7 @@ describe('RoomRuntime flow', () => {
 
 			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Add error handling to the endpoint',
-				mode: 'queue',
+				mode: 'defer',
 			});
 
 			// Group is back to awaiting_worker with iteration bumped
@@ -598,7 +598,7 @@ describe('RoomRuntime flow', () => {
 				// send_to_worker succeeds: feedbackIteration i+1 < 5
 				const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
-					mode: 'queue',
+					mode: 'defer',
 				});
 				expect(JSON.parse(r.content[0].text).success).toBe(true);
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
@@ -643,7 +643,7 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback ${i + 1}`,
-					mode: 'queue',
+					mode: 'defer',
 				});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
@@ -652,7 +652,7 @@ describe('RoomRuntime flow', () => {
 			});
 			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Extra',
-				mode: 'queue',
+				mode: 'defer',
 			});
 
 			// Task in review, not failed
@@ -680,7 +680,7 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Round ${i + 1}`,
-					mode: 'queue',
+					mode: 'defer',
 				});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
@@ -689,7 +689,7 @@ describe('RoomRuntime flow', () => {
 			});
 			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Trigger',
-				mode: 'queue',
+				mode: 'defer',
 			});
 
 			// Task is in review, group awaiting_human
@@ -718,7 +718,7 @@ describe('RoomRuntime flow', () => {
 			// Leader can now send feedback without triggering re-escalation (1 < 5)
 			const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Good, keep going',
-				mode: 'queue',
+				mode: 'defer',
 			});
 			expect(JSON.parse(r.content[0].text).success).toBe(true);
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
@@ -738,7 +738,7 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
-					mode: 'queue',
+					mode: 'defer',
 				});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
@@ -778,7 +778,7 @@ describe('RoomRuntime flow', () => {
 			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(1);
 			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Round 1',
-				mode: 'queue',
+				mode: 'defer',
 			});
 
 			// Round 2: worker done → feedbackIteration becomes 2 (== maxFeedbackIterations)
@@ -791,7 +791,7 @@ describe('RoomRuntime flow', () => {
 			// Leader tries send_to_worker: 2 >= 2 → runtime escalates to human review
 			const escalationResult = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Trigger escalation',
-				mode: 'queue',
+				mode: 'defer',
 			});
 			expect(JSON.parse(escalationResult.content[0].text).success).toBe(false);
 			expect(JSON.parse(escalationResult.content[0].text).error).toContain('human review');
@@ -805,7 +805,7 @@ describe('RoomRuntime flow', () => {
 			// This should succeed because task.status === 'review' — no limit applies.
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Human reviewer feedback forwarded to worker',
-				mode: 'queue',
+				mode: 'defer',
 			});
 
 			expect(JSON.parse(result.content[0].text).success).toBe(true);

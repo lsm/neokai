@@ -18,16 +18,11 @@ export {
 	getBuiltInWorkflows,
 	seedBuiltInWorkflows,
 } from './workflows/built-in-workflows';
-export {
-	WorkflowExecutor,
-	WorkflowTransitionError,
-	WorkflowGateError,
-} from './runtime/workflow-executor';
+export { WorkflowExecutor } from './runtime/workflow-executor';
 export type {
 	ConditionContext,
 	ConditionResult,
 	CommandRunner,
-	TaskTypeResolver,
 } from './runtime/workflow-executor';
 export { SpaceRuntime } from './runtime/space-runtime';
 export type { SpaceRuntimeConfig, ResolvedTaskType } from './runtime/space-runtime';
@@ -95,17 +90,15 @@ export type {
 
 export {
 	TASK_AGENT_TOOL_SCHEMAS,
-	SpawnStepAgentSchema,
-	CheckStepStatusSchema,
-	AdvanceWorkflowSchema,
+	SpawnNodeAgentSchema,
+	CheckNodeStatusSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
 } from './tools/task-agent-tool-schemas';
 export type {
-	SpawnStepAgentInput,
-	CheckStepStatusInput,
-	AdvanceWorkflowInput,
+	SpawnNodeAgentInput,
+	CheckNodeStatusInput,
 	ReportResultInput,
 	RequestHumanInputInput,
 	TaskResultStatus,
@@ -125,13 +118,11 @@ export type { ValidationResult } from './export-format';
 // Types — re-exported from @neokai/shared for convenience
 export type {
 	SpaceWorkflow,
-	WorkflowStep,
+	WorkflowNode,
 	WorkflowRule,
 	WorkflowCondition,
 	WorkflowConditionType,
-	WorkflowTransition,
-	WorkflowTransitionInput,
-	WorkflowStepInput,
+	WorkflowNodeInput,
 	WorkflowRuleInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,

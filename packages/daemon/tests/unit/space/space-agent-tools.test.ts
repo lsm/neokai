@@ -83,9 +83,9 @@ function buildSingleStepWorkflow(
 		spaceId,
 		name,
 		description,
-		steps: [{ id: stepId, name: 'Work', agentId }],
+		nodes: [{ id: stepId, name: 'Work', agentId }],
 		transitions: [],
-		startStepId: stepId,
+		startNodeId: stepId,
 		rules: [],
 		tags,
 	});
@@ -264,7 +264,7 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('returns run with current step and tasks', async () => {
+	test('returns run with tasks', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Get WF');
 
 		const startResult = await makeHandlers(ctx).start_workflow_run({
@@ -279,7 +279,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.run.id).toBe(runId);
 		expect(parsed.run.status).toBe('in_progress');
-		expect(parsed.currentStep).toBeDefined();
 		expect(parsed.tasks).toHaveLength(1);
 	});
 
@@ -290,20 +289,17 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		expect(parsed.error).toContain('run-missing');
 	});
 
-	test('returns run with no currentStep when currentStepId is absent', async () => {
-		// Create a run directly in the DB without a currentStepId
+	test('returns run with empty tasks when no tasks have been created', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'NoStep WF');
 		const rawRun = ctx.workflowRunRepo.createRun({
 			spaceId: ctx.spaceId,
 			workflowId: wf.id,
 			title: 'no-step run',
 		});
-		// Leave currentStepId null (pending run — no step assigned)
 
 		const result = await makeHandlers(ctx).get_workflow_run({ run_id: rawRun.id });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.currentStep).toBeNull();
 		expect(parsed.tasks).toHaveLength(0);
 	});
 });
@@ -380,7 +376,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const runId = JSON.parse(startResult.content[0].text).run.id;
 
 		// Mark as completed
-		ctx.workflowRunRepo.updateStatus(runId, 'completed');
+		ctx.workflowRunRepo.transitionStatus(runId, 'completed');
 
 		const result = await makeHandlers(ctx).change_plan({
 			run_id: runId,
@@ -529,9 +525,8 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		expect(parsed.workflow.id).toBe(wf.id);
 		expect(parsed.workflow.name).toBe('Detail WF');
 		expect(parsed.workflow.description).toBe('Detailed description');
-		expect(parsed.workflow.steps).toHaveLength(1);
-		expect(parsed.workflow.steps[0].agentId).toBe(ctx.agentId);
-		expect(parsed.workflow.transitions).toEqual([]);
+		expect(parsed.workflow.nodes).toHaveLength(1);
+		expect(parsed.workflow.nodes[0].agentId).toBe(ctx.agentId);
 		expect(parsed.workflow.rules).toEqual([]);
 	});
 
@@ -720,7 +715,7 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		expect(parsed.task.title).toBe('My task');
 		expect(parsed.task.description).toBe('Do something');
 		expect(parsed.task.workflowRunId ?? null).toBeNull();
-		expect(parsed.task.workflowStepId ?? null).toBeNull();
+		expect(parsed.task.workflowNodeId ?? null).toBeNull();
 		expect(parsed.task.spaceId).toBe(ctx.spaceId);
 	});
 

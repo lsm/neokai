@@ -50,6 +50,12 @@ function makeQueryMock(messages: unknown[]) {
 // Mocking internal relative-import modules here would permanently replace
 // them for ALL test files in the same bun test run, breaking tests that
 // import those modules directly (e.g. provider-service.test.ts).
+class MockMcpServerForSdk {
+	readonly _registeredTools: Record<string, object> = {};
+	connect(): void {}
+	disconnect(): void {}
+}
+let _toolBatch: Array<{ name: string; def: object }> = [];
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 	query: (params: { prompt: string; options?: Record<string, unknown> }) => {
 		const opts = params.options ?? {};
@@ -60,6 +66,29 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 			lastTitleQueryOptions = opts;
 		}
 		return makeQueryMock(mockSdkMessages);
+	},
+	interrupt: mock(async () => {}),
+	supportedModels: mock(async () => {
+		throw new Error('SDK unavailable in unit test');
+	}),
+	createSdkMcpServer: mock((_options: { name: string; tools?: unknown[] }) => {
+		const server = new MockMcpServerForSdk();
+		for (const { name, def } of _toolBatch) {
+			server._registeredTools[name] = def;
+		}
+		_toolBatch = [];
+		return {
+			type: 'sdk' as const,
+			name: _options.name,
+			version: _options.version ?? '1.0.0',
+			tools: _options.tools ?? [],
+			instance: server,
+		};
+	}),
+	tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => {
+		const def = { name, description, inputSchema, handler };
+		_toolBatch.push({ name, def });
+		return def;
 	},
 }));
 

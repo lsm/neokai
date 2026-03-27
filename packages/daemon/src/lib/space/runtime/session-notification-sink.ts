@@ -4,14 +4,14 @@
  * Formats SpaceNotificationEvents into structured messages and injects them
  * into the Space Agent session via `sessionFactory.injectMessage()`.
  *
- * ## Delivery mode: `'next_turn'`
+ * ## Delivery mode: `'defer'`
  *
- * Notifications use `deliveryMode: 'next_turn'` for non-blocking injection:
+ * Notifications use `deliveryMode: 'defer'` for non-blocking injection:
  * - If the Space Agent session is **idle**: the message is enqueued immediately
  *   and the agent processes it on the next turn.
  * - If the Space Agent session is **busy** (actively streaming a response or
  *   has a message queued): the message is persisted to the DB with status
- *   `'saved'` and automatically replayed once the current turn completes.
+ *   `'deferred'` and automatically replayed once the current turn completes.
  *
  * This ensures notifications are never dropped and never interrupt the agent
  * mid-response. The trade-off is a possible short delay if the agent is busy,
@@ -70,7 +70,7 @@ export class SessionNotificationSink implements NotificationSink {
 		const message = formatEventMessage(event, this.autonomyLevel);
 		try {
 			await this.sessionFactory.injectMessage(this.sessionId, message, {
-				deliveryMode: 'next_turn',
+				deliveryMode: 'defer',
 			});
 		} catch (err) {
 			// Session not found or unavailable — log warning, do not propagate.
@@ -109,6 +109,8 @@ export function formatEventMessage(
 			return formatTaskTimeout(event, autonomyLevel);
 		case 'workflow_run_completed':
 			return formatWorkflowRunCompleted(event, autonomyLevel);
+		case 'agent_auto_completed':
+			return formatAgentAutoCompleted(event, autonomyLevel);
 	}
 }
 
@@ -210,6 +212,30 @@ function formatWorkflowRunCompleted(
 		payload['summary'] = event.summary;
 	}
 	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatAgentAutoCompleted(
+	event: {
+		kind: 'agent_auto_completed';
+		spaceId: string;
+		taskId: string;
+		elapsedMs: number;
+		timestamp: string;
+	},
+	autonomyLevel: AutonomyLevel
+): string {
+	const elapsedMinutes = Math.round(event.elapsedMs / 60_000);
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} was auto-completed after ${elapsedMinutes} minute(s) ` +
+		`because the agent did not call report_done within the configured timeout.`;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		elapsedMs: event.elapsedMs,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
 }
 
 function buildMessage(

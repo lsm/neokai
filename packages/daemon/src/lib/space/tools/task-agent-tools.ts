@@ -1,20 +1,22 @@
 /**
  * Task Agent Tools — MCP tool handlers for the Task Agent session.
  *
- * These handlers implement the business logic for the 5 Task Agent tools:
- *   spawn_step_agent      — Spawn a sub-session for a workflow step's assigned agent
- *   check_step_status     — Poll the status of a running step agent sub-session
- *   advance_workflow      — Advance the workflow to the next step after current step completes
+ * These handlers implement the business logic for the 7 Task Agent tools:
+ *   spawn_node_agent      — Spawn a sub-session for a workflow node's assigned agent
+ *   check_node_status     — Poll the status of a running node agent sub-session
  *   report_result         — Mark the task as completed/failed and record the result
+ *   report_workflow_done  — Explicitly mark the workflow run as completed
  *   request_human_input   — Pause execution and surface a question to the human user
+ *   list_group_members    — List all members of the current task's session group
+ *   send_message          — Send a message to peer node agents via channel topology
  *
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
  * - Dependencies are injected via `TaskAgentToolsConfig`.
  * - The `SubSessionFactory` abstraction allows tests to mock session creation/state.
  * - Session completion is signalled via two paths:
- *     1. Completion callback registered in spawn_step_agent (fires automatically)
- *     2. Polling via check_step_status (Task Agent polls this tool)
+ *     1. Completion callback registered in spawn_node_agent (fires automatically)
+ *     2. Polling via check_node_status (Task Agent polls this tool)
  *
  * Following the pattern established in space-agent-tools.ts.
  */
@@ -25,37 +27,36 @@ import type { Space, McpServerConfig } from '@neokai/shared';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { AgentSessionInit } from '../../agent/agent-session';
-import type { SpaceRuntime } from '../runtime/space-runtime';
-import { WorkflowGateError } from '../runtime/workflow-executor';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
 import { resolveAgentInit, buildCustomAgentTaskMessage } from '../agents/custom-agent';
 import { ChannelResolver } from '../runtime/channel-resolver';
+import type { ChannelRouter } from '../runtime/channel-router';
+import type { CompletionDetector } from '../runtime/completion-detector';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
-	SpawnStepAgentSchema,
-	CheckStepStatusSchema,
-	AdvanceWorkflowSchema,
+	SpawnNodeAgentSchema,
+	CheckNodeStatusSchema,
 	ReportResultSchema,
+	ReportWorkflowDoneSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
-	RelayMessageSchema,
 } from './task-agent-tool-schemas';
-import { resolveStepAgents } from '@neokai/shared';
+import { SendMessageSchema } from './node-agent-tool-schemas';
+import { resolveNodeAgents } from '@neokai/shared';
 import type {
-	SpawnStepAgentInput,
-	CheckStepStatusInput,
-	AdvanceWorkflowInput,
+	SpawnNodeAgentInput,
+	CheckNodeStatusInput,
 	ReportResultInput,
+	ReportWorkflowDoneInput,
 	RequestHumanInputInput,
 	ListGroupMembersInput,
-	RelayMessageInput,
 } from './task-agent-tool-schemas';
+import type { SendMessageInput } from './node-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -139,15 +140,13 @@ export interface TaskAgentToolsConfig {
 	workflowRunId: string;
 	/** Absolute path to the workspace — forwarded to agent sessions. */
 	workspacePath: string;
-	/** SpaceRuntime for accessing WorkflowExecutors by run ID. */
-	runtime: SpaceRuntime;
 	/** Workflow manager for loading workflow definitions. */
 	workflowManager: SpaceWorkflowManager;
 	/** Task repository for direct DB reads. */
 	taskRepo: SpaceTaskRepository;
 	/** Workflow run repository for reading and updating runs. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** Agent manager for resolving step agents. */
+	/** Agent manager for resolving node agents. */
 	agentManager: SpaceAgentManager;
 	/** Task manager for validated status transitions. */
 	taskManager: SpaceTaskManager;
@@ -156,7 +155,6 @@ export interface TaskAgentToolsConfig {
 	/**
 	 * Injects a message into an existing sub-session as a user turn.
 	 * Called after spawn to deliver the step's task context message.
-	 * Also used by relay_message to forward messages between group members.
 	 */
 	messageInjector: (sessionId: string, message: string) => Promise<void>;
 	/**
@@ -166,29 +164,39 @@ export interface TaskAgentToolsConfig {
 	 */
 	onSubSessionComplete: (stepId: string, sessionId: string) => Promise<void>;
 	/**
-	 * Session group repository for looking up group members.
-	 * Required by list_group_members and relay_message tools.
-	 * The fast in-memory taskGroupIds map in TaskAgentManager is used to find the group ID,
-	 * then the repo provides the member list.
-	 */
-	sessionGroupRepo: SpaceSessionGroupRepository;
-	/**
-	 * Returns the group ID for this task from the in-memory map.
-	 * Provided by TaskAgentManager so tools can locate the group without a DB scan.
-	 */
-	getGroupId: () => string | undefined;
-	/**
 	 * DaemonHub instance for emitting task completion/failure events.
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
 	daemonHub?: DaemonHub;
 	/**
-	 * Factory to build a step agent MCP server for a spawned sub-session.
-	 * Called in `spawn_step_agent` after resolving the session ID and agent role.
+	 * Factory to build a node agent MCP server for a spawned sub-session.
+	 * Called in `spawn_node_agent` after resolving the session ID and agent role.
 	 * Returns a McpServerConfig to attach to the sub-session's init.mcpServers.
-	 * Optional — if omitted, no step agent MCP server is attached (e.g. in unit tests).
+	 * Optional — if omitted, no node agent MCP server is attached (e.g. in unit tests).
+	 *
+	 * @param sessionId   - The sub-session ID being started.
+	 * @param role        - The slot role for the agent (used for channel routing).
+	 * @param stepTaskId  - The SpaceTask ID for this step (used by report_done).
 	 */
-	buildStepAgentMcpServer?: (sessionId: string, role: string) => McpServerConfig;
+	buildNodeAgentMcpServer?: (
+		sessionId: string,
+		role: string,
+		stepTaskId: string
+	) => McpServerConfig;
+	/**
+	 * Channel router for gate-checked message routing between agents.
+	 * When provided, the send_message tool uses it for channel validation and
+	 * lazy node activation instead of constructing a ChannelResolver from run config.
+	 * Optional — existing ChannelResolver-based routing is used as fallback.
+	 */
+	channelRouter?: ChannelRouter;
+	/**
+	 * Completion detector for validating all-agents-done state.
+	 * When provided, report_workflow_done checks that all node agent tasks have
+	 * reached a terminal status before marking the workflow run as completed.
+	 * Optional — if omitted, no completion pre-check is performed.
+	 */
+	completionDetector?: CompletionDetector;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +213,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		space,
 		workflowRunId,
 		workspacePath,
-		runtime,
 		workflowManager,
 		taskRepo,
 		workflowRunRepo,
@@ -214,10 +221,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		sessionFactory,
 		messageInjector,
 		onSubSessionComplete,
-		sessionGroupRepo,
-		getGroupId,
 		daemonHub,
-		buildStepAgentMcpServer,
+		buildNodeAgentMcpServer,
+		completionDetector,
 	} = config;
 
 	return {
@@ -232,12 +238,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * 5. Create the sub-session via sessionFactory.create()
 		 * 6. Register completion callback (onSubSessionComplete) via sessionFactory.onComplete()
 		 * 7. Record the sub-session ID on the step task (BEFORE message injection, so
-		 *    check_step_status can track the session even if injection later fails)
+		 *    check_node_status can track the session even if injection later fails)
 		 * 8. Transition main task from pending → in_progress if not already in_progress
 		 * 9. Build and inject the task context message via messageInjector
 		 *    (non-fatal if injection fails — sub-session is already running and trackable)
 		 */
-		async spawn_step_agent(args: SpawnStepAgentInput): Promise<ToolResult> {
+		async spawn_node_agent(args: SpawnNodeAgentInput): Promise<ToolResult> {
 			const { step_id, instructions } = args;
 
 			// Load the workflow run
@@ -253,7 +259,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			// Find the step
-			const step = workflow.steps.find((s) => s.id === step_id);
+			const step = workflow.nodes.find((s) => s.id === step_id);
 			if (!step) {
 				return jsonResult({
 					success: false,
@@ -261,15 +267,15 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Find the pending task for this step (created by WorkflowExecutor.followTransition)
+			// Find the pending task for this step (created when the workflow node was activated)
 			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
-			const stepTasks = allRunTasks.filter((t) => t.workflowStepId === step_id);
+			const stepTasks = allRunTasks.filter((t) => t.workflowNodeId === step_id);
 			if (stepTasks.length === 0) {
 				return jsonResult({
 					success: false,
 					error:
 						`No task found for step "${step.name}" (id: ${step_id}). ` +
-						`Ensure advance_workflow was called first to create the step task.`,
+						`The step task may not have been created yet — check that the workflow run is active.`,
 				});
 			}
 
@@ -278,7 +284,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			// Idempotency guard: if this step already has a tracked sub-session, return it
 			// without creating a duplicate. Prevents double-spawning from orphaning the first
-			// session when the Task Agent retries a spawn_step_agent call.
+			// session when the Task Agent retries a spawn_node_agent call.
 			if (stepTask.taskAgentSessionId) {
 				return jsonResult({
 					success: true,
@@ -290,11 +296,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Ensure customAgentId is set — fall back to the primary step agent ID for preset agents.
+			// Ensure customAgentId is set — fall back to the primary node agent ID for preset agents.
 			// WorkflowExecutor sets customAgentId to undefined for coder/general preset roles,
-			// but those agents are still SpaceAgent records. Use resolveStepAgents to get the
+			// but those agents are still SpaceAgent records. Use resolveNodeAgents to get the
 			// correct primary agentId regardless of whether the step uses agentId or agents[].
-			const primaryAgentId = resolveStepAgents(step)[0]?.agentId;
+			const nodeAgents = resolveNodeAgents(step);
+			const primaryAgentId = nodeAgents[0]?.agentId;
 			const effectiveTask = {
 				...stepTask,
 				customAgentId: stepTask.customAgentId ?? primaryAgentId,
@@ -305,13 +312,33 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				effectiveTask.description = instructions;
 			}
 
+			// Find the WorkflowNodeAgent slot that spawned this task.
+			// When agentName is stored on the task (migration 51+), use it for an exact match.
+			// This correctly handles nodes where the same agentId appears multiple times with
+			// different agent names (e.g. "strict-reviewer" and "quick-reviewer"): each task
+			// was created with its own agentName, so the lookup is unambiguous.
+			// For tasks created before migration 51 (no agentName), fall back to find-by-agentId,
+			// which always returns the first matching slot — acceptable for legacy data.
+
+			const agentSlot = effectiveTask.agentName
+				? nodeAgents.find((a) => a.name === effectiveTask.agentName)
+				: nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
+
+			// Extract slot-level overrides (model and systemPrompt) if present.
+			// Always construct the object; undefined values are handled downstream
+			// (createCustomAgentInit guards on !== undefined for each field).
+			// When agentSlot is undefined (stale agentName: the workflow was edited after
+			// the task was created and the slot no longer exists), both fields are undefined
+			// and no override is applied — the base agent config is used as-is.
+			const slotOverrides = { model: agentSlot?.model, systemPrompt: agentSlot?.systemPrompt };
+
 			// Generate a new session ID for the sub-session.
 			// Note: the factory may assign a different ID internally. All subsequent code
 			// uses `actualSessionId` returned by sessionFactory.create(), not subSessionId.
 			// The subSessionId is embedded in the init only so the SDK can pre-wire it.
 			const subSessionId = randomUUID();
 
-			// Resolve the agent session init
+			// Resolve the agent session init, applying per-slot overrides when present.
 			let init: AgentSessionInit;
 			try {
 				init = resolveAgentInit({
@@ -322,6 +349,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					workspacePath,
 					workflowRun: run,
 					workflow,
+					slotOverrides,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -333,15 +361,22 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// should always succeed — null here would be a data inconsistency.
 			const agentForMember = agentManager.getById(effectiveTask.customAgentId!);
 
-			// Attach step agent peer communication MCP server if a factory is provided.
-			// The server is built with the resolved session ID and agent role so it can
-			// validate channels and inject messages into the correct peer sessions.
-			const agentRole = agentForMember?.role ?? 'agent';
-			if (buildStepAgentMcpServer) {
-				const stepMcpServer = buildStepAgentMcpServer(subSessionId, agentRole);
+			// Use the slot's name (WorkflowNodeAgent.name) for channel routing and group membership.
+			// This ensures that when the same agent appears multiple times in a node with different
+			// slot names (e.g. "strict-reviewer" and "quick-reviewer"), each session is registered
+			// with its unique slot name so ChannelResolver.canSend() checks work correctly.
+			// Falls back to the base agent's role, then 'agent' if neither is available.
+			const memberRole = agentSlot?.name ?? agentForMember?.role ?? 'agent';
+
+			// Attach node agent peer communication MCP server if a factory is provided.
+			// The server is built with the slot role so it can validate channels using the
+			// same role that was registered in the session group.
+			// Pass stepTask.id so report_done can mark the correct step task as completed.
+			if (buildNodeAgentMcpServer) {
+				const stepMcpServer = buildNodeAgentMcpServer(subSessionId, memberRole, stepTask.id);
 				init = {
 					...init,
-					mcpServers: { ...init.mcpServers, 'step-agent': stepMcpServer },
+					mcpServers: { ...init.mcpServers, 'node-agent': stepMcpServer },
 				};
 			}
 
@@ -350,7 +385,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			try {
 				actualSessionId = await sessionFactory.create(init, {
 					agentId: effectiveTask.customAgentId ?? undefined,
-					role: agentForMember?.role ?? 'agent',
+					role: memberRole,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -363,7 +398,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			});
 
 			// Record the sub-session ID on the step task BEFORE message injection.
-			// This ensures check_step_status can locate and track the session even if
+			// This ensures check_node_status can locate and track the session even if
 			// the subsequent message injection fails.
 			taskRepo.updateTask(stepTask.id, {
 				taskAgentSessionId: actualSessionId,
@@ -387,7 +422,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// This is non-fatal: if injection fails the sub-session still runs (and is
 			// already trackable via taskAgentSessionId recorded above), just without its
 			// initial task context. Return success with a warning field so the Task Agent
-			// can still poll check_step_status.
+			// can still poll check_node_status.
 			try {
 				// resolveAgentInit() already validated that the agent exists, so this
 				// getById() call should always succeed. If it somehow returns null after
@@ -419,7 +454,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				const message = err instanceof Error ? err.message : String(err);
 				// Return success:true because the sub-session was created, the completion
 				// callback is registered, and taskAgentSessionId is persisted. The Task Agent
-				// can still track completion via check_step_status. The warning informs it
+				// can still track completion via check_node_status. The warning informs it
 				// that the sub-session started without its initial task context message.
 				return jsonResult({
 					success: true,
@@ -441,39 +476,29 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		},
 
 		/**
-		 * Check the processing state of a step's sub-session.
+		 * Check the processing state of a node's sub-session.
 		 *
 		 * This is the primary mechanism for the Task Agent to detect sub-session completion.
-		 * The Task Agent polls this tool after spawning a step agent.
+		 * The Task Agent polls this tool after spawning a node agent.
 		 *
 		 * If step_id is omitted, checks the workflow run's current step.
 		 * Returns status = 'completed' when the step task has been marked completed in the DB
-		 * (which happens via the completion callback registered in spawn_step_agent).
+		 * (which happens via the completion callback registered in spawn_node_agent).
 		 */
-		async check_step_status(args: CheckStepStatusInput): Promise<ToolResult> {
-			// Resolve step ID — use provided step_id or fall back to current step on run
-			let stepId = args.step_id;
+		async check_node_status(args: CheckNodeStatusInput): Promise<ToolResult> {
+			// step_id is required — no fallback to currentNodeId (field removed in migration 59)
+			const stepId = args.step_id;
 			if (!stepId) {
-				const run = workflowRunRepo.getRun(workflowRunId);
-				if (!run) {
-					return jsonResult({
-						success: false,
-						error: `Workflow run not found: ${workflowRunId}`,
-					});
-				}
-				if (!run.currentStepId) {
-					return jsonResult({
-						success: false,
-						error: 'No current step on the workflow run. Call spawn_step_agent first.',
-					});
-				}
-				stepId = run.currentStepId;
+				return jsonResult({
+					success: false,
+					error: 'step_id is required. Call spawn_node_agent first and pass the step_id.',
+				});
 			}
 
 			// Find task(s) for this step
 			const stepTasks = taskRepo
 				.listByWorkflowRun(workflowRunId)
-				.filter((t) => t.workflowStepId === stepId);
+				.filter((t) => t.workflowNodeId === stepId);
 
 			if (stepTasks.length === 0) {
 				return jsonResult({
@@ -481,7 +506,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					stepId,
 					taskStatus: 'not_found',
 					sessionStatus: 'not_started',
-					message: 'No task found for this step. Has spawn_step_agent been called?',
+					message: 'No task found for this step. Has spawn_node_agent been called?',
 				});
 			}
 
@@ -507,7 +532,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					taskId: stepTask.id,
 					taskStatus: stepTask.status,
 					sessionStatus: 'not_started',
-					message: 'Sub-session not yet started for this step. Call spawn_step_agent.',
+					message: 'Sub-session not yet started for this step. Call spawn_node_agent.',
 				});
 			}
 
@@ -551,137 +576,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					? 'Sub-session is actively processing. Check back soon.'
 					: 'Sub-session is idle (not currently processing). It may be waiting for input.',
 			});
-		},
-
-		/**
-		 * Advance the workflow to the next step after the current step completes.
-		 *
-		 * Pre-conditions:
-		 * - The current step's SpaceTask must have status = 'completed' in the DB
-		 *   (set by the completion callback registered in spawn_step_agent)
-		 *
-		 * Flow:
-		 * 1. Get the WorkflowExecutor for this run
-		 * 2. Verify the current step task is completed
-		 * 3. If the main task is needs_attention (waiting for human), reset to in_progress
-		 * 4. Call executor.advance() to evaluate transitions and move to next step
-		 * 5. Handle WorkflowGateError → return gate-blocked status (caller calls request_human_input)
-		 * 6. Return next step info (or terminal state)
-		 *
-		 * Note: WorkflowExecutor.advance() accepts `{ stepResult?: string }` for
-		 * task_result condition evaluation. The `step_result` field from the tool input
-		 * is forwarded to the executor, which uses it as a fallback when the DB result
-		 * is absent (DB result takes precedence — the most recently completed task on
-		 * the step is queried first).
-		 */
-		async advance_workflow(args: AdvanceWorkflowInput): Promise<ToolResult> {
-			const executor = runtime.getExecutor(workflowRunId);
-			if (!executor) {
-				return jsonResult({
-					success: false,
-					error:
-						`No active executor found for workflow run: ${workflowRunId}. ` +
-						`The run may have completed or been cancelled.`,
-				});
-			}
-
-			if (executor.isComplete()) {
-				return jsonResult({
-					success: false,
-					error: 'Workflow run is already complete. Call report_result to close the task.',
-				});
-			}
-
-			const currentStep = executor.getCurrentStep();
-			if (!currentStep) {
-				return jsonResult({
-					success: false,
-					error: 'No current step on the workflow executor. The run may be in an invalid state.',
-				});
-			}
-
-			// Verify the current step's task is completed in the DB
-			const stepTasks = taskRepo
-				.listByWorkflowRun(workflowRunId)
-				.filter((t) => t.workflowStepId === currentStep.id);
-
-			const allCompleted = stepTasks.length > 0 && stepTasks.every((t) => t.status === 'completed');
-
-			if (!allCompleted) {
-				const taskStatus =
-					stepTasks.length > 0 ? stepTasks[stepTasks.length - 1].status : 'not_found';
-				return jsonResult({
-					success: false,
-					error:
-						`Current step "${currentStep.name}" has not completed yet. ` +
-						`Task status: ${taskStatus}. ` +
-						`Wait for the step agent to finish before calling advance_workflow.`,
-					currentStepId: currentStep.id,
-					currentStepName: currentStep.name,
-					taskStatus,
-				});
-			}
-
-			// If the main task is needs_attention (waiting after a human gate), reset to in_progress
-			const mainTask = taskRepo.getTask(taskId);
-			if (mainTask && mainTask.status === 'needs_attention') {
-				try {
-					await taskManager.setTaskStatus(taskId, 'in_progress');
-				} catch {
-					// Non-fatal — if transition fails, continue with advance attempt
-				}
-			}
-
-			try {
-				const { step: nextStep, tasks: newTasks } = await executor.advance({
-					stepResult: args.step_result,
-				});
-
-				if (newTasks.length === 0) {
-					// Terminal step reached — executor marked run as completed.
-					// `nextStep` is the step that was just completed (the terminal one).
-					return jsonResult({
-						success: true,
-						terminal: true,
-						terminalStep: {
-							id: nextStep.id,
-							name: nextStep.name,
-						},
-						message:
-							'Workflow has reached a terminal step. ' +
-							`Call report_result with status "completed" to close the task.`,
-					});
-				}
-
-				// Workflow advanced to the next step
-				return jsonResult({
-					success: true,
-					terminal: false,
-					nextStep: {
-						id: nextStep.id,
-						name: nextStep.name,
-						instructions: nextStep.instructions,
-						agentId: nextStep.agentId,
-					},
-					newTasks: newTasks.map((t) => ({ id: t.id, title: t.title, status: t.status })),
-					message: `Workflow advanced to step "${nextStep.name}". Call spawn_step_agent to execute it.`,
-				});
-			} catch (err) {
-				if (err instanceof WorkflowGateError) {
-					return jsonResult({
-						success: true,
-						gateBlocked: true,
-						message: err.message,
-						instruction:
-							'A human gate is blocking workflow advancement. ' +
-							'Call request_human_input to surface this to the human user. ' +
-							'When the human responds, call advance_workflow again.',
-					});
-				}
-
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
-			}
 		},
 
 		/**
@@ -739,141 +633,308 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		},
 
 		/**
+		 * Explicitly mark the workflow run as completed.
+		 *
+		 * Use this tool when all node agents have finished and you are certain the
+		 * overall workflow is done. It:
+		 *   1. Validates the workflow run exists and is still in_progress
+		 *   2. Marks the workflow run as completed (sets completedAt)
+		 *   3. Marks the main task as completed via report_result logic
+		 *   4. Emits a space.task.completed event so listeners are notified
+		 *
+		 * The SpaceRuntime tick loop will detect the completed run status on the next
+		 * tick and emit a workflow_run_completed notification to the Space Agent.
+		 */
+		async report_workflow_done(args: ReportWorkflowDoneInput): Promise<ToolResult> {
+			const { summary } = args;
+
+			const run = workflowRunRepo.getRun(workflowRunId);
+			if (!run) {
+				return jsonResult({
+					success: false,
+					error: `Workflow run not found: ${workflowRunId}`,
+				});
+			}
+
+			if (run.status !== 'in_progress') {
+				return jsonResult({
+					success: false,
+					error:
+						`Cannot mark workflow run as completed when status is "${run.status}". ` +
+						`Workflow run must be in_progress.`,
+					currentStatus: run.status,
+				});
+			}
+
+			// Validate that all node agents have reached terminal status before
+			// allowing an explicit workflow completion. This guards against the Task
+			// Agent calling report_workflow_done prematurely while agents are still
+			// running.
+			if (completionDetector) {
+				const wfDef = workflowManager.getWorkflow(run.workflowId);
+				const channels = wfDef?.channels ?? [];
+				const nodes = wfDef?.nodes ?? [];
+				if (!completionDetector.isComplete(workflowRunId, channels, nodes)) {
+					return jsonResult({
+						success: false,
+						error:
+							'Not all node agents have reached a terminal state yet. ' +
+							'Wait for all agents to complete (check via check_node_status) ' +
+							'before calling report_workflow_done.',
+					});
+				}
+			}
+
+			const mainTask = taskRepo.getTask(taskId);
+			if (!mainTask) {
+				return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+			}
+
+			try {
+				// Mark the workflow run as completed — SpaceRuntime tick will detect this
+				// and emit workflow_run_completed via the notification sink.
+				workflowRunRepo.transitionStatus(workflowRunId, 'completed');
+
+				// Mark the main task as completed (mirrors report_result logic).
+				await taskManager.setTaskStatus(taskId, 'completed', {
+					result: summary,
+				});
+
+				// Emit DaemonHub event so the Space Agent is notified.
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.task.completed', {
+							sessionId: 'global',
+							taskId,
+							spaceId: space.id,
+							status: 'completed',
+							summary: summary ?? '',
+							workflowRunId,
+							taskTitle: mainTask.title,
+						})
+						.catch((err) => {
+							log.warn(
+								`Failed to emit space.task.completed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+							);
+						});
+				}
+
+				return jsonResult({
+					success: true,
+					workflowRunId,
+					taskId,
+					summary,
+					message:
+						'Workflow run has been marked as completed. ' +
+						'The main task has also been closed. Stop here — do not call any further tools.',
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
 		 * List all members of the current task's session group.
 		 *
 		 * Returns every member (including the Task Agent itself) with:
 		 *   - sessionId, role, agentId, status
 		 *   - permittedTargets: roles this member can send to per channel topology
+		 *   - completionState: task status and completion summary for this member's slot task
+		 *
+		 * Also returns nodeCompletionState — all tasks on the current node with their completion state.
 		 *
 		 * The channel topology is read from the active workflow run's config
 		 * (`run.config._resolvedChannels` — stored by SpaceRuntime at step-start).
 		 * If no channels are declared, `permittedTargets` is empty for all members.
 		 *
 		 * The Task Agent itself is listed as a member (role: 'task-agent').
-		 * Use `relay_message` to send messages to any member regardless of topology.
 		 */
 		async list_group_members(_args: ListGroupMembersInput): Promise<ToolResult> {
-			const groupId = getGroupId();
-			if (!groupId) {
-				return jsonResult({
-					success: false,
-					error:
-						`No session group found for task ${taskId}. ` +
-						`The group may not have been created yet — try after spawn_step_agent.`,
-				});
-			}
-
-			const group = sessionGroupRepo.getGroup(groupId);
-			if (!group) {
-				return jsonResult({
-					success: false,
-					error: `Session group ${groupId} not found in the database.`,
-				});
-			}
-
 			// Build ChannelResolver from the active workflow run's config
 			const run = workflowRunRepo.getRun(workflowRunId);
 			const resolver = ChannelResolver.fromRunConfig(
 				run?.config as Record<string, unknown> | undefined
 			);
 
-			const members = group.members.map((m) => ({
-				sessionId: m.sessionId,
-				role: m.role,
-				agentId: m.agentId ?? null,
-				status: m.status,
-				permittedTargets: resolver.getPermittedTargets(m.role),
+			// Get all tasks for this workflow run with active sub-sessions
+			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
+			const activeTasks = allRunTasks.filter((t) => t.taskAgentSessionId);
+
+			const members = activeTasks.map((t) => {
+				const ts = t.status;
+				const memberStatus =
+					ts === 'completed'
+						? 'completed'
+						: ts === 'needs_attention' || ts === 'cancelled'
+							? 'failed'
+							: 'active';
+				return {
+					sessionId: t.taskAgentSessionId!,
+					role: t.agentName ?? 'agent',
+					agentId: t.customAgentId ?? null,
+					status: memberStatus,
+					permittedTargets: resolver.getPermittedTargets(t.agentName ?? 'agent'),
+					completionState: {
+						agentName: t.agentName ?? null,
+						taskStatus: t.status,
+						completionSummary: t.completionSummary ?? null,
+						completedAt: t.completedAt ?? null,
+					},
+				};
+			});
+
+			const nodeCompletionState = allRunTasks.map((t) => ({
+				agentName: t.agentName ?? null,
+				taskStatus: t.status,
+				completionSummary: t.completionSummary ?? null,
+				completedAt: t.completedAt ?? null,
 			}));
 
 			return jsonResult({
 				success: true,
-				groupId,
 				members,
+				nodeCompletionState,
 				channelTopologyDeclared: !resolver.isEmpty(),
 				message:
-					`Group has ${members.length} member(s). ` +
+					`Run has ${members.length} active member(s). ` +
 					(resolver.isEmpty()
-						? 'No channel topology declared — use relay_message to communicate freely.'
-						: `Channel topology is active. Task Agent can still relay to any member via relay_message.`),
+						? 'No channel topology declared.'
+						: `Channel topology is active and enforced.`),
 			});
 		},
 
 		/**
-		 * Relay a message to a target sub-session as a user turn.
+		 * Send a message directly to one or more peer node agents.
 		 *
-		 * The Task Agent is NOT constrained by channel topology — it can relay to
-		 * any member in the same group. This enables routing, arbitration, and
-		 * feedback delivery that step agents cannot do directly.
+		 * Validates the requested direction(s) against the declared channel topology
+		 * before routing. The Task Agent uses `send_message` for all inter-agent
+		 * communication with node agents.
 		 *
-		 * Cross-group messaging is rejected: the target session must belong to
-		 * the same session group as this Task Agent (verified via DB lookup).
+		 * Target forms:
+		 *   - `target: 'coder'` — point-to-point to a single role
+		 *   - `target: '*'` — broadcast to all permitted targets
+		 *   - `target: ['coder', 'reviewer']` — multicast to multiple roles
 		 *
-		 * The message is injected via messageInjector, which serializes writes
-		 * per-session so concurrent injections are safely queued.
+		 * The Task Agent's role is `'task-agent'`. Default bidirectional channels
+		 * are auto-created between the Task Agent and all node agent roles at
+		 * step-start, so the Task Agent can reach all peers by default.
 		 */
-		async relay_message(args: RelayMessageInput): Promise<ToolResult> {
-			const { target_session_id, message } = args;
+		async send_message(args: SendMessageInput): Promise<ToolResult> {
+			const { target, message } = args;
 
-			// Validate that the target belongs to this group (DB lookup for restart safety).
-			const groupId = getGroupId();
-			if (!groupId) {
+			const run = workflowRunRepo.getRun(workflowRunId);
+			const resolver = ChannelResolver.fromRunConfig(
+				run?.config as Record<string, unknown> | undefined
+			);
+
+			// When no channel topology is declared, all send_message calls fail.
+			if (resolver.isEmpty()) {
 				return jsonResult({
 					success: false,
 					error:
-						`No session group found for task ${taskId}. ` +
-						`Cannot validate relay target without a group.`,
+						`No channel topology declared for this step. ` +
+						`Direct messaging via send_message is not available.`,
 				});
 			}
 
-			const group = sessionGroupRepo.getGroup(groupId);
-			if (!group) {
-				return jsonResult({
-					success: false,
-					error: `Session group ${groupId} not found.`,
-				});
+			// Resolve target roles from the target argument
+			let targetRoles: string[];
+
+			if (target === '*') {
+				// Broadcast: expand to all permitted targets
+				const permitted = resolver.getPermittedTargets('task-agent');
+				if (permitted.length === 0) {
+					return jsonResult({
+						success: false,
+						error:
+							`No permitted targets for role 'task-agent' in the declared channel topology. ` +
+							`Broadcast ('*') requires at least one permitted outgoing channel.`,
+						availableTargets: [],
+					});
+				}
+				targetRoles = permitted;
+			} else if (Array.isArray(target)) {
+				// Multicast: validate each requested role
+				targetRoles = target;
+			} else {
+				// Point-to-point: single role
+				targetRoles = [target];
 			}
 
-			// Check that the target session is a member of this group
-			const targetMember = group.members.find((m) => m.sessionId === target_session_id);
-			if (!targetMember) {
+			// Validate all requested target roles against channel topology
+			const unauthorizedRoles = targetRoles.filter((role) => !resolver.canSend('task-agent', role));
+			if (unauthorizedRoles.length > 0) {
+				const permittedTargets = resolver.getPermittedTargets('task-agent');
 				return jsonResult({
 					success: false,
 					error:
-						`Target session ${target_session_id} is not a member of group ${groupId}. ` +
-						`Cross-group messaging is not permitted. ` +
-						`Use list_group_members to see valid targets.`,
+						`Channel topology does not permit 'task-agent' to send to: ${unauthorizedRoles.join(', ')}. ` +
+						`Permitted targets: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`,
+					unauthorizedRoles,
+					permittedTargets,
 				});
 			}
 
-			// Reject self-relay (Task Agent → its own session). The Task Agent is a group
-			// member with role 'task-agent'. Injecting a user-turn into its own session would
-			// produce a spurious conversation turn in the running Task Agent conversation.
-			if (targetMember.role === 'task-agent') {
+			// Find peer sessions via task repo (exclude tasks without sessions)
+			const sendPeers = taskRepo
+				.listByWorkflowRun(workflowRunId)
+				.filter((t) => t.taskAgentSessionId)
+				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.agentName ?? 'agent' }));
+			const delivered: Array<{ role: string; sessionId: string }> = [];
+			const notFound: string[] = [];
+			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
+
+			// Best-effort delivery: attempt all targets, aggregate errors.
+			for (const targetRole of targetRoles) {
+				const targetSessions = sendPeers.filter((m) => m.role === targetRole);
+				if (targetSessions.length === 0) {
+					notFound.push(targetRole);
+					continue;
+				}
+				for (const targetMember of targetSessions) {
+					const prefixedMessage = `[Message from task-agent]: ${message}`;
+					try {
+						await messageInjector(targetMember.sessionId, prefixedMessage);
+						delivered.push({ role: targetRole, sessionId: targetMember.sessionId });
+					} catch (err) {
+						const errMsg = err instanceof Error ? err.message : String(err);
+						failed.push({ role: targetRole, sessionId: targetMember.sessionId, error: errMsg });
+					}
+				}
+			}
+
+			if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
 				return jsonResult({
 					success: false,
 					error:
-						`Cannot relay a message to the Task Agent's own session (role: 'task-agent'). ` +
-						`relay_message is for communicating with step agent sub-sessions only.`,
+						`No active sessions found for target role(s): ${notFound.join(', ')}. ` +
+						`Use list_group_members to check which peers are currently active.`,
+					notFoundRoles: notFound,
 				});
 			}
 
-			// Inject the message into the target session.
-			// messageInjector serializes writes per-session; concurrent calls queue safely.
-			try {
-				await messageInjector(target_session_id, message);
-			} catch (err) {
-				const msg = err instanceof Error ? err.message : String(err);
+			if (failed.length > 0) {
 				return jsonResult({
-					success: false,
-					error: `Failed to inject message into session ${target_session_id}: ${msg}`,
+					success: delivered.length > 0 ? 'partial' : false,
+					delivered,
+					failed,
+					notFoundRoles: notFound.length > 0 ? notFound : undefined,
+					message:
+						delivered.length > 0
+							? `Message delivered to ${delivered.length} peer(s) but failed for ${failed.length} peer(s).`
+							: `Message delivery failed for all ${failed.length} target(s).`,
 				});
 			}
 
 			return jsonResult({
 				success: true,
-				targetSessionId: target_session_id,
-				targetRole: targetMember.role,
-				message: `Message relayed to ${targetMember.role} (session ${target_session_id}).`,
+				delivered,
+				notFoundRoles: notFound.length > 0 ? notFound : undefined,
+				message:
+					`Message delivered to ${delivered.length} peer(s): ` +
+					delivered.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
+					'.',
 			});
 		},
 
@@ -887,8 +948,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * Gate re-engagement:
 		 * When the human responds (via space.task.sendMessage), the message is injected
 		 * into this Task Agent session as a normal conversation message. The Task Agent
-		 * receives it, sees the human's response, and calls advance_workflow to proceed.
-		 * The advance_workflow handler resets the task to in_progress before advancing.
+		 * receives it, sees the human's response, and can proceed accordingly.
 		 */
 		async request_human_input(args: RequestHumanInputInput): Promise<ToolResult> {
 			const { question, context: questionContext } = args;
@@ -935,7 +995,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						'Human input has been requested. The question is now visible to the human in the UI. ' +
 						'Wait — do not call any other tools until the human responds. ' +
 						"When the human's response appears in the conversation, " +
-						'read it and then call advance_workflow to continue execution.',
+						'read it and then continue as appropriate.',
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -958,27 +1018,19 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 
 	const tools = [
 		tool(
-			'spawn_step_agent',
-			"Start a sub-session for a workflow step's assigned agent. " +
+			'spawn_node_agent',
+			"Start a sub-session for a workflow node's assigned agent. " +
 				'Call this to execute each workflow step. ' +
 				'Returns the session ID of the spawned sub-session.',
-			SpawnStepAgentSchema.shape,
-			(args) => handlers.spawn_step_agent(args)
+			SpawnNodeAgentSchema.shape,
+			(args) => handlers.spawn_node_agent(args)
 		),
 		tool(
-			'check_step_status',
-			'Poll the status of a running step agent sub-session. ' +
-				'Call this periodically after spawn_step_agent to detect when a step has completed.',
-			CheckStepStatusSchema.shape,
-			(args) => handlers.check_step_status(args)
-		),
-		tool(
-			'advance_workflow',
-			'Advance the workflow to the next step after the current step completes. ' +
-				'The current step must be completed before calling this. ' +
-				'Returns the next step info, a terminal state, or a gate-blocked status.',
-			AdvanceWorkflowSchema.shape,
-			(args) => handlers.advance_workflow(args)
+			'check_node_status',
+			'Poll the status of a running node agent sub-session. ' +
+				'Call this periodically after spawn_node_agent to detect when a step has completed.',
+			CheckNodeStatusSchema.shape,
+			(args) => handlers.check_node_status(args)
 		),
 		tool(
 			'report_result',
@@ -986,6 +1038,14 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				'Call this when the workflow reaches a terminal step or an unrecoverable error occurs.',
 			ReportResultSchema.shape,
 			(args) => handlers.report_result(args)
+		),
+		tool(
+			'report_workflow_done',
+			'Explicitly mark the entire workflow run as completed and close the main task. ' +
+				'Call this when all node agents have finished and the workflow is fully done. ' +
+				'This bypasses the automatic all-agents-done detector and immediately marks the run completed.',
+			ReportWorkflowDoneSchema.shape,
+			(args) => handlers.report_workflow_done(args)
 		),
 		tool(
 			'request_human_input',
@@ -1003,12 +1063,13 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 			(args) => handlers.list_group_members(args)
 		),
 		tool(
-			'relay_message',
-			'Relay a message to a target sub-session as a user turn. ' +
-				'The Task Agent is not constrained by channel topology and can relay to any group member. ' +
-				'Cross-group messaging is rejected. Use list_group_members to find valid target session IDs.',
-			RelayMessageSchema.shape,
-			(args) => handlers.relay_message(args)
+			'send_message',
+			'Send a message directly to one or more peer node agents via declared channel topology. ' +
+				"Supports point-to-point ('coder'), broadcast ('*'), and multicast (['coder','reviewer']). " +
+				'Validates against declared channels — returns an error with available channels if unauthorized. ' +
+				'The Task Agent has default bidirectional channels to all node agents.',
+			SendMessageSchema.shape,
+			(args) => handlers.send_message(args)
 		),
 	];
 

@@ -56,7 +56,9 @@ export interface PlanEnvelopeParams {
 	/** The actual planner assistant output */
 	workerOutput: string;
 	/** Draft tasks created by the planner */
-	draftTasks: Array<Pick<NeoTask, 'id' | 'title' | 'description' | 'priority' | 'assignedAgent'>>;
+	draftTasks: Array<
+		Pick<NeoTask, 'id' | 'title' | 'description' | 'priority' | 'assignedAgent' | 'dependsOn'>
+	>;
 	/** Whether the plan has been approved (phase 2) */
 	approved?: boolean;
 }
@@ -92,9 +94,32 @@ export function formatPlanEnvelope(params: PlanEnvelopeParams): string {
 				`${i + 1}. **${t.title}** (agent: ${t.assignedAgent ?? 'coder'}, priority: ${t.priority})`
 			);
 			lines.push(`   ${t.description}`);
+			if (t.dependsOn && t.dependsOn.length > 0) {
+				lines.push(`   Depends on: ${t.dependsOn.join(', ')}`);
+			}
 			lines.push(`   _Task ID: ${t.id}_`);
 			lines.push('');
 		}
+	}
+
+	if (params.approved && params.draftTasks.length > 0) {
+		lines.push('## Review Instructions');
+		lines.push('');
+		lines.push(
+			'Before calling `complete_task`, review each task above against the plan document (available under `docs/plans/` in the workspace). For each task verify:'
+		);
+		lines.push('- **Title** — accurately reflects the scope and intent from the plan');
+		lines.push(
+			'- **Description** — covers all relevant details from the plan section (root cause, fix approach, files)'
+		);
+		lines.push('- **Dependencies** — correctly reflect the dependency order specified in the plan');
+		lines.push('- **Priority** — matches the priority assigned in the plan');
+		lines.push('- **Completeness** — no plan items were missed or incorrectly merged');
+		lines.push('- **No scope creep** — tasks contain only work from their plan section');
+		lines.push('');
+		lines.push(
+			'Use `update_task` to fix any discrepancies, then call `complete_task` with a summary.'
+		);
 	}
 
 	return lines.join('\n');

@@ -84,6 +84,7 @@ import type {
 	SystemPromptConfig,
 	McpServerConfig,
 	Provider,
+	RoomSkillOverride,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';
@@ -138,6 +139,12 @@ export interface AgentSessionInit {
 
 	/** Disable automatic /context queuing after each turn (default: true) */
 	contextAutoQueue?: boolean;
+	/**
+	 * Room-level skill overrides applied on top of the global skills registry.
+	 * Skills with enabled=false in this list are excluded from injection even if
+	 * globally enabled. Populated by the room runtime when spawning sessions.
+	 */
+	roomSkillOverrides?: RoomSkillOverride[];
 }
 
 // Extracted components
@@ -221,7 +228,6 @@ export class AgentSession
 	queryAbortController: AbortController | null = null;
 	firstMessageReceived = false;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
-	startupTimeoutAutoRecoverAttempts = 0;
 	originalEnvVars: OriginalEnvVars = {};
 	// Whether to auto-queue /context after each turn (default: true)
 	// Disabled for room-managed agents to prevent interleaved messages after terminal state
@@ -241,7 +247,10 @@ export class AgentSession
 		readonly db: Database,
 		readonly messageHub: MessageHub,
 		readonly daemonHub: DaemonHub,
-		private getApiKey: () => Promise<string | null>
+		private getApiKey: () => Promise<string | null>,
+		readonly skillsManager?: import('../skills-manager').SkillsManager,
+		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+		readonly roomSkillOverrides?: RoomSkillOverride[]
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);
@@ -308,13 +317,13 @@ export class AgentSession
 
 		// Recover orphaned messages
 		const recoveryHandler = new MessageRecoveryHandler(session, db, this.logger);
-		recoveryHandler.recoverOrphanedSentMessages();
+		recoveryHandler.recoverOrphanedConsumedMessages();
 
 		// Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
 		this.eventSubscriptionSetup.setup();
 
 		// Replay persisted pending messages after startup/recovery in immediate mode.
-		// Priority: queued/current-turn first, then saved/next-turn.
+		// Priority: enqueued/immediate first, then deferred/defer.
 		const restoredState = this.stateManager.getState();
 		if (session.config.queryMode !== 'manual' && restoredState.status !== 'waiting_for_input') {
 			queueMicrotask(() => {
@@ -350,7 +359,9 @@ export class AgentSession
 		messageHub: MessageHub,
 		daemonHub: DaemonHub,
 		getApiKey: () => Promise<string | null>,
-		defaultModel: string
+		defaultModel: string,
+		skillsManager?: import('../skills-manager').SkillsManager,
+		appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
 	): AgentSession {
 		// Check if session already exists in DB
 		let session = db.getSession(init.sessionId);
@@ -430,7 +441,16 @@ export class AgentSession
 			};
 		}
 
-		const agentSession = new AgentSession(session, db, messageHub, daemonHub, getApiKey);
+		const agentSession = new AgentSession(
+			session,
+			db,
+			messageHub,
+			daemonHub,
+			getApiKey,
+			skillsManager,
+			appMcpServerRepo,
+			init.roomSkillOverrides
+		);
 		if (init.contextAutoQueue === false) {
 			agentSession.contextAutoQueueEnabled = false;
 		}
@@ -801,12 +821,6 @@ export class AgentSession
 
 	async onMarkApiSuccess(): Promise<void> {
 		this.errorManager.markApiSuccess();
-	}
-
-	async onStartupTimeoutAutoRecover(): Promise<void> {
-		if (this.isCleaningUp()) return;
-		this.logger.warn('Auto-recovering after SDK startup timeout — starting fresh without resume.');
-		await this.startStreamingQuery();
 	}
 
 	// ============================================================================

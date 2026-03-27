@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { Database as BunDatabase } from 'bun:sqlite';
 import {
 	RoomRuntimeService,
 	type RoomRuntimeServiceConfig,
@@ -8,6 +8,11 @@ import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-
 import { createRoomTickHandler } from '../../../src/lib/job-handlers/room-tick.handler';
 import { ROOM_TICK } from '../../../src/lib/job-queue-constants';
 import type { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
+import { Database as AppDatabase } from '../../../src/storage';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
+import type { Room, RuntimeState, Session } from '@neokai/shared';
+import { getProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
+import type { Provider, ProviderId } from '@neokai/shared/provider';
 
 const CREATE_TABLE_SQL = `
 	CREATE TABLE IF NOT EXISTS job_queue (
@@ -63,12 +68,54 @@ function makeConfig(overrides: Partial<RoomRuntimeServiceConfig> = {}): RoomRunt
 		daemonHub: makeDaemonHub() as never,
 		getApiKey: async () => null,
 		roomManager: makeRoomManager() as never,
-		sessionManager: {} as never,
+		sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
 		defaultWorkspacePath: '/tmp',
 		defaultModel: 'test-model',
 		getGlobalSettings: () => ({}) as never,
+		settingsManager: { getEnabledMcpServersConfig: () => ({}) } as never,
 		reactiveDb: {} as never,
 		...overrides,
+	};
+}
+
+function makeRoom(id: string, runtimeState?: RuntimeState): Room {
+	const config = runtimeState ? { runtimeState } : undefined;
+	return {
+		id,
+		name: `Room ${id}`,
+		allowedPaths: [{ path: '/tmp' }],
+		defaultPath: '/tmp',
+		sessionIds: [],
+		status: 'active',
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		config,
+	};
+}
+
+function makeSession(id: string): Session {
+	const now = new Date().toISOString();
+	return {
+		id,
+		title: 'Test Session',
+		workspacePath: '/tmp',
+		createdAt: now,
+		lastActiveAt: now,
+		status: 'active',
+		config: {
+			model: 'test-model',
+			maxTokens: 8192,
+			temperature: 0.7,
+		},
+		metadata: {
+			messageCount: 0,
+			totalTokens: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			totalCost: 0,
+			toolCallCount: 0,
+		},
+		type: 'worker',
 	};
 }
 
@@ -180,10 +227,192 @@ describe('RoomRuntimeService.startRuntime()', () => {
 	});
 });
 
+describe('RoomRuntimeService startup runtime preferences', () => {
+	it('does not auto-start paused/stopped rooms on daemon startup', async () => {
+		const runningRoom = makeRoom('room-running', 'running');
+		const pausedRoom = makeRoom('room-paused', 'paused');
+		const stoppedRoom = makeRoom('room-stopped', 'stopped');
+		const rooms = [runningRoom, pausedRoom, stoppedRoom];
+		const byId = new Map(rooms.map((r) => [r.id, r]));
+
+		const roomManager = {
+			listRooms: () => rooms,
+			getRoom: (id: string) => byId.get(id) ?? null,
+			updateRoom: mock(() => null),
+		};
+
+		const service = new RoomRuntimeService(makeConfig({ roomManager: roomManager as never }));
+		const createdRoomIds: string[] = [];
+		const startedRoomIds: string[] = [];
+		const recoverCalls: Array<{ roomId: string; resumeAgents: boolean }> = [];
+
+		const serviceAny = service as unknown as {
+			createOrGetRuntime: (room: Room, autoStart?: boolean) => RoomRuntime;
+			recoverRoomRuntime: (
+				roomId: string,
+				runtime: RoomRuntime,
+				observer: unknown,
+				resumeAgents?: boolean
+			) => Promise<void>;
+			runtimes: Map<string, RoomRuntime>;
+			observers: Map<string, unknown>;
+		};
+
+		serviceAny.createOrGetRuntime = ((room: Room) => {
+			createdRoomIds.push(room.id);
+			const runtime = {
+				start: () => startedRoomIds.push(room.id),
+				pause: () => {},
+				stop: () => {},
+				getState: () => 'paused',
+			} as unknown as RoomRuntime;
+			serviceAny.runtimes.set(room.id, runtime);
+			serviceAny.observers.set(room.id, {});
+			return runtime;
+		}) as unknown as (room: Room, autoStart?: boolean) => RoomRuntime;
+
+		serviceAny.recoverRoomRuntime = (async (
+			roomId: string,
+			_runtime: RoomRuntime,
+			_observer: unknown,
+			resumeAgents = true
+		) => {
+			recoverCalls.push({ roomId, resumeAgents });
+		}) as unknown as (
+			roomId: string,
+			runtime: RoomRuntime,
+			observer: unknown,
+			resumeAgents?: boolean
+		) => Promise<void>;
+
+		await service.start();
+
+		expect(createdRoomIds).toContain('room-running');
+		expect(createdRoomIds).toContain('room-paused');
+		expect(createdRoomIds).not.toContain('room-stopped');
+		expect(startedRoomIds).toEqual(['room-running']);
+		expect(recoverCalls).toEqual([
+			{ roomId: 'room-running', resumeAgents: true },
+			{ roomId: 'room-paused', resumeAgents: false },
+		]);
+	});
+});
+
+describe('RoomRuntimeService runtime state persistence', () => {
+	it('persists paused runtime preference on pauseRuntime()', () => {
+		const room = makeRoom('room-1');
+		const updateRoom = mock(() => room);
+		const roomManager = {
+			getRoom: () => room,
+			updateRoom,
+			listRooms: () => [],
+		};
+
+		const service = new RoomRuntimeService(makeConfig({ roomManager: roomManager as never }));
+		(service as unknown as { runtimes: Map<string, RoomRuntime> }).runtimes.set('room-1', {
+			pause: () => {},
+			resume: () => {},
+			stop: () => {},
+			start: () => {},
+			getState: () => 'running',
+		} as unknown as RoomRuntime);
+
+		expect(service.pauseRuntime('room-1')).toBe(true);
+		expect(updateRoom).toHaveBeenCalledWith('room-1', {
+			config: { runtimeState: 'paused' },
+		});
+	});
+
+	it('persists stopped runtime preference on stopRuntime()', () => {
+		const room = makeRoom('room-1', 'running');
+		const updateRoom = mock(() => room);
+		const roomManager = {
+			getRoom: () => room,
+			updateRoom,
+			listRooms: () => [],
+		};
+
+		const service = new RoomRuntimeService(makeConfig({ roomManager: roomManager as never }));
+		(service as unknown as { runtimes: Map<string, RoomRuntime> }).runtimes.set('room-1', {
+			pause: () => {},
+			resume: () => {},
+			stop: () => {},
+			start: () => {},
+			getState: () => 'running',
+		} as unknown as RoomRuntime);
+
+		expect(service.stopRuntime('room-1')).toBe(true);
+		expect(updateRoom).toHaveBeenCalledWith('room-1', {
+			config: { runtimeState: 'stopped' },
+		});
+	});
+});
+
+describe('RoomRuntimeService message persistence reactivity', () => {
+	it('injectMessage persists via reactive db facade and bumps sdk_messages version', async () => {
+		const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+		const dbPath = `${tmpBase}/room-runtime-reactive-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+		const appDb = new AppDatabase(dbPath);
+		const reactiveDb = createReactiveDatabase(appDb);
+		await appDb.initialize(reactiveDb);
+
+		try {
+			// Insert the session row first (sdk_messages has FK -> sessions.id)
+			reactiveDb.db.createSession(makeSession('session-reactive-1'));
+
+			const roomManager = {
+				listRooms: () => [],
+				getRoom: () => null,
+				updateRoom: () => null,
+			};
+
+			const service = new RoomRuntimeService(
+				makeConfig({
+					db: reactiveDb.db as never,
+					reactiveDb: reactiveDb as never,
+					roomManager: roomManager as never,
+				})
+			);
+
+			const serviceAny = service as unknown as {
+				createSessionFactory: () => {
+					injectMessage: (sessionId: string, message: string) => Promise<void>;
+				};
+				agentSessions: Map<string, unknown>;
+			};
+
+			serviceAny.agentSessions.set('session-reactive-1', {
+				getProcessingState: () => ({ status: 'idle' }),
+				ensureQueryStarted: async () => {},
+				messageQueue: {
+					enqueueWithId: async () => {},
+				},
+			});
+
+			const sessionFactory = serviceAny.createSessionFactory();
+			const before = reactiveDb.getTableVersion('sdk_messages');
+			await sessionFactory.injectMessage('session-reactive-1', 'hello from reactive runtime');
+			const after = reactiveDb.getTableVersion('sdk_messages');
+
+			expect(after).toBeGreaterThan(before);
+			const enqueued = reactiveDb.db.getMessagesByStatus('session-reactive-1', 'enqueued');
+			expect(enqueued).toHaveLength(1);
+			expect(enqueued[0]?.type).toBe('user');
+		} finally {
+			appDb.close();
+			try {
+				require('fs').unlinkSync(dbPath);
+			} catch {
+				// best-effort cleanup
+			}
+		}
+	});
+});
+
 describe('stopRuntime() + room.tick handler interaction', () => {
 	it('tick handler returns { skipped, reason } for a room whose runtime was deleted by stopRuntime()', async () => {
 		// Set up an in-memory job queue so we can build a real handler
-		const db = new Database(':memory:');
+		const db = new BunDatabase(':memory:');
 		db.exec(CREATE_TABLE_SQL);
 		const jobQueue = new JobQueueRepository(db as never);
 
@@ -229,5 +458,73 @@ describe('stopRuntime() + room.tick handler interaction', () => {
 		expect(result).toEqual({ skipped: true, reason: 'not running' });
 		const pending = jobQueue.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(0);
+	});
+});
+
+/**
+ * Minimal mock provider for testing ProviderRegistry interactions.
+ */
+function makeMockProvider(
+	id: ProviderId,
+	available: boolean | (() => boolean | Promise<boolean>)
+): Provider {
+	return {
+		id,
+		displayName: id,
+		capabilities: [],
+		isAvailable: typeof available === 'function' ? available : () => available,
+		getModels: async () => [],
+	} as unknown as Provider;
+}
+
+describe('RoomRuntimeService isProviderAvailable wiring — ProviderRegistry integration', () => {
+	afterEach(() => {
+		resetProviderRegistry();
+	});
+
+	/**
+	 * Extract the isProviderAvailable callback as the service would create it.
+	 * This mirrors exactly the 7 lines added to createOrGetRuntime() so we can
+	 * exercise the logic with real registry state without triggering a full
+	 * RoomRuntime construction.
+	 */
+	function makeCallback() {
+		return async (providerId: string, _model: string): Promise<boolean> => {
+			const provider = getProviderRegistry().get(providerId);
+			if (!provider) return false;
+			return Boolean(await provider.isAvailable());
+		};
+	}
+
+	it('returns false when provider is not registered in the registry', async () => {
+		const cb = makeCallback();
+		expect(await cb('unknown-provider', 'some-model')).toBe(false);
+	});
+
+	it('returns true when provider.isAvailable() returns true', async () => {
+		getProviderRegistry().register(makeMockProvider('anthropic', true));
+		const cb = makeCallback();
+		expect(await cb('anthropic', 'claude-3-haiku')).toBe(true);
+	});
+
+	it('returns false when provider.isAvailable() returns false', async () => {
+		getProviderRegistry().register(makeMockProvider('glm', false));
+		const cb = makeCallback();
+		expect(await cb('glm', 'glm-4')).toBe(false);
+	});
+
+	it('returns false when provider.isAvailable() returns a falsy value', async () => {
+		getProviderRegistry().register(makeMockProvider('anthropic', () => false));
+		const cb = makeCallback();
+		expect(await cb('anthropic', 'claude-3')).toBe(false);
+	});
+
+	it('returns true for a registered provider even when another provider is not registered', async () => {
+		getProviderRegistry().register(makeMockProvider('glm', true));
+		const cb = makeCallback();
+		// glm is registered → true
+		expect(await cb('glm', 'glm-4')).toBe(true);
+		// anthropic is not registered → false
+		expect(await cb('anthropic', 'claude-3')).toBe(false);
 	});
 });

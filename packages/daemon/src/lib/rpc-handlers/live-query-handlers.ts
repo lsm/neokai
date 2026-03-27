@@ -87,6 +87,58 @@ function mapGoalRow(row: Record<string, unknown>): Record<string, unknown> {
 	};
 }
 
+/**
+ * Map canonical task timeline rows into the SessionGroupMessage shape expected by the web client.
+ * For SDK rows, inject `_taskMeta` directly into JSON content so TaskConversationRenderer can
+ * render role/session context without relying on runtime mirroring.
+ */
+function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+	const sourceType = row.sourceType;
+	const groupId = String(row.groupId ?? '');
+	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
+	const role = String(row.role ?? 'system');
+	const messageType = String(row.messageType ?? 'status');
+	const createdAt = Number(row.createdAt ?? Date.now());
+	const iteration = Number(row.iteration ?? 0);
+	const rawId = row.id;
+	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
+	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+
+	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
+
+	if (sourceType === 'sdk') {
+		try {
+			const parsed = JSON.parse(content) as Record<string, unknown>;
+			const uuid = typeof parsed.uuid === 'string' ? parsed.uuid : String(id);
+			const shortSessionId = (sessionId ?? '').slice(0, 8);
+			const turnId = `turn_${groupId}_${iteration}_${shortSessionId}_${uuid}`;
+			const enriched = {
+				...parsed,
+				_taskMeta: {
+					authorRole: role,
+					authorSessionId: sessionId ?? '',
+					turnId,
+					iteration,
+				},
+			};
+			content = JSON.stringify(enriched);
+		} catch {
+			// Keep original content if parsing fails.
+		}
+	}
+
+	return {
+		id,
+		groupId,
+		sessionId,
+		role,
+		messageType,
+		content,
+		createdAt,
+		parentToolUseId,
+	};
+}
+
 // ============================================================================
 // SQL definitions
 // ============================================================================
@@ -116,7 +168,8 @@ SELECT
   pr_number           AS prNumber,
   pr_created_at       AS prCreatedAt,
   input_draft         AS inputDraft,
-  updated_at          AS updatedAt
+  updated_at          AS updatedAt,
+  short_id            AS shortId
 FROM tasks
 WHERE room_id = ?
 ORDER BY created_at DESC, id DESC
@@ -153,23 +206,198 @@ WHERE room_id = ?
 ORDER BY priority DESC, created_at ASC, id ASC
 `.trim();
 
-/**
- * session_group_messages is an append-only table populated in Milestone 4.
- * The registry entry is defined here so the liveQuery.subscribe handler can
- * validate query names at subscription time without coupling to that milestone.
- */
-const SESSION_GROUP_MESSAGES_BY_GROUP_SQL = `
+const MCP_SERVERS_GLOBAL_SQL = `
 SELECT
   id,
-  group_id    AS groupId,
-  session_id  AS sessionId,
-  role,
-  message_type AS messageType,
-  content,
-  created_at  AS createdAt
-FROM session_group_messages
-WHERE group_id = ?
-ORDER BY created_at ASC, id ASC
+  name,
+  description,
+  source_type  AS sourceType,
+  command,
+  args,
+  env,
+  url,
+  headers,
+  enabled,
+  created_at   AS createdAt,
+  updated_at   AS updatedAt
+FROM app_mcp_servers
+ORDER BY name, id ASC
+`.trim();
+
+/**
+ * Map a raw SQLite row from the `app_mcp_servers` table to the AppMcpServer
+ * shape expected by the frontend.
+ *
+ * JSON blob columns: `args`, `env`, `headers`.
+ * Boolean coercion: `enabled` — SQLite stores 0/1; convert to JS boolean.
+ * snake_case mapping: `source_type` → `sourceType` (handled via AS alias in SQL).
+ */
+function mapMcpServerRow(row: Record<string, unknown>): Record<string, unknown> {
+	// Mirror the repository's rowToServer logic: omit optional fields entirely when the
+	// SQLite column is NULL rather than spreading null into the AppMcpServer object.
+	// This keeps the LiveQuery path type-consistent with the RPC handler path.
+	return {
+		id: row.id,
+		name: row.name,
+		sourceType: row.sourceType,
+		enabled: row.enabled === 1,
+		...(row.description != null ? { description: row.description } : {}),
+		...(row.command != null ? { command: row.command } : {}),
+		...(row.url != null ? { url: row.url } : {}),
+		...(row.args != null ? { args: JSON.parse(row.args as string) as string[] } : {}),
+		...(row.env != null ? { env: JSON.parse(row.env as string) as Record<string, string> } : {}),
+		...(row.headers != null
+			? { headers: JSON.parse(row.headers as string) as Record<string, string> }
+			: {}),
+		...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
+		...(row.updatedAt != null ? { updatedAt: row.updatedAt } : {}),
+	};
+}
+
+const SKILLS_LIST_SQL = `
+SELECT
+  id,
+  name,
+  display_name        AS displayName,
+  description,
+  source_type         AS sourceType,
+  config,
+  enabled,
+  built_in            AS builtIn,
+  validation_status   AS validationStatus,
+  created_at          AS createdAt
+FROM skills
+ORDER BY built_in DESC, created_at ASC, id ASC
+`.trim();
+
+/**
+ * Map a raw SQLite row from the `skills` table to the AppSkill shape expected
+ * by the frontend.
+ *
+ * JSON blob column: `config` — parsed to JS object; omitted when NULL.
+ * Boolean coercion: `enabled`, `builtIn` — SQLite stores 0/1; convert to JS boolean.
+ */
+function mapSkillRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		id: row.id,
+		name: row.name,
+		displayName: row.displayName,
+		description: row.description,
+		sourceType: row.sourceType,
+		...(row.config != null ? { config: JSON.parse(row.config as string) as unknown } : {}),
+		enabled: row.enabled === 1,
+		builtIn: row.builtIn === 1,
+		validationStatus: row.validationStatus,
+		...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
+	};
+}
+
+const MCP_ENABLEMENT_BY_ROOM_SQL = `
+SELECT
+  rme.server_id   AS serverId,
+  rme.enabled,
+  ams.name,
+  ams.source_type AS sourceType,
+  ams.description
+FROM room_mcp_enablement rme
+JOIN app_mcp_servers ams ON ams.id = rme.server_id
+WHERE rme.room_id = ?
+ORDER BY ams.id ASC
+`.trim();
+
+function mapMcpEnablementRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		...row,
+		enabled: row.enabled === 1,
+	};
+}
+
+const SKILLS_BY_ROOM_SQL = `
+SELECT
+  s.id,
+  s.name,
+  s.display_name AS displayName,
+  s.description,
+  s.source_type AS sourceType,
+  s.config,
+  s.built_in AS builtIn,
+  s.validation_status AS validationStatus,
+  s.created_at AS createdAt,
+  CASE WHEN rso.enabled IS NOT NULL THEN rso.enabled ELSE s.enabled END AS enabled,
+  CASE WHEN rso.skill_id IS NOT NULL THEN 1 ELSE 0 END AS overriddenByRoom
+FROM skills s
+LEFT JOIN room_skill_overrides rso ON rso.skill_id = s.id AND rso.room_id = ?
+ORDER BY s.built_in DESC, s.created_at ASC, s.id ASC
+`.trim();
+
+function mapSkillByRoomRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		...row,
+		config: JSON.parse(row.config as string),
+		enabled: row.enabled === 1,
+		builtIn: row.builtIn === 1,
+		overriddenByRoom: row.overriddenByRoom === 1,
+	};
+}
+
+/**
+ * Canonical task timeline query (no projection table):
+ * - SDK messages are read directly from sdk_messages joined through session_group_members.
+ * - Group/system events are read from task_group_events.
+ *
+ * A single groupId parameter is threaded via `target_group` CTE and consumed by both branches.
+ */
+const SESSION_GROUP_MESSAGES_BY_GROUP_SQL = `
+WITH target_group AS (
+  SELECT id
+  FROM session_groups
+  WHERE id = ?
+)
+SELECT
+  'sdk'                         AS sourceType,
+  sm.id                         AS id,
+  tg.id                         AS groupId,
+  sm.session_id                 AS sessionId,
+  CASE
+    WHEN gm.role = 'leader' THEN 'leader'
+    WHEN gm.role = 'worker' AND sm.session_id LIKE 'general:%' THEN 'general'
+    WHEN gm.role = 'worker' AND sm.session_id LIKE 'planner:%' THEN 'planner'
+    WHEN gm.role = 'worker' AND sm.session_id LIKE 'coder:%' THEN 'coder'
+    WHEN gm.role = 'worker' THEN 'coder'
+    ELSE gm.role
+  END                           AS role,
+  sm.message_type               AS messageType,
+  sm.sdk_message                AS content,
+  CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+  CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
+  json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
+FROM target_group tg
+JOIN session_group_members gm ON gm.group_id = tg.id
+JOIN sdk_messages sm ON sm.session_id = gm.session_id
+WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+UNION ALL
+SELECT
+  'event'                       AS sourceType,
+  'event:' || e.id              AS id,
+  tg.id                         AS groupId,
+  NULL                          AS sessionId,
+  'system'                      AS role,
+  CASE
+    WHEN e.kind = 'leader_summary' THEN 'leader_summary'
+    WHEN e.kind = 'rate_limited' THEN 'rate_limited'
+    WHEN e.kind = 'model_fallback' THEN 'model_fallback'
+    ELSE 'status'
+  END                           AS messageType,
+  CASE
+    WHEN e.kind IN ('rate_limited', 'model_fallback') THEN COALESCE(e.payload_json, e.kind)
+    ELSE COALESCE(json_extract(e.payload_json, '$.text'), e.kind)
+  END                           AS content,
+  e.created_at                  AS createdAt,
+  0                             AS iteration,
+  NULL                          AS parentToolUseId
+FROM target_group tg
+JOIN task_group_events e ON e.group_id = tg.id
+ORDER BY createdAt ASC, id ASC
 `.trim();
 
 // ============================================================================
@@ -208,7 +436,39 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
 			paramCount: 1,
-			// No JSON blobs; all columns are scalar.
+			mapRow: mapSessionGroupMessageRow,
+		},
+	],
+	[
+		'mcpServers.global',
+		{
+			sql: MCP_SERVERS_GLOBAL_SQL,
+			paramCount: 0,
+			mapRow: mapMcpServerRow,
+		},
+	],
+	[
+		'skills.list',
+		{
+			sql: SKILLS_LIST_SQL,
+			paramCount: 0,
+			mapRow: mapSkillRow,
+		},
+	],
+	[
+		'mcpEnablement.byRoom',
+		{
+			sql: MCP_ENABLEMENT_BY_ROOM_SQL,
+			paramCount: 1,
+			mapRow: mapMcpEnablementRow,
+		},
+	],
+	[
+		'skills.byRoom',
+		{
+			sql: SKILLS_BY_ROOM_SQL,
+			paramCount: 1,
+			mapRow: mapSkillByRoomRow,
 		},
 	],
 ]);
@@ -271,7 +531,12 @@ export function setupLiveQueryHandlers(
 		}
 
 		// 4. Authorization checks
-		if (queryName === 'tasks.byRoom' || queryName === 'goals.byRoom') {
+		if (
+			queryName === 'tasks.byRoom' ||
+			queryName === 'goals.byRoom' ||
+			queryName === 'mcpEnablement.byRoom' ||
+			queryName === 'skills.byRoom'
+		) {
 			const roomId = params[0] as string;
 			if (!stmtRoom.get(roomId)) {
 				throw new Error(`Unauthorized: room "${roomId}" not found`);

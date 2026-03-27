@@ -64,6 +64,14 @@ describe('SessionManager', () => {
 			countMessagesAfter: mock(() => 0),
 			updateMessage: mock(() => {}),
 			saveUserMessage: mock(() => {}),
+			getTaskRepo: mock(() => ({
+				getTask: mock(() => null),
+				getTaskByShortId: mock(() => null),
+			})),
+			getGoalRepo: mock(() => ({
+				getGoal: mock(() => null),
+				getGoalByShortId: mock(() => null),
+			})),
 		} as unknown as Database;
 
 		// Message hub mocks
@@ -273,6 +281,54 @@ describe('SessionManager', () => {
 			const result = await sessionManager.getSessionAsync('test-session-id');
 
 			expect(result).not.toBeNull();
+		});
+	});
+
+	describe('registerSession / unregisterSession', () => {
+		it('registerSession makes session retrievable via getSessionAsync', async () => {
+			const mockSession: Session = {
+				id: 'room:1:task:2:abc',
+				title: 'Room Session',
+				workspacePath: '/test',
+				status: 'active',
+				config: {},
+				metadata: {},
+			};
+			const fakeAgentSession = {
+				getSessionData: mock(() => mockSession),
+				cleanup: mock(async () => {}),
+			} as unknown as import('../../../src/lib/agent/agent-session').AgentSession;
+
+			sessionManager.registerSession(fakeAgentSession);
+
+			const result = await sessionManager.getSessionAsync('room:1:task:2:abc');
+			// Should return the exact same instance, not a DB-loaded duplicate
+			expect(result).toBe(fakeAgentSession);
+			// DB should not have been called since the instance is already in cache
+			expect(mockDb.getSession).not.toHaveBeenCalled();
+		});
+
+		it('unregisterSession removes session from cache', async () => {
+			const mockSession: Session = {
+				id: 'room:1:task:2:xyz',
+				title: 'Room Session',
+				workspacePath: '/test',
+				status: 'active',
+				config: {},
+				metadata: {},
+			};
+			const fakeAgentSession = {
+				getSessionData: mock(() => mockSession),
+				cleanup: mock(async () => {}),
+			} as unknown as import('../../../src/lib/agent/agent-session').AgentSession;
+
+			sessionManager.registerSession(fakeAgentSession);
+			sessionManager.unregisterSession('room:1:task:2:xyz');
+
+			// After unregister, getSession should return null (not in cache, not in DB)
+			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(null);
+			const result = await sessionManager.getSessionAsync('room:1:task:2:xyz');
+			expect(result).toBeNull();
 		});
 	});
 

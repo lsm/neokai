@@ -23,7 +23,11 @@ import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
-import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
+import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
+import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE } from './lib/job-queue-constants';
+import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
+import { FileIndex } from './lib/file-index';
+import { SkillsManager } from './lib/skills-manager';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -71,6 +75,12 @@ export interface DaemonAppContext {
 	jobQueue: JobQueueRepository;
 	/** Persistent job queue processor */
 	jobProcessor: JobQueueProcessor;
+	/** Application-level MCP lifecycle manager — converts registry entries to SDK configs */
+	appMcpManager: AppMcpLifecycleManager;
+	/** Application-level Skills manager — registry CRUD and validation */
+	skillsManager: SkillsManager;
+	/** Workspace file index for fast fuzzy file/folder search */
+	fileIndex: FileIndex;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -194,9 +204,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const eventBus = createDaemonHub('daemon');
 	await eventBus.initialize();
 
+	// Initialize application-level MCP and Skills managers before SessionManager
+	// so AgentSession can inject skills into SDK query options.
+	const appMcpManager = new AppMcpLifecycleManager(db);
+	seedDefaultMcpEntries(db);
+	const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
+	skillsManager.initializeBuiltins();
+
 	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
+	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
+	// trigger LiveQuery invalidation immediately.
 	const sessionManager = new SessionManager(
-		db,
+		reactiveDb.db,
 		messageHub,
 		authManager,
 		settingsManager,
@@ -208,7 +227,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			workspaceRoot: config.workspaceRoot,
 		},
 		jobQueue,
-		jobProcessor
+		jobProcessor,
+		skillsManager,
+		db.appMcpServers
 	);
 
 	// Register session title generation handler before jobProcessor starts
@@ -258,6 +279,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logInfo('[Daemon] GitHub integration disabled - authentication required');
 	}
 
+	// Initialize workspace file index (non-blocking — init runs in the background)
+	const fileIndex = new FileIndex(config.workspaceRoot);
+	void fileIndex.init();
+
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const {
 		cleanup: rpcHandlerCleanup,
@@ -278,6 +303,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobProcessor,
 		reactiveDb,
 		liveQueries,
+		appMcpManager,
+		skillsManager,
 	});
 
 	// Create WebSocket handlers
@@ -396,6 +423,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Register job handlers BEFORE starting the processor so no pending job
 	// from a previous run is dequeued without a handler available.
+	jobProcessor.register(
+		SKILL_VALIDATE,
+		createSkillValidateHandler(skillsManager, db.appMcpServers)
+	);
 	jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
 
 	// Enqueue the initial cleanup job if none is already pending.
@@ -500,6 +531,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				providerRegistry.getAll().flatMap((p) => (p.shutdown ? [p.shutdown()] : []))
 			);
 
+			// Stop workspace file index polling
+			fileIndex.dispose();
+
 			// Close database
 			db.close();
 
@@ -529,6 +563,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		taskAgentManager,
 		jobQueue,
 		jobProcessor,
+		appMcpManager,
+		skillsManager,
+		fileIndex,
 		cleanup,
 	};
 }

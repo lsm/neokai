@@ -11,6 +11,8 @@
  * - goal.linkTask - Link a task to a goal
  * - goal.delete - Delete a goal
  * - goal.listExecutions - List execution history for a recurring mission
+ * - goal.recordMetric - Record a metric value for a measurable mission
+ * - goal.getMetrics - Get current metric state for a goal
  * - task.approve - Human approves a task PR (resumes worker for phase 2)
  */
 
@@ -30,6 +32,8 @@ import type { TaskManager } from '../room/managers/task-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../room/runtime/cron-utils';
+import { resolveGoalId, resolveTaskId } from '../id-resolution';
+import type { TaskRepository } from '../../storage/repositories/task-repository';
 
 const log = new Logger('goal-handlers');
 
@@ -50,12 +54,16 @@ export type GoalManagerLike = Pick<
 	| 'getActiveExecution'
 	| 'updateNextRunAt'
 	| 'listExecutions'
+	| 'recordMetric'
+	| 'checkMetricTargets'
+	| 'getGoalByShortId'
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
-export type TaskManagerFactory = (
-	roomId: string
-) => Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
+export type TaskManagerFactory = (roomId: string) => {
+	taskManager: Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
+	taskRepo: TaskRepository;
+};
 
 export function setupGoalHandlers(
 	messageHub: MessageHub,
@@ -101,6 +109,9 @@ export function setupGoalHandlers(
 			throw new Error('Goal title is required');
 		}
 
+		// nextRunAt is auto-computed in GoalManager.createGoal for recurring goals
+		// with a schedule. No need to compute it here.
+
 		const goalManager = goalManagerFactory(params.roomId);
 		const goal = await goalManager.createGoal({
 			title: params.title,
@@ -131,7 +142,8 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 
 		if (!goal) {
 			throw new Error(`Goal not found: ${params.goalId}`);
@@ -178,6 +190,7 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const { status, progress, priority, metrics, ...rest } = params.updates;
 
 		// Detect V2 patch fields (title, description, missionType, autonomyLevel,
@@ -194,14 +207,14 @@ export function setupGoalHandlers(
 
 		let goal: RoomGoal;
 		if (status) {
-			goal = await goalManager.updateGoalStatus(params.goalId, status, {
+			goal = await goalManager.updateGoalStatus(goalId, status, {
 				...(progress !== undefined ? { progress } : {}),
 				...(priority ? { priority } : {}),
 				...rest,
 			});
 		} else if (progress !== undefined) {
 			goal = await goalManager.updateGoalProgress(
-				params.goalId,
+				goalId,
 				progress,
 				metrics as Record<string, number> | undefined
 			);
@@ -213,9 +226,9 @@ export function setupGoalHandlers(
 			for (const f of v2Fields) {
 				if (f in params.updates) patch[f] = params.updates[f as keyof typeof params.updates];
 			}
-			goal = await goalManager.patchGoal(params.goalId, patch);
+			goal = await goalManager.patchGoal(goalId, patch);
 		} else if (priority) {
-			goal = await goalManager.updateGoalPriority(params.goalId, priority);
+			goal = await goalManager.updateGoalPriority(goalId, priority);
 		} else {
 			throw new Error(
 				'No update fields provided (status, progress, priority, or editable fields required)'
@@ -237,7 +250,8 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.needsHumanGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.needsHumanGoal(goalId);
 
 		return { goal };
 	});
@@ -254,7 +268,8 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.reactivateGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.reactivateGoal(goalId);
 
 		return { goal };
 	});
@@ -272,25 +287,27 @@ export function setupGoalHandlers(
 		if (!params.taskId) {
 			throw new Error('Task ID is required');
 		}
+		if (!taskManagerFactory) {
+			throw new Error('Task manager factory is required for goal.linkTask');
+		}
 
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const { taskRepo } = taskManagerFactory(params.roomId);
+		const taskId = resolveTaskId(params.taskId, params.roomId, taskRepo);
 
 		// For recurring missions with an active execution, use the atomic dual-write path.
 		let goal;
-		const linkedGoal = await goalManager.getGoal(params.goalId);
+		const linkedGoal = await goalManager.getGoal(goalId);
 		if (linkedGoal?.missionType === 'recurring') {
-			const activeExecution = goalManager.getActiveExecution(params.goalId);
+			const activeExecution = goalManager.getActiveExecution(goalId);
 			if (activeExecution) {
-				goal = await goalManager.linkTaskToExecution(
-					params.goalId,
-					activeExecution.id,
-					params.taskId
-				);
+				goal = await goalManager.linkTaskToExecution(goalId, activeExecution.id, taskId);
 			} else {
-				goal = await goalManager.linkTaskToGoal(params.goalId, params.taskId);
+				goal = await goalManager.linkTaskToGoal(goalId, taskId);
 			}
 		} else {
-			goal = await goalManager.linkTaskToGoal(params.goalId, params.taskId);
+			goal = await goalManager.linkTaskToGoal(goalId, taskId);
 		}
 
 		return { goal };
@@ -308,7 +325,8 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const success = await goalManager.deleteGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const success = await goalManager.deleteGoal(goalId);
 
 		return { success };
 	});
@@ -327,7 +345,8 @@ export function setupGoalHandlers(
 		if (!params.cronExpression) throw new Error('Cron expression is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
 			throw new Error(
@@ -346,7 +365,7 @@ export function setupGoalHandlers(
 			throw new Error(`Cron expression "${params.cronExpression}" produces no future run times.`);
 		}
 
-		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+		const updated = await goalManager.updateGoalStatus(goalId, goal.status, {
 			schedule: { expression: params.cronExpression, timezone: tz },
 			nextRunAt,
 			missionType: 'recurring',
@@ -363,13 +382,14 @@ export function setupGoalHandlers(
 		if (!params.goalId) throw new Error('Goal ID is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
 			throw new Error(`Goal ${params.goalId} is not a recurring mission.`);
 		}
 
-		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+		const updated = await goalManager.updateGoalStatus(goalId, goal.status, {
 			schedulePaused: true,
 		});
 		return { goal: updated };
@@ -383,7 +403,8 @@ export function setupGoalHandlers(
 		if (!params.goalId) throw new Error('Goal ID is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
 			throw new Error(`Goal ${params.goalId} is not a recurring mission.`);
@@ -395,7 +416,7 @@ export function setupGoalHandlers(
 		// Recalculate next_run_at from current time
 		const tz = goal.schedule.timezone ?? getSystemTimezone();
 		const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
-		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+		const updated = await goalManager.updateGoalStatus(goalId, goal.status, {
 			schedulePaused: false,
 			nextRunAt: nextRunAt ?? undefined,
 		});
@@ -410,11 +431,82 @@ export function setupGoalHandlers(
 		if (!params.goalId) throw new Error('Goal ID is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 
-		const executions = goalManager.listExecutions(params.goalId, params.limit ?? 20);
+		const executions = goalManager.listExecutions(goalId, params.limit ?? 20);
 		return { executions };
+	});
+
+	// goal.recordMetric - Record a metric value for a measurable mission
+	messageHub.onRequest('goal.recordMetric', async (data) => {
+		const params = data as { roomId: string; goalId: string; metricName: string; value: number };
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+		if (!params.metricName) throw new Error('Metric name is required');
+		if (typeof params.value !== 'number') throw new Error('Value must be a number');
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+		if (goal.missionType !== 'measurable') {
+			throw new Error(
+				`Goal ${params.goalId} is not a measurable mission (missionType: ${goal.missionType ?? 'one_shot'})`
+			);
+		}
+
+		const updated = await goalManager.recordMetric(goalId, params.metricName, params.value);
+		return {
+			goal: updated,
+			metric: {
+				name: params.metricName,
+				value: params.value,
+				goalProgress: updated.progress,
+			},
+		};
+	});
+
+	// goal.getMetrics - Get current metric state and targets for a goal
+	messageHub.onRequest('goal.getMetrics', async (data) => {
+		const params = data as { roomId: string; goalId: string };
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+
+		if (!goal.structuredMetrics || goal.structuredMetrics.length === 0) {
+			return {
+				missionType: goal.missionType ?? 'one_shot',
+				structuredMetrics: [],
+				legacyMetrics: goal.metrics ?? {},
+				note: 'No structured metrics configured. For measurable missions, add structuredMetrics to the goal.',
+			};
+		}
+
+		const checkResult = await goalManager.checkMetricTargets(goalId);
+		return {
+			missionType: goal.missionType ?? 'one_shot',
+			allTargetsMet: checkResult.allMet,
+			metrics: checkResult.results.map((r) => {
+				const metric = goal.structuredMetrics!.find((m) => m.name === r.name);
+				return {
+					name: r.name,
+					current: r.current,
+					target: r.target,
+					met: r.met,
+					direction: metric?.direction ?? 'increase',
+					...(metric?.baseline !== undefined ? { baseline: metric.baseline } : {}),
+					...(metric?.unit ? { unit: metric.unit } : {}),
+				};
+			}),
+		};
 	});
 
 	// task.approve - Human approves the PR; resume leader to complete task flow
@@ -433,10 +525,11 @@ export function setupGoalHandlers(
 			);
 		}
 
-		const taskManager = taskManagerFactory(params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const { taskManager, taskRepo } = taskManagerFactory(params.roomId);
+		const taskId = resolveTaskId(params.taskId, params.roomId, taskRepo);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 		if (task.status !== 'review') {
 			throw new Error(`Task is not in review status (current: ${task.status})`);
@@ -456,16 +549,14 @@ export function setupGoalHandlers(
 				: 'Human has approved the PR. Merge it now by running `gh pr merge`. ' +
 					'After the merge completes, your work is done.';
 
-		const resumed = await runtime.resumeWorkerFromHuman(params.taskId, message, {
+		const resumed = await runtime.resumeWorkerFromHuman(taskId, message, {
 			approved: true,
 		});
 		if (!resumed) {
-			throw new Error(
-				`Failed to resume task ${params.taskId} — no submitted-for-review group found`
-			);
+			throw new Error(`Failed to resume task ${taskId} — no submitted-for-review group found`);
 		}
 
-		log.info(`Task ${params.taskId} approved by human in room ${params.roomId}`);
+		log.info(`Task ${taskId} approved by human in room ${params.roomId}`);
 		return { success: true };
 	};
 

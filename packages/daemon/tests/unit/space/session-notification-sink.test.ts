@@ -111,7 +111,7 @@ describe('SessionNotificationSink', () => {
 			expect(factory.calls[0].sessionId).toBe(SESSION_ID);
 		});
 
-		it('uses next_turn delivery mode', async () => {
+		it('uses defer delivery mode', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
 				kind: 'task_needs_attention',
@@ -123,7 +123,7 @@ describe('SessionNotificationSink', () => {
 
 			await sink.notify(event);
 
-			expect(factory.calls[0].opts?.deliveryMode).toBe('next_turn');
+			expect(factory.calls[0].opts?.deliveryMode).toBe('defer');
 		});
 
 		it('message includes human-readable text with taskId, spaceId, and reason', async () => {
@@ -226,7 +226,7 @@ describe('SessionNotificationSink', () => {
 			expect(json.autonomyLevel).toBe('supervised');
 		});
 
-		it('uses next_turn delivery mode', async () => {
+		it('uses defer delivery mode', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
 				kind: 'workflow_run_needs_attention',
@@ -238,7 +238,7 @@ describe('SessionNotificationSink', () => {
 
 			await sink.notify(event);
 
-			expect(factory.calls[0].opts?.deliveryMode).toBe('next_turn');
+			expect(factory.calls[0].opts?.deliveryMode).toBe('defer');
 		});
 	});
 
@@ -266,7 +266,7 @@ describe('SessionNotificationSink', () => {
 			expect(json.autonomyLevel).toBe('supervised');
 		});
 
-		it('uses next_turn delivery mode', async () => {
+		it('uses defer delivery mode', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
 				kind: 'task_timeout',
@@ -278,7 +278,7 @@ describe('SessionNotificationSink', () => {
 
 			await sink.notify(event);
 
-			expect(factory.calls[0].opts?.deliveryMode).toBe('next_turn');
+			expect(factory.calls[0].opts?.deliveryMode).toBe('defer');
 		});
 	});
 
@@ -346,7 +346,7 @@ describe('SessionNotificationSink', () => {
 			expect(json.status).toBe('needs_attention');
 		});
 
-		it('uses next_turn delivery mode', async () => {
+		it('uses defer delivery mode', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
 				kind: 'workflow_run_completed',
@@ -358,7 +358,7 @@ describe('SessionNotificationSink', () => {
 
 			await sink.notify(event);
 
-			expect(factory.calls[0].opts?.deliveryMode).toBe('next_turn');
+			expect(factory.calls[0].opts?.deliveryMode).toBe('defer');
 		});
 	});
 

@@ -5,21 +5,22 @@
  *
  * Features:
  * - Name and description fields
- * - Vertical step list with expandable WorkflowStepCards
+ * - Vertical step list with expandable WorkflowNodeCards
  * - Add Step button
  * - "Start from template" options
  * - Save / Cancel
  */
 
 import { useState } from 'preact/hooks';
-import type { SpaceWorkflow, SpaceAgent } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceAgent, WorkflowChannel } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
-import { WorkflowStepCard } from './WorkflowStepCard';
-import type { StepDraft, ConditionDraft } from './WorkflowStepCard';
+import { WorkflowNodeCard } from './WorkflowNodeCard';
+import type { NodeDraft, ConditionDraft, AgentTaskState } from './WorkflowNodeCard';
 import { WorkflowRulesEditor } from './WorkflowRulesEditor';
 import type { RuleDraft } from './WorkflowRulesEditor';
 import { rulesToDrafts } from './WorkflowRulesEditor';
+import { ChannelEditor } from './ChannelEditor';
 
 // ============================================================================
 // Tags constants
@@ -63,7 +64,7 @@ function makeLocalId(): string {
 	return generateUUID();
 }
 
-function makeEmptyStep(): StepDraft {
+function makeEmptyStep(): NodeDraft {
 	return { localId: makeLocalId(), name: '', agentId: '', instructions: '' };
 }
 
@@ -84,48 +85,45 @@ export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
 
 /**
  * Derive ordered steps and positional transition conditions from an existing
- * workflow. Graph traversal follows startStepId through outgoing transitions.
- * Orphaned steps (not reachable from startStepId) are appended at the end.
+ * workflow. Graph traversal follows startNodeId through outgoing transitions.
+ * Orphaned steps (not reachable from startNodeId) are appended at the end.
  *
  * Defined outside the component so it is not recreated on each render and
  * is clearly a pure initialization helper, not a reactive dependency.
  *
- * NOTE (Milestone 5): `StepDraft` only carries `agentId` (single-agent format).
+ * NOTE (Milestone 5): `NodeDraft` only carries `agentId` (single-agent format).
  * Multi-agent steps (`agents[]`) and `channels[]` are silently dropped when a workflow
  * is loaded into the editor. Saving such a workflow through the UI would overwrite those
  * fields with the single-agent representation. There is no UI to create multi-agent steps
  * yet, so the practical risk is limited to API-created workflows opened in this editor.
  */
 export function initFromWorkflow(wf: SpaceWorkflow): {
-	steps: StepDraft[];
+	steps: NodeDraft[];
 	transitions: ConditionDraft[];
 	rules: RuleDraft[];
 	tags: string[];
+	channels: WorkflowChannel[];
 } {
-	const stepMap = new Map(wf.steps.map((s) => [s.id, s]));
-	const ordered: StepDraft[] = [];
+	// Use node order from wf.nodes, placing startNodeId first if possible.
+	const stepMap = new Map(wf.nodes.map((s) => [s.id, s]));
+	const ordered: NodeDraft[] = [];
 	const visited = new Set<string>();
-	let currentId: string | undefined = wf.startStepId;
 
-	while (currentId && !visited.has(currentId)) {
-		visited.add(currentId);
-		const s = stepMap.get(currentId);
-		if (s) {
-			ordered.push({
-				localId: makeLocalId(),
-				id: s.id,
-				name: s.name,
-				agentId: s.agentId ?? '',
-				instructions: s.instructions ?? '',
-			});
-		}
-		const outgoing = wf.transitions
-			.filter((t) => t.from === currentId)
-			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-		currentId = outgoing[0]?.to;
+	// Place startNode first
+	const startNode = stepMap.get(wf.startNodeId);
+	if (startNode) {
+		visited.add(startNode.id);
+		ordered.push({
+			localId: makeLocalId(),
+			id: startNode.id,
+			name: startNode.name,
+			agentId: startNode.agentId ?? '',
+			instructions: startNode.instructions ?? '',
+		});
 	}
 
-	for (const s of wf.steps) {
+	// Append remaining nodes in original order
+	for (const s of wf.nodes) {
 		if (!visited.has(s.id)) {
 			ordered.push({
 				localId: makeLocalId(),
@@ -137,23 +135,15 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 		}
 	}
 
-	const conditions: ConditionDraft[] = [];
-	for (let i = 0; i < ordered.length - 1; i++) {
-		const fromId = ordered[i].id;
-		const toId = ordered[i + 1].id;
-		const t = wf.transitions.find((tr) => tr.from === fromId && tr.to === toId);
-		conditions.push(
-			t?.condition
-				? { type: t.condition.type, expression: t.condition.expression }
-				: { type: 'always' }
-		);
-	}
+	// Default all inter-step conditions to 'always' (transitions removed)
+	const conditions: ConditionDraft[] = ordered.slice(0, -1).map(() => ({ type: 'always' }));
 
 	return {
 		steps: ordered,
 		transitions: conditions,
 		rules: rulesToDrafts(wf.rules ?? []),
 		tags: wf.tags ?? [],
+		channels: wf.channels ?? [],
 	};
 }
 
@@ -175,8 +165,9 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 
 	const [name, setName] = useState(workflow?.name ?? '');
 	const [description, setDescription] = useState(workflow?.description ?? '');
-	const [steps, setSteps] = useState<StepDraft[]>(initial?.steps ?? [makeEmptyStep()]);
+	const [steps, setSteps] = useState<NodeDraft[]>(initial?.steps ?? [makeEmptyStep()]);
 	const [transitions, setTransitions] = useState<ConditionDraft[]>(initial?.transitions ?? []);
+	const [channels, setChannels] = useState<WorkflowChannel[]>(initial?.channels ?? []);
 	const [rules, setRules] = useState<RuleDraft[]>(initial?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
 	const [tagInput, setTagInput] = useState('');
@@ -186,6 +177,19 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [showTemplates, setShowTemplates] = useState(false);
 
 	const agents = filterAgents(spaceStore.agents.value);
+	const tasksByNodeId = spaceStore.tasksByNodeId.value;
+
+	// Determine which workflow run to use for completion indicators.
+	// Prefer an active run; fall back to the most recently updated run.
+	// When no run exists yet (e.g. new workflow), relevantRunId is null.
+	const relevantRunId = (() => {
+		if (!workflow?.id) return null;
+		const runs = spaceStore.workflowRuns.value.filter((r) => r.workflowId === workflow.id);
+		if (!runs.length) return null;
+		const active = runs.find((r) => r.status === 'pending' || r.status === 'in_progress');
+		if (active) return active.id;
+		return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
+	})();
 
 	// ---- Step operations ----
 
@@ -231,7 +235,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		setExpandedIndex(other);
 	}
 
-	function updateStep(index: number, step: StepDraft) {
+	function updateStep(index: number, step: NodeDraft) {
 		setSteps((prev) => prev.map((s, i) => (i === index ? step : s)));
 	}
 
@@ -273,7 +277,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	// ---- Template ----
 
 	function applyTemplate(template: WorkflowTemplate) {
-		const newSteps: StepDraft[] = template.stepRoles.map((role) => {
+		const newSteps: NodeDraft[] = template.stepRoles.map((role) => {
 			const found = agents.find(
 				(a) => a.name.toLowerCase() === role || a.role.toLowerCase() === role
 			);
@@ -337,24 +341,11 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				steps.map((s, i) => [s.id ?? s.localId, stepIds[i]])
 			);
 
-			const builtSteps = steps.map((s, i) => ({
+			const builtNodes = steps.map((s, i) => ({
 				id: stepIds[i],
 				name: s.name || `Step ${i + 1}`,
 				agentId: s.agentId ?? '',
 				instructions: s.instructions || undefined,
-			}));
-
-			const builtTransitions = transitions.map((cond, i) => ({
-				from: stepIds[i],
-				to: stepIds[i + 1],
-				condition:
-					cond.type === 'always'
-						? undefined
-						: {
-								type: cond.type,
-								expression: cond.expression,
-							},
-				order: i,
 			}));
 
 			// Build rules — filter out completely blank drafts
@@ -372,11 +363,11 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				await spaceStore.updateWorkflow(workflow.id, {
 					name: name.trim(),
 					description: description.trim() || null,
-					steps: builtSteps,
-					transitions: builtTransitions,
-					startStepId: stepIds[0],
+					nodes: builtNodes,
+					startNodeId: stepIds[0],
 					rules: updateRules,
 					tags,
+					channels: channels.length > 0 ? channels : [],
 				});
 			} else {
 				// Create uses WorkflowRuleInput (no id)
@@ -389,11 +380,11 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				await spaceStore.createWorkflow({
 					name: name.trim(),
 					description: description.trim() || undefined,
-					steps: builtSteps,
-					transitions: builtTransitions,
-					startStepId: stepIds[0],
+					nodes: builtNodes,
+					startNodeId: stepIds[0],
 					rules: createRules,
 					tags,
+					channels: channels.length > 0 ? channels : undefined,
 				});
 			}
 
@@ -519,27 +510,44 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					)}
 
 					<div class="space-y-2">
-						{steps.map((step, i) => (
-							<WorkflowStepCard
-								key={step.localId}
-								step={step}
-								stepIndex={i}
-								isFirst={i === 0}
-								isLast={i === steps.length - 1}
-								expanded={expandedIndex === i}
-								entryCondition={i > 0 ? (transitions[i - 1] ?? { type: 'always' }) : null}
-								exitCondition={i < steps.length - 1 ? (transitions[i] ?? { type: 'always' }) : null}
-								agents={agents}
-								onToggleExpand={() => setExpandedIndex((prev) => (prev === i ? null : i))}
-								onUpdate={(s) => updateStep(i, s)}
-								onUpdateEntryCondition={(c) => updateEntryCondition(i, c)}
-								onUpdateExitCondition={(c) => updateExitCondition(i, c)}
-								onMoveUp={() => moveStep(i, 'up')}
-								onMoveDown={() => moveStep(i, 'down')}
-								onRemove={() => removeStep(i)}
-								disableRemove={steps.length === 1}
-							/>
-						))}
+						{steps.map((step, i) => {
+							// Derive per-agent completion states from live task data for this node,
+							// scoped to the most relevant workflow run to avoid mixing state from
+							// past runs with the current one.
+							const allNodeTasks = step.id ? (tasksByNodeId.get(step.id) ?? []) : [];
+							const nodeTasks = relevantRunId
+								? allNodeTasks.filter((t) => t.workflowRunId === relevantRunId)
+								: allNodeTasks;
+							const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
+								agentName: t.agentName ?? null,
+								status: t.status,
+								completionSummary: t.completionSummary,
+							}));
+							return (
+								<WorkflowNodeCard
+									key={step.localId}
+									node={step}
+									nodeIndex={i}
+									isFirst={i === 0}
+									isLast={i === steps.length - 1}
+									expanded={expandedIndex === i}
+									entryCondition={i > 0 ? (transitions[i - 1] ?? { type: 'always' }) : null}
+									exitCondition={
+										i < steps.length - 1 ? (transitions[i] ?? { type: 'always' }) : null
+									}
+									agents={agents}
+									onToggleExpand={() => setExpandedIndex((prev) => (prev === i ? null : i))}
+									onUpdate={(s) => updateStep(i, s)}
+									onUpdateEntryCondition={(c) => updateEntryCondition(i, c)}
+									onUpdateExitCondition={(c) => updateExitCondition(i, c)}
+									onMoveUp={() => moveStep(i, 'up')}
+									onMoveDown={() => moveStep(i, 'down')}
+									onRemove={() => removeStep(i)}
+									disableRemove={steps.length === 1}
+									nodeTaskStates={nodeTaskStates.length > 0 ? nodeTaskStates : undefined}
+								/>
+							);
+						})}
 					</div>
 
 					<button
@@ -556,6 +564,16 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						</svg>
 						Add Step
 					</button>
+				</div>
+
+				{/* Channels */}
+				<div class="space-y-3">
+					<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Channels</h2>
+					<ChannelEditor
+						channels={channels}
+						onChange={setChannels}
+						agentRoles={agents.map((a) => a.role).filter(Boolean)}
+					/>
 				</div>
 
 				{/* Tags */}

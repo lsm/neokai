@@ -16,6 +16,8 @@ import type {
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
+import { ShortIdAllocator } from '../lib/short-id-allocator';
+export { ShortIdAllocator } from '../lib/short-id-allocator';
 import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
@@ -31,6 +33,11 @@ import {
 	type UpdateGoalParams,
 } from './repositories/goal-repository';
 import { JobQueueRepository } from './repositories/job-queue-repository';
+import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
+import { TaskRepository } from './repositories/task-repository';
+import { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
+import { SkillRepository } from './repositories/skill-repository';
+import { RoomSkillOverrideRepository } from './repositories/room-skill-override-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -50,7 +57,12 @@ export type { JobHandler, JobQueueProcessorOptions } from './job-queue-processor
 // @public - Library export
 // Re-export repository classes for direct use
 export { GoalRepository } from './repositories/goal-repository';
+export { TaskRepository } from './repositories/task-repository';
 export { SpaceAgentRepository } from './repositories/space-agent-repository';
+export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
+export { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
+export { SkillRepository } from './repositories/skill-repository';
+export { RoomSkillOverrideRepository } from './repositories/room-skill-override-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -67,6 +79,12 @@ export class Database {
 	private inboxItemRepo!: InboxItemRepository;
 	private goalRepo!: GoalRepository;
 	private jobQueueRepo!: JobQueueRepository;
+	private appMcpServerRepo!: AppMcpServerRepository;
+	private taskRepo!: TaskRepository;
+	private roomMcpEnablementRepo!: RoomMcpEnablementRepository;
+	private skillRepo!: SkillRepository;
+	private roomSkillOverrideRepo!: RoomSkillOverrideRepository;
+	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -77,13 +95,20 @@ export class Database {
 
 		// Initialize repositories with the raw BunDatabase instance
 		const db = this.core.getDb();
+		this.shortIdAllocator = new ShortIdAllocator(db);
+		const shortIdAllocator = this.shortIdAllocator;
 		this.sessionRepo = new SessionRepository(db);
 		this.sdkMessageRepo = new SDKMessageRepository(db);
 		this.settingsRepo = new SettingsRepository(db);
 		this.githubMappingRepo = new GitHubMappingRepository(db);
 		this.inboxItemRepo = new InboxItemRepository(db);
-		this.goalRepo = new GoalRepository(db, reactiveDb);
+		this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
+		this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
 		this.jobQueueRepo = new JobQueueRepository(db);
+		this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
+		this.roomMcpEnablementRepo = new RoomMcpEnablementRepository(db, reactiveDb);
+		this.skillRepo = new SkillRepository(db, reactiveDb);
+		this.roomSkillOverrideRepo = new RoomSkillOverrideRepository(db, reactiveDb);
 	}
 
 	// ============================================================================
@@ -141,7 +166,11 @@ export class Database {
 	}
 
 	// Message Query Mode operations
-	saveUserMessage(sessionId: string, message: SDKMessage, sendStatus: SendStatus = 'sent'): string {
+	saveUserMessage(
+		sessionId: string,
+		message: SDKMessage,
+		sendStatus: SendStatus = 'consumed'
+	): string {
 		return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus);
 	}
 
@@ -332,6 +361,10 @@ export class Database {
 		return this.goalRepo.getGoal(id);
 	}
 
+	getGoalByShortId(roomId: string, shortId: string): RoomGoal | null {
+		return this.goalRepo.getGoalByShortId(roomId, shortId);
+	}
+
 	listGoals(roomId: string, status?: import('@neokai/shared').GoalStatus): RoomGoal[] {
 		return this.goalRepo.listGoals(roomId, status);
 	}
@@ -373,6 +406,14 @@ export class Database {
 	}
 
 	/**
+	 * Get the shared ShortIdAllocator instance
+	 * Used by TaskManager and GoalManager to assign short IDs on creation
+	 */
+	getShortIdAllocator(): ShortIdAllocator {
+		return this.shortIdAllocator;
+	}
+
+	/**
 	 * Get the SDK message repository
 	 * Used by SessionBridge for direct access to SDK messages
 	 */
@@ -389,6 +430,14 @@ export class Database {
 	}
 
 	/**
+	 * Get the task repository
+	 * Used by ReferenceResolver for task lookups during message preprocessing
+	 */
+	getTaskRepo(): TaskRepository {
+		return this.taskRepo;
+	}
+
+	/**
 	 * Get the database file path
 	 * Used by background job queues to create their own connections to the same DB file
 	 */
@@ -402,6 +451,34 @@ export class Database {
 	 */
 	getJobQueueRepo(): JobQueueRepository {
 		return this.jobQueueRepo;
+	}
+
+	/**
+	 * Get the application-level MCP server repository
+	 */
+	get appMcpServers(): AppMcpServerRepository {
+		return this.appMcpServerRepo;
+	}
+
+	/**
+	 * Get the per-room MCP enablement repository
+	 */
+	get roomMcpEnablement(): RoomMcpEnablementRepository {
+		return this.roomMcpEnablementRepo;
+	}
+
+	/**
+	 * Get the application-level Skills repository
+	 */
+	get skills(): SkillRepository {
+		return this.skillRepo;
+	}
+
+	/**
+	 * Get the per-room skill override repository
+	 */
+	get roomSkillOverrides(): RoomSkillOverrideRepository {
+		return this.roomSkillOverrideRepo;
 	}
 
 	close(): void {

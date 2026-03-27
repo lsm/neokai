@@ -545,8 +545,8 @@ export async function checkPrIsMergeable(
 	try {
 		const pr = JSON.parse(prJson);
 
-		// Check mergeStateStatus for DIRTY or CONFLICTING (both indicate conflicts)
-		// Note: mergeable field is deprecated and returns a string enum, but mergeStateStatus is more reliable
+		// Check mergeStateStatus — more reliable than the deprecated mergeable field
+		// DIRTY/CONFLICTING = merge conflicts; BEHIND = branch is behind base and needs rebase
 		if (pr.mergeStateStatus === 'DIRTY' || pr.mergeStateStatus === 'CONFLICTING') {
 			return {
 				pass: false,
@@ -554,6 +554,16 @@ export async function checkPrIsMergeable(
 				bounceMessage:
 					'Fix merge conflicts: `git fetch && git rebase origin/main` (or base branch), ' +
 					'resolve conflicts, force push, then try again.',
+			};
+		}
+
+		if (pr.mergeStateStatus === 'BEHIND') {
+			return {
+				pass: false,
+				reason: 'PR branch is behind the base branch. Please rebase before submitting for review.',
+				bounceMessage:
+					'PR branch is behind base: `git fetch && git rebase origin/<base-branch>`, ' +
+					'then force push.',
 			};
 		}
 
@@ -599,7 +609,7 @@ export async function checkLeaderDraftsExist(
 		bounceMessage:
 			'No draft tasks were created by the planner yet. The planner must run Phase 2 to create tasks.\n\n' +
 			'To fix this:\n' +
-			'1. Call `send_to_worker` (mode: "queue") with: "The plan is approved. Please:\n' +
+			'1. Call `send_to_worker` (mode: "defer") with: "The plan is approved. Please:\n' +
 			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER>`\n' +
 			'   2. Read the plan file under docs/plans/\n' +
 			'   3. Create all tasks 1:1 from the plan using the `create_task` tool\n' +

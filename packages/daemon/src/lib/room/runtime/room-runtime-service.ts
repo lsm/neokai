@@ -8,7 +8,15 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
+import type {
+	Room,
+	McpServerConfig,
+	RuntimeState,
+	GlobalSettings,
+	RoomSkillOverride,
+} from '@neokai/shared';
+import type { SettingsManager } from '../../settings-manager';
+import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../../storage/job-queue-processor';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -34,8 +42,11 @@ import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from '../managers/room-manager';
 import { WorktreeManager } from '../../worktree-manager';
-import { inferProviderForModel } from '../../providers/registry';
+import { inferProviderForModel, getProviderRegistry } from '../../providers/registry';
 import { Logger } from '../../logger';
+import type { SkillsManager } from '../../skills-manager';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
+import type { RoomSkillOverrideRepository } from '../../../storage/repositories/room-skill-override-repository';
 
 const log = new Logger('room-runtime-service');
 
@@ -50,6 +61,10 @@ export interface RoomRuntimeServiceConfig {
 	defaultModel: string;
 	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
 	getGlobalSettings: () => GlobalSettings;
+	/** Settings manager for reading project-configured MCP servers */
+	settingsManager: SettingsManager;
+	/** Application-level MCP lifecycle manager — provides registry-sourced MCP configs */
+	appMcpManager?: AppMcpLifecycleManager;
 	/** Reactive database wrapper for change event emission */
 	reactiveDb: ReactiveDatabase;
 	/**
@@ -62,6 +77,12 @@ export interface RoomRuntimeServiceConfig {
 	 * Must be provided for the job-queue-based tick loop to function.
 	 */
 	jobProcessor?: JobQueueProcessor;
+	/** Application-level skills manager for injecting skills into session SDK options. Optional for backwards compatibility. */
+	skillsManager?: SkillsManager;
+	/** App MCP server repository for resolving mcp_server skill configs. Optional for backwards compatibility. */
+	appMcpServerRepo?: AppMcpServerRepository;
+	/** Room skill override repository for fetching per-room skill enablement overrides. Optional for backwards compatibility. */
+	roomSkillOverrideRepo?: RoomSkillOverrideRepository;
 }
 
 export class RoomRuntimeService {
@@ -69,6 +90,8 @@ export class RoomRuntimeService {
 	private observers = new Map<string, SessionObserver>();
 	private agentSessions = new Map<string, AgentSession>();
 	private unsubscribers: Array<() => void> = [];
+	/** Stores the room-agent-tools McpServerConfig per room for hot-reload on registry changes */
+	private roomAgentMcpServers = new Map<string, McpServerConfig>();
 
 	constructor(private ctx: RoomRuntimeServiceConfig) {}
 
@@ -132,10 +155,42 @@ export class RoomRuntimeService {
 		return this.agentSessions.get(sessionId);
 	}
 
+	/**
+	 * Get the current model for a task session.
+	 * Returns the model info or null if the session is not found.
+	 */
+	async modelGet(sessionId: string): Promise<{ currentModel: string; provider: string } | null> {
+		const session = this.agentSessions.get(sessionId);
+		if (!session) return null;
+		const sessionData = session.getSessionData();
+		return {
+			currentModel: sessionData.config.model,
+			provider: sessionData.config.provider ?? 'anthropic',
+		};
+	}
+
+	/**
+	 * Switch the model for a task session.
+	 * This operates on the runtime's own AgentSession instances to avoid
+	 * creating duplicate sessions via SessionManager.
+	 */
+	async modelSwitch(
+		sessionId: string,
+		model: string,
+		provider: string
+	): Promise<{ success: boolean; model: string; error?: string }> {
+		const session = this.agentSessions.get(sessionId);
+		if (!session) {
+			return { success: false, model: '', error: 'Session not found in runtime' };
+		}
+		return session.handleModelSwitch(model, provider);
+	}
+
 	pauseRuntime(roomId: string): boolean {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.pause();
+		this.persistRuntimePreference(roomId, 'paused');
 		return true;
 	}
 
@@ -143,6 +198,7 @@ export class RoomRuntimeService {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.resume();
+		this.persistRuntimePreference(roomId, 'running');
 		return true;
 	}
 
@@ -151,6 +207,9 @@ export class RoomRuntimeService {
 		if (!runtime) return false;
 		runtime.stop();
 		this.runtimes.delete(roomId);
+		this.observers.delete(roomId);
+		this.roomAgentMcpServers.delete(roomId);
+		this.persistRuntimePreference(roomId, 'stopped');
 		return true;
 	}
 
@@ -170,10 +229,14 @@ export class RoomRuntimeService {
 			}
 			this.runtimes.delete(roomId);
 			this.observers.delete(roomId);
+			// Clear the cached room-agent-tools server; createOrGetRuntime() →
+			// setupRoomAgentSession() will repopulate it for the fresh runtime.
+			this.roomAgentMcpServers.delete(roomId);
 		}
 
 		// Create a fresh runtime - autoStart=true starts it immediately
 		this.createOrGetRuntime(room, /* autoStart */ true);
+		this.persistRuntimePreference(roomId, 'running');
 		return true;
 	}
 
@@ -183,13 +246,57 @@ export class RoomRuntimeService {
 		}
 		this.runtimes.clear();
 		this.observers.clear();
+		for (const sessionId of this.agentSessions.keys()) {
+			this.ctx.sessionManager.unregisterSession(sessionId);
+		}
 		this.agentSessions.clear();
+		this.roomAgentMcpServers.clear();
 
 		for (const unsub of this.unsubscribers) {
 			unsub();
 		}
 		this.unsubscribers = [];
 		log.info('RoomRuntimeService stopped');
+	}
+
+	private getPersistedRuntimePreference(room: Room): RuntimeState {
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		const state = config.runtimeState;
+		if (state === 'running' || state === 'paused' || state === 'stopped') {
+			return state;
+		}
+		return 'running';
+	}
+
+	private persistRuntimePreference(roomId: string, state: RuntimeState): void {
+		const room = this.ctx.roomManager.getRoom(roomId);
+		if (!room) return;
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		if (config.runtimeState === state) return;
+		this.ctx.roomManager.updateRoom(roomId, {
+			config: {
+				...config,
+				runtimeState: state,
+			},
+		});
+	}
+
+	/**
+	 * Resolve the roomId from a session ID.
+	 * Handles the two ID formats used by room sessions:
+	 *   - `room:chat:{roomId}` — room chat coordinator session
+	 *   - `{role}:{roomId}:{taskId}:{uuid8}` — worker/leader sessions
+	 * Returns null if the format is not recognized.
+	 */
+	private static extractRoomId(sessionId: string): string | null {
+		const parts = sessionId.split(':');
+		if (parts.length >= 3 && parts[0] === 'room' && parts[1] === 'chat') {
+			return parts[2];
+		}
+		if (parts.length >= 4) {
+			return parts[1];
+		}
+		return null;
 	}
 
 	private createSessionFactory(): SessionFactory {
@@ -199,15 +306,79 @@ export class RoomRuntimeService {
 
 		return {
 			createAndStartSession: async (init, role) => {
+				// Resolve room-level skill overrides for this session.
+				// The override list is merged with the global skills registry in
+				// QueryOptionsBuilder so that room-disabled skills are excluded.
+				let roomSkillOverrides: RoomSkillOverride[] | undefined;
+				if (ctx.roomSkillOverrideRepo) {
+					const roomId = RoomRuntimeService.extractRoomId(init.sessionId);
+					if (roomId) {
+						roomSkillOverrides = ctx.roomSkillOverrideRepo.getOverrides(roomId);
+					}
+				}
+
 				const session = AgentSession.fromInit(
-					init,
+					{ ...init, roomSkillOverrides },
 					ctx.db,
 					ctx.messageHub,
 					ctx.daemonHub,
 					ctx.getApiKey,
-					ctx.defaultModel
+					ctx.defaultModel,
+					ctx.skillsManager,
+					ctx.appMcpServerRepo
 				);
 				agentSessions.set(init.sessionId, session);
+				ctx.sessionManager.registerSession(session);
+
+				// Inject merged MCP servers for worker sessions (coder / general).
+				//
+				// Precedence (highest to lowest): file-based > registry.
+				// File-based servers are project-local config (.mcp.json / settings.json) and are
+				// considered more specific than the global application-level registry. When the same
+				// server name appears in both sources, the project's local definition wins.
+				//
+				// Note: Room chat sessions use the OPPOSITE precedence (registry > file-based) because
+				// room chat does not use project-local tools and the app-level registry is intended to
+				// extend the room chat experience. Worker sessions operate in the project workspace, so
+				// the project's local config should take priority.
+				//
+				// Hot-reload for worker sessions is intentionally skipped: workers are short-lived
+				// (one task per session) so a registry change mid-task would not be useful. The
+				// updated map is applied on the next session creation.
+				//
+				// Known limitation after daemon restart: recovered worker sessions re-created by
+				// restoreSession() will NOT have the merged (file + registry) MCP map reapplied —
+				// restoreMcpServersForGroup() only restores role-specific in-process tools
+				// (planner-tools, leader-agent-tools). Workers resumed from a crash will therefore
+				// run without user-configured MCP servers for the remainder of their task. This is
+				// accepted given the short-lived nature of worker sessions.
+				if (role === 'coder' || role === 'general') {
+					const fileMcpServers = ctx.settingsManager.getEnabledMcpServersConfig();
+					const registryMcpServers = ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
+
+					// Detect and warn on name collisions (file-based wins)
+					for (const name of Object.keys(fileMcpServers)) {
+						if (Object.prototype.hasOwnProperty.call(registryMcpServers, name)) {
+							log.warn(
+								`Worker session ${init.sessionId}: MCP server name collision on '${name}' — ` +
+									`file-based config takes precedence over registry entry.`
+							);
+						}
+					}
+
+					// Merge: registry first, then file-based overwrites on collision.
+					// Only call setRuntimeMcpServers when there is at least one server to inject —
+					// an undefined config lets the SDK use its own default discovery, while an
+					// empty map would suppress it entirely with no benefit.
+					const merged: Record<string, McpServerConfig> = {
+						...registryMcpServers,
+						...fileMcpServers,
+					};
+					if (Object.keys(merged).length > 0) {
+						session.setRuntimeMcpServers(merged);
+					}
+				}
+
 				// Leader sessions are started lazily: injectMessage() calls ensureQueryStarted()
 				// before enqueuing the first message. Starting eagerly here would trigger the
 				// 15s SDK startup timeout because the leader has no queued message yet.
@@ -221,7 +392,7 @@ export class RoomRuntimeService {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
 
-				const deliveryMode = opts?.deliveryMode ?? 'current_turn';
+				const deliveryMode = opts?.deliveryMode ?? 'immediate';
 				const state = session.getProcessingState();
 				const isBusy = state.status === 'processing' || state.status === 'queued';
 
@@ -237,11 +408,11 @@ export class RoomRuntimeService {
 					},
 				};
 
-				// Queue-mode semantics:
-				// - next_turn + busy => persist as 'saved' (replayed after current turn)
-				// - otherwise => enqueue now ('queued') so worker can start ASAP when idle
-				if (deliveryMode === 'next_turn' && isBusy) {
-					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'saved');
+				// Defer-mode semantics:
+				// - defer + busy => persist as 'deferred' (replayed after current turn)
+				// - otherwise => enqueue now ('enqueued') so worker can start ASAP when idle
+				if (deliveryMode === 'defer' && isBusy) {
+					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred');
 					return;
 				}
 
@@ -249,7 +420,7 @@ export class RoomRuntimeService {
 				// restart, restored sessions are in cache but haven't started
 				// their query yet (lazy start to avoid startup timeout).
 				await session.ensureQueryStarted();
-				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'queued');
+				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
 				await session.messageQueue.enqueueWithId(messageId, message);
 			},
 			hasSession: (sessionId) => {
@@ -288,6 +459,7 @@ export class RoomRuntimeService {
 				if (!session) return false;
 
 				agentSessions.set(sessionId, session);
+				ctx.sessionManager.registerSession(session);
 				// Don't call startStreamingQuery() here — the SDK query will be
 				// started lazily when injectMessage() is called. Eagerly starting
 				// without a queued message causes a 15s startup timeout because the
@@ -350,6 +522,7 @@ export class RoomRuntimeService {
 					log.warn(`Failed to cleanup session ${sessionId}:`, error);
 				} finally {
 					agentSessions.delete(sessionId);
+					ctx.sessionManager.unregisterSession(sessionId);
 				}
 			},
 			removeWorktree: async (workspacePath: string): Promise<boolean> => {
@@ -384,6 +557,26 @@ export class RoomRuntimeService {
 					return false;
 				}
 			},
+			switchModel: async (sessionId, model, provider) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) {
+					return { success: false, model: '', error: 'Session not found in runtime' };
+				}
+				return session.handleModelSwitch(model, provider);
+			},
+			// Reads from DB (source of truth), not the in-memory agentSessions cache.
+			// This avoids stale model info when switchModel() updates the DB but the
+			// cache entry has been evicted (e.g., after daemon restart).
+			// Returns the raw model value from DB (may be alias or resolved ID).
+			// Callers building modelFallbackMap keys should resolve aliases first.
+			getCurrentModel: async (sessionId) => {
+				const session = ctx.db.getSession(sessionId);
+				if (!session) return null;
+				return {
+					currentModel: session.config.model,
+					provider: session.config.provider ?? 'anthropic',
+				};
+			},
 		};
 	}
 
@@ -392,9 +585,10 @@ export class RoomRuntimeService {
 		if (existing) return existing;
 
 		const rawDb = this.ctx.db.getDatabase();
+		const allocator = this.ctx.db.getShortIdAllocator();
 		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
-		const taskManager = new TaskManager(rawDb, room.id, this.ctx.reactiveDb);
-		const goalManager = new GoalManager(rawDb, room.id, this.ctx.reactiveDb);
+		const taskManager = new TaskManager(rawDb, room.id, this.ctx.reactiveDb, allocator);
+		const goalManager = new GoalManager(rawDb, room.id, this.ctx.reactiveDb, allocator);
 		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
@@ -420,10 +614,6 @@ export class RoomRuntimeService {
 			(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
 			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
 			this.ctx.defaultModel;
-		const workerModel =
-			(agentModels?.worker && agentModels.worker.trim() !== '' ? agentModels.worker : undefined) ??
-			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
-			this.ctx.defaultModel;
 
 		const runtime = new RoomRuntime({
 			room,
@@ -434,7 +624,6 @@ export class RoomRuntimeService {
 			sessionFactory,
 			workspacePath,
 			model: leaderModel,
-			workerModel,
 			defaultModel: this.ctx.defaultModel,
 			maxFeedbackIterations: maxReviewRounds,
 			maxConcurrentGroups,
@@ -447,6 +636,11 @@ export class RoomRuntimeService {
 			getGoal: (goalId) => goalManager.getGoal(goalId),
 			getGlobalSettings: this.ctx.getGlobalSettings,
 			jobQueue: this.ctx.jobQueue,
+			isProviderAvailable: async (providerId: string, _model: string) => {
+				const provider = getProviderRegistry().get(providerId);
+				if (!provider) return false;
+				return Boolean(await provider.isAvailable());
+			},
 		});
 
 		this.runtimes.set(room.id, runtime);
@@ -479,6 +673,10 @@ export class RoomRuntimeService {
 			runtimeService: this,
 		}) as unknown as McpServerConfig;
 
+		// Cache the room-agent-tools server so the mcp.registry.changed handler can
+		// include it when re-applying MCP configs to live sessions.
+		this.roomAgentMcpServers.set(room.id, roomAgentMcpServer);
+
 		// Reuse the SessionManager-owned room chat AgentSession to avoid duplicate
 		// DaemonHub subscriptions and duplicate query execution.
 		void this.ctx.sessionManager
@@ -509,7 +707,31 @@ export class RoomRuntimeService {
 					}
 				}
 
+				// Merge MCP servers from three sources into a single map for the room chat session:
+				//   1. File-based servers (from .mcp.json / settings.json via SettingsManager)
+				//   2. Registry-based servers (application-level entries from AppMcpLifecycleManager,
+				//      filtered by per-room enablement via getEnabledMcpConfigsForRoom)
+				//   3. room-agent-tools (in-process server for room coordination)
+				//
+				// Precedence (highest to lowest): room-agent-tools > registry > file-based.
+				// Registry wins over file-based here because the room chat session does not operate
+				// inside a specific project workspace — the app-level registry is intended to
+				// enrich the room chat experience and takes precedence over project-local config.
+				// room-agent-tools is always last so it can never be shadowed.
+				//
+				// Note: Worker sessions (coder/general) use the OPPOSITE file vs. registry precedence
+				// because they run inside the project workspace where local config is more specific.
+				// See createSessionFactory() for the worker merge logic.
+				//
+				// Note: setRuntimeMcpServers() replaces the config used for the NEXT query; it does
+				// NOT restart any in-flight query. This is intentional — MCP server changes between
+				// queries are the expected use case, and disrupting an active query is not safe.
+				const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
+				const registryMcpServers =
+					this.ctx.appMcpManager?.getEnabledMcpConfigsForRoom(room.id) ?? {};
 				roomChatSession.setRuntimeMcpServers({
+					...fileMcpServers,
+					...registryMcpServers,
 					'room-agent-tools': roomAgentMcpServer,
 				});
 				// Inject the room chat system prompt so the agent knows the proper
@@ -580,22 +802,72 @@ export class RoomRuntimeService {
 			this.runtimes.get(event.roomId)?.onTaskStatusChanged(event.task.id);
 		});
 		this.unsubscribers.push(unsubTaskUpdate);
+
+		// mcp.registry.changed — re-apply MCP configs to all live room chat sessions when the
+		// application-level registry changes (entry created/updated/deleted/toggled).
+		//
+		// Note: setRuntimeMcpServers() updates the config used for subsequent queries only;
+		// it does NOT interrupt a query that is already in-flight. This is sufficient because
+		// MCP server changes between queries are the expected use case.
+		const unsubMcpChanged = this.ctx.daemonHub.on(
+			'mcp.registry.changed',
+			() => {
+				for (const [roomId] of this.runtimes) {
+					// Read both sources inside the handler per-room so that per-room enablement
+					// is respected when re-applying configs after registry changes.
+					const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
+					const registryMcpServers =
+						this.ctx.appMcpManager?.getEnabledMcpConfigsForRoom(roomId) ?? {};
+					const roomChatSessionId = `room:chat:${roomId}`;
+					void this.ctx.sessionManager
+						.getSessionAsync(roomChatSessionId)
+						.then((session) => {
+							if (!session) return;
+							// Merge: file-based, then registry (wins on collision), then
+							// room-agent-tools last so it ALWAYS takes precedence.
+							const merged: Record<string, McpServerConfig> = {
+								...fileMcpServers,
+								...registryMcpServers,
+							};
+							const roomAgentMcpServer = this.roomAgentMcpServers.get(roomId);
+							if (roomAgentMcpServer) {
+								merged['room-agent-tools'] = roomAgentMcpServer;
+							}
+							session.setRuntimeMcpServers(merged);
+						})
+						.catch((error) => {
+							log.warn(`Failed to re-apply MCP servers for room ${roomId}:`, error);
+						});
+				}
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubMcpChanged);
 	}
 
 	private async initializeExistingRooms(): Promise<void> {
 		const rooms = this.ctx.roomManager.listRooms();
 
-		// Recover all rooms in parallel for faster startup
+		// Initialize all rooms in parallel for faster startup
 		await Promise.all(
 			rooms.map(async (room) => {
 				try {
-					// Don't auto-start - wait until after recovery completes to prevent
-					// zombie detection from injecting duplicate continuation messages
+					const runtimePreference = this.getPersistedRuntimePreference(room);
+					if (runtimePreference === 'stopped') {
+						log.info(`Room ${room.id}: runtime preference is stopped; skipping auto-start`);
+						return;
+					}
+
+					// Don't auto-start - wait until after state reattach completes.
 					const runtime = this.createOrGetRuntime(room, /* autoStart */ false);
 					const observer = this.observers.get(room.id)!;
-					await this.recoverRoomRuntime(room.id, runtime, observer);
-					// Start the runtime tick loop after recovery is complete
-					runtime.start();
+					const resumeAgents = runtimePreference === 'running';
+					await this.recoverRoomRuntime(room.id, runtime, observer, resumeAgents);
+
+					if (runtimePreference === 'running') {
+						// Start the runtime tick loop after reattach is complete.
+						runtime.start();
+					}
 				} catch (error) {
 					log.error(`Failed to initialize runtime for room ${room.id}:`, error);
 				}
@@ -606,11 +878,17 @@ export class RoomRuntimeService {
 	private async recoverRoomRuntime(
 		roomId: string,
 		runtime: RoomRuntime,
-		observer: SessionObserver
+		observer: SessionObserver,
+		resumeAgents = true
 	): Promise<void> {
 		const rawDb = this.ctx.db.getDatabase();
 		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
-		const taskManager = new TaskManager(rawDb, roomId, this.ctx.reactiveDb);
+		const taskManager = new TaskManager(
+			rawDb,
+			roomId,
+			this.ctx.reactiveDb,
+			this.ctx.db.getShortIdAllocator()
+		);
 		const sessionFactory = this.createSessionFactory();
 
 		const checker: SessionStateChecker = {
@@ -647,8 +925,21 @@ export class RoomRuntimeService {
 				const activeGroups = groupRepo.getActiveGroups(roomId);
 				for (const group of activeGroups) {
 					try {
-						// Restore MCP servers (planner-tools, leader-agent-tools)
+						// Re-attach runtime-only sdk.message listeners before any continuation
+						// message is injected (rate-limit detection and compatibility hooks).
+						runtime.restoreRecoveredGroupMirroring(group);
+
+						// Restore role-specific in-process MCP servers (planner-tools, leader-agent-tools).
+						// Note: file-based and registry-sourced MCP servers are NOT restored here for
+						// worker sessions (coder/general). This is a known limitation — recovered workers
+						// run without user-configured MCP servers for the remainder of their task.
+						// Workers are short-lived (one task per session) so this is accepted behaviour;
+						// the merged map is applied on the next session creation via createSessionFactory().
 						await runtime.restoreMcpServersForGroup(group);
+
+						if (!resumeAgents) {
+							continue;
+						}
 
 						// Resume work after restart.
 						// - Groups awaiting human review: no message needed, human will provide one.

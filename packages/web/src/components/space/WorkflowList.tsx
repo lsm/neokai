@@ -55,27 +55,22 @@ function MiniConnector({ conditionType }: { conditionType?: WorkflowConditionTyp
 const MAX_DOTS = 6;
 
 function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
-	if (workflow.steps.length === 0) {
+	if (workflow.nodes.length === 0) {
 		return <span class="text-xs text-gray-700 italic">No steps</span>;
 	}
 
-	// Build ordered step list following startStepId
-	const stepMap = new Map(workflow.steps.map((s) => [s.id, s]));
+	// Build ordered step list: startNode first, then remaining nodes in order
+	const stepMap = new Map(workflow.nodes.map((s) => [s.id, s]));
 	const ordered: string[] = [];
 	const visited = new Set<string>();
-	let currentId: string | undefined = workflow.startStepId;
 
-	while (currentId && !visited.has(currentId)) {
-		visited.add(currentId);
-		ordered.push(currentId);
-		const outgoing = workflow.transitions
-			.filter((t) => t.from === currentId)
-			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-		currentId = outgoing[0]?.to;
+	const startNode = stepMap.get(workflow.startNodeId);
+	if (startNode) {
+		visited.add(startNode.id);
+		ordered.push(startNode.id);
 	}
 
-	// Append orphaned steps (not reachable from startStepId)
-	for (const s of workflow.steps) {
+	for (const s of workflow.nodes) {
 		if (!visited.has(s.id)) {
 			ordered.push(s.id);
 		}
@@ -90,14 +85,11 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
 			{display.map((id, i) => {
 				const step = stepMap.get(id);
 				const nextId = i + 1 < display.length ? display[i + 1] : undefined;
-				const transition = nextId
-					? workflow.transitions.find((t) => t.from === id && t.to === nextId)
-					: undefined;
 
 				return (
 					<div key={id} class="flex items-center" title={step?.name ?? id}>
 						<MiniStepDot isStart={i === 0} />
-						{nextId && <MiniConnector conditionType={transition?.condition?.type} />}
+						{nextId && <MiniConnector conditionType={undefined} />}
 					</div>
 				);
 			})}
@@ -239,7 +231,7 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 			{/* Step count + tags footer */}
 			<div class="mt-2.5 flex items-center gap-2 flex-wrap">
 				<span class="text-xs text-gray-600">
-					{workflow.steps.length} {workflow.steps.length === 1 ? 'step' : 'steps'}
+					{workflow.nodes.length} {workflow.nodes.length === 1 ? 'step' : 'steps'}
 				</span>
 				{workflow.tags.length > 0 && (
 					<>

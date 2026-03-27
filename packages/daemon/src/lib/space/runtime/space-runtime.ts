@@ -1,7 +1,7 @@
 /**
  * SpaceRuntime
  *
- * Workflow-first orchestration engine for Spaces.
+ * Agent-centric orchestration engine for Spaces.
  * Manages workflow run lifecycles and standalone task queuing
  * using Space tables exclusively (not Room tables).
  *
@@ -9,13 +9,14 @@
  * - Maintain a Map<runId, WorkflowExecutor> for active workflow runs
  * - Rehydrate executors from DB on first executeTick() call
  * - Start new workflow runs (creates run record + executor + first step task)
- * - Process completed tasks and advance workflows to the next step
+ * - Spawn Task Agent sessions for pending tasks
+ * - Monitor agent liveness and recover from crashes
  * - Resolve task types from agent roles (planner → planning, coder/general → coding, etc.)
  * - Filter and expose workflow rules applicable to a given step
  * - Clean up executors when runs reach terminal states
  *
- * Note: advance() creates SpaceTask DB records only.
- * Session group spawning is handled separately and is NOT in scope here.
+ * In the agent-centric model, agents drive workflow progression via send_message
+ * and report_done — SpaceRuntime no longer calls advance() directly.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -25,9 +26,10 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	WorkflowRule,
-	WorkflowStep,
+	WorkflowNode,
+	WorkflowChannel,
 } from '@neokai/shared';
-import { resolveStepAgents, resolveStepChannels } from '@neokai/shared';
+import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -35,10 +37,12 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { TaskAgentManager } from './task-agent-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
+import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
+import { autoCompleteStuckAgents } from './agent-liveness';
+import { CompletionDetector } from './completion-detector';
 
 const log = new Logger('space-runtime');
 
@@ -79,6 +83,16 @@ export interface SpaceRuntimeConfig {
 	 * in a real sink after construction (e.g. once the Space Agent session exists).
 	 */
 	notificationSink?: NotificationSink;
+	/**
+	 * Completion detector for the all-agents-done completion model.
+	 *
+	 * When provided (or defaulted from taskRepo), used in processRunTick() to
+	 * detect when all agents in a workflow run have reached a terminal status and
+	 * mark the run as completed. Replaces the old terminal-node detection model.
+	 *
+	 * Defaults to `new CompletionDetector(taskRepo)` if not provided.
+	 */
+	completionDetector?: CompletionDetector;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +157,12 @@ export class SpaceRuntime {
 	private notificationSink: NotificationSink;
 
 	/**
+	 * Completion detector for the all-agents-done model.
+	 * Initialized from config or defaulted to `new CompletionDetector(taskRepo)`.
+	 */
+	private completionDetector: CompletionDetector;
+
+	/**
 	 * Deduplication set for notifications keyed by `taskId:status` (e.g. `task-1:needs_attention`
 	 * or `task-1:timeout`). Prevents re-notifying for the same task+status across ticks.
 	 * Entries are cleared when the task leaves the flagged state.
@@ -156,6 +176,20 @@ export class SpaceRuntime {
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
+		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
+	}
+
+	/**
+	 * Returns the current dedup set snapshot for testing purposes.
+	 *
+	 * The returned Set is a copy — mutations have no effect on SpaceRuntime's
+	 * internal state.  Call this before and after a tick to verify that dedup
+	 * entries are added / removed as expected.
+	 *
+	 * @internal — exposed only for unit tests in the same package.
+	 */
+	getNotifiedTaskSet(): ReadonlySet<string> {
+		return new Set(this.notifiedTaskSet);
 	}
 
 	/**
@@ -178,8 +212,6 @@ export class SpaceRuntime {
 	 * Called after construction to resolve the circular dependency:
 	 * SpaceRuntimeService is created first (so TaskAgentManager can reference it),
 	 * then TaskAgentManager is created, then it is injected back here.
-	 * Once set, the tick loop will use Task Agent sessions to drive workflow execution
-	 * instead of calling advance() directly.
 	 */
 	setTaskAgentManager(manager: TaskAgentManager): void {
 		this.config.taskAgentManager = manager;
@@ -304,12 +336,11 @@ export class SpaceRuntime {
 			workflowId,
 			title,
 			description,
-			currentStepId: workflow.startStepId,
 			goalId,
 			maxIterations: workflow.maxIterations,
 		});
 
-		const run = this.config.workflowRunRepo.updateStatus(pendingRun.id, 'in_progress')!;
+		const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
 
 		// Register executor and meta. If a later step fails, we must clean these up.
 		const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
@@ -318,31 +349,32 @@ export class SpaceRuntime {
 		this.executors.set(run.id, executor);
 
 		// Find the start step and create the initial task. Roll back map entries if this fails.
-		const startStep = workflow.steps.find((s) => s.id === workflow.startStepId);
+		const startStep = workflow.nodes.find((s) => s.id === workflow.startNodeId);
 		if (!startStep) {
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
-			this.config.workflowRunRepo.updateStatus(run.id, 'cancelled');
-			throw new Error(`Start step "${workflow.startStepId}" not found in workflow "${workflowId}"`);
+			this.config.workflowRunRepo.transitionStatus(run.id, 'cancelled');
+			throw new Error(`Start step "${workflow.startNodeId}" not found in workflow "${workflowId}"`);
 		}
 
 		const taskManager = this.getOrCreateTaskManager(spaceId);
 		// Multi-agent start steps: create one SpaceTask per agent.
-		// resolveStepAgents() normalises agentId vs agents[] for backward compatibility.
+		// resolveNodeAgents() normalises agentId vs agents[] for backward compatibility.
 		// Keep inside the try block so a malformed step (neither agentId nor agents)
 		// triggers the rollback path and does not leave the executor/run orphaned.
 		const tasks: SpaceTask[] = [];
 		try {
-			const startAgents = resolveStepAgents(startStep);
+			const startAgents = resolveNodeAgents(startStep);
 			for (const agentEntry of startAgents) {
 				const resolved = this.resolveTaskTypeForAgent(agentEntry.agentId);
 				const task = await taskManager.createTask({
 					title: startStep.name,
 					description: agentEntry.instructions ?? startStep.instructions ?? '',
 					workflowRunId: run.id,
-					workflowStepId: startStep.id,
+					workflowNodeId: startStep.id,
 					taskType: resolved.taskType,
 					customAgentId: resolved.customAgentId,
+					agentName: agentEntry.name,
 					status: 'pending',
 					goalId: run.goalId,
 				});
@@ -355,14 +387,14 @@ export class SpaceRuntime {
 			// Cancel the DB run record so rehydrateExecutors() does not silently loop
 			// over it on next server restart (an in_progress run with no tasks would
 			// sit in the executor map indefinitely, never advancing and never erroring).
-			this.config.workflowRunRepo.updateStatus(run.id, 'cancelled');
+			this.config.workflowRunRepo.transitionStatus(run.id, 'cancelled');
 			throw err;
 		}
 
 		// Resolve channel topology for the start step and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
-		this.storeResolvedChannels(run.id, space.id, startStep);
+		this.resolveAndStoreChannels(run.id, space.id, startStep, workflow.channels ?? []);
 
 		return { run, tasks };
 	}
@@ -410,9 +442,9 @@ export class SpaceRuntime {
 	 *   any other role (custom)           → taskType: 'coding',    customAgentId: agentId
 	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
 	 */
-	resolveTaskTypesForStep(step: WorkflowStep): ResolvedTaskType[] {
-		const stepAgents = resolveStepAgents(step);
-		return stepAgents.map((sa) => this.resolveTaskTypeForAgent(sa.agentId));
+	resolveTaskTypesForStep(step: WorkflowNode): ResolvedTaskType[] {
+		const nodeAgents = resolveNodeAgents(step);
+		return nodeAgents.map((sa) => this.resolveTaskTypeForAgent(sa.agentId));
 	}
 
 	/**
@@ -425,7 +457,7 @@ export class SpaceRuntime {
 	 * For multi-agent steps (agents[] format), use `resolveTaskTypesForStep()`
 	 * to get per-agent results.
 	 */
-	resolveTaskTypeForStep(step: WorkflowStep): ResolvedTaskType {
+	resolveTaskTypeForStep(step: WorkflowNode): ResolvedTaskType {
 		return this.resolveTaskTypesForStep(step)[0];
 	}
 
@@ -484,7 +516,7 @@ export class SpaceRuntime {
 	 * then rehydrates Task Agent sessions if a TaskAgentManager is configured.
 	 *
 	 * Called once at the start of the first executeTick(). Reconstructs
-	 * executors with the run's persisted currentStepId so the tick loop can
+	 * executors with the run's persisted currentNodeId so the tick loop can
 	 * resume advancement from where it left off.
 	 *
 	 * Executor rehydration runs first so that SpaceRuntimeService executors are
@@ -526,8 +558,8 @@ export class SpaceRuntime {
 		}
 
 		// Rehydrate Task Agent sessions after executors are ready.
-		// Executors must be loaded first so Task Agents can use advance_workflow
-		// and other MCP tools that rely on the SpaceRuntimeService executor map.
+		// Executors must be loaded first so Task Agents can use MCP tools
+		// that rely on the SpaceRuntimeService executor map.
 		if (this.config.taskAgentManager) {
 			await this.config.taskAgentManager.rehydrate();
 		}
@@ -538,14 +570,13 @@ export class SpaceRuntime {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * For each active executor, checks whether the current step's tasks have all
-	 * completed. If so, calls advance() to move to the next step (creating a new
-	 * pending SpaceTask) or marks the run as completed when the terminal step is
-	 * reached.
+	 * For each active executor, processes the current step's tasks:
+	 * - Detects needs_attention and timeout conditions
+	 * - Spawns Task Agent sessions for pending tasks
+	 * - Monitors agent liveness and resets dead agents
 	 *
-	 * If a gate condition fails, the run status becomes 'needs_attention'.
-	 * The executor is retained so the run can be re-examined after the gate is
-	 * manually resolved (e.g., humanApproved set in run.config).
+	 * Agents drive workflow progression themselves via send_message and report_done.
+	 * This method never calls advance() directly.
 	 *
 	 * Errors from individual runs are caught and re-thrown after all runs have
 	 * been processed, so a single bad run cannot starve subsequent ones.
@@ -568,7 +599,7 @@ export class SpaceRuntime {
 
 	/**
 	 * Process a single workflow run tick: re-read from DB, recreate executor
-	 * with fresh state, check for completed step tasks, and advance if ready.
+	 * with fresh state, detect issues, and spawn/monitor Task Agent sessions.
 	 */
 	private async processRunTick(runId: string): Promise<void> {
 		// Always re-read run from DB to pick up external status changes (e.g. human
@@ -583,43 +614,17 @@ export class SpaceRuntime {
 			return;
 		}
 
-		// Recreate the executor with the fresh run from DB. This ensures that
-		// external run mutations (e.g. status reset after human approval) are
-		// reflected in the executor's advance() guard checks. The executor is
-		// stateless beyond this.run (all workflow state is in the DB), so
-		// recreation is safe and cheap.
+		// In the agent-centric model, agents activate nodes themselves via activateNode().
+		// The tick loop processes ALL active tasks across all nodes — not just one "current step".
 		const meta = this.executorMeta.get(runId);
 		if (!meta) return;
 
-		const freshExecutor = this.buildExecutor(meta.workflow, run, meta.spaceId, meta.workspacePath);
-		this.executors.set(runId, freshExecutor);
-
-		const currentStep = freshExecutor.getCurrentStep();
-		if (!currentStep) {
-			// Run is in_progress but currentStepId references a step that doesn't exist in
-			// the workflow. This is a data inconsistency — cancel the run and clean up maps
-			// so it is not rehydrated on every subsequent restart into the same throw loop.
-			this.executors.delete(runId);
-			this.executorMeta.delete(runId);
-			this.config.workflowRunRepo.updateStatus(runId, 'cancelled');
-			throw new Error(
-				`Run "${runId}" has currentStepId "${run.currentStepId}" not found in workflow "${run.workflowId}"`
-			);
-		}
-
-		// Find tasks that belong to the current step
-		const stepTasks = this.config.taskRepo
-			.listByWorkflowRun(runId)
-			.filter((t) => t.workflowStepId === currentStep.id);
-
-		// Only advance when there is at least one task and ALL are completed.
-		// stepTasks.length === 0 is the normal "waiting" state — the task for this
-		// step has not been spawned yet (session group creation is async and handled
-		// by a separate layer). Silently returning here is intentional.
-		if (stepTasks.length === 0) return;
+		// Get ALL tasks for this run. Each task may belong to a different workflow node.
+		const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
+		if (allRunTasks.length === 0) return;
 
 		// Refresh dedup entries: clear keys for tasks that have left their flagged state.
-		for (const task of stepTasks) {
+		for (const task of allRunTasks) {
 			if (task.status !== 'needs_attention') {
 				this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
 			}
@@ -630,8 +635,8 @@ export class SpaceRuntime {
 
 		// Detect task-level needs_attention BEFORE the all-completed guard.
 		// This is an explicit check — not inferred from WorkflowTransitionError.
-		if (stepTasks.some((t) => t.status === 'needs_attention')) {
-			for (const task of stepTasks) {
+		if (allRunTasks.some((t) => t.status === 'needs_attention')) {
+			for (const task of allRunTasks) {
 				if (task.status !== 'needs_attention') continue;
 				const dedupKey = `${task.id}:needs_attention`;
 				if (!this.notifiedTaskSet.has(dedupKey)) {
@@ -646,23 +651,17 @@ export class SpaceRuntime {
 				}
 			}
 
-			// Partial failure gate: applies only to multi-agent steps (stepTasks.length > 1).
-			// For single-task steps the existing per-task notification is sufficient —
-			// a human can reset just the task without also needing to reset the run.
-			// For multi-agent parallel steps, wait until ALL sibling tasks reach a
-			// terminal state before escalating the run. This prevents premature
-			// escalation when one task has failed but siblings are still running.
-			if (stepTasks.length > 1) {
-				if (this.areAllStepTasksTerminal(stepTasks)) {
-					this.config.workflowRunRepo.updateStatus(runId, 'needs_attention');
-					await this.safeNotify({
-						kind: 'workflow_run_needs_attention',
-						spaceId: meta.spaceId,
-						runId,
-						reason: `One or more parallel tasks on step "${currentStep.name}" require attention`,
-						timestamp: new Date().toISOString(),
-					});
-				}
+			// Escalate the run to needs_attention for multi-agent steps when ALL tasks are terminal.
+			// Single-task steps: only task_needs_attention is emitted (backward compat).
+			if (allRunTasks.length > 1 && this.areAllStepTasksTerminal(allRunTasks)) {
+				this.config.workflowRunRepo.transitionStatus(runId, 'needs_attention');
+				await this.safeNotify({
+					kind: 'workflow_run_needs_attention',
+					spaceId: meta.spaceId,
+					runId,
+					reason: 'One or more tasks require attention',
+					timestamp: new Date().toISOString(),
+				});
 			}
 
 			return;
@@ -673,7 +672,7 @@ export class SpaceRuntime {
 		const taskTimeoutMs = space?.config?.taskTimeoutMs;
 		if (taskTimeoutMs !== undefined) {
 			const now = Date.now();
-			for (const task of stepTasks) {
+			for (const task of allRunTasks) {
 				if (task.status !== 'in_progress' || !task.startedAt) continue;
 				const elapsedMs = now - task.startedAt;
 				if (elapsedMs > taskTimeoutMs) {
@@ -695,8 +694,8 @@ export class SpaceRuntime {
 		// ─── Task Agent integration ───────────────────────────────────────────────
 		// When a TaskAgentManager is configured, Task Agents drive the workflow.
 		// SpaceRuntime's role here is lifecycle management only: spawn for pending
-		// tasks, check liveness, and recover from crashes. advance() is never called
-		// directly — the Task Agent calls it via the advance_workflow MCP tool.
+		// tasks, check liveness, and recover from crashes. Agents drive progression
+		// themselves via send_message and report_done — SpaceRuntime never calls advance().
 		if (this.config.taskAgentManager) {
 			const tam = this.config.taskAgentManager;
 
@@ -705,12 +704,10 @@ export class SpaceRuntime {
 			// tasks before deciding whether to skip.
 			//
 			// NOTE: we intentionally do NOT return early when alive agents are found.
-			// For multi-agent parallel steps, some tasks may have alive agents while
-			// siblings are still pending (e.g. a spawn failure on a prior tick). An
-			// early return here would permanently skip spawning those unspawned tasks.
-			// Always proceed to Step 2 so pending tasks are always re-examined.
-			// The final `return` at the end of the TAM block still prevents advance().
-			for (const task of stepTasks) {
+			// Some tasks may have alive agents while siblings are still pending (e.g. a
+			// spawn failure on a prior tick). An early return here would permanently skip
+			// spawning those unspawned tasks.
+			for (const task of allRunTasks) {
 				if (!task.taskAgentSessionId) continue;
 
 				if (tam.isTaskAgentAlive(task.id)) {
@@ -728,14 +725,40 @@ export class SpaceRuntime {
 				});
 			}
 
+			// Step 1.5: Auto-complete stuck agents — alive but never called report_done.
+			// Must run after dead-agent resets (Step 1) so we only process truly alive agents.
+			// Re-reads tasks from DB to pick up any status resets from Step 1.
+			const freshRunTasksForLiveness = this.config.taskRepo.listByWorkflowRun(runId);
+			const autoCompleted = await autoCompleteStuckAgents(
+				freshRunTasksForLiveness,
+				meta.spaceId,
+				this.config.taskRepo,
+				tam,
+				this.safeNotify.bind(this)
+			);
+			if (autoCompleted.length > 0) {
+				log.warn(
+					`SpaceRuntime: auto-completed ${autoCompleted.length} stuck agent(s) for run ${runId}`
+				);
+			}
+
+			// Step 1.6: All-agents-done completion detection.
+			// After liveness checks and auto-completion, inspect whether every task
+			// in the run has reached a terminal status. If so, mark the run as
+			// completed — cleanupTerminalExecutors() will emit the notification and
+			// remove the executor on the same tick.
+			if (
+				this.completionDetector.isComplete(runId, meta.workflow.channels ?? [], meta.workflow.nodes)
+			) {
+				this.config.workflowRunRepo.transitionStatus(runId, 'completed');
+				return;
+			}
+
 			// Step 2: Spawn Task Agents for pending tasks without an agent session.
 			// Re-read from DB to pick up status resets applied in Step 1.
 			const pendingTasksNeedingAgent = this.config.taskRepo
 				.listByWorkflowRun(runId)
-				.filter(
-					(t) =>
-						t.workflowStepId === currentStep.id && t.status === 'pending' && !t.taskAgentSessionId
-				);
+				.filter((t) => t.status === 'pending' && !t.taskAgentSessionId);
 
 			if (pendingTasksNeedingAgent.length > 0) {
 				if (!space) {
@@ -759,44 +782,8 @@ export class SpaceRuntime {
 				}
 			}
 
-			// Never call advance() directly — Task Agent drives the workflow.
+			// Agents drive workflow progression via send_message and report_done.
 			return;
-		}
-		// ─────────────────────────────────────────────────────────────────────────
-
-		if (!stepTasks.every((t) => t.status === 'completed')) return;
-
-		try {
-			const { step: newStep, tasks: newTasks } = await freshExecutor.advance();
-
-			// Tasks are created with taskType already set by the TaskTypeResolver
-			// injected into the executor via buildExecutor(). No second update needed.
-
-			if (newTasks.length === 0) {
-				// Terminal step reached — run marked completed by advance().
-				// cleanupTerminalExecutors() will emit workflow_run_completed and remove executor.
-				// No cleanup here: executors map is iterated by for..of which captures the
-				// initial key set, so the entry stays until cleanupTerminalExecutors() runs.
-			} else {
-				// Resolve channel topology for the new step.
-				// TODO: Milestone 6: pass to session group creation instead of run config.
-				this.storeResolvedChannels(runId, meta.spaceId, newStep);
-			}
-		} catch (err) {
-			if (!(err instanceof WorkflowTransitionError)) {
-				// Unexpected error — propagate to caller (processCompletedTasks collects it)
-				throw err;
-			}
-			// Gate blocked: run status already set to 'needs_attention' by the executor.
-			// Emit notification so the Space Agent session is informed.
-			await this.safeNotify({
-				kind: 'workflow_run_needs_attention',
-				spaceId: meta.spaceId,
-				runId,
-				reason: err.message,
-				timestamp: new Date().toISOString(),
-			});
-			// Keep executor and meta in map — will be retried after gate is resolved.
 		}
 	}
 
@@ -809,7 +796,7 @@ export class SpaceRuntime {
 	 * picked up without requiring executor recreation.
 	 *
 	 * Emits a `workflow_run_completed` notification for runs that reached the
-	 * `completed` state (either naturally via advance() or externally).
+	 * `completed` state (set by the CompletionDetector or external cancellation).
 	 */
 	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
@@ -949,28 +936,15 @@ export class SpaceRuntime {
 
 	/**
 	 * Builds a WorkflowExecutor for the given run with fresh state.
-	 * Injects a per-agent TaskTypeResolver so each task is created with the correct
-	 * taskType / customAgentId in a single atomic DB write.
+	 * Used for graph navigation (getCurrentStep, isComplete) and condition evaluation.
 	 */
 	private buildExecutor(
 		workflow: SpaceWorkflow,
 		run: SpaceWorkflowRun,
-		spaceId: string,
-		workspacePath: string
+		_spaceId: string,
+		_workspacePath: string
 	): WorkflowExecutor {
-		const taskManager = this.getOrCreateTaskManager(spaceId);
-		return new WorkflowExecutor(
-			workflow,
-			run,
-			taskManager,
-			this.config.workflowRunRepo,
-			workspacePath,
-			undefined, // use default commandRunner
-			// Per-agent resolver: called once per agent entry in the step.
-			// This replaces the old step-level resolver so multi-agent steps produce
-			// correctly-typed tasks for each agent independently.
-			(_step, agentEntry) => this.resolveTaskTypeForAgent(agentEntry.agentId)
-		);
+		return new WorkflowExecutor(workflow, run);
 	}
 
 	/**
@@ -994,38 +968,44 @@ export class SpaceRuntime {
 	 * Resolves the channel topology for a workflow step and stores it in the run's
 	 * config for use by session group creation (Milestone 6).
 	 *
-	 * Calls `resolveStepChannels()` using all Space agents as the lookup table.
+	 * Resolves channel topology using `WorkflowNodeAgent.name` entries from the step
+	 * and the workflow-level channels array.
 	 * Stores the result under `run.config._resolvedChannels`.
 	 *
 	 * TODO Milestone 6: pass resolvedChannels to session group metadata in
 	 * TaskAgentManager.spawnTaskAgent() instead of storing in run config.
 	 *
-	 * Steps with no `channels` declaration store an empty array, clearing any
-	 * previously stored topology from prior steps. This prevents stale topology
-	 * from a channel-declaring step from leaking into subsequent steps that have
-	 * no channels — which would cause list_group_members to report incorrect
-	 * permittedTargets and channelTopologyDeclared=true for the wrong step.
+	 * Note: Task Agent channels are persisted as WorkflowChannel entries in the
+	 * workflow channels array. This function only resolves and stores user-declared
+	 * channels — no runtime auto-generation.
 	 */
-	private storeResolvedChannels(runId: string, spaceId: string, step: WorkflowStep): void {
+	resolveAndStoreChannels(
+		runId: string,
+		spaceId: string,
+		step: WorkflowNode,
+		channels: WorkflowChannel[]
+	): void {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
 
 		const config = (run.config ?? {}) as Record<string, unknown>;
 
-		// No channels declared: clear any previously stored topology so list_group_members
-		// does not return stale topology from a prior step.
-		if (!step.channels || step.channels.length === 0) {
-			this.config.workflowRunRepo.updateRun(runId, {
-				config: { ...config, _resolvedChannels: [] },
-			});
-			return;
-		}
-
-		const allAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
-		const resolved = resolveStepChannels(step, allAgents);
+		// Resolve user-declared channels from workflow-level channels array
+		const resolved = resolveNodeChannels(step, channels);
 
 		this.config.workflowRunRepo.updateRun(runId, {
 			config: { ...config, _resolvedChannels: resolved },
 		});
+	}
+
+	/**
+	 * Returns the channels array for the workflow associated with the given run.
+	 * Used by task-agent-tools.ts to pass channels to resolveAndStoreChannels.
+	 */
+	getWorkflowChannels(runId: string): WorkflowChannel[] {
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) return [];
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		return workflow?.channels ?? [];
 	}
 }

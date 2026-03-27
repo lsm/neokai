@@ -78,7 +78,9 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Verify task shows "completed" status badge
 		const statusBadge = page.locator('[data-testid="task-status-badge"]');
@@ -102,7 +104,9 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'cancelled'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Verify task shows "cancelled" status badge
 		const statusBadge = page.locator('[data-testid="task-status-badge"]');
@@ -133,7 +137,9 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		await page.getByRole('button', { name: /Done/ }).click();
 
 		// Wait for the task to appear in the list
-		await expect(page.locator('text=E2E Lifecycle Test Task').first()).toBeVisible({
+		await expect(
+			page.getByRole('heading', { name: 'E2E Lifecycle Test Task' }).first()
+		).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -144,7 +150,9 @@ test.describe('Task Lifecycle — Reactivate', () => {
 
 		// Task should move from Done tab — click Active tab to confirm it's there
 		await page.getByRole('button', { name: /Active/ }).click();
-		await expect(page.locator('text=E2E Lifecycle Test Task').first()).toBeVisible({
+		await expect(
+			page.getByRole('heading', { name: 'E2E Lifecycle Test Task' }).first()
+		).toBeVisible({
 			timeout: 10000,
 		});
 	});
@@ -153,7 +161,9 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Verify reactivation hint is visible (TaskView shows this for completed/cancelled when no group)
 		await expect(page.locator('text=Sending a message will reactivate this task.')).toBeVisible({
@@ -191,13 +201,15 @@ test.describe('Task Lifecycle — Archive', () => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Click the Archive button to open the dialog
 		// Archive is inside the dropdown
-		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		const dropdownTrigger = page.locator('[data-testid="task-info-panel-trigger"]');
 		await dropdownTrigger.click();
-		const archiveBtn = page.locator('[data-testid="task-action-archive"]');
+		const archiveBtn = page.locator('[data-testid="task-info-panel-archive"]');
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
@@ -219,12 +231,14 @@ test.describe('Task Lifecycle — Archive', () => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Click Archive button → confirm (Archive is in dropdown)
-		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		const dropdownTrigger = page.locator('[data-testid="task-info-panel-trigger"]');
 		await dropdownTrigger.click();
-		const archiveBtn = page.locator('[data-testid="task-action-archive"]');
+		const archiveBtn = page.locator('[data-testid="task-info-panel-archive"]');
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
@@ -240,7 +254,7 @@ test.describe('Task Lifecycle — Archive', () => {
 		await page.getByRole('button', { name: /Done/ }).click();
 
 		// Task should NOT appear in Done tab
-		await expect(page.locator('text=E2E Lifecycle Test Task')).not.toBeVisible({
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).not.toBeVisible({
 			timeout: 5000,
 		});
 	});
@@ -249,12 +263,14 @@ test.describe('Task Lifecycle — Archive', () => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Archive the task (Archive is in dropdown)
-		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		const dropdownTrigger = page.locator('[data-testid="task-info-panel-trigger"]');
 		await dropdownTrigger.click();
-		await page.locator('[data-testid="task-action-archive"]').click();
+		await page.locator('[data-testid="task-info-panel-archive"]').click();
 		await expect(page.locator('[data-testid="archive-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -272,25 +288,29 @@ test.describe('Task Lifecycle — Archive', () => {
 
 		// Done tab should NOT show the task
 		await page.getByRole('button', { name: /Done/ }).click();
-		await expect(page.locator('text=E2E Lifecycle Test Task')).not.toBeVisible({
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).not.toBeVisible({
 			timeout: 5000,
 		});
 
 		// Archived tab SHOULD show the task
 		await archivedTab.click();
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 
 	test('can archive a cancelled task', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'cancelled'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Archive button should be available for cancelled tasks (Archive is in dropdown)
-		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		const dropdownTrigger = page.locator('[data-testid="task-info-panel-trigger"]');
 		await dropdownTrigger.click();
-		const archiveBtn = page.locator('[data-testid="task-action-archive"]');
+		const archiveBtn = page.locator('[data-testid="task-info-panel-archive"]');
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
@@ -307,19 +327,23 @@ test.describe('Task Lifecycle — Archive', () => {
 		const archivedTab = page.getByRole('button', { name: /Archived/ });
 		await expect(archivedTab).toBeVisible({ timeout: 5000 });
 		await archivedTab.click();
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 
 	test('can archive a needs_attention task', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'needs_attention'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Archive button should be visible for needs_attention tasks (Archive is in dropdown)
-		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		const dropdownTrigger = page.locator('[data-testid="task-info-panel-trigger"]');
 		await dropdownTrigger.click();
-		const archiveBtn = page.locator('[data-testid="task-action-archive"]');
+		const archiveBtn = page.locator('[data-testid="task-info-panel-archive"]');
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
@@ -347,7 +371,9 @@ test.describe('Task Lifecycle — Archive', () => {
 
 		// Navigate to the archived task
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Status badge should show "archived"
 		await expect(page.locator('[data-testid="task-status-badge"]')).toHaveText('archived', {
@@ -357,9 +383,9 @@ test.describe('Task Lifecycle — Archive', () => {
 		// Neither Reactivate nor Archive buttons should be present
 		await expect(page.locator('[data-testid="task-reactivate-button"]')).not.toBeAttached();
 		// Archive is in dropdown - open to verify it's not there
-		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		const dropdownTrigger = page.locator('[data-testid="task-info-panel-trigger"]');
 		await dropdownTrigger.click();
-		await expect(page.locator('[data-testid="task-action-archive"]')).not.toBeAttached();
+		await expect(page.locator('[data-testid="task-info-panel-archive"]')).not.toBeAttached();
 
 		// Message input should show archived notice
 		await expect(page.locator('text=Archived tasks cannot receive messages.').first()).toBeVisible({

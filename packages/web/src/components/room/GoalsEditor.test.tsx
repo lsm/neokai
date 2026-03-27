@@ -2,7 +2,7 @@
  * Tests for GoalsEditor Component
  */
 
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GoalsEditor } from './GoalsEditor';
 import type { RoomGoal, TaskSummary } from '@neokai/shared';
@@ -26,8 +26,8 @@ describe('GoalsEditor', () => {
 		priority: 'normal',
 		progress: 50,
 		linkedTaskIds: [],
-		createdAt: Math.floor(Date.now() / 1000) - 86400,
-		updatedAt: Math.floor(Date.now() / 1000),
+		createdAt: Date.now() - 86400 * 1000,
+		updatedAt: Date.now(),
 		...overrides,
 	});
 
@@ -39,9 +39,9 @@ describe('GoalsEditor', () => {
 	};
 
 	describe('Rendering', () => {
-		it('should render the Goals header', () => {
+		it('should render the Missions header', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-			expect(container.textContent).toContain('Goals');
+			expect(container.textContent).toContain('Missions');
 		});
 
 		it('should display goal count badge', () => {
@@ -51,27 +51,29 @@ describe('GoalsEditor', () => {
 			expect(badge?.textContent).toBe('2');
 		});
 
-		it('should render "Create Goal" button', () => {
+		it('should render "Create Mission" button', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Goal');
-			expect(hasCreateGoal).toBe(true);
+			const hasCreateMission = Array.from(buttons).some(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			expect(hasCreateMission).toBe(true);
 		});
 	});
 
 	describe('Empty State', () => {
-		it('should show empty state when no goals', () => {
+		it('should show empty state when no missions', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-			expect(container.textContent).toContain('No goals yet');
+			expect(container.textContent).toContain('No missions yet');
 		});
 
-		it('should have create goal button in empty state', () => {
+		it('should have create mission button in empty state', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateGoal = Array.from(buttons).some((btn) =>
-				btn.textContent?.includes('first goal')
+			const hasCreateMission = Array.from(buttons).some((btn) =>
+				btn.textContent?.includes('first mission')
 			);
-			expect(hasCreateGoal).toBe(true);
+			expect(hasCreateMission).toBe(true);
 		});
 	});
 
@@ -125,6 +127,20 @@ describe('GoalsEditor', () => {
 			const goals = [createMockGoal('goal-1', { description: 'Visible description text' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
 			expect(container.textContent).toContain('Visible description text');
+		});
+
+		it('should show relative time for createdAt (not "just now" for old goals)', () => {
+			// createdAt is milliseconds since epoch — 1 day ago
+			const goals = [createMockGoal('goal-1', { createdAt: Date.now() - 86400 * 1000 })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('1 day ago');
+			expect(container.textContent).not.toContain('just now');
+		});
+
+		it('should show "just now" for very recent goals', () => {
+			const goals = [createMockGoal('goal-1', { createdAt: Date.now() - 5000 })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('just now');
 		});
 	});
 
@@ -464,7 +480,7 @@ describe('GoalsEditor', () => {
 		/** Helper: open the create modal and navigate to step 1 */
 		const openCreateModal = (container: Element) => {
 			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Goal'
+				(btn) => btn.textContent === 'Create Mission'
 			);
 			fireEvent.click(createButton!);
 		};
@@ -580,7 +596,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			expect(document.body.querySelector('[data-testid="custom-cron"]')).toBeTruthy();
 		});
@@ -594,7 +610,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			// The "Create" button (not "Skip & Create") should be disabled
 			const createBtn = Array.from(document.body.querySelectorAll('button')).find(
@@ -612,7 +628,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			// "Skip & Create" should NOT be disabled (it uses defaults, not current step 2 values)
 			const skipBtn = Array.from(document.body.querySelectorAll('button')).find(
@@ -985,6 +1001,95 @@ describe('GoalsEditor', () => {
 			expect(container.textContent).toContain('Build auth module');
 			expect(container.textContent).toContain('Write unit tests');
 			expect(container.textContent).toContain('Deploy to staging');
+		});
+	});
+
+	describe('Short ID Badge', () => {
+		it('should show short ID badge when goal has shortId', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-7' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid="goal-short-id-badge-g-7"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toBe('#g-7');
+		});
+
+		it('should not show short ID badge when goal has no shortId', () => {
+			const goals = [createMockGoal('goal-1')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid^="goal-short-id-badge-"]');
+			expect(badge).toBeNull();
+		});
+
+		it('should show tooltip on short ID badge', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-3' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid="goal-short-id-badge-g-3"]');
+			expect(badge?.getAttribute('title')).toBe('Click to copy short ID');
+		});
+
+		it('should stop propagation when clicking badge', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-5' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-5"]'
+			) as HTMLElement;
+
+			// Track expand state — clicking header toggles expand; clicking badge should not
+			const header = container.querySelector('[data-testid="goal-item-header"]') as HTMLElement;
+			fireEvent.click(header);
+			const expandedContent = container.innerHTML;
+
+			// Click badge — expansion state should not change again
+			fireEvent.click(badge);
+			expect(container.innerHTML).toBe(expandedContent);
+		});
+
+		it('should copy short ID to clipboard on click', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				writable: true,
+				configurable: true,
+			});
+
+			const goals = [createMockGoal('goal-1', { shortId: 'g-9' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-9"]'
+			) as HTMLElement;
+
+			fireEvent.click(badge);
+			expect(writeText).toHaveBeenCalledWith('g-9');
+		});
+
+		it('should show visual feedback ("✓ copied") after clicking badge', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				writable: true,
+				configurable: true,
+			});
+
+			const goals = [createMockGoal('goal-1', { shortId: 'g-11' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-11"]'
+			) as HTMLElement;
+
+			expect(badge.textContent).toBe('#g-11');
+			fireEvent.click(badge);
+			await waitFor(() => {
+				expect(badge.textContent).toBe('✓ copied');
+			});
+		});
+
+		it('should show fallback text for goals without shortId', () => {
+			const goals = [createMockGoal('goal-uuid-only')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			// Goal title still renders
+			expect(container.textContent).toContain('Goal goal-uuid-only');
+			// But no short ID badge
+			expect(container.querySelector('[data-testid^="goal-short-id-badge-"]')).toBeNull();
 		});
 	});
 });

@@ -32,6 +32,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
+import { canTransition } from '../runtime/workflow-run-status-machine';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -123,19 +124,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 
-			// Include current step info if available
-			let currentStep = null;
-			if (run.currentStepId) {
-				const workflow = workflowManager.getWorkflow(run.workflowId);
-				if (workflow) {
-					currentStep = workflow.steps.find((s) => s.id === run.currentStepId) ?? null;
-				}
-			}
-
 			// Include tasks for this run
 			const tasks = taskRepo.listByWorkflowRun(run.id);
 
-			return jsonResult({ success: true, run, currentStep, tasks });
+			return jsonResult({ success: true, run, tasks });
 		},
 
 		/**
@@ -174,7 +166,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					});
 				}
 
-				workflowRunRepo.updateStatus(run.id, 'cancelled');
+				workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 				try {
 					const newDescription = args.description ?? run.description;
@@ -376,11 +368,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				const task = await taskManager.cancelTask(args.task_id);
 
 				if (args.cancel_workflow_run && task.workflowRunId) {
-					workflowRunRepo.updateStatus(task.workflowRunId, 'cancelled');
+					// Only cancel if the run exists and the transition is valid (not already terminal).
+					const existingRun = workflowRunRepo.getRun(task.workflowRunId);
+					const runCancelled =
+						existingRun !== null && canTransition(existingRun.status, 'cancelled');
+					if (runCancelled) {
+						workflowRunRepo.transitionStatus(task.workflowRunId, 'cancelled');
+					}
 					return jsonResult({
 						success: true,
 						task,
-						workflowRunCancelled: true,
+						workflowRunCancelled: runCancelled,
 						workflowRunId: task.workflowRunId,
 					});
 				}

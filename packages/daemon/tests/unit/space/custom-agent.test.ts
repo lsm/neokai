@@ -71,6 +71,8 @@ function makeWorkflowRun(overrides?: Partial<SpaceWorkflowRun>): SpaceWorkflowRu
 		workflowId: 'wf-1',
 		title: 'Deploy v1.0',
 		status: 'in_progress',
+		iterationCount: 0,
+		maxIterations: 5,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
@@ -158,20 +160,12 @@ describe('buildCustomAgentSystemPrompt', () => {
 		expect(prompt).toContain('pullrequestreview');
 	});
 
-	it('includes peer communication section with all three tools', () => {
+	it('includes peer communication section with list_peers and send_message', () => {
 		const agent = makeAgent();
 		const prompt = buildCustomAgentSystemPrompt(agent);
 		expect(prompt).toContain('Peer Communication');
 		expect(prompt).toContain('list_peers');
-		expect(prompt).toContain('send_feedback');
-		expect(prompt).toContain('request_peer_input');
-	});
-
-	it('explains async nature of request_peer_input', () => {
-		const agent = makeAgent();
-		const prompt = buildCustomAgentSystemPrompt(agent);
-		expect(prompt).toContain('[Peer response from {role}]:');
-		expect(prompt).toContain('async and non-blocking');
+		expect(prompt).toContain('send_message');
 	});
 
 	it('no role produces role-specific instructions (roles are display labels only)', () => {
@@ -467,6 +461,216 @@ describe('createCustomAgentInit', () => {
 });
 
 // ============================================================================
+// createCustomAgentInit — slot overrides
+// ============================================================================
+
+describe('createCustomAgentInit — slotOverrides', () => {
+	it('model override replaces agent default model', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-sonnet-4-5-20250929' }),
+			slotOverrides: { model: 'claude-haiku-4-5-20251001' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-haiku-4-5-20251001');
+	});
+
+	it('model override replaces space default model', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: undefined }),
+			space: makeSpace({ defaultModel: 'claude-sonnet-4-5-20250929' }),
+			slotOverrides: { model: 'claude-opus-4-6' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-opus-4-6');
+	});
+
+	it('model override sets correct provider', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-sonnet-4-5-20250929' }),
+			slotOverrides: { model: 'glm-4-flash' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('glm-4-flash');
+		expect(init.provider).toBe('glm');
+	});
+
+	it('systemPrompt override replaces agent default system prompt', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Original agent instructions.' }),
+			slotOverrides: { systemPrompt: 'Override: focus on security.' },
+		});
+		const init = createCustomAgentInit(config);
+		// The override should appear in the append/prompt
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Override: focus on security.');
+		expect(promptText).not.toContain('Original agent instructions.');
+	});
+
+	it('systemPrompt override replaces agent prompt in Agent Instructions section', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Base instructions.' }),
+			slotOverrides: { systemPrompt: 'Slot-specific instructions.' },
+		});
+		const init = createCustomAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Agent Instructions');
+		expect(promptText).toContain('Slot-specific instructions.');
+	});
+
+	it('empty string systemPrompt override removes agent instructions section', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Some instructions.' }),
+			slotOverrides: { systemPrompt: '' },
+		});
+		const init = createCustomAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		// Empty override → the Agent Instructions section is not included
+		// (buildCustomAgentSystemPrompt only adds it when systemPrompt is truthy)
+		expect(promptText).not.toContain('Some instructions.');
+	});
+
+	it('undefined slotOverrides leaves base agent model unchanged', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-opus-4-6' }),
+			slotOverrides: undefined,
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-opus-4-6');
+	});
+
+	it('undefined slotOverrides leaves base agent system prompt unchanged', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Base prompt.' }),
+			slotOverrides: undefined,
+		});
+		const init = createCustomAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Base prompt.');
+	});
+
+	it('partial override: only model provided leaves systemPrompt from agent', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({
+				model: 'claude-sonnet-4-5-20250929',
+				systemPrompt: 'Agent prompt.',
+			}),
+			slotOverrides: { model: 'claude-haiku-4-5-20251001' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-haiku-4-5-20251001');
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Agent prompt.');
+	});
+
+	it('partial override: only systemPrompt provided leaves model from agent', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-opus-4-6', systemPrompt: 'Agent prompt.' }),
+			slotOverrides: { systemPrompt: 'Slot prompt.' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-opus-4-6');
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Slot prompt.');
+		expect(promptText).not.toContain('Agent prompt.');
+	});
+
+	it('model override works with agent/agents path (custom tools)', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-sonnet-4-5-20250929', tools: ['Read', 'Bash'] }),
+			slotOverrides: { model: 'claude-haiku-4-5-20251001' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-haiku-4-5-20251001');
+		// Still uses agent/agents path
+		expect(init.agents).toBeDefined();
+	});
+
+	it('systemPrompt override works with agent/agents path (custom tools) — override lands in agents[key].prompt', () => {
+		// When SpaceAgent.tools is set, createCustomAgentInit uses the agent/agents pattern.
+		// The behavioral prompt (including the systemPrompt override) is placed in
+		// agentDef.prompt, NOT in init.systemPrompt.append — this code path must be tested
+		// separately from the simple (no-tools) path.
+		const config = makeConfig({
+			customAgent: makeAgent({
+				name: 'CodeReviewer',
+				tools: ['Read', 'Bash'],
+				systemPrompt: 'Original agent instructions.',
+			}),
+			slotOverrides: { systemPrompt: 'Slot-level security focus.' },
+		});
+		const init = createCustomAgentInit(config);
+		// Must use agent/agents path
+		expect(init.agents).toBeDefined();
+		// systemPrompt.append is not used on this path
+		expect(init.systemPrompt?.append).toBeUndefined();
+		// The override must appear in agentDef.prompt
+		const agentKey = Object.keys(init.agents!)[0];
+		const agentDef = init.agents![agentKey];
+		expect(agentDef?.prompt).toContain('Slot-level security focus.');
+		expect(agentDef?.prompt).not.toContain('Original agent instructions.');
+	});
+});
+
+// ============================================================================
+// resolveAgentInit — slot overrides pass-through
+// ============================================================================
+
+describe('resolveAgentInit — slotOverrides pass-through', () => {
+	function makeMockAgentManagerForOverrides(agent: SpaceAgent | null): SpaceAgentManager {
+		return {
+			getById: mock(() => agent),
+		} as unknown as SpaceAgentManager;
+	}
+
+	function makeResolveConfigWithOverrides(
+		overrides?: Partial<ResolveAgentInitConfig>
+	): ResolveAgentInitConfig {
+		return {
+			task: makeTask({ customAgentId: 'agent-1' }),
+			space: makeSpace(),
+			agentManager: makeMockAgentManagerForOverrides(makeAgent({ id: 'agent-1' })),
+			sessionId: 'session-override-test',
+			workspacePath: '/workspace/project',
+			workflowRun: null,
+			...overrides,
+		};
+	}
+
+	it('slotOverrides model is applied to the resolved session init', () => {
+		const agent = makeAgent({ id: 'agent-1', model: 'claude-sonnet-4-5-20250929' });
+		const config = makeResolveConfigWithOverrides({
+			agentManager: makeMockAgentManagerForOverrides(agent),
+			slotOverrides: { model: 'claude-haiku-4-5-20251001' },
+		});
+		const init = resolveAgentInit(config);
+		expect(init.model).toBe('claude-haiku-4-5-20251001');
+	});
+
+	it('slotOverrides systemPrompt is applied to the resolved session init', () => {
+		const agent = makeAgent({ id: 'agent-1', systemPrompt: 'Base prompt.' });
+		const config = makeResolveConfigWithOverrides({
+			agentManager: makeMockAgentManagerForOverrides(agent),
+			slotOverrides: { systemPrompt: 'Slot-specific override.' },
+		});
+		const init = resolveAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Slot-specific override.');
+		expect(promptText).not.toContain('Base prompt.');
+	});
+
+	it('no slotOverrides means base agent config is used unchanged', () => {
+		const agent = makeAgent({ id: 'agent-1', model: 'claude-opus-4-6', systemPrompt: 'Base.' });
+		const config = makeResolveConfigWithOverrides({
+			agentManager: makeMockAgentManagerForOverrides(agent),
+		});
+		const init = resolveAgentInit(config);
+		expect(init.model).toBe('claude-opus-4-6');
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Base.');
+	});
+});
+
+// ============================================================================
 // resolveAgentInit
 // ============================================================================
 
@@ -573,7 +777,7 @@ describe('resolveAgentInit', () => {
 	it('accepts workflow field in ResolveAgentInitConfig and does not throw', () => {
 		const agent = makeAgent({ id: 'agent-1', injectWorkflowContext: true });
 		const manager = makeMockAgentManager(agent);
-		const run = makeWorkflowRun({ currentStepId: 'step-plan' });
+		const run = makeWorkflowRun();
 		const wf = makeWorkflow();
 
 		const config = makeResolveConfig({
@@ -599,7 +803,7 @@ describe('resolveAgentInit', () => {
 		// longer driven by a hardcoded role check.
 		const workflowAgent = makeAgent({ id: 'agent-1', injectWorkflowContext: true });
 		const manager = makeMockAgentManager(workflowAgent);
-		const run = makeWorkflowRun({ currentStepId: 'step-plan' });
+		const run = makeWorkflowRun();
 		const wf = makeWorkflow();
 
 		// Step 1+2: resolve session init — workflow is now a field on ResolveAgentInitConfig
@@ -710,12 +914,12 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'Coding Workflow',
 		description: 'Plan, implement, and review code',
-		steps: [
+		nodes: [
 			{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner', instructions: 'Create a plan' },
 			{ id: 'step-code', name: 'Code', agentId: 'agent-coder', instructions: 'Write code' },
 		],
 		transitions: [],
-		startStepId: 'step-plan',
+		startNodeId: 'step-plan',
 		rules: [{ id: 'rule-1', name: 'No direct commits', content: 'Always use a PR' }],
 		tags: ['coding'],
 		createdAt: Date.now(),
@@ -728,7 +932,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('includes workflow structure when injectWorkflowContext is true and workflow is provided', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -742,7 +946,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('includes step names in workflow structure', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -755,7 +959,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('marks the current step', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -768,7 +972,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('includes workflow rules', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -783,7 +987,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 		// Role is not checked; only the injectWorkflowContext flag matters.
 		const config = makeConfig({
 			customAgent: makeAgent({ role: 'coder', injectWorkflowContext: false }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-code' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -831,7 +1035,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('includes workflow guidance to focus on current step first', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 
@@ -840,22 +1044,10 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 		expect(msg).toContain('current step first');
 	});
 
-	it('includes currentStepId from workflowRun when available', () => {
-		const config = makeConfig({
-			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-code' }),
-			workflow: makeWorkflow(),
-		});
-
-		const msg = buildCustomAgentTaskMessage(config);
-
-		expect(msg).toContain('step-code');
-	});
-
 	it('handles workflow with no description gracefully', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow({ description: undefined }),
 		});
 
@@ -865,7 +1057,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('handles workflow with no rules gracefully', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow({ rules: [] }),
 		});
 
@@ -877,8 +1069,8 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 	it('handles workflow with no steps gracefully', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: undefined }),
-			workflow: makeWorkflow({ steps: [] }),
+			workflowRun: makeWorkflowRun(),
+			workflow: makeWorkflow({ nodes: [] }),
 		});
 
 		expect(() => buildCustomAgentTaskMessage(config)).not.toThrow();
@@ -889,7 +1081,7 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 		// receives the same workflow structure as a 'planner' would.
 		const config = makeConfig({
 			customAgent: makeAgent({ role: 'reviewer', injectWorkflowContext: true }),
-			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflowRun: makeWorkflowRun(),
 			workflow: makeWorkflow(),
 		});
 

@@ -11,12 +11,33 @@
 
 import { describe, expect, it, beforeEach, afterEach, spyOn } from 'bun:test';
 import * as nodefs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
 	ensureBunNodeWrapper,
 	buildCopilotEnv,
 } from '../../../../src/lib/providers/anthropic-copilot/bun-node-wrapper';
+
+/**
+ * Probe whether the current Bun binary supports node:sqlite.
+ * buildCopilotEnv() only prepends the wrapper dir when this is true.
+ * Running this once at module-load time avoids interfering with the
+ * module-internal cache used by the production code.
+ */
+function probeBunSqlite(): boolean {
+	try {
+		execFileSync(
+			process.execPath,
+			['-e', "import('node:sqlite').then(() => process.exit(0)).catch(() => process.exit(1))"],
+			{ stdio: 'ignore' }
+		);
+		return true;
+	} catch {
+		return false;
+	}
+}
+const bunSqliteSupported = probeBunSqlite();
 
 // The expected wrapper directory path (must match the implementation)
 const WRAPPER_DIR = join(tmpdir(), 'neokai-bun-node-wrapper');
@@ -88,6 +109,8 @@ describe('ensureBunNodeWrapper (running under Bun in bun test)', () => {
 // On Linux, buildCopilotEnv() returns the base env unchanged because Bun on
 // Linux does not support node:sqlite.  Tests are split by platform so they
 // assert the correct behaviour on both Linux CI and macOS dev machines.
+// Additionally, some non-Linux Bun versions also lack node:sqlite support;
+// those cases are guarded with `bunSqliteSupported`.
 const isLinux = process.platform === 'linux';
 
 describe('buildCopilotEnv (running under Bun in bun test)', () => {
@@ -105,8 +128,8 @@ describe('buildCopilotEnv (running under Bun in bun test)', () => {
 		}
 	});
 
-	it('prepends the bun-node-wrapper dir to PATH (non-Linux only)', () => {
-		if (isLinux) return; // wrapper disabled on Linux — tested separately
+	it('prepends the bun-node-wrapper dir to PATH (non-Linux + sqlite only)', () => {
+		if (isLinux || !bunSqliteSupported) return; // wrapper only active when sqlite is available
 		const base = { PATH: '/usr/bin:/bin', OTHER: 'value' };
 		const result = buildCopilotEnv(base);
 		expect(result.PATH).toMatch(
@@ -121,30 +144,37 @@ describe('buildCopilotEnv (running under Bun in bun test)', () => {
 		expect(result).toBe(base); // exact same reference — no copy made
 	});
 
-	it('preserves the existing PATH after the wrapper dir (non-Linux only)', () => {
-		if (isLinux) return;
+	it('returns base env unchanged when Bun lacks node:sqlite (non-Linux only)', () => {
+		if (isLinux || bunSqliteSupported) return; // only runs when sqlite probe fails on non-Linux
+		const base = { PATH: '/usr/bin:/bin', OTHER: 'value' };
+		const result = buildCopilotEnv(base);
+		expect(result).toBe(base); // exact same reference — no copy made
+	});
+
+	it('preserves the existing PATH after the wrapper dir (non-Linux + sqlite only)', () => {
+		if (isLinux || !bunSqliteSupported) return;
 		const base = { PATH: '/usr/bin:/bin' };
 		const result = buildCopilotEnv(base);
 		expect(result.PATH).toContain('/usr/bin:/bin');
 	});
 
-	it('preserves all other env vars unchanged (non-Linux only)', () => {
-		if (isLinux) return;
+	it('preserves all other env vars unchanged (non-Linux + sqlite only)', () => {
+		if (isLinux || !bunSqliteSupported) return;
 		const base = { PATH: '/usr/bin', FOO: 'bar', BAZ: '42' };
 		const result = buildCopilotEnv(base);
 		expect(result.FOO).toBe('bar');
 		expect(result.BAZ).toBe('42');
 	});
 
-	it('does not mutate the base env object (non-Linux only)', () => {
-		if (isLinux) return;
+	it('does not mutate the base env object (non-Linux + sqlite only)', () => {
+		if (isLinux || !bunSqliteSupported) return;
 		const base = { PATH: '/usr/bin' };
 		buildCopilotEnv(base);
 		expect(base.PATH).toBe('/usr/bin');
 	});
 
-	it('uses process.env.PATH as fallback when base.PATH is absent (non-Linux only)', () => {
-		if (isLinux) return;
+	it('uses process.env.PATH as fallback when base.PATH is absent (non-Linux + sqlite only)', () => {
+		if (isLinux || !bunSqliteSupported) return;
 		const base: NodeJS.ProcessEnv = { FOO: 'bar' };
 		const result = buildCopilotEnv(base);
 		// PATH should start with the wrapper dir

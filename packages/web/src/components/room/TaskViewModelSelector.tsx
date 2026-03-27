@@ -30,6 +30,8 @@ interface RawModelEntry {
 
 export interface TaskViewModelSelectorProps {
 	sessionId: string;
+	/** Room ID for routing task session model switches through RoomRuntimeService */
+	roomId?: string;
 	currentModel: string;
 	currentProvider?: string;
 	disabled?: boolean;
@@ -39,6 +41,7 @@ export interface TaskViewModelSelectorProps {
 
 export function TaskViewModelSelector({
 	sessionId,
+	roomId,
 	currentModel,
 	currentProvider,
 	disabled = false,
@@ -102,15 +105,28 @@ export function TaskViewModelSelector({
 					return;
 				}
 
-				const result = (await hub.request('session.model.switch', {
-					sessionId,
-					model: model.id,
-					provider: model.provider,
-				})) as {
-					success: boolean;
-					model: string;
-					error?: string;
-				};
+				// Use room.runtime.model.switch for task sessions when roomId is available.
+				// This routes through RoomRuntimeService which owns the AgentSession instances
+				// for worker/leader sessions, avoiding duplicate session creation via SessionManager.
+				const result = roomId
+					? ((await hub.request('room.runtime.model.switch', {
+							sessionId,
+							model: model.id,
+							provider: model.provider,
+						})) as {
+							success: boolean;
+							model: string;
+							error?: string;
+						})
+					: ((await hub.request('session.model.switch', {
+							sessionId,
+							model: model.id,
+							provider: model.provider,
+						})) as {
+							success: boolean;
+							model: string;
+							error?: string;
+						});
 
 				if (result.success) {
 					toast.success(`Switched to ${model.name}`);
@@ -125,7 +141,7 @@ export function TaskViewModelSelector({
 				setSwitching(false);
 			}
 		},
-		[sessionId]
+		[sessionId, roomId]
 	);
 
 	// Get current model info

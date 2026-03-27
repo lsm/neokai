@@ -145,6 +145,7 @@ describe('Leader Agent', () => {
 
 		it('should include task management tools in tool contract', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('create_task');
 			expect(prompt).toContain('update_task');
 			expect(prompt).toContain('cancel_task');
 			expect(prompt).toContain('update_task_status');
@@ -225,6 +226,20 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('complete_task');
 		});
 
+		it('should include task review step in Phase 2 guidance for simple plan review', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			// Leader must review tasks against plan before completing
+			expect(prompt).toContain('docs/plans/');
+			expect(prompt).toContain('update_task');
+			expect(prompt).toContain('No scope creep');
+		});
+
+		it('should include task review step in Phase 2 guidance for post-approval section', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			// Post-approval section must mention review step
+			expect(prompt).toContain('verify title, description, dependencies');
+		});
+
 		it('should use planning-specific post-approval workflow for plan_review', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
 			// Should instruct leader to send planner back — NOT merge the PR itself
@@ -299,6 +314,67 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('submit_for_review');
 			expect(prompt).toContain('If no PR exists yet');
 		});
+
+		it('instructs leader to verify PR mergeability before submit_for_review (simple code review)', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain(
+				'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup'
+			);
+			expect(prompt).toContain('CI checks are failing');
+			expect(prompt).toContain('merge conflicts');
+			expect(prompt).toContain('BEHIND');
+		});
+
+		it('instructs leader to verify PR mergeability before submit_for_review (orchestration code review)', () => {
+			const prompt = buildLeaderSystemPrompt(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [{ model: 'claude-opus-4-6' }],
+							},
+						},
+					}),
+				})
+			);
+			expect(prompt).toContain(
+				'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup'
+			);
+			expect(prompt).toContain('CI checks are failing');
+			expect(prompt).toContain('merge conflicts');
+			expect(prompt).toContain('BEHIND');
+		});
+
+		it('instructs leader to verify PR mergeability before submit_for_review (plan review)', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain(
+				'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup'
+			);
+			expect(prompt).toContain('CI checks are failing');
+			expect(prompt).toContain('merge conflicts');
+			expect(prompt).toContain('BEHIND');
+		});
+
+		it('instructs leader to verify PR mergeability before submit_for_review (plan review with reviewers)', () => {
+			const prompt = buildLeaderSystemPrompt(
+				makeConfig({
+					reviewContext: 'plan_review',
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [{ model: 'claude-opus-4-6' }],
+							},
+						},
+					}),
+				})
+			);
+			expect(prompt).toContain(
+				'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup'
+			);
+			expect(prompt).toContain('CI checks are failing');
+			expect(prompt).toContain('merge conflicts');
+			expect(prompt).toContain('BEHIND');
+		});
 	});
 
 	describe('buildLeaderTaskContext', () => {
@@ -355,11 +431,11 @@ describe('Leader Agent', () => {
 			const callbacks = makeCallbacks();
 			const handlers = createLeaderToolHandlers('group-1', callbacks);
 
-			await handlers.send_to_worker({ message: 'Queue this', mode: 'queue' });
+			await handlers.send_to_worker({ message: 'Queue this', mode: 'defer' });
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue', undefined]);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'defer', undefined]);
 		});
 
 		it('should route send_to_worker with progress_summary to callback', async () => {
@@ -482,16 +558,17 @@ describe('Leader Agent', () => {
 			expect(init.mcpServers).toBeDefined();
 			const ctxServer = init.mcpServers!['leader-context-tools'] as unknown as {
 				name: string;
-				instance: { _registeredTools: Record<string, unknown> };
+				tools: Array<{ name: string }>;
 			};
 			expect(ctxServer).toBeDefined();
 			// Verify it is the narrow leader-context server, not the full room-agent server
 			expect(ctxServer.name).toBe('leader-context');
-			const toolNames = Object.keys(ctxServer.instance._registeredTools).sort();
+			const toolNames = ctxServer.tools.map((t) => t.name).sort();
 			// Should include both read-only context tools and task management tools
 			expect(toolNames).toEqual(
 				[
 					'cancel_task',
+					'create_task',
 					'get_room_status',
 					'get_task_detail',
 					'list_goals',

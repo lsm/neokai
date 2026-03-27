@@ -19,6 +19,7 @@ import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import type { SessionManager } from '../session-manager';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { Database } from '../../storage/database';
 import { getCliAgents, refresh as refreshCliAgents } from '../room/agents/cli-agent-registry';
 import { inferProviderForModel } from '../providers/registry';
 import { Logger } from '../logger';
@@ -32,7 +33,8 @@ export function setupRoomHandlers(
 	daemonHub: DaemonHub,
 	workspaceRoot?: string,
 	sessionManager?: SessionManager,
-	jobQueue?: JobQueueRepository
+	jobQueue?: JobQueueRepository,
+	db?: Database
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
@@ -281,6 +283,38 @@ export function setupRoomHandlers(
 		}
 		return { agents: getCliAgents() };
 	});
+
+	// --- Per-Room Skill Override Handlers ---
+	if (db) {
+		// room.getSkillOverrides - Get all skill overrides for a room
+		messageHub.onRequest('room.getSkillOverrides', (data) => {
+			const params = data as { roomId: string };
+			if (!params.roomId) throw new Error('Room ID is required');
+			const overrides = db.roomSkillOverrides.getOverrides(params.roomId);
+			return { overrides } satisfies {
+				overrides: Array<{ skillId: string; roomId: string; enabled: boolean }>;
+			};
+		});
+
+		// room.setSkillOverride - Set (upsert) a skill override for a room
+		messageHub.onRequest('room.setSkillOverride', (data) => {
+			const params = data as { roomId: string; skillId: string; enabled: boolean };
+			if (!params.roomId) throw new Error('Room ID is required');
+			if (!params.skillId) throw new Error('Skill ID is required');
+			if (typeof params.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+			db.roomSkillOverrides.upsertOverride(params.roomId, params.skillId, params.enabled);
+			return { success: true } satisfies { success: boolean };
+		});
+
+		// room.clearSkillOverride - Remove a skill override for a room (revert to global)
+		messageHub.onRequest('room.clearSkillOverride', (data) => {
+			const params = data as { roomId: string; skillId: string };
+			if (!params.roomId) throw new Error('Room ID is required');
+			if (!params.skillId) throw new Error('Skill ID is required');
+			db.roomSkillOverrides.deleteOverride(params.roomId, params.skillId);
+			return { success: true } satisfies { success: boolean };
+		});
+	}
 }
 
 export function setupRoomRuntimeHandlers(
@@ -304,6 +338,39 @@ export function setupRoomRuntimeHandlers(
 		const leaderModel = roomRuntimeService.getLeaderModel(params.roomId);
 		const workerModel = roomRuntimeService.getWorkerModel(params.roomId);
 		return { leaderModel, workerModel };
+	});
+
+	// room.runtime.model.get - Get current model for a task session
+	messageHub.onRequest('room.runtime.model.get', async (data) => {
+		const params = data as { sessionId: string };
+		if (!params.sessionId) throw new Error('Session ID is required');
+		const result = await roomRuntimeService.modelGet(params.sessionId);
+		if (!result) throw new Error('Session not found in runtime');
+		return result;
+	});
+
+	// room.runtime.model.switch - Switch model for a task session
+	messageHub.onRequest('room.runtime.model.switch', async (data) => {
+		const params = data as { sessionId: string; model: string; provider: string };
+		if (!params.sessionId) throw new Error('Session ID is required');
+		if (!params.model) throw new Error('Model is required');
+		if (!params.provider) throw new Error('Provider is required');
+		const result = await roomRuntimeService.modelSwitch(
+			params.sessionId,
+			params.model,
+			params.provider
+		);
+		if (!result.success) {
+			throw new Error(result.error ?? 'Model switch failed');
+		}
+		// Emit session.updated event for parity with session.model.switch handler.
+		// This allows listeners to react to model changes on task sessions.
+		messageHub.event(
+			'session.updated',
+			{ sessionId: params.sessionId, model: result.model },
+			{ channel: `session:${params.sessionId}` }
+		);
+		return result;
 	});
 
 	// room.runtime.pause - Pause runtime

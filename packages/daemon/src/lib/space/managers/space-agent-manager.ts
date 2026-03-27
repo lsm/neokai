@@ -7,7 +7,7 @@
  *   - Model must be recognized; when a provider is also given, validation is
  *     scoped to that provider via the provider-aware isValidModel() API
  *   - Tool names must be from KNOWN_TOOLS (validated on create and non-null update)
- *   - Deletion blocked when agent is referenced by workflow steps
+ *   - Deletion blocked when agent is referenced by workflow nodes
  */
 
 import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
@@ -94,7 +94,7 @@ export class SpaceAgentManager {
 	}
 
 	/**
-	 * Delete an agent, unless it is referenced by workflow steps.
+	 * Delete an agent, unless it is referenced by workflow nodes.
 	 */
 	delete(id: string): SpaceAgentResult<void> {
 		const existing = this.repo.getById(id);
@@ -104,7 +104,7 @@ export class SpaceAgentManager {
 		if (referenced) {
 			return {
 				ok: false,
-				error: `Cannot delete agent "${existing.name}" - it is referenced by workflow steps`,
+				error: `Cannot delete agent "${existing.name}" - it is referenced by workflow nodes`,
 				details: workflowNames.map((n) => `Workflow: ${n}`),
 			};
 		}

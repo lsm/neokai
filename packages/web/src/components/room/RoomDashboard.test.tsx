@@ -5,7 +5,7 @@
  * Tests runtime state indicator, pause/resume/stop/start controls,
  * confirmation dialogs, loading state,
  * stats overview grid (sessions, pending, active, completed, failed),
- * and tasks/sessions list rendering.
+ * and task list rendering.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -412,47 +412,6 @@ describe('RoomDashboard', () => {
 			const { container } = render(<RoomDashboard />);
 
 			expect(container.textContent).toContain('Tasks');
-		});
-
-		it('should call navigateToRoomTask when View button is clicked on a review task', async () => {
-			mockTasks.value = [createTask('task-99', 'review', { title: 'Review Task' })];
-
-			const { container } = render(<RoomDashboard />);
-			await selectReviewTab(container);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			)!;
-			expect(viewBtn).toBeTruthy();
-
-			await fireEvent.click(viewBtn);
-
-			expect(mockNavigateToRoomTask).toHaveBeenCalledWith('room-1', 'task-99');
-		});
-
-		it('should NOT call onTaskClick row handler when View button is clicked', async () => {
-			mockTasks.value = [createTask('task-99', 'review', { title: 'Review Task' })];
-
-			const { container } = render(<RoomDashboard />);
-			await selectReviewTab(container);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			)!;
-			await fireEvent.click(viewBtn);
-
-			// navigateToRoomTask should be called exactly once (from onView), not twice
-			expect(mockNavigateToRoomTask).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	describe('Sessions Section', () => {
-		it('should show Sessions heading', () => {
-			const { container } = render(<RoomDashboard />);
-
-			const headings = container.querySelectorAll('h2');
-			const sessionsHeading = Array.from(headings).find((h) => h.textContent === 'Sessions');
-			expect(sessionsHeading).toBeTruthy();
 		});
 	});
 });

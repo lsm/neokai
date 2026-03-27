@@ -5,10 +5,12 @@
  * 1. SpaceRuntime detects a pending task and spawns a Task Agent session
  * 2. Task Agent session has correct type, context, and MCP tools attached
  * 3. Task Agent processes its initial context message
- * 4. Task Agent can call each workflow tool (spawn_step_agent, check_step_status,
- *    advance_workflow, report_result) verified via probe mocks
+ * 4. Task Agent can call each workflow tool (spawn_node_agent, check_node_status,
+ *    report_result) verified via probe mocks
  * 5. When report_result is called (via full MCP name mock), task status becomes 'completed'
  * 6. Space Agent receives the completion notification event
+ *
+ * Note: advance_workflow was removed in Task 3.5 (agent-driven progression).
  *
  * ## How probe mocks work
  *
@@ -17,11 +19,11 @@
  * bodyFragment (substring search on the serialized request body). Matching mocks
  * return a pre-configured response.
  *
- * Tool call verification tests (spawn_step_agent, check_step_status, advance_workflow)
+ * Tool call verification tests (spawn_node_agent, check_node_status)
  * use TEXT-ONLY mock responses. We cannot use tool_use blocks with the Claude Agent SDK
  * because it dispatches ALL tool_use content blocks regardless of stop_reason. Since the
- * short tool names (e.g. "spawn_step_agent") don't match the registered MCP names (e.g.
- * "mcp__task-agent__spawn_step_agent"), dispatch fails and the SDK retries indefinitely
+ * short tool names (e.g. "spawn_node_agent") don't match the registered MCP names (e.g.
+ * "mcp__task-agent__spawn_node_agent"), dispatch fails and the SDK retries indefinitely
  * (each retry re-sends the probe phrase, matching the same mock — infinite loop). Instead,
  * the mocks return text mentioning the tool name and relevant IDs for test assertions.
  *
@@ -103,12 +105,12 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 		spaceId: space.id,
 		name: 'Code Review Workflow',
 		description: 'A simple code-then-review workflow for lifecycle testing',
-		steps: [
+		nodes: [
 			{ id: STEP_CODE_ID, name: 'Code Implementation', agentId: coderAgent.id },
 			{ id: STEP_REVIEW_ID, name: 'Code Review', agentId: reviewerAgent.id },
 		],
 		transitions: [{ from: STEP_CODE_ID, to: STEP_REVIEW_ID }],
-		startStepId: STEP_CODE_ID,
+		startNodeId: STEP_CODE_ID,
 	})) as { workflow: SpaceWorkflow };
 
 	return {
@@ -364,14 +366,14 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 3: spawn_step_agent tool invocation
+	// Test 3: spawn_node_agent tool invocation
 	// -------------------------------------------------------------------------
 	test(
-		'Task Agent uses spawn_step_agent to create a sub-session for a workflow step',
+		'Task Agent uses spawn_node_agent to create a sub-session for a workflow step',
 		async () => {
 			// NOTE: The probe mock returns a text-only response (no tool_use blocks) to
 			// prevent the Claude Agent SDK from dispatching the short tool name
-			// "spawn_step_agent" (registered as "mcp__task-agent__spawn_step_agent").
+			// "spawn_node_agent" (registered as "mcp__task-agent__spawn_node_agent").
 			// Dispatching a non-matching tool name causes the SDK to retry indefinitely.
 			// We verify the mock was matched by checking the text content mentions the
 			// tool name and step ID.
@@ -396,17 +398,17 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			// Wait for initial message processing before injecting probe
 			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
 
-			// Inject a probe message that triggers the spawn_step_agent mock.
+			// Inject a probe message that triggers the spawn_node_agent mock.
 			// The probe phrase "probe_task_agent_spawn_step_001" is unique to this request
 			// body at this point (earlier conversation does not contain it).
 			await sendMessage(
 				daemon,
 				taskAgentSessionId,
-				'probe_task_agent_spawn_step_001: Please spawn the step agent for the first workflow step.'
+				'probe_task_agent_spawn_step_001: Please spawn the node agent for the first workflow step.'
 			);
 			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
 
-			// Verify the mock was matched: the probe response mentions spawn_step_agent and
+			// Verify the mock was matched: the probe response mentions spawn_node_agent and
 			// the pre-assigned step ID step-code-lifecycle-001
 			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
 				minCount: 4, // initial user + initial assistant + probe user + probe assistant
@@ -416,20 +418,20 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			const assistantMsgs = getAssistantMessages(sdkMessages);
 			const textContent = extractTextContent(assistantMsgs);
 
-			expect(textContent).toContain('spawn_step_agent');
+			expect(textContent).toContain('spawn_node_agent');
 			expect(textContent).toContain(STEP_CODE_ID);
 		},
 		TEST_TIMEOUT
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 4: check_step_status tool invocation
+	// Test 4: check_node_status tool invocation
 	// -------------------------------------------------------------------------
 	test(
-		'Task Agent uses check_step_status to monitor a spawned sub-session',
+		'Task Agent uses check_node_status to monitor a spawned sub-session',
 		async () => {
 			// NOTE: The probe mock returns text-only (no tool_use blocks) to prevent the
-			// SDK from dispatching the short tool name "check_step_status".
+			// SDK from dispatching the short tool name "check_node_status".
 			// We verify the mock was matched by checking the text content.
 			// See probe mock "probe_task_agent_check_step_001" in .devproxy/mocks.json.
 			const { space, workflow } = await createTestFixtures(daemon);
@@ -454,7 +456,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			await sendMessage(
 				daemon,
 				taskAgentSessionId,
-				'probe_task_agent_check_step_001: Please check the status of the running step agent.'
+				'probe_task_agent_check_step_001: Please check the status of the running node agent.'
 			);
 			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
 
@@ -466,62 +468,13 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			const assistantMsgs = getAssistantMessages(sdkMessages);
 			const textContent = extractTextContent(assistantMsgs);
 
-			expect(textContent).toContain('check_step_status');
+			expect(textContent).toContain('check_node_status');
 		},
 		TEST_TIMEOUT
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 5: advance_workflow tool invocation
-	// -------------------------------------------------------------------------
-	test(
-		'Task Agent uses advance_workflow to move the workflow to the next step',
-		async () => {
-			// NOTE: The probe mock returns text-only (no tool_use blocks) to prevent the
-			// SDK from dispatching the short tool name "advance_workflow".
-			// We verify the mock was matched by checking the text content.
-			// See probe mock "probe_task_agent_advance_wf_001" in .devproxy/mocks.json.
-			const { space, workflow } = await createTestFixtures(daemon);
-
-			const { task } = await startWorkflowRunAndGetTask(
-				daemon,
-				space.id,
-				workflow.id,
-				'Lifecycle test run — advance workflow'
-			);
-
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
-				daemon,
-				space.id,
-				task.id,
-				TASK_AGENT_SPAWN_TIMEOUT
-			);
-			daemon.trackSession(taskAgentSessionId);
-
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
-
-			await sendMessage(
-				daemon,
-				taskAgentSessionId,
-				'probe_task_agent_advance_wf_001: Please advance the workflow to the next step.'
-			);
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
-
-			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
-				minCount: 4,
-				timeout: 5_000,
-			});
-
-			const assistantMsgs = getAssistantMessages(sdkMessages);
-			const textContent = extractTextContent(assistantMsgs);
-
-			expect(textContent).toContain('advance_workflow');
-		},
-		TEST_TIMEOUT
-	);
-
-	// -------------------------------------------------------------------------
-	// Test 6: report_result tool execution and task completion
+	// Test 5: report_result tool execution and task completion
 	// -------------------------------------------------------------------------
 	test(
 		'Task Agent calls report_result to complete the task (full execution)',
@@ -584,7 +537,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 7: Space Agent receives completion notification
+	// Test 6: Space Agent receives completion notification
 	// -------------------------------------------------------------------------
 	test(
 		'Space Agent receives a completion notification when report_result completes a task',

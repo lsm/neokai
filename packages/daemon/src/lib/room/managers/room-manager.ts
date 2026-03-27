@@ -15,6 +15,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { RoomRepository } from '../../../storage/repositories/room-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import { SessionRepository } from '../../../storage/repositories/session-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	Room,
 	CreateRoomParams,
@@ -30,10 +31,10 @@ export class RoomManager {
 	private taskRepo: TaskRepository;
 	private sessionRepo: SessionRepository;
 
-	constructor(db: BunDatabase) {
+	constructor(db: BunDatabase, reactiveDb: ReactiveDatabase) {
 		this.db = db;
 		this.roomRepo = new RoomRepository(db);
-		this.taskRepo = new TaskRepository(db);
+		this.taskRepo = new TaskRepository(db, reactiveDb);
 		this.sessionRepo = new SessionRepository(db);
 	}
 
@@ -130,6 +131,7 @@ export class RoomManager {
 
 		const toSummary = (task: NeoTask): TaskSummary => ({
 			id: task.id,
+			shortId: task.shortId,
 			title: task.title,
 			status: task.status,
 			priority: task.priority,
@@ -149,7 +151,7 @@ export class RoomManager {
 		const allTaskSummaries = allTasks.map(toSummary);
 
 		// Build session summaries from actual session data
-		// Filter out room-specific sessions (chat, craft, lead)
+		// Filter out room-specific sessions (chat, craft, lead) and archived (deleted) sessions
 		const sessions = room.sessionIds
 			.filter(
 				(id) =>
@@ -158,22 +160,29 @@ export class RoomManager {
 					!id.startsWith('room:craft:') &&
 					!id.startsWith('room:lead:')
 			)
-			.map((id) => {
+			.flatMap((id) => {
 				const session = this.sessionRepo.getSession(id);
 				if (!session) {
-					return {
-						id,
-						title: `Session ${id.slice(0, 8)}`,
-						status: 'ended' as const,
-						lastActiveAt: 0,
-					};
+					return [
+						{
+							id,
+							title: `Session ${id.slice(0, 8)}`,
+							status: 'ended' as const,
+							lastActiveAt: 0,
+						},
+					];
 				}
-				return {
-					id: session.id,
-					title: session.title,
-					status: session.status,
-					lastActiveAt: new Date(session.lastActiveAt).getTime(),
-				};
+				if (session.status === 'archived') {
+					return [];
+				}
+				return [
+					{
+						id: session.id,
+						title: session.title,
+						status: session.status,
+						lastActiveAt: new Date(session.lastActiveAt).getTime(),
+					},
+				];
 			});
 
 		return {

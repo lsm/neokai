@@ -106,6 +106,9 @@ export class ConnectionManager {
 	// Event-driven connection handlers
 	private connectionHandlers: Set<ConnectionHandler> = new Set();
 
+	// Flag to prevent premature 'connected' state during resume validation
+	private _isResuming = false;
+
 	constructor(baseUrl?: string) {
 		this.baseUrl = baseUrl || getDaemonWsUrl();
 		this.setupVisibilityHandlers();
@@ -300,6 +303,15 @@ export class ConnectionManager {
 
 		// Listen to connection state changes and update global state
 		this.messageHub.onConnection((state) => {
+			// During resume validation, don't report 'connected' until validation completes.
+			// This prevents the UI from seeing a false-positive 'connected' state while
+			// the health check and channel rejoin are still in progress.
+			if (state === 'connected' && this._isResuming) {
+				// Still notify handlers since the WebSocket IS connected, but don't
+				// update connectionState (which drives isConnected in useMessageHub)
+				this.notifyConnectionHandlers();
+				return;
+			}
 			connectionState.value = state;
 
 			// Notify connection handlers when connected
@@ -477,46 +489,61 @@ export class ConnectionManager {
 	 * receive updates after returning from background.
 	 */
 	private async validateConnectionOnResume(): Promise<void> {
-		if (!this.messageHub || !this.transport) {
-			// No connection exists - try to reconnect from scratch
-			await this.reconnect();
-			return;
-		}
+		// Mark that we're in resume validation - this prevents connectionState from
+		// reporting 'connected' until validation completes
+		this._isResuming = true;
 
 		try {
-			// Send a lightweight health check with short timeout
-			// If this fails, the connection is dead and needs reconnect
-			await this.messageHub.request('system.health', {}, { timeout: 3000 });
-
-			// CRITICAL FIX: Re-join channels on resume
-			// Safari may pause WebSocket without closing it, causing server-side
-			// channel memberships to expire while client thinks it's still connected.
-			await this.messageHub.joinChannel('global');
-			const activeRoomId = roomStore.roomId.value;
-			if (activeRoomId) {
-				await this.messageHub.joinChannel(`room:${activeRoomId}`);
-			}
-			const activeSpaceId = spaceStore.spaceId.value;
-			if (activeSpaceId) {
-				await this.messageHub.joinChannel(`space:${activeSpaceId}`);
+			if (!this.messageHub || !this.transport) {
+				// No connection exists - try to reconnect from scratch
+				await this.reconnect();
+				return;
 			}
 
-			// CRITICAL: Refresh ALL state (session store, app state, and global state)
-			// This ensures UI is in sync even if events were missed during background
-			// FIX: Added sessionStore.refresh() to sync agent state for status bar
-			// Without this, status bar would show "Online" instead of actual state
-			await Promise.all([
-				sessionStore.refresh(),
-				appState.refreshAll(),
-				globalStore.refresh(),
-				roomStore.refresh(),
-				spaceStore.refresh(),
-			]);
-		} catch {
-			// FIX: Use forceReconnect() instead of close()
-			// close() sets closed=true which prevents auto-reconnect
-			if (this.transport) {
-				this.transport.forceReconnect();
+			try {
+				// Send a lightweight health check with short timeout
+				// If this fails, the connection is dead and needs reconnect
+				await this.messageHub.request('system.health', {}, { timeout: 3000 });
+
+				// CRITICAL FIX: Re-join channels on resume
+				// Safari may pause WebSocket without closing it, causing server-side
+				// channel memberships to expire while client thinks it's still connected.
+				await this.messageHub.joinChannel('global');
+				const activeRoomId = roomStore.roomId.value;
+				if (activeRoomId) {
+					await this.messageHub.joinChannel(`room:${activeRoomId}`);
+				}
+				const activeSpaceId = spaceStore.spaceId.value;
+				if (activeSpaceId) {
+					await this.messageHub.joinChannel(`space:${activeSpaceId}`);
+				}
+
+				// CRITICAL: Refresh ALL state (session store, app state, and global state)
+				// This ensures UI is in sync even if events were missed during background
+				// FIX: Added sessionStore.refresh() to sync agent state for status bar
+				// Without this, status bar would show "Online" instead of actual state
+				await Promise.all([
+					sessionStore.refresh(),
+					appState.refreshAll(),
+					globalStore.refresh(),
+					roomStore.refresh(),
+					spaceStore.refresh(),
+				]);
+			} catch {
+				// FIX: Use forceReconnect() instead of close()
+				// close() sets closed=true which prevents auto-reconnect
+				if (this.transport) {
+					this.transport.forceReconnect();
+				}
+			}
+		} finally {
+			// Mark that resume validation is complete - now connectionState can update normally
+			this._isResuming = false;
+			// If connection was re-established during resume (e.g. reconnect path), update state now
+			// since the 'connected' event was suppressed while _isResuming was true
+			if (this.transport?.isReady()) {
+				connectionState.value = 'connected';
+				this.notifyConnectionHandlers();
 			}
 		}
 	}

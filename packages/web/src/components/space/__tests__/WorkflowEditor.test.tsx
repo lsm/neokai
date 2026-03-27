@@ -3,10 +3,10 @@
  *
  * Tests:
  * - Renders name and description fields
- * - Add step button adds a new step card
- * - Remove step removes the card
+ * - Add Step button adds a new node card
+ * - Remove node removes the card
  * - Reorder: move up / move down
- * - Agent dropdown (via WorkflowStepCard) excludes 'leader' agent
+ * - Agent dropdown (via WorkflowNodeCard) excludes 'leader' agent
  * - Template selection pre-fills steps
  * - Save calls spaceStore.createWorkflow with correct params
  * - Save calls spaceStore.updateWorkflow when editing
@@ -26,6 +26,8 @@ import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
 const mockAgents: Signal<SpaceAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
+const mockTasksByNodeId = signal(new Map<string, unknown[]>());
+const mockWorkflowRuns = signal<unknown[]>([]);
 
 const mockCreateWorkflow = vi.fn();
 const mockUpdateWorkflow = vi.fn();
@@ -35,6 +37,8 @@ vi.mock('../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			tasksByNodeId: mockTasksByNodeId,
+			workflowRuns: mockWorkflowRuns,
 			createWorkflow: mockCreateWorkflow,
 			updateWorkflow: mockUpdateWorkflow,
 		};
@@ -66,12 +70,11 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'Existing Workflow',
 		description: 'A description',
-		steps: [
+		nodes: [
 			{ id: step1Id, name: 'Plan', agentId: 'agent-1', instructions: 'Plan things' },
 			{ id: step2Id, name: 'Code', agentId: 'agent-2', instructions: '' },
 		],
-		transitions: [{ id: 'tr-1', from: step1Id, to: step2Id, order: 0 }],
-		startStepId: step1Id,
+		startNodeId: step1Id,
 		rules: [],
 		tags: [],
 		createdAt: Date.now(),
@@ -101,8 +104,8 @@ describe('WorkflowEditor', () => {
 			makeAgent('agent-leader', 'leader', 'leader'),
 		];
 		mockWorkflows.value = [];
-		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', steps: [], transitions: [], tags: [] });
-		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', steps: [], transitions: [], tags: [] });
+		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], tags: [] });
+		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
 		mockCreateWorkflow.mockClear();
 		mockUpdateWorkflow.mockClear();
 		defaultProps.onSave.mockClear();
@@ -160,21 +163,21 @@ describe('WorkflowEditor', () => {
 		expect(getByText('1 step')).toBeTruthy();
 		fireEvent.click(getByText('Add Step'));
 		expect(getByText('2 steps')).toBeTruthy();
-		const removeButtons = getAllByTitle('Remove step');
+		const removeButtons = getAllByTitle('Remove node');
 		fireEvent.click(removeButtons[0]);
 		expect(getByText('1 step')).toBeTruthy();
 	});
 
 	it('disables Remove button when only one step remains', () => {
 		const { getByTitle } = render(<WorkflowEditor {...defaultProps} />);
-		const removeBtn = getByTitle('Remove step') as HTMLButtonElement;
+		const removeBtn = getByTitle('Remove node') as HTMLButtonElement;
 		expect(removeBtn.disabled).toBe(true);
 	});
 
 	it('enables Remove button when more than one step exists', () => {
 		const { getByText, getAllByTitle } = render(<WorkflowEditor {...defaultProps} />);
 		fireEvent.click(getByText('Add Step'));
-		const removeBtns = getAllByTitle('Remove step') as HTMLButtonElement[];
+		const removeBtns = getAllByTitle('Remove node') as HTMLButtonElement[];
 		expect(removeBtns[0].disabled).toBe(false);
 		expect(removeBtns[1].disabled).toBe(false);
 	});
@@ -232,41 +235,46 @@ describe('WorkflowEditor', () => {
 	});
 
 	describe('initFromWorkflow', () => {
-		it('returns ordered steps following startStepId', () => {
+		it('returns ordered steps following startNodeId', () => {
 			const wf = makeWorkflow();
 			const { steps } = initFromWorkflow(wf);
 			expect(steps.map((s) => s.name)).toEqual(['Plan', 'Code']);
 		});
 
-		it('returns transitions between sequential steps', () => {
+		it('returns transitions (always) between sequential steps', () => {
 			const wf = makeWorkflow();
 			const { transitions } = initFromWorkflow(wf);
 			expect(transitions).toHaveLength(1);
 			expect(transitions[0].type).toBe('always');
 		});
 
-		it('preserves transition condition type', () => {
-			const s1 = 'step-1';
-			const s2 = 'step-2';
+		it('appends nodes not matching startNodeId after the start node', () => {
 			const wf = makeWorkflow({
-				transitions: [{ id: 'tr-1', from: s1, to: s2, condition: { type: 'human' }, order: 0 }],
-			});
-			const { transitions } = initFromWorkflow(wf);
-			expect(transitions[0].type).toBe('human');
-		});
-
-		it('appends orphaned steps not reachable from startStepId', () => {
-			const wf = makeWorkflow({
-				steps: [
+				nodes: [
 					{ id: 'step-1', name: 'Plan', agentId: 'a1' },
 					{ id: 'step-2', name: 'Code', agentId: 'a2' },
 					{ id: 'orphan', name: 'Orphan', agentId: 'a3' },
 				],
-				transitions: [{ id: 'tr-1', from: 'step-1', to: 'step-2', order: 0 }],
-				startStepId: 'step-1',
+				startNodeId: 'step-1',
 			});
 			const { steps } = initFromWorkflow(wf);
 			expect(steps.map((s) => s.name)).toEqual(['Plan', 'Code', 'Orphan']);
+		});
+
+		it('loads channels from existing workflow', () => {
+			const wf = makeWorkflow({
+				channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+			});
+			const { channels } = initFromWorkflow(wf);
+			expect(channels).toHaveLength(1);
+			expect(channels[0].from).toBe('task-agent');
+			expect(channels[0].to).toBe('coder');
+		});
+
+		it('returns empty channels array when workflow has none', () => {
+			const wf = makeWorkflow();
+			const { channels } = initFromWorkflow(wf);
+			expect(channels).toHaveLength(0);
 		});
 	});
 
@@ -384,10 +392,10 @@ describe('WorkflowEditor', () => {
 			// Click step 1 header to expand it
 			const stepHeaders = container.querySelectorAll('.cursor-pointer');
 			fireEvent.click(stepHeaders[0]);
-			// Now find the exit gate select (selects[2] = exit gate when entry+agent are visible)
-			const selects = container.querySelectorAll('select');
-			// Find exit gate select — it's labeled 'Exit Gate', the last condition select
-			const exitGateSelect = selects[selects.length - 1] as HTMLSelectElement;
+			// Find exit gate select via testid (more robust than positional select indexing)
+			const exitGateSelect = container.querySelector(
+				'[data-testid="exit-gate-select"]'
+			) as HTMLSelectElement;
 			fireEvent.change(exitGateSelect, { target: { value: 'condition' } });
 			// Leave expression empty and try to save
 			fireEvent.click(getByText('Create Workflow'));
@@ -450,7 +458,7 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
-		it('sends steps with generated IDs and transitions', async () => {
+		it('sends steps with generated IDs', async () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector(
 				'input[placeholder="e.g. Feature Development"]'
@@ -463,10 +471,7 @@ describe('WorkflowEditor', () => {
 			await waitFor(() => {
 				expect(mockCreateWorkflow).toHaveBeenCalledWith(
 					expect.objectContaining({
-						steps: expect.arrayContaining([expect.objectContaining({ name: expect.any(String) })]),
-						transitions: expect.arrayContaining([
-							expect.objectContaining({ from: expect.any(String), to: expect.any(String) }),
-						]),
+						nodes: expect.arrayContaining([expect.objectContaining({ name: expect.any(String) })]),
 					})
 				);
 			});
@@ -519,7 +524,7 @@ describe('WorkflowEditor', () => {
 			});
 
 			const call = mockCreateWorkflow.mock.calls[0][0];
-			const savedStepId = call.steps[0]?.id;
+			const savedStepId = call.nodes[0]?.id;
 			const savedRules = call.rules ?? [];
 
 			// The scoped rule must have at least one appliesTo entry — a zero length
@@ -534,6 +539,49 @@ describe('WorkflowEditor', () => {
 					expect(scopedId).toBe(savedStepId);
 				}
 			}
+		});
+	});
+
+	describe('channels', () => {
+		it('renders the Channels section header', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			expect(getByText('Channels')).toBeTruthy();
+		});
+
+		it('renders the ChannelEditor inside the workflow editor', () => {
+			const { getByTestId } = render(<WorkflowEditor {...defaultProps} />);
+			expect(getByTestId('channel-editor')).toBeTruthy();
+		});
+
+		it('channels are included in createWorkflow call when empty', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			selectAgent(container, 'agent-1');
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(
+					expect.objectContaining({ channels: undefined })
+				);
+			});
+		});
+
+		it('channels from existing workflow are included in updateWorkflow call', async () => {
+			const wf = makeWorkflow({
+				channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+					'wf-1',
+					expect.objectContaining({
+						channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+					})
+				);
+			});
 		});
 	});
 

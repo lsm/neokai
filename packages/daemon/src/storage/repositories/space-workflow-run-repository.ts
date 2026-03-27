@@ -8,12 +8,12 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRun, WorkflowRunStatus, CreateWorkflowRunParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
+import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
 
 export interface UpdateWorkflowRunParams {
 	title?: string;
 	description?: string;
 	status?: WorkflowRunStatus;
-	currentStepId?: string;
 	config?: Record<string, unknown>;
 	iterationCount?: number;
 	maxIterations?: number;
@@ -30,8 +30,8 @@ export class SpaceWorkflowRunRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, current_step_id, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -40,8 +40,6 @@ export class SpaceWorkflowRunRepository {
 			params.workflowId,
 			params.title,
 			params.description ?? '',
-			0, // keep current_step_index for backward compat
-			params.currentStepId ?? null,
 			'pending',
 			null,
 			0,
@@ -135,10 +133,6 @@ export class SpaceWorkflowRunRepository {
 				values.push(Date.now());
 			}
 		}
-		if (params.currentStepId !== undefined) {
-			fields.push('current_step_id = ?');
-			values.push(params.currentStepId);
-		}
 		if (params.config !== undefined) {
 			fields.push('config = ?');
 			values.push(JSON.stringify(params.config));
@@ -166,17 +160,51 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * Advance the current step ID for a run
+	 * Update only the status of a run, bypassing lifecycle transition guards.
+	 *
+	 * Intended for test fixtures and internal helpers only — use transitionStatus()
+	 * for all production code that changes run status.
 	 */
-	updateCurrentStep(id: string, stepId: string): SpaceWorkflowRun | null {
-		return this.updateRun(id, { currentStepId: stepId });
+	updateStatusUnchecked(id: string, status: WorkflowRunStatus): SpaceWorkflowRun | null {
+		return this.updateRun(id, { status });
 	}
 
 	/**
-	 * Update only the status of a run
+	 * Atomically validate and apply a lifecycle status transition.
+	 *
+	 * Reads the current status from the DB, validates the requested transition
+	 * against the WorkflowRunStatusMachine, and persists the new status only
+	 * when the transition is allowed.
+	 *
+	 * @returns The updated run on success.
+	 * @throws {Error} when the run is not found.
+	 * @throws {Error} when the transition is not permitted by the lifecycle rules.
 	 */
-	updateStatus(id: string, status: WorkflowRunStatus): SpaceWorkflowRun | null {
-		return this.updateRun(id, { status });
+	transitionStatus(id: string, to: WorkflowRunStatus): SpaceWorkflowRun {
+		const run = this.getRun(id);
+		if (!run) throw new Error(`WorkflowRun not found: ${id}`);
+		assertValidTransition(run.status, to, id);
+		return this.updateRun(id, { status: to })!;
+	}
+
+	/**
+	 * Atomically increment the iteration counter for a run, respecting the cap.
+	 *
+	 * Uses a single SQL UPDATE with a WHERE guard so the read-check-write is atomic:
+	 *   UPDATE ... SET iteration_count = iteration_count + 1
+	 *   WHERE id = ? AND iteration_count < max_iterations
+	 *
+	 * @returns true when the counter was incremented (below cap),
+	 *          false when the cap was already reached (no change applied)
+	 */
+	incrementIterationCount(id: string): boolean {
+		const stmt = this.db.prepare(
+			`UPDATE space_workflow_runs
+			 SET iteration_count = iteration_count + 1, updated_at = ?
+			 WHERE id = ? AND iteration_count < max_iterations`
+		);
+		const result = stmt.run(Date.now(), id);
+		return result.changes > 0;
 	}
 
 	/**
@@ -201,7 +229,6 @@ export class SpaceWorkflowRunRepository {
 			workflowId: row.workflow_id as string,
 			title: row.title as string,
 			description: (row.description as string | null) ?? undefined,
-			currentStepId: (row.current_step_id as string | null) ?? undefined,
 			status: row.status as WorkflowRunStatus,
 			config,
 			iterationCount: (row.iteration_count as number | undefined) ?? 0,

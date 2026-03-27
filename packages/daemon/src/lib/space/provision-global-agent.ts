@@ -10,6 +10,7 @@
 
 import type { McpServerConfig } from '@neokai/shared';
 import type { Database as BunDatabase } from 'bun:sqlite';
+import type { AppMcpLifecycleManager } from '../mcp/app-mcp-lifecycle-manager';
 import type { SessionManager } from '../session-manager';
 import type { SpaceManager } from './managers/space-manager';
 import type { SpaceAgentManager } from './managers/space-agent-manager';
@@ -66,6 +67,13 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	 * message includes the spaceId and taskId so the agent can act on specific tasks.
 	 */
 	daemonHub?: DaemonHub;
+	/**
+	 * Application-level MCP lifecycle manager.
+	 * When provided, registry-sourced MCP servers are merged into the global spaces agent
+	 * session's MCP map. The in-process global-spaces-tools server takes precedence over
+	 * registry entries on name collision.
+	 */
+	appMcpManager?: AppMcpLifecycleManager;
 }
 
 /**
@@ -90,6 +98,7 @@ export async function provisionGlobalSpacesAgent(
 		db,
 		state,
 		daemonHub,
+		appMcpManager,
 	} = deps;
 
 	// Get the shared runtime (no specific space context needed for the global agent)
@@ -143,7 +152,27 @@ export async function provisionGlobalSpacesAgent(
 		state
 	);
 
+	// Merge registry-sourced MCP servers from AppMcpLifecycleManager alongside the
+	// in-process global-spaces-tools server. The in-process server always wins on collision
+	// since it provides the core space management tools required for the global agent.
+	//
+	// Note: unlike RoomRuntimeService, this function does NOT subscribe to mcp.registry.changed
+	// events. The global spaces agent is a daemon-lifetime singleton provisioned once at startup.
+	// Registry changes while it is running will NOT be hot-reloaded; they take effect only on
+	// the next daemon restart. This is a deliberate omission: the hot-reload complexity is not
+	// warranted for a singleton session, and the room module pattern (room-runtime-service.ts)
+	// covers the more common per-room case.
+	const registryMcpServers = appMcpManager?.getEnabledMcpConfigs() ?? {};
+	for (const name of Object.keys(registryMcpServers)) {
+		if (name === 'global-spaces-tools') {
+			log.warn(
+				`Global spaces agent: MCP server name collision on 'global-spaces-tools' — ` +
+					`in-process server takes precedence over registry entry.`
+			);
+		}
+	}
 	existingSession.setRuntimeMcpServers({
+		...registryMcpServers,
 		'global-spaces-tools': mcpServer as unknown as McpServerConfig,
 	});
 	existingSession.setRuntimeSystemPrompt(buildGlobalSpacesAgentPrompt());
@@ -167,7 +196,7 @@ export async function provisionGlobalSpacesAgent(
 				`Task '${event.taskTitle}' (taskId: ${event.taskId}, spaceId: ${event.spaceId}) ` +
 				`has completed.${summaryPart}`;
 			void sessionFactory
-				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'next_turn' })
+				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'defer' })
 				.catch((err) => {
 					log.warn(
 						`Failed to inject task.completed notification into ${GLOBAL_SESSION_ID}: ${err instanceof Error ? err.message : String(err)}`
@@ -182,7 +211,7 @@ export async function provisionGlobalSpacesAgent(
 				`Task '${event.taskTitle}' (taskId: ${event.taskId}, spaceId: ${event.spaceId}) ` +
 				`has ${statusLabel}.${summaryPart}`;
 			void sessionFactory
-				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'next_turn' })
+				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'defer' })
 				.catch((err) => {
 					log.warn(
 						`Failed to inject task.failed notification into ${GLOBAL_SESSION_ID}: ${err instanceof Error ? err.message : String(err)}`

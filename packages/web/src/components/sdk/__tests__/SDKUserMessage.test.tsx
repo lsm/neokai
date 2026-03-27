@@ -11,6 +11,24 @@ import { SDKUserMessage } from '../SDKUserMessage';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
+// Mock useMessageHub — MentionToken uses it for hover preview RPC calls
+vi.mock('../../../hooks/useMessageHub', () => ({
+	useMessageHub: () => ({
+		isConnected: false,
+		state: 'disconnected',
+		getHub: () => null,
+		request: vi.fn(),
+		onEvent: vi.fn(() => () => {}),
+		joinRoom: vi.fn(),
+		leaveRoom: vi.fn(),
+		call: vi.fn(),
+		callIfConnected: vi.fn().mockResolvedValue(null),
+		subscribe: vi.fn(() => () => {}),
+		waitForConnection: vi.fn(),
+		onConnected: vi.fn(() => () => {}),
+	}),
+}));
+
 // Mock the utils module for copyToClipboard
 vi.mock('../../../lib/utils.ts', async (importOriginal) => {
 	const original = await importOriginal<typeof import('../../../lib/utils.ts')>();
@@ -572,6 +590,96 @@ describe('SDKUserMessage', () => {
 			// Check for max-width classes
 			const wrapper = container.querySelector('.max-w-\\[85\\%\\]');
 			expect(wrapper).toBeTruthy();
+		});
+	});
+
+	describe('Reference Token Rendering', () => {
+		function createMessageWithRef(
+			text: string,
+			referenceMetadata: Record<string, unknown> = {}
+		): Extract<SDKMessage, { type: 'user' }> {
+			return {
+				...createTextMessage(text),
+				referenceMetadata,
+			} as unknown as Extract<SDKMessage, { type: 'user' }>;
+		}
+
+		it('renders plain text without @ref unchanged', () => {
+			const message = createTextMessage('Hello @user how are you?');
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.textContent).toContain('Hello @user how are you?');
+			expect(container.querySelector('[data-testid="mention-token"]')).toBeNull();
+		});
+
+		it('renders @ref{task:t-1} as a MentionToken', () => {
+			const message = createMessageWithRef('Fix @ref{task:t-1} now', {
+				'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Login bug' },
+			});
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			const token = container.querySelector('[data-testid="mention-token"]');
+			expect(token).toBeTruthy();
+			expect(container.textContent).toContain('Login bug');
+		});
+
+		it('renders @ref{goal:g-1} as a MentionToken with correct type', () => {
+			const message = createMessageWithRef('Work on @ref{goal:g-1}', {
+				'@ref{goal:g-1}': { type: 'goal', id: 'g-1', displayText: 'Ship v2' },
+			});
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			const token = container.querySelector('[data-testid="mention-token"]');
+			expect(token?.getAttribute('data-ref-type')).toBe('goal');
+		});
+
+		it('falls back to raw id when referenceMetadata is absent', () => {
+			const message = createMessageWithRef('Fix @ref{task:t-99}');
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			const token = container.querySelector('[data-testid="mention-token"]');
+			expect(token).toBeTruthy();
+			// displayText falls back to raw id
+			expect(container.textContent).toContain('t-99');
+		});
+
+		it('renders unknown reference type as styled plain text (not a token)', () => {
+			const message = createTextMessage('See @ref{widget:w-1} here');
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			// Should not render as a mention-token
+			expect(container.querySelector('[data-testid="mention-token"]')).toBeNull();
+			// Should render the raw text
+			expect(container.textContent).toContain('@ref{widget:w-1}');
+		});
+
+		it('renders surrounding text around a token', () => {
+			const message = createMessageWithRef('Please fix @ref{task:t-1} urgently', {
+				'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Bug' },
+			});
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.textContent).toContain('Please fix');
+			expect(container.textContent).toContain('urgently');
+			expect(container.querySelector('[data-testid="mention-token"]')).toBeTruthy();
+		});
+
+		it('renders multiple tokens in a single message', () => {
+			const message = createMessageWithRef('Fix @ref{task:t-1} and see @ref{file:src/foo.ts}', {
+				'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Bug' },
+				'@ref{file:src/foo.ts}': { type: 'file', id: 'src/foo.ts', displayText: 'foo.ts' },
+			});
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			const tokens = container.querySelectorAll('[data-testid="mention-token"]');
+			expect(tokens).toHaveLength(2);
+		});
+
+		it('does not render mention-token for empty message text', () => {
+			const message = createTextMessage('');
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.querySelector('[data-testid="mention-token"]')).toBeNull();
 		});
 	});
 });

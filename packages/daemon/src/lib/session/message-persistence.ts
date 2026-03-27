@@ -10,14 +10,27 @@
  * - Emit events for downstream processing
  */
 
-import type { MessageContent, MessageDeliveryMode, MessageHub, MessageImage } from '@neokai/shared';
+import type {
+	MessageContent,
+	MessageDeliveryMode,
+	MessageHub,
+	MessageImage,
+	ReferenceMetadata,
+	Session,
+} from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
+import { buildReferenceContext, prependContextToMessage } from '../agent/reference-context-builder';
 import { expandBuiltInCommand } from '../built-in-commands';
 import { Logger } from '../logger';
 import type { SessionCache } from './session-cache';
+import {
+	ReferenceResolver,
+	type PreprocessedMessage,
+	type ResolutionContext,
+} from './reference-resolver';
 
 export interface MessagePersistenceData {
 	sessionId: string;
@@ -34,9 +47,65 @@ export class MessagePersistence {
 		private sessionCache: SessionCache,
 		private db: Database,
 		private messageHub: MessageHub,
-		private eventBus: DaemonHub
+		private eventBus: DaemonHub,
+		private referenceResolver?: ReferenceResolver
 	) {
 		this.logger = new Logger('MessagePersistence');
+	}
+
+	/**
+	 * Extract and resolve @ references from a message text.
+	 *
+	 * Returns a PreprocessedMessage with the original text unchanged and a
+	 * populated referenceMetadata map. If no references are found, or if
+	 * resolution fails entirely, returns empty metadata so the message
+	 * still persists normally.
+	 */
+	private async preprocessReferences(text: string, session: Session): Promise<PreprocessedMessage> {
+		try {
+			const mentions = ReferenceResolver.extractReferences(text);
+			if (mentions.length === 0) {
+				return { text, referenceMetadata: {}, resolvedReferences: {} };
+			}
+
+			const context: ResolutionContext = {
+				workspacePath: session.workspacePath,
+				roomId: session.context?.roomId ?? null,
+			};
+
+			const resolved = await this.referenceResolver!.resolveAllReferences(mentions, context);
+
+			const referenceMetadata: ReferenceMetadata = {};
+
+			// Include resolved references with entity titles as displayText
+			for (const [token, ref] of Object.entries(resolved)) {
+				referenceMetadata[token] = {
+					type: ref.type,
+					id: ref.id,
+					displayText: extractDisplayText(ref.type, ref.id, ref.data),
+				};
+			}
+
+			// Include unresolved references with status: 'unresolved' so the UI can surface failures
+			const seenTokens = new Set<string>();
+			for (const mention of mentions) {
+				const token = `@ref{${mention.type}:${mention.id}}`;
+				if (!seenTokens.has(token) && !(token in referenceMetadata)) {
+					seenTokens.add(token);
+					referenceMetadata[token] = {
+						type: mention.type,
+						id: mention.id,
+						displayText: mention.id,
+						status: 'unresolved',
+					};
+				}
+			}
+
+			return { text, referenceMetadata, resolvedReferences: resolved };
+		} catch (err) {
+			this.logger.warn('[MessagePersistence] Reference preprocessing failed, skipping:', err);
+			return { text, referenceMetadata: {}, resolvedReferences: {} };
+		}
 	}
 
 	/**
@@ -54,7 +123,7 @@ export class MessagePersistence {
 	 * 7. Emit 'message.persisted' event for downstream processing
 	 */
 	async persist(data: MessagePersistenceData): Promise<void> {
-		const { sessionId, messageId, content, images, deliveryMode = 'current_turn' } = data;
+		const { sessionId, messageId, content, images, deliveryMode = 'immediate' } = data;
 
 		const agentSession = await this.sessionCache.getAsync(sessionId);
 		if (!agentSession) {
@@ -87,11 +156,24 @@ export class MessagePersistence {
 			const expandedContent = expandBuiltInCommand(content);
 			const finalContent = expandedContent || content;
 
+			// 2b. Preprocess @ references (extract + resolve) if resolver is available
+			const preprocessed = this.referenceResolver
+				? await this.preprocessReferences(finalContent, session)
+				: {
+						text: finalContent,
+						referenceMetadata: {} as ReferenceMetadata,
+						resolvedReferences: {},
+					};
+
+			// 2c. Build reference context block and prepend to agent message
+			const refContext = buildReferenceContext(preprocessed.resolvedReferences);
+			const agentContent = prependContextToMessage(finalContent, refContext);
+
 			// 3. Build message content (text + images)
-			const messageContent = buildMessageContent(finalContent, images);
+			const messageContent = buildMessageContent(agentContent, images);
 
 			// 4. Create SDK user message
-			const sdkUserMessage: SDKUserMessage = {
+			const sdkUserMessage: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {
 				type: 'user' as const,
 				uuid: messageId as UUID,
 				session_id: sessionId,
@@ -103,6 +185,9 @@ export class MessagePersistence {
 							? [{ type: 'text' as const, text: messageContent }]
 							: messageContent,
 				},
+				...(Object.keys(preprocessed.referenceMetadata).length > 0 && {
+					referenceMetadata: preprocessed.referenceMetadata,
+				}),
 			};
 
 			// 5. Save to database with delivery-aware status
@@ -112,20 +197,20 @@ export class MessagePersistence {
 			const isManualMode = session.config.queryMode === 'manual';
 
 			const effectiveDeliveryMode: MessageDeliveryMode =
-				deliveryMode === 'next_turn' && isAgentBusy ? 'next_turn' : 'current_turn';
-			const sendStatus: 'saved' | 'queued' | 'sent' = isManualMode
-				? 'saved'
-				: effectiveDeliveryMode === 'next_turn'
-					? 'saved'
+				deliveryMode === 'defer' && isAgentBusy ? 'defer' : 'immediate';
+			const sendStatus: 'deferred' | 'enqueued' | 'consumed' = isManualMode
+				? 'deferred'
+				: effectiveDeliveryMode === 'defer'
+					? 'deferred'
 					: isAgentBusy
-						? 'queued'
-						: 'sent';
-			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'current_turn';
+						? 'enqueued'
+						: 'consumed';
+			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'immediate';
 
 			const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus);
 
 			// 6. Publish to UI immediately only when not currently in-flight.
-			// Busy-turn insertions are shown in the input overlay and rendered in chat once sent.
+			// Busy-turn insertions are shown in the input overlay and rendered in chat once consumed.
 			if (isManualMode || !isAgentBusy) {
 				try {
 					this.messageHub.event(
@@ -166,6 +251,25 @@ export class MessagePersistence {
 			throw error;
 		}
 	}
+}
+
+/**
+ * Extract a human-readable display text from a resolved reference's entity data.
+ *
+ * For tasks and goals, uses the entity title. For files and folders, uses the path.
+ * Falls back to the raw ID if the data shape is unexpected.
+ */
+function extractDisplayText(type: string, id: string, data: unknown): string {
+	if (data !== null && typeof data === 'object') {
+		const d = data as Record<string, unknown>;
+		if ((type === 'task' || type === 'goal') && typeof d['title'] === 'string') {
+			return d['title'];
+		}
+		if ((type === 'file' || type === 'folder') && typeof d['path'] === 'string') {
+			return d['path'];
+		}
+	}
+	return id;
 }
 
 /**

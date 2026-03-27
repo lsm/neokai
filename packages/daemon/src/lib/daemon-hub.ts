@@ -51,8 +51,11 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 	'session.deleted': { sessionId: string };
 
-	// SDK events — message may include a neokai-injected `timestamp` field from the DB layer
-	'sdk.message': { sessionId: string; message: SDKMessage & { timestamp?: number } };
+	// SDK events — message may carry a neokai-injected `timestamp` from the DB layer.
+	// The SDK defines timestamp?: string (ISO 8601) on user messages; the daemon overrides it
+	// with a number (epoch ms) when replaying persisted messages. The intersection keeps both
+	// possibilities visible to future subscribers so they know to handle either form.
+	'sdk.message': { sessionId: string; message: SDKMessage & { timestamp?: number | string } };
 
 	// Auth events (global events - use 'global' as sessionId)
 	'auth.changed': {
@@ -157,21 +160,21 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		userMessageText: string;
 		needsWorkspaceInit: boolean;
 		hasDraftToClear: boolean;
-		sendStatus: 'saved' | 'queued' | 'sent';
+		sendStatus: 'deferred' | 'enqueued' | 'consumed';
 		deliveryMode: MessageDeliveryMode;
 	};
 
 	// Query mode events
-	// Trigger to send saved messages (Manual mode)
+	// Trigger to send deferred messages (manual mode)
 	'query.trigger': { sessionId: string };
 	// Notification when message statuses change
 	'messages.statusChanged': {
 		sessionId: string;
 		messageIds: string[];
-		status: 'saved' | 'queued' | 'sent';
+		status: 'deferred' | 'enqueued' | 'consumed';
 	};
-	// Send queued messages on turn end (Auto-queue mode)
-	'query.sendQueuedOnTurnEnd': { sessionId: string };
+	// Send enqueued messages on turn end (auto-defer mode)
+	'query.sendEnqueuedOnTurnEnd': { sessionId: string };
 
 	// Rewind events
 	'rewind.started': {
@@ -333,6 +336,16 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		inboxItemId: string;
 	};
 
+	// App-level MCP registry events
+	/**
+	 * Emitted by app-mcp-handlers on create/update/delete/setEnabled.
+	 * Used by RoomRuntimeService (Task 3.2) for hot-reload of MCP server lists.
+	 * This is separate from LiveQuery — both are emitted on every write.
+	 */
+	'mcp.registry.changed': {
+		sessionId: string;
+	};
+
 	// Goal events
 	'goal.created': {
 		sessionId: string;
@@ -488,34 +501,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		spaceId: string;
 		agentId: string;
-	};
-
-	// Space session group events (channel: 'space:${spaceId}')
-	// sessionId is set to 'space:${spaceId}' for channel routing — only clients subscribed
-	// to that space receive these events.
-	'spaceSessionGroup.created': {
-		sessionId: string; // 'space:${spaceId}'
-		spaceId: string;
-		taskId: string;
-		group: import('@neokai/shared').SpaceSessionGroup;
-	};
-	'spaceSessionGroup.memberAdded': {
-		sessionId: string; // 'space:${spaceId}'
-		spaceId: string;
-		groupId: string;
-		member: import('@neokai/shared').SpaceSessionGroupMember;
-	};
-	'spaceSessionGroup.memberUpdated': {
-		sessionId: string; // 'space:${spaceId}'
-		spaceId: string;
-		groupId: string;
-		memberId: string;
-		member: import('@neokai/shared').SpaceSessionGroupMember;
-	};
-	'spaceSessionGroup.deleted': {
-		sessionId: string; // 'space:${spaceId}'
-		spaceId: string;
-		groupId: string;
 	};
 
 	// Space workflow definition events (global events - use 'global' as sessionId)

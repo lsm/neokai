@@ -24,7 +24,7 @@ describe('GoalRepository — V2 Mission fields', () => {
 		// createTables creates goals with all V2 columns already included in the schema
 		createTables(db);
 
-		const roomManager = new RoomManager(db);
+		const roomManager = new RoomManager(db, noOpReactiveDb);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
 			allowedPaths: [{ path: '/workspace/test' }],

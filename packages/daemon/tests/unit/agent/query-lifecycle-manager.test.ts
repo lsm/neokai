@@ -42,6 +42,7 @@ describe('QueryLifecycleManager', () => {
 	let resetCircuitBreakerSpy: ReturnType<typeof mock>;
 	let getInterruptPromiseSpy: ReturnType<typeof mock>;
 	let handleErrorSpy: ReturnType<typeof mock>;
+	let clearModelsCacheSpy: ReturnType<typeof mock>;
 
 	function createMockContext(
 		overrides: Partial<QueryLifecycleManagerContext> = {}
@@ -66,6 +67,7 @@ describe('QueryLifecycleManager', () => {
 		resetCircuitBreakerSpy = mock(() => {});
 		getInterruptPromiseSpy = mock(() => null);
 		handleErrorSpy = mock(async () => {});
+		clearModelsCacheSpy = mock(async () => {});
 
 		startStreamingCalled = false;
 		return {
@@ -107,7 +109,7 @@ describe('QueryLifecycleManager', () => {
 			// Cleanup support methods
 			setCleaningUp: mock(() => {}),
 			cleanupEventSubscriptions: mock(() => {}),
-			clearModelsCache: mock(async () => {}),
+			clearModelsCache: clearModelsCacheSpy,
 			...overrides,
 		};
 	}
@@ -336,6 +338,12 @@ describe('QueryLifecycleManager', () => {
 			expect(startStreamingCalled).toBe(true);
 		});
 
+		test('clears models cache before starting new query', async () => {
+			await manager.restart();
+
+			expect(clearModelsCacheSpy).toHaveBeenCalled();
+		});
+
 		test('throws on start failure', async () => {
 			const failingContext = createMockContext({
 				startStreamingQuery: async () => {
@@ -378,6 +386,13 @@ describe('QueryLifecycleManager', () => {
 			expect(startStreamingCalled).toBe(false);
 		});
 
+		test('clears models cache on early return when no query is running', async () => {
+			// No queryObject or queryPromise set
+			await manager.reset();
+
+			expect(clearModelsCacheSpy).toHaveBeenCalled();
+		});
+
 		test('clears pendingRestartReason on early return', async () => {
 			mockContext.pendingRestartReason = 'settings.local.json';
 			manager = new QueryLifecycleManager(mockContext);
@@ -399,6 +414,7 @@ describe('QueryLifecycleManager', () => {
 			expect(result.success).toBe(true);
 			expect(resetCircuitBreakerSpy).toHaveBeenCalled();
 			expect(setIdleSpy).toHaveBeenCalled();
+			expect(clearModelsCacheSpy).toHaveBeenCalled();
 			expect(publishSpy).toHaveBeenCalledWith(
 				'session.reset',
 				expect.objectContaining({ message: expect.any(String) }),
@@ -557,6 +573,12 @@ describe('QueryLifecycleManager', () => {
 			await manager.ensureQueryStarted();
 
 			expect(startStreamingCalled).toBe(true);
+		});
+
+		test('clears models cache before starting streaming query', async () => {
+			await manager.ensureQueryStarted();
+
+			expect(clearModelsCacheSpy).toHaveBeenCalled();
 		});
 
 		test('validates SDK session when sdkSessionId exists', async () => {

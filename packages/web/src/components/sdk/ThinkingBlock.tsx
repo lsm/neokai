@@ -13,14 +13,14 @@ import { cn } from '../../lib/utils.ts';
 interface ThinkingBlockProps {
 	content: string;
 	className?: string;
+	/** Compact mode: shows only first line with no expand/collapse button */
+	compact?: boolean;
 }
 
 // Number of lines to show in preview mode
 const PREVIEW_LINE_COUNT = 6;
 // Approximate line height in pixels (for line-clamp calculation)
 const LINE_HEIGHT_PX = 20;
-// Max height for preview mode
-const PREVIEW_MAX_HEIGHT = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
 // Amber color scheme for thinking blocks (matching tool-registry)
 const colors = {
@@ -31,18 +31,20 @@ const colors = {
 	lightText: 'text-amber-700 dark:text-amber-300',
 };
 
-export function ThinkingBlock({ content, className }: ThinkingBlockProps) {
+export function ThinkingBlock({ content, className, compact = false }: ThinkingBlockProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
 	const [needsTruncation, setNeedsTruncation] = useState(false);
 	const contentRef = useRef<HTMLPreElement>(null);
+
+	const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
 	// Check if content exceeds preview height
 	useLayoutEffect(() => {
 		if (contentRef.current) {
 			const scrollHeight = contentRef.current.scrollHeight;
-			setNeedsTruncation(scrollHeight > PREVIEW_MAX_HEIGHT);
+			setNeedsTruncation(scrollHeight > previewMaxHeight);
 		}
-	}, [content]);
+	}, [content, previewMaxHeight]);
 
 	const charCount = content.length;
 
@@ -78,27 +80,36 @@ export function ThinkingBlock({ content, className }: ThinkingBlockProps) {
 				<div
 					class={cn(
 						'p-3 bg-white dark:bg-gray-900',
-						!isExpanded && needsTruncation && 'overflow-hidden'
+						!compact && !isExpanded && needsTruncation && 'overflow-hidden'
 					)}
 					style={
-						!isExpanded && needsTruncation ? { maxHeight: `${PREVIEW_MAX_HEIGHT + 24}px` } : {}
+						!compact && !isExpanded && needsTruncation
+							? { maxHeight: `${previewMaxHeight + 24}px` }
+							: {}
 					}
 				>
-					<pre ref={contentRef} class={cn('text-sm whitespace-pre-wrap font-mono', colors.text)}>
+					<pre
+						ref={contentRef}
+						class={cn(
+							'text-sm font-mono',
+							colors.text,
+							compact ? 'whitespace-normal break-words line-clamp-1' : 'whitespace-pre-wrap'
+						)}
+					>
 						{content}
 					</pre>
 				</div>
 
-				{/* Gradient fade overlay when truncated and not expanded */}
-				{needsTruncation && !isExpanded && (
+				{/* Gradient fade overlay when truncated and not expanded (hidden in compact mode) */}
+				{!compact && needsTruncation && !isExpanded && (
 					<div
 						class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none"
 						aria-hidden="true"
 					/>
 				)}
 
-				{/* Expand/Collapse button at bottom edge */}
-				{needsTruncation && (
+				{/* Expand/Collapse button at bottom edge (hidden in compact mode) */}
+				{!compact && needsTruncation && (
 					<div
 						class={cn('flex justify-center py-2 border-t bg-white dark:bg-gray-900', colors.border)}
 					>

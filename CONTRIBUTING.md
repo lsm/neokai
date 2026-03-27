@@ -44,6 +44,8 @@ This project uses a two-branch workflow to optimize development speed while main
    - Dev branch remains stable for other contributors
 
 3. **Releasing to `main`**
+   - Use the protected-branch release flow in [`docs/release-process.md`](docs/release-process.md)
+   - Recommended prep command: `./scripts/release-prepare.sh --version <x.y.z>`
    - Create PR from `dev` to `main`
    - Full test suite runs (all tests including E2E)
    - After merge, production deployment can proceed

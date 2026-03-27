@@ -25,12 +25,16 @@ import type { RoomRuntimeService } from '../../../src/lib/room/runtime/room-runt
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
+// UUID used as task ID in tests — resolveTaskId passes UUIDs through without DB lookup
+// Must match UUID v4 format: third group starts with 4, fourth group starts with 8/9/a/b
+const TASK_UUID = '00000000-0000-4000-8000-000000000001';
+
 // Mock TaskManager module
 const mockTaskManager = {
 	createTask: mock(
 		async () =>
 			({
-				id: 'task-123',
+				id: TASK_UUID,
 				roomId: 'room-123',
 				title: 'Test Task',
 				description: 'Test description',
@@ -43,7 +47,7 @@ const mockTaskManager = {
 	getTask: mock(
 		async () =>
 			({
-				id: 'task-123',
+				id: TASK_UUID,
 				roomId: 'room-123',
 				title: 'Test Task',
 				description: 'Test description',
@@ -57,12 +61,25 @@ const mockTaskManager = {
 	failTask: mock(
 		async () =>
 			({
-				id: 'task-123',
+				id: TASK_UUID,
 				roomId: 'room-123',
 				title: 'Test Task',
 				status: 'needs_attention' as TaskStatus,
 				error: 'Task failed',
 				failedAt: Date.now(),
+				updatedAt: Date.now(),
+			}) as NeoTask
+	),
+	setTaskStatus: mock(
+		async () =>
+			({
+				id: TASK_UUID,
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test description',
+				status: 'in_progress' as TaskStatus,
+				priority: 'medium' as TaskPriority,
+				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			}) as NeoTask
 	),
@@ -194,7 +211,7 @@ function createMockRuntimeService(methodResult = true): {
 function createMockDatabaseWithGroup(groupState: string = 'awaiting_leader'): Database {
 	const groupRow = {
 		id: 'group-123',
-		ref_id: 'task-123',
+		ref_id: TASK_UUID,
 		group_type: 'task_pair',
 		state: groupState,
 		version: 1,
@@ -241,6 +258,7 @@ describe('Task RPC Handlers', () => {
 		mockTaskManager.getTask.mockClear();
 		mockTaskManager.listTasks.mockClear();
 		mockTaskManager.failTask.mockClear();
+		mockTaskManager.setTaskStatus.mockClear();
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -348,20 +366,20 @@ describe('Task RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('task.get');
 			expect(handler).toBeDefined();
 
-			const result = (await handler!({ roomId: 'room-123', taskId: 'task-123' }, {})) as {
+			const result = (await handler!({ roomId: 'room-123', taskId: TASK_UUID }, {})) as {
 				task: NeoTask;
 			};
 
-			expect(mockTaskManager.getTask).toHaveBeenCalledWith('task-123');
+			expect(mockTaskManager.getTask).toHaveBeenCalledWith(TASK_UUID);
 			expect(result.task).toBeDefined();
-			expect(result.task.id).toBe('task-123');
+			expect(result.task.id).toBe(TASK_UUID);
 		});
 
 		it('throws error when roomId is missing', async () => {
 			const handler = messageHubData.handlers.get('task.get');
 			expect(handler).toBeDefined();
 
-			await expect(handler!({ taskId: 'task-123' }, {})).rejects.toThrow('Room ID is required');
+			await expect(handler!({ taskId: TASK_UUID }, {})).rejects.toThrow('Room ID is required');
 		});
 
 		it('throws error when taskId is missing', async () => {
@@ -375,10 +393,13 @@ describe('Task RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('task.get');
 			expect(handler).toBeDefined();
 
+			// Use a valid UUID so resolveTaskId passes through without a DB lookup,
+			// allowing mockResolvedValueOnce(null) to be consumed by getTask().
+			const nonExistentUUID = '00000000-0000-4000-8000-000000000099';
 			mockTaskManager.getTask.mockResolvedValueOnce(null);
 
-			await expect(handler!({ roomId: 'room-123', taskId: 'non-existent' }, {})).rejects.toThrow(
-				'Task not found: non-existent'
+			await expect(handler!({ roomId: 'room-123', taskId: nonExistentUUID }, {})).rejects.toThrow(
+				`Task not found: ${nonExistentUUID}`
 			);
 		});
 	});
@@ -389,11 +410,11 @@ describe('Task RPC Handlers', () => {
 			expect(handler).toBeDefined();
 
 			const result = (await handler!(
-				{ roomId: 'room-123', taskId: 'task-123', error: 'Something went wrong' },
+				{ roomId: 'room-123', taskId: TASK_UUID, error: 'Something went wrong' },
 				{}
 			)) as { task: NeoTask };
 
-			expect(mockTaskManager.failTask).toHaveBeenCalledWith('task-123', 'Something went wrong');
+			expect(mockTaskManager.failTask).toHaveBeenCalledWith(TASK_UUID, 'Something went wrong');
 			expect(result.task).toBeDefined();
 		});
 
@@ -401,11 +422,11 @@ describe('Task RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('task.fail');
 			expect(handler).toBeDefined();
 
-			const result = (await handler!({ roomId: 'room-123', taskId: 'task-123' }, {})) as {
+			const result = (await handler!({ roomId: 'room-123', taskId: TASK_UUID }, {})) as {
 				task: NeoTask;
 			};
 
-			expect(mockTaskManager.failTask).toHaveBeenCalledWith('task-123', '');
+			expect(mockTaskManager.failTask).toHaveBeenCalledWith(TASK_UUID, '');
 			expect(result.task).toBeDefined();
 		});
 
@@ -413,7 +434,7 @@ describe('Task RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('task.fail');
 			expect(handler).toBeDefined();
 
-			await expect(handler!({ taskId: 'task-123', error: 'Failed' }, {})).rejects.toThrow(
+			await expect(handler!({ taskId: TASK_UUID, error: 'Failed' }, {})).rejects.toThrow(
 				'Room ID is required'
 			);
 		});
@@ -431,7 +452,7 @@ describe('Task RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('task.fail');
 			expect(handler).toBeDefined();
 
-			await handler!({ roomId: 'room-123', taskId: 'task-123', error: 'Failed' }, {});
+			await handler!({ roomId: 'room-123', taskId: TASK_UUID, error: 'Failed' }, {});
 
 			// room.overview must still fire so clients get updated session/task metadata
 			expect(roomManagerData.getRoomOverview).toHaveBeenCalledWith('room-123');
@@ -478,11 +499,11 @@ describe('task.sendHumanMessage handler', () => {
 		expect(handler).toBeDefined();
 
 		const result = (await handler!(
-			{ roomId: 'room-123', taskId: 'task-123', message: 'Looks good!' },
+			{ roomId: 'room-123', taskId: TASK_UUID, message: 'Looks good!' },
 			{}
 		)) as { success: boolean };
 
-		expect(injectMessageToWorker).toHaveBeenCalledWith('task-123', 'Looks good!');
+		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'Looks good!');
 		expect(result.success).toBe(true);
 	});
 
@@ -501,9 +522,9 @@ describe('task.sendHumanMessage handler', () => {
 		);
 
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
-		await handler!({ roomId: 'room-123', taskId: 'task-123', message: '  please fix it  ' }, {});
+		await handler!({ roomId: 'room-123', taskId: TASK_UUID, message: '  please fix it  ' }, {});
 
-		expect(injectMessageToWorker).toHaveBeenCalledWith('task-123', 'please fix it');
+		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'please fix it');
 	});
 
 	it('throws error when roomId is missing', async () => {
@@ -521,7 +542,7 @@ describe('task.sendHumanMessage handler', () => {
 		);
 
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
-		await expect(handler!({ taskId: 'task-123', message: 'hello' }, {})).rejects.toThrow(
+		await expect(handler!({ taskId: TASK_UUID, message: 'hello' }, {})).rejects.toThrow(
 			'Room ID is required'
 		);
 	});
@@ -561,7 +582,7 @@ describe('task.sendHumanMessage handler', () => {
 		);
 
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
-		await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+		await expect(handler!({ roomId: 'room-123', taskId: TASK_UUID }, {})).rejects.toThrow(
 			'Message is required'
 		);
 	});
@@ -582,7 +603,7 @@ describe('task.sendHumanMessage handler', () => {
 
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		await expect(
-			handler!({ roomId: 'room-123', taskId: 'task-123', message: '   ' }, {})
+			handler!({ roomId: 'room-123', taskId: TASK_UUID, message: '   ' }, {})
 		).rejects.toThrow('Message cannot be empty');
 	});
 
@@ -601,7 +622,7 @@ describe('task.sendHumanMessage handler', () => {
 
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		await expect(
-			handler!({ roomId: 'room-123', taskId: 'task-123', message: 'hello' }, {})
+			handler!({ roomId: 'room-123', taskId: TASK_UUID, message: 'hello' }, {})
 		).rejects.toThrow('Runtime service is required');
 	});
 
@@ -622,7 +643,7 @@ describe('task.sendHumanMessage handler', () => {
 
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		await expect(
-			handler!({ roomId: 'room-999', taskId: 'task-123', message: 'hello' }, {})
+			handler!({ roomId: 'room-999', taskId: TASK_UUID, message: 'hello' }, {})
 		).rejects.toThrow('No runtime found for room: room-999');
 	});
 
@@ -642,11 +663,11 @@ describe('task.sendHumanMessage handler', () => {
 
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		const result = (await handler!(
-			{ roomId: 'room-123', taskId: 'task-123', message: 'hello' },
+			{ roomId: 'room-123', taskId: TASK_UUID, message: 'hello' },
 			{}
 		)) as { success: boolean };
 
-		expect(injectMessageToWorker).toHaveBeenCalledWith('task-123', 'hello');
+		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'hello');
 		expect(result.success).toBe(true);
 	});
 
@@ -666,11 +687,11 @@ describe('task.sendHumanMessage handler', () => {
 
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		const result = (await handler!(
-			{ roomId: 'room-123', taskId: 'task-123', message: 'hello', target: 'worker' },
+			{ roomId: 'room-123', taskId: TASK_UUID, message: 'hello', target: 'worker' },
 			{}
 		)) as { success: boolean };
 
-		expect(injectMessageToWorker).toHaveBeenCalledWith('task-123', 'hello');
+		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'hello');
 		expect(result.success).toBe(true);
 	});
 
@@ -691,7 +712,7 @@ describe('task.sendHumanMessage handler', () => {
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		const oversizedMessage = 'a'.repeat(10_001);
 		await expect(
-			handler!({ roomId: 'room-123', taskId: 'task-123', message: oversizedMessage }, {})
+			handler!({ roomId: 'room-123', taskId: TASK_UUID, message: oversizedMessage }, {})
 		).rejects.toThrow('Message is too long');
 	});
 
@@ -712,11 +733,85 @@ describe('task.sendHumanMessage handler', () => {
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		const maxMessage = 'a'.repeat(10_000);
 		const result = (await handler!(
-			{ roomId: 'room-123', taskId: 'task-123', message: maxMessage },
+			{ roomId: 'room-123', taskId: TASK_UUID, message: maxMessage },
 			{}
 		)) as { success: boolean };
 
-		expect(injectMessageToWorker).toHaveBeenCalledWith('task-123', maxMessage);
+		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, maxMessage);
 		expect(result.success).toBe(true);
+	});
+
+	it('prepends review reminder when task was in review status', async () => {
+		const { runtimeService, injectMessageToLeader } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_leader');
+
+		// Override getTask to return a task in 'review' status
+		mockTaskManager.getTask.mockResolvedValueOnce({
+			id: TASK_UUID,
+			roomId: 'room-123',
+			title: 'Test Task',
+			description: 'Test description',
+			status: 'review' as TaskStatus,
+			priority: 'medium' as TaskPriority,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		} as NeoTask);
+		// Second call (for emitTaskUpdate after routing) returns in_progress
+		mockTaskManager.getTask.mockResolvedValueOnce({
+			id: TASK_UUID,
+			roomId: 'room-123',
+			title: 'Test Task',
+			description: 'Test description',
+			status: 'in_progress' as TaskStatus,
+			priority: 'medium' as TaskPriority,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		} as NeoTask);
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		const result = (await handler!(
+			{ roomId: 'room-123', taskId: TASK_UUID, message: 'Please fix the typo', target: 'leader' },
+			{}
+		)) as { success: boolean };
+
+		expect(result.success).toBe(true);
+		// setTaskStatus should have been called to transition review → in_progress
+		expect(mockTaskManager.setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
+		// The injected message should include the review reminder
+		const injectedMessage = (injectMessageToLeader.mock.calls[0] as [string, string])[1];
+		expect(injectedMessage).toContain('[Context: This task was in `review` status.');
+		expect(injectedMessage).toContain('submit_for_review');
+		expect(injectedMessage).toContain('Please fix the typo');
+	});
+
+	it('does not prepend review reminder for non-review tasks', async () => {
+		const { runtimeService, injectMessageToWorker } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_leader');
+
+		// Default getTask returns status 'pending'
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await handler!({ roomId: 'room-123', taskId: TASK_UUID, message: 'hello there' }, {});
+
+		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'hello there');
 	});
 });

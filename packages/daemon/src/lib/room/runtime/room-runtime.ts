@@ -24,6 +24,7 @@ import {
 	type RuntimeState,
 	type GlobalSettings,
 	type FallbackModelEntry,
+	type TaskRestriction,
 	MAX_CONCURRENT_GROUPS_LIMIT,
 	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
@@ -38,8 +39,7 @@ import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
-import type { ModelSwitchResult } from '../../agent/model-switch-handler';
-import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
+import type { LeaderToolCallbacks, LeaderToolResult, ReviewContext } from '../agents/leader-agent';
 import { createLeaderMcpServer } from '../agents/leader-agent';
 import type {
 	PlannerCreateTaskParams,
@@ -63,6 +63,7 @@ import {
 } from './message-routing';
 import { createRateLimitBackoff } from './rate-limit-utils';
 import { classifyError } from './error-classifier';
+import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import { Logger } from '../../logger';
 import {
 	runWorkerExitGate,
@@ -105,12 +106,6 @@ export interface WorkerMessage {
 	toolCallNames: string[];
 }
 
-/** Response from session.model.get RPC */
-interface SessionModelGetResult {
-	currentModel: string;
-	modelInfo?: { provider?: string };
-}
-
 export interface RoomRuntimeConfig {
 	room: Room;
 	groupRepo: SessionGroupRepository;
@@ -121,8 +116,6 @@ export interface RoomRuntimeConfig {
 	workspacePath: string;
 	/** Leader model (agentModels.leader > room.defaultModel > global default) */
 	model?: string;
-	/** Worker model (agentModels.worker > room.defaultModel > global default) */
-	workerModel?: string;
 	/** Global default model for fallback when room doesn't specify one */
 	defaultModel?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
@@ -130,7 +123,7 @@ export interface RoomRuntimeConfig {
 	/** Max feedback iterations before auto-escalation (default: 3) */
 	maxFeedbackIterations?: number;
 	/**
-	 * Job queue used to schedule and cancel room.tick jobs.
+	 * Job defer used to schedule and cancel room.tick jobs.
 	 * When provided, scheduleTick() enqueues a room.tick job via enqueueRoomTick.
 	 * When absent (e.g., in unit tests), tick scheduling is a no-op and tests
 	 * drive ticks directly via runtime.tick().
@@ -150,6 +143,12 @@ export interface RoomRuntimeConfig {
 	hookOptions?: HookOptions;
 	/** Dead loop detection config (overrides defaults) */
 	deadLoopConfig?: Partial<DeadLoopConfig>;
+	/**
+	 * Optional callback to verify that a provider is available before switching to it.
+	 * Called with (provider, model) — should return true if the provider is reachable.
+	 * When absent, the availability check is skipped (backward-compatible).
+	 */
+	isProviderAvailable?: (provider: string, model: string) => Promise<boolean>;
 	/** Fetch room from DB by ID (for lazy leader init with current config) */
 	getRoom: (roomId: string) => Room | null;
 	/** Fetch task from DB by ID (for lazy leader init with current data) */
@@ -182,6 +181,7 @@ export class RoomRuntime {
 	private readonly messageHub?: MessageHub;
 	private readonly hookOptions?: HookOptions;
 	private readonly deadLoopConfig: DeadLoopConfig;
+	private readonly isProviderAvailable?: (provider: string, model: string) => Promise<boolean>;
 	private readonly getRoomById: (roomId: string) => Room | null;
 	private readonly defaultModel: string;
 	private readonly getGlobalSettings: () => GlobalSettings;
@@ -195,6 +195,21 @@ export class RoomRuntime {
 	 * while the first fire-and-forget routing is still completing.
 	 */
 	private stuckWorkerRecoveryInFlight = new Set<string>();
+
+	/**
+	 * Group IDs whose stuck-leader recovery is currently in-flight.
+	 * Guards against duplicate message injections across successive ticks
+	 * while the leader is being re-activated after a rate/usage limit expiry.
+	 */
+	private stuckLeaderRecoveryInFlight = new Set<string>();
+
+	/**
+	 * Task IDs whose group spawn is currently in-flight (async).
+	 * Guards against concurrent ticks re-attempting spawn for the same task while
+	 * `spawnGroupForTask` is awaiting worktree creation or DB insert — the window
+	 * where the task is still 'pending' in the DB but a spawn is already underway.
+	 */
+	private spawningTaskIds = new Set<string>();
 
 	readonly taskGroupManager: TaskGroupManager;
 
@@ -289,6 +304,7 @@ export class RoomRuntime {
 		this.messageHub = config.messageHub;
 		this.hookOptions = config.hookOptions;
 		this.deadLoopConfig = { ...DEFAULT_DEAD_LOOP_CONFIG, ...config.deadLoopConfig };
+		this.isProviderAvailable = config.isProviderAvailable;
 		this.getRoomById = config.getRoom;
 		this.defaultModel = config.defaultModel ?? 'sonnet';
 		this.getGlobalSettings = config.getGlobalSettings;
@@ -302,10 +318,6 @@ export class RoomRuntime {
 			workspacePath: config.workspacePath,
 			model: config.model,
 			provider: config.model ? this.resolveProviderForModel(config.model) : undefined,
-			workerModel: config.workerModel,
-			workerProvider: config.workerModel
-				? this.resolveProviderForModel(config.workerModel)
-				: undefined,
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
@@ -334,48 +346,75 @@ export class RoomRuntime {
 		sessionRole: 'worker' | 'leader'
 	): Promise<boolean> {
 		const settings = this.getGlobalSettings();
-		const fallbackModels = settings.fallbackModels ?? [];
 
-		if (fallbackModels.length === 0) {
-			return false;
-		}
-
-		// Get current model info from the session
+		// Get current model info from the session (DB-first, no RPC over WebSocket)
 		let currentModel: string;
 		let currentProvider: string;
 		try {
-			const modelInfo = (await this.messageHub?.request('session.model.get', { sessionId })) as
-				| SessionModelGetResult
-				| undefined;
+			const modelInfo = await this.sessionFactory.getCurrentModel(sessionId);
 			if (!modelInfo || !modelInfo.currentModel) {
 				log.warn(`Could not get current model for session ${sessionId}`);
 				return false;
 			}
 			currentModel = modelInfo.currentModel;
-			currentProvider = modelInfo.modelInfo?.provider ?? 'anthropic';
+			currentProvider = modelInfo.provider ?? 'anthropic';
 		} catch (err) {
 			log.warn(`Error getting current model for session ${sessionId}:`, err);
 			return false;
 		}
 
-		// Find the index of the current model in the fallback chain
-		const currentIndex = fallbackModels.findIndex(
-			(f) => f.model === currentModel && f.provider === currentProvider
-		);
+		// Resolve fallback chain: model-specific map takes priority over default list
+		const modelKey = `${currentProvider}/${currentModel}`;
+		const fallbackModels =
+			(settings.modelFallbackMap && settings.modelFallbackMap[modelKey]) ??
+			settings.fallbackModels ??
+			[];
 
-		// Determine the next fallback model
+		if (fallbackModels.length === 0) {
+			return false;
+		}
+
+		// When using a model-specific mapping, always start from index 0 (the whole list
+		// is already the tailored chain for this model). When using the default list,
+		// advance past the current model's position so we don't re-try it.
+		const usingModelMap = Boolean(settings.modelFallbackMap && settings.modelFallbackMap[modelKey]);
+		const currentIndex = usingModelMap
+			? -1
+			: fallbackModels.findIndex((f) => f.model === currentModel && f.provider === currentProvider);
+
+		// Determine the starting index for the search
+		const startIndex = currentIndex === -1 ? 0 : currentIndex + 1;
+
+		// Loop through remaining fallbacks to find an available candidate
 		let fallback: FallbackModelEntry | undefined;
-		if (currentIndex === -1) {
-			// Current model is not in fallback chain, use the first fallback
-			fallback = fallbackModels[0];
-		} else {
-			// Try the next one in the chain
-			const nextIndex = currentIndex + 1;
-			if (nextIndex < fallbackModels.length) {
-				fallback = fallbackModels[nextIndex];
+		for (let i = startIndex; i < fallbackModels.length; i++) {
+			const candidate = fallbackModels[i];
+
+			// Skip if same as current model
+			if (candidate.model === currentModel && candidate.provider === currentProvider) {
+				continue;
 			}
-			// If current is the last in chain and there's only one fallback, no point switching
-			// to itself, so don't fall back
+
+			// Check provider availability if a callback is configured
+			if (this.isProviderAvailable) {
+				try {
+					const available = await this.isProviderAvailable(candidate.provider, candidate.model);
+					if (!available) {
+						log.warn(
+							`Skipping fallback ${candidate.provider}/${candidate.model} — provider unavailable`
+						);
+						continue;
+					}
+				} catch (err) {
+					log.warn(
+						`Provider availability check failed for ${candidate.provider}/${candidate.model}: ${String(err)}`
+					);
+					continue;
+				}
+			}
+
+			fallback = candidate;
+			break;
 		}
 
 		if (!fallback) {
@@ -386,17 +425,12 @@ export class RoomRuntime {
 			return false;
 		}
 
-		// Don't switch to the same model
-		if (fallback.model === currentModel && fallback.provider === currentProvider) {
-			return false;
-		}
-
 		try {
-			const result = (await this.messageHub?.request('session.model.switch', {
+			const result = await this.sessionFactory.switchModel(
 				sessionId,
-				model: fallback.model,
-				provider: fallback.provider,
-			})) as ModelSwitchResult | undefined;
+				fallback.model,
+				fallback.provider
+			);
 
 			if (result?.success) {
 				log.info(
@@ -710,6 +744,12 @@ export class RoomRuntime {
 						resetsAt: backoff.resetsAt,
 						sessionRole: 'worker',
 					});
+					await this.persistTaskRestriction(
+						group.taskId,
+						backoff,
+						'rate_limit',
+						`API rate limit (HTTP 429)`
+					);
 					this.scheduleTickAfterRateLimitReset(groupId);
 					// Try to switch to a fallback model if configured
 					await this.trySwitchToFallbackModel(groupId, group.workerSessionId, 'worker');
@@ -719,38 +759,59 @@ export class RoomRuntime {
 				// Fall through to the worktree check so the worker can attempt cleanup/retry.
 			}
 			if (errorClass?.class === 'usage_limit') {
-				// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
-				// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
-				log.info(
-					`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
-				);
-				const switched = await this.trySwitchToFallbackModel(
-					groupId,
-					group.workerSessionId,
-					'worker'
-				);
-				if (!switched) {
-					// No fallback available — fall through to rate_limit behavior (backoff + pause)
-					// Parse reset time from the usage limit message, or use 1-minute default
-					const rateLimitBackoff = errorClass.resetsAt
-						? createRateLimitBackoff(workerOutputText, 'worker')
-						: null;
-					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
-						detectedAt: Date.now(),
-						resetsAt: Date.now() + 60 * 1000,
-						sessionRole: 'worker',
-					};
-					this.groupRepo.setRateLimit(groupId, backoff);
-					this.appendGroupEvent(groupId, 'rate_limited', {
-						text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
-						resetsAt: backoff.resetsAt,
-						sessionRole: 'worker',
-					});
-					this.scheduleTickAfterRateLimitReset(groupId);
+				// Only attempt fallback / backoff on first detection (group.rateLimit is null).
+				// After the initial backoff expires, recoverStuckWorkers re-triggers this handler
+				// with the same old "You've hit your limit" text still in the worker output.
+				// Skipping re-detection here lets the worker fall through to the worktree check
+				// and attempt cleanup/retry instead of re-applying a stale backoff indefinitely.
+				// (group.rateLimit is intentionally NOT cleared by the timer — it acts as a
+				// sentinel so that re-triggers caused by recoverStuckWorkers never loop.)
+				if (!group.rateLimit) {
+					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+					// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
+					log.info(
+						`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
+					);
+					const switched = await this.trySwitchToFallbackModel(
+						groupId,
+						group.workerSessionId,
+						'worker'
+					);
+					if (!switched) {
+						// No fallback available — fall through to rate_limit behavior (backoff + pause)
+						// Parse reset time from the usage limit message, or use 1-minute default
+						const rateLimitBackoff = errorClass.resetsAt
+							? createRateLimitBackoff(workerOutputText, 'worker')
+							: null;
+						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+							detectedAt: Date.now(),
+							resetsAt: Date.now() + 60 * 1000,
+							sessionRole: 'worker',
+						};
+						this.groupRepo.setRateLimit(groupId, backoff);
+						this.appendGroupEvent(groupId, 'rate_limited', {
+							text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+							resetsAt: backoff.resetsAt,
+							sessionRole: 'worker',
+						});
+						await this.persistTaskRestriction(
+							group.taskId,
+							backoff,
+							'usage_limit',
+							`Daily/weekly usage cap`
+						);
+						this.scheduleTickAfterRateLimitReset(groupId);
+						return;
+					}
+					// Fallback switch succeeded: clear stale restriction/rate-limit so the UI shows the
+					// task as in_progress with the new model, then return. When the new query finishes,
+					// onWorkerTerminalState fires again with clean output and routes normally.
+					await this.clearTaskRestriction(group.taskId);
+					this.groupRepo.clearRateLimit(groupId);
 					return;
 				}
-				// Fall through to normal routing — fallback model switch event was already appended
-				// in trySwitchToFallbackModel so the UI shows the switch clearly.
+				// group.rateLimit already set (even if expired): re-trigger after expiry.
+				// Fall through to the worktree check so the worker can attempt cleanup/retry.
 			}
 		}
 
@@ -1042,12 +1103,9 @@ export class RoomRuntime {
 					return;
 				}
 				// Only apply backoff on first detection.
-				// Unlike the worker path (where recoverStuckWorkers re-triggers onWorkerTerminalState
-				// after expiry), there is no recoverStuckLeaders mechanism that re-calls this handler.
-				// The !group.rateLimit guard is a defensive check: it prevents the backoff from being
-				// reset if this handler is somehow called again while a rate limit is already recorded.
-				// A full leader retry after 429 would require re-injecting the worker message into the
-				// leader session — tracked as a future improvement (out of scope for this fix).
+				// recoverStuckLeaders re-injects the worker message into the leader session after
+				// expiry, which causes onLeaderTerminalState to fire again. The !group.rateLimit guard
+				// prevents the backoff from being reset on those re-triggers.
 				if (errorClass?.class === 'rate_limit' && !group.rateLimit) {
 					const rateLimitBackoff = errorClass.resetsAt
 						? createRateLimitBackoff(leaderOutputText, 'leader')
@@ -1066,42 +1124,68 @@ export class RoomRuntime {
 						resetsAt: backoff.resetsAt,
 						sessionRole: 'leader',
 					});
+					await this.persistTaskRestriction(
+						group.taskId,
+						backoff,
+						'rate_limit',
+						`API rate limit (HTTP 429) in leader`
+					);
 					this.scheduleTickAfterRateLimitReset(groupId);
 					// Try to switch to a fallback model if configured
 					await this.trySwitchToFallbackModel(groupId, group.leaderSessionId, 'leader');
 					return;
 				}
 				if (errorClass?.class === 'usage_limit') {
-					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
-					// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
-					log.info(
-						`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
-					);
-					const switched = await this.trySwitchToFallbackModel(
-						groupId,
-						group.leaderSessionId,
-						'leader'
-					);
-					if (!switched) {
-						// No fallback available — fall through to rate_limit behavior (backoff + pause)
-						const rateLimitBackoff = errorClass.resetsAt
-							? createRateLimitBackoff(leaderOutputText, 'leader')
-							: null;
-						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
-							detectedAt: Date.now(),
-							resetsAt: Date.now() + 60 * 1000,
-							sessionRole: 'leader',
-						};
-						this.groupRepo.setRateLimit(groupId, backoff);
-						this.appendGroupEvent(groupId, 'rate_limited', {
-							text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
-							resetsAt: backoff.resetsAt,
-							sessionRole: 'leader',
-						});
-						this.scheduleTickAfterRateLimitReset(groupId);
+					// Only act on first detection. If group.rateLimit is already set (even if expired),
+					// the limit was already handled — skip re-detection and fall through to normal
+					// completion. This prevents an infinite loop when recoverStuckLeaders re-triggers
+					// onLeaderTerminalState after the limit has reset but the old output still contains
+					// the usage-limit text.
+					if (!group.rateLimit) {
+						// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+						// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
+						log.info(
+							`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
+						);
+						const switched = await this.trySwitchToFallbackModel(
+							groupId,
+							group.leaderSessionId,
+							'leader'
+						);
+						if (!switched) {
+							// No fallback available — fall through to rate_limit behavior (backoff + pause)
+							const rateLimitBackoff = errorClass.resetsAt
+								? createRateLimitBackoff(leaderOutputText, 'leader')
+								: null;
+							const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+								detectedAt: Date.now(),
+								resetsAt: Date.now() + 60 * 1000,
+								sessionRole: 'leader',
+							};
+							this.groupRepo.setRateLimit(groupId, backoff);
+							this.appendGroupEvent(groupId, 'rate_limited', {
+								text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+								resetsAt: backoff.resetsAt,
+								sessionRole: 'leader',
+							});
+							await this.persistTaskRestriction(
+								group.taskId,
+								backoff,
+								'usage_limit',
+								`Daily/weekly usage cap in leader`
+							);
+							this.scheduleTickAfterRateLimitReset(groupId);
+							return;
+						}
+						// Fallback switch succeeded — clear stale restriction/rate-limit so the task
+						// shows the correct status, then return. The observer will fire again when the
+						// new-model query finishes, delivering clean output (no stale error text).
+						this.groupRepo.clearRateLimit(groupId);
+						await this.clearTaskRestriction(group.taskId);
 						return;
 					}
-					// Fall through to normal completion — fallback model switch event was already appended
+					// group.rateLimit already set (even if expired): re-trigger after expiry.
+					// Fall through to normal completion so the leader can finish cleanly.
 				}
 			}
 		}
@@ -1123,7 +1207,7 @@ export class RoomRuntime {
 		toolName: string,
 		params: {
 			message?: string;
-			mode?: 'steer' | 'queue';
+			mode?: 'immediate' | 'defer';
 			summary?: string;
 			reason?: string;
 			pr_url?: string;
@@ -1170,14 +1254,15 @@ export class RoomRuntime {
 					});
 				}
 				const message = params.message ?? '';
-				const mode = params.mode ?? 'queue';
-				const deliveryMode = mode === 'queue' ? 'next_turn' : 'current_turn';
+				const mode = params.mode ?? 'defer';
+				const deliveryMode = mode === 'defer' ? 'defer' : 'immediate';
 				// feedbackIteration is already 1-based (incremented in routeWorkerToLeader)
 				const currentIteration = group.feedbackIteration;
 				const feedback = formatLeaderToWorkerFeedback(message, currentIteration);
 
 				// Clear any rate limit backoff since we're starting a new iteration
 				this.groupRepo.clearRateLimit(groupId);
+				await this.clearTaskRestriction(group.taskId);
 
 				// Insert status event into group timeline
 				this.appendGroupEvent(groupId, 'status', {
@@ -1488,7 +1573,7 @@ export class RoomRuntime {
 			sendToWorker: async (
 				_groupId: string,
 				message: string,
-				mode?: 'steer' | 'queue',
+				mode?: 'immediate' | 'defer',
 				progressSummary?: string
 			) => {
 				return this.handleLeaderTool(groupId, 'send_to_worker', {
@@ -1620,7 +1705,7 @@ export class RoomRuntime {
 	 * - Clears the group's completedAt so it becomes active again
 	 * - Restores agent sessions (they were stopped when the task failed)
 	 * - Re-registers terminal-state observers so the runtime hears when agents finish
-	 * - Injects the human message (leader first, worker as fallback)
+	 * - Injects the human message (respects target preference)
 	 *
 	 * On failure, undoes the group revive (re-sets completedAt) so the group is not
 	 * left in an orphaned active state without a running agent. The caller is
@@ -1628,8 +1713,15 @@ export class RoomRuntime {
 	 *
 	 * Returns true on success, false if the group cannot be found or sessions
 	 * cannot be restored / injected.
+	 *
+	 * @param target - Which agent should receive the message ('worker' or 'leader').
+	 *                 Defaults to 'leader' for backward compatibility.
 	 */
-	async reviveTaskForMessage(taskId: string, message: string): Promise<boolean> {
+	async reviveTaskForMessage(
+		taskId: string,
+		message: string,
+		target: 'worker' | 'leader' = 'leader'
+	): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group) return false;
 
@@ -1678,25 +1770,49 @@ export class RoomRuntime {
 			await this.restoreMcpServersForGroup(group);
 		}
 
-		// Inject into leader first (preferred — leader orchestrates the workflow).
-		// Fall back to worker if leader is unavailable.
+		// Inject the message respecting the target preference.
+		// When target is 'worker': try worker first, fall back to leader if unavailable.
+		// When target is 'leader': try leader first (leader orchestrates the workflow),
+		// fall back to worker if leader is unavailable.
 		let injected = false;
-		if (leaderAvailable) {
-			try {
-				// Set leaderHasWork before injecting so the terminal event is not dropped.
-				this.groupRepo.setLeaderHasWork(group.id);
-				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
-				injected = true;
-			} catch (error) {
-				log.warn(`reviveTaskForMessage: leader inject failed for ${taskId}:`, error);
+		if (target === 'worker') {
+			// Prefer worker when human explicitly chose worker
+			if (workerAvailable) {
+				try {
+					await this.sessionFactory.injectMessage(group.workerSessionId, message);
+					injected = true;
+				} catch (error) {
+					log.warn(`reviveTaskForMessage: worker inject failed for ${taskId}:`, error);
+				}
 			}
-		}
-		if (!injected && workerAvailable) {
-			try {
-				await this.sessionFactory.injectMessage(group.workerSessionId, message);
-				injected = true;
-			} catch (error) {
-				log.warn(`reviveTaskForMessage: worker inject failed for ${taskId}:`, error);
+			if (!injected && leaderAvailable) {
+				try {
+					this.groupRepo.setLeaderHasWork(group.id);
+					await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+					injected = true;
+				} catch (error) {
+					log.warn(`reviveTaskForMessage: leader inject failed for ${taskId}:`, error);
+				}
+			}
+		} else {
+			// Prefer leader (default behavior for backward compatibility)
+			if (leaderAvailable) {
+				try {
+					// Set leaderHasWork before injecting so the terminal event is not dropped.
+					this.groupRepo.setLeaderHasWork(group.id);
+					await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+					injected = true;
+				} catch (error) {
+					log.warn(`reviveTaskForMessage: leader inject failed for ${taskId}:`, error);
+				}
+			}
+			if (!injected && workerAvailable) {
+				try {
+					await this.sessionFactory.injectMessage(group.workerSessionId, message);
+					injected = true;
+				} catch (error) {
+					log.warn(`reviveTaskForMessage: worker inject failed for ${taskId}:`, error);
+				}
 			}
 		}
 
@@ -1746,6 +1862,48 @@ export class RoomRuntime {
 			group.id,
 			isActiveGroup ? 'Task group terminated by user status change.' : undefined
 		);
+		return true;
+	}
+
+	/**
+	 * Clear the rate limit backoff for the group associated with a task.
+	 *
+	 * Called when a user manually transitions a task from `usage_limited`/`rate_limited`
+	 * back to `in_progress` so that stale rate-limit state doesn't block the next worker
+	 * iteration from forwarding its output to the leader.
+	 *
+	 * Returns `true` if an active group was found and cleared, `false` otherwise.
+	 */
+	async clearGroupRateLimit(taskId: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group || group.completedAt !== null) return false;
+
+		// clearRateLimit does not increment the group version (raw metadata update),
+		// so group.version remains valid for the updateLastForwardedMessageId call below.
+		this.groupRepo.clearRateLimit(group.id);
+		await this.clearTaskRestriction(taskId);
+
+		// Advance lastForwardedMessageId past any stale error messages so that the
+		// next onWorkerTerminalState call does not re-detect them via classifyError.
+		// Without this, clearing group.rateLimit resets the !group.rateLimit guard,
+		// causing the re-detection to re-apply the backoff on the very next tick.
+		if (this.getWorkerMessages) {
+			const staleMessages = this.getWorkerMessages(
+				group.workerSessionId,
+				group.lastForwardedMessageId
+			);
+			const lastStaleMessage = staleMessages.at(-1);
+			if (lastStaleMessage) {
+				this.groupRepo.updateLastForwardedMessageId(group.id, lastStaleMessage.id, group.version);
+				log.info(
+					`Cleared rate limit for group ${group.id} (task ${taskId}): ` +
+						`advanced lastForwardedMessageId to ${lastStaleMessage.id} (skipped ${staleMessages.length} stale message(s))`
+				);
+				return true;
+			}
+		}
+
+		log.info(`Cleared rate limit for group ${group.id} (task ${taskId})`);
 		return true;
 	}
 
@@ -2141,6 +2299,17 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Re-attach runtime-only message mirroring for a resumed group.
+	 *
+	 * TaskView now reads canonical persisted rows (sdk_messages + task_group_events),
+	 * but mirroring is still kept for legacy projection rows and compatibility paths.
+	 */
+	restoreRecoveredGroupMirroring(group: SessionGroup): void {
+		this.cleanupMirroring(group.id);
+		this.setupMirroring(group);
+	}
+
 	// =========================================================================
 	// Message Mirroring
 	// =========================================================================
@@ -2148,19 +2317,21 @@ export class RoomRuntime {
 	/**
 	 * Set up live message monitoring for a group's worker/leader sessions.
 	 *
-	 * Subscribes to DaemonHub sdk.message events, persists each enriched message
-	 * to session_group_messages (for LiveQuery). Does NOT broadcast
-	 * state.groupMessages.delta — message delivery to the frontend is handled
-	 * by the LiveQuery subscription (sessionGroupMessages.byGroup).
+	 * Subscribes to DaemonHub sdk.message events for runtime-only side effects
+	 * (rate-limit detection, fallback notices, dead-loop heuristics).
+	 * Canonical TaskView timeline data is read directly from sdk_messages +
+	 * task_group_events.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
 
 		const mirroredUuids = new Set<string>();
+		// Tracks (groupId:sessionId) keys for which a fallback switch has already been attempted
+		// (either succeeded or failed). Prevents duplicate trySwitchToFallbackModel calls when
+		// multiple mirroring callbacks fire for the same usage_limit message.
+		const fallbackAttempted = new Set<string>();
 
 		const mirrorSession = (sessionId: string, role: string) => {
-			const shortSessionId = sessionId.slice(0, 8);
-
 			return this.daemonHub!.on(
 				'sdk.message',
 				(event) => {
@@ -2169,54 +2340,120 @@ export class RoomRuntime {
 					if (uuid && mirroredUuids.has(uuid)) return;
 					if (uuid) mirroredUuids.add(uuid);
 
+					// Skip tool results — they contain arbitrary file content that can match error
+					// patterns (e.g. test fixtures like "You've hit your limit · resets 11pm") but
+					// are not actual errors from the model
+					if (isSDKUserMessage(event.message)) return;
+
 					// Check for rate limit errors in real-time for both Worker and Leader sessions
 					const messageContent = JSON.stringify(event.message);
 					const msgErrorClass = classifyError(messageContent);
 					if (msgErrorClass?.class === 'rate_limit') {
+						// Use immutable group.id / group.taskId from closure; read fresh state for mutable fields
+						const freshGroup = this.groupRepo.getGroup(group.id);
+						if (!freshGroup) return;
 						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
 						const rateLimitBackoff = createRateLimitBackoff(messageContent, sessionRole);
 						if (rateLimitBackoff) {
-							this.groupRepo.setRateLimit(group.id, rateLimitBackoff);
+							this.groupRepo.setRateLimit(freshGroup.id, rateLimitBackoff);
 							log.info(
-								`Rate limit detected in ${role} message for group ${group.id}. ` +
+								`Rate limit detected in ${role} message for group ${freshGroup.id}. ` +
 									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 							);
-							this.appendGroupEvent(group.id, 'rate_limited', {
+							this.appendGroupEvent(freshGroup.id, 'rate_limited', {
 								text: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
 								resetsAt: rateLimitBackoff.resetsAt,
 								sessionRole,
 							});
+							this.persistTaskRestriction(
+								freshGroup.taskId,
+								rateLimitBackoff,
+								'rate_limit',
+								`API rate limit (HTTP 429) in ${role}`
+							).catch((err: unknown) => {
+								log.error(
+									`Failed to persist rate limit restriction for task ${freshGroup.taskId}: ${String(err)}`
+								);
+							});
 						}
+					} else if (msgErrorClass?.class === 'usage_limit') {
+						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
+						const fallbackKey = `${group.id}:${sessionId}`;
+
+						// Re-detection guard: if backoff already set, a prior handler is managing this
+						const freshGroup = this.groupRepo.getGroup(group.id);
+						if (!freshGroup) return;
+						if (freshGroup.rateLimit !== null) return;
+
+						// Duplicate fallback guard: added synchronously BEFORE the async call so
+						// that two distinct messages arriving before the first .then() resolves
+						// cannot both pass the guard and trigger duplicate trySwitchToFallbackModel
+						// calls.
+						if (fallbackAttempted.has(fallbackKey)) return;
+						fallbackAttempted.add(fallbackKey);
+
+						log.info(
+							`Usage limit detected in ${role} message for group ${group.id} (real-time). ` +
+								`Attempting fallback model switch for ${sessionRole} session ${sessionId}.`
+						);
+
+						this.trySwitchToFallbackModel(group.id, sessionId, sessionRole)
+							.then((switched) => {
+								if (switched) {
+									log.info(
+										`Fallback model switch succeeded for ${sessionRole} session ${sessionId} ` +
+											`in group ${group.id} (mirroring).`
+									);
+									// Clear any stale task restriction so the UI reflects the new model
+									this.clearTaskRestriction(freshGroup.taskId).catch((err: unknown) => {
+										log.error(
+											`Failed to clear task restriction for task ${freshGroup.taskId}: ${String(err)}`
+										);
+									});
+								} else {
+									// No fallback available — apply backoff and restrict the task
+									log.info(
+										`No fallback model available for ${sessionRole} session ${sessionId}. ` +
+											`Applying usage limit backoff for group ${freshGroup.id}.`
+									);
+									const rateLimitBackoff = msgErrorClass.resetsAt
+										? createRateLimitBackoff(messageContent, sessionRole)
+										: null;
+									const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+										detectedAt: Date.now(),
+										resetsAt: Date.now() + 60 * 1000,
+										sessionRole,
+									};
+									this.groupRepo.setRateLimit(freshGroup.id, backoff);
+									this.appendGroupEvent(freshGroup.id, 'rate_limited', {
+										text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+										resetsAt: backoff.resetsAt,
+										sessionRole,
+									});
+									this.persistTaskRestriction(
+										freshGroup.taskId,
+										backoff,
+										'usage_limit',
+										`Daily/weekly usage cap`
+									).catch((err: unknown) => {
+										log.error(
+											`Failed to persist usage limit restriction for task ${freshGroup.taskId}: ${String(err)}`
+										);
+									});
+									this.scheduleTickAfterRateLimitReset(freshGroup.id);
+								}
+							})
+							.catch((err: unknown) => {
+								// fallbackAttempted was already set synchronously above, so even
+								// unexpected throws won't leave the guard open for retry loops.
+								log.error(
+									`Error attempting fallback model switch for session ${sessionId}: ${String(err)}`
+								);
+							});
 					}
 
-					// Read current iteration from DB to stay accurate across feedback cycles
-					const currentGroup = this.groupRepo.getGroup(group.id);
-					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
-					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
-
-					// Persist to session_group_messages so LiveQuery subscribers receive the event.
-					const enrichedMessage = {
-						...event.message,
-						_taskMeta: {
-							authorRole: role,
-							authorSessionId: sessionId,
-							turnId,
-							iteration,
-						},
-					};
-					const sdkNow = Date.now();
-					const sdkMsgType =
-						'type' in event.message && typeof event.message.type === 'string'
-							? event.message.type
-							: 'assistant';
-					this.groupRepo.appendGroupMessage({
-						groupId: group.id,
-						sessionId,
-						role,
-						messageType: sdkMsgType,
-						content: JSON.stringify(enrichedMessage),
-						createdAt: sdkNow,
-					});
+					// Canonical timeline rows are persisted by the SDK/session layer into
+					// sdk_messages. No per-message projection write is needed here.
 				},
 				{ sessionId }
 			);
@@ -2229,6 +2466,7 @@ export class RoomRuntime {
 			unsubWorker();
 			unsubLeader();
 			mirroredUuids.clear();
+			fallbackAttempted.clear();
 		});
 	}
 
@@ -2246,43 +2484,6 @@ export class RoomRuntime {
 			kind,
 			payloadJson: payload ? JSON.stringify(payload) : undefined,
 		});
-		const now = Date.now();
-		// Map event kinds to message types for the frontend.
-		// 'leader_summary' is a special case (rendered as a distinct card).
-		// 'rate_limited' and 'model_fallback' get their own type so the frontend
-		// can render them as prominent notifications.
-		const messageType =
-			kind === 'leader_summary'
-				? 'leader_summary'
-				: kind === 'rate_limited'
-					? 'rate_limited'
-					: kind === 'model_fallback'
-						? 'model_fallback'
-						: 'status';
-
-		// Persist to session_group_messages so LiveQuery subscribers receive the event.
-		// For rich event types (rate_limited, model_fallback) store the full payload as
-		// JSON so the frontend can render extra fields (resetsAt, sessionRole, etc.).
-		// For simple status/leader_summary, store just the text.
-		const content =
-			messageType === 'rate_limited' || messageType === 'model_fallback'
-				? JSON.stringify({ ...payload, type: messageType })
-				: (payload?.text ?? kind);
-		try {
-			this.groupRepo.appendGroupMessage({
-				groupId,
-				sessionId: null,
-				role: 'system',
-				messageType,
-				content,
-				createdAt: now,
-			});
-		} catch (err) {
-			log.warn(
-				`appendGroupEvent: failed to persist group message for group ${groupId} (type=${messageType}, secondary write — ignored):`,
-				err
-			);
-		}
 	}
 
 	private cleanupMirroring(groupId: string, statusText?: string): void {
@@ -2320,12 +2521,15 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Main scheduling loop. Concurrency is managed by the job queue — at most one
+	 * Main scheduling loop. Concurrency is managed by the job defer — at most one
 	 * pending room.tick job exists per room, so concurrent calls are not expected
 	 * in production. In unit tests, callers drive ticks directly and sequentially.
 	 */
 	async tick(): Promise<void> {
 		if (this.state !== 'running') return;
+		// Run stale group cleanup at the tick level — not gated by any tick lock so it
+		// always fires even if the tick body is skipped due to a lock in the future.
+		await this.cleanStaleGroups();
 		await this.executeTick();
 	}
 
@@ -2599,6 +2803,19 @@ export class RoomRuntime {
 				text: `Worker found in ${workerState} state with routing not yet complete — re-triggering routing to Leader.`,
 			});
 
+			// When recovering after rate/usage limit expiry, clear the task restriction
+			// so the task status returns to in_progress.  Without this the task stays stuck
+			// in rate_limited/usage_limited even though the work has resumed.
+			// Note: groupRepo.clearRateLimit is intentionally NOT called here — the expired
+			// but non-null rateLimit acts as a re-detection sentinel so that the re-triggered
+			// onWorkerTerminalState does not re-classify the stale error and re-apply the backoff.
+			// The sentinel is only cleared when send_to_worker starts a genuinely new iteration.
+			if (hasExpiredRateLimit) {
+				void this.clearTaskRestriction(group.taskId).catch((err) => {
+					log.error(`[StuckWorker] Group ${group.id}: clearTaskRestriction threw:`, err);
+				});
+			}
+
 			// Mark as in-flight before firing, clear when done (success or error)
 			this.stuckWorkerRecoveryInFlight.add(group.id);
 			void this.onWorkerTerminalState(group.id, {
@@ -2611,6 +2828,101 @@ export class RoomRuntime {
 				.finally(() => {
 					this.stuckWorkerRecoveryInFlight.delete(group.id);
 				});
+		}
+	}
+
+	/**
+	 * Detect and recover leader sessions stuck after a rate/usage limit has expired.
+	 *
+	 * Pre-conditions for recovery:
+	 * - Leader session exists in the session factory
+	 * - Leader session is idle or interrupted (not actively processing)
+	 * - Group has an expired rate limit scoped to the leader role
+	 * - Group is NOT awaiting human review
+	 * - Group is NOT paused waiting for a question answer
+	 * - A recovery for this group is NOT already in-flight from a previous tick
+	 */
+	private recoverStuckLeaders(): void {
+		if (!this.sessionFactory.getProcessingState) return; // getProcessingState is optional
+
+		const now = Date.now();
+		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
+		for (const group of activeGroups) {
+			// Only recover when the leader has an expired rate limit scoped to the leader role
+			const hasExpiredLeaderRateLimit =
+				group.rateLimit !== null &&
+				now >= group.rateLimit.resetsAt &&
+				group.rateLimit.sessionRole === 'leader';
+
+			if (!hasExpiredLeaderRateLimit) continue;
+			// Skip groups awaiting human review
+			if (group.submittedForReview) continue;
+			// Skip groups paused waiting for a question answer
+			if (group.waitingForQuestion) continue;
+
+			// Leader must be in the session factory (not a zombie)
+			if (!this.sessionFactory.hasSession(group.leaderSessionId)) continue;
+
+			// Leader must be in a terminal state (idle or interrupted)
+			const leaderState = this.sessionFactory.getProcessingState(group.leaderSessionId);
+			if (leaderState !== 'idle' && leaderState !== 'interrupted') continue;
+
+			// Guard against duplicate in-flight recovery: if a previous tick already
+			// injected a message for this group and the leader hasn't started processing yet,
+			// skip it to avoid sending duplicate messages.
+			if (this.stuckLeaderRecoveryInFlight.has(group.id)) {
+				log.debug(`[StuckLeader] Group ${group.id}: recovery already in-flight, skipping`);
+				continue;
+			}
+
+			// Construct a continuation message summarising the last worker output.
+			// Note: in the normal case lastForwardedMessageId is already updated by
+			// routeWorkerToLeader (~line 933), so getWorkerMessages returns an empty array
+			// here. That is fine — the leader's conversation context already contains the
+			// full worker envelope; the generic message alone is sufficient to resume review.
+			let continuationMessage = `[Auto-recovery] Resuming leader review after rate limit expired (iteration ${group.feedbackIteration}).`;
+			if (this.getWorkerMessages) {
+				const workerMessages = this.getWorkerMessages(
+					group.workerSessionId,
+					group.lastForwardedMessageId
+				);
+				if (workerMessages.length > 0) {
+					const excerpt = workerMessages
+						.map((m) => m.text)
+						.join('\n')
+						.slice(0, 500);
+					continuationMessage += ` Last worker output:\n${excerpt}`;
+				}
+			}
+
+			log.warn(
+				`[StuckLeader] Group ${group.id}: leader is '${leaderState}' with expired rate limit. ` +
+					`Re-injecting worker message to resume review.`
+			);
+
+			// Clear the expired rate limit and any task restriction
+			this.groupRepo.clearRateLimit(group.id);
+			void this.clearTaskRestriction(group.taskId).catch((err) => {
+				log.error(`[StuckLeader] Group ${group.id}: clearTaskRestriction threw:`, err);
+			});
+
+			this.appendGroupEvent(group.id, 'status', {
+				text: 'Leader recovered from expired rate limit. Re-injecting worker message.',
+			});
+
+			// Mark as in-flight before firing, clear when injection completes
+			this.stuckLeaderRecoveryInFlight.add(group.id);
+			void this.sessionFactory
+				.injectMessage(group.leaderSessionId, continuationMessage)
+				.catch((err) => {
+					log.error(`[StuckLeader] Group ${group.id}: re-inject threw:`, err);
+				})
+				.finally(() => {
+					this.stuckLeaderRecoveryInFlight.delete(group.id);
+				});
+
+			// Schedule a follow-up tick to pick up the leader's fresh output
+			this.scheduleTick();
 		}
 	}
 
@@ -2664,10 +2976,69 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Clean zombie groups for a specific task before spawning a new group.
+	 * Called from spawnGroupForTask() to free the unique constraint slot for this task.
+	 *
+	 * Identifies active groups (completedAt IS NULL) whose both sessions are missing
+	 * from cache — these are fully abandoned and cannot progress. Terminates them so
+	 * the unique index slot is freed before createGroup() inserts the new row.
+	 *
+	 * Unlike cleanStaleGroups() which checks task terminal status, this checks session
+	 * liveness directly and terminates the group without changing task status.
+	 *
+	 * NOTE on ordering vs recoverZombieGroups():
+	 * recoverZombieGroups() runs inside executeTick() BEFORE the spawn loop, so in the
+	 * normal zombie case (task row still present), it will always handle the zombie
+	 * first (failing the group and moving the task to needs_attention). This method's
+	 * exclusive territory is zombie groups whose task row has been hard-deleted from
+	 * the tasks table: getActiveGroups() uses an INNER JOIN and misses those, but
+	 * getActiveGroupsForTask() (no JOIN) still finds them. This method terminates those
+	 * groups without changing task status so the new group can be inserted.
+	 */
+	private async cleanStaleGroupsForTask(task: NeoTask): Promise<void> {
+		const activeGroups = this.groupRepo.getActiveGroupsForTask(task.id);
+		for (const group of activeGroups) {
+			try {
+				const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
+				const leaderMissing = !this.sessionFactory.hasSession(group.leaderSessionId);
+				// Only terminate if both sessions are gone — a group with one live session
+				// may still be in progress or submitted for review.
+				if (!workerMissing || !leaderMissing) continue;
+
+				log.warn(
+					`[cleanStaleGroupsForTask] Group ${group.id} for task ${task.id} ` +
+						`has no live sessions — auto-cleaning before spawn`
+				);
+
+				// Stop any live sessions (best-effort — both are missing here but defensive).
+				await this.terminateGroupSessions(group);
+
+				// Mark group as terminal without failing the task.
+				// The task remains pending so spawnGroupForTask can create a fresh group.
+				if (group.completedAt === null) {
+					const result = await this.taskGroupManager.terminateGroup(group.id);
+					if (result === null) {
+						log.warn(
+							`[cleanStaleGroupsForTask] terminateGroup returned null for group ${group.id} ` +
+								`(version conflict) — slot may not be freed; spawn will hit UNIQUE constraint`
+						);
+					}
+				}
+
+				this.cleanupMirroring(group.id, 'Zombie group auto-cleaned before spawn.');
+			} catch (error) {
+				log.error(
+					`[cleanStaleGroupsForTask] Failed to clean zombie group ${group.id} for task ${task.id} — skipping:`,
+					error
+				);
+			}
+		}
+	}
+
 	private async executeTick(): Promise<void> {
-		// Safety net: clean up stale groups whose tasks have already reached a
-		// terminal state. This frees concurrency slots blocked by orphaned groups.
-		await this.cleanStaleGroups();
+		// Note: cleanStaleGroups() is called in tick() before executeTick(), so it runs
+		// independently of any future tick-body lock.
 
 		// Safety net: detect and recover zombie groups (sessions missing from cache).
 		// Ordering: zombie recovery runs BEFORE tickRecurringMissions so that any
@@ -2682,6 +3053,11 @@ export class RoomRuntime {
 		// This recovers cases where the observer callback fired but the routing failed silently.
 		// Note: synchronous scan, only fires async work as fire-and-forget if stuck workers are found.
 		this.recoverStuckWorkers();
+
+		// Safety net: detect leader sessions stuck after a rate/usage limit has expired.
+		// Re-injects the last worker message so the leader can resume reviewing.
+		// Note: synchronous scan, only fires async work as fire-and-forget if stuck leaders are found.
+		this.recoverStuckLeaders();
 
 		// Recurring mission scheduler: check for due missions and trigger new executions.
 		// Also checks for completed executions to advance next_run_at.
@@ -2711,7 +3087,7 @@ export class RoomRuntime {
 			return; // Don't start execution groups in the same tick
 		}
 
-		// Find pending non-planning tasks (planning tasks are spawned directly, not via queue)
+		// Find pending non-planning tasks (planning tasks are spawned directly, not via defer)
 		const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
 		const planningTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') === 'planning');
 		if (planningTasks.length > 0) {
@@ -2729,7 +3105,7 @@ export class RoomRuntime {
 		// Uses allActiveGroups (including submitted-for-review) to prevent spawning
 		// a duplicate group while another is awaiting human review.
 		// This prevents duplicate group spawning when concurrent ticks race
-		// (the job queue processor runs up to maxConcurrent jobs in parallel,
+		// (the job defer processor runs up to maxConcurrent jobs in parallel,
 		// so two ticks can both see a task as 'pending' before either transitions
 		// it to 'in_progress').
 		const activeGroupTaskIds = new Set(allActiveGroups.map((g) => g.taskId));
@@ -2740,6 +3116,12 @@ export class RoomRuntime {
 			if (activeGroupTaskIds.has(task.id)) {
 				log.debug(
 					`[executeTick] Task ${task.id} ("${task.title}") skipped — active group already exists`
+				);
+				continue;
+			}
+			if (this.spawningTaskIds.has(task.id)) {
+				log.debug(
+					`[executeTick] Task ${task.id} ("${task.title}") skipped — spawn already in-flight`
 				);
 				continue;
 			}
@@ -2936,8 +3318,43 @@ export class RoomRuntime {
 			);
 			const previousResultSummary = prevCompleted?.resultSummary;
 
-			// Spawn planning group with executionId
-			await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+			// Plan reuse: For subsequent executions (executions 2+), skip planning and clone
+			// tasks from the previous successful execution. This avoids redundant planning
+			// for recurring missions where the same plan is executed repeatedly.
+			//
+			// First execution (executionNumber === 1) always goes through the planner to
+			// establish the initial plan.
+			if (execution.executionNumber > 1 && prevCompleted) {
+				try {
+					const clonedCount = await this.reuseExecutionPlan(
+						goal,
+						execution.id,
+						prevCompleted.taskIds
+					);
+					if (clonedCount > 0) {
+						log.info(
+							`Recurring mission ${goal.id}: execution ${execution.executionNumber} started with ${clonedCount} reused tasks`
+						);
+					} else {
+						// No tasks to clone (e.g., previous execution had no tasks) — fall back to planning
+						log.warn(
+							`Recurring mission ${goal.id}: no tasks to reuse from previous execution — falling back to planning`
+						);
+						await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+					}
+				} catch (err) {
+					// Plan reuse failed (e.g., DB error mid-clone) — fall back to planning
+					// so the execution isn't orphaned with no tasks and no group.
+					log.warn(
+						`Recurring mission ${goal.id}: plan reuse failed — falling back to planning`,
+						err
+					);
+					await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+				}
+			} else {
+				// First execution or no previous successful execution — spawn planning group
+				await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+			}
 		}
 	}
 
@@ -2990,8 +3407,16 @@ export class RoomRuntime {
 					(typeof linkedTasks)[number]
 				>[];
 				const hasActiveTask = validTasks.some((t) =>
-					(['pending', 'in_progress', 'draft', 'review'] as const).includes(
-						t.status as 'pending' | 'in_progress' | 'draft' | 'review'
+					(
+						['pending', 'in_progress', 'draft', 'review', 'rate_limited', 'usage_limited'] as const
+					).includes(
+						t.status as
+							| 'pending'
+							| 'in_progress'
+							| 'draft'
+							| 'review'
+							| 'rate_limited'
+							| 'usage_limited'
 					)
 				);
 				const executionTasks = validTasks.filter((t) => t.taskType !== 'planning');
@@ -3238,7 +3663,7 @@ export class RoomRuntime {
 		// Notify UI: planning task created
 		this.emitTaskUpdate(planningTask);
 
-		// Spawn the planning group directly (bypasses the tick queue)
+		// Spawn the planning group directly (bypasses the tick defer)
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
@@ -3290,17 +3715,132 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Reuse the plan from a previous execution by cloning its tasks.
+	 *
+	 * For subsequent executions of a recurring mission, instead of going through
+	 * the planner again, we clone the tasks from the previous successful execution.
+	 * This avoids redundant planning for recurring work.
+	 *
+	 * Clone behavior:
+	 * - New tasks are created with status='pending' (not 'draft' since they're pre-approved)
+	 * - taskType, assignedAgent, priority are preserved from the original
+	 * - Planning tasks are excluded (only execution tasks are cloned)
+	 * - Dependencies are remapped from old task IDs to new task IDs
+	 *
+	 * Returns the number of tasks cloned.
+	 */
+	private async reuseExecutionPlan(
+		goal: RoomGoal,
+		newExecutionId: string,
+		prevExecutionTaskIds: string[]
+	): Promise<number> {
+		if (prevExecutionTaskIds.length === 0) {
+			log.debug(`[reuseExecutionPlan] No tasks to clone for goal ${goal.id}`);
+			return 0;
+		}
+
+		// Get full task details for all previous tasks
+		const prevTasks = await Promise.all(
+			prevExecutionTaskIds.map((id) => this.taskManager.getTask(id))
+		);
+		const validPrevTasks = prevTasks.filter(Boolean) as NeoTask[];
+
+		// Filter out planning tasks — we only reuse execution tasks
+		const executionTasks = validPrevTasks.filter((t) => t.taskType !== 'planning');
+
+		if (executionTasks.length === 0) {
+			log.debug(`[reuseExecutionPlan] No execution tasks to clone for goal ${goal.id}`);
+			return 0;
+		}
+
+		// Create a mapping from old task ID to new task ID for dependency remapping
+		const oldToNewIdMap = new Map<string, string>();
+
+		// First pass: create all new tasks without dependencies (avoids forward-reference issues)
+		for (const prevTask of executionTasks) {
+			const newTask = await this.taskManager.createTask({
+				title: prevTask.title,
+				description: prevTask.description,
+				priority: prevTask.priority,
+				taskType: prevTask.taskType,
+				assignedAgent: prevTask.assignedAgent,
+				status: 'pending',
+				// Note: dependsOn is set in second pass after all tasks exist
+			});
+			oldToNewIdMap.set(prevTask.id, newTask.id);
+
+			// Link the new task to the new execution
+			await this.goalManager.linkTaskToExecution(goal.id, newExecutionId, newTask.id);
+			log.debug(`[reuseExecutionPlan] Cloned task: "${prevTask.title}" → "${newTask.title}"`);
+		}
+
+		// Second pass: update dependsOn to use new task IDs
+		for (const prevTask of executionTasks) {
+			if (prevTask.dependsOn && prevTask.dependsOn.length > 0) {
+				const droppedDeps = prevTask.dependsOn.filter((depId) => !oldToNewIdMap.has(depId));
+				if (droppedDeps.length > 0) {
+					log.warn(
+						`[reuseExecutionPlan] Dropped unresolvable dependencies for cloned task "${prevTask.title}": ${droppedDeps.join(', ')}`
+					);
+				}
+
+				const newDependsOn = prevTask.dependsOn
+					.map((depId) => oldToNewIdMap.get(depId))
+					.filter(Boolean) as string[];
+
+				if (newDependsOn.length > 0) {
+					const newTaskId = oldToNewIdMap.get(prevTask.id);
+					if (newTaskId) {
+						await this.taskManager.updateTaskStatus(newTaskId, 'pending', {
+							dependsOn: newDependsOn,
+						});
+					}
+				}
+			}
+		}
+
+		log.info(
+			`[reuseExecutionPlan] Cloned ${executionTasks.length} tasks for goal ${goal.id} (execution ${newExecutionId})`
+		);
+		return executionTasks.length;
+	}
+
+	/**
 	 * Spawn an execution (Coder/General, Leader) group for a task.
 	 * Reads task.assignedAgent to pick the appropriate worker factory.
 	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
+		// Guard: skip immediately if this task's spawn is already in-flight from a prior tick.
+		// This prevents redundant spawn attempts during the async window between a tick firing
+		// and the group DB record being created (task is still 'pending' during that window).
+		if (this.spawningTaskIds.has(task.id)) {
+			log.debug(
+				`[spawnGroupForTask] Task ${task.id} ("${task.title}") — spawn already in-flight, skipping`
+			);
+			return;
+		}
+		this.spawningTaskIds.add(task.id);
+		try {
+			await this._spawnGroupForTaskInner(task);
+		} finally {
+			this.spawningTaskIds.delete(task.id);
+		}
+	}
+
+	private async _spawnGroupForTaskInner(task: NeoTask): Promise<void> {
+		// Clean zombie groups for this task before the active-group dedup check.
+		// Handles the case where a previous crashed session left an active group with
+		// missing sessions. Without this, getActiveGroupsForTask() would detect the
+		// zombie and return early, keeping the task stuck indefinitely.
+		await this.cleanStaleGroupsForTask(task);
+
 		// Defense-in-depth: verify no active group exists for this task right before spawning.
 		// Catches races that slip past the executeTick() filter (e.g., concurrent ticks).
 		// Check ALL active groups, not just the most recent — a stale older group with
 		// completedAt === null would be missed by getGroupByTaskId() which returns only the latest.
 		const allActiveGroups = this.groupRepo.getActiveGroupsForTask(task.id);
 		if (allActiveGroups.length > 0) {
-			log.warn(
+			log.debug(
 				`[spawnGroupForTask] Task ${task.id} ("${task.title}") already has ${allActiveGroups.length} active group(s) (${allActiveGroups.map((g) => g.id).join(', ')}) — skipping duplicate spawn`
 			);
 			return;
@@ -3332,12 +3872,28 @@ export class RoomRuntime {
 
 		// Determine worker config based on assigned agent type
 		const agentType = task.assignedAgent ?? 'coder';
-		const workerRole = agentType === 'general' ? 'general' : 'coder';
+		const workerRole =
+			agentType === 'general' ? 'general' : agentType === 'planner' ? 'planner' : 'coder';
 		const workerModel = this.resolveAgentModel(currentRoom, workerRole);
 		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
 		const workerProvider = this.resolveProviderForModel(workerModel);
 		const leaderProvider = this.resolveProviderForModel(leaderModel);
 		let workerConfig: WorkerConfig;
+
+		// Mutable ref for planner's isPlanApproved gate — set after spawn completes.
+		// Only used when agentType === 'planner'.
+		let spawnedGroupId: string | null = null;
+
+		// For recurring missions, get the active execution to link tasks and group to it.
+		// Declared at function scope so it's accessible after spawn for setExecutionId.
+		const activeExecution =
+			goal?.missionType === 'recurring' ? this.goalManager.getActiveExecution(goal.id) : null;
+		const isRecurringExecution = activeExecution != null;
+
+		// reviewContext determines the leader's review guidelines — planner gets plan_review, others get code_review.
+		const reviewContext = (
+			agentType === 'planner' ? 'plan_review' : 'code_review'
+		) as ReviewContext;
 
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
 		const leaderContextConfig = {
@@ -3349,7 +3905,8 @@ export class RoomRuntime {
 			groupId: '',
 			model: leaderModel,
 			provider: leaderProvider,
-			reviewContext: 'code_review' as const,
+			// Dynamically set so general/coder agents get 'code_review' and planner gets 'plan_review'.
+			reviewContext,
 		};
 
 		if (agentType === 'general') {
@@ -3368,6 +3925,84 @@ export class RoomRuntime {
 				initFactory: (workerSessionId) =>
 					createGeneralAgentInit({ ...generalConfig, sessionId: workerSessionId }),
 				taskMessage: buildGeneralTaskMessage(generalConfig),
+				leaderTaskContext: buildLeaderTaskContext(leaderContextConfig),
+			};
+		} else if (agentType === 'planner') {
+			// Planner agent: used for goal_review tasks. Mirrors spawnPlanningGroup() callback wiring.
+			// Planner tasks REQUIRE a linked goal — fail fast if none exists.
+			if (!goal) {
+				await this.taskManager.failTask(task.id, 'Planner tasks require a linked goal');
+				await this.emitTaskUpdateById(task.id);
+				return;
+			}
+
+			// workerModel/workerProvider are already the planner's model/provider
+			// (workerRole === 'planner' when agentType === 'planner').
+			// Build create_draft_task callback — mirrors spawnPlanningGroup pattern
+			const createDraftTask = async (
+				params: PlannerCreateTaskParams
+			): Promise<{ id: string; title: string }> => {
+				const draftTask = await this.taskManager.createTask({
+					title: params.title,
+					description: params.description,
+					priority: params.priority,
+					dependsOn: params.dependsOn,
+					taskType: 'coding',
+					status: 'draft',
+					createdByTaskId: task.id,
+					assignedAgent: params.agent,
+				});
+				// Link the draft task to the goal (or execution for recurring missions)
+				if (isRecurringExecution && activeExecution) {
+					await this.goalManager.linkTaskToExecution(goal.id, activeExecution.id, draftTask.id);
+				} else {
+					await this.goalManager.linkTaskToGoal(goal.id, draftTask.id);
+				}
+				log.info(`Planner created draft task: ${draftTask.id} (${draftTask.title})`);
+				return { id: draftTask.id, title: draftTask.title };
+			};
+
+			const updateDraftTask = async (
+				taskId: string,
+				updates: {
+					title?: string;
+					description?: string;
+					priority?: TaskPriority;
+					assignedAgent?: AgentType;
+				}
+			): Promise<{ id: string; title: string }> => {
+				return this.taskManager.updateDraftTask(taskId, updates);
+			};
+
+			const removeDraftTask = async (taskId: string): Promise<boolean> => {
+				return this.taskManager.removeDraftTask(taskId);
+			};
+
+			// isPlanApproved uses the function-scope spawnedGroupId ref — set after spawn() returns
+			const isPlanApproved = () => {
+				if (!spawnedGroupId) return false;
+				return this.groupRepo.getGroup(spawnedGroupId)?.approved ?? false;
+			};
+
+			const plannerConfig = {
+				task,
+				goal,
+				room: currentRoom,
+				sessionId: '', // placeholder — overwritten by initFactory
+				workspacePath: this.taskGroupManager.workspacePath,
+				model: workerModel,
+				provider: workerProvider,
+				createDraftTask,
+				updateDraftTask,
+				removeDraftTask,
+				isPlanApproved,
+			};
+
+			workerConfig = {
+				role: 'planner',
+				initFactory: (workerSessionId) =>
+					createPlannerAgentInit({ ...plannerConfig, sessionId: workerSessionId }),
+				taskMessage: buildPlannerTaskMessage(plannerConfig),
 				leaderTaskContext: buildLeaderTaskContext(leaderContextConfig),
 			};
 		} else {
@@ -3409,14 +4044,33 @@ export class RoomRuntime {
 				},
 				(groupId) => this.createLeaderCallbacks(groupId),
 				workerConfig,
-				'code_review'
+				reviewContext
 			);
+			// Wire up spawnedGroupId for planner's isPlanApproved gate
+			if (agentType === 'planner') {
+				spawnedGroupId = group.id;
+				// For recurring missions, link the group to the execution for correlation.
+				if (isRecurringExecution && activeExecution) {
+					this.groupRepo.setExecutionId(group.id, activeExecution.id);
+				}
+			}
 		} catch (err) {
-			// spawn() calls failTask() only for worktree-creation failures (line ~241).
-			// If session init throws after startTask(), the task stays in_progress.
-			// The zombie/stuck-worker recovery will detect and re-trigger routing on the
-			// next tick once the process stabilises.
-			log.error(`Failed to spawn group for task ${task.id}: ${err}`);
+			// UNIQUE constraint violation means a concurrent tick already spawned a group
+			// for this task. With the spawningTaskIds guard this should be rare, but the
+			// DB constraint remains as a final safety net — log at debug to reduce noise.
+			const errStr = String(err);
+			if (errStr.includes('UNIQUE constraint failed')) {
+				log.debug(
+					`[spawnGroupForTask] Task ${task.id} ("${task.title}"): UNIQUE constraint — ` +
+						`concurrent tick already spawned a group. Skipping.`
+				);
+			} else {
+				// spawn() calls failTask() only for worktree-creation failures (line ~241).
+				// If session init throws after startTask(), the task stays in_progress.
+				// The zombie/stuck-worker recovery will detect and re-trigger routing on the
+				// next tick once the process stabilises.
+				log.error(`Failed to spawn group for task ${task.id}: ${err}`);
+			}
 			await this.emitTaskUpdateById(task.id);
 			return;
 		}
@@ -3432,7 +4086,7 @@ export class RoomRuntime {
 
 	/**
 	 * If the completed task was a planning task, promote its draft children to pending
-	 * so they enter the execution queue on the next tick.
+	 * so they enter the execution defer on the next tick.
 	 */
 	private async promoteDraftTasksIfPlanning(taskId: string): Promise<void> {
 		const task = await this.taskManager.getTask(taskId);
@@ -3608,6 +4262,50 @@ export class RoomRuntime {
 		}
 
 		if (this.jobQueue) enqueueRoomTick(this.roomId, this.jobQueue, delayMs);
+	}
+
+	/**
+	 * Persist a rate or usage limit restriction to the task record and update its status.
+	 *
+	 * Called when a rate/usage limit is first detected for a group. Saves the restriction
+	 * data so the UI can display the reset time, and sets the task status to
+	 * 'rate_limited' or 'usage_limited' so it's clearly distinguishable from in_progress.
+	 */
+	private async persistTaskRestriction(
+		taskId: string,
+		backoff: RateLimitBackoff,
+		limitType: 'rate_limit' | 'usage_limit',
+		limitDescription: string
+	): Promise<void> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return;
+		// Only update from in_progress to avoid overwriting a terminal status.
+		if (task.status !== 'in_progress') return;
+
+		const newStatus = limitType === 'rate_limit' ? 'rate_limited' : ('usage_limited' as const);
+		const restriction: TaskRestriction = {
+			type: limitType,
+			limit: limitDescription,
+			resetAt: backoff.resetsAt,
+			sessionRole: backoff.sessionRole,
+		};
+		await this.taskManager.updateTaskStatus(taskId, newStatus, { restrictions: restriction });
+		await this.emitTaskUpdateById(taskId);
+	}
+
+	/**
+	 * Clear a task's restriction data and restore its status to in_progress.
+	 *
+	 * Called when a new worker iteration starts (send_to_worker / clearRateLimit path),
+	 * meaning the restriction has either expired or been superseded by a fallback model.
+	 */
+	private async clearTaskRestriction(taskId: string): Promise<void> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return;
+		if (task.status !== 'rate_limited' && task.status !== 'usage_limited') return;
+
+		await this.taskManager.updateTaskStatus(taskId, 'in_progress', { restrictions: null });
+		await this.emitTaskUpdateById(taskId);
 	}
 
 	/**

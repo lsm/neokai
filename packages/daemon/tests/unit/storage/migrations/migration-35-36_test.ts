@@ -78,9 +78,10 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 		expect(getColumnDefault(db, 'space_workflow_runs', 'iteration_count')).toBe('0');
 	});
 
-	test('fresh DB: max_iterations on runs has default value of 5', () => {
+	test('fresh DB: max_iterations on runs has default value of 10 (updated by migration 59)', () => {
+		// Migration 35 originally set default to 5; migration 59 rebuilt the table with default 10.
 		runMigrations(db, () => {});
-		expect(getColumnDefault(db, 'space_workflow_runs', 'max_iterations')).toBe('5');
+		expect(getColumnDefault(db, 'space_workflow_runs', 'max_iterations')).toBe('10');
 	});
 
 	test('fresh DB: new runs default to iteration_count=0 and max_iterations=5', () => {
@@ -101,7 +102,8 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 			.prepare(`SELECT iteration_count, max_iterations FROM space_workflow_runs WHERE id = 'run-1'`)
 			.get() as { iteration_count: number; max_iterations: number };
 		expect(row.iteration_count).toBe(0);
-		expect(row.max_iterations).toBe(5);
+		// Migration 59 rebuilt space_workflow_runs with default max_iterations=10.
+		expect(row.max_iterations).toBe(10);
 	});
 
 	test('idempotency: running migration twice does not error', () => {

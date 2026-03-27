@@ -15,6 +15,24 @@ import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/sh
 export { runMigrations } from './migrations';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations';
+// knip-ignore-next-line
+export { runMigration47 } from './migrations';
+// knip-ignore-next-line
+export { runMigration48 } from './migrations';
+// knip-ignore-next-line
+export { runMigration49 } from './migrations';
+// knip-ignore-next-line
+export { runMigration50 } from './migrations';
+// knip-ignore-next-line
+export { runMigration51 } from './migrations';
+// knip-ignore-next-line
+export { runMigration55 } from './migrations';
+// knip-ignore-next-line
+export { runMigration56 } from './migrations';
+// knip-ignore-next-line
+export { runMigration57 } from './migrations';
+// knip-ignore-next-line
+export { runMigration58 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -73,7 +91,7 @@ export function createTables(db: BunDatabase): void {
         message_subtype TEXT,
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
-        send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent', 'failed')),
+        send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
@@ -142,7 +160,7 @@ export function createTables(db: BunDatabase): void {
         room_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived', 'rate_limited', 'usage_limited')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -153,7 +171,7 @@ export function createTables(db: BunDatabase): void {
         started_at INTEGER,
         completed_at INTEGER,
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
-        assigned_agent TEXT DEFAULT 'coder',
+        assigned_agent TEXT DEFAULT 'coder' CHECK(assigned_agent IN ('coder', 'general', 'planner')),
         created_by_task_id TEXT,
         archived_at INTEGER,
         active_session TEXT,
@@ -162,6 +180,8 @@ export function createTables(db: BunDatabase): void {
         pr_created_at INTEGER,
         input_draft TEXT,
         updated_at INTEGER,
+        short_id TEXT,
+        restrictions TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -197,9 +217,29 @@ export function createTables(db: BunDatabase): void {
         max_planning_attempts INTEGER NOT NULL DEFAULT 0,
         consecutive_failures INTEGER NOT NULL DEFAULT 0,
         replan_count INTEGER NOT NULL DEFAULT 0,
+        short_id TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
+
+	// Short ID counters — per-(entity_type, scope_id) monotonic counter for short ID allocation
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS short_id_counters (
+        entity_type TEXT NOT NULL,
+        scope_id    TEXT NOT NULL,
+        counter     INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (entity_type, scope_id)
+      )
+    `);
+
+	// Partial unique indexes for short_id on tasks and goals — scoped to room so that
+	// different rooms can each have their own t-1, t-2, ... sequence without collision.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
+	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
+	);
 
 	// Mission metric history table
 	db.exec(`
@@ -303,18 +343,56 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// session_group_messages: append-only table for persisted group conversation
-	// messages (SDK + status entries). Replaces the legacy mirrored table dropped
-	// in migration 19. Populated by the LiveQuery message streaming path (Milestone 4).
 	db.exec(`
-      CREATE TABLE IF NOT EXISTS session_group_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-        session_id TEXT,
-        role TEXT NOT NULL DEFAULT 'system',
-        message_type TEXT NOT NULL DEFAULT 'status',
-        content TEXT NOT NULL DEFAULT '',
+      CREATE TABLE IF NOT EXISTS app_mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        source_type TEXT NOT NULL CHECK(source_type IN ('stdio', 'sse', 'http')),
+        command TEXT,
+        args TEXT,
+        env TEXT,
+        url TEXT,
+        headers TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    `);
+
+	// Per-room MCP enablement overrides
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_mcp_enablement (
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        server_id TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (room_id, server_id)
+      )
+    `);
+
+	// Application-level Skills registry
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS skills (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        config TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        built_in INTEGER NOT NULL DEFAULT 0,
+        validation_status TEXT NOT NULL DEFAULT 'pending',
         created_at INTEGER NOT NULL
+      )
+    `);
+
+	// Per-room skill enablement overrides
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_skill_overrides (
+        skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (skill_id, room_id)
       )
     `);
 
@@ -387,9 +465,6 @@ function createIndexes(db: BunDatabase): void {
 	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_sgm_group ON session_group_messages(group_id, created_at, id)`
-	);
 	// Job queue indexes
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`

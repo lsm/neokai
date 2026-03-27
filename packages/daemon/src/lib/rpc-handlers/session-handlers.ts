@@ -343,7 +343,7 @@ export function setupSessionHandlers(
 			sessionId: targetSessionId,
 			content,
 			images,
-			deliveryMode = 'current_turn',
+			deliveryMode = 'immediate',
 		} = data as {
 			sessionId: string;
 			content: string;
@@ -351,7 +351,7 @@ export function setupSessionHandlers(
 			deliveryMode?: MessageDeliveryMode;
 		};
 
-		if (deliveryMode !== 'current_turn' && deliveryMode !== 'next_turn') {
+		if (deliveryMode !== 'immediate' && deliveryMode !== 'defer') {
 			throw new Error('Invalid deliveryMode');
 		}
 
@@ -794,8 +794,8 @@ export function setupSessionHandlers(
 		}
 	});
 
-	// Handle triggering saved messages to be sent (Manual query mode)
-	// Use case: When user wants to manually send all saved messages in Manual mode
+	// Handle triggering deferred messages to be sent (manual mode)
+	// Use case: When user wants to manually send all deferred messages
 	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession handles the actual sending
 	messageHub.onRequest('session.query.trigger', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
@@ -818,7 +818,7 @@ export function setupSessionHandlers(
 	messageHub.onRequest('session.messages.countByStatus', async (data) => {
 		const { sessionId: targetSessionId, status } = data as {
 			sessionId: string;
-			status: 'saved' | 'queued' | 'sent';
+			status: 'deferred' | 'enqueued' | 'consumed';
 		};
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -844,11 +844,11 @@ export function setupSessionHandlers(
 			limit = 20,
 		} = data as {
 			sessionId: string;
-			status: 'saved' | 'queued' | 'sent';
+			status: 'deferred' | 'enqueued' | 'consumed';
 			limit?: number;
 		};
 
-		if (!['saved', 'queued', 'sent'].includes(status)) {
+		if (!['deferred', 'enqueued', 'consumed'].includes(status)) {
 			throw new Error('Invalid status');
 		}
 

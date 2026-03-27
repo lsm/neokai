@@ -33,6 +33,17 @@ const CUSTOM_AGENT_FEATURES: SessionFeatures = {
 // Config
 // ============================================================================
 
+/**
+ * Per-slot overrides from a `WorkflowNodeAgent` entry.
+ * Applied on top of the base `SpaceAgent` config when spawning a specific slot.
+ */
+export interface SlotOverrides {
+	/** Override the agent's default model for this slot */
+	model?: string;
+	/** Override the agent's default system prompt for this slot */
+	systemPrompt?: string;
+}
+
 export interface CustomAgentConfig {
 	/** The custom Space agent definition */
 	customAgent: SpaceAgent;
@@ -53,6 +64,12 @@ export interface CustomAgentConfig {
 	workspacePath: string;
 	/** Summaries of previously completed tasks for context */
 	previousTaskSummaries?: string[];
+	/**
+	 * Optional per-slot overrides from the `WorkflowNodeAgent` entry.
+	 * When provided, `model` replaces the agent's default model and `systemPrompt`
+	 * replaces the agent's default system prompt for this execution slot.
+	 */
+	slotOverrides?: SlotOverrides;
 }
 
 // ============================================================================
@@ -155,9 +172,9 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 		`You are part of a multi-agent team within this workflow step. ` +
 			`You have MCP tools for communicating with peer agents in the same group.`
 	);
-	sections.push(`\n### Primary: \`send_feedback\` (channel-validated direct messaging)\n`);
+	sections.push(`\n### \`send_message\` (channel-validated direct messaging)\n`);
 	sections.push(
-		`Use \`send_feedback\` to send messages directly to permitted peers based on the declared channel topology.`
+		`Use \`send_message\` to send messages directly to permitted peers based on the declared channel topology.`
 	);
 	sections.push(
 		`- \`target: 'role'\` — point-to-point to a specific role (e.g., \`'coder'\`)\n` +
@@ -166,30 +183,31 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 	);
 	sections.push(
 		`This tool validates against declared channels. ` +
-			`If the channel is not declared, it returns an error with available channels and suggests \`request_peer_input\`.`
-	);
-	sections.push(`\n### Fallback: \`request_peer_input\` (Task Agent mediated)\n`);
-	sections.push(
-		`Use \`request_peer_input\` when no direct channel is declared or as a fallback when \`send_feedback\` fails validation.`
-	);
-	sections.push(
-		`This is **async and non-blocking** — the tool returns immediately with an acknowledgment. ` +
-			`The peer's answer will arrive as a separate user turn prefixed with: \`[Peer response from {role}]: ...\``
-	);
-	sections.push(
-		`**Do NOT wait for an immediate reply.** Continue your work and handle peer responses when they arrive.`
+			`If the channel is not declared, it returns an error with available channels.`
 	);
 	sections.push(`\n### Discovering peers: \`list_peers\`\n`);
 	sections.push(
 		`Use \`list_peers\` to see all other agents in this step's group, their roles, statuses, ` +
-			`and permitted outgoing channels for \`send_feedback\`.`
+			`and permitted outgoing channels for \`send_message\`.`
 	);
 	sections.push(`\n### Communication model rules\n`);
 	sections.push(
-		`- If this step has declared channels: use \`send_feedback\` for permitted directions, ` +
-			`\`request_peer_input\` for undeclared directions\n` +
-			`- If this step has no declared channels: all communication goes through \`request_peer_input\`\n` +
+		`- Use \`send_message\` for all peer communication — channel topology determines permitted targets\n` +
+			`- If a direction is not declared in the channel topology, \`send_message\` returns an error\n` +
 			`- All communication is scoped to this group — you cannot message agents in other tasks`
+	);
+
+	// Completion signalling
+	sections.push(`\n## Signalling Completion\n`);
+	sections.push(`\n### \`report_done\` (signal task completion)\n`);
+	sections.push(
+		`When you have finished all assigned work, call \`report_done\` to mark your step as complete. ` +
+			`Provide an optional \`summary\` describing what was accomplished.`
+	);
+	sections.push(
+		`- After calling \`report_done\`, stop — do not perform further actions\n` +
+			`- This is the correct way to close your task lifecycle\n` +
+			`- Do not rely on the session ending naturally; always call \`report_done\` explicitly`
 	);
 
 	// Review feedback handling
@@ -251,9 +269,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		if (workflowRun.description) {
 			sections.push(`**Description:** ${workflowRun.description}`);
 		}
-		if (workflowRun.currentStepId) {
-			sections.push(`**Current Step ID:** ${workflowRun.currentStepId}`);
-		}
 	}
 
 	// Inject full workflow structure when the agent has opted in via injectWorkflowContext.
@@ -269,12 +284,10 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 			sections.push(`\n**Workflow description:** ${workflow.description}`);
 		}
 
-		if (workflow.steps.length > 0) {
+		if (workflow.nodes.length > 0) {
 			sections.push(`\n**Steps:**`);
-			for (const step of workflow.steps) {
-				const isCurrent = step.id === workflowRun.currentStepId;
-				const marker = isCurrent ? ' ← current step' : '';
-				sections.push(`- **${step.name}** (id: \`${step.id}\`)${marker}`);
+			for (const step of workflow.nodes) {
+				sections.push(`- **${step.name}** (id: \`${step.id}\`)`);
 				if (step.instructions) {
 					sections.push(`  Instructions: ${step.instructions}`);
 				}
@@ -346,15 +359,23 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
  * room-runtime pattern where the initial user message is sent after session start.
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
-	const { customAgent, space, sessionId, workspacePath } = config;
+	const { customAgent, space, sessionId, workspacePath, slotOverrides } = config;
 
 	const customTools =
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
 
-	const model = customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
+	// Apply per-slot overrides: slot model takes precedence over agent default.
+	const model =
+		slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
 	const provider = inferProviderForModel(model);
 
-	const behavioralPrompt = buildCustomAgentSystemPrompt(customAgent);
+	// Apply per-slot systemPrompt override: slot override replaces agent's default system prompt.
+	// The override is applied by building the prompt with a modified agent copy.
+	const agentForPrompt: SpaceAgent =
+		slotOverrides?.systemPrompt !== undefined
+			? { ...customAgent, systemPrompt: slotOverrides.systemPrompt }
+			: customAgent;
+	const behavioralPrompt = buildCustomAgentSystemPrompt(agentForPrompt);
 
 	// When custom tools are configured, use the agent/agents pattern so the SDK
 	// enforces the allowlist. Otherwise, fall back to the simple preset path.
@@ -430,6 +451,12 @@ export interface ResolveAgentInitConfig {
 	workflow?: SpaceWorkflow | null;
 	/** Summaries of previously completed tasks */
 	previousTaskSummaries?: string[];
+	/**
+	 * Optional per-slot overrides from the `WorkflowNodeAgent` entry for this execution slot.
+	 * When provided, the slot's `model` and/or `systemPrompt` replace the base agent's defaults.
+	 * Used when the same agent appears multiple times in a node with different per-slot configs.
+	 */
+	slotOverrides?: SlotOverrides;
 }
 
 /**
@@ -454,6 +481,7 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		workflowRun,
 		workflow,
 		previousTaskSummaries,
+		slotOverrides,
 	} = config;
 
 	if (!task.customAgentId) {
@@ -476,6 +504,7 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		sessionId,
 		workspacePath,
 		previousTaskSummaries,
+		slotOverrides,
 	});
 }
 

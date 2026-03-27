@@ -67,7 +67,7 @@ function createMockSessionFactory(
 		async injectMessage(
 			sessionId: string,
 			message: string,
-			opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+			opts?: { deliveryMode?: 'immediate' | 'defer' }
 		) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
@@ -101,6 +101,12 @@ function createMockSessionFactory(
 		},
 		setSessionMcpServers(_sessionId: string, _mcpServers: Record<string, unknown>) {
 			return true;
+		},
+		async switchModel(_sessionId: string, model: string, _provider: string) {
+			return { success: true, model };
+		},
+		async getCurrentModel(_sessionId: string) {
+			return { currentModel: 'sonnet', provider: 'anthropic' };
 		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
@@ -223,7 +229,8 @@ describe('TaskGroupManager', () => {
 				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
 				max_planning_attempts INTEGER NOT NULL DEFAULT 5,
 				consecutive_failures INTEGER NOT NULL DEFAULT 0,
-		replan_count INTEGER NOT NULL DEFAULT 0
+		replan_count INTEGER NOT NULL DEFAULT 0,
+				short_id TEXT
 			);
 			CREATE TABLE tasks (
 				id TEXT PRIMARY KEY, room_id TEXT NOT NULL, title TEXT NOT NULL,
@@ -240,6 +247,7 @@ describe('TaskGroupManager', () => {
 				pr_url TEXT,
 				pr_number INTEGER,
 				pr_created_at INTEGER,
+				short_id TEXT,
 				updated_at INTEGER
 			);
 			CREATE TABLE session_groups (
@@ -460,7 +468,7 @@ describe('TaskGroupManager', () => {
 				async injectMessage(
 					sessionId: string,
 					message: string,
-					opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+					opts?: { deliveryMode?: 'immediate' | 'defer' }
 				) {
 					callOrder.push(`injectMessage:${sessionId.split(':')[0]}`);
 					await sessionFactory.injectMessage(sessionId, message, opts);
@@ -498,7 +506,7 @@ describe('TaskGroupManager', () => {
 			trackingFactory.injectMessage = async (
 				sessionId: string,
 				message: string,
-				opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+				opts?: { deliveryMode?: 'immediate' | 'defer' }
 			) => {
 				if (sessionId.startsWith('coder:')) {
 					observerRegisteredBeforeInject = workerObserverRegistered;

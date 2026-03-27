@@ -99,7 +99,7 @@ describe('GoalManager — Measurable Missions', () => {
 		db.exec(MISSION_METRIC_HISTORY_DDL);
 		db.exec(MISSION_EXECUTIONS_DDL);
 
-		roomManager = new RoomManager(db);
+		roomManager = new RoomManager(db, noOpReactiveDb);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
 			allowedPaths: [{ path: '/workspace/test' }],

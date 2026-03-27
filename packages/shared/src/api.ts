@@ -25,6 +25,12 @@ import type {
 	ConfigUpdateResult,
 } from './types.ts';
 import type { PermissionMode } from './types/settings.ts';
+import type {
+	AppMcpServer,
+	CreateAppMcpServerRequest,
+	UpdateAppMcpServerRequest,
+} from './types/app-mcp-server.ts';
+import type { AppSkill, CreateSkillParams, UpdateSkillParams } from './types/skills.ts';
 
 // Request types
 export interface CreateSessionRequest {
@@ -364,6 +370,63 @@ export interface RemoveMcpServerResponse {
 	message?: string;
 }
 
+// --- Per-Room MCP Enablement ---
+
+export interface McpRoomGetEnabledRequest {
+	roomId: string;
+}
+
+export interface McpRoomGetEnabledResponse {
+	serverIds: string[];
+}
+
+export interface McpRoomSetEnabledRequest {
+	roomId: string;
+	serverId: string;
+	enabled: boolean;
+}
+
+export interface McpRoomSetEnabledResponse {
+	ok: boolean;
+}
+
+export interface McpRoomResetToGlobalRequest {
+	roomId: string;
+}
+
+export interface McpRoomResetToGlobalResponse {
+	ok: boolean;
+}
+
+// --- Per-Room Skill Enablement ---
+
+export interface SkillRoomGetOverridesRequest {
+	roomId: string;
+}
+
+export interface SkillRoomGetOverridesResponse {
+	overrides: Array<{ skillId: string; roomId: string; enabled: boolean }>;
+}
+
+export interface SkillRoomSetOverrideRequest {
+	roomId: string;
+	skillId: string;
+	enabled: boolean;
+}
+
+export interface SkillRoomSetOverrideResponse {
+	success: boolean;
+}
+
+export interface SkillRoomClearOverrideRequest {
+	roomId: string;
+	skillId: string;
+}
+
+export interface SkillRoomClearOverrideResponse {
+	success: boolean;
+}
+
 // --- Output Format ---
 
 export interface GetOutputFormatRequest {
@@ -618,4 +681,139 @@ export interface SDKCleanupResponse {
 	processedCount: number;
 	totalSize: number;
 	errors: string[];
+}
+
+// ---------------------------------------------------------------------------
+// MCP Registry RPC types (mcp.registry.*)
+//
+// The *Response types below are intended for frontend (web) consumption — they
+// are not imported by the daemon handlers (which use inline `satisfies`
+// expressions).  They serve as a single source of truth for the shape callers
+// can expect from each RPC endpoint.
+// ---------------------------------------------------------------------------
+
+export type { AppMcpServer, CreateAppMcpServerRequest, UpdateAppMcpServerRequest };
+
+/** Response from mcp.registry.list */
+export interface McpRegistryListResponse {
+	servers: AppMcpServer[];
+}
+
+/** Response from mcp.registry.get */
+export interface McpRegistryGetResponse {
+	server: AppMcpServer;
+}
+
+/** Response from mcp.registry.create */
+export interface McpRegistryCreateResponse {
+	server: AppMcpServer;
+}
+
+/** Response from mcp.registry.update */
+export interface McpRegistryUpdateResponse {
+	server: AppMcpServer;
+}
+
+/** Request for mcp.registry.delete */
+export interface McpRegistryDeleteRequest {
+	id: string;
+}
+
+/** Response from mcp.registry.delete */
+export interface McpRegistryDeleteResponse {
+	success: boolean;
+}
+
+/** Request for mcp.registry.setEnabled */
+export interface McpRegistrySetEnabledRequest {
+	id: string;
+	enabled: boolean;
+}
+
+/** Response from mcp.registry.setEnabled */
+export interface McpRegistrySetEnabledResponse {
+	server: AppMcpServer;
+}
+
+/**
+ * A single startup/validation error for an MCP registry entry.
+ * `serverId` matches the `id` field of AppMcpServer (mirrors McpStartupError in the daemon).
+ */
+export interface McpRegistryError {
+	serverId: string;
+	name: string;
+	error: string;
+}
+
+/** Response from mcp.registry.listErrors */
+export interface McpRegistryListErrorsResponse {
+	errors: McpRegistryError[];
+}
+
+// ---------------------------------------------------------------------------
+// Skills RPC types (skill.*)
+//
+// Request/Response types for the application-level Skills registry RPC methods.
+// ---------------------------------------------------------------------------
+
+export type { AppSkill, CreateSkillParams, UpdateSkillParams };
+
+/** Request for skill.list */
+export interface SkillListRequest {}
+
+/** Response from skill.list */
+export interface SkillListResponse {
+	skills: AppSkill[];
+}
+
+/** Request for skill.get */
+export interface SkillGetRequest {
+	id: string;
+}
+
+/** Response from skill.get */
+export interface SkillGetResponse {
+	skill: AppSkill | null;
+}
+
+/** Request for skill.create */
+export interface SkillCreateRequest {
+	params: CreateSkillParams;
+}
+
+/** Response from skill.create */
+export interface SkillCreateResponse {
+	skill: AppSkill;
+}
+
+/** Request for skill.update */
+export interface SkillUpdateRequest {
+	id: string;
+	params: UpdateSkillParams;
+}
+
+/** Response from skill.update */
+export interface SkillUpdateResponse {
+	skill: AppSkill;
+}
+
+/** Request for skill.delete */
+export interface SkillDeleteRequest {
+	id: string;
+}
+
+/** Response from skill.delete */
+export interface SkillDeleteResponse {
+	success: boolean;
+}
+
+/** Request for skill.setEnabled */
+export interface SkillSetEnabledRequest {
+	id: string;
+	enabled: boolean;
+}
+
+/** Response from skill.setEnabled */
+export interface SkillSetEnabledResponse {
+	skill: AppSkill;
 }

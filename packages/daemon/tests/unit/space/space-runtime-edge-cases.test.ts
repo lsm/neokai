@@ -123,12 +123,12 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, role: s
 function buildLinearWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	steps: Array<{ id: string; name: string; agentId: string }>,
+	nodes: Array<{ id: string; name: string; agentId: string }>,
 	conditions: Array<{ type: 'always' | 'human' }> = []
 ) {
-	const transitions = steps.slice(0, -1).map((step, i) => ({
+	const transitions = nodes.slice(0, -1).map((step, i) => ({
 		from: step.id,
-		to: steps[i + 1].id,
+		to: nodes[i + 1].id,
 		condition: conditions[i] ?? { type: 'always' as const },
 		order: 0,
 	}));
@@ -137,9 +137,9 @@ function buildLinearWorkflow(
 		spaceId,
 		name: `Workflow ${Date.now()}-${Math.random()}`,
 		description: '',
-		steps,
+		nodes,
 		transitions,
-		startStepId: steps[0].id,
+		startNodeId: nodes[0].id,
 		rules: [],
 		tags: [],
 	});
@@ -267,47 +267,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			// Sink did attempt to notify
 			expect(throwingSink.thrownEvents).toHaveLength(1);
 			expect(throwingSink.thrownEvents[0].kind).toBe('task_needs_attention');
-		});
-
-		test('tick does not crash when sink.notify() throws for workflow_run_needs_attention', async () => {
-			const throwingSink = new ThrowingNotificationSink();
-			const rt = makeRuntime({ notificationSink: throwingSink });
-
-			// Two-step workflow with a human gate — completing step 1 triggers the gate,
-			// which emits workflow_run_needs_attention
-			const wf = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: 'step-gate-throw-1', name: 'Plan', agentId: AGENT },
-					{ id: 'step-gate-throw-2', name: 'Code', agentId: AGENT },
-				],
-				[{ type: 'human' }]
-			);
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			// Tick must complete without throwing even though the sink throws for the gate event
-			await expect(rt.executeTick()).resolves.toBeUndefined();
-
-			expect(throwingSink.thrownEvents).toHaveLength(1);
-			expect(throwingSink.thrownEvents[0].kind).toBe('workflow_run_needs_attention');
-		});
-
-		test('tick does not crash when sink.notify() throws for workflow_run_completed', async () => {
-			const throwingSink = new ThrowingNotificationSink();
-			const rt = makeRuntime({ notificationSink: throwingSink });
-
-			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-throw-done', name: 'Only Step', agentId: AGENT },
-			]);
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			await expect(rt.executeTick()).resolves.toBeUndefined();
-
-			expect(throwingSink.thrownEvents).toHaveLength(1);
-			expect(throwingSink.thrownEvents[0].kind).toBe('workflow_run_completed');
 		});
 
 		test("all runs processed even if one run's notification throws", async () => {
@@ -448,33 +407,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			>;
 			expect(naEvt.reason).toBe('Persistent error');
 		});
-
-		test('task goes needs_attention→completed between ticks — dedup key cleared, completion handled', async () => {
-			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-rapid-done', name: 'Only Step', agentId: AGENT },
-			]);
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-
-			// Tick 1: needs_attention — 1 notification
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Retry needed' });
-			await runtime.executeTick();
-
-			const naEvents1 = sink.events.filter((e) => e.kind === 'task_needs_attention');
-			expect(naEvents1).toHaveLength(1);
-
-			// Between ticks: task is fixed and completed
-			taskRepo.updateTask(tasks[0].id, { status: 'completed', error: null });
-
-			// Tick 2: task completed, workflow run completes, workflow_run_completed emitted
-			await runtime.executeTick();
-
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
-			expect(completedEvents).toHaveLength(1);
-
-			// No additional task_needs_attention (task left that state)
-			const naEvents2 = sink.events.filter((e) => e.kind === 'task_needs_attention');
-			expect(naEvents2).toHaveLength(1); // still only the original one
-		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -546,45 +478,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const taskIds = reNotified.map((e) => (e.kind === 'task_needs_attention' ? e.taskId : ''));
 			expect(taskIds).toContain(tasksA[0].id);
 			expect(taskIds).toContain(tasksB[0].id);
-		});
-
-		test('gate-blocked run (needs_attention status) is NOT re-notified after restart — gate must be resolved manually', async () => {
-			// Build a two-step workflow with a human gate
-			const wf = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: 'step-gate-r1', name: 'Plan', agentId: AGENT },
-					{ id: 'step-gate-r2', name: 'Code', agentId: AGENT },
-				],
-				[{ type: 'human' }]
-			);
-			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Gated Run');
-
-			// First step completes — gate fires, run enters needs_attention
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			await runtime.executeTick();
-
-			const gateEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
-			expect(gateEvents).toHaveLength(1);
-
-			// Simulate restart: fresh runtime with empty dedup set
-			const freshSink = new MockNotificationSink();
-			const freshRuntime = makeRuntime({ notificationSink: freshSink });
-
-			// Run is now in needs_attention status — on restart, processRunTick skips it
-			// (run.status === 'needs_attention') so it will NOT be re-notified via the
-			// workflow path. This is intentional: the gate event already fired.
-			await freshRuntime.executeTick();
-
-			// Workflow run needs_attention is NOT re-notified on restart (run stays terminal).
-			// This is by design — the gate must be manually resolved first.
-			const reGated = freshSink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
-			expect(reGated).toHaveLength(0);
-
-			// Confirm run is still in needs_attention in DB
-			const refreshedRun = workflowRunRepo.getRun(run.id);
-			expect(refreshedRun?.status).toBe('needs_attention');
 		});
 	});
 
@@ -686,7 +579,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(sink.events).toHaveLength(0);
 
 			// External cancellation: update run status directly in DB (simulating external API call)
-			workflowRunRepo.updateStatus(run.id, 'cancelled');
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// Tick 2: run is now cancelled, SpaceRuntime skips it in processRunTick
 			// and cleanupTerminalExecutors removes it without emitting workflow_run_completed
@@ -709,7 +602,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
 
 			// External cancellation between ticks
-			workflowRunRepo.updateStatus(run.id, 'cancelled');
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// Tick 2: run is cancelled, executor removed by cleanupTerminalExecutors.
 			// No new notification should be emitted.
@@ -729,7 +622,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 
 			// Simulate: between daemon restart and first tick, run gets cancelled externally
-			workflowRunRepo.updateStatus(run.id, 'cancelled');
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// Fresh runtime (simulating restart): first executeTick() rehydrates,
 			// then processes — cancelled run should emit nothing

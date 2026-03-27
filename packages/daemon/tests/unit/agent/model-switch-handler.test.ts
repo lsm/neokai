@@ -300,7 +300,11 @@ describe('ModelSwitchHandler', () => {
 		const VALID_MODEL = 'opus';
 
 		describe('when query not started', () => {
-			it('should update config only when query not started', async () => {
+			it('should update config and restart when query not started', async () => {
+				// FIX: Always call restart() to ensure new model takes effect.
+				// This validates the session file and starts a fresh query with the new model,
+				// even when queryObject is null. This fixes the bug where model switch
+				// wasn't taking effect for tasks in non-active states (review, needs_attention).
 				handler = createHandler({ queryObject: null });
 				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
@@ -312,7 +316,8 @@ describe('ModelSwitchHandler', () => {
 					})
 				);
 				expect(setModelTrackerSpy).toHaveBeenCalled();
-				expect(restartSpy).not.toHaveBeenCalled();
+				// Restart IS called to ensure the new model takes effect
+				expect(restartSpy).toHaveBeenCalled();
 			});
 
 			it('should pass only serializable config fields (no closures or cyclic refs)', async () => {
@@ -397,16 +402,18 @@ describe('ModelSwitchHandler', () => {
 				expect(restartSpy).toHaveBeenCalled();
 			});
 
-			it('should not restart when queryObject does not exist (query not started)', async () => {
-				// Only when query hasn't been created at all should we skip restart.
-				// The new model will be used when the query finally starts.
+			it('should restart even when queryObject does not exist (query not started)', async () => {
+				// FIX: Always call restart() to ensure new model takes effect.
+				// This is important for tasks in non-active states (review, needs_attention)
+				// where the query might have been completed/interrupted. Without restart,
+				// the new model would not take effect until the task resumes.
 				handler = createHandler({ queryObject: null, firstMessageReceived: false });
 				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(true);
 				expect(updateSessionSpy).toHaveBeenCalled();
-				// No restart because queryObject doesn't exist
-				expect(restartSpy).not.toHaveBeenCalled();
+				// Restart IS called to ensure the new model takes effect
+				expect(restartSpy).toHaveBeenCalled();
 			});
 		});
 

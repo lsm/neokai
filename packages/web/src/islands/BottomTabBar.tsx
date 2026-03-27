@@ -1,105 +1,188 @@
 import type { JSX } from 'preact';
-import { navSectionSignal, type NavSection } from '../lib/signals.ts';
+import {
+	navSectionSignal,
+	currentRoomIdSignal,
+	currentRoomSessionIdSignal,
+	currentRoomTaskIdSignal,
+	currentRoomTabSignal,
+	currentRoomActiveTabSignal,
+	type NavSection,
+} from '../lib/signals.ts';
 import {
 	navigateToSessions,
 	navigateToSettings,
 	navigateToRooms,
 	navigateToInbox,
+	navigateToRoom,
+	navigateToRoomAgent,
+	navigateToHome,
 } from '../lib/router.ts';
 import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
-	id: NavSection;
+	id: NavSection | 'room-agent' | 'room-overview' | 'room-missions' | 'room-home';
 	label: string;
 	icon: () => JSX.Element;
 }
 
-const BOTTOM_TABS: TabItem[] = [
-	{
-		id: 'inbox',
-		label: 'Inbox',
-		icon: () => (
-			<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-				/>
-			</svg>
-		),
-	},
-	{
-		id: 'rooms',
-		label: 'Rooms',
-		icon: () => (
-			<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
-				/>
-			</svg>
-		),
-	},
-	{
-		id: 'chats',
-		label: 'Chats',
-		icon: () => (
-			<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-				/>
-			</svg>
-		),
-	},
-	{
-		id: 'settings',
-		label: 'Settings',
-		icon: () => (
-			<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-				/>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-				/>
-			</svg>
-		),
-	},
+const InboxIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
+		/>
+	</svg>
+);
+
+const RoomsIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
+		/>
+	</svg>
+);
+
+const ChatsIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+		/>
+	</svg>
+);
+
+const SettingsIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+		/>
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+		/>
+	</svg>
+);
+
+const HomeIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
+		/>
+	</svg>
+);
+
+const MissionIcon = () => (
+	<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M13 10V3L4 14h7v7l9-11h-7z"
+		/>
+	</svg>
+);
+
+const RoomOverviewIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
+		/>
+	</svg>
+);
+
+const GLOBAL_BOTTOM_TABS: TabItem[] = [
+	{ id: 'inbox', label: 'Inbox', icon: InboxIcon },
+	{ id: 'rooms', label: 'Rooms', icon: RoomsIcon },
+	{ id: 'chats', label: 'Chats', icon: ChatsIcon },
+	{ id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
-function handleTabClick(id: NavSection): void {
-	switch (id) {
-		case 'inbox':
-			navigateToInbox();
-			break;
-		case 'rooms':
-			navigateToRooms();
-			break;
-		case 'chats':
-			navigateToSessions();
-			break;
-		case 'settings':
-			navigateToSettings();
-			break;
-	}
-}
+const ROOM_BOTTOM_TABS: TabItem[] = [
+	{ id: 'room-overview', label: 'Overview', icon: RoomOverviewIcon },
+	{ id: 'room-agent', label: 'Agent', icon: ChatsIcon },
+	{ id: 'room-missions', label: 'Missions', icon: MissionIcon },
+	{ id: 'room-home', label: '/', icon: HomeIcon },
+];
 
 export function BottomTabBar() {
 	const navSection = navSectionSignal.value;
+	const roomId = currentRoomIdSignal.value;
+	const roomSessionId = currentRoomSessionIdSignal.value;
 	const inboxBadgeCount = inboxStore.reviewCount.value;
+
+	const roomTaskId = currentRoomTaskIdSignal.value;
+	const isInRoomContext = navSection === 'rooms' && roomId !== null;
+	const isViewingRoomAgent = roomSessionId === `room:chat:${roomId}`;
+	// Overview is only active when on the room dashboard (no task and no session open)
+	const isViewingRoomDashboard = roomSessionId === null && roomTaskId === null;
+
+	const tabs = isInRoomContext ? ROOM_BOTTOM_TABS : GLOBAL_BOTTOM_TABS;
+
+	const handleTabClick = (id: TabItem['id']) => {
+		switch (id) {
+			case 'inbox':
+				navigateToInbox();
+				break;
+			case 'rooms':
+				navigateToRooms();
+				break;
+			case 'chats':
+				navigateToSessions();
+				break;
+			case 'settings':
+				navigateToSettings();
+				break;
+			case 'room-overview':
+				if (roomId) navigateToRoom(roomId);
+				break;
+			case 'room-agent':
+				if (roomId) navigateToRoomAgent(roomId);
+				break;
+			case 'room-missions':
+				if (roomId) {
+					currentRoomTabSignal.value = 'goals';
+					navigateToRoom(roomId);
+				}
+				break;
+			case 'room-home':
+				navigateToHome();
+				break;
+		}
+	};
+
+	const isTabActive = (id: TabItem['id']): boolean => {
+		if (isInRoomContext) {
+			if (id === 'room-agent') return isViewingRoomAgent;
+			if (id === 'room-missions') return currentRoomActiveTabSignal.value === 'goals';
+			// Overview is only active when on dashboard and no specific room tab is selected
+			if (id === 'room-overview')
+				return (
+					isViewingRoomDashboard &&
+					navSection === 'rooms' &&
+					currentRoomActiveTabSignal.value !== 'goals'
+				);
+		}
+		return navSection === id;
+	};
 
 	return (
 		<div
@@ -107,8 +190,8 @@ export function BottomTabBar() {
 			role="tablist"
 			aria-label="Main navigation"
 		>
-			{BOTTOM_TABS.map((tab) => {
-				const isActive = navSection === tab.id;
+			{tabs.map((tab) => {
+				const isActive = isTabActive(tab.id);
 				const isInbox = tab.id === 'inbox';
 				const badge = isInbox ? inboxBadgeCount : 0;
 

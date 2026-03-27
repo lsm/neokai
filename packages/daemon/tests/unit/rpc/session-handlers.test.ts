@@ -719,7 +719,7 @@ describe('Session RPC Handlers', () => {
 				{
 					sessionId: 'session-123',
 					content: 'Queue this',
-					deliveryMode: 'next_turn',
+					deliveryMode: 'defer',
 				},
 				{}
 			);
@@ -729,7 +729,7 @@ describe('Session RPC Handlers', () => {
 				expect.objectContaining({
 					sessionId: 'session-123',
 					content: 'Queue this',
-					deliveryMode: 'next_turn',
+					deliveryMode: 'defer',
 				})
 			);
 		});
@@ -1242,7 +1242,7 @@ describe('Session RPC Handlers', () => {
 	});
 
 	describe('session.messages.countByStatus', () => {
-		it('returns count for saved status', async () => {
+		it('returns count for deferred status', async () => {
 			const handler = messageHubData.handlers.get('session.messages.countByStatus');
 			expect(handler).toBeDefined();
 
@@ -1250,12 +1250,12 @@ describe('Session RPC Handlers', () => {
 				getMessageCountByStatus: mock(() => 5),
 			} as unknown as ReturnType<typeof mock> extends ReturnType<typeof mock> ? object : never);
 
-			const result = await handler!({ sessionId: 'session-123', status: 'saved' }, {});
+			const result = await handler!({ sessionId: 'session-123', status: 'deferred' }, {});
 
 			expect(result).toEqual({ count: 5 });
 		});
 
-		it('returns count for queued status', async () => {
+		it('returns count for enqueued status', async () => {
 			const handler = messageHubData.handlers.get('session.messages.countByStatus');
 			expect(handler).toBeDefined();
 
@@ -1263,7 +1263,7 @@ describe('Session RPC Handlers', () => {
 				getMessageCountByStatus: mock(() => 3),
 			} as unknown as ReturnType<typeof mock> extends ReturnType<typeof mock> ? object : never);
 
-			const result = await handler!({ sessionId: 'session-123', status: 'queued' }, {});
+			const result = await handler!({ sessionId: 'session-123', status: 'enqueued' }, {});
 
 			expect(result).toEqual({ count: 3 });
 		});
@@ -1274,14 +1274,14 @@ describe('Session RPC Handlers', () => {
 
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
 
-			await expect(handler!({ sessionId: 'non-existent', status: 'saved' }, {})).rejects.toThrow(
+			await expect(handler!({ sessionId: 'non-existent', status: 'deferred' }, {})).rejects.toThrow(
 				'Session not found'
 			);
 		});
 	});
 
 	describe('session.messages.byStatus', () => {
-		it('returns user message summaries for saved status', async () => {
+		it('returns user message summaries for deferred status', async () => {
 			const handler = messageHubData.handlers.get('session.messages.byStatus');
 			expect(handler).toBeDefined();
 
@@ -1294,13 +1294,13 @@ describe('Session RPC Handlers', () => {
 						type: 'user',
 						message: {
 							role: 'user',
-							content: [{ type: 'text', text: 'queued message' }],
+							content: [{ type: 'text', text: 'enqueued message' }],
 						},
 					},
 				]),
 			} as unknown as ReturnType<typeof mock> extends ReturnType<typeof mock> ? object : never);
 
-			const result = await handler!({ sessionId: 'session-123', status: 'saved' }, {});
+			const result = await handler!({ sessionId: 'session-123', status: 'deferred' }, {});
 
 			expect(result).toEqual({
 				messages: [
@@ -1308,8 +1308,8 @@ describe('Session RPC Handlers', () => {
 						dbId: 'db-1',
 						uuid: 'msg-1',
 						timestamp: 123,
-						status: 'saved',
-						text: 'queued message',
+						status: 'deferred',
+						text: 'enqueued message',
 					},
 				],
 			});

@@ -2,7 +2,7 @@
  * Leader Agent Factory - Creates AgentSessionInit for Leader (reviewer) sessions
  *
  * The Leader agent reviews worker output and routes outcomes via MCP tools:
- * - send_to_worker(message, mode) - Forward feedback to worker (steer/queue)
+ * - send_to_worker(message, mode) - Forward feedback to worker (immediate/defer)
  * - complete_task(summary) - Accept work, mark task done
  * - fail_task(reason) - Task is not achievable
  * - replan_goal(reason) - Fail task and trigger replanning with context
@@ -55,7 +55,7 @@ export interface LeaderToolCallbacks {
 	sendToWorker(
 		groupId: string,
 		message: string,
-		mode?: 'steer' | 'queue',
+		mode?: 'immediate' | 'defer',
 		progressSummary?: string
 	): Promise<LeaderToolResult>;
 	completeTask(
@@ -162,14 +162,15 @@ You MUST call tools (no text-only final responses).
 
 ### Review Tools (primary actions)
 - \`send_to_worker\` — Forward feedback to worker without changing group ownership
-  - mode=\`queue\`: enqueue for next-turn processing (default, preferred for review URLs)
-  - mode=\`steer\`: inject for current-turn steering
+  - mode=\`defer\`: enqueue for next-turn processing (default, preferred for review URLs)
+  - mode=\`immediate\`: inject for current-turn steering
 - \`complete_task\` — Accept the work if it meets all requirements
 - \`fail_task\` — Mark the task as not achievable
 - \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried
 - \`submit_for_review\` — Work is done with a PR ready; submit for peer review and human approval
 
 ### Task Management Tools (for managing other tasks in the room)
+- \`create_task\` — Create a new task, optionally linked to a goal. Use to spawn fix tasks, investigation tasks, or sub-tasks discovered during execution
 - \`update_task\` — Edit title, description, priority, or dependencies of any task
 - \`cancel_task\` — Cancel a task and cascade to any pending dependents
 - \`update_task_status\` — Change a task's status (e.g., retry a failed task: needs_attention → pending)
@@ -203,13 +204,17 @@ When the human message indicates approval (e.g., "approved", "merge it", "looks 
 For planning tasks the planner must run a second phase to create tasks.
 **Do NOT merge the plan PR yourself — the planner handles merge + task creation.**
 
-1. **Send the planner back** — Call \`send_to_worker\` (mode: "queue") with:
+1. **Send the planner back** — Call \`send_to_worker\` (mode: "defer") with:
    "The plan is approved. Please:
    1. Merge the plan PR: \`gh pr merge <PR_NUMBER>\`
    2. Read the plan file under docs/plans/
    3. Create all tasks 1:1 from the plan using the \`create_task\` tool
    4. Finish your response after all tasks are created"
-2. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing "Phase 2 (task creation)" and "Tasks created: N", call \`complete_task\` with a summary.
+2. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing "Phase 2 (task creation)" and "Tasks created: N":
+   a. Read the plan document under \`docs/plans/\` in the workspace.
+   b. Review each listed task against the plan: verify title, description, dependencies, priority, completeness, and no scope creep.
+   c. Use \`update_task\` to fix any discrepancies found.
+   d. Call \`complete_task\` with a summary after all tasks are verified.
 
 **IMPORTANT**: The planner must use the \`create_task\` tool to register tasks. You cannot call \`complete_task\` until tasks are created — the runtime gate will reject it.`;
 	}
@@ -240,7 +245,7 @@ function leaderPostRejectionSection(): string {
 
 When the human message indicates rejection with feedback (e.g., "fix the tests", "needs changes"):
 
-1. **Forward feedback to worker** — Call \`send_to_worker\` (mode: "queue") with the human's feedback
+1. **Forward feedback to worker** — Call \`send_to_worker\` (mode: "defer") with the human's feedback
 
 After the worker addresses feedback and exits again, you will receive the updated output for review.`;
 }
@@ -250,7 +255,7 @@ function leaderWorkerQuestionsSection(): string {
 ## Handling Worker Questions
 
 If the worker output shows \`Terminal state: waiting_for_input\`, the worker is asking a question.
-- If you can answer the question from the goal/task context, call \`send_to_worker\` (mode: "steer") with the answer
+- If you can answer the question from the goal/task context, call \`send_to_worker\` (mode: "immediate") with the answer
 - If the question requires human judgment or information you don't have, use \`fail_task\` with the reason (e.g., "Worker needs human input: <question>")`;
 }
 
@@ -259,6 +264,31 @@ function leaderPlanReviewGuidelinesSection(reviewerNames: string[], helperNames:
 		return leaderPlanReviewOrchestrationSection(reviewerNames, helperNames);
 	}
 	return leaderPlanReviewSimpleSection(helperNames);
+}
+
+/**
+ * Shared prompt block instructing the leader to verify PR mergeability
+ * before calling `submit_for_review`. Used in all four review sections
+ * (simple/orchestration × code/plan) to ensure consistent behavior.
+ *
+ * Uses a single `gh pr view --json mergeable,mergeStateStatus,statusCheckRollup`
+ * command, matching the runtime gate in checkPrIsMergeable, so the leader's
+ * proactive check and the gate use the same data source.
+ *
+ * @param stepLabel - e.g. "Step 5" (orchestration) or "step 5" (numbered list)
+ * @param asSubList - true to format as an indented sub-list (for numbered-step sections)
+ */
+function prMergeabilityCheckBlock(stepLabel: string, asSubList: boolean): string {
+	const indent = asSubList ? '   ' : '';
+	return `${indent}**Before calling \`submit_for_review\`**, run one command to verify the PR is ready:
+${indent}\`\`\`
+${indent}gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup
+${indent}\`\`\`
+${indent}Then check the output:
+${indent}- If \`mergeStateStatus\` is \`DIRTY\` or \`CONFLICTING\` → send to worker: "PR has merge conflicts. Rebase and force push: \`git fetch && git rebase origin/<base-branch>\`."
+${indent}- If \`mergeStateStatus\` is \`BEHIND\` → send to worker: "PR branch is behind base. Rebase and force push: \`git fetch && git rebase origin/<base-branch>\`."
+${indent}- If any \`statusCheckRollup\` entry has \`conclusion: FAILURE\` or \`conclusion: TIMED_OUT\` → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
+${indent}- Only call \`submit_for_review\` when \`mergeStateStatus\` is \`CLEAN\` (or \`UNKNOWN\`) and no checks have failed.`;
 }
 
 function leaderPlanReviewOrchestrationSection(
@@ -291,7 +321,7 @@ You are a coordinator. You do NOT review the plan yourself. You delegate reviews
 ### Step 1: Understand the Plan
 Read the planner's output to understand what plan was created and what PR was opened.
 Extract the PR number (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).
-If no PR was created, call \`send_to_worker\` (mode: "queue") asking the planner to create one before review can proceed.
+If no PR was created, call \`send_to_worker\` (mode: "defer") asking the planner to create one before review can proceed.
 
 ### Step 2: Dispatch Reviewer Sub-agents
 Use the Task tool to dispatch each reviewer to review the plan PR. Spawn all reviewers in parallel.
@@ -303,13 +333,21 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ### Step 4: Route
 
-- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
+- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
-- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval
-- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
+- **Only P3 nits or no issues** → verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL for human approval
+- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL (let human decide).
 - **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`
 
-Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`, call \`complete_task\`.`;
+### Step 5: Verify PR Mergeability (before submit_for_review)
+
+${prMergeabilityCheckBlock('Step 5', false)}
+
+Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`:
+1. Read the plan document under \`docs/plans/\` in the workspace.
+2. Review each listed task against the plan for accuracy, completeness, correct dependencies, and no scope creep.
+3. Use \`update_task\` to fix any discrepancies found.
+4. Call \`complete_task\` with a summary after all tasks are verified.`;
 }
 
 function leaderPlanReviewSimpleSection(helperNames: string[]): string {
@@ -322,16 +360,27 @@ ${helperSection}## Plan Review Guidelines
 
 **Phase 1 (plan document)**: When you receive \`[PLANNER OUTPUT] — Phase 1 (plan document)\`, follow this workflow:
 1. Read the planner output and extract the PR number/URL.
-2. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one.
+2. If no PR exists yet, use \`send_to_worker\` (mode: "defer") to request one.
 3. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
-   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
-   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval.
-   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
-5. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
-6. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.
+   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
+   - **Only P3 nits or no issues** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL for human approval.
+   - **Review post TIMEOUT/ERROR** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL (let human decide).
+5. ${prMergeabilityCheckBlock('step 5', true)}
+6. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
+7. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.
 
-**Phase 2 (task creation)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N", call \`complete_task\` with a summary of the tasks created.`;
+**Phase 2 (task review + completion)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N":
+1. Read the plan document under \`docs/plans/\` in the workspace.
+2. Review each listed task against the plan. For each task, verify:
+   - **Title** — accurately reflects the scope and intent from the plan
+   - **Description** — covers all relevant details (root cause, fix approach, files)
+   - **Dependencies** — correctly reflect the dependency order in the plan
+   - **Priority** — matches the priority assigned in the plan
+   - **Completeness** — no plan items were missed or incorrectly merged
+   - **No scope creep** — tasks contain only work from their plan section
+3. Use \`update_task\` to fix any discrepancies found.
+4. Call \`complete_task\` with a summary after all tasks are verified.`;
 }
 
 function leaderCodeReviewGuidelinesSection(reviewerNames: string[], helperNames: string[]): string {
@@ -371,7 +420,7 @@ You are a coordinator. You do NOT review code yourself. You delegate reviews to 
 ### Step 1: Understand What Was Done
 Read the worker's output to understand what was implemented and which files changed.
 Extract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).
-If no PR was created, call \`send_to_worker\` (mode: "queue") asking the worker to create one before review can proceed.
+If no PR was created, call \`send_to_worker\` (mode: "defer") asking the worker to create one before review can proceed.
 
 ### Step 2: Dispatch Reviewer Sub-agents
 Use the Task tool to dispatch each reviewer. Spawn all reviewers in parallel.
@@ -383,11 +432,15 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ### Step 4: Route
 
-- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
+- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
-- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL
-- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
-- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``;
+- **Only P3 nits or no issues** → verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL
+- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL (let human decide).
+- **Fundamentally broken** → \`fail_task\` or \`replan_goal\`
+
+### Step 5: Verify PR Mergeability (before submit_for_review)
+
+${prMergeabilityCheckBlock('Step 5', false)}`;
 }
 
 function leaderCodeReviewSimpleSection(helperNames: string[]): string {
@@ -400,12 +453,13 @@ ${helperSection}## Code Review Guidelines
 
 **Every iteration follows the same workflow** — including after the worker addresses feedback.
 1. Read the worker output and extract the PR number/URL.
-2. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one.
+2. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "defer") to request one.
 3. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
-   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
-   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.
-   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
+   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
+   - **Only P3 nits or no issues** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL.
+   - **Review post TIMEOUT/ERROR** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL (let human decide).
+5. ${prMergeabilityCheckBlock('step 5', true)}
 
 - Use \`fail_task\` if this specific task is not achievable but the overall plan is still sound
 - Use \`replan_goal\` if the failure reveals the overall approach needs rethinking — this cancels remaining tasks and triggers a fresh plan`;
@@ -456,7 +510,7 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 	return {
 		async send_to_worker(args: {
 			message: string;
-			mode?: 'steer' | 'queue';
+			mode?: 'immediate' | 'defer';
 			progress_summary?: string;
 		}): Promise<LeaderToolResult> {
 			return callbacks.sendToWorker(groupId, args.message, args.mode, args.progress_summary);
@@ -505,13 +559,13 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 	const tools = [
 		tool(
 			'send_to_worker',
-			'Send feedback to the worker agent. mode=queue (default) enqueues for next turn; mode=steer injects current-turn guidance.',
+			'Send feedback to the worker agent. mode=defer (default) enqueues for next turn; mode=immediate injects current-turn guidance.',
 			{
 				message: z.string().describe('Specific, actionable feedback for the worker agent'),
 				mode: z
-					.enum(['steer', 'queue'])
+					.enum(['immediate', 'defer'])
 					.optional()
-					.describe('Delivery mode: queue (default) or steer (immediate)'),
+					.describe('Delivery mode: defer (default) or immediate (inject now)'),
 				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.send_to_worker(args)
@@ -1128,7 +1182,7 @@ export function createLeaderAgentInit(
 			description:
 				'Coordinator that orchestrates code review. Dispatches reviewer and helper sub-agents, collects their results, and routes decisions using MCP tools.',
 			prompt: buildLeaderSystemPrompt(config),
-			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob'],
+			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob', 'Bash'],
 			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
 		};
 

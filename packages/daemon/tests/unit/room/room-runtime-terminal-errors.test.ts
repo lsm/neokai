@@ -309,5 +309,257 @@ describe('RoomRuntime - terminal error detection', () => {
 			const payload = JSON.parse(rateLimitedEvents[0].payloadJson ?? '{}');
 			expect(payload.text).toContain('Usage limit');
 		});
+
+		it('does NOT re-set rate limit when group.rateLimit is already set (usage_limit re-trigger after expiry)', async () => {
+			// Production flow:
+			//   1. Initial usage_limit → setRateLimit(resetsAt) → scheduleTickAfterRateLimitReset
+			//   2. Timer fires after reset time → does NOT clear rateLimit (sentinel remains)
+			//   3. recoverStuckWorkers → onWorkerTerminalState called again with same usage_limit text
+			//   4. group.rateLimit is non-null (expired but present) → guard skips re-detection
+			//   5. Falls through to worktree check → routes to leader — no infinite loop
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Simulate the limit having already expired (timer fired, resetsAt now in past,
+			// but rateLimit is still non-null because the sentinel is never cleared by the timer).
+			const expiredRateLimit = {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 1, // already expired
+				sessionRole: 'worker' as const,
+			};
+			ctx.groupRepo.setRateLimit(group.id, expiredRateLimit);
+
+			// Re-trigger as recoverStuckWorkers would
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Rate limit must NOT have been pushed to a new future timestamp —
+			// the guard should have skipped re-detection.
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeLessThanOrEqual(Date.now());
+
+			// Worker should have been routed to leader (worktree is clean in tests).
+			// Routing is confirmed by feedbackIteration incrementing.
+			expect(updatedGroup!.feedbackIteration).toBeGreaterThan(0);
+		});
+
+		it('does NOT route worker when group.rateLimit is still active (usage_limit not yet expired)', async () => {
+			// Production flow (rate limit still active):
+			//   1. Initial usage_limit → setRateLimit(resetsAt in future)
+			//   2. Something triggers onWorkerTerminalState again while limit is still active
+			//   3. isRateLimited() returns true (resetsAt > now) → handler returns early at the
+			//      rate-limit guard (line ~634) before any usage_limit detection runs
+			//   4. feedbackIteration stays at 0 — worker output is NOT forwarded to leader
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Confirm first detection set an active (future) rate limit
+			const groupAfterFirst = ctx.groupRepo.getGroup(group.id);
+			expect(groupAfterFirst!.rateLimit).not.toBeNull();
+			expect(groupAfterFirst!.rateLimit!.resetsAt).toBeGreaterThan(Date.now());
+			const originalResetsAt = groupAfterFirst!.rateLimit!.resetsAt;
+
+			// Re-trigger while the limit is still in the future (not yet expired)
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// isRateLimited() was true → returned early → rateLimit is unchanged
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBe(originalResetsAt);
+
+			// feedbackIteration must NOT have incremented — no routing happened
+			expect(updatedGroup!.feedbackIteration).toBe(0);
+		});
+
+		it('returns early without routing to leader after successful fallback switch', async () => {
+			// Configure a fallback model and getCurrentModel to provide the current model info
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				getCurrentModelImpl: async () => ({
+					currentModel: 'claude-opus-4-5',
+					provider: 'anthropic',
+				}),
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Task should NOT be paused — fallback switch succeeded, task stays in_progress
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('usage_limited');
+			expect(updatedTask!.status).not.toBe('rate_limited');
+			expect(updatedTask!.restrictions).toBeNull();
+
+			// Group rate limit must NOT be set
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+
+			// Leader must NOT have been injected with stale error output
+			const leaderInjectCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
+			);
+			expect(leaderInjectCalls).toHaveLength(0);
+
+			// switchModel should have been called on the session factory
+			const switchModelCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchModelCalls).toHaveLength(1);
+			expect(switchModelCalls[0].args[1]).toBe('claude-haiku-4-5');
+		});
+
+		it('clears group rate limit after successful fallback switch in worker path', async () => {
+			// clearRateLimit is called inside `if (!group.rateLimit)`, so it normally clears null.
+			// To make this test non-tautological we override switchModel to SET group.rateLimit
+			// mid-call, so clearRateLimit at line 778 actually clears a non-null sentinel.
+			// The test fails if clearRateLimit is deleted from the worker fallback-success path.
+			let groupIdForSpy: string | null = null;
+
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				getCurrentModelImpl: async () => ({
+					currentModel: 'claude-opus-4-5',
+					provider: 'anthropic',
+				}),
+			});
+
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+			groupIdForSpy = group.id;
+
+			// Override switchModel to set group.rateLimit while the fallback switch runs,
+			// so clearRateLimit at line 778 actually clears a non-null sentinel.
+			ctx.sessionFactory.switchModel = async (sessionId, model, provider) => {
+				ctx.sessionFactory.calls.push({
+					method: 'switchModel',
+					args: [sessionId, model, provider],
+				});
+				if (groupIdForSpy) {
+					ctx.groupRepo.setRateLimit(groupIdForSpy, {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60_000,
+						sessionRole: 'worker',
+					});
+				}
+				return { success: true, model };
+			};
+
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// clearRateLimit must have cleared the sentinel set by the spy
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+
+			// switchModel was called (confirms the fallback path ran)
+			const switchModelCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchModelCalls).toHaveLength(1);
+
+			// Task should not be paused
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.restrictions).toBeNull();
+			expect(updatedTask!.status).not.toBe('usage_limited');
+			expect(updatedTask!.status).not.toBe('rate_limited');
+		});
+
+		it('task restriction cleared after fallback switch even with prior rate_limit cycle', async () => {
+			// Regression scenario:
+			//   1. A prior rate_limit (429) cycle already set task.status='rate_limited' + restrictions
+			//   2. The group rate limit sentinel was cleared (e.g. via clearGroupRateLimit from
+			//      task.setStatus) but task restriction was left in place (stale state)
+			//   3. Worker re-runs and outputs usage_limit text; fallback model is configured
+			//   4. usage_limit guard fires (group.rateLimit is null)
+			//   5. trySwitchToFallbackModel succeeds
+			//   6. clearTaskRestriction must clear the stale restriction from step 1
+
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				getCurrentModelImpl: async () => ({
+					currentModel: 'claude-opus-4-5',
+					provider: 'anthropic',
+				}),
+			});
+
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			// Simulate "prior rate_limit cycle" state: task is rate_limited with restrictions,
+			// but group rate limit sentinel was already cleared (e.g. user called task.setStatus).
+			// We write directly to the DB to inject the stale state without going through the runtime.
+			const staleRestriction = JSON.stringify({
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 1,
+				limitType: 'rate_limit',
+				reason: 'API rate limit (HTTP 429)',
+			});
+			ctx.db.run(`UPDATE tasks SET status = 'rate_limited', restrictions = ? WHERE id = ?`, [
+				staleRestriction,
+				task.id,
+			]);
+
+			// Confirm the stale restriction is in place and group.rateLimit is null
+			const taskBeforeSwitch = await ctx.taskManager.getTask(task.id);
+			expect(taskBeforeSwitch!.status).toBe('rate_limited');
+			expect(taskBeforeSwitch!.restrictions).not.toBeNull();
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+
+			// Trigger usage_limit detection — fallback should fire and clear the stale restriction
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Stale restriction from the prior rate_limit cycle must now be cleared
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.restrictions).toBeNull();
+
+			// Group rate limit should remain cleared
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+
+			// switchModel should have been called once
+			const switchModelCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchModelCalls).toHaveLength(1);
+			expect(switchModelCalls[0].args[1]).toBe('claude-haiku-4-5');
+		});
 	});
 });

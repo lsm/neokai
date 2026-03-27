@@ -146,6 +146,8 @@ export interface MissionExecution {
 export interface RoomGoal {
 	/** Unique identifier */
 	id: string;
+	/** Human-readable short ID (e.g. 'g-42'), scoped to parent room */
+	shortId?: string;
 	/** Room this goal belongs to */
 	roomId: string;
 	/** Goal title */
@@ -250,7 +252,27 @@ export type TaskStatus =
 	| 'completed'
 	| 'needs_attention'
 	| 'cancelled'
-	| 'archived';
+	| 'archived'
+	| 'rate_limited'
+	| 'usage_limited';
+
+/**
+ * Restriction data for a task that has hit an API rate or usage limit.
+ * Persisted on the task record so the UI can show reset time and the runtime
+ * can auto-resume without manual intervention.
+ */
+export interface TaskRestriction {
+	/** Type of limit that was hit */
+	type: 'rate_limit' | 'usage_limit';
+	/** Human-readable description of the limit (e.g. "100 req/min", "daily cap") */
+	limit: string;
+	/** Unix timestamp (ms) when the limit resets */
+	resetAt: number;
+	/** Which session hit the limit */
+	sessionRole: 'worker' | 'leader';
+	/** Seconds until retryable (for rate limits with explicit retry-after) */
+	retryAfter?: number;
+}
 
 /**
  * Task priority
@@ -263,9 +285,10 @@ export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type TaskType = 'planning' | 'coding' | 'research' | 'design' | 'goal_review';
 
 /**
- * Agent type that should execute a task
+ * Agent type that should execute a task.
+ * 'planner' is used for goal review and planning-type tasks assigned to the Planner/Leader agent.
  */
-export type AgentType = 'coder' | 'general';
+export type AgentType = 'coder' | 'general' | 'planner';
 
 /**
  * A task managed within a room
@@ -273,6 +296,8 @@ export type AgentType = 'coder' | 'general';
 export interface NeoTask {
 	/** Unique identifier */
 	id: string;
+	/** Human-readable short ID (e.g. 't-42'), scoped to parent room */
+	shortId?: string;
 	/** Room this task belongs to */
 	roomId: string;
 	/** Task title */
@@ -321,6 +346,11 @@ export interface NeoTask {
 	prNumber?: number | null;
 	/** When PR was created/submitted (milliseconds since epoch) */
 	prCreatedAt?: number | null;
+	/**
+	 * Active restriction when task is paused due to a rate or usage limit.
+	 * Cleared when the task resumes after the restriction expires.
+	 */
+	restrictions?: TaskRestriction | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
 }
@@ -375,6 +405,10 @@ export interface UpdateTaskParams {
 	inputDraft?: string | null;
 	/** Timestamp when the task was archived. Set to null to clear when unarchiving. */
 	archivedAt?: number | null;
+	/**
+	 * Active restriction for rate/usage limited tasks. Set to null to clear restriction.
+	 */
+	restrictions?: TaskRestriction | null;
 }
 
 // ============================================================================
@@ -433,6 +467,8 @@ export interface SessionSummary {
  */
 export interface TaskSummary {
 	id: string;
+	/** Human-readable short ID (e.g. 't-42'), scoped to parent room */
+	shortId?: string;
 	title: string;
 	status: TaskStatus;
 	priority: TaskPriority;

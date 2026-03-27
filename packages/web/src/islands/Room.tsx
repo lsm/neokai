@@ -10,12 +10,13 @@
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/router';
-import { currentRoomTabSignal } from '../lib/signals';
+import { currentRoomTabSignal, currentRoomActiveTabSignal } from '../lib/signals';
+import { useRoomLiveQuery } from '../hooks/useRoomLiveQuery';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
 import type { CreateGoalFormData } from '../components/room/GoalsEditor';
-import { TaskView } from '../components/room/TaskView';
+import { TaskViewToggle } from '../components/room/TaskViewToggle';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
@@ -33,6 +34,12 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
 
+	// Manage LiveQuery subscriptions for tasks and goals.
+	// Intentionally declared before the select() effect so that LiveQuery
+	// handlers are registered before the hub request fires — both share
+	// [roomId] as their dependency and run in declaration order.
+	useRoomLiveQuery(roomId);
+
 	useEffect(() => {
 		roomStore.select(roomId).finally(() => {
 			setInitialLoad(false);
@@ -41,6 +48,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			roomStore.select(null);
 			// Clear any pending tab signal when leaving a room to prevent cross-room contamination
 			currentRoomTabSignal.value = null;
+			currentRoomActiveTabSignal.value = null;
 		};
 	}, [roomId]);
 
@@ -51,6 +59,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			const validTabs: RoomTab[] = ['overview', 'context', 'agents', 'goals', 'settings'];
 			if (validTabs.includes(pendingTab as RoomTab)) {
 				setActiveTab(pendingTab as RoomTab);
+				currentRoomActiveTabSignal.value = pendingTab;
 			}
 			currentRoomTabSignal.value = null;
 		}
@@ -59,6 +68,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	// Update URL when tab changes
 	const handleTabChange = (tab: RoomTab) => {
 		setActiveTab(tab);
+		currentRoomActiveTabSignal.value = tab;
 		navigateToRoom(roomId);
 	};
 
@@ -143,7 +153,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			<div class="flex-1 flex flex-col overflow-hidden">
 				{/* Task view: show Craft + Lead sessions for the selected task */}
 				{taskViewId ? (
-					<TaskView key={taskViewId} roomId={roomId} taskId={taskViewId} />
+					<TaskViewToggle key={taskViewId} roomId={roomId} taskId={taskViewId} />
 				) : sessionViewId ? (
 					/* Session view: show a specific session within the room */
 					<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
@@ -197,7 +207,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								}`}
 								onClick={() => handleTabChange('goals')}
 							>
-								Goals
+								Missions
 							</button>
 							<button
 								class={`px-4 py-2 text-sm font-medium transition-colors ${

@@ -1,26 +1,28 @@
 /**
- * Integration-level tests for cross-agent messaging.
+ * Unit tests for cross-agent messaging.
  *
- * Exercises the full messaging stack with a real SQLite DB and mock injectors
- * (no real agent sessions). Focuses on end-to-end behavioral enforcement:
+ * Exercises the node agent peer communication tools (send_message, list_peers)
+ * and the Task Agent list_group_members tool in isolation with a real SQLite DB.
  *
- *   send_feedback         — channel validation, target modes, fan-out, hub-spoke
- *   request_peer_input    — Task Agent mediated async flow
- *   list_peers            — peer discovery with channel info
- *   list_group_members    — Task Agent group view
- *   relay_message         — Task Agent unrestricted relay, cross-group rejection
+ * Test patterns covered:
+ *   send_message  — channel validation, target modes, fan-out, hub-spoke
+ *   list_peers    — peer discovery with channel info
+ *   list_group_members — Task Agent group view with channel topology
  *
- * Channel topology patterns tested end-to-end through tool handlers:
+ * Channel topology patterns tested:
  *   A → B          one-way point-to-point
  *   A ↔ B          bidirectional point-to-point
  *   A → [B,C,D]    fan-out one-way
  *   A ↔ [B,C,D]    hub-spoke bidirectional (spoke isolation enforced)
  *
- * Pure ChannelResolver unit tests (canSend, getPermittedTargets, fromRunConfig
- * invalid-entry filtering) live in channel-resolver.test.ts.
+ * Task Agent participation in channel topology:
+ *   - list_group_members shows permittedTargets for all members including Task Agent
+ *   - When channel to/from Task Agent is declared, it appears in permittedTargets
+ *   - When channel to/from Task Agent is removed, permittedTargets updates accordingly
  *
- * Group scoping is explicitly tested: messages must never cross task-group
- * boundaries (relay_message rejects out-of-group target session IDs).
+ * Note: Task Agent does not have send_message tool. Node agents cannot deliver
+ * messages to Task Agent via send_message (task-agent is filtered from delivery targets).
+ * Task Agent's participation in the topology is visible via list_group_members.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -28,10 +30,10 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -39,9 +41,9 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import {
-	createStepAgentToolHandlers,
-	type StepAgentToolsConfig,
-} from '../../../src/lib/space/tools/step-agent-tools.ts';
+	createNodeAgentToolHandlers,
+	type NodeAgentToolsConfig,
+} from '../../../src/lib/space/tools/node-agent-tools.ts';
 import {
 	createTaskAgentToolHandlers,
 	type SubSessionFactory,
@@ -91,6 +93,25 @@ function seedAgent(
 	).run(agentId, spaceId, name, role, Date.now(), Date.now());
 }
 
+function seedRunTask(
+	db: BunDatabase,
+	spaceId: string,
+	workflowRunId: string,
+	agentName: string,
+	sessionId: string
+): void {
+	db.exec('PRAGMA foreign_keys = OFF');
+	const now = Date.now();
+	const id = `task-cam-${Math.random().toString(36).slice(2)}`;
+	db.prepare(
+		`INSERT INTO space_tasks
+       (id, space_id, title, description, status, priority, agent_name,
+        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, '', 'in_progress', 'normal', ?, ?, '[]', ?, ?, ?)`
+	).run(id, spaceId, `Task for ${agentName}`, agentName, workflowRunId, sessionId, now, now);
+	db.exec('PRAGMA foreign_keys = ON');
+}
+
 // ===========================================================================
 // ResolvedChannel builder helper
 // ===========================================================================
@@ -111,17 +132,47 @@ function ch(fromRole: string, toRole: string, isHubSpoke = false): ResolvedChann
 // Each call creates its own isolated SQLite DB so tests never share state.
 // ===========================================================================
 
+const STEP_NODE_ID = 'node-cam-step';
+
 interface StepCtx {
 	db: BunDatabase;
 	dir: string;
 	spaceId: string;
-	sessionGroupRepo: SpaceSessionGroupRepository;
-	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** ID of the single workflow run created at context construction time. */
-	runId: string;
-	groupId: string;
-	/** Store resolved channels in the active workflow run config. */
-	setChannels: (channels: ResolvedChannel[]) => void;
+	spaceTaskRepo: SpaceTaskRepository;
+	workflowRunId: string;
+	/** Channel resolver used by makeStepConfig when no override is provided. Defaults to empty. */
+	channelResolver: ChannelResolver;
+}
+
+function seedStepTask(
+	db: BunDatabase,
+	spaceId: string,
+	workflowRunId: string,
+	agentName: string,
+	sessionId: string,
+	status = 'in_progress'
+): void {
+	db.exec('PRAGMA foreign_keys = OFF');
+	const now = Date.now();
+	const id = `task-cam-${Math.random().toString(36).slice(2)}`;
+	db.prepare(
+		`INSERT INTO space_tasks
+       (id, space_id, title, description, status, priority, agent_name,
+        workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
+	).run(
+		id,
+		spaceId,
+		`Task for ${agentName}`,
+		status,
+		agentName,
+		workflowRunId,
+		STEP_NODE_ID,
+		sessionId,
+		now,
+		now
+	);
+	db.exec('PRAGMA foreign_keys = ON');
 }
 
 function makeStepCtx(
@@ -132,49 +183,37 @@ function makeStepCtx(
 	const spaceId = 'space-cam-step';
 	seedSpace(db, spaceId);
 
-	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
-	const group = sessionGroupRepo.createGroup({ spaceId, name: 'task:cam-1', taskId: 'cam-task-1' });
-
-	for (let i = 0; i < members.length; i++) {
-		const m = members[i];
-		sessionGroupRepo.addMember(group.id, m.sessionId, {
-			role: m.role,
-			status: (m.status as 'active' | 'completed' | 'failed') ?? 'active',
-			orderIndex: i,
-		});
-	}
-
+	// Create a minimal workflow run so we can attach tasks
 	const workflowRepo = new SpaceWorkflowRepository(db);
-	const runRepo = new SpaceWorkflowRunRepository(db);
-
-	// Create a minimal workflow + run so we can attach a _resolvedChannels config.
-	const wf = workflowRepo.createWorkflow({
+	const workflow = workflowRepo.createWorkflow({
 		spaceId,
-		name: 'cam-wf',
+		name: 'Step Test WF',
 		description: '',
-		steps: [],
+		nodes: [],
 		transitions: [],
-		startStepId: '',
+		startNodeId: '',
 		rules: [],
 	});
-	const run = runRepo.createRun({
+	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+	const run = workflowRunRepo.createRun({
 		spaceId,
-		workflowId: wf.id,
-		title: 'cam run',
-		triggeredBy: 'test',
+		workflowId: workflow.id,
+		title: 'Step Test Run',
 	});
+
+	const spaceTaskRepo = new SpaceTaskRepository(db);
+
+	for (const m of members) {
+		seedStepTask(db, spaceId, run.id, m.role, m.sessionId, m.status ?? 'in_progress');
+	}
 
 	return {
 		db,
 		dir,
 		spaceId,
-		sessionGroupRepo,
-		workflowRunRepo: runRepo,
-		runId: run.id,
-		groupId: group.id,
-		setChannels: (channels: ResolvedChannel[]) => {
-			runRepo.updateRun(run.id, { config: { _resolvedChannels: channels } });
-		},
+		spaceTaskRepo,
+		workflowRunId: run.id,
+		channelResolver: new ChannelResolver([]),
 	};
 }
 
@@ -182,32 +221,30 @@ function makeStepConfig(
 	ctx: StepCtx,
 	mySessionId: string,
 	myRole: string,
-	overrides: Partial<StepAgentToolsConfig> = {}
-): StepAgentToolsConfig & {
+	overrides: Partial<NodeAgentToolsConfig> = {}
+): NodeAgentToolsConfig & {
 	injectedMessages: Array<{ sessionId: string; message: string }>;
-	taskAgentMessages: string[];
 } {
 	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
-	const taskAgentMessages: string[] = [];
 
 	const config = {
 		mySessionId,
 		myRole,
 		taskId: 'cam-task-1',
-		workflowRunId: ctx.runId,
-		sessionGroupRepo: ctx.sessionGroupRepo,
-		getGroupId: () => ctx.groupId,
-		workflowRunRepo: ctx.workflowRunRepo,
+		stepTaskId: '',
+		spaceId: ctx.spaceId,
+		channelResolver: ctx.channelResolver,
+		workflowRunId: ctx.workflowRunId,
+		spaceTaskRepo: ctx.spaceTaskRepo,
+		workflowNodeId: STEP_NODE_ID,
 		messageInjector: async (sessionId: string, message: string) => {
 			injectedMessages.push({ sessionId, message });
 		},
-		injectToTaskAgent: async (message: string) => {
-			taskAgentMessages.push(message);
-		},
+		taskManager: new SpaceTaskManager(ctx.db, ctx.spaceId),
 		...overrides,
 	};
 
-	return Object.assign(config, { injectedMessages, taskAgentMessages });
+	return Object.assign(config, { injectedMessages });
 }
 
 // ===========================================================================
@@ -226,7 +263,6 @@ interface TaskCtx {
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
-	sessionGroupRepo: SpaceSessionGroupRepository;
 }
 
 function makeTaskCtx(): TaskCtx {
@@ -248,8 +284,6 @@ function makeTaskCtx(): TaskCtx {
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
-	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
-
 	const runtime = new SpaceRuntime({
 		db,
 		spaceManager,
@@ -284,7 +318,6 @@ function makeTaskCtx(): TaskCtx {
 		taskManager,
 		agentManager,
 		runtime,
-		sessionGroupRepo,
 	};
 }
 
@@ -311,7 +344,6 @@ async function startRun(ctx: TaskCtx, wf: SpaceWorkflow) {
 		spaceId: ctx.spaceId,
 		workflowId: wf.id,
 		title: 'cam run',
-		triggeredBy: 'test',
 	});
 	const mainTask = ctx.taskManager.createTask({
 		spaceId: ctx.spaceId,
@@ -329,7 +361,6 @@ function makeTaskConfig(
 	runId: string,
 	factory: SubSessionFactory,
 	overrides: {
-		groupId?: string;
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
 	} = {}
 ): TaskAgentToolsConfig {
@@ -338,7 +369,6 @@ function makeTaskConfig(
 		space: ctx.space,
 		workflowRunId: runId,
 		workspacePath: '/tmp/workspace',
-		runtime: ctx.runtime,
 		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
 		workflowRunRepo: ctx.workflowRunRepo,
@@ -347,8 +377,6 @@ function makeTaskConfig(
 		sessionFactory: factory,
 		messageInjector: overrides.messageInjector ?? (async () => {}),
 		onSubSessionComplete: async () => {},
-		sessionGroupRepo: ctx.sessionGroupRepo,
-		getGroupId: () => overrides.groupId,
 	};
 }
 
@@ -357,9 +385,9 @@ function buildSingleStepWf(ctx: TaskCtx) {
 	return ctx.workflowManager.createWorkflow({
 		spaceId: ctx.spaceId,
 		name: 'Single-Step WF',
-		steps: [{ id: stepId, name: 'Only Step', agentId: ctx.agentId }],
+		nodes: [{ id: stepId, name: 'Only Step', agentId: ctx.agentId }],
 		transitions: [],
-		startStepId: stepId,
+		startNodeId: stepId,
 		rules: [],
 	});
 }
@@ -373,10 +401,10 @@ function parse(result: { content: Array<{ text: string }> }): Record<string, unk
 }
 
 // ===========================================================================
-// 1. send_feedback — channel validation and target modes
+// 1. send_message — channel validation and target modes
 // ===========================================================================
 
-describe('send_feedback — point-to-point (target: role)', () => {
+describe('send_message — point-to-point (target: role)', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
@@ -388,16 +416,16 @@ describe('send_feedback — point-to-point (target: role)', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		ctx.setChannels([ch('coder', 'reviewer')]);
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(await handlers.send_feedback({ target: 'reviewer', message: 'LGTM' }));
+		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'LGTM' }));
 		expect(result.success).toBe(true);
 		expect(cfg.injectedMessages).toHaveLength(1);
 		expect(cfg.injectedMessages[0].sessionId).toBe('sess-reviewer');
-		expect(cfg.injectedMessages[0].message).toContain('[Feedback from coder]');
+		expect(cfg.injectedMessages[0].message).toContain('[Message from coder]');
 		expect(cfg.injectedMessages[0].message).toContain('LGTM');
 	});
 
@@ -407,19 +435,19 @@ describe('send_feedback — point-to-point (target: role)', () => {
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
 		// Only reviewer→coder declared; coder→reviewer not present
-		ctx.setChannels([ch('reviewer', 'coder')]);
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('reviewer', 'coder')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(await handlers.send_feedback({ target: 'reviewer', message: 'Hello' }));
+		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hello' }));
 		expect(result.success).toBe(false);
 		expect(result.unauthorizedRoles).toEqual(['reviewer']);
 		expect(cfg.injectedMessages).toHaveLength(0);
 	});
 });
 
-describe('send_feedback — broadcast (target: "*")', () => {
+describe('send_message — broadcast (target: "*")', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
@@ -432,12 +460,12 @@ describe('send_feedback — broadcast (target: "*")', () => {
 			{ sessionId: 'sess-B', role: 'B' },
 			{ sessionId: 'sess-C', role: 'C' },
 		]);
-		ctx.setChannels([ch('hub', 'B'), ch('hub', 'C')]);
+		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(await handlers.send_feedback({ target: '*', message: 'Broadcast!' }));
+		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
 		expect(result.success).toBe(true);
 		const delivered = (result.delivered as Array<{ sessionId: string }>).map((d) => d.sessionId);
 		expect(delivered.sort()).toEqual(['sess-B', 'sess-C'].sort());
@@ -449,18 +477,18 @@ describe('send_feedback — broadcast (target: "*")', () => {
 			{ sessionId: 'sess-hub', role: 'hub' },
 		]);
 		// Only hub→spoke; spoke has no outgoing channels
-		ctx.setChannels([ch('hub', 'spoke')]);
+		const cfg = makeStepConfig(ctx, 'sess-spoke', 'spoke', {
+			channelResolver: new ChannelResolver([ch('hub', 'spoke')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const cfg = makeStepConfig(ctx, 'sess-spoke', 'spoke');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(await handlers.send_feedback({ target: '*', message: 'Hi' }));
+		const result = parse(await handlers.send_message({ target: '*', message: 'Hi' }));
 		expect(result.success).toBe(false);
 		expect(result.availableTargets).toEqual([]);
 	});
 });
 
-describe('send_feedback — multicast (target: [role1, role2])', () => {
+describe('send_message — multicast (target: [role1, role2])', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
@@ -473,14 +501,12 @@ describe('send_feedback — multicast (target: [role1, role2])', () => {
 			{ sessionId: 'sess-B', role: 'B' },
 			{ sessionId: 'sess-C', role: 'C' },
 		]);
-		ctx.setChannels([ch('hub', 'B'), ch('hub', 'C')]);
+		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(
-			await handlers.send_feedback({ target: ['B', 'C'], message: 'Multicast' })
-		);
+		const result = parse(await handlers.send_message({ target: ['B', 'C'], message: 'Multicast' }));
 		expect(result.success).toBe(true);
 		const delivered = (result.delivered as Array<{ sessionId: string }>).map((d) => d.sessionId);
 		expect(delivered.sort()).toEqual(['sess-B', 'sess-C'].sort());
@@ -493,14 +519,12 @@ describe('send_feedback — multicast (target: [role1, role2])', () => {
 			{ sessionId: 'sess-C', role: 'C' },
 		]);
 		// Only hub→B; hub→C not declared
-		ctx.setChannels([ch('hub', 'B')]);
+		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			channelResolver: new ChannelResolver([ch('hub', 'B')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(
-			await handlers.send_feedback({ target: ['B', 'C'], message: 'Multicast' })
-		);
+		const result = parse(await handlers.send_message({ target: ['B', 'C'], message: 'Multicast' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
 	});
@@ -512,20 +536,19 @@ describe('send_feedback — multicast (target: [role1, role2])', () => {
 			{ sessionId: 'sess-B', role: 'B' },
 			{ sessionId: 'sess-C', role: 'C' },
 		]);
-		ctx.setChannels([ch('hub', 'B'), ch('hub', 'C')]);
-
 		let callCount = 0;
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
 			messageInjector: async (sessionId: string, message: string) => {
 				callCount++;
 				if (sessionId === 'sess-C') throw new Error('Session C unavailable');
 				cfg.injectedMessages.push({ sessionId, message });
 			},
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(
-			await handlers.send_feedback({ target: ['B', 'C'], message: 'Multicast partial' })
+			await handlers.send_message({ target: ['B', 'C'], message: 'Multicast partial' })
 		);
 		// Partial success: B delivered, C failed → success is 'partial' (not true)
 		expect(result.success).toBe('partial');
@@ -541,38 +564,37 @@ describe('send_feedback — multicast (target: [role1, role2])', () => {
 });
 
 // ===========================================================================
-// 2. send_feedback — no channels declared (empty topology)
+// 2. send_message — no channels declared (empty topology)
 // ===========================================================================
 
-describe('send_feedback — no channels declared', () => {
+describe('send_message — no channels declared', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('all send_feedback calls fail with suggestion to use request_peer_input', async () => {
+	test('all send_message calls fail when no channels declared', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		// No setChannels call — empty topology
+		// No channels declared — empty topology (default empty resolver)
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const result = parse(await handlers.send_feedback({ target: 'reviewer', message: 'Hi' }));
+		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hi' }));
 		expect(result.success).toBe(false);
-		expect(result.suggestion).toBe('request_peer_input');
 		expect(cfg.injectedMessages).toHaveLength(0);
 	});
 });
 
 // ===========================================================================
-// 3. send_feedback — fan-out one-way topology
+// 3. send_message — fan-out one-way topology
 // ===========================================================================
 
-describe('send_feedback — fan-out one-way: hub → spokes, spokes cannot reply', () => {
+describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
@@ -587,20 +609,20 @@ describe('send_feedback — fan-out one-way: hub → spokes, spokes cannot reply
 			{ sessionId: 'sess-D', role: 'D' },
 		]);
 		// Fan-out one-way: hub → B, C, D (no reverse)
-		ctx.setChannels([ch('hub', 'B'), ch('hub', 'C'), ch('hub', 'D')]);
+		ctx.channelResolver = new ChannelResolver([ch('hub', 'B'), ch('hub', 'C'), ch('hub', 'D')]);
 	});
 
 	test('hub can send to B', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(await handlers.send_feedback({ target: 'B', message: 'Go!' }));
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: 'B', message: 'Go!' }));
 		expect(result.success).toBe(true);
 	});
 
 	test('hub broadcasts to all spokes via *', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(await handlers.send_feedback({ target: '*', message: 'All go!' }));
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: '*', message: 'All go!' }));
 		expect(result.success).toBe(true);
 		const delivered = (result.delivered as Array<{ sessionId: string }>).map((d) => d.sessionId);
 		expect(delivered.sort()).toEqual(['sess-B', 'sess-C', 'sess-D'].sort());
@@ -608,26 +630,26 @@ describe('send_feedback — fan-out one-way: hub → spokes, spokes cannot reply
 
 	test('spoke B cannot send back to hub (one-way enforcement)', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-B', 'B');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(await handlers.send_feedback({ target: 'hub', message: 'Hello hub' }));
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: 'hub', message: 'Hello hub' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('hub')).toBe(true);
 	});
 
 	test('spoke B cannot send to spoke C (spoke isolation)', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-B', 'B');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(await handlers.send_feedback({ target: 'C', message: 'Hi C' }));
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: 'C', message: 'Hi C' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
 	});
 });
 
 // ===========================================================================
-// 4. send_feedback — hub-spoke bidirectional topology
+// 4. send_message — hub-spoke bidirectional topology
 // ===========================================================================
 
-describe('send_feedback — hub-spoke bidirectional: hub broadcasts, spokes reply to hub only', () => {
+describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply to hub only', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
@@ -641,7 +663,7 @@ describe('send_feedback — hub-spoke bidirectional: hub broadcasts, spokes repl
 			{ sessionId: 'sess-C', role: 'C' },
 		]);
 		// Hub-spoke bidirectional: hub↔B, hub↔C (no B↔C)
-		ctx.setChannels([
+		ctx.channelResolver = new ChannelResolver([
 			ch('hub', 'B', true),
 			ch('B', 'hub', true),
 			ch('hub', 'C', true),
@@ -651,16 +673,16 @@ describe('send_feedback — hub-spoke bidirectional: hub broadcasts, spokes repl
 
 	test('hub can send to B', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(await handlers.send_feedback({ target: 'B', message: 'Review this' }));
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: 'B', message: 'Review this' }));
 		expect(result.success).toBe(true);
 		expect(cfg.injectedMessages[0].sessionId).toBe('sess-B');
 	});
 
 	test('hub can broadcast to all spokes via *', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(await handlers.send_feedback({ target: '*', message: 'Broadcast' }));
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast' }));
 		expect(result.success).toBe(true);
 		const delivered = (result.delivered as Array<{ sessionId: string }>).map((d) => d.sessionId);
 		expect(delivered.sort()).toEqual(['sess-B', 'sess-C'].sort());
@@ -668,123 +690,31 @@ describe('send_feedback — hub-spoke bidirectional: hub broadcasts, spokes repl
 
 	test('spoke B can reply to hub', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-B', 'B');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(
-			await handlers.send_feedback({ target: 'hub', message: 'Reviewed, LGTM' })
-		);
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: 'hub', message: 'Reviewed, LGTM' }));
 		expect(result.success).toBe(true);
 		expect(cfg.injectedMessages[0].sessionId).toBe('sess-hub');
 	});
 
 	test('spoke B cannot send to spoke C (spoke isolation enforced)', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-B', 'B');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(await handlers.send_feedback({ target: 'C', message: 'Hi C' }));
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: 'C', message: 'Hi C' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
 	});
 
 	test('spoke C cannot send to spoke B (spoke isolation, other direction)', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-C', 'C');
-		const handlers = createStepAgentToolHandlers(cfg);
-		const result = parse(await handlers.send_feedback({ target: 'B', message: 'Hi B' }));
+		const handlers = createNodeAgentToolHandlers(cfg);
+		const result = parse(await handlers.send_message({ target: 'B', message: 'Hi B' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('B')).toBe(true);
 	});
 });
 
 // ===========================================================================
-// 5. request_peer_input — Task Agent mediated async flow
-// ===========================================================================
-
-describe('request_peer_input — async routing through Task Agent', () => {
-	let ctx: StepCtx;
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('routes question to Task Agent and returns async acknowledgment', async () => {
-		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
-		]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(
-			await handlers.request_peer_input({
-				target_role: 'reviewer',
-				question: 'Does the API look correct?',
-			})
-		);
-		expect(result.success).toBe(true);
-		expect(result.async).toBe(true);
-		expect(result.targetRole).toBe('reviewer');
-		expect(cfg.taskAgentMessages).toHaveLength(1);
-	});
-
-	test('routing message includes sender identity, session ID, and target role', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		await handlers.request_peer_input({ target_role: 'reviewer', question: 'Any concerns?' });
-
-		const msg = cfg.taskAgentMessages[0];
-		expect(msg).toContain('coder');
-		expect(msg).toContain('reviewer');
-		expect(msg).toContain('sess-coder');
-		expect(msg).toContain('Any concerns?');
-	});
-
-	test('routing message asks Task Agent to forward response back with prefix', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		await handlers.request_peer_input({ target_role: 'reviewer', question: 'Question' });
-
-		const msg = cfg.taskAgentMessages[0];
-		expect(msg).toContain('[Peer response from reviewer]');
-	});
-
-	test('available even when no channels declared (fallback mode)', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		// No channels set — resolver is empty, send_feedback would fail
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		// send_feedback should fail
-		const fbResult = parse(await handlers.send_feedback({ target: 'reviewer', message: 'Hi' }));
-		expect(fbResult.success).toBe(false);
-
-		// request_peer_input should succeed
-		const rpResult = parse(
-			await handlers.request_peer_input({ target_role: 'reviewer', question: 'Hi' })
-		);
-		expect(rpResult.success).toBe(true);
-	});
-
-	test('returns error when Task Agent injection fails', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
-			injectToTaskAgent: async () => {
-				throw new Error('Task Agent session not found');
-			},
-		});
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(
-			await handlers.request_peer_input({ target_role: 'reviewer', question: 'Q' })
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('Task Agent session not found');
-	});
-});
-
-// ===========================================================================
-// 6. list_peers — peer discovery
+// 5. list_peers — peer discovery
 // ===========================================================================
 
 describe('list_peers — peer discovery with channel info', () => {
@@ -802,7 +732,7 @@ describe('list_peers — peer discovery with channel info', () => {
 		]);
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.success).toBe(true);
@@ -818,10 +748,10 @@ describe('list_peers — peer discovery with channel info', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		ctx.setChannels([ch('coder', 'reviewer')]);
-
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(true);
@@ -833,30 +763,29 @@ describe('list_peers — peer discovery with channel info', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		// No setChannels call
+		// No channels declared (default empty resolver)
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(false);
 		expect(result.permittedTargets as string[]).toHaveLength(0);
 	});
 
-	test('returns error when group not found', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
-			getGroupId: () => undefined,
-		});
-		const handlers = createStepAgentToolHandlers(cfg);
+	test('returns empty peers when no tasks with sessions exist', async () => {
+		ctx = makeStepCtx([]);
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
+		expect((result.peers as unknown[]).length).toBe(0);
 	});
 });
 
 // ===========================================================================
-// 7. list_group_members (Task Agent tool)
+// 6. list_group_members (Task Agent tool)
 // ===========================================================================
 
 describe('list_group_members — Task Agent group view', () => {
@@ -871,32 +800,16 @@ describe('list_group_members — Task Agent group view', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			agentId: ctx.agentId,
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
-			role: 'reviewer',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'reviewer', 'reviewer-session');
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
 		expect(result.success).toBe(true);
-		expect(result.groupId).toBe(group.id);
 		const members = result.members as Array<{
 			sessionId: string;
 			role: string;
@@ -908,7 +821,6 @@ describe('list_group_members — Task Agent group view', () => {
 
 		const coder = members.find((m) => m.role === 'coder');
 		expect(coder?.sessionId).toBe('coder-session');
-		expect(coder?.agentId).toBe(ctx.agentId);
 		expect(Array.isArray(coder?.permittedTargets)).toBe(true);
 	});
 
@@ -917,15 +829,7 @@ describe('list_group_members — Task Agent group view', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
 		// Store channels in run config
 		ctx.workflowRunRepo.updateRun(run.id, {
@@ -935,219 +839,223 @@ describe('list_group_members — Task Agent group view', () => {
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
 		expect(result.channelTopologyDeclared).toBe(true);
 	});
 
-	test('returns error when no group exists for task', async () => {
+	test('returns empty members when no tasks have sessions', async () => {
 		ctx = makeTaskCtx();
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
-			// no groupId — getGroupId() returns undefined
 		);
 
 		const result = parse(await handlers.list_group_members({}));
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('No session group found');
+		expect(result.success).toBe(true);
+		expect((result.members as unknown[]).length).toBe(0);
 	});
 });
 
 // ===========================================================================
-// 8. relay_message (Task Agent tool) — unrestricted relay + cross-group rejection
+// 6b. Task Agent participation in channel topology
 // ===========================================================================
+// These tests verify that the Task Agent's role in the channel topology is
+// correctly reflected via list_group_members. The key insight is:
+//   - list_group_members shows permittedTargets for ALL members including Task Agent
+//   - When a channel to/from Task Agent is declared, it appears in permittedTargets
+//   - When the channel is removed (topology changes), permittedTargets updates
+//
+// Note: Task Agent does not have a send_message tool. When a node agent calls
+// send_message targeting 'task-agent', the channel resolver check passes (if channel
+// declared), but the task-agent is filtered from delivery targets, so the message
+// is never delivered. This is by design — Task Agent communicates via its own mechanisms,
+// not by receiving injected messages.
 
-describe('relay_message — Task Agent unrestricted relay', () => {
+describe('Task Agent in channel topology — via list_group_members', () => {
 	let ctx: TaskCtx;
 	afterEach(() => {
 		ctx.db.close();
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('successfully relays to any group member (ignores channel topology)', async () => {
+	test('coder permittedTargets includes task-agent when channel coder→task-agent is declared', async () => {
 		ctx = makeTaskCtx();
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
-			role: 'reviewer',
-			status: 'active',
-		});
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
-		// Store one-way channel: coder→reviewer only
+		// Declare channel: coder → task-agent
 		ctx.workflowRunRepo.updateRun(run.id, {
-			config: { _resolvedChannels: [ch('coder', 'reviewer')] },
+			config: { _resolvedChannels: [ch('coder', 'task-agent')] },
 		});
 
-		const injected: Array<{ sessionId: string; message: string }> = [];
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-				messageInjector: async (sid, msg) => injected.push({ sessionId: sid, message: msg }),
-			})
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
-		// Task Agent relays reviewer→coder even though channel is coder→reviewer only
-		const result = parse(
-			await handlers.relay_message({
-				target_session_id: 'coder-session',
-				message: 'Feedback from reviewer',
-			})
-		);
+		const result = parse(await handlers.list_group_members({}));
 		expect(result.success).toBe(true);
-		expect(injected).toHaveLength(1);
-		expect(injected[0].sessionId).toBe('coder-session');
+
+		const members = result.members as Array<{
+			role: string;
+			permittedTargets: string[];
+		}>;
+		const coder = members.find((m) => m.role === 'coder');
+		expect(coder?.permittedTargets).toContain('task-agent');
 	});
 
-	test('rejects self-relay (task-agent targeting its own session)', async () => {
+	test('reviewer permittedTargets includes task-agent when channel reviewer→task-agent is declared', async () => {
 		ctx = makeTaskCtx();
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'reviewer', 'reviewer-session');
+
+		// Declare channel: reviewer → task-agent
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('reviewer', 'task-agent')] },
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
-		const result = parse(
-			await handlers.relay_message({
-				target_session_id: 'ta-session',
-				message: 'Self message',
-			})
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('task-agent');
+		const result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+
+		const members = result.members as Array<{
+			role: string;
+			permittedTargets: string[];
+		}>;
+		const reviewer = members.find((m) => m.role === 'reviewer');
+		expect(reviewer?.permittedTargets).toContain('task-agent');
 	});
 
-	test('relaying to a completed member calls injector (failure surfaced from injector)', async () => {
+	test('task-agent permittedTargets is empty when no channels to/from task-agent declared', async () => {
 		ctx = makeTaskCtx();
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'completed-session', {
-			role: 'coder',
-			status: 'completed',
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		// Declare channel between coder and reviewer — NOT involving task-agent
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('coder', 'reviewer'), ch('reviewer', 'coder')] },
 		});
 
 		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-				messageInjector: async () => {
-					throw new Error('Sub-session gone');
-				},
-			})
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
-		// relay_message does not pre-check member status; injector failure surfaces as error
-		const result = parse(
-			await handlers.relay_message({ target_session_id: 'completed-session', message: 'Hi' })
+		const result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+
+		const members = result.members as Array<{
+			role: string;
+			permittedTargets: string[];
+		}>;
+		const taskAgentMember = members.find((m) => m.role === 'task-agent');
+		expect(taskAgentMember?.permittedTargets).toEqual([]);
+	});
+
+	test('task-agent permittedTargets includes coder when channel task-agent→coder is declared', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		// Declare channel: task-agent → coder (Task Agent can send to coder)
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('task-agent', 'coder')] },
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('Sub-session gone');
+
+		const result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+
+		const members = result.members as Array<{
+			role: string;
+			permittedTargets: string[];
+		}>;
+		const taskAgentMember = members.find((m) => m.role === 'task-agent');
+		expect(taskAgentMember?.permittedTargets).toContain('coder');
+	});
+
+	test('removing channel to task-agent updates permittedTargets', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		// Initially: channel coder → task-agent
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('coder', 'task-agent')] },
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
+		);
+
+		let result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+		let members = result.members as Array<{ role: string; permittedTargets: string[] }>;
+		let coder = members.find((m) => m.role === 'coder');
+		expect(coder?.permittedTargets).toContain('task-agent');
+
+		// Remove channel to task-agent — update topology to empty
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [] },
+		});
+
+		result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+		members = result.members as Array<{ role: string; permittedTargets: string[] }>;
+		coder = members.find((m) => m.role === 'coder');
+		expect(coder?.permittedTargets).not.toContain('task-agent');
 	});
 });
 
 // ===========================================================================
-// 9. Group scoping — cross-group message isolation
+// 7. Group scoping — cross-group message isolation
 // ===========================================================================
 
 describe('Group scoping — messages cannot leak between task groups', () => {
-	let ctx: TaskCtx;
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('relay_message rejects target session from a different group', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		// Group A (this Task Agent's group)
-		const groupA = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(groupA.id, 'session-in-A', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		// Group B (a different task's group, simulating another concurrent task)
-		const groupB = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: 'task:other-task',
-			taskId: 'other-task-id',
-		});
-		ctx.sessionGroupRepo.addMember(groupB.id, 'session-in-B', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: groupA.id })
-		);
-
-		// Try to relay to a session in group B (should be rejected)
-		const result = parse(
-			await handlers.relay_message({
-				target_session_id: 'session-in-B',
-				message: 'Cross-group message',
-			})
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('not a member of group');
-	});
-
-	test('send_feedback only delivers within the step agent own group', async () => {
+	test('send_message only delivers within the node agent own group', async () => {
 		// Two independent step contexts (different groups, different DBs)
 		const ctxA = makeStepCtx([
 			{ sessionId: 'sess-hub-A', role: 'hub' },
 			{ sessionId: 'sess-B-A', role: 'B' },
 		]);
-		ctxA.setChannels([ch('hub', 'B')]);
+		ctxA.channelResolver = new ChannelResolver([ch('hub', 'B')]);
 
 		const ctxB = makeStepCtx([
 			{ sessionId: 'sess-hub-B', role: 'hub' },
 			{ sessionId: 'sess-B-B', role: 'B' },
 		]);
-		ctxB.setChannels([ch('hub', 'B')]);
+		ctxB.channelResolver = new ChannelResolver([ch('hub', 'B')]);
 
 		try {
 			const cfgA = makeStepConfig(ctxA, 'sess-hub-A', 'hub');
-			const handlersA = createStepAgentToolHandlers(cfgA);
+			const handlersA = createNodeAgentToolHandlers(cfgA);
 
 			// Group A hub sends to its own B — succeeds
-			const resultA = parse(await handlersA.send_feedback({ target: 'B', message: 'To A.B' }));
+			const resultA = parse(await handlersA.send_message({ target: 'B', message: 'To A.B' }));
 			expect(resultA.success).toBe(true);
 			expect(cfgA.injectedMessages[0].sessionId).toBe('sess-B-A');
 
@@ -1164,7 +1072,7 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 });
 
 // ===========================================================================
-// 10. Error cases — non-existent sessions, injection failures
+// 8. Error cases — non-existent sessions, injection failures
 // ===========================================================================
 
 describe('Error cases — non-existent targets and injection failures', () => {
@@ -1174,33 +1082,32 @@ describe('Error cases — non-existent targets and injection failures', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('send_feedback to non-existent role returns no-active-sessions error', async () => {
+	test('send_message to non-existent role returns no-active-sessions error', async () => {
 		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		ctx.setChannels([ch('coder', 'ghost')]);
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'ghost')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(await handlers.send_feedback({ target: 'ghost', message: 'Hello ghost' }));
+		const result = parse(await handlers.send_message({ target: 'ghost', message: 'Hello ghost' }));
 		expect(result.success).toBe(false);
 		expect((result.error as string).toLowerCase()).toContain('no active sessions');
 	});
 
-	test('send_feedback injection failure returns all-failed error', async () => {
+	test('send_message injection failure returns all-failed error', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		ctx.setChannels([ch('coder', 'reviewer')]);
-
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
 			messageInjector: async () => {
 				throw new Error('Session closed');
 			},
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const result = parse(await handlers.send_feedback({ target: 'reviewer', message: 'Hi' }));
+		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hi' }));
 		expect(result.success).toBe(false);
 		// All-failed path: production returns `message` (not `error`) describing the failure
 		expect((result.message as string).toLowerCase()).toContain('failed');
@@ -1208,74 +1115,17 @@ describe('Error cases — non-existent targets and injection failures', () => {
 });
 
 // ===========================================================================
-// 11. relay_message — cross-group rejection (Task Agent validation)
+// 9. Step with no channels declared — no messaging available
 // ===========================================================================
 
-describe('relay_message — cross-group rejection', () => {
-	let ctx: TaskCtx;
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('rejects session not in the Task Agent group', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'known-session', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
-		);
-
-		const result = parse(
-			await handlers.relay_message({
-				target_session_id: 'completely-unknown-session',
-				message: 'Hi',
-			})
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('not a member of group');
-	});
-
-	test('returns error when relay target group does not exist in DB', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: 'nonexistent-group',
-			})
-		);
-
-		const result = parse(await handlers.relay_message({ target_session_id: 'any', message: 'Hi' }));
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('nonexistent-group');
-	});
-});
-
-// ===========================================================================
-// 12. Step with no channels declared — open model (all via request_peer_input)
-// ===========================================================================
-
-describe('Step with no channels declared — open model', () => {
+describe('Step with no channels declared', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('send_feedback always fails; request_peer_input always succeeds', async () => {
+	test('send_message fails when no channels declared', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-a', role: 'agent-a' },
 			{ sessionId: 'sess-b', role: 'agent-b' },
@@ -1283,19 +1133,12 @@ describe('Step with no channels declared — open model', () => {
 		// No channels declared — resolver is empty
 
 		const cfgA = makeStepConfig(ctx, 'sess-a', 'agent-a');
-		const handlersA = createStepAgentToolHandlers(cfgA);
+		const handlersA = createNodeAgentToolHandlers(cfgA);
 
 		const fbResult = parse(
-			await handlersA.send_feedback({ target: 'agent-b', message: 'Direct msg' })
+			await handlersA.send_message({ target: 'agent-b', message: 'Direct msg' })
 		);
 		expect(fbResult.success).toBe(false);
-		expect(fbResult.suggestion).toBe('request_peer_input');
-
-		const rpResult = parse(
-			await handlersA.request_peer_input({ target_role: 'agent-b', question: 'Q?' })
-		);
-		expect(rpResult.success).toBe(true);
-		expect(rpResult.async).toBe(true);
 	});
 
 	test('list_peers shows no permitted targets when no channels declared', async () => {
@@ -1305,7 +1148,7 @@ describe('Step with no channels declared — open model', () => {
 		]);
 
 		const cfg = makeStepConfig(ctx, 'sess-a', 'agent-a');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(false);
@@ -1314,28 +1157,300 @@ describe('Step with no channels declared — open model', () => {
 });
 
 // ===========================================================================
-// 13. Message attribution — sender identity prefix
+// 10. Message attribution — sender identity prefix
 // ===========================================================================
 
-describe('send_feedback — sender attribution prefix', () => {
+describe('send_message — sender attribution prefix', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('injected message includes [Feedback from <role>] prefix', async () => {
+	test('injected message includes [Message from <role>] prefix', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		ctx.setChannels([ch('coder', 'reviewer')]);
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
 
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
+		await handlers.send_message({ target: 'reviewer', message: 'Here is my patch' });
 
-		await handlers.send_feedback({ target: 'reviewer', message: 'Here is my patch' });
+		expect(cfg.injectedMessages[0].message).toBe('[Message from coder]: Here is my patch');
+	});
+});
 
-		expect(cfg.injectedMessages[0].message).toBe('[Feedback from coder]: Here is my patch');
+// ===========================================================================
+// 11. Task Agent send_message — channel validation and target modes
+// ===========================================================================
+
+describe('Task Agent send_message — point-to-point (target: role)', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('succeeds when channel is declared', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Set up channel: task-agent → coder (one-way)
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder')],
+			},
+		});
+
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				messageInjector: async (sessionId, message) => {
+					injectedMessages.push({ sessionId, message });
+				},
+			})
+		);
+
+		const result = parse(await handlers.send_message({ target: 'coder', message: 'Hello coder' }));
+		expect(result.success).toBe(true);
+		expect(injectedMessages).toHaveLength(1);
+		expect(injectedMessages[0].sessionId).toBe('coder-session');
+		expect(injectedMessages[0].message).toContain('[Message from task-agent]');
+		expect(injectedMessages[0].message).toContain('Hello coder');
+	});
+
+	test('denied when channel is not declared (task-agent → coder missing)', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Set up channel: coder → task-agent only (reverse direction)
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('coder', 'task-agent')],
+			},
+		});
+
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
+		);
+
+		const result = parse(await handlers.send_message({ target: 'coder', message: 'Should fail' }));
+		expect(result.success).toBe(false);
+		expect(result.unauthorizedRoles).toEqual(['coder']);
+	});
+
+	test('fails when no channels declared (empty topology)', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// No channels declared
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
+		);
+
+		const result = parse(await handlers.send_message({ target: 'coder', message: 'Should fail' }));
+		expect(result.success).toBe(false);
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
+	});
+});
+
+describe('Task Agent send_message — broadcast (target: "*")', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('delivers to all permitted targets', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// task-agent can send to both coder and reviewer
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder'), ch('task-agent', 'reviewer')],
+			},
+		});
+
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'reviewer', 'reviewer-session');
+
+		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				messageInjector: async (sessionId, message) => {
+					injectedMessages.push({ sessionId, message });
+				},
+			})
+		);
+
+		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
+		expect(result.success).toBe(true);
+		const delivered = result.delivered as Array<{ sessionId: string }>;
+		expect(delivered.length).toBe(2);
+		const deliveredIds = delivered.map((d) => d.sessionId).sort();
+		expect(deliveredIds).toEqual(['coder-session', 'reviewer-session'].sort());
+	});
+
+	test('fails when task-agent has no permitted targets', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Only coder can send to task-agent, not the other way around
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('coder', 'task-agent')],
+			},
+		});
+
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
+		);
+
+		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
+		expect(result.success).toBe(false);
+		expect(result.availableTargets).toEqual([]);
+	});
+});
+
+describe('Task Agent send_message — default task-agent channels', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('task-agent has default bidirectional channels to all node agents', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Simulate storeResolvedChannels behavior: default bidirectional channels
+		// between task-agent and all node agents are auto-added
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [
+					// Default task-agent → coder
+					{
+						fromRole: 'task-agent',
+						toRole: 'coder',
+						fromAgentId: 'task-agent',
+						toAgentId: 'coder',
+						direction: 'one-way',
+						isHubSpoke: false,
+					},
+					// Default coder → task-agent
+					{
+						fromRole: 'coder',
+						toRole: 'task-agent',
+						fromAgentId: 'coder',
+						toAgentId: 'task-agent',
+						direction: 'one-way',
+						isHubSpoke: false,
+					},
+				],
+			},
+		});
+
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				messageInjector: async (sessionId, message) => {
+					injectedMessages.push({ sessionId, message });
+				},
+			})
+		);
+
+		// Task Agent can send to coder via default channel
+		const result = parse(
+			await handlers.send_message({ target: 'coder', message: 'Default channel works' })
+		);
+		expect(result.success).toBe(true);
+		expect(injectedMessages).toHaveLength(1);
+		expect(injectedMessages[0].sessionId).toBe('coder-session');
+	});
+
+	test('removing task-agent channel prevents messaging (no bypass)', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// User explicitly removes task-agent → coder channel
+		// Only coder → task-agent is declared (not the default task-agent → coder)
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [
+					// Only coder can message task-agent, not the other way
+					{
+						fromRole: 'coder',
+						toRole: 'task-agent',
+						fromAgentId: 'coder',
+						toAgentId: 'task-agent',
+						direction: 'one-way',
+						isHubSpoke: false,
+					},
+				],
+			},
+		});
+
+		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
+		);
+
+		// Task Agent cannot send to coder because the channel was removed
+		const result = parse(
+			await handlers.send_message({ target: 'coder', message: 'Should be blocked' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.unauthorizedRoles).toEqual(['coder']);
+	});
+});
+
+describe('Task Agent send_message — error cases', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns error when no active sessions found for target', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Set up a channel but no sessions for coder
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder')],
+			},
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
+		);
+
+		const result = parse(await handlers.send_message({ target: 'coder', message: 'Hello' }));
+		expect(result.success).toBe(false);
+		expect(result.error as string).toContain('No active sessions found');
 	});
 });

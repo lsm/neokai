@@ -15,9 +15,10 @@
  */
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
-import type { SpaceAgent } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowStepCard';
-import { isMultiAgentStep } from '../WorkflowStepCard';
+import type { SpaceAgent, WorkflowChannel } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
+import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
+import { isMultiAgentNode, isNodeFullyCompleted, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
 
 // ============================================================================
@@ -25,9 +26,18 @@ import type { Point } from './types';
 // ============================================================================
 
 /** Renders a compact text representation of channel topology. */
-function ChannelTopologyBadge({ step }: { step: StepDraft }) {
-	const channels = step.channels;
-	if (!channels || channels.length === 0) return null;
+function ChannelTopologyBadge({
+	workflowChannels,
+	nodeAgentNames,
+}: {
+	workflowChannels?: WorkflowChannel[];
+	nodeAgentNames: string[];
+}) {
+	if (!workflowChannels || workflowChannels.length === 0) return null;
+
+	// Show only channels where the source agent is in this node's agent list
+	const visibleChannels = (workflowChannels ?? []).filter((ch) => nodeAgentNames.includes(ch.from));
+	if (visibleChannels.length === 0) return null;
 
 	/** Truncate a role string for compact display. Channels already use role strings as identifiers. */
 	const roleLabel = (role: string) => (role.length > 8 ? role.slice(0, 8) + '…' : role);
@@ -39,7 +49,7 @@ function ChannelTopologyBadge({ step }: { step: StepDraft }) {
 
 	return (
 		<div class="mt-1.5 space-y-0.5" data-testid="channel-topology-badge">
-			{channels.map((ch, i) => (
+			{visibleChannels.map((ch, i) => (
 				<div key={i} class="flex items-center gap-0.5 text-xs text-gray-500">
 					<span class="font-mono">{roleLabel(ch.from)}</span>
 					<span class="text-gray-600">{ch.direction === 'bidirectional' ? '↔' : '→'}</span>
@@ -60,11 +70,13 @@ export type PortType = 'input' | 'output';
 export interface WorkflowNodeProps {
 	/** Zero-based index within the steps array; used for step number badge */
 	stepIndex: number;
-	step: StepDraft;
+	step: NodeDraft;
 	/** Absolute position in canvas coordinates */
 	position: Point;
 	/** Full agents list — used to resolve the agent name from step.agentId */
 	agents: SpaceAgent[];
+	/** Workflow-level channels — shown filtered by this node's agent roles */
+	workflowChannels?: WorkflowChannel[];
 	isSelected?: boolean;
 	/** First step in the workflow — hides input port, adds green border + START badge */
 	isStartNode?: boolean;
@@ -82,6 +94,11 @@ export interface WorkflowNodeProps {
 	isDropTarget?: boolean;
 	/** Called when the card body is clicked (for selection) */
 	onClick?: (stepId: string) => void;
+	/**
+	 * Runtime agent completion states for this node.
+	 * When provided, per-agent status indicators are shown inside the node card.
+	 */
+	nodeTaskStates?: AgentTaskState[];
 }
 
 // ============================================================================
@@ -93,6 +110,7 @@ export function WorkflowNode({
 	step,
 	position,
 	agents,
+	workflowChannels = [],
 	isSelected = false,
 	isStartNode = false,
 	isDropTarget = false,
@@ -102,11 +120,28 @@ export function WorkflowNode({
 	onPortMouseEnter,
 	onPortMouseLeave,
 	onClick,
+	nodeTaskStates,
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
+	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
 
-	const multi = isMultiAgentStep(step);
+	const multi = isMultiAgentNode(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
+
+	// Derive agent slot names for this node (used to filter workflow-level channels)
+	const nodeAgentNames: string[] = isTaskAgent
+		? ['task-agent']
+		: multi
+			? step.agents!.map((a) => a.name)
+			: step.agentId
+				? [step.agentId]
+				: [];
+
+	// Build a lookup: agentName → AgentTaskState
+	const taskStateByAgent = new Map<string | null, AgentTaskState>(
+		(nodeTaskStates ?? []).map((s) => [s.agentName, s])
+	);
+	const allDone = isNodeFullyCompleted(nodeTaskStates ?? []);
 
 	// ---- Drag state ----
 	const dragState = useRef<{
@@ -131,6 +166,8 @@ export function WorkflowNode({
 
 	// ---- Window-level listeners (always registered, guard on dragState) ----
 	// Mirrors the pattern used by VisualCanvas for its spacebar+drag pan.
+	// For the Task Agent node, dragState.current is never set (handleMouseDown
+	// returns early), so both handlers short-circuit immediately — they are no-ops.
 	useEffect(() => {
 		const onMouseMove = (e: MouseEvent) => {
 			if (!dragState.current) return;
@@ -156,7 +193,12 @@ export function WorkflowNode({
 			if (!dragState.current) return;
 			dragState.current = null;
 			if (nodeRef.current) {
-				nodeRef.current.style.cursor = 'grab';
+				// Only reset to 'grab' for draggable nodes — Task Agent uses 'default'
+				// and dragState.current can never be set for it, so this branch is
+				// unreachable for Task Agent. Guard here for defence-in-depth.
+				if (!isTaskAgent) {
+					nodeRef.current.style.cursor = 'grab';
+				}
 				nodeRef.current.style.boxShadow = '';
 			}
 		};
@@ -169,9 +211,14 @@ export function WorkflowNode({
 		};
 	}, [stepId]);
 
-	// ---- Card body mousedown — starts drag ----
+	// ---- Card body mousedown — starts drag (disabled for Task Agent) ----
 	const handleMouseDown = useCallback(
 		(e: MouseEvent) => {
+			// Task Agent is pinned — it cannot be dragged
+			if (isTaskAgent) {
+				e.stopPropagation();
+				return;
+			}
 			// Only primary button
 			if (e.button !== 0) return;
 			e.stopPropagation(); // prevent canvas pan from triggering
@@ -191,7 +238,7 @@ export function WorkflowNode({
 				nodeRef.current.style.boxShadow = '0 8px 24px rgba(0,0,0,0.4)';
 			}
 		},
-		[position.x, position.y]
+		[isTaskAgent, position.x, position.y]
 	);
 
 	// ---- Card click — for selection (suppressed after drag) ----
@@ -235,17 +282,71 @@ export function WorkflowNode({
 	}, [onPortMouseLeave, stepId]);
 
 	// ---- Styles ----
-	const borderClass = isStartNode
-		? 'border-green-500'
-		: isSelected
-			? 'border-blue-500'
-			: 'border-gray-700';
+	const borderClass = isTaskAgent
+		? 'border-amber-400'
+		: isStartNode
+			? 'border-green-500'
+			: isSelected
+				? 'border-blue-500'
+				: allDone
+					? 'border-green-600'
+					: 'border-gray-700';
+
+	const bgClass = isTaskAgent ? 'bg-amber-950' : 'bg-gray-800';
 
 	const inputPortBg = isDropTarget ? '#22c55e' : '#6b7280';
 	const inputPortBorder = isDropTarget ? '#16a34a' : '#374151';
 	const inputPortScale = isDropTarget ? 'scale(1.4)' : '';
 
 	const ringClass = isSelected ? 'ring-2 ring-blue-500' : '';
+
+	// Task Agent: render a visually distinct pinned node with no ports
+	if (isTaskAgent) {
+		return (
+			<div
+				ref={nodeRef}
+				data-testid={`workflow-node-${stepId}`}
+				data-step-id={stepId}
+				data-task-agent="true"
+				style={{
+					position: 'absolute',
+					left: position.x,
+					top: position.y,
+					minWidth: 160,
+					cursor: 'default',
+					userSelect: 'none',
+					zIndex: 10,
+				}}
+				class={`rounded-lg border-2 ${bgClass} ${borderClass}`}
+				onMouseDown={handleMouseDown}
+			>
+				<div class="px-3 py-2">
+					{/* Header row: Task Agent badge */}
+					<div class="flex items-center justify-between mb-1">
+						<span
+							data-testid="task-agent-badge"
+							class="text-xs font-bold text-amber-400 uppercase tracking-wider"
+						>
+							Task Agent
+						</span>
+					</div>
+					{/* Name */}
+					<p
+						data-testid="step-name"
+						class="text-sm font-medium text-amber-100 truncate"
+						style={{ maxWidth: 180 }}
+					>
+						{step.name || 'Task Agent'}
+					</p>
+					{/* Channel topology */}
+					<ChannelTopologyBadge
+						workflowChannels={workflowChannels}
+						nodeAgentNames={nodeAgentNames}
+					/>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div
@@ -260,7 +361,7 @@ export function WorkflowNode({
 				cursor: 'grab',
 				userSelect: 'none',
 			}}
-			class={`rounded-lg border-2 bg-gray-800 ${borderClass} ${ringClass}`}
+			class={`rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}
 			onMouseDown={handleMouseDown}
 			onClick={handleClick}
 		>
@@ -322,25 +423,38 @@ export function WorkflowNode({
 				{multi ? (
 					<div data-testid="agent-badges" class="flex flex-wrap gap-1 mt-1">
 						{step.agents!.map((sa) => {
-							const name = agents.find((a) => a.id === sa.agentId)?.name ?? sa.agentId;
+							const hasOverrides = !!(sa.model || sa.systemPrompt);
+							const taskState = taskStateByAgent.get(sa.name);
 							return (
 								<span
-									key={sa.agentId}
-									class="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5"
+									key={sa.name}
+									class={`text-xs rounded px-1.5 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-amber-900/40 text-amber-300' : 'bg-gray-700 text-gray-300'}`}
+									title={hasOverrides ? `${sa.name} (has overrides)` : sa.name}
 								>
-									{name}
+									{sa.name}
+									{hasOverrides && !taskState && (
+										<span
+											data-testid="override-indicator"
+											class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
+										/>
+									)}
+									{taskState && <AgentStatusIcon state={taskState} />}
 								</span>
 							);
 						})}
 					</div>
 				) : (
-					<p data-testid="agent-name" class="text-xs text-gray-400 truncate mt-0.5">
-						{agentName}
-					</p>
+					<div
+						data-testid="agent-name"
+						class="flex items-center gap-1 text-xs text-gray-400 truncate mt-0.5"
+					>
+						<span class="truncate">{agentName}</span>
+						{taskStateByAgent.get(null) && <AgentStatusIcon state={taskStateByAgent.get(null)!} />}
+					</div>
 				)}
 
 				{/* Channel topology */}
-				<ChannelTopologyBadge step={step} />
+				<ChannelTopologyBadge workflowChannels={workflowChannels} nodeAgentNames={nodeAgentNames} />
 			</div>
 
 			{/* Bottom port */}

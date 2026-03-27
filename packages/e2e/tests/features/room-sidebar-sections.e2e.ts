@@ -200,7 +200,9 @@ async function navigateToRoomAndWaitForSidebar(page: Page, roomId: string): Prom
 	await page.goto(`/room/${roomId}`);
 	await waitForWebSocketConnected(page);
 	// Wait for both Goals and Tasks section headers to be visible
-	await expect(page.locator('button[aria-label="Goals section"]')).toBeVisible({ timeout: 10000 });
+	await expect(page.locator('button[aria-label="Missions section"]')).toBeVisible({
+		timeout: 10000,
+	});
 	await expect(page.locator('button[aria-label="Tasks section"]')).toBeVisible({ timeout: 5000 });
 }
 
@@ -251,7 +253,7 @@ test.describe('Room Sidebar Sections', () => {
 	test('Goals section: expand a goal shows linked tasks, collapse hides them', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		const goalsSection = getSidebarSection(page, 'Goals');
+		const goalsSection = getSidebarSection(page, 'Missions');
 
 		// Wait for goals to load (fetchGoals is called asynchronously on room init)
 		await expect(goalsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
@@ -275,7 +277,7 @@ test.describe('Room Sidebar Sections', () => {
 	test('Goals section: expanded goal shows linked task as clickable button', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		const goalsSection = getSidebarSection(page, 'Goals');
+		const goalsSection = getSidebarSection(page, 'Missions');
 
 		// Wait for goals to load
 		await expect(goalsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
@@ -293,7 +295,7 @@ test.describe('Room Sidebar Sections', () => {
 	test('Goals section: header shows correct active goal count', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		const goalsSection = getSidebarSection(page, 'Goals');
+		const goalsSection = getSidebarSection(page, 'Missions');
 
 		// Wait for goals to load — title text should appear
 		await expect(goalsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
@@ -528,7 +530,7 @@ test.describe('Room Sidebar Sections', () => {
 
 		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
 
-		const goalsSection = getSidebarSection(page, 'Goals');
+		const goalsSection = getSidebarSection(page, 'Missions');
 		await expect(goalsSection.getByText('Completed Tasks Test Goal')).toBeVisible({
 			timeout: 15000,
 		});
@@ -589,7 +591,7 @@ test.describe('Room Sidebar Sections', () => {
 
 		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
 
-		const goalsSection = getSidebarSection(page, 'Goals');
+		const goalsSection = getSidebarSection(page, 'Missions');
 		await expect(goalsSection.getByText('Toggle Show Goal')).toBeVisible({ timeout: 15000 });
 
 		// Expand the goal
@@ -649,7 +651,7 @@ test.describe('Room Sidebar Sections', () => {
 
 		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
 
-		const goalsSection = getSidebarSection(page, 'Goals');
+		const goalsSection = getSidebarSection(page, 'Missions');
 		await expect(goalsSection.getByText('Persist Toggle Goal')).toBeVisible({ timeout: 15000 });
 
 		// Expand goal and toggle to show completed

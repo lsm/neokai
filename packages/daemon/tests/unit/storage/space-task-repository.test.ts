@@ -15,7 +15,7 @@ describe('SpaceTaskRepository', () => {
 	let spaceId: string;
 	let workflowId: string;
 	let workflowRunId: string;
-	let workflowStepId: string;
+	let workflowNodeId: string;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
@@ -30,7 +30,7 @@ describe('SpaceTaskRepository', () => {
 		const now = Date.now();
 		workflowId = 'wf-1';
 		workflowRunId = 'run-1';
-		workflowStepId = 'step-1';
+		workflowNodeId = 'step-1';
 
 		(db as any)
 			.prepare(
@@ -46,9 +46,9 @@ describe('SpaceTaskRepository', () => {
 
 		(db as any)
 			.prepare(
-				`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 			)
-			.run(workflowStepId, workflowId, 'Step 1', 0, now, now);
+			.run(workflowNodeId, workflowId, 'Step 1', 0, now, now);
 	});
 
 	afterEach(() => {
@@ -72,7 +72,7 @@ describe('SpaceTaskRepository', () => {
 			expect(task.dependsOn).toEqual([]);
 			expect(task.customAgentId).toBeUndefined();
 			expect(task.workflowRunId).toBeUndefined();
-			expect(task.workflowStepId).toBeUndefined();
+			expect(task.workflowNodeId).toBeUndefined();
 			expect(task.taskAgentSessionId).toBeUndefined();
 		});
 
@@ -83,12 +83,12 @@ describe('SpaceTaskRepository', () => {
 				description: '',
 				customAgentId: 'agent-1',
 				workflowRunId,
-				workflowStepId,
+				workflowNodeId,
 			});
 
 			expect(task.customAgentId).toBe('agent-1');
 			expect(task.workflowRunId).toBe(workflowRunId);
-			expect(task.workflowStepId).toBe(workflowStepId);
+			expect(task.workflowNodeId).toBe(workflowNodeId);
 		});
 
 		it('creates a task with draft status', () => {
@@ -192,16 +192,16 @@ describe('SpaceTaskRepository', () => {
 			expect(updated!.activeSession).toBeNull();
 		});
 
-		it('updates customAgentId, workflowRunId, workflowStepId', () => {
+		it('updates customAgentId, workflowRunId, workflowNodeId', () => {
 			const task = repo.createTask({ spaceId, title: 'T', description: '' });
 			const updated = repo.updateTask(task.id, {
 				customAgentId: 'custom-agent',
 				workflowRunId,
-				workflowStepId,
+				workflowNodeId,
 			});
 			expect(updated!.customAgentId).toBe('custom-agent');
 			expect(updated!.workflowRunId).toBe(workflowRunId);
-			expect(updated!.workflowStepId).toBe(workflowStepId);
+			expect(updated!.workflowNodeId).toBe(workflowNodeId);
 		});
 
 		it('clears nullable fields', () => {
@@ -390,6 +390,38 @@ describe('SpaceTaskRepository', () => {
 			});
 			const updated = repo.updateTask(task.id, { goalId: null });
 			expect(updated!.goalId).toBeUndefined();
+		});
+	});
+
+	describe('completionSummary', () => {
+		it('is undefined when not set', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			expect(task.completionSummary).toBeUndefined();
+		});
+
+		it('sets completionSummary via updateTask', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			const updated = repo.updateTask(task.id, {
+				status: 'completed',
+				completionSummary: 'Implemented the feature and added tests.',
+			});
+			expect(updated!.completionSummary).toBe('Implemented the feature and added tests.');
+			expect(updated!.status).toBe('completed');
+			expect(updated!.completedAt).toBeDefined();
+		});
+
+		it('clears completionSummary with null', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			repo.updateTask(task.id, { completionSummary: 'Done.' });
+			const cleared = repo.updateTask(task.id, { completionSummary: null });
+			expect(cleared!.completionSummary).toBeUndefined();
+		});
+
+		it('persists completionSummary across reads', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			repo.updateTask(task.id, { completionSummary: 'All done!' });
+			const fetched = repo.getTask(task.id);
+			expect(fetched!.completionSummary).toBe('All done!');
 		});
 	});
 

@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, act } from '@testing-library/preact';
 
-import { TaskConversationRenderer } from './TaskConversationRenderer';
+import { TaskConversationRenderer, parseGroupMessage } from './TaskConversationRenderer';
 import { resetSubscriptionCounterForTesting } from '../../hooks/useGroupMessages';
 
 // -------------------------------------------------------
@@ -531,5 +531,219 @@ describe('TaskConversationRenderer — session question state props', () => {
 			// authorSessionId is still passed as sessionId prop to allow form rendering for known tools
 			expect(props?.pendingQuestion).toBeNull();
 		});
+	});
+});
+
+describe('TaskConversationRenderer — isReconnecting state', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockRequest.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+			if (method === 'liveQuery.subscribe') {
+				lastSubscriptionId = params.subscriptionId as string;
+				return { ok: true };
+			}
+			if (method === 'liveQuery.unsubscribe') return { ok: true };
+			if (method === 'session.get') return { session: null };
+			return {};
+		});
+		mockOnEvent.mockClear();
+		snapshotHandler = null;
+		deltaHandler = null;
+		lastSubscriptionId = null;
+		sessionStateHandlers.length = 0;
+		capturedSDKProps.length = 0;
+		resetSubscriptionCounterForTesting();
+		// Reset to connected by default.
+		mockIsConnected.value = true;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('renders "Reconnecting…" when WebSocket is disconnected and groupId is set', async () => {
+		// Simulate a WebSocket disconnect while the component is mounted with a group.
+		mockIsConnected.value = false;
+
+		const { container } = render(<TaskConversationRenderer groupId="group-1" />);
+
+		// isReconnecting = !isConnected && groupId !== null → true
+		// The component should show "Reconnecting…" not "Waiting for agent activity…"
+		await waitFor(() => {
+			expect(container.textContent).toContain('Reconnecting');
+		});
+		expect(container.textContent).not.toContain('Waiting for agent activity');
+	});
+
+	it('renders "Loading conversation…" when connected but snapshot has not arrived yet', async () => {
+		mockIsConnected.value = true;
+
+		const { container } = render(<TaskConversationRenderer groupId="group-1" />);
+
+		// isReconnecting = false (connected), isLoading = true (snapshot pending)
+		await waitFor(() => {
+			expect(container.textContent).toContain('Loading conversation');
+		});
+		expect(container.textContent).not.toContain('Reconnecting');
+	});
+
+	it('shows a direct empty-history reason when snapshot arrives with zero messages', async () => {
+		mockIsConnected.value = true;
+
+		const { container } = render(<TaskConversationRenderer groupId="group-1" />);
+
+		await act(async () => {
+			fireSnapshot([]);
+		});
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('No conversation history found for this task group');
+		});
+		expect(container.textContent).toContain(
+			'No persisted timeline rows were found for this task group'
+		);
+		expect(container.textContent).not.toContain('Waiting for agent activity');
+	});
+
+	it('renders messages normally once snapshot arrives after reconnect', async () => {
+		// Start disconnected.
+		mockIsConnected.value = false;
+		const { container, rerender } = render(<TaskConversationRenderer groupId="group-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('Reconnecting');
+		});
+
+		// Reconnect.
+		mockIsConnected.value = true;
+		rerender(<TaskConversationRenderer groupId="group-1" />);
+
+		// Now in loading state (connected, waiting for snapshot).
+		await waitFor(() => {
+			expect(container.textContent).toContain('Loading conversation');
+		});
+
+		// Snapshot arrives.
+		await act(async () => {
+			fireSnapshot([makeRawMessage(1, 'assistant', 'uuid-reconnect-1')]);
+		});
+
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid="msg-uuid-reconnect-1"]')).not.toBeNull();
+		});
+		expect(container.textContent).not.toContain('Reconnecting');
+		expect(container.textContent).not.toContain('Loading conversation');
+	});
+});
+
+// -------------------------------------------------------
+// parseGroupMessage unit tests
+// -------------------------------------------------------
+
+describe('parseGroupMessage — timestamp preservation', () => {
+	/**
+	 * Regression test: createdAt from the database row must be injected into the
+	 * returned SDKMessage so that message components render the correct creation
+	 * time, not the current time.
+	 */
+
+	it('preserves createdAt on a regular assistant SDK message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 1,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'worker',
+			messageType: 'assistant',
+			content: JSON.stringify({ type: 'assistant', uuid: 'uuid-1', message: { content: [] } }),
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a status message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 2,
+			groupId: 'group-1',
+			sessionId: null,
+			role: 'system',
+			messageType: 'status',
+			content: 'Task started',
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a leader_summary message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 3,
+			groupId: 'group-1',
+			sessionId: null,
+			role: 'system',
+			messageType: 'leader_summary',
+			content: '[Turn Summary] Some summary',
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a rate_limited message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 4,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'worker',
+			messageType: 'rate_limited',
+			content: JSON.stringify({ text: 'Rate limit reached', resetsAt: 1700000060000 }),
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a model_fallback message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 5,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'worker',
+			messageType: 'model_fallback',
+			content: JSON.stringify({ fromModel: 'claude-3-5', toModel: 'claude-3-6' }),
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a user SDK message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 6,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'worker',
+			messageType: 'user',
+			content: JSON.stringify({
+				type: 'user',
+				uuid: 'uuid-2',
+				message: { content: [{ type: 'text', text: 'Hello' }] },
+			}),
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
 	});
 });

@@ -57,12 +57,11 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'My Workflow',
 		description: 'Does stuff',
-		steps: [
+		nodes: [
 			{ id: s1, name: 'Plan', agentId: 'a1' },
 			{ id: s2, name: 'Code', agentId: 'a2' },
 		],
-		transitions: [{ id: 'tr-1', from: s1, to: s2, order: 0 }],
-		startStepId: s1,
+		startNodeId: s1,
 		rules: [],
 		tags: [],
 		createdAt: Date.now(),
@@ -154,9 +153,8 @@ describe('WorkflowList', () => {
 			...defaultProps,
 			workflows: [
 				makeWorkflow({
-					steps: [{ id: s1, name: 'Plan', agentId: 'a1' }],
-					transitions: [],
-					startStepId: s1,
+					nodes: [{ id: s1, name: 'Plan', agentId: 'a1' }],
+					startNodeId: s1,
 				}),
 			],
 		};
@@ -201,32 +199,10 @@ describe('WorkflowList', () => {
 	it('handles workflow with no steps in mini viz', () => {
 		const props = {
 			...defaultProps,
-			workflows: [makeWorkflow({ steps: [], transitions: [], startStepId: '' })],
+			workflows: [makeWorkflow({ nodes: [], startNodeId: '' })],
 		};
 		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('No steps')).toBeTruthy();
-	});
-
-	it('renders human gate connector for human condition transition', () => {
-		const s1 = 'step-1';
-		const s2 = 'step-2';
-		const props = {
-			...defaultProps,
-			workflows: [
-				makeWorkflow({
-					steps: [
-						{ id: s1, name: 'Plan', agentId: 'a1' },
-						{ id: s2, name: 'Code', agentId: 'a2' },
-					],
-					transitions: [
-						{ id: 'tr-1', from: s1, to: s2, condition: { type: 'human' as const }, order: 0 },
-					],
-					startStepId: s1,
-				}),
-			],
-		};
-		const { container } = render(<WorkflowList {...props} />);
-		expect(container.querySelector('.bg-yellow-400')).toBeTruthy();
 	});
 
 	describe('delete workflow', () => {

@@ -59,7 +59,7 @@ describe('TaskManager + LiveQueryEngine integration', () => {
 		taskManager = new TaskManager(bunDb, 'room-test', reactiveDb);
 
 		// Create the room so FK constraints pass
-		const roomManager = new RoomManager(bunDb);
+		const roomManager = new RoomManager(bunDb, reactiveDb);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
 			allowedPaths: [{ path: '/workspace' }],

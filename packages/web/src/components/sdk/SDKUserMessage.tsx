@@ -14,11 +14,62 @@ import { IconButton } from '../ui/IconButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
 import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
+import { MentionToken, parseTextWithReferences } from './MentionToken.tsx';
 import { MessageInfoButton } from './MessageInfoButton.tsx';
 import { MessageInfoDropdown } from './MessageInfoDropdown.tsx';
 import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
+import type { JSX } from 'preact';
+import { Fragment } from 'preact';
+import type { ReferenceMetadata } from '@neokai/shared';
+
+/**
+ * Render text content, replacing @ref{type:id} tokens with styled MentionToken
+ * components and leaving all other text (including plain @) unchanged.
+ */
+function renderMessageText(
+	text: string,
+	metadata: ReferenceMetadata,
+	sessionId?: string
+): JSX.Element {
+	// Fast path: skip parsing when there are no @ref tokens
+	if (!text.includes('@ref{')) {
+		return <>{text}</>;
+	}
+
+	const segments = parseTextWithReferences(text, metadata);
+
+	return (
+		<>
+			{segments.map((seg, idx) => {
+				if (seg.kind === 'text') {
+					// Use Fragment to emit text nodes without a DOM wrapper, preserving
+					// the original text-node structure for selection and layout.
+					return <Fragment key={idx}>{seg.content}</Fragment>;
+				}
+				if (seg.kind === 'mention') {
+					return (
+						<MentionToken
+							key={idx}
+							refType={seg.refType}
+							id={seg.id}
+							displayText={seg.displayText}
+							status={seg.status}
+							sessionId={sessionId}
+						/>
+					);
+				}
+				// unknown-mention: render the raw token string with warning styling
+				return (
+					<span key={idx} class="text-yellow-500/70 italic" title="Unknown reference type">
+						{seg.content}
+					</span>
+				);
+			})}
+		</>
+	);
+}
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }> & { sendStatus?: string };
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -113,6 +164,10 @@ export function SDKUserMessage({
 
 	const textContent = getTextContent();
 	const imageBlocks = getImageBlocks();
+
+	// Extract reference metadata from the message blob for rendering @ref tokens
+	const referenceMetadata: ReferenceMetadata =
+		(message as typeof message & { referenceMetadata?: ReferenceMetadata }).referenceMetadata ?? {};
 
 	// For synthetic messages, extract all content blocks for detailed display
 	const getSyntheticContentBlocks = (): Array<Record<string, unknown>> | string | null => {
@@ -240,7 +295,7 @@ export function SDKUserMessage({
 		>
 			{/* Main Content */}
 			<div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
-				{textContent}
+				{renderMessageText(textContent, referenceMetadata, sessionId)}
 			</div>
 
 			{/* Attached images */}

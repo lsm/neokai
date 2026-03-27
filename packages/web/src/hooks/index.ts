@@ -48,6 +48,23 @@ export {
 } from './useAutoScroll';
 export {
 	useGroupMessages,
+	DEFAULT_PAGE_SIZE,
 	type SessionGroupMessage,
+	type UseGroupMessagesOptions,
 	type UseGroupMessagesResult,
 } from './useGroupMessages';
+export { useRoomLiveQuery } from './useRoomLiveQuery';
+export { useRoomSkills, type UseRoomSkillsResult } from './useRoomSkills';
+export {
+	useTurnBlocks,
+	type TurnBlock,
+	type RuntimeMessage,
+	type TurnBlockItem,
+} from './useTurnBlocks';
+export {
+	useReferenceAutocomplete,
+	extractActiveAtQuery,
+	insertReferenceMention,
+	type UseReferenceAutocompleteOptions,
+	type UseReferenceAutocompleteResult,
+} from './useReferenceAutocomplete';

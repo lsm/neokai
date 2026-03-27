@@ -2,13 +2,15 @@
  * DAG auto-layout algorithm for the workflow visual editor.
  *
  * Performs a layered layout (Sugiyama-style, simplified):
- * 1. Topological sort starting from startStepId following transitions
+ * 1. Topological sort starting from startNodeId following transitions
  * 2. Layer assignment: each node's layer = max(predecessor layers) + 1
  * 3. Horizontal spacing within each layer with centering
  * 4. Orphaned nodes (unreachable from start) are appended below the main graph
  */
 
-import type { WorkflowStep, WorkflowTransition } from '@neokai/shared';
+import type { WorkflowNode } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
+import type { VisualTransition } from './types';
 
 /** A 2D point in canvas coordinates */
 export interface Point {
@@ -20,34 +22,50 @@ export interface Point {
 const H_GAP = 250;
 /** Vertical gap between layers */
 const V_GAP = 150;
-/** Starting y offset for the first layer */
-const START_Y = 50;
+/** Starting y offset for the first layer (below the Task Agent node) */
+const START_Y = 170;
 /** Starting x offset for centering calculations */
 const START_X = 50;
+/** Vertical position of the Task Agent node (top of canvas) */
+const TASK_AGENT_Y = 20;
+
+/**
+ * Canonical canvas position for the Task Agent virtual node.
+ * Exported so callers that initialise node positions outside of autoLayout
+ * (e.g. create-mode component state) stay in sync with the layout constants.
+ */
+export const TASK_AGENT_INITIAL_POSITION: Point = { x: START_X, y: TASK_AGENT_Y };
 
 /**
  * Compute auto-layout positions for all steps in a workflow.
  *
- * @param steps - All workflow steps (nodes)
+ * The Task Agent virtual node (`TASK_AGENT_NODE_ID`) is always placed at the
+ * top-center of the canvas, pinned above all other nodes. Regular workflow
+ * nodes are laid out in the layered graph below it.
+ *
+ * @param nodes - All workflow nodes (regular, not including the Task Agent)
  * @param transitions - All workflow transitions (directed edges)
- * @param startStepId - The entry-point step ID
- * @returns A map from step ID to canvas Point {x, y}
+ * @param startNodeId - The entry-point node ID
+ * @returns A map from node ID (or TASK_AGENT_NODE_ID) to canvas Point {x, y}
  */
 export function autoLayout(
-	steps: WorkflowStep[],
-	transitions: WorkflowTransition[],
-	startStepId: string
+	nodes: WorkflowNode[],
+	transitions: VisualTransition[],
+	startNodeId: string
 ): Map<string, Point> {
-	if (steps.length === 0) {
-		return new Map();
+	if (nodes.length === 0) {
+		// Even with no regular nodes, place the Task Agent at the top-center
+		const result = new Map<string, Point>();
+		result.set(TASK_AGENT_NODE_ID, { x: START_X, y: TASK_AGENT_Y });
+		return result;
 	}
 
-	const stepIds = new Set(steps.map((s) => s.id));
+	const stepIds = new Set(nodes.map((s) => s.id));
 
 	// Build adjacency: successors and predecessors
 	const successors = new Map<string, string[]>();
 	const predecessors = new Map<string, string[]>();
-	for (const s of steps) {
+	for (const s of nodes) {
 		successors.set(s.id, []);
 		predecessors.set(s.id, []);
 	}
@@ -58,16 +76,16 @@ export function autoLayout(
 	}
 
 	// ------------------------------------------------------------------
-	// Phase 1: BFS/topological reachability from startStepId
+	// Phase 1: BFS/topological reachability from startNodeId
 	// We use Kahn's algorithm on the reachable subgraph to assign layers.
 	// Cycle edges are broken by tracking visited nodes.
 	// ------------------------------------------------------------------
 	const reachable = new Set<string>();
 	const bfsQueue: string[] = [];
 
-	if (stepIds.has(startStepId)) {
-		bfsQueue.push(startStepId);
-		reachable.add(startStepId);
+	if (stepIds.has(startNodeId)) {
+		bfsQueue.push(startNodeId);
+		reachable.add(startNodeId);
 	}
 
 	while (bfsQueue.length > 0) {
@@ -142,7 +160,7 @@ export function autoLayout(
 	}
 
 	// Sort within each layer by step order in the original array for stability
-	const stepOrder = new Map<string, number>(steps.map((s, i) => [s.id, i]));
+	const stepOrder = new Map<string, number>(nodes.map((s, i) => [s.id, i]));
 	for (const group of layerGroups.values()) {
 		group.sort((a, b) => (stepOrder.get(a) ?? 0) - (stepOrder.get(b) ?? 0));
 	}
@@ -150,7 +168,7 @@ export function autoLayout(
 	// ------------------------------------------------------------------
 	// Phase 4: Collect orphaned nodes (unreachable from start)
 	// ------------------------------------------------------------------
-	const orphans = steps.filter((s) => !reachable.has(s.id)).map((s) => s.id);
+	const orphans = nodes.filter((s) => !reachable.has(s.id)).map((s) => s.id);
 	orphans.sort((a, b) => (stepOrder.get(a) ?? 0) - (stepOrder.get(b) ?? 0));
 
 	// Determine the widest layer for centering
@@ -189,6 +207,11 @@ export function autoLayout(
 			positions.set(orphans[i], { x: xStart + i * H_GAP, y });
 		}
 	}
+
+	// Pin the Task Agent node at the top-center of the canvas.
+	// Center x is the midpoint of the widest layer of regular nodes.
+	const taskAgentX = START_X + ((maxLayerWidth - 1) * H_GAP) / 2;
+	positions.set(TASK_AGENT_NODE_ID, { x: taskAgentX, y: TASK_AGENT_Y });
 
 	return positions;
 }

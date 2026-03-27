@@ -57,7 +57,7 @@ export function useSendMessage({
 		async (
 			content: string,
 			images?: MessageImage[],
-			deliveryMode: MessageDeliveryMode = 'current_turn'
+			deliveryMode: MessageDeliveryMode = 'immediate'
 		) => {
 			if (!content.trim() || (isSending && !allowQueueWhileProcessing)) return;
 
@@ -96,7 +96,7 @@ export function useSendMessage({
 					deliveryMode?: MessageDeliveryMode;
 				} = { sessionId, content, images };
 
-				if (deliveryMode !== 'current_turn') {
+				if (deliveryMode !== 'immediate') {
 					requestPayload.deliveryMode = deliveryMode;
 				}
 

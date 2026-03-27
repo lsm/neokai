@@ -4,7 +4,7 @@
  * Tests for SDK query execution with streaming input.
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { QueryRunner, type QueryRunnerContext } from '../../../src/lib/agent/query-runner';
 import type { Session, MessageHub } from '@neokai/shared';
@@ -185,7 +185,6 @@ describe('QueryRunner', () => {
 			queryAbortController: null,
 			firstMessageReceived: false,
 			startupTimeoutTimer: null,
-			startupTimeoutAutoRecoverAttempts: 0,
 			originalEnvVars: {},
 
 			// Methods for state coordination
@@ -717,7 +716,7 @@ describe('QueryRunner', () => {
 		});
 	});
 
-	describe('startup timeout auto-recovery', () => {
+	describe('startup timeout error surfacing', () => {
 		// Integration tests: exercise the runQuery() catch block when a startup-timeout
 		// error is thrown.  buildSpy throws 'SDK startup timeout - query aborted' so the
 		// test never waits for the real 15-second timer.
@@ -741,18 +740,7 @@ describe('QueryRunner', () => {
 			}
 		});
 
-		it('should NOT call messageQueue.clear() when onStartupTimeoutAutoRecover is registered', async () => {
-			const ctx = createContext({
-				onStartupTimeoutAutoRecover: mock(async () => {}),
-			});
-			runner = new QueryRunner(ctx);
-			runner.start();
-			await ctx.queryPromise?.catch(() => {});
-
-			expect(clearSpy).not.toHaveBeenCalled();
-		});
-
-		it('should call messageQueue.clear() when onStartupTimeoutAutoRecover is absent', async () => {
+		it('should always call messageQueue.clear() on startup timeout error', async () => {
 			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
@@ -761,17 +749,12 @@ describe('QueryRunner', () => {
 			expect(clearSpy).toHaveBeenCalled();
 		});
 
-		it('should call messageQueue.clear() on startup-timeout AbortError even when handler is registered', async () => {
-			// Guard: if the throw site ever becomes an AbortError, queue must still be
-			// cleared because the recovery path is gated behind !isAbortError and will
-			// not run — leaving stale preserved messages would be wrong.
+		it('should call messageQueue.clear() on startup-timeout AbortError', async () => {
 			const abortError = new Error('SDK startup timeout - query aborted');
 			abortError.name = 'AbortError';
 			buildSpy.mockRejectedValue(abortError);
 
-			const ctx = createContext({
-				onStartupTimeoutAutoRecover: mock(async () => {}),
-			});
+			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
@@ -779,61 +762,92 @@ describe('QueryRunner', () => {
 			expect(clearSpy).toHaveBeenCalled();
 		});
 
-		it('should schedule onStartupTimeoutAutoRecover after ~300ms', async () => {
-			const recoverSpy = mock(async () => {});
-			const ctx = createContext({
-				onStartupTimeoutAutoRecover: recoverSpy,
-			});
+		it('should surface error immediately via handleError on startup timeout', async () => {
+			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
 
-			// Not yet called — deferred by setTimeout(300ms)
-			expect(recoverSpy).not.toHaveBeenCalled();
-
-			await new Promise((resolve) => setTimeout(resolve, 400));
-			expect(recoverSpy).toHaveBeenCalledTimes(1);
-		});
-
-		it('should NOT invoke onStartupTimeoutAutoRecover when isCleaningUp returns true', async () => {
-			const recoverSpy = mock(async () => {});
-			const ctx = createContext({
-				isCleaningUp: () => true,
-				onStartupTimeoutAutoRecover: recoverSpy,
-			});
-			runner = new QueryRunner(ctx);
-			runner.start();
-			await ctx.queryPromise?.catch(() => {});
-
-			await new Promise((resolve) => setTimeout(resolve, 400));
-			expect(recoverSpy).not.toHaveBeenCalled();
-		});
-
-		it('should surface error normally and NOT recover when retry limit (1) is already reached', async () => {
-			const recoverSpy = mock(async () => {});
-			const ctx = createContext({
-				startupTimeoutAutoRecoverAttempts: 1, // already at limit
-				onStartupTimeoutAutoRecover: recoverSpy,
-			});
-			runner = new QueryRunner(ctx);
-			runner.start();
-			await ctx.queryPromise?.catch(() => {});
-
-			await new Promise((resolve) => setTimeout(resolve, 400));
-			expect(recoverSpy).not.toHaveBeenCalled();
 			expect(handleErrorSpy).toHaveBeenCalled();
 		});
 
-		it('should increment startupTimeoutAutoRecoverAttempts when recovery is scheduled', async () => {
-			const ctx = createContext({
-				startupTimeoutAutoRecoverAttempts: 0,
-				onStartupTimeoutAutoRecover: mock(async () => {}),
-			});
+		it('should pass actionable user message with timeout hint to handleError (startup timeout)', async () => {
+			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
 
-			expect(ctx.startupTimeoutAutoRecoverAttempts).toBe(1);
+			expect(handleErrorSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.any(Error),
+				expect.any(String), // category
+				expect.stringContaining('NEOKAI_SDK_STARTUP_TIMEOUT_MS'), // timeout hint for startup failure
+				expect.anything(),
+				expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
+			);
+			// Should NOT contain retry count language
+			const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+			expect(userMessage).not.toContain('attempt(s)');
+		});
+
+		it('should pass session-reset hint (no timeout mention) for conversation-not-found', async () => {
+			buildSpy.mockRejectedValue(new Error('No conversation found for session abc123'));
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(handleErrorSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.any(Error),
+				expect.any(String),
+				expect.stringContaining('session has been reset automatically'), // actionable hint
+				expect.anything(),
+				expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
+			);
+			// NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a missing session file
+			const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+			expect(userMessage).not.toContain('NEOKAI_SDK_STARTUP_TIMEOUT_MS');
+			// Should NOT contain retry count language
+			expect(userMessage).not.toContain('attempt(s)');
+		});
+
+		it('should call stateManager.setIdle after handling startup timeout error', async () => {
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
+
+		it('should NOT pass startupMaxRetries in handleError metadata', async () => {
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(handleErrorSpy).toHaveBeenCalled();
+			const metadata = handleErrorSpy.mock.calls[0][5] as Record<string, unknown>;
+			expect(metadata.startupMaxRetries).toBeUndefined();
+		});
+	});
+
+	describe('auto-recovery removal regression guards (Task 2.3)', () => {
+		// Regression guards: verify that auto-recovery fields removed in Task 2.1 are absent
+		// from QueryRunnerContext.  If any are reintroduced, TypeScript will catch callers
+		// that omit the field; these runtime checks provide belt-and-suspenders coverage.
+
+		it('should not have onStartupTimeoutAutoRecover in QueryRunnerContext', () => {
+			// createContext() returns a full QueryRunnerContext built from all known fields.
+			// A reintroduced onStartupTimeoutAutoRecover would appear as a defined property.
+			const ctx = createContext();
+			expect((ctx as Record<string, unknown>).onStartupTimeoutAutoRecover).toBeUndefined();
+		});
+
+		it('should not have startupTimeoutAutoRecoverAttempts in QueryRunnerContext', () => {
+			const ctx = createContext();
+			expect((ctx as Record<string, unknown>).startupTimeoutAutoRecoverAttempts).toBeUndefined();
 		});
 	});
 });

@@ -113,6 +113,33 @@ describe('RoomRuntime', () => {
 			expect(activeGroups).toHaveLength(1);
 		});
 
+		it('should not double-spawn when concurrent ticks overlap during async spawn', async () => {
+			// Simulate the race: two ticks fire concurrently while the first spawn is
+			// still in-flight (e.g., awaiting worktree creation). The spawningTaskIds
+			// in-memory guard must prevent the second tick from attempting a duplicate spawn.
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+
+			// Fire two ticks concurrently — do NOT await the first before starting the second.
+			const [tick1, tick2] = [ctx.runtime.tick(), ctx.runtime.tick()];
+			await Promise.all([tick1, tick2]);
+
+			// Exactly one group should be active despite concurrent ticks
+			const activeGroups = ctx.groupRepo.getActiveGroups('room-1');
+			expect(activeGroups).toHaveLength(1);
+			expect(activeGroups[0].taskId).toBe(task.id);
+
+			// Only one worker and one leader session should have been created
+			const workerCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
+			);
+			const leaderCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			);
+			expect(workerCalls).toHaveLength(1);
+			expect(leaderCalls).toHaveLength(1);
+		});
+
 		it('should trigger replanning when planning succeeded but all execution tasks failed (maxPlanningRetries=2)', async () => {
 			// Use a room config with maxPlanningRetries=2 to allow retries
 			ctx.runtime.updateRoom({ ...ctx.runtime['room'], config: { maxPlanningRetries: 2 } });

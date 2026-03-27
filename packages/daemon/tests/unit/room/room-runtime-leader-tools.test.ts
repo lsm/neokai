@@ -71,7 +71,7 @@ describe('RoomRuntime leader tools', () => {
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Fix the tests',
-				mode: 'queue',
+				mode: 'defer',
 			});
 
 			const parsed = JSON.parse(result.content[0].text);
@@ -80,12 +80,12 @@ describe('RoomRuntime leader tools', () => {
 			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
 			expect(updatedGroup.submittedForReview).toBe(false);
 
-			// Should inject feedback into worker session using queue mode
+			// Should inject feedback into worker session using defer mode
 			const injectCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'injectMessage' && (c.args[1] as string).includes('LEADER FEEDBACK')
 			);
 			expect(injectCalls.length).toBeGreaterThan(0);
-			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'next_turn' });
+			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'defer' });
 		});
 
 		it('should reject complete_task when not yet submitted for review or approved', async () => {

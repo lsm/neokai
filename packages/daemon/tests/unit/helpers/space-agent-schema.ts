@@ -55,8 +55,9 @@ export function createSpaceAgentSchema(db: Database): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			start_step_id TEXT,
+			start_node_id TEXT,
 			config TEXT,
+			channels TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,
@@ -66,7 +67,7 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
 
 	db.exec(`
-		CREATE TABLE space_workflow_steps (
+		CREATE TABLE space_workflow_nodes (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
@@ -95,7 +96,7 @@ export function insertWorkflow(db: Database, id: string, spaceId: string, name: 
 	).run(id, spaceId, name, now, now);
 }
 
-export function insertWorkflowStep(
+export function insertWorkflowNode(
 	db: Database,
 	id: string,
 	workflowId: string,
@@ -103,6 +104,6 @@ export function insertWorkflowStep(
 ): void {
 	const now = Date.now();
 	db.prepare(
-		`INSERT INTO space_workflow_steps (id, workflow_id, name, agent_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	).run(id, workflowId, `Step ${id}`, agentId, 0, now, now);
+		`INSERT INTO space_workflow_nodes (id, workflow_id, name, agent_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+	).run(id, workflowId, `Node ${id}`, agentId, 0, now, now);
 }

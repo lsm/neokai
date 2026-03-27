@@ -11,7 +11,7 @@
  *   (IDs survive renames; empty selection = applies to all steps)
  */
 
-import type { WorkflowRule, WorkflowStep } from '@neokai/shared';
+import type { WorkflowRule, WorkflowNode } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 
 // ============================================================================
@@ -59,7 +59,7 @@ export function rulesToDrafts(rules: WorkflowRule[]): RuleDraft[] {
 // ============================================================================
 
 interface StepMultiSelectProps {
-	steps: WorkflowStep[];
+	steps: WorkflowNode[];
 	selected: string[];
 	onChange: (ids: string[]) => void;
 }
@@ -112,7 +112,7 @@ function StepMultiSelect({ steps, selected, onChange }: StepMultiSelectProps) {
 
 interface RuleCardProps {
 	rule: RuleDraft;
-	steps: WorkflowStep[];
+	steps: WorkflowNode[];
 	onUpdate: (rule: RuleDraft) => void;
 	onRemove: () => void;
 }
@@ -175,7 +175,7 @@ function RuleCard({ rule, steps, onUpdate, onRemove }: RuleCardProps) {
 
 interface WorkflowRulesEditorProps {
 	rules: RuleDraft[];
-	steps: WorkflowStep[];
+	steps: WorkflowNode[];
 	onChange: (rules: RuleDraft[]) => void;
 }
 
