@@ -163,7 +163,7 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
 	}
 
 	for (const node of nodes) {
-		const channels = node.step.channels;
+		const channels = node.workflowChannels;
 		if (!channels) continue;
 
 		for (const channel of channels) {

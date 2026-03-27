@@ -329,11 +329,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				step: node.step,
 				position: node.position,
 				agents,
+				workflowChannels: channels,
 				isStartNode: nodeIsStart(node),
 				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
 			};
 		});
-	}, [nodes, agents, nodeIsStart, tasksByNodeId, relevantRunId]);
+	}, [nodes, agents, channels, nodeIsStart, tasksByNodeId, relevantRunId]);
 
 	// ------------------------------------------------------------------
 	// Derived: selected node / edge
