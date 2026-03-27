@@ -333,16 +333,22 @@ export class QueryLifecycleManager {
 		}
 
 		if (messageQueue.isRunning()) {
-			// Stale running state detection: if the queue thinks it's running but
-			// there's no active query promise, the previous query's finally block
-			// hasn't called stop() yet (or it was lost). Force-stop and restart
-			// so the enqueued message is not orphaned.
+			// Defensive stale state detection: if the queue thinks it's running but
+			// there's no active query promise, the session is in an inconsistent state
+			// (e.g., restored session with stale queue flag, or cleanup was interrupted).
+			// The primary race (between for-await loop ending and finally block cleanup)
+			// is handled by the early messageQueue.stop() in QueryRunner.runQuery().
+			// This check catches residual edge cases where queryPromise has already
+			// been nulled but the queue wasn't stopped.
 			if (!this.ctx.queryPromise) {
 				this.logger.warn(
 					`Stale running state detected for session ${session.id}: ` +
 						`messageQueue.isRunning()=true but queryPromise=null. Force-stopping and restarting.`
 				);
 				messageQueue.stop();
+				// Clear stale query reference to prevent concurrent callers from
+				// seeing a dead query object during the restart window.
+				this.ctx.queryObject = null;
 				// Fall through to start a fresh query below
 			} else {
 				this.logger.debug(

@@ -480,36 +480,14 @@ export class TaskGroupManager {
 		// the resulting idle event even if the leader completes synchronously.
 		this.groupRepo.setLeaderHasWork(groupId);
 
-		const MAX_INJECT_RETRIES = 2;
-		const RETRY_DELAY_MS = 1000;
-		let lastError: Error | null = null;
-		for (let attempt = 0; attempt <= MAX_INJECT_RETRIES; attempt++) {
-			try {
-				if (attempt > 0) {
-					log.warn(
-						`[routeWorkerToLeader] Group ${groupId}: retry attempt ${attempt}/${MAX_INJECT_RETRIES} ` +
-							`after ${RETRY_DELAY_MS * attempt}ms delay`
-					);
-					await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
-				}
-				await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
-				lastError = null;
-				break;
-			} catch (error) {
-				lastError = error instanceof Error ? error : new Error(String(error));
-				log.error(
-					`[routeWorkerToLeader] Group ${groupId}: injectMessage failed ` +
-						`(attempt ${attempt + 1}/${MAX_INJECT_RETRIES + 1}): ${lastError.message}`
-				);
-			}
-		}
+		const injectError = await this.injectMessageWithRetry(
+			group.leaderSessionId,
+			leaderMessage,
+			`routeWorkerToLeader:${groupId}`
+		);
 
-		if (lastError) {
-			log.error(
-				`[routeWorkerToLeader] Group ${groupId}: all ${MAX_INJECT_RETRIES + 1} inject attempts failed, ` +
-					`failing task: ${lastError.message}`
-			);
-			await this.fail(groupId, `Failed to deliver worker output to leader: ${lastError.message}`);
+		if (injectError) {
+			await this.fail(groupId, `Failed to deliver worker output to leader: ${injectError.message}`);
 			return null;
 		}
 
@@ -576,12 +554,22 @@ export class TaskGroupManager {
 		}
 
 		// If worker is waiting for input (AskUserQuestion), answer the question.
-		// Otherwise inject feedback as a regular message.
+		// Otherwise inject feedback as a regular message with retry.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);
 		if (!answered) {
-			await this.sessionFactory.injectMessage(group.workerSessionId, message, {
-				deliveryMode: opts?.deliveryMode,
-			});
+			const injectError = await this.injectMessageWithRetry(
+				group.workerSessionId,
+				message,
+				`routeLeaderToWorker:${groupId}`,
+				{ deliveryMode: opts?.deliveryMode }
+			);
+			if (injectError) {
+				await this.fail(
+					groupId,
+					`Failed to deliver leader feedback to worker: ${injectError.message}`
+				);
+				return null;
+			}
 		}
 
 		return this.groupRepo.getGroup(groupId);
@@ -827,6 +815,49 @@ export class TaskGroupManager {
 		await this.cleanupWorktree(group);
 
 		return group;
+	}
+
+	/**
+	 * Inject a message into a session with retry and backoff.
+	 *
+	 * Retries transient failures (e.g., stale queue state, SDK startup timeout)
+	 * but bails immediately on permanent errors (e.g., session not in cache).
+	 *
+	 * @returns null on success, or the last Error if all attempts failed
+	 */
+	private async injectMessageWithRetry(
+		sessionId: string,
+		message: string,
+		context: string,
+		opts?: { deliveryMode?: MessageDeliveryMode }
+	): Promise<Error | null> {
+		const MAX_ATTEMPTS = 3;
+		const BASE_DELAY_MS = 500;
+		const NON_RETRYABLE_PATTERNS = ['not in service cache', 'not found in service cache'];
+
+		let lastError: Error | null = null;
+		for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+			try {
+				if (attempt > 0) {
+					const delayMs = BASE_DELAY_MS * 2 ** (attempt - 1);
+					log.warn(`[${context}] retry ${attempt}/${MAX_ATTEMPTS - 1} after ${delayMs}ms`);
+					await new Promise((r) => setTimeout(r, delayMs));
+				}
+				await this.sessionFactory.injectMessage(sessionId, message, opts);
+				return null; // success
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+				log.error(
+					`[${context}] injectMessage failed (attempt ${attempt + 1}/${MAX_ATTEMPTS}): ${lastError.message}`
+				);
+				// Bail immediately on non-retryable errors (e.g., session doesn't exist)
+				if (NON_RETRYABLE_PATTERNS.some((p) => lastError!.message.includes(p))) {
+					log.error(`[${context}] non-retryable error, skipping remaining retries`);
+					break;
+				}
+			}
+		}
+		return lastError;
 	}
 
 	/**
