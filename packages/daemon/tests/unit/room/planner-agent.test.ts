@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
+	buildPlannerExplorerAgentDef,
+	buildPlannerFactCheckerAgentDef,
 	buildPlannerSystemPrompt,
 	buildPlannerTaskMessage,
 	buildPlanWriterAgentDef,
@@ -495,6 +497,145 @@ describe('planner-agent', () => {
 			};
 			const msg = buildPlannerTaskMessage({ ...baseConfig, replanContext: rc });
 			expect(msg).toContain('Attempt 3');
+		});
+	});
+
+	describe('buildPlannerExplorerAgentDef', () => {
+		it('returns a valid AgentDefinition', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def).toBeDefined();
+			expect(def.tools).toBeDefined();
+			expect(def.model).toBeDefined();
+			expect(def.prompt).toBeDefined();
+		});
+
+		it('has only read-only codebase tools', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.tools).toContain('Read');
+			expect(def.tools).toContain('Grep');
+			expect(def.tools).toContain('Glob');
+			expect(def.tools).toContain('Bash');
+		});
+
+		it('does NOT have write or edit tools', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.tools).not.toContain('Write');
+			expect(def.tools).not.toContain('Edit');
+		});
+
+		it('does NOT have sub-agent spawning tools', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.tools).not.toContain('Task');
+			expect(def.tools).not.toContain('TaskOutput');
+			expect(def.tools).not.toContain('TaskStop');
+		});
+
+		it('does NOT have web tools', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.tools).not.toContain('WebSearch');
+			expect(def.tools).not.toContain('WebFetch');
+		});
+
+		it('uses inherit model', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.model).toBe('inherit');
+		});
+
+		it('prompt instructs to return ---EXPLORER_FINDINGS--- block', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.prompt).toContain('---EXPLORER_FINDINGS---');
+			expect(def.prompt).toContain('---END_EXPLORER_FINDINGS---');
+		});
+
+		it('prompt includes all required sections in findings block', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.prompt).toContain('Relevant Files');
+			expect(def.prompt).toContain('Patterns Found');
+			expect(def.prompt).toContain('Dependencies');
+			expect(def.prompt).toContain('Estimated Complexity');
+			expect(def.prompt).toContain('Key Concerns');
+		});
+
+		it('prompt instructs not to write or edit files', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.prompt).toContain('Do NOT write');
+		});
+
+		it('prompt instructs not to spawn sub-agents', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.prompt).toContain('Do NOT spawn');
+		});
+	});
+
+	describe('buildPlannerFactCheckerAgentDef', () => {
+		it('returns a valid AgentDefinition', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def).toBeDefined();
+			expect(def.tools).toBeDefined();
+			expect(def.model).toBeDefined();
+			expect(def.prompt).toBeDefined();
+		});
+
+		it('has only web tools', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.tools).toContain('WebSearch');
+			expect(def.tools).toContain('WebFetch');
+			expect(def.tools).toHaveLength(2);
+		});
+
+		it('does NOT have codebase tools', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.tools).not.toContain('Read');
+			expect(def.tools).not.toContain('Grep');
+			expect(def.tools).not.toContain('Glob');
+			expect(def.tools).not.toContain('Bash');
+		});
+
+		it('does NOT have write or edit tools', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.tools).not.toContain('Write');
+			expect(def.tools).not.toContain('Edit');
+		});
+
+		it('does NOT have sub-agent spawning tools', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.tools).not.toContain('Task');
+			expect(def.tools).not.toContain('TaskOutput');
+			expect(def.tools).not.toContain('TaskStop');
+		});
+
+		it('uses inherit model', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.model).toBe('inherit');
+		});
+
+		it('prompt instructs to return ---FACT_CHECK_RESULT--- block', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('---FACT_CHECK_RESULT---');
+			expect(def.prompt).toContain('---END_FACT_CHECK_RESULT---');
+		});
+
+		it('prompt includes all required sections in fact-check block', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('Validated Assumptions');
+			expect(def.prompt).toContain('Flagged Issues');
+			expect(def.prompt).toContain('Recommended Versions/Patterns');
+			expect(def.prompt).toContain('Corrections to Explorer Findings');
+		});
+
+		it('prompt instructs not to read local files', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('Do NOT read any local files');
+		});
+
+		it('prompt instructs not to spawn sub-agents', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('Do NOT spawn');
+		});
+
+		it('prompt instructs to use explorer findings as input', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('explorer findings');
 		});
 	});
 
