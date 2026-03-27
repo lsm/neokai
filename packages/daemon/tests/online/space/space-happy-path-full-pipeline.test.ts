@@ -115,12 +115,12 @@ async function driveToCodePrGateOpen(
 	);
 	expect(['pending', 'in_progress']).toContain(planningTask.status);
 
+	await mockAgentDone(daemon, space.id, planningTask.id, 'Plan PR opened');
 	await writeGateData(daemon, runId, 'plan-pr-gate', {
 		plan_submitted: 'https://github.com/example/repo/pull/10',
 		pr_number: 10,
 		branch: 'plan/test-feature',
 	});
-	await mockAgentDone(daemon, space.id, planningTask.id, 'Plan PR opened');
 
 	// ── Stage 2: Plan Review → plan-approval-gate ──────────────────────────
 	const planReviewTask = await waitForNodeActivated(
@@ -447,7 +447,8 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			expect(runAfter2.iterationCount).toBe(iterBefore2 + 1);
 			expect(runAfter2.status).toBe('in_progress');
 
-			// review-votes-gate must be reset after the reject cycle
+			// review-votes-gate must be reset after the reject cycle.
+			// null means the gate record was deleted, which also counts as a reset.
 			const votesGateAfterReject = await readGateData(daemon, runId, 'review-votes-gate');
 			if (votesGateAfterReject !== null) {
 				const votes = votesGateAfterReject.data.votes as Record<string, string> | undefined;
@@ -497,6 +498,10 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 					NODE_ACTIVATION_TIMEOUT
 				),
 			]);
+
+			expect(['pending', 'in_progress']).toContain(r3a.status);
+			expect(['pending', 'in_progress']).toContain(r3b.status);
+			expect(['pending', 'in_progress']).toContain(r3c.status);
 
 			await mockAgentDone(daemon, spaceId, r3a.id, 'LGTM');
 			await mockAgentDone(daemon, spaceId, r3b.id, 'LGTM');
@@ -549,7 +554,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			expect(completedRun.completedAt).toBeDefined();
 
 			// Exactly 2 iteration increments: one QA fail + one reviewer reject
-			expect(completedRun.iterationCount).toBe(iterBefore2 + 1);
+			expect(completedRun.iterationCount).toBe(2);
 
 			// Completion summary available on the Done task
 			const doneTasks = await getTasksForNode(daemon, spaceId, runId, 'Done');
