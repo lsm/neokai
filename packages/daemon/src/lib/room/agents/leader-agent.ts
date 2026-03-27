@@ -210,7 +210,7 @@ For planning tasks the planner must run a second phase to create tasks.
 
 1. **Send the planner back** — Call \`send_to_worker\` (mode: "defer") with:
    "The plan is approved. Please:
-   1. Merge the plan PR: \`gh pr merge <PR_NUMBER> --no-delete-branch\`
+   1. Merge the plan PR: \`gh pr merge <PR_NUMBER>\` (do NOT use --delete-branch)
    2. Read the plan file under docs/plans/
    3. Create all tasks 1:1 from the plan using the \`create_task\` tool
    4. Finish your response after all tasks are created"
@@ -228,9 +228,9 @@ For planning tasks the planner must run a second phase to create tasks.
 
 When the human message indicates approval (e.g., "approved", "merge it", "looks good"), you must complete the task by:
 
-1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR:
+1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR (do NOT use --delete-branch, branch cleanup is handled separately):
    \`\`\`bash
-   gh pr merge <PR_NUMBER> --no-delete-branch
+   gh pr merge <PR_NUMBER>
    \`\`\`
 2. **Sync the root repo** — Pull the merged changes into the root workspace:
    \`\`\`bash

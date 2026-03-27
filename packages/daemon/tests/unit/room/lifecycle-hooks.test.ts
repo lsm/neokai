@@ -511,7 +511,7 @@ describe('checkWorkerPrMerged', () => {
 		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('gh pr merge');
-		expect(result.bounceMessage).toContain('--no-delete-branch');
+		expect(result.bounceMessage).toContain('do NOT use --delete-branch');
 		expect(result.bounceMessage).toContain('OPEN');
 		expect(result.bounceMessage).toContain('feat/add-alerts');
 	});
