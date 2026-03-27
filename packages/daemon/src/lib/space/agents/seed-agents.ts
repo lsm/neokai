@@ -168,7 +168,7 @@ export interface SeedPresetAgentsResult {
 }
 
 /**
- * Seed the four preset SpaceAgents for a newly-created Space.
+ * Seed the five preset SpaceAgents for a newly-created Space.
  *
  * Idempotent by design: if a preset name is already taken in this Space
  * (e.g. because this was called twice), the error is recorded but does not
