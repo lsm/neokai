@@ -725,8 +725,9 @@ describe('planner-agent', () => {
 			expect(init.agents).toHaveProperty('Planner');
 		});
 
-		it('agents map includes all 3-stage pipeline sub-agents', () => {
+		it('agents map includes all 3-stage pipeline sub-agents (exactly 4 total)', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(Object.keys(init.agents ?? {})).toHaveLength(4);
 			expect(init.agents).toHaveProperty('planner-explorer');
 			expect(init.agents).toHaveProperty('planner-fact-checker');
 			expect(init.agents).toHaveProperty('plan-writer');
@@ -809,6 +810,13 @@ describe('planner-agent', () => {
 		it('should set session type to planner', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
 			expect(init.type).toBe('planner');
+		});
+
+		it('MCP server config contains only planner-tools (no extra servers)', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const mcpKeys = Object.keys(init.mcpServers ?? {});
+			expect(mcpKeys).toHaveLength(1);
+			expect(mcpKeys).toContain('planner-tools');
 		});
 	});
 });
