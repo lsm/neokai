@@ -755,10 +755,11 @@ describe('reference.search handler', () => {
 			);
 		});
 
-		it('returns empty results for whitespace-only query', async () => {
+		it('returns empty results for whitespace-only query without room context', async () => {
 			insertTask(db, roomId, 'task-1', 'Some task', 't-1');
 
-			const sessions = new Map([['sess-1', { roomId }]]);
+			// No room context — empty query should return nothing
+			const sessions = new Map();
 			const { hub, call } = buildMessageHub();
 			setupReferenceHandlers(hub, {
 				db: db as never,
@@ -774,6 +775,53 @@ describe('reference.search handler', () => {
 			})) as { results: unknown[] };
 
 			expect(result.results).toHaveLength(0);
+		});
+
+		it('returns all tasks for empty query when room context exists', async () => {
+			insertTask(db, roomId, 'task-1', 'Some task', 't-1');
+
+			const sessions = new Map([['sess-1', { roomId }]]);
+			const { hub, call } = buildMessageHub();
+			setupReferenceHandlers(hub, {
+				db: db as never,
+				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
+				sessionManager: buildSessionManager(sessions) as never,
+				fileIndex: buildFileIndex(),
+			});
+
+			const result = (await call('reference.search', {
+				sessionId: 'sess-1',
+				query: '   ',
+			})) as { results: Array<{ type: string }> };
+
+			// Empty query with room context returns all tasks
+			expect(result.results).toHaveLength(1);
+			expect(result.results[0].type).toBe('task');
+		});
+
+		it('extracts roomId from synthetic room:chat: session ID', async () => {
+			insertTask(db, roomId, 'task-1', 'Room Agent Task', 't-1');
+
+			// No real session in DB — the synthetic ID "room:chat:<roomId>" should be parsed
+			const sessions = new Map();
+			const { hub, call } = buildMessageHub();
+			setupReferenceHandlers(hub, {
+				db: db as never,
+				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
+				sessionManager: buildSessionManager(sessions) as never,
+				fileIndex: buildFileIndex(),
+			});
+
+			const result = (await call('reference.search', {
+				sessionId: `room:chat:${roomId}`,
+				query: '',
+			})) as { results: Array<{ type: string; displayText: string }> };
+
+			expect(result.results).toHaveLength(1);
+			expect(result.results[0].type).toBe('task');
+			expect(result.results[0].displayText).toBe('Room Agent Task');
 		});
 	});
 });

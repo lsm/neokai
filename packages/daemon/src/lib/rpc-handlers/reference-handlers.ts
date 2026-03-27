@@ -206,15 +206,22 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 		if (typeof params.query !== 'string') throw new Error('query must be a string');
 
 		const query = params.query.trim();
-		// Empty/whitespace-only query would match everything — return nothing instead
-		if (!query) return { results: [] };
 
 		const requestedTypes: ReferenceType[] =
 			params.types && params.types.length > 0 ? params.types : ['task', 'goal', 'file', 'folder'];
 
-		// Resolve room context from session
+		// Resolve room context from session.
+		// The room agent route uses a synthetic session ID "room:chat:<roomId>"
+		// which has no DB entry — extract the roomId from it directly.
 		const session = sessionManager.getSessionFromDB(params.sessionId);
-		const roomId = session?.context?.roomId;
+		let roomId = session?.context?.roomId;
+		if (!roomId && params.sessionId.startsWith('room:chat:')) {
+			roomId = params.sessionId.slice('room:chat:'.length);
+		}
+
+		// Empty query with no room context: nothing to search.
+		// Empty query WITH room context: return all tasks/goals for the room.
+		if (!query && !roomId) return { results: [] };
 
 		const allResults: ReferenceSearchResult[] = [];
 
@@ -317,6 +324,11 @@ async function resolveSessionContext(
 ): Promise<{ workspacePath: string; roomId: string | null }> {
 	const agentSession = await deps.sessionManager.getSessionAsync(sessionId);
 	if (!agentSession) {
+		// The room agent route uses a synthetic session ID "room:chat:<roomId>"
+		// which has no DB entry — extract the roomId from it.
+		if (sessionId.startsWith('room:chat:')) {
+			return { workspacePath: deps.workspaceRoot, roomId: sessionId.slice('room:chat:'.length) };
+		}
 		return { workspacePath: deps.workspaceRoot, roomId: null };
 	}
 
