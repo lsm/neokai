@@ -104,6 +104,7 @@ export function setupTaskHandlers(
 			description: string;
 			priority?: TaskPriority;
 			dependsOn?: string[];
+			status?: TaskStatus;
 		};
 
 		if (!params.roomId) {
@@ -119,6 +120,7 @@ export function setupTaskHandlers(
 			description: params.description ?? '',
 			priority: params.priority,
 			dependsOn: params.dependsOn,
+			status: params.status,
 		});
 
 		// Emit room.overview for new task creation (significant change)

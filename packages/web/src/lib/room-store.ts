@@ -18,7 +18,6 @@
 import { signal, computed } from '@preact/signals';
 import type {
 	Room,
-	TaskSummary,
 	NeoTask,
 	TaskStatus,
 	SessionSummary,
@@ -78,7 +77,7 @@ class RoomStore {
 	readonly room = signal<Room | null>(null);
 
 	/** Tasks for this room */
-	readonly tasks = signal<TaskSummary[]>([]);
+	readonly tasks = signal<NeoTask[]>([]);
 
 	/** Sessions in this room */
 	readonly sessions = signal<SessionSummary[]>([]);
@@ -163,17 +162,17 @@ class RoomStore {
 	/** Active goals */
 	readonly activeGoals = computed(() => this.goals.value.filter((g) => g.status === 'active'));
 
-	/** Tasks grouped by goal ID (Map<goalId, TaskSummary[]>) */
+	/** Tasks grouped by goal ID (Map<goalId, NeoTask[]>) */
 	readonly tasksByGoalId = computed(() => {
 		const goals = this.goals.value;
 		const tasks = this.tasks.value;
-		const taskMap = new Map<string, TaskSummary>();
+		const taskMap = new Map<string, NeoTask>();
 		for (const t of tasks) {
 			taskMap.set(t.id, t);
 		}
-		const result = new Map<string, TaskSummary[]>();
+		const result = new Map<string, NeoTask[]>();
 		for (const goal of goals) {
-			const linked: TaskSummary[] = [];
+			const linked: NeoTask[] = [];
 			for (const taskId of goal.linkedTaskIds) {
 				const task = taskMap.get(taskId);
 				if (task) linked.push(task);
@@ -368,7 +367,7 @@ class RoomStore {
 				(event) => {
 					if (event.subscriptionId !== tasksSubId) return;
 					if (!this.activeSubscriptionIds.has(tasksSubId)) return; // stale-event guard
-					this.tasks.value = event.rows as TaskSummary[];
+					this.tasks.value = event.rows as NeoTask[];
 				}
 			);
 			cleanups.push(unsubTaskSnapshot);
@@ -378,11 +377,11 @@ class RoomStore {
 				if (!this.activeSubscriptionIds.has(tasksSubId)) return; // stale-event guard
 				let current = this.tasks.value;
 				if (event.removed?.length) {
-					const removedIds = new Set((event.removed as TaskSummary[]).map((r) => r.id));
+					const removedIds = new Set((event.removed as NeoTask[]).map((r) => r.id));
 					current = current.filter((t) => !removedIds.has(t.id));
 				}
 				if (event.updated?.length) {
-					const updatedTasks = event.updated as TaskSummary[];
+					const updatedTasks = event.updated as NeoTask[];
 					// Show toast when a known task transitions into review/rate-limited/usage-limited status.
 					// Skip when prevTask is absent to avoid spurious toasts during hydration.
 					for (const updatedTask of updatedTasks) {
@@ -403,7 +402,7 @@ class RoomStore {
 					current = current.map((t) => updatedMap.get(t.id) ?? t);
 				}
 				if (event.added?.length) {
-					current = [...current, ...(event.added as TaskSummary[])];
+					current = [...current, ...(event.added as NeoTask[])];
 				}
 				this.tasks.value = current;
 			});

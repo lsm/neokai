@@ -333,11 +333,11 @@ test.describe('Mobile Room Agent Navigation', () => {
 		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
 		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toBeVisible();
 
-		// Click Inbox tab (present in both room and global contexts)
-		await bottomTabBar.getByRole('tab', { name: 'Inbox' }).click();
+		// Click the "/" (Home) tab — present in room context, navigates to global home
+		await bottomTabBar.getByRole('tab', { name: '/' }).click();
 
-		// URL should change to inbox
-		await expect(page).toHaveURL(/\/inbox$/, { timeout: 5000 });
+		// URL should change to home
+		await expect(page).toHaveURL(/\/$/, { timeout: 5000 });
 
 		// Now global tabs should be shown (Rooms tab visible)
 		await expect(bottomTabBar.getByRole('tab', { name: 'Rooms' })).toBeVisible({ timeout: 5000 });
