@@ -954,7 +954,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 	const tools = [
 		tool(
 			'create_goal',
-			'Create a new goal for the room',
+			'Create a new goal (mission) for the room. Use mission_type to specify one_shot (default), measurable (KPI tracking), or recurring (cron-scheduled).',
 			{
 				title: z.string().describe('Short title for the goal'),
 				description: z.string().optional().describe('Detailed description'),
