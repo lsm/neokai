@@ -266,8 +266,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
-			// Stable sort descending by hits; 0-hit workflows appear at the end
-			scored.sort((a, b) => b.hits - a.hits);
+			// Stable sort descending by hits; tiebreak: prefer 'v2'-tagged workflows (e.g.
+			// CODING_WORKFLOW_V2 over CODING_WORKFLOW) so V2 is always recommended first
+			// when both match equally. Falls back to V1 naturally if V2 is not seeded.
+			scored.sort((a, b) => {
+				if (b.hits !== a.hits) return b.hits - a.hits;
+				const aIsV2 = (a.workflow.tags ?? []).includes('v2') ? 1 : 0;
+				const bIsV2 = (b.workflow.tags ?? []).includes('v2') ? 1 : 0;
+				return bIsV2 - aIsV2;
+			});
 			return jsonResult({ success: true, workflows: scored.map((s) => s.workflow) });
 		},
 
