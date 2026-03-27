@@ -486,22 +486,19 @@ describe('Coder Agent', () => {
 				expect(new Set(keys).size).toBe(2);
 			});
 
-			it('prefixes user helper with custom- when name collides with built-in coder-explorer', () => {
-				// buildWorkerHelperAgents always adds `helper-` prefix, so to hit the collision
-				// we need a helper whose generated name equals a built-in.
-				// We test via buildWorkerHelperAgents returning a collision by using a name
-				// that — after the helper- prefix — does NOT collide. The collision scenario
-				// is covered by testing the resolvedHelpers logic directly via a custom-named helper
-				// whose name is exactly 'coder-explorer'.
-				// Since buildWorkerHelperAgents generates `helper-<baseName>`, we verify via
-				// the integration path that the built-in names are never overwritten.
+			it('built-in agents are never overwritten by user helpers (helper- prefix ensures no collision)', () => {
+				// buildWorkerHelperAgents always prefixes names with `helper-`, so a user
+				// helper named 'coder-explorer' produces 'helper-coder-explorer', which cannot
+				// overwrite the built-in 'coder-explorer' key. The spread order (built-ins
+				// first, helpers last) provides an additional safeguard.
 				const init = createCoderAgentInit(
 					makeConfigWithWorkers([{ model: 'haiku', name: 'coder-explorer' }])
 				);
 				const keys = Object.keys(init.agents ?? {});
-				// Built-in coder-explorer must still be present
+				// Built-ins are present with their canonical names
 				expect(keys).toContain('coder-explorer');
-				// User helper should be renamed to avoid collision — `helper-coder-explorer` which does NOT collide
+				expect(keys).toContain('coder-tester');
+				// User helper gets the helper- prefix, so no collision occurs
 				expect(keys).toContain('helper-coder-explorer');
 			});
 		});

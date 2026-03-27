@@ -486,9 +486,6 @@ export function buildCoderTaskMessage(config: CoderAgentConfig): string {
 	return sections.join('\n');
 }
 
-/** Built-in sub-agent names — user helpers that collide with these get a `custom-` prefix. */
-const BUILTIN_AGENT_NAMES = new Set(['coder-explorer', 'coder-tester']);
-
 /**
  * Create an AgentSessionInit for a Coder agent session.
  *
@@ -499,22 +496,20 @@ const BUILTIN_AGENT_NAMES = new Set(['coder-explorer', 'coder-tester']);
  * The system prompt is embedded in the Coder agent definition's `prompt` field.
  * Task-specific context is delivered via the initial user message
  * (buildCoderTaskMessage).
+ *
+ * Note: name collisions between user helpers and built-ins cannot occur because
+ * `buildWorkerHelperAgents` always prefixes helper names with `helper-`, so
+ * generated keys like `helper-haiku` can never equal `coder-explorer` or
+ * `coder-tester`. The spread order (built-ins then helpers) is an additional
+ * safeguard that would prevent overwriting even if that invariant changed.
  */
 export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit {
 	const roomConfig = config.room.config ?? {};
 	const workerSubagents = getWorkerSubagents(roomConfig);
-	const rawHelperAgents = workerSubagents ? buildWorkerHelperAgents(workerSubagents) : {};
-
-	// Resolve name collisions: if a user helper has the same name as a built-in,
-	// prefix it with `custom-` so built-ins always take their canonical names.
-	const resolvedHelpers: Record<string, AgentDefinition> = {};
-	for (const [name, def] of Object.entries(rawHelperAgents)) {
-		const finalName = BUILTIN_AGENT_NAMES.has(name) ? `custom-${name}` : name;
-		resolvedHelpers[finalName] = def;
-	}
+	const helperAgents = workerSubagents ? buildWorkerHelperAgents(workerSubagents) : {};
 
 	const customHelperNames =
-		Object.keys(resolvedHelpers).length > 0 ? Object.keys(resolvedHelpers) : undefined;
+		Object.keys(helperAgents).length > 0 ? Object.keys(helperAgents) : undefined;
 
 	const coderAgentDef: AgentDefinition = {
 		description:
@@ -554,7 +549,7 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 			Coder: coderAgentDef,
 			'coder-explorer': buildCoderExplorerAgentDef(),
 			'coder-tester': buildTesterAgentDef(),
-			...resolvedHelpers,
+			...helperAgents,
 		},
 		contextAutoQueue: false,
 	};
