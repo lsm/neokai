@@ -810,5 +810,43 @@ describe('planner-agent', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
 			expect(init.type).toBe('planner');
 		});
+
+		it('agents map has exactly 4 entries: Planner + 3 sub-agents', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const keys = Object.keys(init.agents ?? {});
+			expect(keys).toHaveLength(4);
+			expect(keys).toContain('Planner');
+			expect(keys).toContain('planner-explorer');
+			expect(keys).toContain('planner-fact-checker');
+			expect(keys).toContain('plan-writer');
+		});
+
+		it('no sub-agent has Task/TaskOutput/TaskStop (one level max)', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const subAgents = ['planner-explorer', 'planner-fact-checker', 'plan-writer'] as const;
+			for (const name of subAgents) {
+				const tools = init.agents?.[name]?.tools ?? [];
+				expect(tools).not.toContain('Task');
+				expect(tools).not.toContain('TaskOutput');
+				expect(tools).not.toContain('TaskStop');
+			}
+		});
+
+		it('planner-explorer uses inherit model', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.agents?.['planner-explorer']?.model).toBe('inherit');
+		});
+
+		it('planner-fact-checker uses inherit model', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.agents?.['planner-fact-checker']?.model).toBe('inherit');
+		});
+
+		it('MCP server config contains only planner-tools (no extra servers)', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const mcpKeys = Object.keys(init.mcpServers ?? {});
+			expect(mcpKeys).toHaveLength(1);
+			expect(mcpKeys).toContain('planner-tools');
+		});
 	});
 });
