@@ -161,6 +161,8 @@ at createTestSpaceWithTask (/home/runner/work/neokai/neokai/packages/e2e/tests/f
 
 ### E2E Test Failures at #23660910158
 
+**Note on job naming**: The E2E job names in this report (e.g., `E2E No-LLM (features-space-agent-centric-workflow)`) are derived from the discovered test suite identifiers used as artifact names, not from the GitHub API top-level job list. The E2E matrix uses dynamic job expansion via `needs.discover.outputs`, and the API may not surface all matrix child jobs at the top level. Artifact names (e.g., `e2e-no-llm-results-features-space-agent-centric-workflow`) confirm the suites ran and failed.
+
 **4 failing tests** across 3 suites. All failures were on a pre-PR#1044 baseline.
 
 #### 1. `features-space-agent-centric-workflow` — `clickedNode is not defined`
@@ -183,9 +185,9 @@ at createTestSpaceWithTask (/home/runner/work/neokai/neokai/packages/e2e/tests/f
 **Test**: `creates space and shows tabbed dashboard layout`
 **Error**: `locator('text=Quick Actions').toBeVisible()` timeout after 5s
 
-**Root cause**: Timing/race condition — the dashboard tabbed layout loaded but "Quick Actions" text wasn't visible in time. The next CI run at commit `3885cb5` (`#23659893244`) had the same suite **pass** (5/5), confirming this is a flaky/timing issue, not a code bug.
+**Root cause**: Timing/race condition — the dashboard tabbed layout loaded but "Quick Actions" text wasn't visible in time. No subsequent non-cancelled CI run exists to verify (all runs after #23660910158 were cancelled), so this is currently classified as **suspected flaky** pending the next successful run.
 
-**Status**: Flaky — no action needed; monitoring.
+**Status**: Suspected flaky — requires verification in the next non-cancelled CI run.
 
 ---
 
