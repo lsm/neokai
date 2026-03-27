@@ -49,3 +49,37 @@ export function computeGroupState(
 	const someEnabled = serverNames.some((name) => isServerEnabled(disabledMcpServers, name));
 	return { allEnabled, someEnabled, isIndeterminate: someEnabled && !allEnabled };
 }
+
+/**
+ * Compute group-level toggle state for a list of app-level skills.
+ * Returns `allEnabled: false` and `someEnabled: false` when the list is empty.
+ */
+export function computeSkillGroupState(skills: { enabled: boolean }[]): {
+	allEnabled: boolean;
+	someEnabled: boolean;
+	isIndeterminate: boolean;
+} {
+	if (skills.length === 0) {
+		return { allEnabled: false, someEnabled: false, isIndeterminate: false };
+	}
+	const allEnabled = skills.every((s) => s.enabled);
+	const someEnabled = skills.some((s) => s.enabled);
+	return { allEnabled, someEnabled, isIndeterminate: someEnabled && !allEnabled };
+}
+
+/**
+ * Resolve the setting sources from a tools config object.
+ * Handles both the new `settingSources` field and the legacy `loadSettingSources` flag.
+ */
+export function resolveSettingSources(tools?: {
+	settingSources?: string[];
+	loadSettingSources?: boolean;
+}): string[] {
+	if (tools?.settingSources) {
+		return tools.settingSources;
+	}
+	if (tools?.loadSettingSources === false) {
+		return [];
+	}
+	return ['user', 'project', 'local'];
+}

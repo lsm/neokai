@@ -32,6 +32,8 @@ import {
 	toggleServer as toggleServerUtil,
 	toggleGroupServers,
 	computeGroupState,
+	computeSkillGroupState,
+	resolveSettingSources,
 } from './ToolsModal.utils.ts';
 
 interface ToolsModalProps {
@@ -154,7 +156,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		if (isOpen && session) {
 			loadConfig();
 			loadGlobalConfig();
-			void skillsStore.subscribe();
+			void skillsStore.subscribe().catch(() => {
+				toast.error('Failed to load App MCP Servers');
+			});
 		}
 		return () => {
 			skillsStore.unsubscribe();
@@ -172,13 +176,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		if (!session) return;
 		const tools = session.config.tools;
 		useClaudeCodePreset.value = tools?.useClaudeCodePreset ?? true;
-		if (tools?.settingSources) {
-			settingSources.value = tools.settingSources;
-		} else if (tools?.loadSettingSources !== false) {
-			settingSources.value = ['user', 'project', 'local'];
-		} else {
-			settingSources.value = [];
-		}
+		settingSources.value = resolveSettingSources(tools) as SettingSource[];
 		disabledMcpServers.value = tools?.disabledMcpServers ?? [];
 		memoryEnabled.value = tools?.kaiTools?.memory ?? false;
 		hasChanges.value = false;
@@ -356,8 +354,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 	// App MCP counts
 	const appSkills = appMcpSkills.value;
-	const appAllOn = appSkills.length > 0 && appSkills.every((s) => s.enabled);
-	const appSomeOn = appSkills.some((s) => s.enabled);
+	const { allEnabled: appAllOn, someEnabled: appSomeOn } = computeSkillGroupState(appSkills);
+	const anySkillToggling = appSkills.some((s) => skillToggling.value.has(s.id));
 
 	return (
 		<Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
@@ -377,6 +375,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 								onToggleAll={toggleAppMcpGroup}
 								scope="global"
 								itemCount={appSkills.length}
+								disabled={anySkillToggling}
 							/>
 							{appMcpGroupOpen.value && (
 								<div class="space-y-1 mt-1 ml-5">
