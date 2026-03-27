@@ -56,12 +56,14 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
 
 		// Create a skill referencing the AppMcpServer
 		const skillResult = (await daemon.messageHub.request('skill.create', {
-			name: 'test-echo-skill',
-			displayName: 'Test Echo Skill',
-			description: 'Skill backed by echo server',
-			sourceType: 'mcp_server',
-			config: { type: 'mcp_server', appMcpServerId: serverId },
-			enabled: true,
+			params: {
+				name: 'test-echo-skill',
+				displayName: 'Test Echo Skill',
+				description: 'Skill backed by echo server',
+				sourceType: 'mcp_server',
+				config: { type: 'mcp_server', appMcpServerId: serverId },
+				enabled: true,
+			},
 		})) as { skill: AppSkill };
 		expect(skillResult.skill.enabled).toBe(true);
 
@@ -96,12 +98,14 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
 
 		// Create + enable skill
 		const skillResult = (await daemon.messageHub.request('skill.create', {
-			name: 'test-echo-skill-2',
-			displayName: 'Test Echo Skill 2',
-			description: 'Skill backed by echo server 2',
-			sourceType: 'mcp_server',
-			config: { type: 'mcp_server', appMcpServerId: serverId },
-			enabled: true,
+			params: {
+				name: 'test-echo-skill-2',
+				displayName: 'Test Echo Skill 2',
+				description: 'Skill backed by echo server 2',
+				sourceType: 'mcp_server',
+				config: { type: 'mcp_server', appMcpServerId: serverId },
+				enabled: true,
+			},
 		})) as { skill: AppSkill };
 		expect(skillResult.skill.enabled).toBe(true);
 
@@ -141,12 +145,14 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
 
 		// Create + enable skill referencing this server
 		await daemon.messageHub.request('skill.create', {
-			name: 'test-echo-skill-3',
-			displayName: 'Test Echo Skill 3',
-			description: 'Skill backed by echo server 3',
-			sourceType: 'mcp_server',
-			config: { type: 'mcp_server', appMcpServerId: serverId },
-			enabled: true,
+			params: {
+				name: 'test-echo-skill-3',
+				displayName: 'Test Echo Skill 3',
+				description: 'Skill backed by echo server 3',
+				sourceType: 'mcp_server',
+				config: { type: 'mcp_server', appMcpServerId: serverId },
+				enabled: true,
+			},
 		});
 
 		// Create a normal session
@@ -182,12 +188,14 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
 
 		// Create + enable skill referencing this server
 		await daemon.messageHub.request('skill.create', {
-			name: 'test-echo-skill-4',
-			displayName: 'Test Echo Skill 4',
-			description: 'Skill backed by disabled server',
-			sourceType: 'mcp_server',
-			config: { type: 'mcp_server', appMcpServerId: serverId },
-			enabled: true,
+			params: {
+				name: 'test-echo-skill-4',
+				displayName: 'Test Echo Skill 4',
+				description: 'Skill backed by disabled server',
+				sourceType: 'mcp_server',
+				config: { type: 'mcp_server', appMcpServerId: serverId },
+				enabled: true,
+			},
 		});
 
 		// Disable the AppMcpServer — skill stays enabled
