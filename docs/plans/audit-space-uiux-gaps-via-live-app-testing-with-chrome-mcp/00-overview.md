@@ -38,7 +38,7 @@ This audit was conducted through:
 |---|-------|----------|----------|
 | B1 | Quick Actions "Start Workflow Run" and "Create Task" buttons are unwired scaffolding — `onStartWorkflow` and `onCreateTask` props are never passed from SpaceIsland | P1 | `SpaceIsland.tsx` line 241, `SpaceDashboard.tsx` line 149 comment |
 | B2 | SpaceNavPanel component is built but NOT rendered anywhere — SpaceIsland uses a tab-based layout without a left navigation column | P2 | `SpaceNavPanel.tsx` is imported nowhere except its own file |
-| B3 | `spaceWorkflowRun.create` RPC handler may not be registered — store method has a TODO(M6) comment saying it's a stub | P1 | `space-store.ts` line 847 |
+| B3 | RPC naming mismatch: frontend `space-store.ts` calls `spaceWorkflowRun.create` but daemon registers handler as `spaceWorkflowRun.start` (in `space-workflow-run-handlers.ts` line 124). The TODO(M6) comment on line 842 is stale — the backend is implemented, just under a different name | P1 | `space-store.ts` line 857, `space-workflow-run-handlers.ts` line 124 |
 | B4 | SpaceAgentList has no padding wrapper — the component starts with `<div class="flex flex-col h-full">` but header uses `mb-4` without outer padding, while other tabs (Dashboard, Settings) use `p-6` | P3 | `SpaceAgentList.tsx` line 194 |
 | B5 | SpaceContextPanel uses a rocket emoji in empty state which conflicts with the project's no-emoji rule | P3 | `SpaceContextPanel.tsx` line 262 |
 
@@ -65,7 +65,7 @@ This audit was conducted through:
 - Wire Quick Actions buttons (Start Workflow Run, Create Task)
 - Create Task creation dialog
 - Create Workflow Run start dialog
-- Verify and fix `spaceWorkflowRun.create` RPC registration
+- Fix RPC naming mismatch: rename frontend call from `spaceWorkflowRun.create` to `spaceWorkflowRun.start`
 
 ### P2 (Medium) — Complete the user journey
 - Add space edit/rename functionality in Settings
@@ -73,22 +73,26 @@ This audit was conducted through:
 - Add task status management controls in SpaceTaskPane
 - Add breadcrumb/back navigation for space detail
 - Add workflow run detail view with task breakdown
-- Consider chat integration for space detail view
-
 ### P3 (Low) — Polish
 - Fix SpaceAgentList padding consistency
-- Remove emoji from SpaceContextPanel empty state
-- Improve mobile responsiveness
-- Connect space session sub-routes
+- Remove emoji from SpaceContextPanel empty state and ContextPanel.tsx (`emptyIcon: '🚀'` on line 207)
+- Remove unused SpaceNavPanel component (has tests and export but is not rendered anywhere; deliberate removal with cleanup)
+
+### Deferred to Future Iteration
+- **G5 — Chat interface within space detail**: SpacesPage renders a ChatContainer for the Global Spaces Agent, but individual space views have no chat panel. This is a significant feature requiring architectural decisions (embedded chat vs. sidebar, agent scope per space) and is deferred to a dedicated follow-up plan.
+- **G6 — Deep links for space sessions**: Session sub-routes exist in the router but SpaceIsland doesn't handle them. Deferred as P3.
+- **G8 — Mobile responsiveness**: WorkflowCanvas hides on mobile but other tabs lack mobile layout. Deferred as P3.
 
 ## Milestones
 
-1. **Wire Quick Actions and Create Task Dialog** — Connect existing dashboard buttons and build the task creation form
-2. **Workflow Run Start Dialog and RPC Verification** — Build the workflow run start UI and verify backend support
-3. **Space Settings CRUD** — Add edit, archive, and delete functionality to SpaceSettings
-4. **Task Pane Enhancements** — Add task status management and workflow run detail view
-5. **Navigation and Polish** — Breadcrumbs, padding fixes, mobile improvements, emoji removal
+1. **Wire Quick Actions and Create Task Dialog** — Connect existing dashboard buttons and build the task creation form (2 tasks)
+2. **Workflow Run Start Dialog and RPC Fix** — Fix RPC naming mismatch and build the workflow run start UI (3 tasks)
+3. **Space Settings CRUD** — Add edit, archive, and delete functionality to SpaceSettings (2 tasks)
+4. **Task Pane Enhancements** — Add task status management and workflow run detail view (2 tasks)
+5. **Navigation and Polish** — Breadcrumbs, padding fix, emoji/icon cleanup, SpaceNavPanel removal, comprehensive E2E test (4 tasks)
+
+Note: M1, M2, and M3 have no inter-milestone dependencies and can be parallelized.
 
 ## Estimated Task Count
 
-Total: 14 tasks across 5 milestones
+Total: 13 tasks across 5 milestones

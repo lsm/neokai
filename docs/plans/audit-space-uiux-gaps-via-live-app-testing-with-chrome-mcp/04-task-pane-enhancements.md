@@ -43,17 +43,20 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Agent type:** coder
 
 **Subtasks:**
-1. Create `packages/web/src/components/space/WorkflowRunDetail.tsx` showing: run title, status badge, started/completed timestamps, list of tasks grouped by workflow node (using `spaceStore.tasksByNodeId`)
-2. In `SpaceDashboard.tsx`, make recent run items clickable — on click, open WorkflowRunDetail in a slide-over panel or replace the dashboard content
-3. Add a "Back to Dashboard" button in the detail view
-4. Show each task with its status dot, title, and click-to-open-task-pane behavior (navigate to `/space/:id/task/:taskId`)
-5. Write unit test covering: render with run data, task grouping, back button navigation
+1. Create `packages/web/src/components/space/WorkflowRunDetail.tsx` showing: run title, status badge, started/completed timestamps, list of tasks grouped by workflow node
+2. **Task grouping implementation**: Use `spaceStore.tasksByNodeId` (a computed signal at `space-store.ts` line 121 that returns `Map<string, SpaceTask[]>`) to group tasks. Grouping key is the node UUID (`nodeId`). Display each group as a collapsible section with the workflow step name as the header (resolve step name from the workflow definition). Standalone tasks (those without a `nodeId`) should appear in an "Ungrouped Tasks" section at the bottom.
+3. In `SpaceDashboard.tsx`, make recent run items clickable — on click, open WorkflowRunDetail as a slide-over panel (overlay on the right side, similar to SpaceTaskPane pattern)
+4. Add a "Back to Dashboard" button / close button in the detail view header
+5. Show each task with its status dot, title, and click-to-open-task-pane behavior (navigate to `/space/:id/task/:taskId`)
+6. Verify `tasksByNodeId` returns the expected `Map<string, SpaceTask[]>` structure in a unit test
+7. Write unit test covering: render with run data, task grouping by node, ungrouped tasks section, back button navigation, task click navigation
 
 **Acceptance criteria:**
-- Clicking a run in Recent Activity opens the run detail view
-- Tasks are displayed grouped by workflow node
+- Clicking a run in Recent Activity opens the run detail view as a slide-over panel
+- Tasks are displayed in collapsible sections grouped by workflow node name (using `tasksByNodeId` signal)
+- Standalone tasks (no `nodeId`) appear in an "Ungrouped Tasks" section
 - Clicking a task in the detail navigates to the task pane
-- Back button returns to the main dashboard view
+- Back/close button returns to the main dashboard view
 
 **Dependencies:** None
 

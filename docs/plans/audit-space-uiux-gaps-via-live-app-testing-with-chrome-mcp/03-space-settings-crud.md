@@ -55,7 +55,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Archive button shows confirmation modal and archives the space on confirm
 - Delete button shows danger confirmation modal and deletes on confirm
 - Both actions redirect to the spaces list after completion
-- Archived spaces appear under the "Archived" filter tab in SpaceContextPanel
+- Verify archived spaces are visible under the existing "Archived" filter tab in SpaceContextPanel (the filter tabs already exist in `SpaceContextPanel.tsx` lines 254-258)
 - E2E test passes
 
 **Dependencies:** None

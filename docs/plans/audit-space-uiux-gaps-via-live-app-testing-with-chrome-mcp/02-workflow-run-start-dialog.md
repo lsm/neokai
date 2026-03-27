@@ -2,35 +2,34 @@
 
 ## Goal
 
-Enable users to start a workflow run from the Dashboard's "Start Workflow Run" quick action. This requires verifying the backend RPC handler exists and building a workflow selection dialog.
+Enable users to start a workflow run from the Dashboard's "Start Workflow Run" quick action. This requires fixing the RPC naming mismatch and building a workflow selection dialog.
 
 ## Scope
 
-- Verify `spaceWorkflowRun.create` RPC handler registration in the daemon
+- Fix RPC naming mismatch: frontend calls `spaceWorkflowRun.create` but daemon registers `spaceWorkflowRun.start`
 - Build WorkflowRunStartDialog component
 - Replace the temporary Workflows-tab redirect from M1 with the real dialog
 
 ## Tasks
 
-### Task 2.1: Verify and Fix spaceWorkflowRun.create RPC Handler
+### Task 2.1: Fix spaceWorkflowRun RPC Naming Mismatch
 
-**Description:** The space-store has a TODO(M6) comment indicating `spaceWorkflowRun.create` may be a stub. Verify whether the RPC handler is registered in the daemon's handler registration and fix if missing.
+**Description:** The daemon registers the handler as `spaceWorkflowRun.start` (in `space-workflow-run-handlers.ts` line 124), but the frontend `space-store.ts` line 857 calls `spaceWorkflowRun.create`. This is a naming mismatch, not a missing implementation. The TODO(M6) comment on line 842 is stale.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. Check `packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts` for `spaceWorkflowRun.create` handler implementation
-2. Check `packages/daemon/src/lib/rpc-handlers/index.ts` to verify the handler is registered with the MessageHub
-3. If missing, implement the handler: accept `{ spaceId, workflowId, title?, variables? }`, create a workflow run via SpaceWorkflowRunRepository, emit `space.workflowRun.created` event
-4. If the handler exists but the space-store TODO is outdated, remove the TODO comment
-5. Write an online test in `packages/daemon/tests/online/space/` verifying the RPC creates a run and returns it
-6. Remove the TODO(M6) comment from `packages/web/src/lib/space-store.ts` once verified
+1. In `packages/web/src/lib/space-store.ts`, rename the RPC call on line 857 from `hub.request('spaceWorkflowRun.create', ...)` to `hub.request('spaceWorkflowRun.start', ...)`
+2. Update the response handling: the `spaceWorkflowRun.start` handler returns `{ run: SpaceWorkflowRun }`, so extract `.run` from the response (e.g., `const { run } = await hub.request('spaceWorkflowRun.start', params)`)
+3. Remove the stale TODO(M6) comment on line 842
+4. Verify the existing online tests in `packages/daemon/tests/online/space/` cover `spaceWorkflowRun.start`; if not, add a test verifying the RPC creates a run and returns `{ run: SpaceWorkflowRun }`
+5. Run existing tests to confirm no regressions
 
 **Acceptance criteria:**
-- `spaceWorkflowRun.create` RPC handler is registered and functional
-- Creating a run via RPC returns a SpaceWorkflowRun object
-- The `space.workflowRun.created` event is emitted
-- Online test passes
+- Frontend calls `spaceWorkflowRun.start` (matching the daemon handler name)
+- Response is correctly extracted as `{ run: SpaceWorkflowRun }` (not bare `SpaceWorkflowRun`)
+- TODO(M6) comment is removed
+- All existing tests pass
 
 **Dependencies:** None
 
@@ -44,7 +43,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Subtasks:**
 1. Create `packages/web/src/components/space/WorkflowRunStartDialog.tsx` with: Workflow selector (dropdown of space's workflows from `spaceStore.workflows`), Run title (optional text input, auto-suggested from workflow name + timestamp), Start button
-2. Wire form submission to `spaceStore.startWorkflowRun({ workflowId, title })`
+2. Wire form submission to `spaceStore.startWorkflowRun(params)` where params is `Omit<CreateWorkflowRunParams, 'spaceId'>` (spaceId is added by the store). Required field: `workflowId`. Optional fields: `title` (auto-suggested from workflow name + timestamp if empty), `variables`
 3. Handle edge case: no workflows configured — show "No workflows available. Create one first." with a link/button to switch to Workflows tab
 4. Add success toast showing run title; close dialog on success
 5. Write unit test covering: render with workflows, render empty state, submit flow

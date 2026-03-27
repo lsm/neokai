@@ -7,8 +7,10 @@ Improve navigation within the space detail view and fix minor polish issues iden
 ## Scope
 
 - Add breadcrumb navigation for space detail
-- Remove emoji from SpaceContextPanel empty state
-- Clean up unused SpaceNavPanel component or integrate it
+- Fix SpaceAgentList padding consistency (moved from M1 — independent P3 work)
+- Remove emojis from SpaceContextPanel and ContextPanel.tsx
+- Remove unused SpaceNavPanel component and its tests
+- Comprehensive E2E navigation test
 
 ## Tasks
 
@@ -35,23 +37,26 @@ Improve navigation within the space detail view and fix minor polish issues iden
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
-### Task 5.2: Remove Emoji and Fix Minor Polish Issues
+### Task 5.2: Remove Emojis, Fix Padding, and Remove Unused SpaceNavPanel
 
-**Description:** Fix minor issues identified in the audit: remove emoji from SpaceContextPanel, evaluate SpaceNavPanel usage.
+**Description:** Fix minor polish issues: remove emojis from space-related components (including `ContextPanel.tsx`), fix SpaceAgentList padding inconsistency, and remove the unused SpaceNavPanel component.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. In `SpaceContextPanel.tsx`, replace the rocket emoji (`<div class="text-3xl mb-2">🚀</div>`) in the empty state with an SVG icon consistent with the rest of the space UI
-2. Add a suitable SVG icon (e.g., a space/grid icon or the same plus-circle icon used elsewhere)
-3. Evaluate `SpaceNavPanel.tsx` — if it is not imported or used anywhere, add a comment noting it as a reserved component for future left-panel layout, or remove it if it duplicates SpaceContextPanel functionality
-4. Verify no other emojis exist in space component files (excluding test files)
-5. Update any affected tests
+1. In `SpaceContextPanel.tsx`, replace the rocket emoji (`<div class="text-3xl mb-2">🚀</div>`) in the empty state with an SVG icon consistent with the rest of the space UI (e.g., a grid/layout icon or plus-circle icon)
+2. In `packages/web/src/islands/ContextPanel.tsx`, replace the rocket emoji on line 207 (`emptyIcon: '🚀'`) with an appropriate SVG icon or text icon matching the spaces section
+3. Search all `packages/web/src/components/space/` AND `packages/web/src/islands/` files for remaining emojis in production code (excluding test files) and replace with SVG icons
+4. **Fix SpaceAgentList padding**: In `SpaceIsland.tsx`, wrap the `<SpaceAgentList />` render in a div with `class="p-6 h-full overflow-y-auto"` (or add padding directly in SpaceAgentList's root div) to match Dashboard and Settings tabs which use `p-6`
+5. **Remove SpaceNavPanel**: Delete `packages/web/src/components/space/SpaceNavPanel.tsx` and its test file `packages/web/src/components/space/__tests__/SpaceNavPanel.test.tsx`. Remove the export from `packages/web/src/components/space/index.ts` line 10. This component was built for a left-panel layout that was replaced with tabs; it is not imported or rendered anywhere.
+6. Update any affected tests; run `bun run check` to verify no dead exports remain
 
 **Acceptance criteria:**
-- No emojis in space component production code
-- Empty state in SpaceContextPanel uses an SVG icon instead
-- SpaceNavPanel has a clear status (documented or removed)
+- No emojis in space component or ContextPanel production code
+- Empty states use SVG icons instead of emoji
+- SpaceAgentList has consistent padding with Dashboard and Settings tabs
+- SpaceNavPanel.tsx, its test file, and its export are removed
+- `bun run check` passes (no dead exports)
 
 **Dependencies:** None
 
