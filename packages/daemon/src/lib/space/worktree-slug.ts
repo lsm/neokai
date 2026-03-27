@@ -1,11 +1,11 @@
-import { slugify } from './slug';
+import { slugify, resolveCollision } from './slug';
 
 /**
  * Generate a slug for a worktree folder name and git branch.
  *
  * Delegates to `slugify()` for core slugification rules.
- * If the task title is empty/whitespace-only or produces an empty slug,
- * falls back to `task-{taskNumber}`.
+ * If the task title contains no alphanumeric characters (empty, whitespace-only,
+ * or all-special-chars), falls back to `task-{taskNumber}`.
  *
  * The returned slug is used as:
  * - The worktree folder name (as-is)
@@ -21,38 +21,12 @@ export function worktreeSlug(
 	taskNumber: number,
 	existingSlugs: string[] = []
 ): string {
-	const trimmed = taskTitle.trim();
-
-	if (!trimmed) {
-		return resolveWorktreeCollision(`task-${taskNumber}`, existingSlugs);
+	// Detect whether the title contains any usable (alphanumeric) characters
+	// before delegating. This avoids coupling to slug.ts' internal sentinel value
+	// ('unnamed-space') and prevents false positives for titles like "Unnamed Space".
+	if (!/[a-z0-9]/i.test(taskTitle)) {
+		return resolveCollision(`task-${taskNumber}`, existingSlugs);
 	}
 
-	const slug = slugify(trimmed, existingSlugs);
-
-	// slugify() falls back to 'unnamed-space' for empty input; treat that as a
-	// signal that the title produced no usable characters.
-	if (!slug || slug === 'unnamed-space') {
-		return resolveWorktreeCollision(`task-${taskNumber}`, existingSlugs);
-	}
-
-	return slug;
-}
-
-/**
- * Resolve collisions for the fallback `task-{taskNumber}` slug.
- * Appends a numeric suffix (-2, -3, …) if the base is already taken.
- */
-function resolveWorktreeCollision(base: string, existingSlugs: string[]): string {
-	const slugSet = new Set(existingSlugs);
-	if (!slugSet.has(base)) {
-		return base;
-	}
-	let counter = 2;
-	while (true) {
-		const suffixed = `${base}-${counter}`;
-		if (!slugSet.has(suffixed)) {
-			return suffixed;
-		}
-		counter++;
-	}
+	return slugify(taskTitle, existingSlugs);
 }

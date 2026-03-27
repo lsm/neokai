@@ -96,7 +96,7 @@ function truncateAtWordBoundary(slug: string, maxLength: number): string {
 /**
  * Resolve slug collisions by appending a numeric suffix (-2, -3, ...).
  */
-function resolveCollision(base: string, existingSlugs: string[]): string {
+export function resolveCollision(base: string, existingSlugs: string[]): string {
 	const slugSet = new Set(existingSlugs);
 
 	if (!slugSet.has(base)) {

@@ -16,7 +16,6 @@ describe('worktreeSlug', () => {
 		});
 
 		test('title with only special characters falls back to task-{taskNumber}', () => {
-			// slugify('!!!') → 'unnamed-space', which triggers the fallback
 			expect(worktreeSlug('!!!@@@', 7)).toBe('task-7');
 		});
 	});
@@ -43,6 +42,17 @@ describe('worktreeSlug', () => {
 			expect(slug).not.toContain('99');
 			expect(slug).toBe('refactor-database-layer');
 		});
+
+		// Regression: titles that happen to produce 'unnamed-space' when slugified
+		// must NOT fall back to task-{taskNumber} — the sentinel-value check was
+		// removed in favour of testing the raw input for alphanumeric content.
+		test('title "unnamed-space" is NOT treated as a fallback trigger', () => {
+			expect(worktreeSlug('unnamed-space', 5)).toBe('unnamed-space');
+		});
+
+		test('title "Unnamed Space" is NOT treated as a fallback trigger', () => {
+			expect(worktreeSlug('Unnamed Space', 5)).toBe('unnamed-space');
+		});
 	});
 
 	describe('collision handling', () => {
@@ -62,6 +72,12 @@ describe('worktreeSlug', () => {
 
 		test('fallback collision increments correctly', () => {
 			expect(worktreeSlug('', 2, ['task-2', 'task-2-2'])).toBe('task-2-3');
+		});
+
+		// Regression: all-special-chars title with 'unnamed-space' already taken must
+		// fall back to task-N, not 'unnamed-space-2'.
+		test('all-special-chars title with unnamed-space taken still uses task-N fallback', () => {
+			expect(worktreeSlug('!!!', 7, ['unnamed-space'])).toBe('task-7');
 		});
 
 		test('no collision when existingSlugs is empty', () => {
