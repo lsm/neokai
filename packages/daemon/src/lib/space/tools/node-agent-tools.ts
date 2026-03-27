@@ -504,6 +504,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * channels define which agents can communicate and whether a gate
 		 * guards the channel. Use this to understand the full channel map
 		 * before calling list_reachable_agents or send_message.
+		 *
+		 * Note: `gateId` is always null — `WorkflowChannel` uses an inline
+		 * `gate?: WorkflowCondition` rather than a `gateId` reference.
+		 * Separated gate entities require a future type migration to `Channel`.
 		 */
 		async list_channels(_args: ListChannelsInput): Promise<ToolResult> {
 			const channels = workflow?.channels ?? [];
@@ -609,7 +613,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Nested objects are replaced wholesale (not deep-merged).
 		 *
 		 * For vote-counting gates (count conditions), use your nodeId as the
-		 * map key so each node counts only once. Your nodeId is "${workflowNodeId}".
+		 * map key so each node counts only once. Your nodeId is returned in the JSON response.
 		 *
 		 * Writing triggers gate re-evaluation — the response includes whether
 		 * the gate is now open so you know if the gated channel is unblocked.
@@ -746,7 +750,9 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			'list_channels',
 			'List all channels declared in this workflow. ' +
 				'Channels define the messaging topology — which agents can communicate and whether a gate ' +
-				'guards the channel. Use this to understand the full channel map for this workflow run.',
+				'guards the channel. Use this to understand the full channel map for this workflow run. ' +
+				'Note: `gateId` is not yet available — `WorkflowChannel` uses inline `gate?: WorkflowCondition` ' +
+				'instead of a separated `Gate` reference; correlation via `gateId` requires a type migration.',
 			ListChannelsSchema.shape,
 			(args) => handlers.list_channels(args)
 		),
@@ -771,7 +777,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			"Write (merge) data into a gate's runtime data store. " +
 				"Your role must be in the gate's allowedWriterRoles. " +
 				'For vote-counting (count condition) gates, use your nodeId as the map key so each node votes once. ' +
-				'After writing, gate re-evaluation is triggered — the response tells you if the gate is now open.',
+				'After writing, gate re-evaluation is triggered locally — the response tells you if the gate is now open. ' +
+				'Note: the workflow runtime polls gate state at channel-routing time; this tool does not directly push channel unblock events.',
 			WriteGateSchema.shape,
 			(args) => handlers.write_gate(args)
 		),

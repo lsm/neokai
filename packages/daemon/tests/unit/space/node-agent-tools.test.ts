@@ -52,6 +52,20 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
+function seedSpaceWorkflowRunRow(
+	db: BunDatabase,
+	runId: string,
+	spaceId: string,
+	workflowId: string
+): void {
+	const now = Date.now();
+	db.prepare(
+		`INSERT INTO space_workflow_runs
+     (id, space_id, workflow_id, title, description, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', 'pending', NULL, 0, 5, NULL, ?, ?)`
+	).run(runId, spaceId, workflowId, now, now);
+}
+
 function seedSpaceTask(
 	db: BunDatabase,
 	spaceId: string,
@@ -150,6 +164,9 @@ function makeCtx(): TestCtx {
 	// Workflow run/node IDs for peer task seeding
 	const workflowRunId = 'run-node-tools-default';
 	const nodeId = 'node-node-tools-default';
+
+	// Seed workflow run so gate_data FK constraint is satisfied for write_gate tests
+	seedSpaceWorkflowRunRow(db, workflowRunId, spaceId, 'wf-seed');
 
 	// Seed peer tasks: coder and reviewer on the default node
 	seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
@@ -859,8 +876,579 @@ describe('node-agent-tools: report_done', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: list_reachable_agents
+// Tests: list_channels
 // ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_channels', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns empty channels when workflow is null', async () => {
+		const config = makeConfig(ctx, { workflow: null });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_channels({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.channels).toHaveLength(0);
+		expect(data.total).toBe(0);
+	});
+
+	test('returns empty channels when workflow has no channels', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_channels({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.channels).toHaveLength(0);
+	});
+
+	test('returns channel with hasGate false when no inline gate', async () => {
+		const channel: WorkflowChannel = {
+			id: 'ch-1',
+			from: 'coder',
+			to: 'reviewer',
+			direction: 'one-way',
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [channel],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_channels({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.channels).toHaveLength(1);
+		expect(data.channels[0].channelId).toBe('ch-1');
+		expect(data.channels[0].from).toBe('coder');
+		expect(data.channels[0].to).toBe('reviewer');
+		expect(data.channels[0].hasGate).toBe(false);
+	});
+
+	test('returns channel with hasGate true when inline gate present', async () => {
+		const channel: WorkflowChannel = {
+			id: 'ch-2',
+			from: 'coder',
+			to: 'reviewer',
+			direction: 'one-way',
+			gate: { type: 'human', description: 'Needs approval' },
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [channel],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_channels({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.channels).toHaveLength(1);
+		expect(data.channels[0].hasGate).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: list_gates
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_gates', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns empty gates when workflow is null', async () => {
+		const config = makeConfig(ctx, { workflow: null });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_gates({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gates).toHaveLength(0);
+		expect(data.nodeId).toBe(ctx.nodeId);
+	});
+
+	test('returns empty gates when workflow has no gates', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_gates({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gates).toHaveLength(0);
+	});
+
+	test('returns gate with default data when no runtime data exists', async () => {
+		const gate: Gate = {
+			id: 'gate-approval',
+			condition: { type: 'check', field: 'approved', op: '==', value: true },
+			data: { approved: undefined },
+			allowedWriterRoles: ['reviewer'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_gates({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gates).toHaveLength(1);
+		expect(data.gates[0].gateId).toBe('gate-approval');
+		expect(data.gates[0].currentData).toEqual({ approved: undefined });
+		expect(data.gates[0].allowedWriterRoles).toEqual(['reviewer']);
+		expect(data.nodeId).toBe(ctx.nodeId);
+	});
+
+	test('returns gate with runtime data overriding defaults', async () => {
+		const gate: Gate = {
+			id: 'gate-vote',
+			condition: {
+				type: 'count',
+				field: 'votes',
+				matchValue: 'approved',
+				min: 2,
+			},
+			data: { votes: {} },
+			allowedWriterRoles: ['*'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		// Pre-write some runtime data
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		gateDataRepo.merge(ctx.workflowRunId, 'gate-vote', {
+			votes: { 'node-a': 'approved', 'node-b': 'approved' },
+		});
+
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_gates({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gates).toHaveLength(1);
+		expect(data.gates[0].currentData).toEqual({
+			votes: { 'node-a': 'approved', 'node-b': 'approved' },
+		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: read_gate
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: read_gate', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns error for non-existent gateId', async () => {
+		const gate: Gate = {
+			id: 'gate-real',
+			condition: { type: 'check', field: 'x', op: '==', value: 1 },
+			data: {},
+			allowedWriterRoles: [],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.read_gate({ gateId: 'gate-does-not-exist' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not found');
+		expect(data.availableGateIds).toEqual(['gate-real']);
+	});
+
+	test('returns gate data and open status for existing gate (closed)', async () => {
+		const gate: Gate = {
+			id: 'gate-check',
+			condition: { type: 'check', field: 'ready', op: '==', value: true },
+			data: { ready: false },
+			allowedWriterRoles: ['coder'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.read_gate({ gateId: 'gate-check' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateId).toBe('gate-check');
+		expect(data.data).toEqual({ ready: false });
+		expect(data.gateOpen).toBe(false);
+	});
+
+	test('returns gate data and open status for existing gate (open)', async () => {
+		const gate: Gate = {
+			id: 'gate-open',
+			condition: { type: 'check', field: 'status', op: '==', value: 'go' },
+			data: { status: 'go' },
+			allowedWriterRoles: [],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.read_gate({ gateId: 'gate-open' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: write_gate
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: write_gate', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns error for non-existent gateId', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gateghost', data: { x: 1 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not found');
+	});
+
+	test('returns error when role is not in allowedWriterRoles', async () => {
+		const gate: Gate = {
+			id: 'gate-restricted',
+			condition: { type: 'check', field: 'x', op: 'exists' },
+			data: {},
+			allowedWriterRoles: ['reviewer'], // only reviewer can write
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		// makeConfig uses myRole: 'coder' by default
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-restricted', data: { x: 1 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not authorized');
+		expect(data.allowedWriterRoles).toEqual(['reviewer']);
+		expect(data.myRole).toBe('coder');
+	});
+
+	test('succeeds when role is in allowedWriterRoles and merges data', async () => {
+		const gate: Gate = {
+			id: 'gate-writable',
+			condition: { type: 'check', field: 'x', op: 'exists' },
+			data: { x: undefined, y: 'original' },
+			allowedWriterRoles: ['coder'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		// First write: creates the record with { x: 42 }
+		const result = await handlers.write_gate({ gateId: 'gate-writable', data: { x: 42 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// Shallow merge: x=42 overwrites existing x, y is not in the partial so it's absent.
+		// Gate defaults are NOT merged in by write_gate — merge is only against stored data.
+		expect(data.updatedData).toEqual({ x: 42 });
+		expect(data.gateOpen).toBe(true); // x now exists
+		expect(data.nodeId).toBe(ctx.nodeId);
+
+		// Second write: merge adds 'y' alongside existing 'x'
+		const result2 = await handlers.write_gate({ gateId: 'gate-writable', data: { y: 'original' } });
+		const data2 = JSON.parse(result2.content[0].text);
+		expect(data2.success).toBe(true);
+		expect(data2.updatedData).toEqual({ x: 42, y: 'original' });
+	});
+
+	test('shallow merge: nested object is replaced wholesale', async () => {
+		const gate: Gate = {
+			id: 'gate-nested',
+			condition: { type: 'check', field: 'config', op: 'exists' },
+			data: { config: { a: 1, b: 2 } },
+			allowedWriterRoles: ['coder'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// Write with new nested object
+		const result = await handlers.write_gate({
+			gateId: 'gate-nested',
+			data: { config: { c: 3 } },
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// Nested object replaced (not deep-merged)
+		expect(data.updatedData).toEqual({ config: { c: 3 } });
+	});
+
+	test('authorized role with wildcard (*) allows any role to write', async () => {
+		const gate: Gate = {
+			id: 'gate-open',
+			condition: { type: 'check', field: 'voted', op: 'exists' },
+			data: {},
+			allowedWriterRoles: ['*'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		// myRole is 'coder' but '*' should authorize any role
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-open', data: { voted: true } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+	});
+
+	test('count condition gate opens after sufficient votes', async () => {
+		const gate: Gate = {
+			id: 'gate-vote',
+			condition: {
+				type: 'count',
+				field: 'votes',
+				matchValue: 'approved',
+				min: 2,
+			},
+			data: { votes: {} },
+			allowedWriterRoles: ['*'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+
+		// First vote (node-a): write only node-a's vote, gate is still closed
+		const configA = makeConfig(ctx, {
+			workflow,
+			workflowNodeId: 'node-a',
+		});
+		const handlersA = createNodeAgentToolHandlers(configA);
+		const resultA = await handlersA.write_gate({
+			gateId: 'gate-vote',
+			data: { votes: { 'node-a': 'approved' } },
+		});
+		const dataA = JSON.parse(resultA.content[0].text);
+		expect(dataA.success).toBe(true);
+		expect(dataA.gateOpen).toBe(false); // only 1 vote, need 2
+
+		// Second vote (node-b): shallow merge replaces the entire votes map,
+		// so node-b must write the accumulated map. In practice, an agent would
+		// read the current state first and then write the updated map.
+		const configB = makeConfig(ctx, {
+			workflow,
+			workflowNodeId: 'node-b',
+		});
+		const handlersB = createNodeAgentToolHandlers(configB);
+		const resultB = await handlersB.write_gate({
+			gateId: 'gate-vote',
+			data: { votes: { 'node-a': 'approved', 'node-b': 'approved' } },
+		});
+		const dataB = JSON.parse(resultB.content[0].text);
+		expect(dataB.success).toBe(true);
+		expect(dataB.gateOpen).toBe(true); // 2 votes, min=2
+	});
+});
 
 describe('node-agent-tools: list_reachable_agents', () => {
 	let ctx: TestCtx;

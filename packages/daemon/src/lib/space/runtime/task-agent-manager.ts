@@ -1311,7 +1311,7 @@ export class TaskAgentManager {
 		stepTaskId: string,
 		taskManager: SpaceTaskManager
 	) {
-		const workflowNodeId = this.config.taskRepo.getTask(taskId)?.workflowNodeId ?? '';
+		const workflowNodeId = this.config.taskRepo.getTask(stepTaskId)?.workflowNodeId ?? '';
 		// Build the ChannelResolver from the workflow run's stored config at spawn time.
 		// Channels are written once at step-start by SpaceRuntime.storeResolvedChannels(),
 		// so reading them here gives the correct topology for this sub-session's lifetime.
