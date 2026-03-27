@@ -7,12 +7,12 @@
  * Worktree location : {spaceWorkspacePath}/.worktrees/{slug}/
  * Branch naming     : space/{slug}
  *
- * Does NOT extend Room's WorktreeManager — uses simple-git directly.
+ * Does NOT extend Room's WorktreeManager — uses execSync directly.
  */
 
-import simpleGit from 'simple-git';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository';
 import { SpaceRepository } from '../../../storage/repositories/space-repository';
@@ -79,27 +79,29 @@ export class SpaceWorktreeManager {
 		const worktreePath = join(worktreesDir, slug);
 		const branchName = `space/${slug}`;
 
-		const git = simpleGit(space.workspacePath);
-
 		// If a stale branch with the same name exists (from a previous crashed run),
 		// delete it so we can recreate it cleanly.
 		try {
-			const branches = await git.raw(['branch', '--list', branchName]);
+			const branches = execSync(`git branch --list "${branchName}"`, {
+				cwd: space.workspacePath,
+			}).toString();
 			if (branches.trim().length > 0) {
 				this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
-				await git.branch(['-D', branchName]);
+				execSync(`git branch -D "${branchName}"`, { cwd: space.workspacePath });
 			}
 		} catch {
 			// Non-fatal: branch check/delete failure should not block worktree creation
 		}
 
 		try {
-			await git.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch ?? 'HEAD']);
+			execSync(`git worktree add "${worktreePath}" -b "${branchName}" ${baseBranch ?? 'HEAD'}`, {
+				cwd: space.workspacePath,
+			});
 		} catch (err) {
 			// Clean up the directory if it was partially created
 			if (existsSync(worktreePath)) {
 				try {
-					await git.raw(['worktree', 'remove', worktreePath, '--force']);
+					rmSync(worktreePath, { recursive: true, force: true });
 				} catch {
 					// Ignore cleanup errors
 				}
@@ -135,11 +137,9 @@ export class SpaceWorktreeManager {
 			return;
 		}
 
-		const git = simpleGit(space.workspacePath);
-
 		// Remove the worktree directory via git
 		try {
-			await git.raw(['worktree', 'remove', record.path, '--force']);
+			execSync(`git worktree remove "${record.path}" --force`, { cwd: space.workspacePath });
 		} catch (err) {
 			this.logger.warn(
 				`Failed to remove git worktree at ${record.path} (continuing with cleanup): ${err instanceof Error ? err.message : String(err)}`
@@ -149,7 +149,7 @@ export class SpaceWorktreeManager {
 		// Delete the branch
 		const branchName = `space/${record.slug}`;
 		try {
-			await git.branch(['-D', branchName]);
+			execSync(`git branch -D "${branchName}"`, { cwd: space.workspacePath });
 		} catch {
 			// Branch may already be gone; non-fatal
 		}
@@ -198,8 +198,7 @@ export class SpaceWorktreeManager {
 		const space = this.spaceRepo.getSpace(spaceId);
 		if (space) {
 			try {
-				const git = simpleGit(space.workspacePath);
-				await git.raw(['worktree', 'prune']);
+				execSync('git worktree prune', { cwd: space.workspacePath });
 			} catch (err) {
 				this.logger.warn(
 					`git worktree prune failed for space ${spaceId}: ${err instanceof Error ? err.message : String(err)}`
