@@ -2453,6 +2453,48 @@ describe('Room Agent Tools', () => {
 			expect(metrics[0].direction).toBe('decrease');
 			expect(metrics[0].baseline).toBe(500);
 		});
+
+		it('should persist mission_type and allow set_schedule on recurring goal', async () => {
+			// Create a recurring goal via create_goal with mission_type
+			const created = parseResult(
+				await handlers.create_goal({
+					title: 'Nightly rebuild',
+					mission_type: 'recurring',
+					autonomy_level: 'semi_autonomous',
+				})
+			);
+			expect(created.success).toBe(true);
+			const goalId = created.goalId as string;
+
+			// Verify missionType persists via list_goals
+			const listed = parseResult(await handlers.list_goals());
+			const goals = listed.goals as Array<Record<string, unknown>>;
+			const recurringGoal = goals.find((g) => g.id === goalId);
+			expect(recurringGoal).toBeDefined();
+			expect(recurringGoal!.missionType).toBe('recurring');
+			expect(recurringGoal!.autonomyLevel).toBe('semi_autonomous');
+
+			// Verify set_schedule works on the recurring goal created via create_goal
+			const scheduleResult = parseResult(
+				await handlers.set_schedule({ goal_id: goalId, cron_expression: '0 2 * * *' })
+			);
+			expect(scheduleResult.success).toBe(true);
+			const scheduledGoal = scheduleResult.goal as Record<string, unknown>;
+			expect(scheduledGoal.missionType).toBe('recurring');
+			expect((scheduledGoal.schedule as Record<string, unknown>).expression).toBe('0 2 * * *');
+			expect(scheduleResult.nextRunAt).toBeDefined();
+		});
+
+		it('should default to one_shot when mission_type is omitted', async () => {
+			const result = parseResult(
+				await handlers.create_goal({
+					title: 'Default goal',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.missionType).toBe('one_shot');
+		});
 	});
 
 	describe('update_goal V2 fields', () => {
