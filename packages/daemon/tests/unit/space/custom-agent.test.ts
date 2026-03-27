@@ -9,6 +9,7 @@ import { describe, it, expect, mock } from 'bun:test';
 import {
 	buildCustomAgentSystemPrompt,
 	buildCustomAgentTaskMessage,
+	buildPlannerNodeAgentPrompt,
 	createCustomAgentInit,
 	resolveAgentInit,
 	type CustomAgentConfig,
@@ -1089,5 +1090,142 @@ describe('buildCustomAgentTaskMessage — workflow context injection', () => {
 		const msg = buildCustomAgentTaskMessage(config);
 
 		expect(msg).toContain('Workflow Structure');
+	});
+});
+
+// ============================================================================
+// buildPlannerNodeAgentPrompt
+// ============================================================================
+
+describe('buildPlannerNodeAgentPrompt', () => {
+	it('returns a non-empty string', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(typeof prompt).toBe('string');
+		expect(prompt.length).toBeGreaterThan(0);
+	});
+
+	it('includes plan document creation instructions', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('Planner Responsibilities');
+		expect(prompt).toContain('plan document');
+		expect(prompt).toContain('docs/plans/');
+	});
+
+	it('includes codebase exploration instructions', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('explore the codebase');
+	});
+
+	it('includes plan document structure guidance', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('Objective');
+		expect(prompt).toContain('Approach');
+		expect(prompt).toContain('Test strategy');
+	});
+
+	it('instructs to commit, push, and open a plan PR', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('plan PR');
+		expect(prompt).toContain('plan:');
+	});
+
+	it('instructs to call write_gate with plan-pr-gate', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('write_gate');
+		expect(prompt).toContain('plan-pr-gate');
+	});
+
+	it('specifies the required gate data fields: prUrl, prNumber, branch', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('prUrl');
+		expect(prompt).toContain('prNumber');
+		expect(prompt).toContain('branch');
+	});
+
+	it('explains the gate condition (prUrl exists)', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('prUrl exists');
+	});
+
+	it('instructs to notify reviewers via send_message', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('send_message');
+		expect(prompt).toContain('reviewer');
+	});
+
+	it('send_message example uses "message" field (not "text")', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('"message"');
+		expect(prompt).not.toContain('"text"');
+	});
+
+	it('mentions workflow structure alignment (step 5)', () => {
+		const prompt = buildPlannerNodeAgentPrompt();
+		expect(prompt).toContain('Workflow Structure');
+		expect(prompt).toContain('Step 5');
+	});
+});
+
+// ============================================================================
+// buildCustomAgentSystemPrompt — planner role integration
+// ============================================================================
+
+describe('buildCustomAgentSystemPrompt planner integration', () => {
+	it('includes planner-specific sections for planner role', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Planner Responsibilities');
+		expect(prompt).toContain('plan-pr-gate');
+		expect(prompt).toContain('write_gate');
+	});
+
+	it('does NOT include planner sections for coder role', () => {
+		const agent = makeAgent({ role: 'coder', name: 'Coder' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Planner Responsibilities');
+		expect(prompt).not.toContain('plan-pr-gate');
+	});
+
+	it('does NOT include planner sections for reviewer role', () => {
+		const agent = makeAgent({ role: 'reviewer', name: 'Reviewer' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Planner Responsibilities');
+		expect(prompt).not.toContain('plan-pr-gate');
+	});
+
+	it('does NOT include planner sections for qa role', () => {
+		const agent = makeAgent({ role: 'qa', name: 'QA' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).not.toContain('Planner Responsibilities');
+		expect(prompt).not.toContain('plan-pr-gate');
+	});
+
+	it('planner prompt still includes mandatory git workflow', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Git Workflow (MANDATORY)');
+		expect(prompt).toContain('git push -u origin HEAD');
+	});
+
+	it('planner prompt still includes completion signalling', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Signalling Completion');
+		expect(prompt).toContain('report_done');
+	});
+
+	it('planner prompt still includes peer communication', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		expect(prompt).toContain('Peer Communication');
+		expect(prompt).toContain('list_peers');
+	});
+
+	it('planner-specific sections appear before completion signalling', () => {
+		const agent = makeAgent({ role: 'planner', name: 'Planner' });
+		const prompt = buildCustomAgentSystemPrompt(agent);
+		const plannerIdx = prompt.indexOf('Planner Responsibilities');
+		const completionIdx = prompt.indexOf('Signalling Completion');
+		expect(plannerIdx).toBeLessThan(completionIdx);
 	});
 });
