@@ -450,6 +450,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// On startup: clean up orphaned worktrees (directories missing from disk) and run the TTL reaper.
 	// Both are non-blocking — errors are logged but never propagate to block server start.
+	let reaperTimer: ReturnType<typeof setInterval> | null = null;
 	if (process.env.NODE_ENV !== 'test') {
 		const worktreeStartupCleanup = async () => {
 			try {
@@ -473,7 +474,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 		// Run TTL reaper periodically (every hour) for long-running daemon processes.
 		const WORKTREE_REAPER_INTERVAL_MS = 60 * 60 * 1000;
-		const reaperTimer = setInterval(() => {
+		reaperTimer = setInterval(() => {
 			spaceWorktreeManager.reapExpiredWorktrees().catch((err) => {
 				logError('[Daemon] Periodic worktree TTL reaper failed:', err);
 			});
@@ -489,6 +490,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			return;
 		}
 		isCleanedUp = true;
+
+		// Stop the hourly worktree TTL reaper before shutting down other resources.
+		if (reaperTimer !== null) {
+			clearInterval(reaperTimer);
+			reaperTimer = null;
+		}
 
 		try {
 			try {

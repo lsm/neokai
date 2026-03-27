@@ -286,6 +286,8 @@ interface TestCtx {
 	createdSessions: Map<string, MockAgentSession>;
 	fromInitSpy: ReturnType<typeof spyOn<typeof AgentSession, 'fromInit'>>;
 	sessionManagerDeleteCalls: string[];
+	/** Adds a fake session record to the in-memory DB mock so getSession() returns it */
+	addDbSession: (id: string, type: string) => void;
 }
 
 function makeCtx(worktreePath = '/tmp/worktrees/test-task'): TestCtx {
@@ -402,6 +404,9 @@ function makeCtx(worktreePath = '/tmp/worktrees/test-task'): TestCtx {
 		createdSessions,
 		fromInitSpy,
 		sessionManagerDeleteCalls,
+		addDbSession: (id: string, type: string) => {
+			mockDb.createSession({ id, type });
+		},
 	};
 }
 
@@ -505,43 +510,61 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 	// -------------------------------------------------------------------------
 
 	describe('worktree reuse across node agents', () => {
-		test('sub-sessions receive the same worktree path as workspacePath', async () => {
+		test('SubSessionFactory.create overrides workspacePath with worktree path', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
-			// Manually trigger sub-session creation via the factory
-			// (we access the internal createSubSession method through public API)
-			const subSessionId = `sub-${task.id}-node-1`;
-			const fakeInit = {
+			// Access the private factory method via type cast so we can invoke it directly.
+			// This exercises the path-override logic in createSubSessionFactory() without
+			// needing a full MCP server stack.
+			type ManagerPrivate = {
+				createSubSessionFactory(id: string): { create(init: object): Promise<string> };
+			};
+			const factory = (ctx.manager as unknown as ManagerPrivate).createSubSessionFactory(task.id);
+
+			const subSessionId = `sub-factory-test-${task.id}`;
+			const initWithOriginalPath = {
 				sessionId: subSessionId,
-				workspacePath: '/original-path', // will be overridden
+				workspacePath: '/original-path', // must be overridden to '/tmp/worktrees/test-task'
 				messages: [],
-				type: 'space_task_node_agent' as const,
+				type: 'space_task_node_agent',
 				context: {},
 			};
-			await ctx.manager.createSubSession(
-				task.id,
-				subSessionId,
-				fakeInit as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit
-			);
+			await factory.create(initWithOriginalPath);
 
+			// AgentSession.fromInit was called by createSubSession with effectiveInit that has
+			// the worktree path, not /original-path.
 			const subSession = ctx.createdSessions.get(subSessionId)!;
-			// The sub-session should have received the worktree path, not the original path
-			// Note: createSubSession directly receives the init; the path override happens in
-			// createSubSessionFactory. Here we test that the factory correctly overrides the path.
-			// We check via getSubSession which returns the sub-session.
-			expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
+			expect(subSession).toBeDefined();
+			expect(subSession._workspacePath).toBe('/tmp/worktrees/test-task');
 		});
 
-		test('SubSessionFactory overrides workspacePath with worktree path', async () => {
-			// We test the factory override by checking that when the internal factory creates
-			// a session it stores the worktree path (not the original init path).
-			// Spy on createSubSession to verify the init received has the correct path.
+		test('createSubSession without worktree path preserves original workspacePath', async () => {
+			// When no worktree exists for a task, the factory must not override the path.
 			const task = await makeTask(ctx.taskManager);
+			// Spawn without worktreeManager worktree path set (use a manager with no worktree mock)
+			// by temporarily making the mock throw so the path is never stored.
+			ctx.worktreeMock.createError = new Error('force fallback');
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			ctx.worktreeMock.createError = undefined;
 
-			// After spawn, the worktree path should be in the map
-			expect(ctx.manager.getTaskWorktreePath(task.id)).toBe('/tmp/worktrees/test-task');
+			// No path in map — factory must leave workspacePath intact.
+			type ManagerPrivate = {
+				createSubSessionFactory(id: string): { create(init: object): Promise<string> };
+			};
+			const factory = (ctx.manager as unknown as ManagerPrivate).createSubSessionFactory(task.id);
+
+			const subSessionId = `sub-nopath-${task.id}`;
+			await factory.create({
+				sessionId: subSessionId,
+				workspacePath: '/keep-this',
+				messages: [],
+				type: 'space_task_node_agent',
+				context: {},
+			});
+
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			expect(subSession._workspacePath).toBe('/keep-this');
 		});
 	});
 
@@ -796,25 +819,85 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 	// -------------------------------------------------------------------------
 
 	describe('rehydration restores worktree path from run config', () => {
-		test('getTaskWorktreePath returns path after successful rehydration', async () => {
-			// After spawnTaskAgent the path is in the map; verify it's present
+		test('rehydrate() reads worktreePath from run config and sets taskWorktreePaths', async () => {
+			// Simulate a daemon restart: seed DB with an in-progress task whose
+			// workflow run config already has a worktreePath stored by spawnTaskAgent.
+			const sessionId = `session-rehydrate-${Date.now()}`;
+
 			const task = await makeTask(ctx.taskManager);
 			const workflowRun = ctx.workflowRunRepo.createRun({
 				spaceId: ctx.spaceId,
 				workflowId: 'workflow-rehydrate',
 				title: 'Rehydrate run',
 			});
-			ctx.taskRepo.updateTask(task.id, { workflowRunId: workflowRun.id });
-			const linkedTask = ctx.taskRepo.getTask(task.id)!;
 
-			await ctx.manager.spawnTaskAgent(linkedTask, ctx.space, null, workflowRun);
+			// Store worktreePath in run config (as spawnTaskAgent would have done).
+			// Use '/tmp' — guaranteed to exist on disk so existsSync() passes.
+			ctx.workflowRunRepo.updateRun(workflowRun.id, { config: { worktreePath: '/tmp' } });
 
-			// The worktree path is now in the run config
-			const updatedRun = ctx.workflowRunRepo.getRun(workflowRun.id)!;
-			expect(updatedRun.config?.worktreePath).toBe('/tmp/worktrees/test-task');
+			// Mark task as in_progress with a session id and workflow run link.
+			ctx.taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: sessionId,
+				workflowRunId: workflowRun.id,
+			});
 
-			// And in the in-memory map
-			expect(ctx.manager.getTaskWorktreePath(task.id)).toBe('/tmp/worktrees/test-task');
+			// Seed the session in the mock DB so rehydrate() identifies it as a task-agent session.
+			ctx.addDbSession(sessionId, 'space_task_agent');
+
+			// Spy on AgentSession.restore so no real DB/SDK calls are made.
+			const mockSession = makeMockSession(sessionId);
+			const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(
+				mockSession as unknown as AgentSession
+			);
+
+			try {
+				await ctx.manager.rehydrate();
+			} finally {
+				restoreSpy.mockRestore();
+			}
+
+			// The critical assertion: rehydrateTaskAgent() should have read
+			// workflowRun.config.worktreePath and called taskWorktreePaths.set(taskId, '/tmp').
+			expect(ctx.manager.getTaskWorktreePath(task.id)).toBe('/tmp');
+		});
+
+		test('rehydrate() skips worktree path when stored path no longer exists on disk', async () => {
+			const sessionId = `session-rehydrate-gone-${Date.now()}`;
+
+			const task = await makeTask(ctx.taskManager);
+			const workflowRun = ctx.workflowRunRepo.createRun({
+				spaceId: ctx.spaceId,
+				workflowId: 'workflow-rehydrate-gone',
+				title: 'Rehydrate gone run',
+			});
+
+			// Use a path that definitely does not exist on disk.
+			ctx.workflowRunRepo.updateRun(workflowRun.id, {
+				config: { worktreePath: '/nonexistent/worktree/path/that/surely/does/not/exist' },
+			});
+
+			ctx.taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: sessionId,
+				workflowRunId: workflowRun.id,
+			});
+
+			ctx.addDbSession(sessionId, 'space_task_agent');
+
+			const mockSession = makeMockSession(sessionId);
+			const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(
+				mockSession as unknown as AgentSession
+			);
+
+			try {
+				await ctx.manager.rehydrate();
+			} finally {
+				restoreSpy.mockRestore();
+			}
+
+			// Path did not exist on disk → not stored in the map (falls back to space.workspacePath).
+			expect(ctx.manager.getTaskWorktreePath(task.id)).toBeUndefined();
 		});
 	});
 });

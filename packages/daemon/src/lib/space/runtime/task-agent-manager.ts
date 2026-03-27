@@ -36,6 +36,7 @@
  * registered `onComplete` callbacks are fired.
  */
 
+import { existsSync } from 'node:fs';
 import { generateUUID } from '@neokai/shared';
 import type {
 	Space,
@@ -999,16 +1000,23 @@ export class TaskAgentManager {
 		}
 
 		// --- Restore worktree path from workflow run config (persisted at spawn time).
-		// If the path is still present on disk we restore it so sub-sessions spawned
-		// after restart share the same worktree; otherwise fall back gracefully.
+		// Only restores the path when the worktree directory still exists on disk —
+		// if the directory was deleted between restarts (manual cleanup, disk failure),
+		// fall back to space.workspacePath to avoid directing sub-sessions at a
+		// non-existent location.
 		const rehydrateWorkspacePath = (() => {
 			const storedPath =
 				workflowRun?.config && typeof workflowRun.config.worktreePath === 'string'
 					? workflowRun.config.worktreePath
 					: null;
-			if (storedPath) {
+			if (storedPath && existsSync(storedPath)) {
 				this.taskWorktreePaths.set(taskId, storedPath);
 				return storedPath;
+			}
+			if (storedPath) {
+				log.warn(
+					`TaskAgentManager.rehydrate: worktree path ${storedPath} no longer exists on disk for task ${taskId} — falling back to space workspace`
+				);
 			}
 			return space.workspacePath;
 		})();
