@@ -2,7 +2,7 @@
 
 ## Goal and Scope
 
-Create `CODING_WORKFLOW_V2` with the full pipeline using unified gates with composable conditions. All gates are the same entity — the only variation is the condition config. This uses the unified Gate architecture from Milestone 1.
+Create `CODING_WORKFLOW_V2` with the full pipeline using separated channels and gates with composable conditions. Channels are simple pipes; gates are optional filters attached to channels. This uses the Channel + Gate architecture from Milestone 1.
 
 ## Target Pipeline
 
@@ -27,21 +27,35 @@ Planning ──[check: prUrl]──► Plan Review ──[check: approved]──
 
 ### Channel Definitions
 
-**All gates are the same unified Gate entity** — they differ only in their `condition` config. Channels that share the same gate instance are noted below.
+Channels are simple unidirectional pipes. Gates are independent entities optionally attached to channels. A channel without a gate is always open. Channels that share the same gate instance are noted below.
 
-| Channel | Gate ID | Condition | `resetOnCycle` | Cyclic | Description |
-|---------|---------|-----------|----------------|--------|-------------|
-| Planning → Plan Review | `plan-pr-gate` | `check: prUrl exists` | false | no | Planner writes `{ prUrl }` |
-| Plan Review → Coding | `plan-approval-gate` | `check: approved == true` | false | no | Human approves plan |
-| Coding → Reviewer 1 | `code-pr-gate` | `check: prUrl exists` | false | no | **Shared**: all 3 reviewer channels |
-| Coding → Reviewer 2 | `code-pr-gate` | (same gate instance) | false | no | |
-| Coding → Reviewer 3 | `code-pr-gate` | (same gate instance) | false | no | |
-| Reviewer 1 → QA | `review-votes-gate` | `count: votes.approve >= 3` | true | no | **Shared**: all 3 reviewers vote here |
-| Reviewer 2 → QA | `review-votes-gate` | (same gate instance) | true | no | |
-| Reviewer 3 → QA | `review-votes-gate` | (same gate instance) | true | no | |
-| QA → Done | `qa-result-gate` | `check: result == passed` | true | no | QA passes |
-| QA → Coding | `qa-fail-gate` | `check: result == failed` | true | yes | QA fails, feedback to coder |
-| Reviewers → Coding | `review-reject-gate` | `check: result == rejected` | true | yes | Any reviewer rejects |
+| Channel ID | From → To | Gate ID | Cyclic | Description |
+|------------|-----------|---------|--------|-------------|
+| `ch-plan-to-review` | Planning → Plan Review | `plan-pr-gate` | no | Gated: planner writes `{ prUrl }` |
+| `ch-review-to-coding` | Plan Review → Coding | `plan-approval-gate` | no | Gated: human approves plan |
+| `ch-coding-to-rev1` | Coding → Reviewer 1 | `code-pr-gate` | no | **Shared gate**: all 3 reviewer channels |
+| `ch-coding-to-rev2` | Coding → Reviewer 2 | `code-pr-gate` | no | (same gate instance) |
+| `ch-coding-to-rev3` | Coding → Reviewer 3 | `code-pr-gate` | no | (same gate instance) |
+| `ch-rev1-to-qa` | Reviewer 1 → QA | `review-votes-gate` | no | **Shared gate**: all 3 reviewers vote here |
+| `ch-rev2-to-qa` | Reviewer 2 → QA | `review-votes-gate` | no | (same gate instance) |
+| `ch-rev3-to-qa` | Reviewer 3 → QA | `review-votes-gate` | no | (same gate instance) |
+| `ch-qa-to-done` | QA → Done | `qa-result-gate` | no | Gated: QA passes |
+| `ch-qa-to-coding` | QA → Coding | `qa-fail-gate` | yes | Gated: QA fails, feedback to coder |
+| `ch-rev-to-coding` | Reviewers → Coding | `review-reject-gate` | yes | Gated: any reviewer rejects |
+
+### Gate Definitions
+
+All gates are the same entity — they differ only in their `condition` config and which channel they're attached to.
+
+| Gate ID | Condition | `resetOnCycle` | `allowedWriterRoles` |
+|---------|-----------|----------------|---------------------|
+| `plan-pr-gate` | `check: prUrl exists` | false | `['planner']` |
+| `plan-approval-gate` | `check: approved == true` | false | `['human']` |
+| `code-pr-gate` | `check: prUrl exists` | false | `['coder']` |
+| `review-votes-gate` | `count: votes.approve >= 3` | true | `['reviewer']` |
+| `review-reject-gate` | `check: result == rejected` | true | `['reviewer']` |
+| `qa-result-gate` | `check: result == passed` | true | `['qa']` |
+| `qa-fail-gate` | `check: result == failed` | true | `['qa']` |
 
 **Reject vs. votes gates**: `review-votes-gate` and `review-reject-gate` are **separate gate instances** with different conditions:
 - `review-votes-gate`: condition `count: votes.approve >= 3`. Passes when all 3 approve.
@@ -60,7 +74,7 @@ Planning ──[check: prUrl]──► Plan Review ──[check: approved]──
 
 ### Task 3.1: Define CODING_WORKFLOW_V2 Template
 
-**Description**: Create the new workflow template in `built-in-workflows.ts` with all nodes, channels, and gate configurations.
+**Description**: Create the new workflow template in `built-in-workflows.ts` with all nodes, channels (as simple pipes), and gates (as independent entities attached to channels).
 
 **Subtasks**:
 1. Define node ID constants for all 8 nodes (Planning, Plan Review, Coding, Reviewer 1/2/3, QA, Done)
@@ -70,14 +84,16 @@ Planning ──[check: prUrl]──► Plan Review ──[check: approved]──
 5. Define 3 Reviewer nodes with `agentId: 'reviewer'`, marked as parallel
 6. Define the QA node with `agentId: 'qa'`
 7. Define the Done node (terminal)
-8. Define all channels per the table above — each gate is a unified Gate entity with the appropriate condition config (`check`, `count`, `always`, or composite `all`/`any`), `allowedWriterRoles`, `resetOnCycle` flag, and `description`. Note: V2 uses only `check` and `count` conditions; `all`/`any` composites are available for future workflows.
-9. Set `maxIterations: 5` on the workflow template
-10. Mark cyclic channels with `isCyclic: true`
+8. Define all channels per the Channel Definitions table — each channel is a simple pipe with `from`, `to`, optional `gateId`, and `isCyclic` flag
+9. Define all gates per the Gate Definitions table — each gate is an independent entity with `condition` config (`check` or `count`), `channelId`, `allowedWriterRoles`, `resetOnCycle` flag, and `description`. Note: V2 uses only `check` and `count` conditions; `all`/`any` composites are available for future workflows.
+10. Set `maxIterations: 5` on the workflow template
+11. Mark cyclic channels with `isCyclic: true`
 
 **Acceptance Criteria**:
 - Workflow template has 8 nodes with correct agent assignments
-- Channel topology matches the specification exactly
-- All gates use unified Gate entity with composable conditions (no separate gate classes)
+- Channels are simple pipes — no condition logic in channels
+- Gates are independent entities attached to channels via `gateId`
+- Channel and gate topology matches the specification exactly
 - `check` conditions used for PR URL, approval, and result gates
 - `count` condition used for vote-counting gate (`review-votes-gate`)
 - 3 reviewer nodes are marked as parallel
@@ -85,7 +101,7 @@ Planning ──[check: prUrl]──► Plan Review ──[check: approved]──
 - `maxIterations: 5` is set
 - Unit test validates the full template structure
 
-**Depends on**: Milestone 1 (unified gate must exist)
+**Depends on**: Milestone 1 (separated channels + gates must exist)
 
 **Agent type**: coder
 
@@ -137,7 +153,7 @@ Planning ──[check: prUrl]──► Plan Review ──[check: approved]──
 - Parallel sessions don't interfere with each other
 - Unit tests cover parallel execution and voting
 
-**Depends on**: Task 3.1, Milestone 1 (unified gate evaluator)
+**Depends on**: Task 3.1, Milestone 1 (channel + gate evaluator)
 
 **Agent type**: coder
 

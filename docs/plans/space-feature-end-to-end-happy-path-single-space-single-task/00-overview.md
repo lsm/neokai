@@ -12,18 +12,35 @@ Make the happy path for a single space with a single task using a single workflo
 Planning → [check: prUrl exists] → Plan Review (1 reviewer) → [check: approved] → Coding → [check: prUrl exists] → 3 Code Reviewers (parallel) → [check: ≥3 approve votes] → QA → Done
 ```
 
-## Core Architecture: Gates + Channels
+## Core Architecture: Channels + Gates
 
-**CRITICAL DESIGN DECISION**: The Space workflow uses a Gate + Channel model instead of a complex state machine. This is fundamentally simpler and more composable than tracking many states with complex transition rules.
+**CRITICAL DESIGN DECISION**: The Space workflow uses a Channel + Gate model instead of a complex state machine. This is fundamentally simpler and more composable than tracking many states with complex transition rules.
 
-### The Unified Gate
+### Channels and Gates Are Separate Concepts
 
-A **Gate** is ONE concept: a **condition + data store**. There are no separate gate classes (no `PRGate`, `AggregateGate`, `HumanGate`). Every gate is the same thing — a persistent data store with a composable condition that checks the data.
+- A **Channel** is a unidirectional pipe between two nodes: `{ from, to }`. Just a connection. No condition logic.
+- A **Gate** is an optional filter attached to a channel: `{ condition, data }`. It controls when communication can flow through the channel.
+
+A channel **without** a gate is always open — messages flow freely.
+A channel **with** a gate is filtered — communication only flows when the gate's condition passes.
+
+For **bidirectional** communication between two nodes, create TWO channels (one per direction), each with its own optional gate.
 
 ```typescript
+// Channel = just a pipe between nodes
+interface Channel {
+  id: string;
+  from: string;          // source node ID
+  to: string;            // target node ID
+  gateId?: string;       // optional — if absent, channel is always open
+  isCyclic?: boolean;    // for feedback loops
+}
+
+// Gate = optional filter attached to a channel
 interface Gate {
   id: string;
-  condition: GateCondition;             // what to check — composable, not a class hierarchy
+  channelId: string;                    // which channel this gate is attached to
+  condition: GateCondition;             // what to check — composable predicates
   data: Record<string, unknown>;        // persistent data store — agents read/write this
   allowedWriterRoles: string[];         // who can write — ['planner'], ['reviewer'], etc.
   description: string;                  // human-readable — "Write your PR URL here after creating the PR"
@@ -31,20 +48,23 @@ interface Gate {
 }
 ```
 
+**Example — bidirectional planner ↔ reviewer**:
+- Channel A: `planner → reviewer`, Gate: `plan-pr-gate` (condition: `check: prUrl exists`) — reviewer can't start until planner creates a PR
+- Channel B: `reviewer → planner`, No gate — always open for feedback messages
+
 ### Composable Conditions
 
 Instead of a type hierarchy, conditions are small pluggable predicates that check gate data:
 
 ```typescript
 type GateCondition =
-  | { type: 'always' }                                            // always passes
   | { type: 'check'; field: string; op?: '==' | '!=' | 'exists'; value?: unknown }  // check a single field
   | { type: 'count'; field: string; matchValue: unknown; min: number }              // count matching entries in a map
-  | { type: 'all'; conditions: GateCondition[] }                  // AND — all sub-conditions must pass
-  | { type: 'any'; conditions: GateCondition[] }                  // OR — at least one sub-condition must pass
+  | { type: 'all'; conditions: GateCondition[] }                                    // AND — all sub-conditions must pass
+  | { type: 'any'; conditions: GateCondition[] }                                    // OR — at least one sub-condition must pass
 ```
 
-Five condition types cover **every** gate behavior in the workflow:
+**No `always` condition type** — a channel without a gate is implicitly always open. Four condition types cover every gate behavior:
 
 | Gate use case | Condition | Example |
 |---------------|-----------|---------|
@@ -57,13 +77,29 @@ Five condition types cover **every** gate behavior in the workflow:
 | Composite AND | `{ type: 'all', conditions: [...] }` | Passes when ALL sub-conditions pass |
 | Composite OR | `{ type: 'any', conditions: [...] }` | Passes when ANY sub-condition passes |
 
-The `all`/`any` types are **recursive** — sub-conditions can themselves be `all`/`any`, enabling arbitrarily complex logic. For the current V2 workflow, simple `check`/`count` conditions suffice, but composite conditions enable future gates like "PR exists AND CI passes" without needing multiple separate gates.
+The `all`/`any` types are **recursive** — sub-conditions can themselves be `all`/`any`, enabling arbitrarily complex logic. For the current V2 workflow, simple `check`/`count` conditions suffice, but composite conditions enable future gates like "PR exists AND CI passes" in a single gate.
 
-**Why this is better**: No class hierarchy, no separate evaluator per type. One `evaluate(gate)` function with a switch on `condition.type`. Adding a new behavior = defining a new condition config, not a new class. Composite `all`/`any` allow combining conditions without proliferating gates. All gates have the same API: `read_gate`, `write_gate`.
+**Why this is better**: Channels are simple pipes. Gates are optional filters. No class hierarchy, no separate evaluator per type. One `evaluate(gate)` function with a recursive switch on `condition.type`. Adding a new behavior = defining a new condition config, not a new class. A channel without a gate replaces the old `always` condition type.
+
+### Structured `send_message` Data
+
+The `send_message` MCP tool carries structured data alongside natural language text:
+
+```typescript
+{
+  text: string,                         // natural language message
+  data?: Record<string, unknown>        // structured data (extensible)
+}
+```
+
+Use cases:
+- Reviewer sends feedback: `{ text: 'Approved with suggestions', data: { reviewUrl, gateData: { 'review-votes-gate': { votes: { approve: 1 } } } } }`
+- Planner sends plan: `{ text: 'Plan ready for review', data: { planDocPath, prUrl } }`
+- Gate data updates can be embedded in message `data` and applied on delivery through the channel
 
 ### Gate Data Store
 
-Gates persist their data to SQLite in a dedicated `gate_data` table (keyed by `runId + gateId`), separate from the static channel/gate definitions. This separation ensures: (a) gate data changes frequently during a run while channel definitions are static, (b) gate data is per-run while channels are per-workflow, and (c) atomic reads/writes without deserializing a JSON blob from the channel definition.
+Gates persist their data to SQLite in a dedicated `gate_data` table (keyed by `runId + gateId`), separate from channel and gate definitions. This separation ensures: (a) gate data changes frequently during a run while definitions are static, (b) gate data is per-run while definitions are per-workflow, and (c) atomic reads/writes without deserializing a JSON blob.
 
 **Gate data examples**:
 - PR gate: `{ prUrl: 'https://github.com/...', prNumber: 123, branch: 'feat/xyz' }`
@@ -71,11 +107,13 @@ Gates persist their data to SQLite in a dedicated `gate_data` table (keyed by `r
 - Vote gate: `{ votes: { 'reviewer-1-node': 'approve', 'reviewer-2-node': 'approve', 'reviewer-3-node': 'approve' } }`
 - QA result gate: `{ result: 'passed', summary: '...' }`
 
-### Gate Discovery
+### Gate and Channel Discovery
 
-Agents discover available gates via two mechanisms:
-1. **`list_gates` MCP tool**: Returns all gates for the current workflow run with their IDs, conditions, descriptions, and current data. Agents call this at session start to understand the workflow topology.
-2. **Workflow context injection**: When a node agent is spawned, the `TaskAgentManager` injects a `workflowContext` section into the agent's task message containing: the node's upstream/downstream gate IDs and human-readable descriptions.
+Agents discover the workflow topology via MCP tools and injected context:
+1. **`list_channels` MCP tool**: Returns all channels for the current workflow run with their IDs, from/to nodes, and whether they have a gate attached.
+2. **`list_gates` MCP tool**: Returns all gates with their IDs, conditions, descriptions, and current data.
+3. **`read_gate` / `write_gate` MCP tools**: Read from and write to gate data stores.
+4. **Workflow context injection**: When a node agent is spawned, the `TaskAgentManager` injects a `workflowContext` section into the agent's task message containing: upstream/downstream channel and gate IDs with human-readable descriptions.
 
 ### Gate Write Permissions
 
@@ -100,30 +138,16 @@ failureReason?: 'humanRejected' | 'maxIterationsReached' | 'nodeTimeout' | 'agen
 
 This avoids a cross-cutting type change that would affect the status machine, repository, RPC handlers, and all consumers.
 
-### Channels
-
-A **Channel** controls who can talk to whom (communication flow). A channel connects two nodes and has a gate that controls when messages can flow.
-
-```typescript
-interface Channel {
-  id: string;
-  from: string;  // source node ID
-  to: string;    // target node ID
-  gate: Gate;    // controls when this channel opens
-  isCyclic?: boolean;  // for feedback loops
-}
-```
-
 ### Why This Is Simpler
 
 Instead of a state machine with many states and complex transition rules, we have:
 
 1. **Nodes** execute agents (one at a time or in parallel)
-2. **Channels** connect nodes with gates
-3. **Gates** are simple conditions with data stores — all the same type, all the same API
+2. **Channels** are unidirectional pipes between nodes (bidirectional = two channels)
+3. **Gates** are optional filters on channels — all the same type, all the same API
 4. The workflow "state" is just: which nodes are active + what data is in each gate
 
-Adding new behaviors = adding new gates with new condition configs, not new gate classes or state transitions.
+Adding new behaviors = adding new gates with new condition configs, not new gate classes or state transitions. Making a channel always open = just remove the gate.
 
 ## Current State Analysis
 
@@ -155,9 +179,9 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 ### What Needs to Be Built / Fixed
 
-1. **Unified Gate with data store**: The existing `ChannelGateEvaluator` has separate gate type handling but lacks the **gate data store** concept. Refactor to a single unified Gate entity with composable conditions and persistent data stores.
+1. **Separate Channel + Gate architecture**: The existing implementation couples gates into channels. Refactor so channels are simple pipes and gates are independent entities optionally attached to channels. A channel without a gate is always open.
 
-2. **Composable conditions**: Replace the current per-type evaluator logic with five condition types (`always`, `check`, `count`, `all`, `any`) that cover all workflow behaviors including AND/OR composition.
+2. **Composable conditions**: Replace the current per-type evaluator logic with four condition types (`check`, `count`, `all`, `any`) that cover all workflow behaviors including AND/OR composition. No `always` type — a channel without a gate is implicitly always open.
 
 3. **Extended workflow template**: Create `CODING_WORKFLOW_V2` matching the target pipeline with gates configured via conditions.
 
@@ -171,14 +195,14 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 8. **Worktree isolation (one per task)**: Currently no worktree isolation exists. Need ONE worktree per task (shared by all agents in that task), with folder/branch names derived from the task title via slugification (e.g., task "Add dark mode support" → folder `add-dark-mode-support`, branch `space/add-dark-mode-support`).
 
-9. **Gate data MCP tools**: Agents need `read_gate`, `write_gate`, and `list_gates` MCP tools to interact with gate data stores.
+9. **Channel and Gate MCP tools**: Agents need `list_channels`, `list_gates`, `read_gate`, `write_gate` MCP tools to discover the workflow topology and interact with gate data stores. `send_message` needs structured `data` field alongside text.
 
 10. **End-to-end integration testing**: No single test exercises the full pipeline.
 
 ## High-Level Approach
 
 **Phase 1 — Unified Gate architecture and workflow template** (Milestones 1-3):
-- Implement unified Gate with composable conditions and data store
+- Implement separated Channel + Gate architecture with composable conditions and data store
 - Enhance node agent prompts with gate interaction instructions
 - Create extended CODING_WORKFLOW_V2 with the full pipeline
 - Implement worktree isolation (one per task, short names)
@@ -196,11 +220,11 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 ## Milestones
 
-1. **Unified Gate with composable conditions** — Implement the single Gate entity with persistent data store, five condition types (`always`, `check`, `count`, plus `all`/`any` for AND/OR composition), `read_gate`/`write_gate`/`list_gates` MCP tools, and channel router integration
+1. **Separated Channels + Gates with composable conditions** — Implement channels as simple pipes and gates as independent entities with persistent data stores, four condition types (`check`, `count`, `all`/`any` for AND/OR composition), `list_channels`/`list_gates`/`read_gate`/`write_gate` MCP tools, structured `send_message` data, and channel router integration
 
 2. **Enhanced node agent prompts** — Add git/PR/review-specific system prompts for planner, coder, reviewer, and QA agents, including gate data interaction instructions
 
-3. **Extended coding workflow (V2)** — Create CODING_WORKFLOW_V2 with the full pipeline using unified gates with composable conditions
+3. **Extended coding workflow (V2)** — Create CODING_WORKFLOW_V2 with the full pipeline using separated channels and gates with composable conditions
 
 4. **Worktree isolation (one per task)** — Implement single worktree per task with task-title-derived slug names (e.g., `add-dark-mode-support`), shared by all agents in the task
 
@@ -245,7 +269,7 @@ Planning ──[check: prUrl exists]──► Plan Review (1 reviewer) ──[ch
 
 ## Cross-Milestone Dependencies
 
-- Milestone 1 (unified gate) is the foundation — M2 and M3 depend on it
+- Milestone 1 (channels + gates) is the foundation — M2 and M3 depend on it
 - Milestone 2 (prompts) depends on M1 (agents need gate MCP tools) AND M3 (prompts reference specific gate IDs). **M2 should be implemented after M3.**
 - Milestone 3 (V2 workflow) depends on M1 (unified gate must exist)
 - Milestone 4 (worktree) can start in parallel with M2/M3

@@ -9,11 +9,15 @@ Build a live workflow canvas visualization where humans can see the running work
 ### Canvas Visualization
 
 The workflow runs as a live instance on a **canvas/visualization**:
-- Each node shows its current status (pending, active, completed, failed)
-- Channels between nodes show gate status (blocked, open, waiting for human)
+- **Nodes** are the primary visual elements showing agent status (pending, active, completed, failed)
+- **Channels** are rendered as directional lines/arrows between nodes (with arrowheads showing direction)
+- **Gates** are visual elements rendered ON the channel line (not as separate nodes) — like a valve on a pipe
+  - Gate states: blocked (red/gray lock icon), open (green check), waiting for human (amber pulsing)
+  - Channels without a gate show as plain directional arrows (always open)
 - Active nodes pulse or animate to indicate work in progress
 - Completed nodes show a checkmark with elapsed time
 - Failed nodes show an error indicator
+- **Gate editing (workflow template mode)**: User can drag a gate onto a channel line or click a "+" button on the line to add a gate. Removing a gate from a channel makes it always open.
 
 ### Approval Gate Interaction
 
@@ -85,21 +89,30 @@ The artifacts view is essentially an embedded PR review interface:
 
 **Subtasks**:
 1. Create `packages/web/src/components/space/WorkflowCanvas.tsx`:
-   - Renders the workflow graph as a visual canvas (nodes + edges)
-   - Each node shows: name, agent role, status (pending/active/completed/failed), elapsed time
-   - Edges (channels) show gate status: blocked (gray), open (green), waiting for approval (amber pulsing)
+   - Renders the workflow graph as a visual canvas with three visual element types:
+     - **Nodes**: boxes showing name, agent role, status (pending/active/completed/failed), elapsed time
+     - **Channels**: directional lines/arrows between nodes (with arrowheads). Plain lines for gateless channels.
+     - **Gates**: visual elements rendered ON the channel line (icon/indicator on the line, not a separate node). Gate states: blocked (lock icon, gray), open (check, green), waiting for human (amber, pulsing).
    - Active nodes have animation/pulse effect
 2. Subscribe to `workflow_run_status_changed` and `gate_data_changed` live queries for real-time updates
-3. On initial load, query current workflow run state and gate data to render correct initial state
+3. On initial load, query current workflow run state, channels, and gate data to render correct initial state
 4. Layout algorithm: horizontal pipeline layout (left to right), with parallel nodes stacked vertically
-5. Handle the 3 parallel reviewer nodes: show them stacked vertically with a shared `review-votes-gate` indicator
-6. Style with Tailwind CSS, consistent with existing Space UI
+5. Handle the 3 parallel reviewer nodes: show them stacked vertically, sharing the same `review-votes-gate` indicator on their converging channel to QA
+6. **Gate editing in template mode**: When viewing a workflow template (not a running instance), allow:
+   - Click "+" button on any channel line to add a new gate
+   - Drag a gate from a palette onto a channel line
+   - Click a gate indicator to edit its condition config
+   - Remove a gate from a channel (making it always open)
+7. Style with Tailwind CSS, consistent with existing Space UI
 
 **Acceptance Criteria**:
-- Canvas shows all nodes with correct statuses
-- Real-time updates as nodes activate/complete
+- Canvas renders nodes, channels (directional arrows), and gates (on channel lines) as distinct visual elements
+- Gates render ON the channel line, not as separate nodes
+- Gateless channels render as plain arrows (always open)
+- Real-time updates as nodes activate/complete and gates open/close
 - Approval gates are visually distinct (amber, pulsing)
 - Parallel reviewer nodes displayed correctly
+- Gate editing works in template mode (add/remove/configure gates on channels)
 - Works on initial load (not just live updates)
 
 **Depends on**: Task 6.1 (backend RPCs for state)
