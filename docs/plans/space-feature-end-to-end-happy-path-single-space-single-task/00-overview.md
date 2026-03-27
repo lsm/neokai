@@ -36,10 +36,10 @@ interface Channel {
   isCyclic?: boolean;    // for feedback loops
 }
 
-// Gate = optional filter attached to a channel
+// Gate = independent filter entity, referenced by channels via gateId
+// A single gate can be shared by multiple channels (e.g., code-pr-gate shared by 3 reviewer channels)
 interface Gate {
   id: string;
-  channelId: string;                    // which channel this gate is attached to
   condition: GateCondition;             // what to check — composable predicates
   data: Record<string, unknown>;        // persistent data store — agents read/write this
   allowedWriterRoles: string[];         // who can write — ['planner'], ['reviewer'], etc.

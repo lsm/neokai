@@ -8,7 +8,7 @@ Implement the core Channel + Gate architecture: channels as simple unidirectiona
 
 ### Channels and Gates Are Separate Concepts
 
-A **Channel** is a unidirectional pipe between two nodes. A **Gate** is an optional filter attached to a channel.
+A **Channel** is a unidirectional pipe between two nodes. A **Gate** is an independent filter entity referenced by channels via `gateId`. A single gate can be shared by multiple channels (e.g., `code-pr-gate` is shared by 3 reviewer channels).
 
 ```typescript
 // In packages/shared/src/types/space.ts
@@ -18,14 +18,14 @@ interface Channel {
   id: string;
   from: string;          // source node ID
   to: string;            // target node ID
-  gateId?: string;       // optional — if absent, channel is always open
+  gateId?: string;       // optional — references a Gate by ID. If absent, channel is always open.
   isCyclic?: boolean;    // for feedback loops
 }
 
-// Gate = optional filter attached to a channel
+// Gate = independent filter entity, referenced by channels via gateId
+// No back-reference to channel — a gate can be shared by multiple channels
 interface Gate {
   id: string;                           // e.g., 'plan-pr-gate', 'review-votes-gate'
-  channelId: string;                    // which channel this gate is attached to
   condition: GateCondition;             // composable predicate — NOT a class hierarchy
   data: Record<string, unknown>;        // persistent data store (SQLite)
   allowedWriterRoles: string[];         // who can write — ['planner'], ['reviewer'], etc.
@@ -83,15 +83,15 @@ For channels without a gate: no evaluation needed — always open.
 
 ### How Each Workflow Gate Maps to Conditions
 
-| Gate ID | Attached to Channel | Condition Config | Passes when... |
-|---------|-------------------|-----------------|----------------|
-| `plan-pr-gate` | planning → plan-review | `{ type: 'check', field: 'prUrl' }` | Planner writes PR URL |
-| `plan-approval-gate` | plan-review → coding | `{ type: 'check', field: 'approved', op: '==', value: true }` | Human approves |
-| `code-pr-gate` | coding → reviewer-1/2/3 | `{ type: 'check', field: 'prUrl' }` | Coder writes PR URL |
-| `review-votes-gate` | reviewer-1/2/3 → qa | `{ type: 'count', field: 'votes', matchValue: 'approve', min: 3 }` | ≥3 reviewers approve |
-| `review-reject-gate` | reviewer-1/2/3 → coding | `{ type: 'check', field: 'result', op: '==', value: 'rejected' }` | Any reviewer rejects |
-| `qa-result-gate` | qa → done | `{ type: 'check', field: 'result', op: '==', value: 'passed' }` | QA passes |
-| `qa-fail-gate` | qa → coding | `{ type: 'check', field: 'result', op: '==', value: 'failed' }` | QA fails |
+| Gate ID | Referenced by Channel(s) | Condition Config | Passes when... |
+|---------|------------------------|-----------------|----------------|
+| `plan-pr-gate` | `ch-plan-to-review` | `{ type: 'check', field: 'prUrl' }` | Planner writes PR URL |
+| `plan-approval-gate` | `ch-review-to-coding` | `{ type: 'check', field: 'approved', op: '==', value: true }` | Human approves |
+| `code-pr-gate` | `ch-coding-to-rev1`, `ch-coding-to-rev2`, `ch-coding-to-rev3` (shared) | `{ type: 'check', field: 'prUrl' }` | Coder writes PR URL |
+| `review-votes-gate` | `ch-rev1-to-qa`, `ch-rev2-to-qa`, `ch-rev3-to-qa` (shared) | `{ type: 'count', field: 'votes', matchValue: 'approve', min: 3 }` | ≥3 reviewers approve |
+| `review-reject-gate` | `ch-rev-to-coding` | `{ type: 'check', field: 'result', op: '==', value: 'rejected' }` | Any reviewer rejects |
+| `qa-result-gate` | `ch-qa-to-done` | `{ type: 'check', field: 'result', op: '==', value: 'passed' }` | QA passes |
+| `qa-fail-gate` | `ch-qa-to-coding` | `{ type: 'check', field: 'result', op: '==', value: 'failed' }` | QA fails |
 
 **Note**: These are all the same Gate entity with different condition configs. No `PRGate`, `AggregateGate`, `HumanGate` classes. Channels without gates (e.g., feedback channels) are always open.
 
@@ -104,14 +104,19 @@ For channels without a gate: no evaluation needed — always open.
 **Subtasks**:
 1. Audit the existing gate types in `packages/shared/src/types/space.ts` — currently supports `always`, `human`, `condition`, `task_result` as separate types coupled into channels
 2. Define the `Channel` interface: `{ id, from, to, gateId?, isCyclic? }` — a simple unidirectional pipe. No condition logic. A channel without `gateId` is always open.
-3. Define the `Gate` interface: `{ id, channelId, condition: GateCondition, data, allowedWriterRoles, description, resetOnCycle }` — an independent entity attached to a channel
+3. Define the `Gate` interface: `{ id, condition: GateCondition, data, allowedWriterRoles, description, resetOnCycle }` — an independent entity referenced by channels via `gateId`. No back-reference to channel — a gate can be shared by multiple channels (e.g., `code-pr-gate` shared by 3 reviewer channels).
 4. Define the `GateCondition` discriminated union with four types: `check`, `count`, `all` (AND composition), `any` (OR composition). No `always` type — a channel without a gate is implicitly always open. The `all`/`any` types are recursive — `conditions` is `GateCondition[]`, enabling arbitrarily nested logic.
 5. Create a dedicated `gate_data` table in SQLite keyed by `(run_id, gate_id)` with a JSON `data` column. Rationale: (a) gate data changes frequently during a run while gate definitions are static, (b) gate data is per-run while gate definitions are per-workflow template, (c) separate table enables atomic reads/writes without JSON blob deserialization, (d) concurrent writes (e.g., 3 reviewers voting) benefit from row-level granularity.
 6. Add `allowedWriterRoles: string[]` to the gate definition schema (static, per-gate)
 7. Add `resetOnCycle: boolean` to the gate definition schema — controls whether data is cleared on cyclic channel traversal
 8. Update `send_message` MCP tool to accept structured data alongside text: `{ text: string, data?: Record<string, unknown> }`. Gate data updates can be embedded in message `data`.
 9. Add `failureReason` optional field to `SpaceWorkflowRun` interface: `failureReason?: 'humanRejected' | 'maxIterationsReached' | 'nodeTimeout' | 'agentCrash'`. All failure scenarios use existing `'needs_attention'` status with this field.
-10. Migrate existing gate definitions to the new separated format (backward-compatible: map old `always` type to channel-without-gate, map old `human` type to gate with `{ type: 'check', field: 'approved', op: '==', value: true }`, etc.)
+10. Migrate existing gate definitions to the new separated format. Map each old gate type:
+    - `always` → remove gate, set channel's `gateId` to `undefined` (channel without gate = always open)
+    - `human` → gate with `{ type: 'check', field: 'approved', op: '==', value: true }`
+    - `condition` (shell expression) → gate with `{ type: 'check', field: 'result', op: '==', value: 'passed' }`. The old shell-expression-based condition evaluation is replaced by explicit field checks — agents write the condition result to the gate data store instead of the system evaluating a shell expression.
+    - `task_result` → gate with `{ type: 'check', field: 'result', op: '==', value: 'passed' }` (same mapping as `condition` — both checked a result value)
+    - Ensure backward compatibility: existing workflow runs in progress at migration time should continue to work. For in-flight runs, populate `gate_data` table from the old gate state.
 11. Unit tests: type validation, schema creation, data persistence round-trip, gate_data table CRUD, channel-without-gate routing, backward-compatible migration
 
 **Acceptance Criteria**:
@@ -173,7 +178,7 @@ For channels without a gate: no evaluation needed — always open.
    - Agents call this at session start to understand the workflow topology
 2. Add `list_gates` MCP tool to `node-agent-tools`:
    - Parameters: none
-   - Returns: array of `{ gateId, channelId, condition, description, allowedWriterRoles, currentData }` for all gates in the run
+   - Returns: array of `{ gateId, condition, description, allowedWriterRoles, currentData }` for all gates in the run
 3. Add `read_gate` MCP tool to `node-agent-tools`:
    - Parameters: `{ gateId: string }`
    - Returns: the gate's current `data` object from the `gate_data` table

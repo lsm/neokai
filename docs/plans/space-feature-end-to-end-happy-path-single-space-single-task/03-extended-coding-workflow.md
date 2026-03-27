@@ -45,7 +45,7 @@ Channels are simple unidirectional pipes. Gates are independent entities optiona
 
 ### Gate Definitions
 
-All gates are the same entity — they differ only in their `condition` config and which channel they're attached to.
+All gates are independent entities — they differ only in their `condition` config. A gate has no back-reference to channels; channels reference gates via `gateId`. A single gate can be shared by multiple channels.
 
 | Gate ID | Condition | `resetOnCycle` | `allowedWriterRoles` |
 |---------|-----------|----------------|---------------------|
@@ -85,7 +85,7 @@ All gates are the same entity — they differ only in their `condition` config a
 6. Define the QA node with `agentId: 'qa'`
 7. Define the Done node (terminal)
 8. Define all channels per the Channel Definitions table — each channel is a simple pipe with `from`, `to`, optional `gateId`, and `isCyclic` flag
-9. Define all gates per the Gate Definitions table — each gate is an independent entity with `condition` config (`check` or `count`), `channelId`, `allowedWriterRoles`, `resetOnCycle` flag, and `description`. Note: V2 uses only `check` and `count` conditions; `all`/`any` composites are available for future workflows.
+9. Define all gates per the Gate Definitions table — each gate is an independent entity with `condition` config (`check` or `count`), `allowedWriterRoles`, `resetOnCycle` flag, and `description`. Gates have no back-reference to channels — channels reference gates via `gateId`. Note: V2 uses only `check` and `count` conditions; `all`/`any` composites are available for future workflows.
 10. Set `maxIterations: 5` on the workflow template
 11. Mark cyclic channels with `isCyclic: true`
 

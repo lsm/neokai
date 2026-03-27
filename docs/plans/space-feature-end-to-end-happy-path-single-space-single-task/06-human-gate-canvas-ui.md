@@ -98,12 +98,16 @@ The artifacts view is essentially an embedded PR review interface:
 3. On initial load, query current workflow run state, channels, and gate data to render correct initial state
 4. Layout algorithm: horizontal pipeline layout (left to right), with parallel nodes stacked vertically
 5. Handle the 3 parallel reviewer nodes: show them stacked vertically, sharing the same `review-votes-gate` indicator on their converging channel to QA
-6. **Gate editing in template mode**: When viewing a workflow template (not a running instance), allow:
+6. **Mode switching**: The canvas has two modes, determined by context:
+   - **Runtime mode** (default when a workflow run is active): Read-only visualization. Shows live node statuses, gate states, and progress. Gates show open/closed/waiting indicators. No editing allowed.
+   - **Template mode** (when viewing/editing a workflow template with no active run): Editable. Allows adding/removing nodes, channels, and gates.
+   - The mode is determined automatically: if the Space has an active workflow run → runtime mode; if no active run and the user navigates to the workflow editor → template mode. No explicit toggle button needed — the context determines the mode.
+7. **Gate editing in template mode**: When in template mode, allow:
    - Click "+" button on any channel line to add a new gate
    - Drag a gate from a palette onto a channel line
    - Click a gate indicator to edit its condition config
    - Remove a gate from a channel (making it always open)
-7. Style with Tailwind CSS, consistent with existing Space UI
+8. Style with Tailwind CSS, consistent with existing Space UI
 
 **Acceptance Criteria**:
 - Canvas renders nodes, channels (directional arrows), and gates (on channel lines) as distinct visual elements
@@ -112,6 +116,8 @@ The artifacts view is essentially an embedded PR review interface:
 - Real-time updates as nodes activate/complete and gates open/close
 - Approval gates are visually distinct (amber, pulsing)
 - Parallel reviewer nodes displayed correctly
+- Runtime mode is read-only; template mode allows editing
+- Mode determined automatically by context (active run → runtime, no run → template)
 - Gate editing works in template mode (add/remove/configure gates on channels)
 - Works on initial load (not just live updates)
 
