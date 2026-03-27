@@ -518,6 +518,17 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 				// with another process starting the proxy simultaneously), the proxy may
 				// already be up.  Do one final port check before giving up.
 				if (await checkProxyReady()) {
+					// Verify the proxy that won the race is using our config before
+					// adopting it. If it's from a different worktree, throw so the
+					// caller gets a clear failure rather than silently using wrong mocks.
+					const runningConfig = await fetchRunningProxyConfigFile();
+					if (runningConfig !== null && runningConfig !== configPath) {
+						throw new Error(
+							`Dev Proxy started by a concurrent process has a different config. ` +
+								`Expected: ${configPath}, Got: ${runningConfig}. ` +
+								`Stop the running proxy and retry.`
+						);
+					}
 					running = true;
 					external = true;
 					if (setEnvVars) {
