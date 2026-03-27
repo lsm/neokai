@@ -89,15 +89,38 @@ export class SpaceWorktreeManager {
 			});
 			if (branches.trim().length > 0) {
 				this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
-				execFileSync('git', ['branch', '-D', branchName], {
-					cwd: space.workspacePath,
-					timeout: 30_000,
-				});
+				try {
+					execFileSync('git', ['branch', '-D', branchName], {
+						cwd: space.workspacePath,
+						timeout: 30_000,
+					});
+				} catch {
+					// Branch may be in use by a worktree from a stale git reference.
+					// Prune stale worktree entries (those whose paths no longer exist),
+					// then retry the deletion.
+					try {
+						execFileSync('git', ['worktree', 'prune'], {
+							cwd: space.workspacePath,
+							timeout: 30_000,
+						});
+						execFileSync('git', ['branch', '-D', branchName], {
+							cwd: space.workspacePath,
+							timeout: 30_000,
+						});
+					} catch (retryErr) {
+						// Still failed — branch is in use by an active worktree from another
+						// context (e.g., a concurrent agent run). Log and continue; the
+						// worktree add below will fail and throw a clear error.
+						this.logger.warn(
+							`Failed to delete stale branch ${branchName} after worktree prune: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`
+						);
+					}
+				}
 			}
 		} catch (err) {
-			// Non-fatal: branch check/delete failure should not block worktree creation
+			// Non-fatal: branch check failure should not block worktree creation
 			this.logger.warn(
-				`Failed to check/delete stale branch ${branchName}: ${err instanceof Error ? err.message : String(err)}`
+				`Failed to check stale branch ${branchName}: ${err instanceof Error ? err.message : String(err)}`
 			);
 		}
 

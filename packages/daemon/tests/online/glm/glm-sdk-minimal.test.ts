@@ -26,7 +26,7 @@
  * REQUIREMENTS:
  * - GLM_API_KEY environment variable (or ZHIPU_API_KEY)
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will SKIP if credentials are not available
+ * - Tests will FAIL if credentials are not available (per hard-fail rule)
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -173,8 +173,7 @@ function restoreEnvVars(originals: Map<string, string | undefined>): void {
 describe('GLM SDK - Stable Tests with Promise.race', () => {
 	test('should work with GLM via sonnet/default model (glm-5)', async () => {
 		if (!GLM_API_KEY) {
-			console.log('Skipping test - GLM_API_KEY not set');
-			return;
+			throw new Error('GLM_API_KEY (or ZHIPU_API_KEY) must be set to run GLM online tests');
 		}
 
 		console.log('[GLM Test] Starting minimal SDK test with default → glm-5...');
@@ -207,8 +206,7 @@ describe('GLM SDK - Stable Tests with Promise.race', () => {
 
 	test('should work with GLM via default/sonnet model (glm-5)', async () => {
 		if (!GLM_API_KEY) {
-			console.log('Skipping test - GLM_API_KEY not set');
-			return;
+			throw new Error('GLM_API_KEY (or ZHIPU_API_KEY) must be set to run GLM online tests');
 		}
 
 		console.log('[GLM Test] Starting SDK test with default → glm-5...');
@@ -238,8 +236,7 @@ describe('GLM SDK - Stable Tests with Promise.race', () => {
 
 	test('should work with GLM via opus model (glm-5)', async () => {
 		if (!GLM_API_KEY) {
-			console.log('Skipping test - GLM_API_KEY not set');
-			return;
+			throw new Error('GLM_API_KEY (or ZHIPU_API_KEY) must be set to run GLM online tests');
 		}
 
 		console.log('[GLM Test] Starting SDK test with opus → glm-5...');
