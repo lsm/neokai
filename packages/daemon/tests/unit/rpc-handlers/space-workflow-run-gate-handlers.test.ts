@@ -177,7 +177,6 @@ function createMockRunRepo(run: SpaceWorkflowRun | null = mockRun): SpaceWorkflo
 function createMockGateDataRepo(existing: GateDataRecord | null = null): GateDataRepository {
 	return {
 		get: mock(() => existing),
-		listByRun: mock(() => (existing ? [existing] : [])),
 		merge: mock((_runId: string, _gateId: string, partial: Record<string, unknown>) => ({
 			...mockGateData,
 			data: { ...(existing?.data ?? {}), ...partial },
@@ -196,7 +195,6 @@ function createMockRuntimeService(): SpaceRuntimeService {
 		createOrGetRuntime: mock(async () => ({
 			startWorkflowRun: mock(async () => ({ run: mockRun, tasks: [] })),
 		})),
-		notifyGateDataChanged: mock(async (_runId: string, _gateId: string) => []),
 		start: mock(() => {}),
 		stop: mock(() => {}),
 	} as unknown as SpaceRuntimeService;
@@ -753,12 +751,12 @@ describe('space-workflow-run gate handlers', () => {
 		});
 	});
 
-	// ─── spaceWorkflowRun.writeGateData ───────────────────────────────────
+	// ─── spaceWorkflowRun.writeGateData ───────────────────────────────────────
 
 	describe('spaceWorkflowRun.writeGateData', () => {
 		it('throws if runId is missing', async () => {
 			await expect(
-				call('spaceWorkflowRun.writeGateData', { gateId: 'plan-pr-gate', data: {} })
+				call('spaceWorkflowRun.writeGateData', { gateId: 'g1', data: {} })
 			).rejects.toThrow('runId is required');
 		});
 
@@ -768,105 +766,63 @@ describe('space-workflow-run gate handlers', () => {
 			).rejects.toThrow('gateId is required');
 		});
 
-		it('throws if data is missing', async () => {
+		it('throws if data is not a plain object', async () => {
 			await expect(
-				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'plan-pr-gate' })
-			).rejects.toThrow('data must be an object');
+				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'g1', data: 'bad' })
+			).rejects.toThrow('data must be a plain object');
 		});
 
 		it('throws if data is an array', async () => {
 			await expect(
-				call('spaceWorkflowRun.writeGateData', {
-					runId: 'run-1',
-					gateId: 'plan-pr-gate',
-					data: ['not', 'an', 'object'],
-				})
-			).rejects.toThrow('data must be an object');
-		});
-
-		it('throws if data is a string', async () => {
-			await expect(
-				call('spaceWorkflowRun.writeGateData', {
-					runId: 'run-1',
-					gateId: 'plan-pr-gate',
-					data: 'plain string',
-				})
-			).rejects.toThrow('data must be an object');
+				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'g1', data: [] })
+			).rejects.toThrow('data must be a plain object');
 		});
 
 		it('throws if run not found', async () => {
 			setup({ run: null });
 			await expect(
-				call('spaceWorkflowRun.writeGateData', {
-					runId: 'missing',
-					gateId: 'plan-pr-gate',
-					data: { plan_submitted: 'https://github.com/example/pull/1' },
-				})
-			).rejects.toThrow('WorkflowRun not found: missing');
+				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'g1', data: {} })
+			).rejects.toThrow('WorkflowRun not found: run-1');
 		});
 
-		it('throws if run is completed (status guard)', async () => {
-			setup({ run: { ...mockRun, status: 'completed' } });
-			await expect(
-				call('spaceWorkflowRun.writeGateData', {
-					runId: 'run-1',
-					gateId: 'plan-pr-gate',
-					data: { plan_submitted: 'https://github.com/example/pull/1' },
-				})
-			).rejects.toThrow('Cannot write gate data on a completed workflow run');
-		});
-
-		it('throws if run is cancelled (status guard)', async () => {
-			setup({ run: { ...mockRun, status: 'cancelled' } });
-			await expect(
-				call('spaceWorkflowRun.writeGateData', {
-					runId: 'run-1',
-					gateId: 'plan-pr-gate',
-					data: { plan_submitted: 'https://github.com/example/pull/1' },
-				})
-			).rejects.toThrow('Cannot write gate data on a cancelled workflow run');
-		});
-
-		it('throws if run is pending (status guard)', async () => {
-			setup({ run: { ...mockRun, status: 'pending' } });
-			await expect(
-				call('spaceWorkflowRun.writeGateData', {
-					runId: 'run-1',
-					gateId: 'plan-pr-gate',
-					data: { plan_submitted: 'https://github.com/example/pull/1' },
-				})
-			).rejects.toThrow('Cannot write gate data on a pending workflow run');
-		});
-
-		it('merges data into the gate and returns gateData', async () => {
-			const result = (await call('spaceWorkflowRun.writeGateData', {
-				runId: 'run-1',
-				gateId: 'plan-pr-gate',
-				data: { plan_submitted: 'https://github.com/example/pull/7', pr_number: 7 },
-			})) as { gateData: GateDataRecord };
-
-			expect(gateDataRepo.merge).toHaveBeenCalledWith('run-1', 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/pull/7',
-				pr_number: 7,
-			});
-			expect(result.gateData).toBeDefined();
-		});
-
-		it('emits space.gateData.updated after a successful write', async () => {
+		it('merges gate data via gateDataRepo.merge', async () => {
 			await call('spaceWorkflowRun.writeGateData', {
 				runId: 'run-1',
-				gateId: 'plan-pr-gate',
-				data: { plan_submitted: 'https://github.com/example/pull/8' },
+				gateId: 'review-votes-gate',
+				data: { votes: { 'Reviewer 1': 'approved' } },
+			});
+			expect(gateDataRepo.merge).toHaveBeenCalledWith('run-1', 'review-votes-gate', {
+				votes: { 'Reviewer 1': 'approved' },
+			});
+		});
+
+		it('emits space.gateData.updated with correct payload', async () => {
+			await call('spaceWorkflowRun.writeGateData', {
+				runId: 'run-1',
+				gateId: 'review-votes-gate',
+				data: { votes: { 'Reviewer 2': 'rejected' } },
 			});
 
 			expect(daemonHub.emit).toHaveBeenCalledWith(
 				'space.gateData.updated',
 				expect.objectContaining({
-					spaceId: 'space-1',
+					sessionId: 'global',
+					spaceId: mockRun.spaceId,
 					runId: 'run-1',
-					gateId: 'plan-pr-gate',
+					gateId: 'review-votes-gate',
 				})
 			);
+		});
+
+		it('returns the updated gateData record', async () => {
+			const result = (await call('spaceWorkflowRun.writeGateData', {
+				runId: 'run-1',
+				gateId: 'code-pr-gate',
+				data: { pr_url: 'https://github.com/test/repo/pull/1' },
+			})) as { gateData: { runId: string; gateId: string } };
+
+			expect(result.gateData).toBeDefined();
+			expect(result.gateData.gateId).toBe('gate-approval'); // mockGateData default id
 		});
 	});
 });

@@ -10,6 +10,7 @@
  * - spaceWorkflowRun.listGateData   - Returns all gate data records for a run
  * - spaceWorkflowRun.getGateArtifacts - Returns changed files and diff summary for a run's worktree
  * - spaceWorkflowRun.getFileDiff    - Returns unified diff for a specific file in the worktree
+ * - spaceWorkflowRun.writeGateData  - Writes arbitrary gate data (E2E test infrastructure only)
  */
 
 import { execFile } from 'node:child_process';
@@ -556,5 +557,39 @@ export function setupSpaceWorkflowRunHandlers(
 		}
 
 		return { diff, additions, deletions, filePath: params.filePath };
+	});
+
+	// ─── spaceWorkflowRun.writeGateData ──────────────────────────────────────
+	//
+	// Writes arbitrary gate data for E2E test infrastructure.
+	// Bypasses allowedWriterRoles — intended for use in test beforeEach/setup only.
+	// Does NOT trigger onGateDataChanged (no automatic node activation or cycle reset).
+	messageHub.onRequest('spaceWorkflowRun.writeGateData', async (data) => {
+		const params = data as { runId: string; gateId: string; data: Record<string, unknown> };
+
+		if (!params.runId) throw new Error('runId is required');
+		if (!params.gateId) throw new Error('gateId is required');
+		if (!params.data || typeof params.data !== 'object' || Array.isArray(params.data)) {
+			throw new Error('data must be a plain object');
+		}
+
+		const run = workflowRunRepo.getRun(params.runId);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
+
+		daemonHub
+			.emit('space.gateData.updated', {
+				sessionId: 'global',
+				spaceId: run.spaceId,
+				runId: params.runId,
+				gateId: params.gateId,
+				data: gateData.data,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.gateData.updated:', err);
+			});
+
+		return { gateData };
 	});
 }
