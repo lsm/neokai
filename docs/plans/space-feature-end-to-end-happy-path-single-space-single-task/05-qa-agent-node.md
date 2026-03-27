@@ -26,10 +26,10 @@ Both cyclic channels (Reviewer→Coding and QA→Coding) share the same global `
 
 **Subtasks**:
 1. Verify QA node exists in V2 template with correct agent assignment and tool access
-2. Verify channels: Aggregate→QA (passes on quorum), QA→Done (passes on 'passed'), QA→Coding (fails on 'failed', cyclic)
+2. Verify channels: `review-votes-gate`→QA (passes on `count: votes.approve >= 3`), QA→Done via `qa-result-gate` (passes on `check: result == passed`), QA→Coding via `qa-fail-gate` (passes on `check: result == failed`, cyclic)
 3. Test the QA→Coding feedback loop: QA writes `{ result: 'failed', summary: '...' }` to `qa-fail-gate` → cyclic channel activates → Coding node re-activates
 4. Verify the full re-review cycle after QA failure: Coding → 3 Reviewers → QA (all 3 reviewers must re-vote from scratch)
-5. **Verify gate data reset**: When the QA→Coding cyclic channel fires, the `ChannelRouter` resets downstream gate data (M1 Task 1.4). Specifically: `review-aggregate-gate` votes reset to `{ votes: {} }`, `qa-result-gate` → `{}`, `review-reject-gate` → `{}`. The `code-pr-gate` data is preserved. This ensures all 3 reviewers must re-vote — stale approve votes from the previous round are cleared. The reset is performed by `ChannelRouter.onCyclicTraversal()` (implemented in M1).
+5. **Verify gate data reset via `resetOnCycle`**: When the QA→Coding cyclic channel fires, all gates with `resetOnCycle: true` have their data cleared to `{}` (M1 Task 1.4). Specifically: `review-votes-gate` (true) → `{}`, `qa-result-gate` (true) → `{}`, `review-reject-gate` (true) → `{}`, `qa-fail-gate` (true) → `{}`. `code-pr-gate` (`resetOnCycle: false`) is preserved. This ensures all 3 reviewers must re-vote from scratch.
 6. Verify iteration counter increments on QA→Coding cycle
 7. Unit tests for QA feedback loop
 
@@ -56,8 +56,8 @@ Both cyclic channels (Reviewer→Coding and QA→Coding) share the same global `
 3. Update the Task Agent prompt to produce a human-readable summary:
    - What was implemented (from Coder's result)
    - PR link and status (from Code PR Gate data)
-   - Review summary (from Aggregate Gate votes)
-   - QA verification status (from Task Result Gate data)
+   - Review summary (from `review-votes-gate` data)
+   - QA verification status (from `qa-result-gate` data)
    - Suggested next steps
 4. Verify the Space chat agent surfaces the summary to the human
 5. Unit tests for completion detection and summary generation

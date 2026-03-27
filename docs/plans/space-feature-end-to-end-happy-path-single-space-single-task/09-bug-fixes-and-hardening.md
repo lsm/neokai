@@ -76,12 +76,7 @@ Fix issues discovered during integration and E2E testing. Add robust error handl
 3. **Rate limit handling**: Wait and retry using `Retry-After` header
 4. **Timeout enforcement**: Per-node configurable timeouts (30min coder, 15min reviewer/QA, 20min planner)
 5. **Cancellation cleanup**: Kill sessions, remove worktree, transition to `cancelled`, notify human
-6. **Gate data corruption recovery**: If gate data is malformed (fails JSON parse or schema validation), reset to the gate type's initial state and log error. **Initial state per gate type**:
-   - PR Gate: `{}` (no PR URL — blocks until planner/coder writes)
-   - Human Gate: `{ waiting: true }` (re-shows approval UI)
-   - Aggregate Gate: `{ votes: {} }` (clears all votes, requires re-review)
-   - Task Result Gate: `{}` (blocks until agent writes result)
-   - Always Gate: `{}` (always passes, no data needed)
+6. **Gate data corruption recovery**: If gate data is malformed (fails JSON parse or schema validation), reset data to `{}` and log error. Since all gates use the unified Gate entity, the reset is always `{}` — the gate's condition will re-evaluate against the empty data store (e.g., `check: prUrl exists` will fail, `count: votes.approve >= 3` will return 0, etc.). For human-approval gates specifically, also set `{ waiting: true }` to re-show the approval UI.
 7. **Structured error messages**: All failures produce human-readable messages in Space chat
 
 **Acceptance Criteria**:

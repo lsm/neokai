@@ -9,60 +9,78 @@ Make the happy path for a single space with a single task using a single workflo
 ## Target Workflow Pipeline
 
 ```
-Planning → [PR Gate] → Plan Review (1 reviewer) → [Human Gate] → Coding → [PR Gate] → 3 Code Reviewers (parallel) → [Aggregate Gate: 3 yes votes required] → QA → Done
+Planning → [check: prUrl exists] → Plan Review (1 reviewer) → [check: approved] → Coding → [check: prUrl exists] → 3 Code Reviewers (parallel) → [check: ≥3 approve votes] → QA → Done
 ```
-
-**Gate types**:
-- **PR Gate**: Blocks until a PR is created. Stores the PR URL. Agents downstream can read it.
-- **Human Gate**: Blocks until a human approves. Shows artifacts view with all changes in the worktree.
-- **Aggregate Gate**: Blocks until a quorum is met (e.g., 3/3 reviewers vote "yes"). Stores each reviewer's vote.
-- **Task Result Gate**: Simple pass/fail based on agent's `report_done` result.
 
 ## Core Architecture: Gates + Channels
 
 **CRITICAL DESIGN DECISION**: The Space workflow uses a Gate + Channel model instead of a complex state machine. This is fundamentally simpler and more composable than tracking many states with complex transition rules.
 
-### Gates
+### The Unified Gate
 
-A **Gate** is a simple condition that can pass or not, **with a data store**. Gates hold the data they need (PR URLs, review results, approval status). Agents can read and write gate data.
+A **Gate** is ONE concept: a **condition + data store**. There are no separate gate classes (no `PRGate`, `AggregateGate`, `HumanGate`). Every gate is the same thing — a persistent data store with a composable condition that checks the data.
 
 ```typescript
 interface Gate {
   id: string;
-  type: 'pr' | 'human' | 'aggregate' | 'task_result' | 'condition' | 'always';
-  // The gate's data store — agents can read/write this
-  data: Record<string, unknown>;
-  // Evaluate whether the gate passes
-  evaluate(): boolean;
+  condition: GateCondition;             // what to check — composable, not a class hierarchy
+  data: Record<string, unknown>;        // persistent data store — agents read/write this
+  allowedWriterRoles: string[];         // who can write — ['planner'], ['reviewer'], etc.
+  description: string;                  // human-readable — "Write your PR URL here after creating the PR"
+  resetOnCycle: boolean;                // whether data is cleared when a cyclic channel fires
 }
 ```
 
+### Composable Conditions
+
+Instead of a type hierarchy, conditions are small pluggable predicates that check gate data:
+
+```typescript
+type GateCondition =
+  | { type: 'always' }                                            // always passes
+  | { type: 'check'; field: string; op?: '==' | '!=' | 'exists'; value?: unknown }  // check a single field
+  | { type: 'count'; field: string; matchValue: unknown; min: number }              // count matching entries in a map
+```
+
+Three condition types cover **every** gate behavior in the workflow:
+
+| Gate use case | Condition | Example |
+|---------------|-----------|---------|
+| PR created | `{ type: 'check', field: 'prUrl', op: 'exists' }` | Passes when `data.prUrl` is truthy |
+| Human approval | `{ type: 'check', field: 'approved', op: '==', value: true }` | Passes when `data.approved === true` |
+| QA passed | `{ type: 'check', field: 'result', op: '==', value: 'passed' }` | Passes when `data.result === 'passed'` |
+| QA failed (cyclic) | `{ type: 'check', field: 'result', op: '==', value: 'failed' }` | Passes when `data.result === 'failed'` |
+| Review rejected (cyclic) | `{ type: 'check', field: 'result', op: '==', value: 'rejected' }` | Passes when `data.result === 'rejected'` |
+| 3 reviewer votes | `{ type: 'count', field: 'votes', matchValue: 'approve', min: 3 }` | Passes when ≥3 entries in `data.votes` equal `'approve'` |
+
+**Why this is better**: No class hierarchy, no separate evaluator per type. One `evaluate(gate)` function with a switch on `condition.type`. Adding a new behavior = defining a new condition config, not a new class. All gates have the same API: `read_gate`, `write_gate`.
+
+### Gate Data Store
+
+Gates persist their data to SQLite in a dedicated `gate_data` table (keyed by `runId + gateId`), separate from the static channel/gate definitions. This separation ensures: (a) gate data changes frequently during a run while channel definitions are static, (b) gate data is per-run while channels are per-workflow, and (c) atomic reads/writes without deserializing a JSON blob from the channel definition.
+
 **Gate data examples**:
-- PR Gate: `{ prUrl: 'https://github.com/...', prNumber: 123, branch: 'feat/xyz' }`
-- Human Gate: `{ approved: true, approvedBy: 'user123', approvedAt: '2025-...' }`
-- Aggregate Gate: `{ votes: { reviewer1: 'approve', reviewer2: 'approve', reviewer3: 'approve' }, quorum: 3 }`
-- Task Result Gate: `{ result: 'passed', summary: '...' }`
-
-**Key property**: Gates persist their data to SQLite in a dedicated `gate_data` table (keyed by `runId + gateId`), separate from the static channel/gate definitions. This separation ensures: (a) gate data changes frequently during a run while channel definitions are static, (b) gate data is per-run while channels are per-workflow, and (c) atomic reads/writes without deserializing a JSON blob from the channel definition.
-
-Agents read/write gate data via MCP tools (`read_gate`, `write_gate`, `list_gates`). The gate's `evaluate()` checks its own data store — no external state machine needed.
+- PR gate: `{ prUrl: 'https://github.com/...', prNumber: 123, branch: 'feat/xyz' }`
+- Human approval gate: `{ approved: true, approvedBy: 'user123', approvedAt: '2025-...' }`
+- Vote gate: `{ votes: { 'reviewer-1-node': 'approve', 'reviewer-2-node': 'approve', 'reviewer-3-node': 'approve' } }`
+- QA result gate: `{ result: 'passed', summary: '...' }`
 
 ### Gate Discovery
 
 Agents discover available gates via two mechanisms:
-1. **`list_gates` MCP tool**: Returns all gates for the current workflow run with their IDs, types, and current data. Agents call this at session start to understand the workflow topology.
-2. **Workflow context injection**: When a node agent is spawned, the `TaskAgentManager` injects a `workflowContext` section into the agent's task message containing: the node's upstream/downstream gate IDs, gate types, and human-readable descriptions (e.g., "Code PR Gate: write your PR URL here after creating the PR").
+1. **`list_gates` MCP tool**: Returns all gates for the current workflow run with their IDs, conditions, descriptions, and current data. Agents call this at session start to understand the workflow topology.
+2. **Workflow context injection**: When a node agent is spawned, the `TaskAgentManager` injects a `workflowContext` section into the agent's task message containing: the node's upstream/downstream gate IDs and human-readable descriptions.
 
 ### Gate Write Permissions
 
-Each gate has an `allowedWriterRoles` list (persisted in the gate definition, not the data store):
-- `plan-pr-gate` (Plan PR Gate): `['planner']`
-- `plan-human-gate` (Human Gate): `['human']` (written via RPC, not MCP tool)
-- `code-pr-gate` (Code PR Gate): `['coder']`
-- `review-aggregate-gate` (Aggregate Gate): `['reviewer']`
-- `review-reject-gate` (Review Reject Gate): `['reviewer']`
-- `qa-result-gate` (QA Result Gate): `['qa']`
-- `qa-fail-gate` (QA Fail Gate): `['qa']`
+Each gate has an `allowedWriterRoles` list (persisted in the gate definition):
+- `plan-pr-gate`: `['planner']`
+- `plan-approval-gate`: `['human']` (written via RPC, not MCP tool)
+- `code-pr-gate`: `['coder']`
+- `review-votes-gate`: `['reviewer']`
+- `review-reject-gate`: `['reviewer']`
+- `qa-result-gate`: `['qa']`
+- `qa-fail-gate`: `['qa']`
 
 When an unauthorized agent calls `write_gate`, the tool returns an error: `"Permission denied: role '{role}' cannot write to gate '{gateId}'"`. The authorization check uses the agent's `nodeRole` from the MCP server config.
 
@@ -74,7 +92,7 @@ The current `WorkflowRunStatus` type is: `'pending' | 'in_progress' | 'completed
 failureReason?: 'humanRejected' | 'maxIterationsReached' | 'nodeTimeout' | 'agentCrash';
 ```
 
-This avoids a cross-cutting type change that would affect the status machine, repository, RPC handlers, and all consumers. The `needs_attention` status already semantically means "requires human intervention" which is correct for all failure scenarios.
+This avoids a cross-cutting type change that would affect the status machine, repository, RPC handlers, and all consumers.
 
 ### Channels
 
@@ -92,14 +110,14 @@ interface Channel {
 
 ### Why This Is Simpler
 
-Instead of a state machine with states like `planning`, `waiting_for_plan_review`, `waiting_for_human_approval`, `coding`, `waiting_for_code_review`, `waiting_for_qa`, `done`, `failed`, `needs_attention` — each with complex transition rules — we have:
+Instead of a state machine with many states and complex transition rules, we have:
 
 1. **Nodes** execute agents (one at a time or in parallel)
 2. **Channels** connect nodes with gates
-3. **Gates** are simple conditions with data stores
+3. **Gates** are simple conditions with data stores — all the same type, all the same API
 4. The workflow "state" is just: which nodes are active + what data is in each gate
 
-Adding new behaviors = adding new gates and channels, not new states and transition rules.
+Adding new behaviors = adding new gates with new condition configs, not new gate classes or state transitions.
 
 ## Current State Analysis
 
@@ -131,31 +149,31 @@ Adding new behaviors = adding new gates and channels, not new states and transit
 
 ### What Needs to Be Built / Fixed
 
-1. **Gate + Channel architecture refactor**: The existing `ChannelGateEvaluator` supports basic gate types but lacks the **gate data store** concept. Gates need to persist data (PR URLs, review votes, approval status) that agents can read/write. This is the core architectural change.
+1. **Unified Gate with data store**: The existing `ChannelGateEvaluator` has separate gate type handling but lacks the **gate data store** concept. Refactor to a single unified Gate entity with composable conditions and persistent data stores.
 
-2. **New gate types**: PR Gate (checks PR exists, stores URL), Aggregate Gate (quorum voting), and enhanced Human Gate (stores approval + shows artifacts).
+2. **Composable conditions**: Replace the current per-type evaluator logic with the three condition types (`always`, `check`, `count`) that cover all workflow behaviors.
 
-3. **Extended workflow template**: Create `CODING_WORKFLOW_V2` matching the target pipeline with PR gates, parallel reviewers, and aggregate gate.
+3. **Extended workflow template**: Create `CODING_WORKFLOW_V2` matching the target pipeline with gates configured via conditions.
 
 4. **Node agent prompt specialization**: Node agents need proper system prompts with git workflow, PR creation, review posting, gate data writing.
 
-5. **Parallel reviewer support**: The workflow needs 3 reviewer nodes that run in parallel, with an aggregate gate requiring all 3 to approve before QA runs.
+5. **Parallel reviewer support**: The workflow needs 3 reviewer nodes that run in parallel, with a vote-counting gate requiring all 3 to approve before QA runs.
 
 6. **QA agent step**: Verification agent that checks test coverage, CI status, and PR mergeability.
 
-7. **Human gate UI with canvas visualization**: Live workflow visualization on a canvas. Clicking a human gate opens an artifacts view showing all changes in the worktree. Clicking individual changes renders file diffs. Similar to GitHub Actions visualization but with human-in-the-loop nodes.
+7. **Human gate UI with canvas visualization**: Live workflow visualization on a canvas. Clicking a human-approval gate opens an artifacts view showing all changes in the worktree.
 
-8. **Worktree isolation (one per task)**: Currently no worktree isolation exists. Need ONE worktree per task (shared by all agents in that task), with short human-readable folder names (e.g., `alpha-3`, `nova-7`).
+8. **Worktree isolation (one per task)**: Currently no worktree isolation exists. Need ONE worktree per task (shared by all agents in that task), with short human-readable folder names.
 
-9. **Gate data MCP tools**: Agents need `read_gate` and `write_gate` MCP tools to interact with gate data stores.
+9. **Gate data MCP tools**: Agents need `read_gate`, `write_gate`, and `list_gates` MCP tools to interact with gate data stores.
 
 10. **End-to-end integration testing**: No single test exercises the full pipeline.
 
 ## High-Level Approach
 
-**Phase 1 — Gate + Channel architecture and workflow template** (Milestones 1-3):
-- Implement gate data store and new gate types (PR, Aggregate, enhanced Human)
-- Enhance node agent prompts (git workflow, review posting, PR management, gate interaction)
+**Phase 1 — Unified Gate architecture and workflow template** (Milestones 1-3):
+- Implement unified Gate with composable conditions and data store
+- Enhance node agent prompts with gate interaction instructions
 - Create extended CODING_WORKFLOW_V2 with the full pipeline
 - Implement worktree isolation (one per task, short names)
 
@@ -172,17 +190,17 @@ Adding new behaviors = adding new gates and channels, not new states and transit
 
 ## Milestones
 
-1. **Gate data store and new gate types** — Implement the gate data store (persisted to SQLite), `read_gate`/`write_gate` MCP tools, and new gate types: PR Gate, Aggregate Gate, enhanced Human Gate
+1. **Unified Gate with composable conditions** — Implement the single Gate entity with persistent data store, three condition types (`always`, `check`, `count`), `read_gate`/`write_gate`/`list_gates` MCP tools, and channel router integration
 
 2. **Enhanced node agent prompts** — Add git/PR/review-specific system prompts for planner, coder, reviewer, and QA agents, including gate data interaction instructions
 
-3. **Extended coding workflow (V2)** — Create CODING_WORKFLOW_V2 with the full pipeline: Planning → [PR Gate] → Plan Review → [Human Gate] → Coding → [PR Gate] → 3 Reviewers (parallel) → [Aggregate Gate] → QA → Done
+3. **Extended coding workflow (V2)** — Create CODING_WORKFLOW_V2 with the full pipeline using unified gates with composable conditions
 
 4. **Worktree isolation (one per task)** — Implement single worktree per task with short human-readable names (e.g., `alpha-3`, `nova-7`), shared by all agents in the task
 
 5. **QA agent node** — Add QA as the verification step before Done, with QA→Code feedback loop
 
-6. **Human gate canvas UI** — Build live workflow canvas visualization with clickable human gates that show artifacts view with file diffs (GitHub Actions-style but with human-in-the-loop)
+6. **Human gate canvas UI** — Build live workflow canvas visualization with clickable human-approval gates that show artifacts view with file diffs (GitHub Actions-style but with human-in-the-loop)
 
 7. **Online integration test** — Exercise the full happy path with dev proxy, broken into focused per-component sub-tests
 
@@ -193,41 +211,40 @@ Adding new behaviors = adding new gates and channels, not new states and transit
 ## Final Workflow Graph
 
 ```
-Planning ──[PR Gate]──► Plan Review (1 reviewer) ──[Human Gate]──► Coding ──[PR Gate]──► Reviewer 1 ─┐
-                                                                    ▲                    Reviewer 2 ─┼─[Aggregate Gate: 3 yes]──► QA ──[Task Result: pass]──► Done
-                                                                    │                    Reviewer 3 ─┘                            │
-                                                                    │                                                             │
-                                                                    └──────────── [Task Result: fail, cyclic] ────────────────────┘
+Planning ──[check: prUrl exists]──► Plan Review (1 reviewer) ──[check: approved]──► Coding ──[check: prUrl exists]──► Reviewer 1 ─┐
+                                                                    ▲                                                  Reviewer 2 ─┼─[count: votes.approve ≥ 3]──► QA ──[check: result == passed]──► Done
+                                                                    │                                                  Reviewer 3 ─┘                                │
+                                                                    │                                                                                               │
+                                                                    └──────────── [check: result == failed, cyclic] ────────────────────────────────────────────────┘
                                                                     │                         │
-                                                                    └── [Review reject, cyclic]┘
+                                                                    └── [check: result == rejected, cyclic]┘
 ```
 
 **Gate data flow**:
-- Planner writes to PR Gate: `{ prUrl, prNumber, branch }`
-- Plan reviewers read PR Gate data to find the plan PR
-- Human reads gate artifacts view, clicks approve → Human Gate data: `{ approved: true }`
-- Coder writes to PR Gate: `{ prUrl, prNumber, branch }`
-- Each reviewer writes to Aggregate Gate: `{ votes: { [nodeId]: 'approve' | 'reject' } }` (keyed by node ID, not agent ID, to avoid collision if an agent is re-spawned)
-- Aggregate Gate evaluates: passes when `Object.values(votes).filter(v => v === 'approve').length >= quorum`
-- QA reads PR Gate data, runs tests, writes Task Result Gate data
+- Planner writes `{ prUrl, prNumber, branch }` → `plan-pr-gate` condition `check: prUrl exists` passes
+- Plan reviewer reads plan PR from `plan-pr-gate` data
+- Human clicks approve → `plan-approval-gate` data gets `{ approved: true }` → condition `check: approved == true` passes
+- Coder writes `{ prUrl, prNumber, branch }` → `code-pr-gate` condition `check: prUrl exists` passes
+- Each reviewer writes `{ votes: { [nodeId]: 'approve' | 'reject' } }` → `review-votes-gate` condition `count: votes.approve >= 3` passes when quorum met
+- QA reads PR from `code-pr-gate` data, writes `{ result: 'passed' | 'failed', summary: '...' }` → `qa-result-gate`
 
 **All cyclic channels route back to Coding, never to Planning.** This ensures:
 - Code-level issues (review feedback, QA failures) are fixed by the Coder directly without re-planning
 - The human gate only fires once (Plan Review → Coding), not on every iteration
 - The Coder can iterate on feedback from both reviewers and QA independently
 
-**Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow transitions to `needs_attention` with error metadata `{ failureReason: 'maxIterationsReached' }`. Note: the current `WorkflowRunStatus` type does not include `'failed'` — all failure scenarios use the existing `'needs_attention'` status with a structured `failureReason` field. See M1 Task 1.1 for the type expansion details.
+**Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow transitions to `needs_attention` with `failureReason: 'maxIterationsReached'`.
 
-**Aggregate Gate reset on cycles**: When a cyclic channel fires (e.g., reviewer rejection or QA failure routes back to Coding), the Aggregate Gate's vote data is **reset to `{ votes: {} }`**. This ensures all 3 reviewers must re-vote from scratch after the Coder fixes issues. The reset is triggered by `ChannelRouter` when traversing any cyclic channel — it clears the gate data of all downstream gates between the cycle target (Coding) and the cycle source (Reviewer/QA). See M1 Task 1.4 for implementation details.
+**Gate data reset on cycles**: When a cyclic channel fires, gates with `resetOnCycle: true` have their data cleared to `{}`. This ensures reviewers must re-vote from scratch after the Coder fixes issues. Gates with `resetOnCycle: false` (like `code-pr-gate`) preserve their data across cycles. See M1 Task 1.4 for implementation.
 
 ## Cross-Milestone Dependencies
 
-- Milestone 1 (gate data store) is the foundation — M2 and M3 depend on it
-- Milestone 2 (prompts) depends on M1 (agents need `read_gate`/`write_gate`/`list_gates` instructions) AND M3 (prompts reference specific gate IDs from the V2 workflow template). **M2 should be implemented after M3.** Alternatively, M2 prompts can use generic gate references (e.g., "the downstream PR gate") with M3 providing the concrete wiring, but implementing M3 first is cleaner.
-- Milestone 3 (V2 workflow) depends on M1 (new gate types must exist)
+- Milestone 1 (unified gate) is the foundation — M2 and M3 depend on it
+- Milestone 2 (prompts) depends on M1 (agents need gate MCP tools) AND M3 (prompts reference specific gate IDs). **M2 should be implemented after M3.**
+- Milestone 3 (V2 workflow) depends on M1 (unified gate must exist)
 - Milestone 4 (worktree) can start in parallel with M2/M3
 - Milestone 5 (QA) depends on M3 (V2 workflow template must exist)
-- Milestone 6 (human gate UI) depends on M1 (gate data store) and M3 (V2 workflow with human gate)
+- Milestone 6 (human gate UI) depends on M1 (gate data store) and M3 (V2 workflow with human-approval gate)
 - Milestone 7 (online test) depends on M5 and M6
 - Milestone 8 (E2E test) depends on M6; can start in parallel with M7
 - Milestone 9 (hardening) depends on M7 and M8

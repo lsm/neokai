@@ -2,16 +2,16 @@
 
 ## Goal and Scope
 
-Create `CODING_WORKFLOW_V2` with the full pipeline: Planning → [PR Gate] → Plan Review → [Human Gate] → Coding → [PR Gate] → 3 Reviewers (parallel) → [Aggregate Gate: 3 yes votes] → QA → Done. This uses the Gate + Channel architecture from Milestone 1.
+Create `CODING_WORKFLOW_V2` with the full pipeline using unified gates with composable conditions. All gates are the same entity — the only variation is the condition config. This uses the unified Gate architecture from Milestone 1.
 
 ## Target Pipeline
 
 ```
-Planning ──[PR Gate]──► Plan Review ──[Human Gate]──► Coding ──[PR Gate]──► Reviewer 1 ─┐
-                                                        ▲                    Reviewer 2 ─┼─[Aggregate: 3 yes]──► QA ──[pass]──► Done
-                                                        │                    Reviewer 3 ─┘                        │
-                                                        │                                                         │
-                                                        └── [reject, cyclic] ─────────────────────────────────────┘
+Planning ──[check: prUrl]──► Plan Review ──[check: approved]──► Coding ──[check: prUrl]──► Reviewer 1 ─┐
+                                                                   ▲                       Reviewer 2 ─┼─[count: votes.approve ≥ 3]──► QA ──[check: result == passed]──► Done
+                                                                   │                       Reviewer 3 ─┘                                │
+                                                                   │                                                                    │
+                                                                   └── [check: result == rejected/failed, cyclic] ─────────────────────┘
 ```
 
 ### Node Definitions
@@ -27,28 +27,28 @@ Planning ──[PR Gate]──► Plan Review ──[Human Gate]──► Coding
 
 ### Channel Definitions
 
-**Gate instances**: Each gate has a unique ID. Channels that share the same gate instance are noted below.
+**All gates are the same unified Gate entity** — they differ only in their `condition` config. Channels that share the same gate instance are noted below.
 
-| Channel | Gate ID | Gate Type | Gate Config | Cyclic | Description |
-|---------|---------|-----------|-------------|--------|-------------|
-| Planning → Plan Review | `plan-pr-gate` | PR Gate | - | no | Planner writes `{ prUrl }` to gate |
-| Plan Review → Coding | `plan-human-gate` | Human Gate | - | no | Human approves plan in artifacts view |
-| Coding → Reviewer 1 | `code-pr-gate` | PR Gate | - | no | **Shared gate**: all 3 reviewer channels use the same `code-pr-gate` instance |
-| Coding → Reviewer 2 | `code-pr-gate` | PR Gate | - | no | Same `code-pr-gate` instance |
-| Coding → Reviewer 3 | `code-pr-gate` | PR Gate | - | no | Same `code-pr-gate` instance |
-| Reviewer 1 → QA | `review-aggregate-gate` | Aggregate | `{ quorum: 3 }` | no | **Shared gate**: all 3 reviewers write votes to the same gate |
-| Reviewer 2 → QA | `review-aggregate-gate` | Aggregate | `{ quorum: 3 }` | no | Same `review-aggregate-gate` |
-| Reviewer 3 → QA | `review-aggregate-gate` | Aggregate | `{ quorum: 3 }` | no | Same `review-aggregate-gate` |
-| QA → Done | `qa-result-gate` | Task Result | `{ expression: 'passed' }` | no | QA passes |
-| QA → Coding | `qa-fail-gate` | Task Result | `{ expression: 'failed' }` | yes | QA fails, feedback to coder |
-| Reviewers → Coding | `review-reject-gate` | Task Result | `{ expression: 'rejected' }` | yes | **Separate gate from aggregate**: when any reviewer writes `'rejected'` to `review-reject-gate`, this cyclic channel fires and routes feedback to Coding |
+| Channel | Gate ID | Condition | `resetOnCycle` | Cyclic | Description |
+|---------|---------|-----------|----------------|--------|-------------|
+| Planning → Plan Review | `plan-pr-gate` | `check: prUrl exists` | false | no | Planner writes `{ prUrl }` |
+| Plan Review → Coding | `plan-approval-gate` | `check: approved == true` | false | no | Human approves plan |
+| Coding → Reviewer 1 | `code-pr-gate` | `check: prUrl exists` | false | no | **Shared**: all 3 reviewer channels |
+| Coding → Reviewer 2 | `code-pr-gate` | (same gate instance) | false | no | |
+| Coding → Reviewer 3 | `code-pr-gate` | (same gate instance) | false | no | |
+| Reviewer 1 → QA | `review-votes-gate` | `count: votes.approve >= 3` | true | no | **Shared**: all 3 reviewers vote here |
+| Reviewer 2 → QA | `review-votes-gate` | (same gate instance) | true | no | |
+| Reviewer 3 → QA | `review-votes-gate` | (same gate instance) | true | no | |
+| QA → Done | `qa-result-gate` | `check: result == passed` | true | no | QA passes |
+| QA → Coding | `qa-fail-gate` | `check: result == failed` | true | yes | QA fails, feedback to coder |
+| Reviewers → Coding | `review-reject-gate` | `check: result == rejected` | true | yes | Any reviewer rejects |
 
-**Clarification on reject vs. aggregate gates**: The `review-aggregate-gate` (quorum gate) and `review-reject-gate` (reject feedback gate) are **separate gate instances** with different IDs and different evaluation logic:
-- `review-aggregate-gate`: evaluates `Object.values(data.votes).filter(v => v === 'approve').length >= 3`. Only passes when ALL 3 approve.
-- `review-reject-gate`: evaluates `data.result === 'rejected'`. Any reviewer that rejects writes `{ result: 'rejected', feedback: '...' }` to this gate, which fires the cyclic channel back to Coding.
-- A reviewer writes to BOTH gates: it writes its vote to `review-aggregate-gate` AND, if rejecting, writes the rejection to `review-reject-gate`.
+**Reject vs. votes gates**: `review-votes-gate` and `review-reject-gate` are **separate gate instances** with different conditions:
+- `review-votes-gate`: condition `count: votes.approve >= 3`. Passes when all 3 approve.
+- `review-reject-gate`: condition `check: result == rejected`. Any reviewer that rejects writes `{ result: 'rejected', feedback: '...' }` here, firing the cyclic channel back to Coding.
+- A reviewer writes to BOTH gates: vote to `review-votes-gate`, and if rejecting, rejection to `review-reject-gate`.
 
-**Gate data reset on cycles**: When any cyclic channel fires (QA→Coding or Reviewers→Coding), the `ChannelRouter` resets downstream gate data: `review-aggregate-gate` votes → `{ votes: {} }`, `qa-result-gate` → `{}`, `review-reject-gate` → `{}`. The `code-pr-gate` data is preserved (PR URL doesn't change). See M1 Task 1.4 for implementation.
+**Gate data reset on cycles**: Uses the `resetOnCycle` flag (see M1). Gates with `resetOnCycle: true` have their data cleared to `{}` when any cyclic channel fires. Gates with `resetOnCycle: false` (like `code-pr-gate`) preserve their data. This ensures reviewers must re-vote from scratch after a fix.
 
 ### Iteration Cap
 
@@ -70,21 +70,22 @@ Planning ──[PR Gate]──► Plan Review ──[Human Gate]──► Coding
 5. Define 3 Reviewer nodes with `agentId: 'reviewer'`, marked as parallel
 6. Define the QA node with `agentId: 'qa'`
 7. Define the Done node (terminal)
-8. Define all channels per the table above with correct gate types and configs
+8. Define all channels per the table above — each gate is a unified Gate entity with the appropriate condition config (`check`, `count`, or `always`), `allowedWriterRoles`, `resetOnCycle` flag, and `description`
 9. Set `maxIterations: 5` on the workflow template
 10. Mark cyclic channels with `isCyclic: true`
 
 **Acceptance Criteria**:
 - Workflow template has 8 nodes with correct agent assignments
 - Channel topology matches the specification exactly
-- PR Gates, Human Gate, Aggregate Gate, Task Result Gates are all correctly configured
+- All gates use unified Gate entity with composable conditions (no separate gate classes)
+- `check` conditions used for PR URL, approval, and result gates
+- `count` condition used for vote-counting gate (`review-votes-gate`)
 - 3 reviewer nodes are marked as parallel
-- Aggregate gate requires quorum of 3
 - Cyclic channels are marked correctly
 - `maxIterations: 5` is set
 - Unit test validates the full template structure
 
-**Depends on**: Milestone 1 (new gate types must exist)
+**Depends on**: Milestone 1 (unified gate must exist)
 
 **Agent type**: coder
 
@@ -123,20 +124,20 @@ Planning ──[PR Gate]──► Plan Review ──[Human Gate]──► Coding
 
 **Subtasks**:
 1. Update `TaskAgentManager.activateNode()` to handle multiple target nodes from a single gate transition
-2. When a PR Gate opens with 3 downstream channels (Coding → Reviewer 1/2/3), spawn all 3 reviewer sessions
+2. When `code-pr-gate` passes (condition `check: prUrl exists`) with 3 downstream channels, spawn all 3 reviewer sessions
 3. Each reviewer session operates in the same task worktree (read-only for reviewers)
-4. Track parallel node completion: each reviewer's `report_done` writes to the shared Aggregate Gate
-5. The Aggregate Gate evaluates after each write — only activates QA when quorum is met
+4. Track parallel node completion: each reviewer writes its vote to the shared `review-votes-gate`
+5. The gate's `count: votes.approve >= 3` condition evaluates after each write — only activates QA when threshold is met
 6. Unit tests: parallel activation, incremental voting, quorum detection
 
 **Acceptance Criteria**:
-- 3 reviewer nodes activate simultaneously when Code PR Gate opens
-- Each reviewer writes its vote independently to the Aggregate Gate
-- QA activates only when all 3 reviewers approve (quorum = 3)
+- 3 reviewer nodes activate simultaneously when `code-pr-gate` condition passes
+- Each reviewer writes its vote independently to `review-votes-gate`
+- QA activates only when `count` condition meets threshold (≥3 approve votes)
 - Parallel sessions don't interfere with each other
 - Unit tests cover parallel execution and voting
 
-**Depends on**: Task 3.1, Milestone 1 (Aggregate Gate evaluator)
+**Depends on**: Task 3.1, Milestone 1 (unified gate evaluator)
 
 **Agent type**: coder
 
