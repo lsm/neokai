@@ -46,6 +46,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
 	test('registry contains all expected query names', () => {
 		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom.all')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('sessionGroupMessages.byGroup')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(true);
@@ -53,6 +54,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
 	test('all registry entries have correct paramCount', () => {
 		expect(NAMED_QUERY_REGISTRY.get('tasks.byRoom')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('tasks.byRoom.all')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('goals.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('skills.byRoom')!.paramCount).toBe(1);
@@ -65,20 +67,21 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	describe('tasks.byRoom', () => {
 		function insertTask(overrides: Record<string, unknown> = {}): string {
 			const id = `task-${Date.now()}-${Math.random()}`;
+			const status = (overrides.status as string) ?? 'pending';
 			db.exec(`
 				INSERT INTO tasks (
 					id, room_id, title, description, status, priority,
 					depends_on, created_at, updated_at
 				) VALUES (
-					'${id}', '${roomId}', 'Test Task', 'Desc', 'pending', 'normal',
+					'${id}', '${roomId}', 'Test Task', 'Desc', '${status}', 'normal',
 					'${JSON.stringify(overrides.dependsOn ?? [])}', ${now}, ${now}
 				)
 			`);
 			return id;
 		}
 
-		function queryAndMap(): Record<string, unknown>[] {
-			const entry = NAMED_QUERY_REGISTRY.get('tasks.byRoom')!;
+		function queryAndMap(queryName = 'tasks.byRoom'): Record<string, unknown>[] {
+			const entry = NAMED_QUERY_REGISTRY.get(queryName)!;
 			const rows = db.prepare(entry.sql).all(roomId) as Record<string, unknown>[];
 			return entry.mapRow ? rows.map(entry.mapRow) : rows;
 		}
@@ -131,6 +134,39 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		test('ORDER BY is created_at DESC, id DESC (deterministic tiebreaker)', () => {
 			const sql = NAMED_QUERY_REGISTRY.get('tasks.byRoom')!.sql;
 			expect(sql).toContain('ORDER BY created_at DESC, id DESC');
+		});
+
+		test('excludes archived tasks by default', () => {
+			insertTask({ status: 'pending' });
+			insertTask({ status: 'in_progress' });
+			insertTask({ status: 'archived' });
+			insertTask({ status: 'completed' });
+
+			const rows = queryAndMap();
+			const statuses = rows.map((r) => r.status);
+			expect(statuses).not.toContain('archived');
+			expect(rows).toHaveLength(3);
+		});
+
+		test('tasks.byRoom.all includes archived tasks', () => {
+			insertTask({ status: 'pending' });
+			insertTask({ status: 'archived' });
+
+			const rows = queryAndMap('tasks.byRoom.all');
+			const statuses = rows.map((r) => r.status);
+			expect(statuses).toContain('archived');
+			expect(statuses).toContain('pending');
+			expect(rows).toHaveLength(2);
+		});
+
+		test('tasks.byRoom.all has same column shape as tasks.byRoom', () => {
+			insertTask();
+			const defaultRows = queryAndMap('tasks.byRoom');
+			const allRows = queryAndMap('tasks.byRoom.all');
+			// Both should have the same columns (keys)
+			const defaultKeys = Object.keys(defaultRows[0]).sort();
+			const allKeys = Object.keys(allRows[0]).sort();
+			expect(allKeys).toEqual(defaultKeys);
 		});
 	});
 

@@ -143,8 +143,10 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
 // SQL definitions
 // ============================================================================
 
-const TASKS_BY_ROOM_SQL = `
-SELECT
+/**
+ * Shared column list for task queries — avoids duplicating the SELECT clause.
+ */
+const TASKS_SELECT_COLUMNS = `
   id,
   room_id             AS roomId,
   title,
@@ -169,7 +171,26 @@ SELECT
   pr_created_at       AS prCreatedAt,
   input_draft         AS inputDraft,
   updated_at          AS updatedAt,
-  short_id            AS shortId
+  short_id            AS shortId`;
+
+/**
+ * Default task query: excludes archived tasks.
+ * The sidebar and dashboard almost never need archived tasks, so filtering
+ * them server-side saves bandwidth and client memory.
+ */
+const TASKS_BY_ROOM_SQL = `
+SELECT ${TASKS_SELECT_COLUMNS}
+FROM tasks
+WHERE room_id = ? AND status != 'archived'
+ORDER BY created_at DESC, id DESC
+`.trim();
+
+/**
+ * All tasks including archived — used when the client explicitly needs the
+ * full task history (e.g., the "Archived" tab in the dashboard).
+ */
+const TASKS_BY_ROOM_ALL_SQL = `
+SELECT ${TASKS_SELECT_COLUMNS}
 FROM tasks
 WHERE room_id = ?
 ORDER BY created_at DESC, id DESC
@@ -424,6 +445,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		},
 	],
 	[
+		'tasks.byRoom.all',
+		{
+			sql: TASKS_BY_ROOM_ALL_SQL,
+			paramCount: 1,
+			mapRow: mapTaskRow,
+		},
+	],
+	[
 		'goals.byRoom',
 		{
 			sql: GOALS_BY_ROOM_SQL,
@@ -533,6 +562,7 @@ export function setupLiveQueryHandlers(
 		// 4. Authorization checks
 		if (
 			queryName === 'tasks.byRoom' ||
+			queryName === 'tasks.byRoom.all' ||
 			queryName === 'goals.byRoom' ||
 			queryName === 'mcpEnablement.byRoom' ||
 			queryName === 'skills.byRoom'

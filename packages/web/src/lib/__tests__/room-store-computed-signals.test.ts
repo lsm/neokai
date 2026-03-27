@@ -5,7 +5,7 @@
  * - orphanTasksActive: Orphan tasks with draft/pending/in_progress
  * - orphanTasksReview: Orphan tasks with review/needs_attention/rate_limited/usage_limited
  * - orphanTasksDone: Orphan tasks with completed/cancelled
- * - orphanTasksArchived: Orphan tasks with archived
+ * (orphanTasksArchived was removed — archived tasks are excluded server-side)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -209,27 +209,10 @@ describe('RoomStore — computed goal/task signals', () => {
 		});
 	});
 
-	describe('orphanTasksArchived', () => {
-		it('includes archived orphan tasks', () => {
-			roomStore.tasks.value = [
-				makeTask('t1', 'in_progress'),
-				makeTask('t2', 'archived'),
-				makeTask('t3', 'completed'),
-			];
-			roomStore.goals.value = [];
-			const ids = roomStore.orphanTasksArchived.value.map((t) => t.id);
-			expect(ids).toEqual(['t2']);
-		});
-
-		it('excludes archived tasks linked to a goal', () => {
-			roomStore.tasks.value = [makeTask('t1', 'archived')];
-			roomStore.goals.value = [makeGoal('g1', ['t1'])];
-			expect(roomStore.orphanTasksArchived.value).toEqual([]);
-		});
-	});
-
-	describe('all 10 TaskStatus values are covered', () => {
-		it('every status falls into exactly one bucket', () => {
+	describe('non-archived TaskStatus values are covered by orphan buckets', () => {
+		it('every non-archived status falls into exactly one bucket', () => {
+			// Note: archived tasks are excluded server-side by the tasks.byRoom LiveQuery,
+			// so the tasks signal never contains archived tasks in production.
 			roomStore.tasks.value = [
 				makeTask('draft', 'draft'),
 				makeTask('pending', 'pending'),
@@ -238,7 +221,6 @@ describe('RoomStore — computed goal/task signals', () => {
 				makeTask('needs_attention', 'needs_attention'),
 				makeTask('completed', 'completed'),
 				makeTask('cancelled', 'cancelled'),
-				makeTask('archived', 'archived'),
 				makeTask('rate_limited', 'rate_limited'),
 				makeTask('usage_limited', 'usage_limited'),
 			];
@@ -247,10 +229,9 @@ describe('RoomStore — computed goal/task signals', () => {
 			const active = new Set(roomStore.orphanTasksActive.value.map((t) => t.id));
 			const review = new Set(roomStore.orphanTasksReview.value.map((t) => t.id));
 			const done = new Set(roomStore.orphanTasksDone.value.map((t) => t.id));
-			const archived = new Set(roomStore.orphanTasksArchived.value.map((t) => t.id));
 
 			// No overlap
-			const buckets = [active, review, done, archived];
+			const buckets = [active, review, done];
 			for (let i = 0; i < buckets.length; i++) {
 				for (let j = i + 1; j < buckets.length; j++) {
 					for (const id of buckets[i]) {
@@ -259,8 +240,8 @@ describe('RoomStore — computed goal/task signals', () => {
 				}
 			}
 
-			// All covered — rate_limited and usage_limited fall into the review bucket
-			expect(active.size + review.size + done.size + archived.size).toBe(10);
+			// All 9 non-archived statuses covered
+			expect(active.size + review.size + done.size).toBe(9);
 			expect(review.has('rate_limited')).toBe(true);
 			expect(review.has('usage_limited')).toBe(true);
 		});
