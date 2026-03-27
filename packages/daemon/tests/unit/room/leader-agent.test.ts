@@ -747,10 +747,12 @@ describe('Leader Agent', () => {
 			);
 			expect(init.agent).toBe('Leader');
 			expect(init.agents).toBeDefined();
-			expect(Object.keys(init.agents!)).toHaveLength(3); // Leader + 2 reviewers
+			expect(Object.keys(init.agents!)).toHaveLength(5); // Leader + 2 reviewers + reviewer-explorer + reviewer-fact-checker
 			expect(Object.keys(init.agents!)).toContain('Leader');
 			expect(Object.keys(init.agents!)).toContain('reviewer-opus');
 			expect(Object.keys(init.agents!)).toContain('reviewer-sonnet');
+			expect(Object.keys(init.agents!)).toContain('reviewer-explorer');
+			expect(Object.keys(init.agents!)).toContain('reviewer-fact-checker');
 		});
 
 		it('should include Task tools in Leader agent definition', () => {
@@ -856,15 +858,89 @@ describe('Leader Agent', () => {
 			expect(agent.prompt).toContain('EVENT="COMMENT"');
 		});
 
-		it('should include read-only tools for reviewers', () => {
+		it('should include read-only tools and Task tools for reviewers', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
 			const agent = agents['reviewer-opus'];
 			expect(agent.tools).toContain('Read');
 			expect(agent.tools).toContain('Grep');
 			expect(agent.tools).toContain('Glob');
 			expect(agent.tools).toContain('Bash');
+			expect(agent.tools).toContain('Task');
+			expect(agent.tools).toContain('TaskOutput');
+			expect(agent.tools).toContain('TaskStop');
 			expect(agent.tools).not.toContain('Edit');
 			expect(agent.tools).not.toContain('Write');
+		});
+
+		it('should always include reviewer-explorer and reviewer-fact-checker in agents map', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			expect(agents['reviewer-explorer']).toBeDefined();
+			expect(agents['reviewer-fact-checker']).toBeDefined();
+		});
+
+		it('should include reviewer-explorer and reviewer-fact-checker even with no reviewers', () => {
+			const agents = buildReviewerAgents([]);
+			expect(agents['reviewer-explorer']).toBeDefined();
+			expect(agents['reviewer-fact-checker']).toBeDefined();
+		});
+
+		it('should include reviewer-explorer and reviewer-fact-checker with multiple reviewers', () => {
+			const agents = buildReviewerAgents([
+				{ model: 'claude-opus-4-6' },
+				{ model: 'custom-cli', type: 'cli' },
+			]);
+			expect(agents['reviewer-explorer']).toBeDefined();
+			expect(agents['reviewer-fact-checker']).toBeDefined();
+			expect(agents['reviewer-opus']).toBeDefined();
+			expect(agents['reviewer-custom-cli']).toBeDefined();
+		});
+
+		it('reviewer-explorer should NOT have Task tools (one level max)', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			const explorer = agents['reviewer-explorer'];
+			expect(explorer.tools).not.toContain('Task');
+			expect(explorer.tools).not.toContain('TaskOutput');
+			expect(explorer.tools).not.toContain('TaskStop');
+		});
+
+		it('reviewer-fact-checker should NOT have Task tools (one level max)', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			const factChecker = agents['reviewer-fact-checker'];
+			expect(factChecker.tools).not.toContain('Task');
+			expect(factChecker.tools).not.toContain('TaskOutput');
+			expect(factChecker.tools).not.toContain('TaskStop');
+		});
+
+		it('SDK reviewer prompt should describe reviewer-explorer sub-agent usage', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			const agent = agents['reviewer-opus'];
+			expect(agent.prompt).toContain('reviewer-explorer');
+			expect(agent.prompt).toContain('reviewer-fact-checker');
+		});
+
+		it('SDK reviewer prompt should instruct when to use sub-agents vs skip them', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			const agent = agents['reviewer-opus'];
+			expect(agent.prompt).toContain('Non-trivial');
+			expect(agent.prompt).toContain('trivial');
+		});
+
+		it('CLI reviewer prompt should mention sub-agents are available but not to use them', () => {
+			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
+			const agent = agents['reviewer-custom-cli'];
+			expect(agent.prompt).toContain('reviewer-explorer');
+			expect(agent.prompt).toContain('reviewer-fact-checker');
+			expect(agent.prompt).toContain('Do not spawn sub-agents');
+		});
+
+		it('should not overwrite built-in sub-agents if reviewer model maps to same short name', () => {
+			// A model named 'explorer' would normally produce 'reviewer-explorer' via toShortModelName,
+			// which would collide with the built-in definition. usedNames must prevent this.
+			const agents = buildReviewerAgents([{ model: 'explorer' }]);
+			// Built-in reviewer-explorer must be the real sub-agent definition (has CONTEXT_FINDINGS format)
+			expect(agents['reviewer-explorer'].prompt).toContain('---CONTEXT_FINDINGS---');
+			// The colliding reviewer must be renamed with a counter suffix
+			expect(agents['reviewer-explorer-2']).toBeDefined();
 		});
 
 		it('should detect GLM provider label for SDK reviewers', () => {
