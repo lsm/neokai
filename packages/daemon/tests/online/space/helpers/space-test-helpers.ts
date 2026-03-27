@@ -13,18 +13,27 @@
  * - readGateData           — read current gate data for a (runId, gateId) pair
  * - approveGate            — human-approve a gate (writes approved:true + triggers activation)
  * - rejectGate             — human-reject a gate (writes approved:false, run → needs_attention)
+ * - markRunFailed          — mark run as needs_attention with a specific failureReason
  * - waitForNodeStatus      — poll until at least one task for a node reaches a target status
  * - waitForRunStatus       — poll until the workflow run reaches a target status
  * - getGateArtifacts       — fetch gate artifacts (changed files + diff) for a run
  * - mockAgentDone          — mark a task as completed directly via spaceTask.update
+ * - restartDaemon          — kill the daemon and restart it with the same workspace/database
  *
  * ## Usage
  *
  *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/space/...
  */
 
-import type { DaemonServerContext } from '../../helpers/daemon-server';
-import type { Space, SpaceAgent, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/shared';
+import { createDaemonServer, type DaemonServerContext } from '../../../helpers/daemon-server';
+import type {
+	Space,
+	SpaceAgent,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+	SpaceTask,
+	WorkflowRunFailureReason,
+} from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -427,4 +436,68 @@ export async function getTasksForNodeId(
 	})) as SpaceTask[];
 
 	return tasks.filter((t) => t.workflowRunId === runId && t.workflowNodeId === nodeId);
+}
+
+// ---------------------------------------------------------------------------
+// Failure simulation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark a workflow run as needs_attention with a specific failure reason.
+ * Simulates what the Space Agent does when it detects an unrecoverable failure
+ * (e.g. agentCrash, maxIterationsReached).
+ *
+ * Uses the spaceWorkflowRun.markFailed RPC which transitions the run to
+ * needs_attention and sets the failureReason field atomically.
+ */
+export async function markRunFailed(
+	daemon: DaemonServerContext,
+	runId: string,
+	failureReason: WorkflowRunFailureReason,
+	reason?: string
+): Promise<{ run: SpaceWorkflowRun }> {
+	return (await daemon.messageHub.request('spaceWorkflowRun.markFailed', {
+		id: runId,
+		failureReason,
+		reason,
+	})) as { run: SpaceWorkflowRun };
+}
+
+// ---------------------------------------------------------------------------
+// Daemon restart helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Restart the daemon with the same workspace directory (and therefore the
+ * same SQLite database).  Used by restart-persistence tests to verify that
+ * gate data, run state, and task state survive a full daemon restart.
+ *
+ * **In-process mode only** (default): reads the dbPath from the hidden
+ * `daemonContext` property that createInProcessDaemonServer attaches to the
+ * returned context.  Does NOT work when DAEMON_TEST_SPAWN=true is set.
+ *
+ * Steps:
+ *  1. Extract the workspace path from the running daemon context.
+ *  2. Kill the daemon and wait for clean shutdown.
+ *  3. Spin up a new daemon targeting the same workspace / DB file.
+ *
+ * The caller is responsible for updating any variable holding the old
+ * DaemonServerContext reference (e.g. `daemon = await restartDaemon(daemon)`).
+ */
+export async function restartDaemon(daemon: DaemonServerContext): Promise<DaemonServerContext> {
+	const { workspacePath } = daemon;
+
+	if (!workspacePath) {
+		throw new Error(
+			'restartDaemon: workspacePath not found on daemon context — only works with ' +
+				'in-process mode (do not set DAEMON_TEST_SPAWN=true for restart tests)'
+		);
+	}
+
+	// Gracefully shut down the current daemon
+	daemon.kill('SIGTERM');
+	await daemon.waitForExit();
+
+	// Start a new daemon with the same workspace so it picks up the existing DB
+	return createDaemonServer({ workspacePath });
 }

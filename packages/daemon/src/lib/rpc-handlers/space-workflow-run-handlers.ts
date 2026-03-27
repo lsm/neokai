@@ -6,6 +6,7 @@
  * - spaceWorkflowRun.list           - Lists runs for a space (optional status filter)
  * - spaceWorkflowRun.get            - Gets a run by ID
  * - spaceWorkflowRun.cancel         - Cancels a run and all pending tasks
+ * - spaceWorkflowRun.markFailed     - Marks a run as needs_attention with a specific failure reason
  * - spaceWorkflowRun.approveGate    - Approves or rejects a human approval gate
  * - spaceWorkflowRun.listGateData   - Returns all gate data records for a run
  * - spaceWorkflowRun.getGateArtifacts - Returns changed files and diff summary for a run's worktree
@@ -23,7 +24,7 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
-import type { WorkflowRunStatus } from '@neokai/shared';
+import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@neokai/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-run-handlers');
@@ -234,6 +235,67 @@ export function setupSpaceWorkflowRunHandlers(
 
 		// needs_attention → in_progress (human resolved the blocking issue)
 		const updated = workflowRunRepo.transitionStatus(params.id, 'in_progress');
+
+		daemonHub
+			.emit('space.workflowRun.updated', {
+				sessionId: 'global',
+				spaceId: run.spaceId,
+				runId: run.id,
+				run: updated,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.workflowRun.updated:', err);
+			});
+
+		return { run: updated };
+	});
+
+	// ─── spaceWorkflowRun.markFailed ─────────────────────────────────────────
+	//
+	// Transitions a run to needs_attention with a specific failureReason.
+	// Production RPC called by the Space Agent when it detects an unrecoverable
+	// failure in a task agent session: e.g. agentCrash (unexpected termination),
+	// maxIterationsReached, or nodeTimeout. Also used in integration tests to
+	// exercise the needs_attention path without a real LLM session.
+	messageHub.onRequest('spaceWorkflowRun.markFailed', async (data) => {
+		const params = data as {
+			id: string;
+			failureReason: WorkflowRunFailureReason;
+			reason?: string;
+		};
+
+		if (!params.id) throw new Error('id is required');
+		if (!params.failureReason) throw new Error('failureReason is required');
+
+		const run = workflowRunRepo.getRun(params.id);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.id}`);
+
+		if (run.status === 'completed' || run.status === 'cancelled') {
+			throw new Error(`Cannot mark a ${run.status} workflow run as failed`);
+		}
+		if (run.status === 'needs_attention') {
+			// Already in needs_attention — just update failureReason
+			const updated =
+				workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
+
+			daemonHub
+				.emit('space.workflowRun.updated', {
+					sessionId: 'global',
+					spaceId: run.spaceId,
+					runId: run.id,
+					run: updated,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.workflowRun.updated:', err);
+				});
+
+			return { run: updated };
+		}
+
+		// Transition to needs_attention then set failureReason
+		workflowRunRepo.transitionStatus(params.id, 'needs_attention');
+		const updated =
+			workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
 		daemonHub
 			.emit('space.workflowRun.updated', {
