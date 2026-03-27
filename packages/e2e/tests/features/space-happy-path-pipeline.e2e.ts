@@ -91,7 +91,7 @@ async function cancelRun(
 		await page.evaluate(async (rid) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) return;
-			await hub.request('spaceWorkflowRun.cancel', { runId: rid });
+			await hub.request('spaceWorkflowRun.cancel', { id: rid });
 		}, runId);
 	} catch {
 		// Best-effort cleanup
@@ -116,8 +116,6 @@ async function deleteSpace(
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Space Happy Path Pipeline', () => {
-	// Run serially: each test assumes clean state from a fresh beforeEach.
-	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
@@ -154,6 +152,7 @@ test.describe('Space Happy Path Pipeline', () => {
 		await page.locator('button:has-text("Agents")').click();
 		await expect(page.locator('text=Planner')).toBeVisible({ timeout: 5000 });
 		await expect(page.locator('text=Coder')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=General')).toBeVisible({ timeout: 5000 });
 		await expect(page.locator('text=Reviewer')).toBeVisible({ timeout: 5000 });
 		await expect(page.locator('text=QA')).toBeVisible({ timeout: 5000 });
 
@@ -283,9 +282,18 @@ test.describe('Space Happy Path Pipeline', () => {
 		const noFilesEl = page.getByTestId('no-files');
 
 		const state = await Promise.race([
-			errorEl.waitFor({ state: 'visible', timeout: 5000 }).then(() => 'error' as const),
-			diffSummaryEl.waitFor({ state: 'visible', timeout: 5000 }).then(() => 'diff' as const),
-			noFilesEl.waitFor({ state: 'visible', timeout: 5000 }).then(() => 'no-files' as const),
+			errorEl
+				.waitFor({ state: 'visible', timeout: 5000 })
+				.then(() => 'error' as const)
+				.catch(() => {}),
+			diffSummaryEl
+				.waitFor({ state: 'visible', timeout: 5000 })
+				.then(() => 'diff' as const)
+				.catch(() => {}),
+			noFilesEl
+				.waitFor({ state: 'visible', timeout: 5000 })
+				.then(() => 'no-files' as const)
+				.catch(() => {}),
 		]);
 
 		// Any terminal state is acceptable for an E2E test without a real worktree.
