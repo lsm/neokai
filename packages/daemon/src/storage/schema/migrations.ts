@@ -3898,9 +3898,18 @@ export function runMigration62(db: BunDatabase): void {
 		db.exec(
 			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)`
 		);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
 		db.exec(
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_one_per_agent_slot ON space_tasks (workflow_run_id, workflow_node_id, agent_name) WHERE workflow_run_id IS NOT NULL AND workflow_node_id IS NOT NULL AND agent_name IS NOT NULL`
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
 		);
+		db.exec(`
+			CREATE UNIQUE INDEX IF NOT EXISTS uq_space_tasks_run_node_agent
+			ON space_tasks (workflow_run_id, workflow_node_id, agent_name)
+			WHERE workflow_run_id IS NOT NULL
+				AND workflow_node_id IS NOT NULL
+				AND agent_name IS NOT NULL
+				AND status IN ('pending', 'in_progress', 'review', 'rate_limited', 'usage_limited')
+		`);
 		db.exec(
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
 		);
