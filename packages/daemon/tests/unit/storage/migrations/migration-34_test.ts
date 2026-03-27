@@ -126,9 +126,9 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 
 		expect(() => {
 			db.prepare(
-				`INSERT INTO space_tasks (id, space_id, title, description, status, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)`
-			).run('st-1', 'space-1', 'Test Task', 'desc', 'archived', now, now);
+				`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('st-1', 'space-1', 1, 'Test Task', 'desc', 'archived', now, now);
 		}).not.toThrow();
 
 		const row = db.prepare(`SELECT status FROM space_tasks WHERE id = 'st-1'`).get() as {
