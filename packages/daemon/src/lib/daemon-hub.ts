@@ -353,7 +353,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		goalId: string;
 		goal: import('@neokai/shared').RoomGoal;
 	};
-	/** Emitted when a coder/general task completes without human review (semi-autonomous mode) */
+	/** Emitted when a coder/general task completes without human review (semi-autonomous or no-pr mode) */
 	'goal.task.auto_completed': {
 		sessionId: string; // 'room:${roomId}' for channel routing
 		roomId: string;
@@ -361,7 +361,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		taskId: string;
 		taskTitle: string;
 		prUrl: string;
-		approvalSource: 'leader_semi_auto';
+		approvalSource: 'leader_semi_auto' | 'leader_no_pr';
 	};
 	'goal.updated': {
 		sessionId: string;
