@@ -93,36 +93,42 @@ test.describe('Tools Modal - Redesigned', () => {
 		await expect(page.getByText('This session').first()).toBeVisible();
 	});
 
-	test('should collapse App MCP Servers group', async ({ page }) => {
+	test('should collapse App MCP Servers group via header button', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
-
 		await openToolsModal(page);
 
-		// The App MCP Servers group header should be visible
 		const appMcpHeader = page.locator('button:has-text("App MCP Servers")');
 		await expect(appMcpHeader).toBeVisible();
 
-		// Click to collapse
+		// Initially expanded (aria-expanded="true")
+		await expect(appMcpHeader).toHaveAttribute('aria-expanded', 'true');
+
+		// Collapse
 		await appMcpHeader.click();
 
-		// After collapsing, no items from that group should be visible
-		// (the group count is still shown in the header)
-		await expect(appMcpHeader).toBeVisible();
+		// Should now be collapsed
+		await expect(appMcpHeader).toHaveAttribute('aria-expanded', 'false');
 	});
 
-	test('should collapse Project MCP Servers group', async ({ page }) => {
+	test('should collapse Project MCP Servers group via header button', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
-
 		await openToolsModal(page);
 
 		const fileMcpHeader = page.locator('button:has-text("Project MCP Servers")');
 		await expect(fileMcpHeader).toBeVisible();
 
-		// Collapse the group
+		// Initially expanded
+		await expect(fileMcpHeader).toHaveAttribute('aria-expanded', 'true');
+
+		// Collapse
 		await fileMcpHeader.click();
 
-		// Header should still be visible (just collapsed)
-		await expect(fileMcpHeader).toBeVisible();
+		// Should now be collapsed
+		await expect(fileMcpHeader).toHaveAttribute('aria-expanded', 'false');
+
+		// Re-expand
+		await fileMcpHeader.click();
+		await expect(fileMcpHeader).toHaveAttribute('aria-expanded', 'true');
 	});
 
 	test('should show NeoKai Tools with Memory toggle', async ({ page }) => {

@@ -27,6 +27,12 @@ import {
 	type McpServersFromSourcesResponse,
 } from '../lib/api-helpers.ts';
 import { skillsStore } from '../lib/skills-store.ts';
+import {
+	isServerEnabled,
+	toggleServer as toggleServerUtil,
+	toggleGroupServers,
+	computeGroupState,
+} from './ToolsModal.utils.ts';
 
 interface ToolsModalProps {
 	isOpen: boolean;
@@ -52,7 +58,6 @@ function ScopeBadge({ scope }: { scope: 'global' | 'session' }) {
 // Collapsible group header component
 interface GroupHeaderProps {
 	title: string;
-	description?: string;
 	isOpen: boolean;
 	onToggleOpen: () => void;
 	allEnabled: boolean;
@@ -60,6 +65,7 @@ interface GroupHeaderProps {
 	onToggleAll: () => void;
 	scope: 'global' | 'session';
 	itemCount: number;
+	disabled?: boolean;
 }
 
 function GroupHeader({
@@ -71,6 +77,7 @@ function GroupHeader({
 	onToggleAll,
 	scope,
 	itemCount,
+	disabled = false,
 }: GroupHeaderProps) {
 	const isIndeterminate = someEnabled && !allEnabled;
 
@@ -109,6 +116,7 @@ function GroupHeader({
 							if (el) el.indeterminate = isIndeterminate;
 						}}
 						onChange={onToggleAll}
+						disabled={disabled}
 						class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 					/>
 				</label>
@@ -148,9 +156,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			loadGlobalConfig();
 			void skillsStore.subscribe();
 		}
-		if (!isOpen) {
+		return () => {
 			skillsStore.unsubscribe();
-		}
+		};
 	}, [isOpen, session?.id]);
 
 	// Reload MCP servers when setting sources change
@@ -201,6 +209,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
 	const isMemoryAllowed = useComputed(() => globalConfig.value?.kaiTools?.memory?.allowed ?? true);
+	const isClaudeCodePresetAllowed = useComputed(
+		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
+	);
 
 	// App-level MCP skills
 	const appMcpSkills = useComputed(() =>
@@ -208,15 +219,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	);
 
 	// File-based MCP server helpers
-	const isServerEnabled = (serverName: string): boolean =>
-		!disabledMcpServers.value.includes(serverName);
-
-	const toggleServer = (serverName: string) => {
-		if (disabledMcpServers.value.includes(serverName)) {
-			disabledMcpServers.value = disabledMcpServers.value.filter((s) => s !== serverName);
-		} else {
-			disabledMcpServers.value = [...disabledMcpServers.value, serverName];
-		}
+	const handleToggleServer = (serverName: string) => {
+		disabledMcpServers.value = toggleServerUtil(disabledMcpServers.value, serverName);
 		hasChanges.value = true;
 	};
 
@@ -239,59 +243,44 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	// Group toggle for app-level skills
 	const toggleAppMcpGroup = async () => {
 		const skills = appMcpSkills.value;
+		if (skills.length === 0) return;
 		const allOn = skills.every((s) => s.enabled);
 		const newEnabled = !allOn;
-		for (const skill of skills) {
-			if (skill.enabled !== newEnabled) {
-				const toggling = new Set(skillToggling.value);
-				toggling.add(skill.id);
-				skillToggling.value = toggling;
-				try {
-					await skillsStore.setEnabled(skill.id, newEnabled);
-				} catch {
-					// Continue with remaining skills
-				} finally {
-					const done = new Set(skillToggling.value);
-					done.delete(skill.id);
-					skillToggling.value = done;
-				}
-			}
-		}
+		const toToggle = skills.filter((s) => s.enabled !== newEnabled);
+
+		// Mark all as toggling
+		skillToggling.value = new Set([...skillToggling.value, ...toToggle.map((s) => s.id)]);
+
+		await Promise.allSettled(
+			toToggle.map((skill) =>
+				skillsStore.setEnabled(skill.id, newEnabled).catch(() => {
+					toast.error(`Failed to toggle ${skill.displayName}`);
+				})
+			)
+		);
+
+		// Clear toggling state for all
+		const done = new Set(skillToggling.value);
+		for (const skill of toToggle) done.delete(skill.id);
+		skillToggling.value = done;
 	};
 
 	// Group toggle for file-based servers by source
 	const toggleFileMcpGroup = (source: SettingSource) => {
 		const servers = mcpServersData.value?.servers[source] ?? [];
-		const allOn = servers.every((s) => isServerEnabled(s.name));
-		if (allOn) {
-			// Disable all in this source
-			const toDisable = servers
-				.map((s) => s.name)
-				.filter((n) => !disabledMcpServers.value.includes(n));
-			disabledMcpServers.value = [...disabledMcpServers.value, ...toDisable];
-		} else {
-			// Enable all in this source
-			const names = new Set(servers.map((s) => s.name));
-			disabledMcpServers.value = disabledMcpServers.value.filter((n) => !names.has(n));
-		}
+		disabledMcpServers.value = toggleGroupServers(
+			disabledMcpServers.value,
+			servers.map((s) => s.name)
+		);
 		hasChanges.value = true;
 	};
 
 	// Group toggle for all file-based servers across all sources
 	const toggleAllFileMcp = () => {
-		const allServers = (['user', 'project', 'local'] as SettingSource[])
+		const allServerNames = (['user', 'project', 'local'] as SettingSource[])
 			.filter((src) => settingSources.value.includes(src))
-			.flatMap((src) => mcpServersData.value?.servers[src] ?? []);
-		const allOn = allServers.every((s) => isServerEnabled(s.name));
-		if (allOn) {
-			const toDisable = allServers
-				.map((s) => s.name)
-				.filter((n) => !disabledMcpServers.value.includes(n));
-			disabledMcpServers.value = [...disabledMcpServers.value, ...toDisable];
-		} else {
-			const names = new Set(allServers.map((s) => s.name));
-			disabledMcpServers.value = disabledMcpServers.value.filter((n) => !names.has(n));
-		}
+			.flatMap((src) => (mcpServersData.value?.servers[src] ?? []).map((s) => s.name));
+		disabledMcpServers.value = toggleGroupServers(disabledMcpServers.value, allServerNames);
 		hasChanges.value = true;
 	};
 
@@ -359,12 +348,15 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const allFileMcpServers = enabledSources.flatMap(
 		(src) => mcpServersData.value?.servers[src] ?? []
 	);
-	const fileMcpAllOn = allFileMcpServers.every((s) => isServerEnabled(s.name));
-	const fileMcpSomeOn = allFileMcpServers.some((s) => isServerEnabled(s.name));
+	const allFileMcpServerNames = allFileMcpServers.map((s) => s.name);
+	const { allEnabled: fileMcpAllOn, someEnabled: fileMcpSomeOn } = computeGroupState(
+		disabledMcpServers.value,
+		allFileMcpServerNames
+	);
 
 	// App MCP counts
 	const appSkills = appMcpSkills.value;
-	const appAllOn = appSkills.every((s) => s.enabled);
+	const appAllOn = appSkills.length > 0 && appSkills.every((s) => s.enabled);
 	const appSomeOn = appSkills.some((s) => s.enabled);
 
 	return (
@@ -495,8 +487,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 											{enabledSources.map((source) => {
 												const servers = mcpServersData.value?.servers[source] ?? [];
 												if (servers.length === 0) return null;
-												const srcAllOn = servers.every((s) => isServerEnabled(s.name));
-												const srcSomeOn = servers.some((s) => isServerEnabled(s.name));
+												const { allEnabled: srcAllOn, someEnabled: srcSomeOn } = computeGroupState(
+													disabledMcpServers.value,
+													servers.map((s) => s.name)
+												);
 												return (
 													<div key={source}>
 														<div class="flex items-center justify-between mb-1">
@@ -548,8 +542,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 																	</div>
 																	<input
 																		type="checkbox"
-																		checked={isServerEnabled(server.name)}
-																		onChange={() => toggleServer(server.name)}
+																		checked={isServerEnabled(disabledMcpServers.value, server.name)}
+																		onChange={() => handleToggleServer(server.name)}
 																		class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 																	/>
 																</label>
@@ -578,9 +572,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 						}}
 						allEnabled={memoryEnabled.value}
 						someEnabled={memoryEnabled.value}
-						onToggleAll={toggleMemory}
+						onToggleAll={() => {
+							if (isMemoryAllowed.value) toggleMemory();
+						}}
 						scope="session"
 						itemCount={1}
+						disabled={!isMemoryAllowed.value}
 					/>
 					{neoKaiGroupOpen.value && (
 						<div class="mt-1 ml-5 space-y-1">
@@ -659,7 +656,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 								<h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
 									System Prompt
 								</h4>
-								<label class="flex items-center justify-between p-2 rounded-lg bg-dark-800/50 hover:bg-dark-800 cursor-pointer">
+								<label
+									class={`flex items-center justify-between p-2 rounded-lg bg-dark-800/50 transition-colors ${isClaudeCodePresetAllowed.value ? 'hover:bg-dark-800 cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+								>
 									<div>
 										<div class="text-sm text-gray-200">Claude Code Preset</div>
 										<div class="text-xs text-gray-500">Use official Claude Code system prompt</div>
@@ -671,6 +670,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 											useClaudeCodePreset.value = !useClaudeCodePreset.value;
 											hasChanges.value = true;
 										}}
+										disabled={!isClaudeCodePresetAllowed.value}
 										class="w-4 h-4 rounded border-gray-600 text-blue-500"
 									/>
 								</label>
