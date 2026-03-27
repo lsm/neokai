@@ -112,7 +112,10 @@ class RoomStore {
 	// ========================================
 
 	/** Effective per-room skills (global enabled state merged with room overrides via skills.byRoom). */
-	readonly roomSkills = signal<EffectiveRoomSkill[]>([]);
+	readonly skillStore = new EntityStore<EffectiveRoomSkill>();
+
+	/** Pass-through computed for backward-compatible access to skill array. */
+	readonly roomSkills = computed(() => this.skillStore.toArray());
 
 	/** Auto-completed task notifications (from semi-autonomous mode) */
 	readonly autoCompletedNotifications = signal<
@@ -304,7 +307,7 @@ class RoomStore {
 		this.sessions.value = [];
 		this.error.value = null;
 		this.goalStore.clear();
-		this.roomSkills.value = [];
+		this.skillStore.clear();
 		this.autoCompletedNotifications.value = [];
 		this.runtimeState.value = null;
 
@@ -540,7 +543,7 @@ class RoomStore {
 				(event) => {
 					if (event.subscriptionId !== skillsSubId) return;
 					if (!this.activeSubscriptionIds.has(skillsSubId)) return; // stale-event guard
-					this.roomSkills.value = event.rows as EffectiveRoomSkill[];
+					this.skillStore.applySnapshot(event.rows as EffectiveRoomSkill[]);
 				}
 			);
 			cleanups.push(unsubSkillSnapshot);
@@ -548,19 +551,9 @@ class RoomStore {
 			const unsubSkillDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== skillsSubId) return;
 				if (!this.activeSubscriptionIds.has(skillsSubId)) return; // stale-event guard
-				let current = this.roomSkills.value;
-				if (event.removed?.length) {
-					const removedIds = new Set((event.removed as EffectiveRoomSkill[]).map((r) => r.id));
-					current = current.filter((s) => !removedIds.has(s.id));
-				}
-				if (event.updated?.length) {
-					const updatedMap = new Map((event.updated as EffectiveRoomSkill[]).map((u) => [u.id, u]));
-					current = current.map((s) => updatedMap.get(s.id) ?? s);
-				}
-				if (event.added?.length) {
-					current = [...current, ...(event.added as EffectiveRoomSkill[])];
-				}
-				this.roomSkills.value = current;
+				this.skillStore.applyDelta(
+					event as { added?: EffectiveRoomSkill[]; removed?: EffectiveRoomSkill[]; updated?: EffectiveRoomSkill[] }
+				);
 			});
 			cleanups.push(unsubSkillDelta);
 
