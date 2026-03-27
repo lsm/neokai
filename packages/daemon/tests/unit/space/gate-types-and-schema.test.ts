@@ -37,7 +37,7 @@ function freshDb(): Database {
 	createSpaceTables(d);
 	const now = Date.now();
 	d.exec(
-		`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES ('${SPACE_ID}', '/tmp/test', 'Test Space', ${now}, ${now})`
+		`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('${SPACE_ID}', '${SPACE_ID}', '/tmp/test', 'Test Space', ${now}, ${now})`
 	);
 	return d;
 }

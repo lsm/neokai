@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { runMigration61 } from '../../../src/storage/schema/migrations';
+import { runMigration63 } from '../../../src/storage/schema/migrations';
 import { slugify } from '../../../src/lib/space/slug';
 
 /**
@@ -201,7 +201,7 @@ describe('Migration 61 — slug backfill', () => {
 		).run('s2', '/tmp/ws-2', 'My Project', now, now);
 
 		// Run migration
-		runMigration61(db);
+		runMigration63(db);
 
 		// Verify slugs were backfilled
 		const rows = db.prepare('SELECT id, slug FROM spaces ORDER BY id').all() as Array<{
@@ -245,7 +245,7 @@ describe('Migration 61 — slug backfill', () => {
 		).run('s2', '/tmp/ws-2', 'My Project', now, now);
 
 		// Run migration
-		runMigration61(db);
+		runMigration63(db);
 
 		// Verify collision was resolved
 		const rows = db.prepare('SELECT id, slug FROM spaces ORDER BY id').all() as Array<{
@@ -279,7 +279,7 @@ describe('Migration 61 — slug backfill', () => {
 			)
 		`);
 
-		runMigration61(db);
+		runMigration63(db);
 
 		// Verify slug column has NOT NULL constraint
 		const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{
@@ -321,7 +321,7 @@ describe('Migration 61 — slug backfill', () => {
 		`);
 
 		// Run twice — should not throw
-		runMigration61(db);
-		runMigration61(db);
+		runMigration63(db);
+		runMigration63(db);
 	});
 });

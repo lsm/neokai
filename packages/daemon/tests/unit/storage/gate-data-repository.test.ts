@@ -30,7 +30,7 @@ function freshDb(): Database {
 	// Insert required parent rows for FK constraints
 	const now = Date.now();
 	d.exec(
-		`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES ('sp1', '/tmp/test', 'Test Space', ${now}, ${now})`
+		`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('sp1', 'sp1', '/tmp/test', 'Test Space', ${now}, ${now})`
 	);
 	d.exec(
 		`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES ('wf1', 'sp1', 'Test Workflow', ${now}, ${now})`

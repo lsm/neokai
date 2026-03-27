@@ -4116,7 +4116,6 @@ export function runMigration63(db: BunDatabase): void {
 			name: string;
 		}>;
 
-		const usedSlugs = new Set<string>();
 		const updateStmt = db.prepare('UPDATE spaces SET slug = ? WHERE id = ? AND slug IS NULL');
 
 		for (const row of rows) {

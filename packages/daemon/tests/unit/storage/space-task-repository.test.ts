@@ -488,6 +488,7 @@ describe('SpaceTaskRepository', () => {
 		it('scopes taskNumber per space (two spaces get independent sequences)', () => {
 			const space2 = spaceRepo.createSpace({
 				workspacePath: '/workspace/test2',
+				slug: 'space-2',
 				name: 'Space 2',
 			});
 
@@ -569,6 +570,7 @@ describe('SpaceTaskRepository', () => {
 
 			const space2 = spaceRepo.createSpace({
 				workspacePath: '/workspace/test3',
+				slug: 'space-3',
 				name: 'Space 3',
 			});
 			expect(repo.getTaskByNumber(space2.id, 1)).toBeNull();

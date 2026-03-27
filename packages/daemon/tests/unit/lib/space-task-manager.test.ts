@@ -87,7 +87,7 @@ describe('SpaceTaskManager', () => {
 			// Create another space and its manager
 			const otherSpace = spaceRepo.createSpace({
 				workspacePath: '/workspace/other',
-				slug: 'other',
+				slug: 'other-space',
 				name: 'Other',
 			});
 			const otherManager = new SpaceTaskManager(db as any, otherSpace.id);
@@ -751,6 +751,7 @@ describe('SpaceTaskManager', () => {
 
 			const otherSpace = spaceRepo.createSpace({
 				workspacePath: '/workspace/other',
+				slug: 'other-scoped',
 				name: 'Other',
 			});
 			const otherManager = new SpaceTaskManager(db as any, otherSpace.id);
