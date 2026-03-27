@@ -13,7 +13,60 @@
  * so no real agent sessions are created.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { mock } from 'bun:test';
+
+// Re-declare the SDK mock so it survives Bun's module isolation.
+// Without this, room-agent-tools.test.ts (which runs before this file alphabetically)
+// overrides tool() to return only { name }, discarding description/inputSchema/handler.
+// This file's tests inspect those fields, so we need the full mock.
+mock.module('@anthropic-ai/claude-agent-sdk', () => {
+	class MockMcpServer {
+		readonly _registeredTools: Record<string, object> = {};
+		connect(): void {}
+		disconnect(): void {}
+	}
+
+	let _toolBatch: Array<{ name: string; def: object }> = [];
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	function tool(name: string, description: string, inputSchema: any, handler: unknown): object {
+		const def = { name, description, inputSchema, handler };
+		_toolBatch.push({ name, def });
+		return def;
+	}
+
+	return {
+		query: mock(async () => ({ interrupt: () => {} })),
+		interrupt: mock(async () => {}),
+		supportedModels: mock(async () => {
+			throw new Error('SDK unavailable');
+		}),
+		createSdkMcpServer: mock((_opts: { name: string; version?: string; tools?: unknown[] }) => {
+			const server = new MockMcpServer();
+			for (const { name, def } of _toolBatch) {
+				server._registeredTools[name] = def;
+			}
+			// Fallback: recover from _opts.tools if _toolBatch was empty
+			if (Object.keys(server._registeredTools).length === 0 && Array.isArray(_opts.tools)) {
+				for (const t of _opts.tools) {
+					const td = t as { name?: string };
+					if (td.name) server._registeredTools[td.name] = t;
+				}
+			}
+			_toolBatch = [];
+			return {
+				type: 'sdk' as const,
+				name: _opts.name,
+				version: _opts.version ?? '1.0.0',
+				tools: _opts.tools ?? [],
+				instance: server,
+			};
+		}),
+		tool,
+	};
+});
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';

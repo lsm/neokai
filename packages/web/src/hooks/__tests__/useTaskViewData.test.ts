@@ -390,6 +390,101 @@ describe('useTaskViewData', () => {
 	});
 });
 
+describe('useTaskViewData — short ID deep link resolution', () => {
+	beforeEach(() => {
+		mockMessageHubState.isConnected = true;
+		mockRequest.mockReset();
+		mockOnEvent.mockClear();
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.getGroup') return { group: makeGroup() };
+			if (method === 'session.get') return { session: null };
+			return {};
+		});
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('resolves task by shortId when taskId is a short ID (e.g. t-42)', async () => {
+		const taskWithShortId = makeTask('in_progress');
+		taskWithShortId.shortId = 't-42';
+		mockTasksSignal.value = [taskWithShortId];
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 't-42'));
+
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		expect(result.current.task).not.toBeNull();
+		expect(result.current.task?.id).toBe('task-1');
+		expect(result.current.task?.shortId).toBe('t-42');
+	});
+
+	it('resolves task by UUID when taskId is a UUID', async () => {
+		const taskWithShortId = makeTask('in_progress');
+		taskWithShortId.shortId = 't-42';
+		mockTasksSignal.value = [taskWithShortId];
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		expect(result.current.task).not.toBeNull();
+		expect(result.current.task?.id).toBe('task-1');
+	});
+
+	it('returns null when short ID does not match any task', async () => {
+		const taskWithShortId = makeTask('in_progress');
+		taskWithShortId.shortId = 't-42';
+		mockTasksSignal.value = [taskWithShortId];
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 't-999'));
+
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		expect(result.current.task).toBeNull();
+	});
+
+	it('sends short ID to RPC calls (daemon resolves it)', async () => {
+		const taskWithShortId = makeTask('in_progress');
+		taskWithShortId.shortId = 't-42';
+		mockTasksSignal.value = [taskWithShortId];
+
+		renderHook(() => useTaskViewData('room-1', 't-42'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.getGroup', {
+				roomId: 'room-1',
+				taskId: 't-42',
+			});
+		});
+	});
+
+	it('reactively updates when task appears in store after initial deep link load', async () => {
+		// Simulate deep link load before LiveQuery delivers tasks
+		mockTasksSignal.value = [];
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 't-42'));
+
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+		expect(result.current.task).toBeNull();
+
+		// LiveQuery delivers the task
+		const taskWithShortId = makeTask('in_progress');
+		taskWithShortId.shortId = 't-42';
+
+		act(() => {
+			mockTasksSignal.value = [taskWithShortId];
+		});
+
+		expect(result.current.task).not.toBeNull();
+		expect(result.current.task?.shortId).toBe('t-42');
+	});
+});
+
 describe('useTaskViewData — action handlers', () => {
 	beforeEach(() => {
 		mockMessageHubState.isConnected = true;
