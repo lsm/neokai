@@ -101,6 +101,7 @@ export class SDKMessageHandler {
 	private isZeroTokenResult(message: SDKMessage): boolean {
 		if (!isSDKResultSuccess(message)) return false;
 		const usage = message.usage;
+		if (!usage) return true;
 		return (
 			usage.input_tokens === 0 &&
 			usage.output_tokens === 0 &&
@@ -684,7 +685,14 @@ export class SDKMessageHandler {
 		if (!isSDKResultSuccess(message)) return;
 
 		// Update session metadata with token usage and costs
-		const usage = message.usage;
+		// Guard: SDK may produce result messages without usage (e.g. bridge providers
+		// like anthropic-copilot where the upstream SDK fails to populate usage).
+		const usage = message.usage ?? {
+			input_tokens: 0,
+			output_tokens: 0,
+			cache_creation_input_tokens: 0,
+			cache_read_input_tokens: 0,
+		};
 		const totalTokens = usage.input_tokens + usage.output_tokens;
 
 		// SDK's total_cost_usd is CUMULATIVE within a single run, but RESETS when agent restarts
