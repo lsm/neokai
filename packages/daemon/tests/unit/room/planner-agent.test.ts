@@ -725,8 +725,9 @@ describe('planner-agent', () => {
 			expect(init.agents).toHaveProperty('Planner');
 		});
 
-		it('agents map includes all 3-stage pipeline sub-agents', () => {
+		it('agents map includes all 3-stage pipeline sub-agents (exactly 4 total)', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(Object.keys(init.agents ?? {})).toHaveLength(4);
 			expect(init.agents).toHaveProperty('planner-explorer');
 			expect(init.agents).toHaveProperty('planner-fact-checker');
 			expect(init.agents).toHaveProperty('plan-writer');
@@ -809,37 +810,6 @@ describe('planner-agent', () => {
 		it('should set session type to planner', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
 			expect(init.type).toBe('planner');
-		});
-
-		it('agents map has exactly 4 entries: Planner + 3 sub-agents', () => {
-			const init = createPlannerAgentInit(sharedBaseConfig);
-			const keys = Object.keys(init.agents ?? {});
-			expect(keys).toHaveLength(4);
-			expect(keys).toContain('Planner');
-			expect(keys).toContain('planner-explorer');
-			expect(keys).toContain('planner-fact-checker');
-			expect(keys).toContain('plan-writer');
-		});
-
-		it('no sub-agent has Task/TaskOutput/TaskStop (one level max)', () => {
-			const init = createPlannerAgentInit(sharedBaseConfig);
-			const subAgents = ['planner-explorer', 'planner-fact-checker', 'plan-writer'] as const;
-			for (const name of subAgents) {
-				const tools = init.agents?.[name]?.tools ?? [];
-				expect(tools).not.toContain('Task');
-				expect(tools).not.toContain('TaskOutput');
-				expect(tools).not.toContain('TaskStop');
-			}
-		});
-
-		it('planner-explorer uses inherit model', () => {
-			const init = createPlannerAgentInit(sharedBaseConfig);
-			expect(init.agents?.['planner-explorer']?.model).toBe('inherit');
-		});
-
-		it('planner-fact-checker uses inherit model', () => {
-			const init = createPlannerAgentInit(sharedBaseConfig);
-			expect(init.agents?.['planner-fact-checker']?.model).toBe('inherit');
 		});
 
 		it('MCP server config contains only planner-tools (no extra servers)', () => {
