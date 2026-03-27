@@ -261,6 +261,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 63: Add slug column to spaces table for human-readable URL identifiers.
 	// Auto-generates slugs from existing space names and adds a UNIQUE index.
 	runMigration63(db);
+
+	// Migration 64: Create space_worktrees table for persisting task ↔ git worktree mappings.
+	// One row per task; keyed by (space_id, task_id) with a per-space unique slug constraint.
+	runMigration64(db);
 }
 
 /**
@@ -4205,4 +4209,36 @@ function generateBaseMigrationSlug(input: string): string {
 	}
 
 	return slug;
+}
+
+/**
+ * Migration 64: Create space_worktrees table.
+ *
+ * Persists the mapping between space tasks and the git worktrees created for them.
+ * Schema:
+ *   id          - UUID primary key
+ *   space_id    - owning space
+ *   task_id     - the task this worktree was created for
+ *   slug        - human-readable folder/branch slug (unique per space)
+ *   path        - absolute filesystem path to the worktree directory
+ *   created_at  - Unix epoch ms
+ *
+ * Constraints:
+ *   UNIQUE(space_id, task_id)  — one worktree per task
+ *   UNIQUE(space_id, slug)     — no two tasks share the same slug within a space
+ */
+function runMigration64(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_worktrees (
+			id         TEXT PRIMARY KEY,
+			space_id   TEXT NOT NULL,
+			task_id    TEXT NOT NULL,
+			slug       TEXT NOT NULL,
+			path       TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			UNIQUE(space_id, task_id),
+			UNIQUE(space_id, slug)
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
 }

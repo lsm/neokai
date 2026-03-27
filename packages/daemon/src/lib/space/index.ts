@@ -3,6 +3,8 @@
  */
 
 export { SpaceManager } from './managers/space-manager';
+export { SpaceWorktreeManager } from './managers/space-worktree-manager';
+export type { SpaceWorktreeInfo } from './managers/space-worktree-manager';
 export {
 	SpaceTaskManager,
 	VALID_SPACE_TASK_TRANSITIONS,
