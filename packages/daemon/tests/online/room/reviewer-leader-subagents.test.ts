@@ -109,7 +109,7 @@ function makeCallbacks(): LeaderToolCallbacks {
 // ---------------------------------------------------------------------------
 
 function agentHasTool(def: AgentDefinition, tool: string): boolean {
-	return Array.isArray(def.tools) && (def.tools as string[]).includes(tool);
+	return Array.isArray(def.tools) && def.tools.includes(tool);
 }
 
 function agentLacksTaskTools(def: AgentDefinition): boolean {

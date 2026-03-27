@@ -59,6 +59,7 @@ ROOM_FILES=(
   room-reviewer-flow.test.ts
   room-tick-job.test.ts
   short-id-flow.test.ts
+  reviewer-leader-subagents.test.ts
 )
 
 FEATURES_FILES=(
