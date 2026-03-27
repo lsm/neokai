@@ -833,6 +833,19 @@ describe('RoomRuntime leader tools', () => {
 			expect(updatedTask!.result).toBe('Research complete');
 		});
 
+		it('should store only artifacts when summary is empty', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: '',
+				no_pr: true,
+				artifacts: 'Created tasks: fix-auth, fix-api',
+			});
+
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.result).toBe('Created tasks: fix-auth, fix-api');
+		});
+
 		it('should leave prUrl and prNumber null/undefined', async () => {
 			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
 
