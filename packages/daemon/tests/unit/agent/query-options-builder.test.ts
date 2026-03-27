@@ -1384,4 +1384,87 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.allowedTools).toContain('WebFetch');
 		});
 	});
+
+	// Task G7: disabled MCP servers must be excluded from mcpServers map regardless of session type
+	describe('disabledMcpServers filtering', () => {
+		it('excludes disabled servers from mcpServers for normal sessions', async () => {
+			mockSession.config.mcpServers = {
+				'my-server': { command: 'run-server' },
+				'other-server': { command: 'run-other' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: ['my-server'],
+			};
+
+			const options = await builder.build();
+
+			expect(options.mcpServers).not.toHaveProperty('my-server');
+			expect(options.mcpServers).toHaveProperty('other-server');
+		});
+
+		it('excludes disabled servers from mcpServers for room_chat sessions', async () => {
+			mockSession.type = 'room_chat';
+			mockSession.config.mcpServers = {
+				'room-agent-tools': { command: 'room-cmd' },
+				'my-project-server': { command: 'project-cmd' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: ['my-project-server'],
+			};
+
+			const options = await builder.build();
+
+			// room_chat always has strictMcpConfig: true and settingSources: []
+			expect(options.strictMcpConfig).toBe(true);
+			expect(options.settingSources).toEqual([]);
+			// Disabled server must not appear even though settingSources is empty
+			expect(options.mcpServers).not.toHaveProperty('my-project-server');
+			expect(options.mcpServers).toHaveProperty('room-agent-tools');
+		});
+
+		it('keeps all servers when disabledMcpServers is empty', async () => {
+			mockSession.config.mcpServers = {
+				'server-a': { command: 'cmd-a' },
+				'server-b': { command: 'cmd-b' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: [],
+			};
+
+			const options = await builder.build();
+
+			expect(options.mcpServers).toHaveProperty('server-a');
+			expect(options.mcpServers).toHaveProperty('server-b');
+		});
+
+		it('returns undefined mcpServers when all servers are disabled', async () => {
+			mockSession.config.mcpServers = {
+				'only-server': { command: 'cmd' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: ['only-server'],
+			};
+
+			const options = await builder.build();
+
+			expect(options.mcpServers).toBeUndefined();
+		});
+
+		it('room_chat allowedTools wildcards exclude disabled server', async () => {
+			mockSession.type = 'room_chat';
+			mockSession.config.mcpServers = {
+				'room-agent-tools': { command: 'room-cmd' },
+				'disabled-server': { command: 'dis-cmd' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: ['disabled-server'],
+			};
+
+			const options = await builder.build();
+
+			// allowedTools wildcards are generated from the filtered mcpServers
+			expect(options.allowedTools).toContain('room-agent-tools__*');
+			expect(options.allowedTools).not.toContain('disabled-server__*');
+		});
+	});
 });
