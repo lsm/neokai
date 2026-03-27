@@ -405,6 +405,58 @@ describe('buildSpaceChatSystemPrompt — escalation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Clarification guidance (M5.3)
+// ---------------------------------------------------------------------------
+
+describe('buildSpaceChatSystemPrompt — clarification guidance', () => {
+	test('includes instruction to ask for clarification on ambiguous requests', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('Ask for clarification');
+	});
+
+	test('includes examples of vague requests that require clarification', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('improve the app');
+		expect(prompt).toContain('make it better');
+		expect(prompt).toContain('help me');
+	});
+
+	test('instructs not to start work until the request is specific enough', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('specific enough to act on');
+	});
+
+	test('mentions unclear scope or success criteria as a reason to ask', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('success criteria');
+	});
+
+	test('mentions multiple interpretations as a reason to ask', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('Multiple interpretations');
+	});
+
+	test('includes examples of clear requests ready to act on', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('Clear requests');
+	});
+
+	test('guides to prefer workflow run with V2 for clear coding work', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('V2 workflow');
+	});
+
+	test('clarification guidance present regardless of autonomy level', () => {
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		for (const prompt of [supervised, semi]) {
+			expect(prompt).toContain('Ask for clarification');
+			expect(prompt).toContain('specific enough to act on');
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Coordination tools section
 // ---------------------------------------------------------------------------
 
