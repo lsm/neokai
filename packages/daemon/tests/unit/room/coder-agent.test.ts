@@ -364,6 +364,16 @@ describe('Coder Agent', () => {
 			expect(init.agents).toHaveProperty('coder-tester');
 		});
 
+		it('agents map has exactly 3 entries (built-ins only) when no worker sub-agents configured', () => {
+			// Verifies the always-on pattern: no conditional branching — Coder, coder-explorer,
+			// coder-tester are always present; no extra agents without worker config.
+			const init = createCoderAgentInit(makeConfig());
+			expect(Object.keys(init.agents ?? {})).toHaveLength(3);
+			expect(Object.keys(init.agents ?? {})).toEqual(
+				expect.arrayContaining(['Coder', 'coder-explorer', 'coder-tester'])
+			);
+		});
+
 		it('Coder agent def includes Task, TaskOutput, TaskStop tools', () => {
 			const init = createCoderAgentInit(makeConfig());
 			const coderDef = init.agents?.['Coder'];
@@ -444,6 +454,18 @@ describe('Coder Agent', () => {
 		it('coder-explorer agent uses inherit model', () => {
 			const init = createCoderAgentInit(makeConfig());
 			expect(init.agents?.['coder-explorer']?.model).toBe('inherit');
+		});
+
+		it('coder-explorer in agents map is the canonical buildCoderExplorerAgentDef() output', () => {
+			// Ensures createCoderAgentInit delegates to the builder rather than inlining
+			// a different definition — keeps the two in sync.
+			const init = createCoderAgentInit(makeConfig());
+			const inMap = init.agents?.['coder-explorer'];
+			const standalone = buildCoderExplorerAgentDef();
+			expect(inMap?.tools).toEqual(standalone.tools);
+			expect(inMap?.model).toBe(standalone.model);
+			expect(inMap?.prompt).toBe(standalone.prompt);
+			expect(inMap?.description).toBe(standalone.description);
 		});
 
 		describe('with worker sub-agents configured', () => {
@@ -656,10 +678,11 @@ describe('Coder Agent', () => {
 			expect(def.model).toBe('inherit');
 		});
 
-		it('has a non-empty description', () => {
+		it('description identifies the agent as read-only codebase explorer', () => {
 			const def = buildCoderExplorerAgentDef();
 			expect(def.description).toBeTruthy();
-			expect(def.description.length).toBeGreaterThan(10);
+			expect(def.description.toLowerCase()).toContain('read-only');
+			expect(def.description.toLowerCase()).toContain('codebase');
 		});
 
 		it('prompt requires ---EXPLORE_RESULT--- structured output block', () => {
