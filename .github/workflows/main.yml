@@ -140,7 +140,8 @@ jobs:
           - mcp
           # Codex bridge tests disabled — requires OPENAI_API_KEY (real API, not mocked)
           # - providers-anthropic-to-codex-bridge
-          - providers-anthropic-copilot
+          # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
+          # - providers-anthropic-copilot
           - rewind
           # Room tests temporarily disabled during refactoring
           # - room-1
@@ -206,9 +207,9 @@ jobs:
             mock_sdk: true
           # - module: providers-anthropic-to-codex-bridge
           #   test_path: tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
-          - module: providers-anthropic-copilot
-            test_path: tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
-            timeout: 15
+          # - module: providers-anthropic-copilot
+          #   test_path: tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
+          #   timeout: 15
           - module: rewind
             test_path: tests/online/rewind
             mock_sdk: true
