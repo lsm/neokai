@@ -5,6 +5,12 @@
  * - Main (flex-1): tabbed view — Dashboard | Agents | Workflows | Settings
  * - Right (~320px, conditional): SpaceTaskPane when a task is selected
  *
+ * Dashboard tab shows WorkflowCanvas:
+ *   - Runtime mode when an active workflow run exists (read-only, live status)
+ *   - Template mode when no active run but workflows exist (editable gates)
+ *   - Falls back to SpaceDashboard when no workflows configured
+ *   - On small screens the canvas is hidden; SpaceDashboard is shown instead
+ *
  * Space navigation is handled by the Context Panel sidebar.
  */
 
@@ -18,6 +24,7 @@ import { SpaceAgentList } from '../components/space/SpaceAgentList';
 import { WorkflowList } from '../components/space/WorkflowList';
 import { WorkflowEditor } from '../components/space/WorkflowEditor';
 import { VisualWorkflowEditor } from '../components/space/visual-editor/VisualWorkflowEditor';
+import { WorkflowCanvas } from '../components/space/WorkflowCanvas';
 import { SpaceSettings } from '../components/space/SpaceSettings';
 import { cn } from '../lib/utils';
 
@@ -60,6 +67,16 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 
 	// Derive active task ID from the global signal
 	const activeTaskId = currentSpaceTaskIdSignal.value;
+
+	// Canvas mode: pick the first active run (runtime) or first workflow (template)
+	const activeRuns = spaceStore.activeRuns.value;
+	const workflows = spaceStore.workflows.value;
+	const activeRun = activeRuns[0] ?? null;
+	const defaultWorkflow = activeRun
+		? (workflows.find((w) => w.id === activeRun.workflowId) ?? workflows[0] ?? null)
+		: (workflows[0] ?? null);
+	/** True when the canvas should be shown on the dashboard tab */
+	const showCanvas = defaultWorkflow !== null;
 
 	// Load space data on mount or when spaceId changes
 	useEffect(() => {
@@ -128,7 +145,6 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 	}
 
 	const space = spaceStore.space.value;
-	const workflows = spaceStore.workflows.value;
 
 	const editingWorkflow =
 		workflowEditId && workflowEditId !== 'new'
@@ -222,7 +238,42 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 						</div>
 					) : (
 						<>
-							{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
+							{activeTab === 'dashboard' && (
+								<>
+									{/* Canvas panel — shown on md+ when a workflow or active run exists */}
+									{showCanvas && (
+										<div
+											class="hidden md:flex flex-col h-full overflow-hidden"
+											data-testid="canvas-panel"
+										>
+											{/* Active-run banner */}
+											{activeRun && (
+												<div class="flex items-center gap-2 px-4 py-2 border-b border-dark-700 bg-dark-900 flex-shrink-0">
+													<span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
+													<span class="text-xs text-blue-300 truncate">{activeRun.title}</span>
+													<span class="ml-auto text-xs text-gray-600 capitalize flex-shrink-0">
+														{activeRun.status.replace('_', ' ')}
+													</span>
+												</div>
+											)}
+											<WorkflowCanvas
+												key={`${defaultWorkflow.id}:${activeRun?.id ?? 'template'}`}
+												workflowId={defaultWorkflow.id}
+												runId={activeRun?.id ?? null}
+												spaceId={spaceId}
+												class="flex-1 min-h-0"
+											/>
+										</div>
+									)}
+									{/* Fallback: shown on mobile, or when no canvas data */}
+									<div
+										class={cn('flex flex-col h-full overflow-y-auto', showCanvas && 'md:hidden')}
+										data-testid="dashboard-fallback"
+									>
+										<SpaceDashboard spaceId={spaceId} />
+									</div>
+								</>
+							)}
 							{activeTab === 'agents' && <SpaceAgentList />}
 							{activeTab === 'workflows' && space && (
 								<WorkflowList
@@ -239,7 +290,7 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 				</div>
 			</div>
 
-			{/* Right column — task detail pane (conditionally shown) */}
+			{/* Right column — task detail pane / chat panel (conditionally shown) */}
 			{activeTaskId && (
 				<div class="hidden md:flex w-80 flex-shrink-0 border-l border-dark-700 overflow-hidden flex-col">
 					<SpaceTaskPane taskId={activeTaskId} onClose={handleTaskPaneClose} />

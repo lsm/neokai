@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * Tests for SpaceIsland — workflow editor mode toggle
+ * Tests for SpaceIsland — workflow editor mode toggle and canvas integration
  *
  * Tests:
  * Toggle visibility
@@ -41,12 +41,24 @@
  * - Switching to 'visual' writes to localStorage
  * - Switching to 'list' writes to localStorage
  * - Reads localStorage on initial render to restore preference
+ *
+ * Canvas integration — dashboard tab
+ * - Shows WorkflowCanvas in runtime mode when active run exists
+ * - Shows WorkflowCanvas in template mode (no runId) when no active run but workflow exists
+ * - Shows dashboard fallback when no workflows exist
+ * - Canvas panel is hidden on mobile (no active run, has workflow)
+ * - Active-run banner is shown in canvas panel when active run exists
+ * - Active-run banner is hidden in canvas panel when no active run
+ * - WorkflowCanvas receives correct runId in runtime mode
+ * - WorkflowCanvas receives correct workflowId for active run's workflow
+ * - WorkflowCanvas uses first workflow as fallback when run's workflow not found
+ * - Dashboard fallback always rendered on mobile (md:hidden)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceWorkflow, SpaceAgent, Space } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceAgent, Space, SpaceWorkflowRun } from '@neokai/shared';
 
 // ============================================================================
 // Mock signals — must be declared before vi.mock calls
@@ -57,6 +69,7 @@ let mockError = signal<string | null>(null);
 let mockSpace = signal<Space | null>(null);
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceAgent[]>([]);
+let mockActiveRuns = signal<SpaceWorkflowRun[]>([]);
 let mockCurrentSpaceTaskId = signal<string | null>(null);
 
 const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
@@ -125,6 +138,26 @@ vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
 	},
 }));
 
+// Track props passed to WorkflowCanvas
+let capturedCanvasProps: Record<string, unknown> = {};
+vi.mock('../../components/space/WorkflowCanvas', () => ({
+	WorkflowCanvas: (props: {
+		workflowId: string;
+		runId?: string | null;
+		spaceId: string;
+		class?: string;
+	}) => {
+		capturedCanvasProps = props;
+		return (
+			<div
+				data-testid="workflow-canvas"
+				data-workflow-id={props.workflowId}
+				data-run-id={props.runId ?? ''}
+			/>
+		);
+	},
+}));
+
 vi.mock('../../components/space/SpaceDashboard', () => ({
 	SpaceDashboard: () => <div data-testid="space-dashboard" />,
 }));
@@ -146,6 +179,7 @@ vi.mock('../../lib/space-store', () => ({
 			space: mockSpace,
 			workflows: mockWorkflows,
 			agents: mockAgents,
+			activeRuns: mockActiveRuns,
 			selectSpace: mockSelectSpace,
 		};
 	},
@@ -200,6 +234,21 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 	};
 }
 
+function makeWorkflowRun(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkflowRun {
+	return {
+		id: 'run-1',
+		spaceId: 'space-1',
+		workflowId: 'wf-existing',
+		title: 'Test Run',
+		status: 'in_progress',
+		iterationCount: 0,
+		maxIterations: 10,
+		createdAt: 0,
+		updatedAt: 0,
+		...overrides,
+	};
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -244,9 +293,11 @@ beforeEach(() => {
 	mockSpace = signal(makeSpace());
 	mockWorkflows = signal([makeWorkflow()]);
 	mockAgents = signal([]);
+	mockActiveRuns = signal([]);
 	mockCurrentSpaceTaskId = signal(null);
 	capturedWorkflowEditorProps = {};
 	capturedVisualEditorProps = {};
+	capturedCanvasProps = {};
 	// Reset localStorage mock to return null (default mode = 'list')
 	(localStorage.getItem as ReturnType<typeof vi.fn>).mockReturnValue(null);
 	// Stub window.confirm (not defined in happy-dom) — default to true (accept)
@@ -498,6 +549,135 @@ describe('SpaceIsland — workflow editor toggle', () => {
 			openCreateEditor(result);
 			fireEvent.click(result.getByTestId('editor-mode-visual'));
 			expect(localStorage.setItem).not.toHaveBeenCalled();
+		});
+	});
+});
+
+describe('SpaceIsland — canvas integration (dashboard tab)', () => {
+	describe('Canvas visibility', () => {
+		it('shows canvas panel when workflow exists and no active run (template mode)', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([]);
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			expect(getByTestId('canvas-panel')).toBeTruthy();
+		});
+
+		it('shows canvas panel when active run exists (runtime mode)', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([makeWorkflowRun()]);
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			expect(getByTestId('canvas-panel')).toBeTruthy();
+		});
+
+		it('does not show canvas panel when no workflows exist', () => {
+			mockWorkflows = signal([]);
+			mockActiveRuns = signal([]);
+			const { queryByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			expect(queryByTestId('canvas-panel')).toBeNull();
+		});
+
+		it('shows dashboard fallback when no workflows exist', () => {
+			mockWorkflows = signal([]);
+			mockActiveRuns = signal([]);
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			expect(getByTestId('dashboard-fallback')).toBeTruthy();
+		});
+
+		it('always shows dashboard fallback alongside canvas panel', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([]);
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			// Both exist in DOM — canvas visible on md+, fallback visible on mobile
+			expect(getByTestId('canvas-panel')).toBeTruthy();
+			expect(getByTestId('dashboard-fallback')).toBeTruthy();
+		});
+	});
+
+	describe('Canvas props — template mode (no active run)', () => {
+		it('passes workflowId of first workflow to WorkflowCanvas', () => {
+			mockWorkflows = signal([makeWorkflow({ id: 'wf-alpha' })]);
+			mockActiveRuns = signal([]);
+			render(<SpaceIsland spaceId="space-1" />);
+			expect(capturedCanvasProps.workflowId).toBe('wf-alpha');
+		});
+
+		it('passes null runId to WorkflowCanvas in template mode', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([]);
+			render(<SpaceIsland spaceId="space-1" />);
+			expect(capturedCanvasProps.runId).toBeNull();
+		});
+
+		it('passes spaceId to WorkflowCanvas', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([]);
+			render(<SpaceIsland spaceId="space-42" />);
+			expect(capturedCanvasProps.spaceId).toBe('space-42');
+		});
+	});
+
+	describe('Canvas props — runtime mode (active run exists)', () => {
+		it('passes runId to WorkflowCanvas in runtime mode', () => {
+			mockWorkflows = signal([makeWorkflow({ id: 'wf-existing' })]);
+			mockActiveRuns = signal([makeWorkflowRun({ id: 'run-xyz', workflowId: 'wf-existing' })]);
+			render(<SpaceIsland spaceId="space-1" />);
+			expect(capturedCanvasProps.runId).toBe('run-xyz');
+		});
+
+		it("passes run's workflowId to WorkflowCanvas when workflow found", () => {
+			mockWorkflows = signal([makeWorkflow({ id: 'wf-a' }), makeWorkflow({ id: 'wf-b' })]);
+			mockActiveRuns = signal([makeWorkflowRun({ id: 'run-1', workflowId: 'wf-b' })]);
+			render(<SpaceIsland spaceId="space-1" />);
+			expect(capturedCanvasProps.workflowId).toBe('wf-b');
+		});
+
+		it('falls back to first workflow when run workflow not found', () => {
+			mockWorkflows = signal([makeWorkflow({ id: 'wf-fallback' })]);
+			mockActiveRuns = signal([makeWorkflowRun({ workflowId: 'wf-nonexistent' })]);
+			render(<SpaceIsland spaceId="space-1" />);
+			expect(capturedCanvasProps.workflowId).toBe('wf-fallback');
+		});
+	});
+
+	describe('Active-run banner', () => {
+		it('shows run banner when active run exists', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([makeWorkflowRun({ title: 'My Active Run', status: 'in_progress' })]);
+			const { getByText } = render(<SpaceIsland spaceId="space-1" />);
+			expect(getByText('My Active Run')).toBeTruthy();
+		});
+
+		it('shows run status in banner', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([makeWorkflowRun({ title: 'Run', status: 'pending' })]);
+			const { getByText } = render(<SpaceIsland spaceId="space-1" />);
+			expect(getByText('pending')).toBeTruthy();
+		});
+
+		it('does not show run banner when no active run', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([]);
+			const { queryByText } = render(<SpaceIsland spaceId="space-1" />);
+			// Banner text "in progress" / "pending" should not appear
+			expect(queryByText('in progress')).toBeNull();
+		});
+	});
+
+	describe('Canvas not shown on non-dashboard tabs', () => {
+		it('does not show canvas panel when on agents tab', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([makeWorkflowRun()]);
+			const { queryByTestId, getByText } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByText('Agents'));
+			expect(queryByTestId('canvas-panel')).toBeNull();
+		});
+
+		it('does not show canvas panel when on workflows tab', () => {
+			mockWorkflows = signal([makeWorkflow()]);
+			mockActiveRuns = signal([makeWorkflowRun()]);
+			const { queryByTestId, getByText } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByText('Workflows'));
+			expect(queryByTestId('canvas-panel')).toBeNull();
 		});
 	});
 });
