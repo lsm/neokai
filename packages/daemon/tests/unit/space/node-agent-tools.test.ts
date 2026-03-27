@@ -329,6 +329,78 @@ describe('node-agent-tools: list_peers', () => {
 		expect(data.success).toBe(true);
 		expect(data.peers).toHaveLength(0);
 	});
+
+	test('excludes pending task with no session from peers list', async () => {
+		// Seed a pending task with no session — should not appear in peers
+		const isolatedNodeId = 'node-no-session';
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			isolatedNodeId,
+			'tester',
+			'pending',
+			null
+		);
+		// Do NOT set task_agent_session_id — simulates not-yet-spawned task
+
+		const config = makeConfig(ctx, { workflowNodeId: isolatedNodeId });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.peers).toHaveLength(0);
+	});
+
+	test('excludes failed task with no session from peers list', async () => {
+		// A needs_attention task that never got a session should also be excluded
+		const isolatedNodeId = 'node-failed-no-sess';
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			isolatedNodeId,
+			'tester',
+			'needs_attention',
+			'Failed before session'
+		);
+
+		const config = makeConfig(ctx, { workflowNodeId: isolatedNodeId });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.peers).toHaveLength(0);
+	});
+
+	test('includes completed task with no session in peers list', async () => {
+		// A completed task whose session was cleared should still appear for visibility
+		const isolatedNodeId = 'node-completed-no-sess';
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			isolatedNodeId,
+			'tester',
+			'completed',
+			'Done'
+		);
+		// Do NOT set task_agent_session_id — simulates post-session cleanup
+
+		const config = makeConfig(ctx, { workflowNodeId: isolatedNodeId });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.peers).toHaveLength(1);
+		expect(data.peers[0].role).toBe('tester');
+		expect(data.peers[0].sessionId).toBeNull();
+		expect(data.peers[0].status).toBe('completed');
+		expect(data.peers[0].completionState.completionSummary).toBe('Done');
+	});
 });
 
 // ---------------------------------------------------------------------------
