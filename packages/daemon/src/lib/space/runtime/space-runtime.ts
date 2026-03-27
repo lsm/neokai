@@ -788,6 +788,51 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Finds the result summary from the terminal (Done) node agent task for a
+	 * completed workflow run. Used to populate the `workflow_run_completed`
+	 * notification summary so the Space Chat Agent can surface it to the human.
+	 *
+	 * Strategy:
+	 * 1. Find terminal node IDs — workflow nodes that do not appear as the
+	 *    `from` source in any channel (no outbound channels).
+	 * 2. Look up completed tasks for those node IDs.
+	 * 3. Return the first non-empty result string found.
+	 *
+	 * Falls back to `undefined` when no terminal task result is available
+	 * (e.g. the Done node hasn't run yet, or the result field was not set).
+	 */
+	private resolveCompletionSummary(runId: string, workflow: SpaceWorkflow): string | undefined {
+		const channels = workflow.channels ?? [];
+		const nodes = workflow.nodes;
+
+		// Collect node IDs that appear as channel sources (have outbound channels)
+		const nodesWithOutbound = new Set<string>();
+		for (const ch of channels) {
+			nodesWithOutbound.add(ch.from);
+		}
+
+		// Terminal nodes are those with no outbound channels
+		const terminalNodeIds = new Set<string>();
+		for (const node of nodes) {
+			if (!nodesWithOutbound.has(node.id)) {
+				terminalNodeIds.add(node.id);
+			}
+		}
+
+		if (terminalNodeIds.size === 0) return undefined;
+
+		// Look up completed tasks for terminal nodes and return the first result
+		const runTasks = this.config.taskRepo.listByWorkflowRun(runId);
+		for (const task of runTasks) {
+			if (task.workflowNodeId != null && terminalNodeIds.has(task.workflowNodeId) && task.result) {
+				return task.result;
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
 	 * Removes from the executors map any executor whose run has reached a
 	 * terminal state (completed or cancelled).
 	 *
@@ -797,6 +842,8 @@ export class SpaceRuntime {
 	 *
 	 * Emits a `workflow_run_completed` notification for runs that reached the
 	 * `completed` state (set by the CompletionDetector or external cancellation).
+	 * Includes the Done node agent's result summary (if available) so the
+	 * Space Chat Agent can surface it to the human.
 	 */
 	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
@@ -805,11 +852,13 @@ export class SpaceRuntime {
 				if (run?.status === 'completed') {
 					const meta = this.executorMeta.get(runId);
 					if (meta) {
+						const summary = this.resolveCompletionSummary(runId, meta.workflow);
 						await this.safeNotify({
 							kind: 'workflow_run_completed',
 							spaceId: meta.spaceId,
 							runId,
 							status: 'completed',
+							summary,
 							timestamp: new Date().toISOString(),
 						});
 					}

@@ -180,4 +180,23 @@ describe('seedPresetAgents', () => {
 		expect(typeof qa?.systemPrompt).toBe('string');
 		expect((qa?.systemPrompt?.length ?? 0) > 0).toBe(true);
 	});
+
+	it('General agent has a system prompt set (Done node summarizer)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.role === 'general');
+
+		expect(general).toBeDefined();
+		expect(typeof general?.systemPrompt).toBe('string');
+		expect((general?.systemPrompt?.length ?? 0) > 0).toBe(true);
+	});
+
+	it('General agent system prompt references done node summarization behavior', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.role === 'general');
+
+		expect(general?.systemPrompt).toContain('Done Node Agent');
+		expect(general?.systemPrompt).toContain('code-pr-gate');
+		expect(general?.systemPrompt).toContain('qa-result-gate');
+		expect(general?.systemPrompt).toContain('ANALYSIS_COMPLETE:');
+	});
 });

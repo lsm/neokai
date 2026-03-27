@@ -18,7 +18,7 @@
 import type { SpaceAgent, SessionFeatures } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
-import { buildQaNodeAgentPrompt } from './custom-agent';
+import { buildQaNodeAgentPrompt, buildDoneNodeAgentPrompt } from './custom-agent';
 
 // ---------------------------------------------------------------------------
 // Feature flag profiles per role
@@ -128,8 +128,12 @@ const PRESET_AGENTS: PresetDefinition[] = [
 	{
 		name: 'General',
 		role: 'general',
-		description: 'General-purpose worker. Handles broad tasks that do not fit a specialized role.',
+		description:
+			'Done node agent. Reads gate data from completed workflow stages and produces a ' +
+			'comprehensive human-readable summary of what was accomplished.',
 		tools: GENERAL_TOOLS,
+		// systemPrompt is populated lazily in seedPresetAgents() to avoid
+		// calling buildDoneNodeAgentPrompt() at module-init time.
 	},
 	{
 		name: 'Planner',
@@ -191,7 +195,12 @@ export async function seedPresetAgents(
 
 	for (const preset of PRESET_AGENTS) {
 		// Resolve role-specific system prompts lazily (at seed time, not module-init).
-		const systemPrompt = preset.role === 'qa' ? buildQaNodeAgentPrompt() : preset.systemPrompt;
+		const systemPrompt =
+			preset.role === 'qa'
+				? buildQaNodeAgentPrompt()
+				: preset.role === 'general'
+					? buildDoneNodeAgentPrompt()
+					: preset.systemPrompt;
 
 		const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
 			spaceId,

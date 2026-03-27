@@ -633,6 +633,138 @@ export function buildQaNodeAgentPrompt(): string {
 }
 
 // ============================================================================
+// Done node agent specialized prompt
+// ============================================================================
+
+/**
+ * Build the specialized system prompt content for a Done node agent.
+ *
+ * The Done node is the terminal node in the V2 workflow. Its job is to read
+ * gate data from completed workflow stages and produce a comprehensive,
+ * human-readable summary of what was accomplished. It does NOT write code or
+ * modify files — it only reads gates and composes a summary.
+ *
+ * This is stored as the `systemPrompt` field on the General SpaceAgent preset,
+ * so it gets embedded in the "Agent Instructions" section of the broader
+ * `buildCustomAgentSystemPrompt` output.
+ *
+ * Covers:
+ *   1. Role declaration (read-only summarizer, bypass marker required)
+ *   2. Read code-pr-gate for PR URL and branch
+ *   3. Read review-votes-gate for reviewer verdicts
+ *   4. Read qa-result-gate for QA outcome
+ *   5. Compose a Markdown summary with all findings
+ *   6. Call report_done with the summary
+ *   7. Output summary with ANALYSIS_COMPLETE: bypass marker
+ */
+export function buildDoneNodeAgentPrompt(): string {
+	const sections: string[] = [];
+
+	// Role + read-only declaration
+	sections.push(
+		`You are the Done Node Agent — the final step in the workflow. ` +
+			`Your responsibility is to read the gate data written by previous workflow stages ` +
+			`and compose a comprehensive, human-readable summary of what was accomplished. ` +
+			`You do NOT write, edit, or commit any code — you only read gate data and produce a summary.`
+	);
+	sections.push(
+		`\n**IMPORTANT — This is a read-only summarization role.** ` +
+			`The broader workflow prompt includes a "Git Workflow (MANDATORY)" section that applies to coding agents. ` +
+			`As the Done node agent you must NOT create commits, push branches, or open pull requests. ` +
+			`When you finish producing the summary, use the \`ANALYSIS_COMPLETE:\` bypass marker ` +
+			`(documented in the "Bypassing Git/PR Gates for Research-Only Tasks" section) as the opening of your final response, ` +
+			`after calling \`report_done\` with the summary.`
+	);
+
+	// Step 1: Read code-pr-gate
+	sections.push(`\n## Step 1 — Read the PR Gate\n`);
+	sections.push(
+		`Read the \`code-pr-gate\` to discover the pull request that was implemented:\n\n` +
+			`\`\`\`\n` +
+			`read_gate({ gateId: "code-pr-gate" })\n` +
+			`\`\`\`\n\n` +
+			`Extract these fields from the gate data:\n` +
+			`- \`pr_url\` — the full GitHub PR URL (e.g. \`https://github.com/owner/repo/pull/42\`)\n` +
+			`- \`pr_number\` — the PR number (if present)\n` +
+			`- \`branch\` — the feature branch name (if present)\n\n` +
+			`If \`code-pr-gate\` is empty, note "No PR data available" and continue.`
+	);
+
+	// Step 2: Read review-votes-gate
+	sections.push(`\n## Step 2 — Read the Review Votes\n`);
+	sections.push(
+		`Read the \`review-votes-gate\` to see how reviewers voted on the implementation:\n\n` +
+			`\`\`\`\n` +
+			`read_gate({ gateId: "review-votes-gate" })\n` +
+			`\`\`\`\n\n` +
+			`Extract the \`votes\` map, e.g.:\n` +
+			`\`\`\`json\n` +
+			`{ "Reviewer 1": "approve", "Reviewer 2": "approve", "Reviewer 3": "approve" }\n` +
+			`\`\`\`\n\n` +
+			`Count approvals and rejections from the votes map. ` +
+			`If no votes are present, note "No review data available".`
+	);
+
+	// Step 3: Read qa-result-gate
+	sections.push(`\n## Step 3 — Read the QA Result\n`);
+	sections.push(
+		`Read the \`qa-result-gate\` to get the QA verification outcome:\n\n` +
+			`\`\`\`\n` +
+			`read_gate({ gateId: "qa-result-gate" })\n` +
+			`\`\`\`\n\n` +
+			`Extract:\n` +
+			`- \`result\` — \`"passed"\` or \`"failed"\`\n` +
+			`- \`summary\` — the QA agent's verification summary (if present)\n\n` +
+			`If \`qa-result-gate\` is empty, note "No QA data available".`
+	);
+
+	// Step 4: Compose the summary
+	sections.push(`\n## Step 4 — Compose the Workflow Summary\n`);
+	sections.push(
+		`Using the gate data collected above, compose a comprehensive Markdown summary ` +
+			`following this exact structure:\n\n` +
+			`\`\`\`markdown\n` +
+			`## Workflow Complete\n\n` +
+			`### What Was Implemented\n` +
+			`<1-3 sentences describing what was built, based on the task title and description>\n\n` +
+			`### Pull Request\n` +
+			`- **PR URL:** <pr_url from code-pr-gate, or "Not available">\n` +
+			`- **Branch:** <branch name, or "Not available">\n` +
+			`- **Status:** Ready to merge\n\n` +
+			`### Code Review\n` +
+			`- **Approvals:** <count> reviewer(s) approved\n` +
+			`- **Rejections:** <count> (should be 0 at this stage)\n` +
+			`- **Reviewers:** <list of reviewer names and their vote>\n\n` +
+			`### QA Verification\n` +
+			`- **Result:** <PASSED / FAILED>\n` +
+			`- **Details:** <QA summary from qa-result-gate.summary>\n\n` +
+			`### Suggested Next Steps\n` +
+			`1. Review the PR at <pr_url>\n` +
+			`2. Merge the pull request when ready\n` +
+			`3. <any additional context-specific suggestions>\n` +
+			`\`\`\``
+	);
+
+	// Step 5: Call report_done and output summary
+	sections.push(`\n## Step 5 — Report Done and Output Summary\n`);
+	sections.push(
+		`After composing the summary:\n\n` +
+			`1. Call \`report_done\` with the full Markdown summary as the \`summary\` argument:\n` +
+			`   \`\`\`\n` +
+			`   report_done({ summary: "<your full Markdown summary>" })\n` +
+			`   \`\`\`\n\n` +
+			`2. Then output the summary with the bypass marker as the opening of your final response:\n` +
+			`   \`\`\`\n` +
+			`   ANALYSIS_COMPLETE:\n\n` +
+			`   <Your full Markdown summary here>\n` +
+			`   \`\`\`\n\n` +
+			`Always call \`report_done\` BEFORE outputting the final response.`
+	);
+
+	return sections.join('\n');
+}
+
+// ============================================================================
 // Task message builder
 // ============================================================================
 
