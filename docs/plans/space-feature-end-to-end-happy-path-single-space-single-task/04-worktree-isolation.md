@@ -18,11 +18,11 @@ Implement git worktree isolation for Space tasks. Each task gets **one worktree*
 
 ### Task 4.1: Implement Task Title Slugification
 
-**Description**: Create a slugification function that converts task titles into valid folder/branch names, used for both the worktree folder and the git branch.
+**Description**: Create a shared slugification utility that converts names/titles into valid slug strings. Used by worktree naming (task title → folder/branch), space slugs (M1 Task 1.6), and potentially other areas.
 
 **Subtasks**:
-1. Create `packages/daemon/src/lib/space/worktree-slug.ts` with:
-   - `slugifyTaskTitle(title: string, existingSlugs: string[]): string` — converts a task title to a valid slug, appending `-2`/`-3`/etc. if the base slug already exists
+1. Create `packages/daemon/src/lib/space/slug.ts` with:
+   - `slugify(input: string, existingSlugs: string[]): string` — converts any input string to a valid slug, appending `-2`/`-3`/etc. if the base slug already exists. This is a shared utility used by both worktree naming and space slug generation (M1 Task 1.6).
 2. Slugification rules:
    - Lowercase the input
    - Replace spaces and non-alphanumeric characters with hyphens
@@ -30,7 +30,7 @@ Implement git worktree isolation for Space tasks. Each task gets **one worktree*
    - Strip leading/trailing hyphens
    - Truncate to max 60 characters at a word boundary (don't cut mid-word)
    - If the resulting slug already exists in `existingSlugs`, append `-2`, `-3`, etc. until unique
-   - If the title is empty or results in an empty slug after processing, fall back to `task-{shortId}` (first 8 chars of task UUID)
+   - If the title is empty or results in an empty slug after processing, fall back to `task-{taskNumber}` (the numeric task ID from M1 Task 1.5)
 3. The same slug is used for both the worktree folder name and the git branch name (prefixed with `space/`)
 4. Unit tests: basic slugification, special characters, long titles (truncation), collision handling (suffix incrementing), empty/whitespace-only titles, unicode handling
 

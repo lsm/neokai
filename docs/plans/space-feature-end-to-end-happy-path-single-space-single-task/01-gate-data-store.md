@@ -1,8 +1,8 @@
-# Milestone 1: Separated Channels + Gates with Composable Conditions
+# Milestone 1: Core Architecture — Channels, Gates, and Data Model
 
 ## Goal and Scope
 
-Implement the core Channel + Gate architecture: channels as simple unidirectional pipes and gates as independent entities with persistent data stores and composable conditions. No class hierarchy of gate types — one Gate concept, four condition types (including `all`/`any` composition), one set of MCP tools. Channels and gates are fully separated — a channel without a gate is always open. This is the foundation that all other milestones build on.
+Implement the core Channel + Gate architecture and foundational data model changes. Channels are simple unidirectional pipes; gates are independent entities with persistent data stores and composable conditions. No class hierarchy of gate types — one Gate concept, four condition types (including `all`/`any` composition), one set of MCP tools. Also adds numeric task IDs and space slugs for human-friendly identification. This is the foundation that all other milestones build on.
 
 ## Architecture
 
@@ -238,5 +238,64 @@ For channels without a gate: no evaluation needed — always open.
 - Unit tests cover all scenarios including gateless channels and reset behavior
 
 **Depends on**: Task 1.3
+
+**Agent type**: coder
+
+---
+
+### Task 1.5: Implement Numeric Task IDs
+
+**Description**: Replace UUID-based task IDs with auto-incrementing numeric IDs, scoped per space. This makes tasks human-friendly ("task 5" instead of "task 550e8400-...") and enables GitHub-style references (`neokai-dev#5`).
+
+**Subtasks**:
+1. Update `SpaceTask` schema: change `id` column from UUID `TEXT` to `INTEGER PRIMARY KEY AUTOINCREMENT`. The auto-increment counter is space-scoped — each space has its own sequence.
+2. **Implementation approach**: Add a `task_number` column (`INTEGER NOT NULL`) to the existing `space_tasks` table, with a `UNIQUE(space_id, task_number)` constraint. The UUID `id` column stays as the internal primary key for foreign key references (workflow runs, worktrees, etc.), while `task_number` is the human-facing numeric ID. This avoids a risky migration of all FK references from UUID to integer.
+3. Auto-assign `task_number` on task creation: `SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?`. Use a transaction to prevent race conditions.
+4. Update `SpaceTask` TypeScript interface to include `taskNumber: number`
+5. Update `SpaceTaskManager.createTask()` to auto-assign the numeric ID
+6. Update all RPC handlers that return tasks to include `taskNumber`
+7. Add `getTaskByNumber(spaceId, taskNumber)` lookup method to `SpaceTaskManager`
+8. Update agent prompts and workflow context to use numeric task IDs (e.g., "Working on task #5")
+9. Unit tests: auto-increment, space-scoped uniqueness, concurrent creation, lookup by number
+
+**Acceptance Criteria**:
+- Tasks have auto-incrementing numeric IDs scoped per space
+- Numeric IDs are contiguous within a space (1, 2, 3, ...)
+- Agents and UI reference tasks by number ("task #5")
+- UUID remains as internal primary key for FK references
+- Lookup by `(spaceId, taskNumber)` works
+- Unit tests verify auto-increment and uniqueness
+
+**Depends on**: nothing (parallel with other M1 tasks)
+
+**Agent type**: coder
+
+---
+
+### Task 1.6: Implement Space Slugs
+
+**Description**: Add a `slug` column to spaces as an alternative, human-readable identifier for navigation. Auto-generated from the space name, editable by the user.
+
+**Subtasks**:
+1. Add `slug TEXT NOT NULL UNIQUE` column to the `spaces` table. Add a unique index for fast lookup.
+2. Reuse the `slugifyTaskTitle()` function from M4 Task 4.1 (or extract into a shared `slugify()` utility in `packages/daemon/src/lib/space/slug.ts` that both space slugs and worktree slugs can use)
+3. Auto-generate slug from space name on creation: `slugify(spaceName, existingSlugs)`
+4. Add `updateSlug(spaceId, newSlug)` method to `SpaceManager` — validates uniqueness, format (lowercase, hyphens, max 60 chars)
+5. Add `getSpaceBySlug(slug)` lookup method to `SpaceManager`
+6. Update `space.create` RPC to auto-generate slug; add `space.updateSlug` RPC for user editing
+7. Update frontend routing to support `/space/{slug}` alongside `/space/{uuid}` — try slug lookup first, fall back to UUID
+8. Backfill slugs for existing spaces (migration): generate slug from `name` for each space, handle collisions with suffix
+9. Unit tests: auto-generation, uniqueness, editable slug update, lookup by slug, backfill migration, collision handling
+
+**Acceptance Criteria**:
+- Spaces have a unique slug column (e.g., `neokai-dev`)
+- Slug auto-generated from name on creation
+- Slug editable by user (with uniqueness validation)
+- Navigation works via `/space/{slug}`
+- Existing spaces get backfilled slugs
+- GitHub-style task references possible: `neokai-dev#5` (space slug + task number)
+- Unit tests verify all behaviors
+
+**Depends on**: nothing (parallel with other M1 tasks)
 
 **Agent type**: coder

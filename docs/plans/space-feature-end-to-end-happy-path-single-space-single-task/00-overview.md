@@ -138,6 +138,56 @@ failureReason?: 'humanRejected' | 'maxIterationsReached' | 'nodeTimeout' | 'agen
 
 This avoids a cross-cutting type change that would affect the status machine, repository, RPC handlers, and all consumers.
 
+### Identification and Navigation
+
+#### Numeric Task IDs
+
+Tasks use **auto-incrementing numeric IDs** instead of UUIDs, scoped per space:
+
+```typescript
+// SpaceTask table
+interface SpaceTask {
+  id: number;              // INTEGER PRIMARY KEY AUTOINCREMENT — space-scoped numeric ID
+  spaceId: string;         // UUID of the parent space
+  title: string;
+  // ... other fields
+}
+```
+
+- **Human-friendly**: "task 5" instead of "task 550e8400-e29b-41d4-a716-446655440000"
+- **Space-scoped**: uniqueness within a space is sufficient. Cross-space refs use `spaceId + taskId`.
+- **Shared sequence**: single auto-incrementing counter across all tasks in a space (like GitHub issues/PRs sharing the same number sequence)
+- **Easy to reference**: in UI, agent prompts, logs, messages, and GitHub-style references (`neokai-dev#5`)
+
+#### Space Slugs
+
+Spaces have a **slug** column as an alternative, human-readable identifier:
+
+```typescript
+interface Space {
+  id: string;              // UUID — primary key (unchanged)
+  slug: string;            // UNIQUE indexed column — auto-generated from name, editable
+  name: string;
+  // ... other fields
+}
+```
+
+- **UUID remains primary key** internally — no migration risk
+- **Slug is a unique indexed column** — alternative lookup for navigation
+- **Auto-generated from space name** on creation using the same slugification rules as worktree slugs (lowercase, hyphens, max 60 chars, collision suffix)
+- **Editable** by the user after creation
+- **Navigation**: `/space/neokai-dev` instead of `/space/{uuid}`
+
+#### Reference Hierarchy
+
+This creates a clean, GitHub-inspired reference model:
+
+```
+neokai-dev                              → space (slug)
+neokai-dev#5                            → task (space slug + numeric ID)
+space/add-dark-mode-support             → worktree branch (task-title slug)
+```
+
 ### Why This Is Simpler
 
 Instead of a state machine with many states and complex transition rules, we have:
@@ -199,6 +249,10 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 10. **End-to-end integration testing**: No single test exercises the full pipeline.
 
+11. **Numeric task IDs**: Replace UUID-based task IDs with auto-incrementing numeric IDs (space-scoped). Human-friendly: "task 5" instead of "task 550e8400-e29b...".
+
+12. **Space slugs**: Add slug column to spaces for human-readable navigation (`/space/neokai-dev` instead of `/space/{uuid}`). Enables GitHub-style task references: `neokai-dev#5`.
+
 ## High-Level Approach
 
 **Phase 1 — Unified Gate architecture and workflow template** (Milestones 1-3):
@@ -220,7 +274,7 @@ Adding new behaviors = adding new gates with new condition configs, not new gate
 
 ## Milestones
 
-1. **Separated Channels + Gates with composable conditions** — Implement channels as simple pipes and gates as independent entities with persistent data stores, four condition types (`check`, `count`, `all`/`any` for AND/OR composition), `list_channels`/`list_gates`/`read_gate`/`write_gate` MCP tools, structured `send_message` data, and channel router integration
+1. **Core architecture — Channels, Gates, and data model** — Implement channels as simple pipes and gates as independent entities with persistent data stores, four condition types (`check`, `count`, `all`/`any` for AND/OR composition), MCP tools (`list_channels`/`list_gates`/`read_gate`/`write_gate`, structured `send_message`), channel router integration, numeric task IDs (space-scoped auto-increment), and space slugs (human-readable navigation)
 
 2. **Enhanced node agent prompts** — Add git/PR/review-specific system prompts for planner, coder, reviewer, and QA agents, including gate data interaction instructions
 
@@ -298,4 +352,4 @@ Planning ──[check: prUrl exists]──► Plan Review (1 reviewer) ──[ch
 
 ## Total Estimated Task Count
 
-~30 tasks across 9 milestones
+~32 tasks across 9 milestones
