@@ -142,11 +142,11 @@ function insertRoom(db: BunDatabase, roomId: string) {
 	);
 }
 
-function insertTask(db: BunDatabase, taskId: string, roomId: string) {
+function insertTask(db: BunDatabase, taskId: string, roomId: string, status = 'pending') {
 	const now = Date.now();
 	db.exec(
 		`INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, priority, task_type, created_at, updated_at)
-		 VALUES ('${taskId}', '${roomId}', 'Test Task', '', 'pending', 'normal', 'coding', ${now}, ${now})`
+		 VALUES ('${taskId}', '${roomId}', 'Test Task', '', '${status}', 'normal', 'coding', ${now}, ${now})`
 	);
 }
 
@@ -552,6 +552,87 @@ describe('setupLiveQueryHandlers', () => {
 		expect(result2).toEqual({ ok: true });
 		expect(setup.sentMessages.length).toBe(1);
 		expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+	});
+
+	// -----------------------------------------------------------------------
+	// tasks.byRoom excludes archived tasks, tasks.byRoom.all includes them
+	// -----------------------------------------------------------------------
+
+	test('tasks.byRoom snapshot excludes archived tasks', async () => {
+		insertTask(db, 'task-archived', roomId, 'archived');
+
+		await setup.callHandler('liveQuery.subscribe', {
+			queryName: 'tasks.byRoom',
+			params: [roomId],
+			subscriptionId: 'sub-no-archived',
+		});
+
+		const snapshot = setup.sentMessages[0].message.data;
+		const rows = snapshot.rows as Array<{ id: string; status: string }>;
+		const statuses = rows.map((r) => r.status);
+		expect(statuses).not.toContain('archived');
+		// Only the non-archived task from beforeEach should appear
+		expect(rows).toHaveLength(1);
+		expect(rows[0].id).toBe(taskId);
+	});
+
+	test('tasks.byRoom.all snapshot includes archived tasks', async () => {
+		insertTask(db, 'task-archived-2', roomId, 'archived');
+
+		await setup.callHandler('liveQuery.subscribe', {
+			queryName: 'tasks.byRoom.all',
+			params: [roomId],
+			subscriptionId: 'sub-all',
+		});
+
+		const snapshot = setup.sentMessages[0].message.data;
+		const rows = snapshot.rows as Array<{ id: string; status: string }>;
+		const statuses = rows.map((r) => r.status);
+		expect(statuses).toContain('archived');
+		expect(statuses).toContain('pending');
+		expect(rows).toHaveLength(2);
+	});
+
+	test('tasks.byRoom.all: nonexistent room rejected', async () => {
+		await expect(
+			setup.callHandler('liveQuery.subscribe', {
+				queryName: 'tasks.byRoom.all',
+				params: ['room-does-not-exist'],
+				subscriptionId: 'sub-all-unauth',
+			})
+		).rejects.toThrow('Unauthorized');
+	});
+
+	// -----------------------------------------------------------------------
+	// Archiving a task emits a removed delta for tasks.byRoom subscriber
+	// -----------------------------------------------------------------------
+
+	test('archiving a task emits a removed delta for tasks.byRoom subscriber', async () => {
+		// Subscribe — snapshot includes the pending task from beforeEach
+		await setup.callHandler('liveQuery.subscribe', {
+			queryName: 'tasks.byRoom',
+			params: [roomId],
+			subscriptionId: 'sub-archive-delta',
+		});
+		expect(setup.sentMessages.length).toBe(1);
+		const snapshot = setup.sentMessages[0].message.data;
+		expect((snapshot.rows as Array<{ id: string }>).map((r) => r.id)).toContain(taskId);
+
+		// Archive the task by updating its status
+		db.exec(`UPDATE tasks SET status = 'archived' WHERE id = '${taskId}'`);
+		reactiveDb.notifyChange('tasks');
+		await new Promise((r) => setTimeout(r, 50));
+
+		// Find the delta that removed the archived task
+		const deltas = setup.sentMessages
+			.slice(1)
+			.filter((m) => m.message.method === 'liveQuery.delta');
+		expect(deltas.length).toBeGreaterThanOrEqual(1);
+
+		// The last delta should contain the removed task
+		const lastDelta = deltas[deltas.length - 1].message.data;
+		const removedIds = (lastDelta.removed as Array<{ id: string }> | undefined)?.map((r) => r.id);
+		expect(removedIds).toContain(taskId);
 	});
 
 	// -----------------------------------------------------------------------

@@ -76,7 +76,7 @@ class RoomStore {
 	/** Room metadata */
 	readonly room = signal<Room | null>(null);
 
-	/** Tasks for this room */
+	/** Tasks for this room (excludes archived — filtered server-side by LiveQuery) */
 	readonly tasks = signal<NeoTask[]>([]);
 
 	/** Sessions in this room */
@@ -146,9 +146,6 @@ class RoomStore {
 	readonly completedTasks = computed(() =>
 		this.tasks.value.filter((t) => t.status === 'completed')
 	);
-
-	/** Archived tasks */
-	readonly archivedTasks = computed(() => this.tasks.value.filter((t) => t.status === 'archived'));
 
 	/** Tasks in review status */
 	readonly reviewTasks = computed(() => this.tasks.value.filter((t) => t.status === 'review'));
@@ -227,10 +224,9 @@ class RoomStore {
 		this.orphanTasks.value.filter((t) => t.status === 'completed' || t.status === 'cancelled')
 	);
 
-	/** Orphan tasks that are archived */
-	readonly orphanTasksArchived = computed(() =>
-		this.orphanTasks.value.filter((t) => t.status === 'archived')
-	);
+	// NOTE: orphanTasksArchived was removed — archived tasks are now excluded
+	// server-side by the tasks.byRoom LiveQuery.  Use tasks.byRoom.all if
+	// archived tasks are needed.
 
 	// ========================================
 	// Private State

@@ -5,7 +5,9 @@
  * - Active: draft + pending + in_progress
  * - Review: review + needs_attention (awaiting human action)
  * - Done: completed + cancelled
- * - Archived: hidden by default, expandable
+ *
+ * Note: Archived tasks are excluded server-side by the tasks.byRoom LiveQuery
+ * and are not displayed in this component.
  */
 
 import { signal, effect, useSignal } from '@preact/signals';
@@ -13,15 +15,16 @@ import type { TaskSummary, TaskStatus, RoomGoal } from '@neokai/shared';
 import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
 
 /** Tab filter types */
-export type TaskFilterTab = 'active' | 'review' | 'done' | 'archived';
+export type TaskFilterTab = 'active' | 'review' | 'done';
 
 /** Get initial tab from localStorage - exported for testing */
 export function getInitialTab(): TaskFilterTab {
 	if (typeof window === 'undefined') return 'active';
 	const stored = localStorage.getItem('neokai:room:taskFilterTab');
-	// Migrate old tab values: 'failed' and 'needs_attention' now live under 'review'
+	// Migrate old tab values: 'failed', 'needs_attention', and 'archived' map to other tabs
 	if (stored === 'failed' || stored === 'needs_attention') return 'review';
-	if (stored === 'active' || stored === 'review' || stored === 'done' || stored === 'archived') {
+	if (stored === 'archived') return 'active';
+	if (stored === 'active' || stored === 'review' || stored === 'done') {
 		return stored;
 	}
 	return 'active';
@@ -61,7 +64,6 @@ function getTabCounts(tasks: TaskSummary[]) {
 				t.status === 'usage_limited'
 		).length,
 		done: tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled').length,
-		archived: tasks.filter((t) => t.status === 'archived').length,
 	};
 }
 
@@ -82,8 +84,6 @@ function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary
 			);
 		case 'done':
 			return tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled');
-		case 'archived':
-			return tasks.filter((t) => t.status === 'archived');
 	}
 }
 
@@ -122,15 +122,8 @@ export function RoomTasks({
 	onGoalClick,
 	onReactivate,
 }: RoomTasksProps) {
-	let selectedTab = selectedTabSignal.value;
+	const selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
-
-	// Auto-reset to 'active' when archived tab is selected but no archived tasks exist
-	if (selectedTab === 'archived' && tabCounts.archived === 0) {
-		selectedTab = 'active';
-		selectedTabSignal.value = 'active';
-	}
-
 	const filteredTasks = getFilteredTasks(tasks, selectedTab);
 
 	const handleTabClick = (tab: TaskFilterTab) => {
@@ -170,15 +163,6 @@ export function RoomTasks({
 					onClick={() => handleTabClick('done')}
 					variant="green"
 				/>
-				{tabCounts.archived > 0 && (
-					<TabButton
-						label="Archived"
-						count={tabCounts.archived}
-						isActive={selectedTab === 'archived'}
-						onClick={() => handleTabClick('archived')}
-						variant="gray"
-					/>
-				)}
 			</div>
 
 			{/* Task List */}
@@ -273,10 +257,6 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 			title: 'No completed tasks',
 			description: 'Completed and cancelled tasks will appear here',
 		},
-		archived: {
-			title: 'No archived tasks',
-			description: 'Archived tasks will appear here',
-		},
 	};
 
 	const { title, description } = messages[tab];
@@ -307,11 +287,6 @@ function TaskList({
 	onGoalClick?: () => void;
 	onReactivate?: (taskId: string) => void;
 }) {
-	// Active tab: group by in_progress, pending, draft
-	// Review tab: group by review and needs_attention
-	// Done tab: group by completed and cancelled
-	// Archived tab: all archived tasks
-
 	if (tab === 'active') {
 		const inProgress = tasks.filter((t) => t.status === 'in_progress');
 		const pending = tasks.filter((t) => t.status === 'pending');
@@ -410,55 +385,38 @@ function TaskList({
 		);
 	}
 
-	if (tab === 'done') {
-		const completed = tasks.filter((t) => t.status === 'completed');
-		const cancelled = tasks.filter((t) => t.status === 'cancelled');
+	// Done tab (default)
+	const completed = tasks.filter((t) => t.status === 'completed');
+	const cancelled = tasks.filter((t) => t.status === 'cancelled');
 
-		return (
-			<div class="space-y-4">
-				{completed.length > 0 && (
-					<TaskGroup
-						title="Completed"
-						count={completed.length}
-						variant="green"
-						tasks={completed}
-						allTasks={allTasks}
-						goalByTaskId={goalByTaskId}
-						onTaskClick={onTaskClick}
-						onGoalClick={onGoalClick}
-						onReactivate={onReactivate}
-					/>
-				)}
-				{cancelled.length > 0 && (
-					<TaskGroup
-						title="Cancelled"
-						count={cancelled.length}
-						variant="gray"
-						tasks={cancelled}
-						allTasks={allTasks}
-						goalByTaskId={goalByTaskId}
-						onTaskClick={onTaskClick}
-						onGoalClick={onGoalClick}
-						onReactivate={onReactivate}
-					/>
-				)}
-			</div>
-		);
-	}
-
-	// Archived tab
 	return (
 		<div class="space-y-4">
-			<TaskGroup
-				title="Archived"
-				count={tasks.length}
-				variant="gray"
-				tasks={tasks}
-				allTasks={allTasks}
-				goalByTaskId={goalByTaskId}
-				onTaskClick={onTaskClick}
-				onGoalClick={onGoalClick}
-			/>
+			{completed.length > 0 && (
+				<TaskGroup
+					title="Completed"
+					count={completed.length}
+					variant="green"
+					tasks={completed}
+					allTasks={allTasks}
+					goalByTaskId={goalByTaskId}
+					onTaskClick={onTaskClick}
+					onGoalClick={onGoalClick}
+					onReactivate={onReactivate}
+				/>
+			)}
+			{cancelled.length > 0 && (
+				<TaskGroup
+					title="Cancelled"
+					count={cancelled.length}
+					variant="gray"
+					tasks={cancelled}
+					allTasks={allTasks}
+					goalByTaskId={goalByTaskId}
+					onTaskClick={onTaskClick}
+					onGoalClick={onGoalClick}
+					onReactivate={onReactivate}
+				/>
+			)}
 		</div>
 	);
 }
