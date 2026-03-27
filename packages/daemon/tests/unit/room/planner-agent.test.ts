@@ -818,5 +818,38 @@ describe('planner-agent', () => {
 			expect(mcpKeys).toHaveLength(1);
 			expect(mcpKeys).toContain('planner-tools');
 		});
+
+		it('none of the three sub-agents have Task/TaskOutput/TaskStop tools', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const SUB_AGENTS = ['planner-explorer', 'planner-fact-checker', 'plan-writer'] as const;
+			for (const name of SUB_AGENTS) {
+				const tools = init.agents?.[name]?.tools ?? [];
+				expect(tools, `${name} must not have Task`).not.toContain('Task');
+				expect(tools, `${name} must not have TaskOutput`).not.toContain('TaskOutput');
+				expect(tools, `${name} must not have TaskStop`).not.toContain('TaskStop');
+			}
+		});
+
+		it('planner system prompt includes Task() template for spawning planner-fact-checker with explorer findings', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const prompt = init.agents?.['Planner']?.prompt ?? '';
+			expect(prompt).toContain('planner-fact-checker');
+			expect(prompt).toContain('## Explorer Findings');
+		});
+
+		it('planner system prompt includes Task() template for spawning plan-writer with both findings', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const prompt = init.agents?.['Planner']?.prompt ?? '';
+			expect(prompt).toContain('plan-writer');
+			expect(prompt).toContain('## Fact-Check Results');
+		});
+
+		it('Planner agent def describes 3-stage pipeline in its prompt', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const prompt = init.agents?.['Planner']?.prompt ?? '';
+			expect(prompt).toContain('planner-explorer');
+			expect(prompt).toContain('planner-fact-checker');
+			expect(prompt).toContain('plan-writer');
+		});
 	});
 });
