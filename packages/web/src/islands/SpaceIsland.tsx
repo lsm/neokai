@@ -257,6 +257,7 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 												</div>
 											)}
 											<WorkflowCanvas
+												key={`${defaultWorkflow.id}:${activeRun?.id ?? 'template'}`}
 												workflowId={defaultWorkflow.id}
 												runId={activeRun?.id ?? null}
 												spaceId={spaceId}
