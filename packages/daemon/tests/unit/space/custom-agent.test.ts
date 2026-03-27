@@ -223,11 +223,12 @@ describe('buildReviewerNodeAgentPrompt', () => {
 		expect(prompt).not.toContain('read_gate');
 	});
 
-	it('retrieves PR URL from list_gates response (code-pr-gate currentData)', () => {
+	it('retrieves PR URL from list_gates response (code-pr-gate currentData.pr_url)', () => {
 		const agent = makeAgent({ role: 'reviewer' });
 		const prompt = buildReviewerNodeAgentPrompt(agent);
 		expect(prompt).toContain('code-pr-gate');
 		expect(prompt).toContain('currentData');
+		expect(prompt).toContain('currentData.pr_url');
 	});
 
 	it('includes review process steps', () => {
@@ -1304,16 +1305,16 @@ describe('buildPlannerNodeAgentPrompt', () => {
 		expect(prompt).toContain('plan-pr-gate');
 	});
 
-	it('specifies the required gate data fields: prUrl, prNumber, branch', () => {
+	it('specifies the required gate data fields: plan_submitted, pr_number, branch', () => {
 		const prompt = buildPlannerNodeAgentPrompt();
-		expect(prompt).toContain('prUrl');
-		expect(prompt).toContain('prNumber');
+		expect(prompt).toContain('plan_submitted');
+		expect(prompt).toContain('pr_number');
 		expect(prompt).toContain('branch');
 	});
 
-	it('explains the gate condition (prUrl exists)', () => {
+	it('explains the gate condition (plan_submitted exists)', () => {
 		const prompt = buildPlannerNodeAgentPrompt();
-		expect(prompt).toContain('prUrl exists');
+		expect(prompt).toContain('plan_submitted exists');
 	});
 
 	it('instructs to notify reviewers via send_message', () => {
@@ -1439,16 +1440,16 @@ describe('buildCoderNodeAgentPrompt', () => {
 		expect(prompt).toContain('code-pr-gate');
 	});
 
-	it('specifies the required gate data fields: prUrl, prNumber, branch', () => {
+	it('specifies the required gate data fields: pr_url, pr_number, branch', () => {
 		const prompt = buildCoderNodeAgentPrompt();
-		expect(prompt).toContain('prUrl');
-		expect(prompt).toContain('prNumber');
+		expect(prompt).toContain('pr_url');
+		expect(prompt).toContain('pr_number');
 		expect(prompt).toContain('branch');
 	});
 
-	it('explains the gate condition (prUrl exists)', () => {
+	it('explains the gate condition (pr_url exists)', () => {
 		const prompt = buildCoderNodeAgentPrompt();
-		expect(prompt).toContain('prUrl exists');
+		expect(prompt).toContain('pr_url exists');
 	});
 
 	it('explains that write_gate unblocks reviewer agents', () => {
@@ -1573,11 +1574,11 @@ describe('buildQaNodeAgentPrompt', () => {
 		expect(prompt).toContain('not authenticated');
 	});
 
-	it('includes read_gate instruction for code-pr-gate', () => {
+	it('includes read_gate instruction for code-pr-gate with pr_url field', () => {
 		const prompt = buildQaNodeAgentPrompt();
 		expect(prompt).toContain('read_gate');
 		expect(prompt).toContain('code-pr-gate');
-		expect(prompt).toContain('prUrl');
+		expect(prompt).toContain('pr_url');
 	});
 
 	it('includes test command detection for package.json', () => {

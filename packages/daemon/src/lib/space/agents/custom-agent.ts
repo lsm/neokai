@@ -290,8 +290,8 @@ export function buildReviewerNodeAgentPrompt(customAgent: SpaceAgent): string {
 	sections.push(`\n## Step 2 — Get the PR URL from \`code-pr-gate\`\n`);
 	sections.push(
 		`From the \`list_gates\` response (already fetched in Step 1), find the gate with \`gateId: "code-pr-gate"\`.\n` +
-			`Extract the \`currentData.pr\` field — this is the PR URL (e.g., \`https://github.com/owner/repo/pull/42\`).\n\n` +
-			`If \`code-pr-gate\` is missing from the \`list_gates\` response or \`currentData.pr\` is empty, stop and output:\n` +
+			`Extract the \`currentData.pr_url\` field — this is the PR URL (e.g., \`https://github.com/owner/repo/pull/42\`).\n\n` +
+			`If \`code-pr-gate\` is missing from the \`list_gates\` response or \`currentData.pr_url\` is empty, stop and output:\n` +
 			`\`PR URL not found in code-pr-gate — cannot proceed with review.\``
 	);
 
@@ -486,9 +486,9 @@ export function buildQaNodeAgentPrompt(): string {
 			`\`\`\`\n` +
 			`read_gate({ gateId: "code-pr-gate" })\n` +
 			`\`\`\`\n\n` +
-			`The gate data will contain a \`prUrl\` field (e.g. \`https://github.com/owner/repo/pull/123\`). ` +
+			`The gate data will contain a \`pr_url\` field (e.g. \`https://github.com/owner/repo/pull/123\`). ` +
 			`Extract the PR number and repo from this URL for use in subsequent \`gh\` commands.\n\n` +
-			`If \`code-pr-gate\` is empty or has no \`prUrl\`, stop and write a failed result:\n` +
+			`If \`code-pr-gate\` is empty or has no \`pr_url\`, stop and write a failed result:\n` +
 			`- gateId: \`qa-result-gate\`\n` +
 			`- data: \`{ result: "failed", summary: "No PR URL found in code-pr-gate — cannot verify QA." }\``
 	);
@@ -945,12 +945,12 @@ export function buildCoderNodeAgentPrompt(): string {
 	sections.push(`\`\`\`\n` + `read_gate({ gateId: "plan-pr-gate" })\n` + `\`\`\``);
 	sections.push(
 		`The gate data contains:\n` +
-			`- \`prUrl\` — the plan PR URL (fetch the diff to read the full plan)\n` +
-			`- \`prNumber\` — the plan PR number\n` +
+			`- \`plan_submitted\` — the plan PR URL (fetch the diff to read the full plan)\n` +
+			`- \`pr_number\` — the plan PR number\n` +
 			`- \`branch\` — the branch containing the plan document\n\n` +
-			`Read the plan document (e.g. via \`gh pr diff <prNumber>\` or \`Read docs/plans/<slug>.md\`) ` +
+			`Read the plan document (e.g. via \`gh pr diff <pr_number>\` or \`Read docs/plans/<slug>.md\`) ` +
 			`to understand the implementation approach before writing any code.\n\n` +
-			`If \`plan-pr-gate\` is empty or has no \`prUrl\`, proceed with the task description ` +
+			`If \`plan-pr-gate\` is empty or has no \`plan_submitted\`, proceed with the task description ` +
 			`from the task message — no plan PR is required in that case.`
 	);
 
@@ -966,15 +966,15 @@ export function buildCoderNodeAgentPrompt(): string {
 			`write_gate({\n` +
 			`  "gateId": "code-pr-gate",\n` +
 			`  "data": {\n` +
-			`    "prUrl": "<PR URL from gh pr create>",\n` +
-			`    "prNumber": <PR number as integer>,\n` +
+			`    "pr_url": "<PR URL from gh pr create>",\n` +
+			`    "pr_number": <PR number as integer>,\n` +
 			`    "branch": "<feature branch name>"\n` +
 			`  }\n` +
 			`})\n` +
 			`\`\`\``
 	);
 	sections.push(
-		`The gate condition is \`check: prUrl exists\`. Once \`prUrl\` is present in the ` +
+		`The gate condition is \`check: pr_url exists\`. Once \`pr_url\` is present in the ` +
 			`gate data, the condition passes and the code-review channel opens automatically.`
 	);
 
@@ -1051,15 +1051,15 @@ export function buildPlannerNodeAgentPrompt(): string {
 			`write_gate({\n` +
 			`  "gateId": "plan-pr-gate",\n` +
 			`  "data": {\n` +
-			`    "prUrl": "<PR URL from gh pr create>",\n` +
-			`    "prNumber": <PR number as integer>,\n` +
+			`    "plan_submitted": "<PR URL from gh pr create>",\n` +
+			`    "pr_number": <PR number as integer>,\n` +
 			`    "branch": "<feature branch name>"\n` +
 			`  }\n` +
 			`})\n` +
 			`\`\`\``
 	);
 	sections.push(
-		`The gate condition is \`check: prUrl exists\`. Once \`prUrl\` is present in the ` +
+		`The gate condition is \`check: plan_submitted exists\`. Once \`plan_submitted\` is present in the ` +
 			`gate data, the condition passes and the plan-review channel opens automatically.`
 	);
 
@@ -1075,8 +1075,8 @@ export function buildPlannerNodeAgentPrompt(): string {
 			`  "target": "reviewer",\n` +
 			`  "message": "Plan PR is ready for review.",\n` +
 			`  "data": {\n` +
-			`    "prUrl": "<PR URL>",\n` +
-			`    "prNumber": <PR number>\n` +
+			`    "plan_submitted": "<PR URL>",\n` +
+			`    "pr_number": <PR number>\n` +
 			`  }\n` +
 			`})\n` +
 			`\`\`\``
