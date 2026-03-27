@@ -103,6 +103,15 @@ describe('parseDiff', () => {
 		expect(lines[0].newLineNum).toBe(2);
 	});
 
+	it('trailing newline does not produce a phantom context line', () => {
+		// git diff output always ends with \n — the trailing empty string must be skipped
+		const diff = '@@ -1,1 +1,1 @@\n-old\n+new\n';
+		const lines = parseDiff(diff);
+		// Only 3 lines: hunk header, removed, added — no phantom context
+		expect(lines.length).toBe(3);
+		expect(lines.map((l) => l.type)).toEqual(['hunk', 'removed', 'added']);
+	});
+
 	it('does not increment counters for "no newline at end of file" line', () => {
 		// "\ No newline at end of file" must NOT increment old or new line counters
 		const diff =

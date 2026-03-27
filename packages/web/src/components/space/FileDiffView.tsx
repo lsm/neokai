@@ -95,8 +95,10 @@ export function parseDiff(diff: string): ParsedLine[] {
 		} else if (raw.startsWith('\\')) {
 			// "\ No newline at end of file" — informational; no line number increment
 			result.push({ type: 'index', content: raw, oldLineNum: null, newLineNum: null });
+		} else if (!raw) {
+			// trailing newline produces an empty string — skip it
 		} else {
-			// context line (starts with space) or empty
+			// context line (starts with space)
 			oldLine++;
 			newLine++;
 			result.push({
@@ -207,14 +209,10 @@ export function FileDiffView({ runId, filePath, onBack, class: className }: File
 				)}
 
 				{!loading && !error && parsedLines.length > 0 && (
-					<table
-						class="w-full text-xs font-mono border-collapse"
-						style={{ tableLayout: 'fixed' }}
-						data-testid="diff-table"
-					>
+					<table class="min-w-full text-xs font-mono border-collapse" data-testid="diff-table">
 						<colgroup>
-							<col style={{ width: '3.5rem' }} />
-							<col style={{ width: '3.5rem' }} />
+							<col style={{ width: '3.5rem', flexShrink: 0 }} />
+							<col style={{ width: '3.5rem', flexShrink: 0 }} />
 							<col />
 						</colgroup>
 						<tbody>
@@ -259,7 +257,7 @@ export function FileDiffView({ runId, filePath, onBack, class: className }: File
 										<td class="px-2 py-0.5 text-gray-600 text-right select-none border-r border-dark-700 w-14">
 											{line.newLineNum ?? ''}
 										</td>
-										<td class={cn('px-3 py-0.5 whitespace-pre overflow-hidden', contentClass)}>
+										<td class={cn('px-3 py-0.5 whitespace-pre', contentClass)}>
 											{sigil !== null && (
 												<span
 													class={cn(
