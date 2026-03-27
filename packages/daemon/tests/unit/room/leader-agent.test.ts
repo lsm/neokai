@@ -143,6 +143,15 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('replan_goal');
 		});
 
+		it('should document no_pr and artifacts for complete_task', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('no_pr');
+			expect(prompt).toContain('artifacts');
+			expect(prompt).toContain('research');
+			expect(prompt).toContain('investigation');
+			expect(prompt).toContain('meta-tasks');
+		});
+
 		it('should include task management tools in tool contract', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('create_task');
