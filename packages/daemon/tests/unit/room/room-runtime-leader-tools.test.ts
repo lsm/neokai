@@ -959,11 +959,19 @@ describe('RoomRuntime leader tools', () => {
 
 			ctx.hub.emittedEvents.length = 0;
 
-			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Research done',
 				no_pr: true,
 			});
 
+			// Verify the completion itself succeeded
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('completed');
+
+			// But no auto_completed event for supervised goals
 			const autoEvents = ctx.hub.emittedEvents.filter(
 				(e) => e.event === 'goal.task.auto_completed'
 			);
@@ -1025,6 +1033,10 @@ describe('RoomRuntime leader tools', () => {
 
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(true);
+
+			// Planning task itself should be completed
+			const updatedPlanTask = await ctx.taskManager.getTask(planTask.id);
+			expect(updatedPlanTask!.status).toBe('completed');
 
 			// Draft tasks should be promoted to pending
 			const updated1 = await ctx.taskManager.getTask(draft1.id);
