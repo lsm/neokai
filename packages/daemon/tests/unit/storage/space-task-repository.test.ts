@@ -570,4 +570,23 @@ describe('SpaceTaskRepository', () => {
 			expect(repo.getTaskByNumber(space2.id, 1)).toBeNull();
 		});
 	});
+
+	describe('concurrent task creation', () => {
+		it('assigns unique taskNumbers when creating tasks rapidly', () => {
+			// Simulate concurrent creation by creating many tasks in tight succession.
+			// The transaction in createTask prevents duplicate task_numbers.
+			const tasks = Array.from({ length: 20 }, (_, i) =>
+				repo.createTask({ spaceId, title: `Task ${i}`, description: '' })
+			);
+
+			const numbers = tasks.map((t) => t.taskNumber);
+			const uniqueNumbers = new Set(numbers);
+			expect(uniqueNumbers.size).toBe(20);
+
+			// Verify monotonically increasing
+			for (let i = 1; i < numbers.length; i++) {
+				expect(numbers[i]).toBeGreaterThan(numbers[i - 1]);
+			}
+		});
+	});
 });

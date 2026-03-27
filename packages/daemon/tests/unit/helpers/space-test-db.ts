@@ -146,7 +146,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		CREATE TABLE IF NOT EXISTS space_tasks (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
-			task_number INTEGER,
+			task_number INTEGER NOT NULL,
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'pending'

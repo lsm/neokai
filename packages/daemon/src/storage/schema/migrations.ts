@@ -3801,28 +3801,117 @@ export function runMigration62(db: BunDatabase): void {
 	const cols = db.prepare('PRAGMA table_info(space_tasks)').all() as Array<{ name: string }>;
 	if (cols.some((c) => c.name === 'task_number')) return;
 
-	// Add the column (nullable initially so existing rows don't violate NOT NULL)
-	db.exec(`ALTER TABLE space_tasks ADD COLUMN task_number INTEGER`);
+	// SQLite cannot ALTER a column to NOT NULL, so we:
+	// 1. Add nullable column and backfill existing rows
+	// 2. Rebuild table with NOT NULL constraint via rename pattern
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	db.exec(`BEGIN`);
+	try {
+		// Step 1: Add nullable column and backfill
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN task_number INTEGER`);
 
-	// Backfill existing rows: assign sequential numbers per space ordered by created_at
-	const spaces = db.prepare(`SELECT DISTINCT space_id FROM space_tasks`).all() as Array<{
-		space_id: string;
-	}>;
-	for (const { space_id } of spaces) {
-		const tasks = db
-			.prepare(`SELECT id FROM space_tasks WHERE space_id = ? ORDER BY created_at ASC`)
-			.all(space_id) as Array<{ id: string }>;
-		const updateStmt = db.prepare(`UPDATE space_tasks SET task_number = ? WHERE id = ?`);
-		let num = 1;
-		for (const { id } of tasks) {
-			updateStmt.run(num++, id);
+		const spaces = db.prepare(`SELECT DISTINCT space_id FROM space_tasks`).all() as Array<{
+			space_id: string;
+		}>;
+		for (const { space_id } of spaces) {
+			const tasks = db
+				.prepare(`SELECT id FROM space_tasks WHERE space_id = ? ORDER BY created_at ASC`)
+				.all(space_id) as Array<{ id: string }>;
+			const updateStmt = db.prepare(`UPDATE space_tasks SET task_number = ? WHERE id = ?`);
+			let num = 1;
+			for (const { id } of tasks) {
+				updateStmt.run(num++, id);
+			}
 		}
-	}
 
-	// Create unique index (enforces per-space uniqueness)
-	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
-	);
+		// Step 2: Rebuild table with NOT NULL on task_number
+		db.exec(`DROP TABLE IF EXISTS space_tasks_m61_new`);
+		db.exec(`
+			CREATE TABLE space_tasks_m61_new (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				task_number INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed',
+						'needs_attention', 'cancelled', 'archived', 'rate_limited', 'usage_limited')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				task_type TEXT
+					CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
+				assigned_agent TEXT
+					CHECK(assigned_agent IN ('coder', 'general', 'planner')),
+				custom_agent_id TEXT,
+				agent_name TEXT,
+				completion_summary TEXT,
+				workflow_run_id TEXT,
+				workflow_node_id TEXT,
+				created_by_task_id TEXT,
+				goal_id TEXT,
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				input_draft TEXT,
+				active_session TEXT
+					CHECK(active_session IN ('worker', 'leader')),
+				task_agent_session_id TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER,
+				archived_at INTEGER,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
+				FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
+			)
+		`);
+
+		db.exec(`
+			INSERT INTO space_tasks_m61_new
+			SELECT id, space_id, task_number, title, description, status, priority, task_type,
+				assigned_agent, custom_agent_id, agent_name, completion_summary,
+				workflow_run_id, workflow_node_id, created_by_task_id, goal_id,
+				progress, current_step, result, error, depends_on, input_draft,
+				active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+				archived_at, created_at, started_at, completed_at, updated_at
+			FROM space_tasks
+		`);
+
+		db.exec(`DROP TABLE space_tasks`);
+		db.exec(`ALTER TABLE space_tasks_m61_new RENAME TO space_tasks`);
+
+		// Recreate all indexes (dropped with the old table)
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)`
+		);
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_one_per_agent_slot ON space_tasks (workflow_run_id, workflow_node_id, agent_name) WHERE workflow_run_id IS NOT NULL AND workflow_node_id IS NOT NULL AND agent_name IS NOT NULL`
+		);
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
+		);
+
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
 }
 
 export function runMigration60(db: BunDatabase): void {
