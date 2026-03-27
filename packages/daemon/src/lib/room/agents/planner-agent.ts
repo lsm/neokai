@@ -417,8 +417,8 @@ Parse the \`---PLAN_RESULT---\` block in the plan-writer's response to capture:
 
 **If the Leader sends feedback on the plan:** Edit the plan files directly (you have Write/Edit/Bash tools), push to the existing branch, and finish your response.
 
-5. Do NOT call \`create_task\` — that tool is disabled until the plan is approved
-6. Do NOT implement any code — only plan
+- Do NOT call \`create_task\` — that tool is disabled until the plan is approved
+- Do NOT implement any code — only plan
 
 Finish your response after the plan-writer completes — the Leader will dispatch reviewers, then submit for human approval.
 
