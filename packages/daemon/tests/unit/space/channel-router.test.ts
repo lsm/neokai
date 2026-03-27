@@ -1775,6 +1775,48 @@ describe('ChannelRouter', () => {
 			expect(result.toRole).toBe('coder');
 		});
 
+		test('gated channel (check): canDeliver returns true when condition satisfied', async () => {
+			const gate: Gate = {
+				id: 'allow-gate',
+				condition: { type: 'check', field: 'approved', op: '==', value: true },
+				data: {},
+				allowedWriterRoles: ['*'],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'allow-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'canDeliver Allowed Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Write gate data to satisfy the condition
+			gateDataRepo.set(run.id, 'allow-gate', { approved: true });
+
+			const result = await router.canDeliver(run.id, 'coder', 'planner', {
+				workspacePath: '/tmp/ws',
+			});
+			expect(result.allowed).toBe(true);
+		});
+
 		test('gated channel (check): canDeliver returns false when blocked', async () => {
 			const gate: Gate = {
 				id: 'approval-gate',

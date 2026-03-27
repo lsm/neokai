@@ -1520,6 +1520,75 @@ describe('node-agent-tools: write_gate', () => {
 		expect(dataB.success).toBe(true);
 		expect(dataB.gateOpen).toBe(true); // 2 votes, min=2
 	});
+
+	test('write_gate calls onGateDataChanged when provided', async () => {
+		const gate: Gate = {
+			id: 'trigger-gate',
+			condition: { type: 'check', field: 'ready', op: 'exists' },
+			data: {},
+			allowedWriterRoles: ['*'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-trigger',
+			spaceId: ctx.spaceId,
+			name: 'Trigger Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+
+		const calls: Array<{ runId: string; gateId: string }> = [];
+		const config = makeConfig(ctx, {
+			workflow,
+			onGateDataChanged: async (runId, gateId) => {
+				calls.push({ runId, gateId });
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		await handlers.write_gate({ gateId: 'trigger-gate', data: { ready: true } });
+
+		// Allow microtasks to flush the fire-and-forget promise
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].runId).toBe(ctx.workflowRunId);
+		expect(calls[0].gateId).toBe('trigger-gate');
+	});
+
+	test('write_gate does not fail when onGateDataChanged is absent', async () => {
+		const gate: Gate = {
+			id: 'no-callback-gate',
+			condition: { type: 'check', field: 'x', op: 'exists' },
+			data: {},
+			allowedWriterRoles: ['*'],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-no-cb',
+			spaceId: ctx.spaceId,
+			name: 'No Callback Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+
+		// No onGateDataChanged provided — should not throw
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'no-callback-gate', data: { x: 1 } });
+		const data = JSON.parse(result.content[0].text);
+		expect(data.success).toBe(true);
+	});
 });
 
 describe('node-agent-tools: list_reachable_agents', () => {

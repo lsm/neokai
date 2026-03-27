@@ -533,13 +533,16 @@ export class ChannelRouter {
 	 * Evaluates a gate by ID against its current runtime data from `gate_data`.
 	 *
 	 * Looks up the gate definition in `workflow.gates`, loads the runtime data from
-	 * `GateDataRepository` (falls back to the gate's default `data` if no DB record),
-	 * and evaluates the condition.
+	 * `GateDataRepository`, and evaluates the condition.
+	 *
+	 * **Fallback behavior when `gateDataRepo` is absent or no DB record exists:**
+	 * Evaluates against the gate's default `data` (as declared in the workflow definition).
+	 * This means a gate can open on first evaluation if its default data satisfies the
+	 * condition — callers that use `gateId` channels should always provide `gateDataRepo`.
 	 *
 	 * Returns `{ open: false }` with a descriptive reason when:
-	 * - `gateDataRepo` is not configured
-	 * - The gate is not found in `workflow.gates`
-	 * - The condition fails
+	 * - The gate is not found in `workflow.gates` (misconfiguration)
+	 * - The condition fails against the runtime (or default) data
 	 */
 	private evaluateGateById(
 		runId: string,
@@ -576,14 +579,16 @@ export class ChannelRouter {
 		const cyclicGates = (workflow.gates ?? []).filter((g) => g.resetOnCycle);
 
 		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {
-			// Atomic path: wrap both reset and increment in one transaction
+			// Atomic path: wrap both reset and increment in one transaction.
+			// db.transaction() preserves the return type of the wrapped function,
+			// so the call returns boolean directly (no cast needed).
 			const transaction = this.config.db.transaction(() => {
 				for (const gate of cyclicGates) {
 					this.config.gateDataRepo!.reset(runId, gate.id, gate.data);
 				}
 				return this.config.workflowRunRepo.incrementIterationCount(runId);
 			});
-			const incremented = transaction() as boolean;
+			const incremented = transaction();
 			if (!incremented) {
 				throw new ActivationError(
 					`Cyclic channel reached the maximum iteration count during delivery (cap enforced atomically). Message was delivered but the cycle was not counted.`

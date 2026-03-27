@@ -124,6 +124,16 @@ export interface NodeAgentToolsConfig {
 	 * Used by list_gates, read_gate, write_gate.
 	 */
 	gateDataRepo: GateDataRepository;
+	/**
+	 * Callback invoked after a gate data write to trigger re-evaluation and
+	 * potential lazy node activation for any channels referencing the changed gate.
+	 *
+	 * Called by `write_gate` after every successful data merge (fire-and-forget).
+	 * When provided, blocked target nodes are auto-activated the moment their gate
+	 * condition is satisfied — enabling vote-counting and push-on-write semantics.
+	 * When absent, nodes are activated at the next `deliverMessage` call instead.
+	 */
+	onGateDataChanged?: (runId: string, gateId: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +161,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		agentMessageRouter,
 		workflow,
 		gateDataRepo,
+		onGateDataChanged,
 	} = config;
 
 	return {
@@ -658,6 +669,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			// Re-evaluate gate with updated data
 			const evalResult = evaluateGate({ ...gateDef, data: updated.data });
 
+			// Trigger re-evaluation and lazy node activation for channels referencing
+			// this gate (fire-and-forget — errors are swallowed to keep the tool response fast).
+			if (onGateDataChanged) {
+				void onGateDataChanged(workflowRunId, gateId).catch(() => {});
+			}
+
 			return jsonResult({
 				success: true,
 				gateId,
@@ -666,7 +683,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				reason: evalResult.reason ?? null,
 				nodeId: workflowNodeId,
 				message: evalResult.open
-					? `Gate "${gateId}" is now OPEN — gated channel(s) may unblock.`
+					? `Gate "${gateId}" is now OPEN — gated channel(s) are unblocked.`
 					: `Gate "${gateId}" is still CLOSED after write: ${evalResult.reason ?? 'condition not met'}.`,
 			});
 		},
@@ -783,8 +800,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			"Write (merge) data into a gate's runtime data store. " +
 				"Your role must be in the gate's allowedWriterRoles. " +
 				'For vote-counting (count condition) gates, use your nodeId as the map key so each node votes once. ' +
-				'After writing, gate re-evaluation is triggered locally — the response tells you if the gate is now open. ' +
-				'Note: the workflow runtime polls gate state at channel-routing time; this tool does not directly push channel unblock events.',
+				'After writing, gate re-evaluation is triggered — the response tells you if the gate is now open. ' +
+				'When the gate opens, blocked target nodes are automatically activated by the workflow runtime.',
 			WriteGateSchema.shape,
 			(args) => handlers.write_gate(args)
 		),

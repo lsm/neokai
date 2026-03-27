@@ -1329,6 +1329,17 @@ export class TaskAgentManager {
 			? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
 			: null;
 
+		// Build a ChannelRouter so write_gate can trigger onGateDataChanged, which
+		// re-evaluates gated channels and lazily activates target nodes when a gate opens.
+		const nodeAgentChannelRouter = new ChannelRouter({
+			taskRepo: this.config.taskRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			workflowManager: this.config.spaceWorkflowManager,
+			agentManager: this.config.spaceAgentManager,
+			gateDataRepo: this.config.gateDataRepo,
+			db: this.config.db.getDatabase(),
+		});
+
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myRole: role,
@@ -1345,6 +1356,7 @@ export class TaskAgentManager {
 			daemonHub: this.config.daemonHub,
 			workflow,
 			gateDataRepo: this.config.gateDataRepo,
+			onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
 		});
 	}
 }
