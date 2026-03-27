@@ -253,9 +253,10 @@ export function setupSpaceWorkflowRunHandlers(
 	// ─── spaceWorkflowRun.markFailed ─────────────────────────────────────────
 	//
 	// Transitions a run to needs_attention with a specific failureReason.
-	// Used to simulate agent crash scenarios in tests and to allow the Space Agent
-	// to surface structured failure reasons when an agent session terminates
-	// unexpectedly (e.g. agentCrash) or exceeds iteration limits.
+	// Production RPC called by the Space Agent when it detects an unrecoverable
+	// failure in a task agent session: e.g. agentCrash (unexpected termination),
+	// maxIterationsReached, or nodeTimeout. Also used in integration tests to
+	// exercise the needs_attention path without a real LLM session.
 	messageHub.onRequest('spaceWorkflowRun.markFailed', async (data) => {
 		const params = data as {
 			id: string;

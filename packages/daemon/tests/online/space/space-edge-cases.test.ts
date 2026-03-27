@@ -4,12 +4,14 @@
  * Covers uncommon but critical scenarios in the Space workflow system:
  *
  *   a. Concurrent tasks      — two workflow runs share no state; each has its own
- *                              iteration counter and isolated gate data.
+ *                              iteration counter (verified at initial state) and
+ *                              gate data is fully isolated between runs.
  *   b. Cancellation          — cancelling a run transitions it and all pending
  *                              tasks to 'cancelled'; cancellation is idempotent.
- *   c. Agent crash           — marking a run as failed via spaceWorkflowRun.markFailed
- *                              transitions run → needs_attention with the given
- *                              failureReason (agentCrash); the run can then be resumed.
+ *   c. Agent crash           — spaceWorkflowRun.markFailed (the production RPC the
+ *                              Space Agent calls on crash detection) transitions
+ *                              run → needs_attention with failureReason: 'agentCrash';
+ *                              the run can then be resumed.
  *   d. Approval gate persistence — gate data written before a daemon restart is
  *                              intact and readable after the daemon restarts.
  *   e. Vote gate partial + restart — two reviewer votes are written; QA is still
@@ -74,8 +76,14 @@ describe('Space Workflow — Edge Cases', () => {
 	}, SETUP_TIMEOUT);
 
 	// =========================================================================
-	// a. Concurrent tasks — separate iteration counters and gate data isolation
+	// a. Concurrent tasks — independent state and gate data isolation
 	// =========================================================================
+	//
+	// Note: worktrees are provisioned by TaskAgentManager when a real agent
+	// session starts, not at run creation time. Without live agent sessions
+	// (no LLM calls in these tests), there are no worktrees to compare.
+	// This test verifies the other forms of run isolation: separate iteration
+	// counters, separate task records, and isolated gate data.
 
 	test(
 		'Two concurrent workflow runs have independent iteration counters and isolated gate data',
@@ -98,7 +106,9 @@ describe('Space Workflow — Edge Cases', () => {
 
 			expect(runA).not.toBe(runB);
 
-			// Both runs start with iterationCount = 0 and are in_progress
+			// Both runs start with iterationCount = 0.
+			// incrementIterationCount has no public RPC, so this verifies initial
+			// isolation: each run owns its own counter row, not a shared counter.
 			const runAObj = (
 				(await daemon.messageHub.request('spaceWorkflowRun.get', { id: runA })) as {
 					run: SpaceWorkflowRun;
@@ -231,16 +241,21 @@ describe('Space Workflow — Edge Cases', () => {
 	);
 
 	// =========================================================================
-	// c. Agent crash — run → needs_attention with failureReason: 'agentCrash'
+	// c. Agent crash — spaceWorkflowRun.markFailed (production path) sets
+	//    run → needs_attention with failureReason: 'agentCrash'
+	//
+	// The Space Agent calls markFailed when it detects an unrecoverable failure
+	// (e.g. session terminated unexpectedly). These tests exercise that RPC
+	// handler directly, which is the same code path that fires in production.
 	// =========================================================================
 
 	test(
-		'markRunFailed transitions run to needs_attention with agentCrash failureReason',
+		'markFailed RPC transitions run to needs_attention with agentCrash failureReason',
 		async () => {
 			const { space, workflow } = await createTestSpace(daemon);
 			const { runId } = await startWorkflowRun(daemon, space.id, workflow.id, 'Agent Crash Test');
 
-			// Simulate the Planning agent session crashing
+			// Exercise the production crash-detection RPC (called by Space Agent on unexpected exit)
 			const { run: failedRun } = await markRunFailed(
 				daemon,
 				runId,
@@ -305,12 +320,13 @@ describe('Space Workflow — Edge Cases', () => {
 			const restartWorkspace = `/tmp/neokai-restart-gate-${Date.now()}`;
 			await Bun.$`mkdir -p ${restartWorkspace}`;
 
-			// Replace the default daemon with one that won't delete its workspace on exit
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-			daemon = await createDaemonServer({ workspacePath: restartWorkspace });
-
 			try {
+				// Replace the default daemon with one that won't delete its workspace on exit.
+				// Runs inside the try block so the workspace is always cleaned up in finally
+				// even if createDaemonServer throws.
+				daemon.kill('SIGTERM');
+				await daemon.waitForExit();
+				daemon = await createDaemonServer({ workspacePath: restartWorkspace });
 				const { space, workflow } = await createTestSpace(daemon);
 				const { runId } = await startWorkflowRun(
 					daemon,
@@ -378,11 +394,12 @@ describe('Space Workflow — Edge Cases', () => {
 			const restartWorkspace = `/tmp/neokai-restart-votes-${Date.now()}`;
 			await Bun.$`mkdir -p ${restartWorkspace}`;
 
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-			daemon = await createDaemonServer({ workspacePath: restartWorkspace });
-
 			try {
+				// Replace the default daemon inside the try block so the workspace is always
+				// cleaned up in finally even if createDaemonServer throws.
+				daemon.kill('SIGTERM');
+				await daemon.waitForExit();
+				daemon = await createDaemonServer({ workspacePath: restartWorkspace });
 				const { space, workflow } = await createTestSpace(daemon);
 				const { runId } = await startWorkflowRun(
 					daemon,
