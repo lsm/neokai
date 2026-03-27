@@ -25,8 +25,8 @@ Identify all gaps where MCP servers and skills are not properly integrated with 
 | G3 | Space task agent rehydration (`rehydrateTaskAgent()`) calls `AgentSession.restore()` without `skillsManager`/`appMcpServerRepo`. After daemon restart, rehydrated task agent sessions run without skills injection even if freshly spawned ones have it. Sub-session rehydration (~line 1142) has the same issue. | High | `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` (~line 993, ~line 1142) |
 | G4 | No per-space skill override mechanism exists (rooms have `RoomSkillOverride`, spaces have nothing equivalent) | Low | N/A (new feature) |
 | G5 | After daemon restart, recovered room worker sessions lose both user-configured MCP servers (file-based + registry) AND skills injection (`skillsManager`/`appMcpServerRepo`). `AgentSession.restore()` does not accept these parameters. Only role-specific in-process MCP servers (planner-tools, leader-agent-tools) are restored. | Medium | `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` (~line 470), `packages/daemon/src/lib/agent/agent-session.ts` (~line 468) |
-| G6 | **App-level MCP servers not visible in normal sessions.** Normal sessions created via `SessionManager` receive `skillsManager` and `appMcpServerRepo` for skills-based MCP injection at query time, but they never call `setRuntimeMcpServers()` with app registry entries. Unlike room chat, task agents, and global spaces agents (which all explicitly call `setRuntimeMcpServers()`), normal sessions rely solely on the skills → `QueryOptionsBuilder.getMcpServersFromSkills()` path. If this path has issues (e.g. `AppMcpServer.enabled` flag not checked), app-level MCP servers silently fail to appear. | High | `packages/daemon/src/lib/session/session-lifecycle.ts` (session creation), `packages/daemon/src/lib/agent/query-options-builder.ts` (`getMcpServersFromSkills()`) |
-| G7 | **Project-level MCP server disable toggle not respected.** Project-level MCP servers (defined in `.mcp.json` or `.claude/settings.json`) are loaded through file-based settings, NOT the skills registry. The ToolsModal checkbox writes to `disabledMcpServers` in `ToolsConfig`, which is persisted to `.claude/settings.local.json`. However, this `disabledMcpServers` list may not be properly applied to SDK session options, causing servers like Chrome DevTools MCP to remain active even when unchecked in the UI. The `SettingsManager.prepareSDKOptions()` path or the SDK's handling of `disabledMcpServers` needs investigation and a fix. | High | `packages/web/src/components/ToolsModal.tsx`, `packages/daemon/src/lib/agent/query-options-builder.ts`, `packages/daemon/src/lib/settings-manager.ts` |
+| G6 | **Missing `AppMcpServer.enabled` check in skills-based MCP injection.** `getMcpServersFromSkills()` in `QueryOptionsBuilder` calls `appMcpServerRepo.get(id)` but never checks `appServer.enabled` before adding the server to the SDK options map. It only checks `AppSkill.enabled` (via `getEnabledSkills()`). If an `AppMcpServer` is disabled but its wrapping `AppSkill` remains enabled, the server is still injected. The repository already has a `listEnabled()` method for this purpose. Note: normal sessions DO receive `skillsManager` and `appMcpServerRepo` through `SessionManager` and the skills injection path IS active at query-build time -- no additional `setRuntimeMcpServers()` call is needed for normal sessions. | High | `packages/daemon/src/lib/agent/query-options-builder.ts` (`getMcpServersFromSkills()` ~line 839-857) |
+| G7 | **Project-level MCP server disable toggle not respected in room_chat sessions.** The ToolsModal writes disabled server names to `disabledMcpjsonServers` in `.claude/settings.local.json` via `settingsManager.setDisabledMcpServers()`. The SDK reads this key from the settings file. For normal/worker sessions this likely works because they load `settings.local.json`. However, `room_chat` sessions set `settingSources: []`, which causes the SDK to skip loading `settings.local.json` entirely -- so `disabledMcpjsonServers` never takes effect. Investigation is needed to confirm the exact affected session types and find the right fix (e.g., passing disabled servers through SDK options directly rather than relying on file-based settings). | High | `packages/web/src/components/ToolsModal.tsx`, `packages/daemon/src/lib/agent/query-options-builder.ts`, `packages/daemon/src/lib/settings-manager.ts` |
 | G8 | **Tools UI in session chat container is outdated.** The ToolsModal shows "Claude Code Preset" toggle and "Settings Source" checkboxes (user/project/local) which are internal implementation details, not user-friendly concepts. App-level MCP servers (from the skills registry) are not shown at all -- only file-based MCP servers grouped by setting source appear. The UI needs a redesign to: show ALL available tools/prompts (file-based + app-level) organized into logical groups, and allow enable/disable at both group and individual level. | Medium | `packages/web/src/components/ToolsModal.tsx` (573 lines) |
 
 **Previously reported as gap (confirmed not a gap):**
@@ -108,19 +108,18 @@ G4 (per-space skill overrides) is deferred as low priority -- spaces can be addr
 
 ---
 
-## Task 3: Fix app-level MCP server visibility in normal sessions (G6)
+## Task 3: Fix `AppMcpServer.enabled` check in skills-based MCP injection (G6)
 
-**Description:** Normal sessions (lobby/non-room) created via `SessionManager` do not call `setRuntimeMcpServers()` with app registry entries, unlike room chat, task agents, and global spaces agents which all do. Normal sessions rely solely on the `QueryOptionsBuilder.getMcpServersFromSkills()` path, which requires skills to exist for each MCP server. Additionally, `getMcpServersFromSkills()` does not check the `AppMcpServer.enabled` flag -- it only checks the `AppSkill.enabled` flag, so a disabled app MCP server could still be injected if its wrapping skill remains enabled.
+**Description:** `QueryOptionsBuilder.getMcpServersFromSkills()` does not check the `AppMcpServer.enabled` flag before injecting servers into SDK options. It only checks `AppSkill.enabled` via `getEnabledSkills()`. If an `AppMcpServer` is disabled but its wrapping `AppSkill` remains enabled, the server is still injected. The fix is straightforward: add an `appServer.enabled` check. Note: normal sessions already receive `skillsManager` and `appMcpServerRepo` through `SessionManager`, and the skills injection path is active at query-build time -- no additional `setRuntimeMcpServers()` call is needed.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. Investigate and confirm the exact failure mode: are app-level MCP servers missing because `getMcpServersFromSkills()` has a bug, or because normal sessions need explicit `setRuntimeMcpServers()` calls?
-2. Add a check for `appServer.enabled` in `QueryOptionsBuilder.getMcpServersFromSkills()` before converting to SDK config (belt-and-suspenders with the skill enabled check)
-3. If needed, add `setRuntimeMcpServers()` with app registry entries in `SessionLifecycle.create()` for normal sessions, matching the pattern used by room chat and task agents
-4. Add unit tests for `getMcpServersFromSkills()` verifying that disabled `AppMcpServer` entries are filtered out
-5. Add an online test confirming a normal session can access a globally-enabled app-level MCP server
-6. Changes must be on a feature branch with a GitHub PR created via `gh pr create`
+1. Add a check for `appServer.enabled` in `QueryOptionsBuilder.getMcpServersFromSkills()` (~line 839-857) before converting to SDK config -- skip disabled `AppMcpServer` entries even if the wrapping skill is enabled
+2. If `getMcpServersFromSkills()` still misses servers after the enabled check fix, investigate whether `skillsManager` is properly wired in the affected session type
+3. Add unit tests for `getMcpServersFromSkills()` verifying that disabled `AppMcpServer` entries are filtered out even when the wrapping `AppSkill` is enabled
+4. Add an online test confirming a normal session can access a globally-enabled app-level MCP server
+5. Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Acceptance criteria:**
 - App-level MCP servers appear in normal session SDK options when globally enabled
@@ -135,24 +134,24 @@ G4 (per-space skill overrides) is deferred as low priority -- spaces can be addr
 
 ## Task 4: Fix project-level MCP server disable toggle (G7)
 
-**Description:** Project-level MCP servers (from `.mcp.json` or `.claude/settings.json`) remain active even when their checkbox is unchecked in the ToolsModal. The ToolsModal writes disabled server names to `disabledMcpServers` in `ToolsConfig`, which is persisted to `.claude/settings.local.json`. This config must be properly threaded through to the SDK session options so that disabled MCP servers are not started. The bug could be in how `disabledMcpServers` is passed from session config to the SDK, or in how the SDK interprets it.
+**Description:** The ToolsModal writes disabled server names to `disabledMcpjsonServers` in `.claude/settings.local.json` via `settingsManager.setDisabledMcpServers()`. The SDK reads this key from the settings file. For normal/worker sessions that load `settings.local.json`, this likely works. However, `room_chat` sessions set `settingSources: []`, causing the SDK to skip loading `settings.local.json` entirely -- so `disabledMcpjsonServers` never takes effect. The fix needs to ensure disabled MCP servers are excluded regardless of which settings sources are loaded, likely by passing the disabled list through SDK options directly.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. Trace the full path: ToolsModal checkbox → `disabledMcpServers` in `ToolsConfig` → session config persistence → `QueryOptionsBuilder.build()` / `SettingsManager.prepareSDKOptions()` → SDK options
-2. Identify where the chain breaks (is `disabledMcpServers` not read from config? not passed to SDK? not applied to `mcpServers` map?)
-3. Fix the bug so that MCP servers in `disabledMcpServers` are excluded from the SDK session options
-4. Add a unit test for `QueryOptionsBuilder` that verifies `disabledMcpServers` entries are excluded from the final `mcpServers` map
-5. Add an e2e test: toggle a project-level MCP server off in the ToolsModal, verify it is not listed as available in the session
+1. Trace the full path: ToolsModal checkbox → `disabledMcpjsonServers` in `settings.local.json` → SDK settings file loading → MCP server filtering. Confirm which session types are affected (expected: `room_chat` with `settingSources: []`; verify normal/worker sessions work correctly).
+2. Identify the right fix: either pass `disabledMcpServers` through SDK options directly (so it doesn't depend on settings file loading), or ensure `room_chat` sessions include `local` in their `settingSources`, or filter disabled servers in `QueryOptionsBuilder.build()` before passing to the SDK.
+3. Implement the fix so that MCP servers in the disabled list are excluded from SDK session options for ALL session types, including `room_chat`.
+4. Add a unit test for `QueryOptionsBuilder` or the relevant layer that verifies `disabledMcpServers` entries are excluded from the final `mcpServers` map for both normal and room_chat sessions.
+5. Add an e2e test targeting a **normal session**: toggle a project-level MCP server off in the ToolsModal, verify it is not listed as available in the session. (Room_chat e2e can be added later if needed.)
 6. Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Acceptance criteria:**
-- Unchecking a project-level MCP server in ToolsModal prevents it from being loaded in the session
+- Unchecking a project-level MCP server in ToolsModal prevents it from being loaded in the session (for both normal and room_chat session types)
 - Re-checking it makes it available again
 - The `disabledMcpServers` config is properly persisted and read
-- New unit test confirms disabled servers are excluded from SDK options
-- New e2e test confirms the UI toggle works end-to-end
+- New unit test confirms disabled servers are excluded for both normal and room_chat session types
+- New e2e test targeting a normal session confirms the UI toggle works end-to-end
 - Existing ToolsModal and session tests continue to pass
 
 **Dependencies:** None (can run in parallel with other tasks)
@@ -173,19 +172,24 @@ G4 (per-space skill overrides) is deferred as low priority -- spaces can be addr
 3. **Group-based organization:** Organize tools into logical groups (e.g., by category: "File Operations", "Web", "MCP Servers", "Plugins", or by source: "Built-in", "Project", "App-level"). Each group should be collapsible.
 4. **Group-level enable/disable:** Add a toggle at the group header level that enables/disables all tools in that group at once.
 5. **Individual enable/disable:** Retain individual toggles for each tool/server within a group.
-6. **Persist state:** Ensure enable/disable state is properly persisted -- file-based servers via `disabledMcpServers` in session config, app-level servers via skill enabled/room override state.
-7. **Add unit tests** for new UI components (group toggle logic, unified list rendering).
-8. **Add e2e test:** Open the ToolsModal, verify groups are displayed, toggle a group off, verify individual items are disabled.
+6. **Persist state with clear scoping rules:**
+   - **File-based MCP servers** (from settings sources): per-session config via `disabledMcpServers` written to `.claude/settings.local.json` (existing mechanism, fixed by Task 4)
+   - **App-level MCP servers** (from skills registry): global enable/disable via `AppSkill.enabled` (affects all sessions), per-room disable via `RoomSkillOverride` (affects room sessions only)
+   - **Group-level toggles** should batch-apply the appropriate mechanism for each item in the group (file-based items write to `disabledMcpServers`, app-level items toggle skill enabled state)
+   - The UI should clearly indicate scope: "This change affects all sessions" vs "This change affects this session only"
+7. **Add unit tests** for new UI components (group toggle logic, unified list rendering, scope-aware persistence).
+8. **Add e2e test:** Open the ToolsModal, verify groups are displayed, toggle a group off, verify individual items are disabled, reopen modal and verify state persists.
 9. Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Acceptance criteria:**
 - "Claude Code Preset" and "Settings Source" no longer shown as top-level sections in the ToolsModal
 - All available MCP servers (both file-based and app-level) are displayed in a unified view
 - Tools are organized into collapsible groups
-- Group-level toggle enables/disables all items in the group
+- Group-level toggle enables/disables all items in the group using the correct persistence mechanism per item type
 - Individual toggles still work independently
+- The UI clearly communicates the scope of enable/disable actions (session-local vs global)
 - State persists across modal open/close and page refresh
-- New unit tests cover group toggle logic
+- New unit tests cover group toggle logic and scope-aware persistence
 - New e2e test verifies the redesigned UI works end-to-end
 - Existing session functionality is not broken
 
