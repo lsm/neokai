@@ -483,6 +483,14 @@ describe('CODING_WORKFLOW_V2 template', () => {
 	test('maxIterations is set to 5', () => {
 		expect(CODING_WORKFLOW_V2.maxIterations).toBe(5);
 	});
+
+	test('has the default tag so workflow selector ranks it first for coding requests', () => {
+		expect(CODING_WORKFLOW_V2.tags).toContain('default');
+	});
+
+	test('has the coding tag', () => {
+		expect(CODING_WORKFLOW_V2.tags).toContain('coding');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -777,6 +785,19 @@ describe('seedBuiltInWorkflows()', () => {
 			expect(nodeNames.has(ch.from as string)).toBe(true);
 			expect(nodeNames.has(ch.to as string)).toBe(true);
 		}
+	});
+
+	test('CODING_WORKFLOW_V2 seeded with default tag for workflow selector ranking', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
+		expect(wf.tags).toContain('default');
+	});
+
+	test('CODING_WORKFLOW_V2 seeded alongside CODING_WORKFLOW_V1 — both present', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
+		expect(names).toContain(CODING_WORKFLOW.name);
+		expect(names).toContain(CODING_WORKFLOW_V2.name);
 	});
 
 	test('all seeded workflows have the real spaceId assigned', async () => {

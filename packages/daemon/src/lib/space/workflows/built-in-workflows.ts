@@ -323,7 +323,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 	],
 	startNodeId: V2_PLANNING_STEP,
 	rules: [],
-	tags: ['coding', 'v2', 'parallel-review'],
+	tags: ['coding', 'v2', 'parallel-review', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
 	// Gates — independent entities referenced by channels via gateId

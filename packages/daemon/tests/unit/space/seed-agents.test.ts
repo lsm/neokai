@@ -171,4 +171,13 @@ describe('seedPresetAgents', () => {
 		expect(qa?.tools).toContain('Grep');
 		expect(qa?.tools).toContain('Glob');
 	});
+
+	it('QA agent has a system prompt set', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const qa = seeded.find((a) => a.role === 'qa');
+
+		expect(qa).toBeDefined();
+		expect(typeof qa?.systemPrompt).toBe('string');
+		expect((qa?.systemPrompt?.length ?? 0) > 0).toBe(true);
+	});
 });
