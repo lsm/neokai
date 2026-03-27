@@ -659,7 +659,7 @@ export function RoomSettings({
 										type="button"
 										onClick={() => setShowArchiveModal(true)}
 										disabled={disabled}
-										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-yellow-700/60 text-yellow-400 hover:bg-yellow-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-yellow-700/60 text-yellow-400 hover:bg-yellow-900/20 active:bg-yellow-900/40 active:scale-95 rounded-md transition-all disabled:opacity-40 disabled:cursor-not-allowed"
 									>
 										Archive
 									</button>
@@ -678,7 +678,7 @@ export function RoomSettings({
 										type="button"
 										onClick={() => setShowDeleteModal(true)}
 										disabled={disabled}
-										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-red-700/60 text-red-400 hover:bg-red-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-red-700/60 text-red-400 hover:bg-red-900/20 active:bg-red-900/40 active:scale-95 rounded-md transition-all disabled:opacity-40 disabled:cursor-not-allowed"
 									>
 										Delete
 									</button>

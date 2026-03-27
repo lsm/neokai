@@ -33,8 +33,8 @@ export function NavIconButton({
 				'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
 				'disabled:opacity-40 disabled:cursor-not-allowed',
 				active
-					? 'bg-indigo-500/20 text-indigo-400'
-					: 'text-gray-500 hover:text-gray-300 hover:bg-white/5',
+					? 'bg-indigo-500/20 text-indigo-400 active:bg-indigo-500/30'
+					: 'text-gray-500 hover:text-gray-300 hover:bg-white/5 active:bg-white/10 active:text-gray-200',
 				className
 			)}
 		>

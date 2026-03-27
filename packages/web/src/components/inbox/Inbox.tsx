@@ -59,7 +59,7 @@ function InboxTaskCard({
 						type="button"
 						onClick={handleApprove}
 						disabled={anyApproving}
-						class="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+						class="bg-green-600 hover:bg-green-700 active:bg-green-800 active:scale-95 text-white text-xs px-3 py-1 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 transition-all"
 					>
 						{isApproving ? (
 							<>
@@ -74,14 +74,14 @@ function InboxTaskCard({
 						type="button"
 						onClick={() => setIsRejecting((v) => !v)}
 						disabled={anyApproving}
-						class="border border-red-600 text-red-400 hover:bg-red-900/20 text-xs px-3 py-1 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+						class="border border-red-600 text-red-400 hover:bg-red-900/20 active:bg-red-900/40 active:scale-95 text-xs px-3 py-1 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
 					>
 						Reject
 					</button>
 					<button
 						type="button"
 						onClick={handleView}
-						class="text-gray-400 hover:text-gray-200 hover:bg-dark-700 text-xs px-3 py-1 rounded-lg transition-colors"
+						class="text-gray-400 hover:text-gray-200 active:text-white hover:bg-dark-700 active:bg-dark-600 active:scale-95 text-xs px-3 py-1 rounded-lg transition-all"
 					>
 						View
 					</button>
@@ -103,7 +103,7 @@ function InboxTaskCard({
 								setFeedback('');
 								setIsRejecting(false);
 							}}
-							class="px-3 py-1.5 text-xs font-medium text-gray-400 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors"
+							class="px-3 py-1.5 text-xs font-medium text-gray-400 bg-dark-800 hover:bg-dark-700 active:bg-dark-600 active:scale-95 border border-dark-600 rounded transition-all"
 						>
 							Cancel
 						</button>
@@ -111,7 +111,7 @@ function InboxTaskCard({
 							type="button"
 							onClick={handleRejectSubmit}
 							disabled={!feedback.trim()}
-							class="px-3 py-1.5 text-xs font-medium text-red-400 bg-red-900/20 hover:bg-red-900/30 border border-red-700/50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+							class="px-3 py-1.5 text-xs font-medium text-red-400 bg-red-900/20 hover:bg-red-900/30 active:bg-red-900/50 active:scale-95 border border-red-700/50 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
 						>
 							Send Feedback
 						</button>

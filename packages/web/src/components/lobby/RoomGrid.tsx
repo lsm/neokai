@@ -57,7 +57,7 @@ function RoomCard({ room, onClick }: RoomCardProps) {
 			disabled={isArchived}
 			class={`group bg-dark-850 border border-dark-700 rounded-lg p-5 text-left transition-all
         ${
-					isArchived ? 'opacity-50 cursor-not-allowed' : 'hover:bg-dark-800 hover:border-dark-600'
+					isArchived ? 'opacity-50 cursor-not-allowed' : 'hover:bg-dark-800 hover:border-dark-600 active:bg-dark-750 active:scale-[0.99]'
 				}`}
 		>
 			<div class="flex items-start justify-between mb-3">

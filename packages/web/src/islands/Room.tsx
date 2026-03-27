@@ -21,6 +21,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 import { toast } from '../lib/toast';
+import { lobbyStore } from '../lib/lobby-store';
 
 type RoomTab = 'overview' | 'context' | 'agents' | 'goals' | 'settings';
 
@@ -137,12 +138,16 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 
 	const handleArchiveRoom = async () => {
 		await roomStore.archiveRoom();
+		// Explicitly refresh lobby so the archived room disappears without page reload
+		lobbyStore.refresh();
 		toast.success('Room archived successfully');
 		navigateToHome();
 	};
 
 	const handleDeleteRoom = async () => {
 		await roomStore.deleteRoom();
+		// Explicitly refresh lobby so the deleted room disappears without page reload
+		lobbyStore.refresh();
 		toast.success('Room deleted permanently');
 		navigateToHome();
 	};
@@ -173,7 +178,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
 									activeTab === 'overview'
 										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
+										: 'text-gray-400 hover:text-gray-200 active:text-gray-100'
 								}`}
 								onClick={() => handleTabChange('overview')}
 							>
@@ -183,7 +188,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
 									activeTab === 'context'
 										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
+										: 'text-gray-400 hover:text-gray-200 active:text-gray-100'
 								}`}
 								onClick={() => handleTabChange('context')}
 							>
@@ -193,7 +198,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
 									activeTab === 'agents'
 										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
+										: 'text-gray-400 hover:text-gray-200 active:text-gray-100'
 								}`}
 								onClick={() => handleTabChange('agents')}
 							>
@@ -203,7 +208,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
 									activeTab === 'goals'
 										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
+										: 'text-gray-400 hover:text-gray-200 active:text-gray-100'
 								}`}
 								onClick={() => handleTabChange('goals')}
 							>
@@ -213,7 +218,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
 									activeTab === 'settings'
 										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
+										: 'text-gray-400 hover:text-gray-200 active:text-gray-100'
 								}`}
 								onClick={() => handleTabChange('settings')}
 							>

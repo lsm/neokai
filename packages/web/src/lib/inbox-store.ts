@@ -80,7 +80,10 @@ async function approveTask(taskId: string, roomId: string): Promise<boolean> {
 	try {
 		const hub = await connectionManager.getHub();
 		await hub.request('task.approve', { roomId, taskId });
-		await refresh();
+		// Optimistically remove the approved task immediately for instant UI feedback
+		items.value = items.value.filter((item) => item.task.id !== taskId);
+		// Refresh in background to sync any other changes
+		refresh();
 		return true;
 	} catch (err) {
 		toast.error(err instanceof Error ? err.message : 'Failed to approve task');
@@ -92,7 +95,10 @@ async function rejectTask(taskId: string, roomId: string, feedback: string): Pro
 	try {
 		const hub = await connectionManager.getHub();
 		await hub.request('task.reject', { roomId, taskId, feedback });
-		await refresh();
+		// Optimistically remove the rejected task immediately for instant UI feedback
+		items.value = items.value.filter((item) => item.task.id !== taskId);
+		// Refresh in background to sync any other changes
+		refresh();
 		return true;
 	} catch (err) {
 		toast.error(err instanceof Error ? err.message : 'Failed to reject task');
