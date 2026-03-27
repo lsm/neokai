@@ -18,9 +18,7 @@
  * - Gate data event subscription updates gate status
  */
 
-// @ts-nocheck
-
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, cleanup, waitFor, fireEvent } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceWorkflow, SpaceWorkflowRun, SpaceTask, Gate } from '@neokai/shared';
@@ -32,7 +30,7 @@ let mockTasks: Signal<SpaceTask[]>;
 let mockTasksByRun: Signal<Map<string, SpaceTask[]>>;
 
 const mockEventListeners = new Map<string, Array<(data: unknown) => void>>();
-const mockHub = {
+const mockHub: { request: Mock; onEvent: Mock } = {
 	request: vi.fn(),
 	onEvent: vi.fn((event: string, handler: (data: unknown) => void) => {
 		if (!mockEventListeners.has(event)) mockEventListeners.set(event, []);

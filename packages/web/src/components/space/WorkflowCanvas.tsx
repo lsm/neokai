@@ -148,6 +148,8 @@ function evalConditionStatus(condition: GateCondition, data: Record<string, unkn
 			return 'blocked';
 		}
 	}
+	// Exhaustive fallback — guards against new GateCondition types added in the future.
+	return 'blocked';
 }
 
 // ============================================================================
@@ -859,6 +861,8 @@ export function WorkflowCanvas({
 	// ---- Fetch gate data for runtime mode ----
 	const fetchGateData = useCallback(async () => {
 		if (!runId) return;
+		// Clear stale data immediately so old run's gate states don't flash on the new run's channels.
+		setGateDataMap(new Map());
 		setGateDataLoading(true);
 		try {
 			const hub = connectionManager.getHubIfConnected();
@@ -939,6 +943,10 @@ export function WorkflowCanvas({
 	);
 
 	// ---- Template mode: add/remove gate on channel ----
+	// TODO(M6.3): Persist template-mode gate assignments to the backend by calling
+	// spaceWorkflow.update (or a dedicated channel-gate RPC) when add/remove fires.
+	// Currently these changes are local-only and lost on unmount. Gate editing in
+	// WorkflowEditor.tsx remains the canonical way to persist gate assignments.
 	const handleAddGate = useCallback((channelId: string, gateId: string) => {
 		setLocalGateAssignments((prev) => {
 			const next = new Map(prev);
