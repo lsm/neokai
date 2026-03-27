@@ -522,9 +522,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * guards the channel. Use this to understand the full channel map
 		 * before calling list_reachable_agents or send_message.
 		 *
-		 * Note: `gateId` is always null — `WorkflowChannel` uses an inline
-		 * `gate?: WorkflowCondition` rather than a `gateId` reference.
-		 * Separated gate entities require a future type migration to `Channel`.
+		 * A channel can be gated via:
+		 * - `gateId` (new separated architecture, M1.1): references a Gate entity
+		 *   in `workflow.gates`; use `list_gates` to see current gate data and status.
+		 * - `gate` (legacy inline condition): an inline WorkflowCondition object.
+		 * `hasGate` is true when either path is set.
 		 */
 		async list_channels(_args: ListChannelsInput): Promise<ToolResult> {
 			const channels = workflow?.channels ?? [];
@@ -535,8 +537,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				direction: ch.direction,
 				isCyclic: ch.isCyclic ?? false,
 				label: ch.label ?? null,
-				// Legacy inline gate — summarize presence without exposing full condition
-				hasGate: ch.gate !== undefined,
+				// True when the channel is gated via either the new gateId reference
+				// or the legacy inline gate condition.
+				hasGate: ch.gate !== undefined || ch.gateId !== undefined,
+				// Gate ID for new-architecture channels; null for legacy inline gates.
+				gateId: ch.gateId ?? null,
 			}));
 			return jsonResult({
 				success: true,
@@ -670,9 +675,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const evalResult = evaluateGate({ ...gateDef, data: updated.data });
 
 			// Trigger re-evaluation and lazy node activation for channels referencing
-			// this gate (fire-and-forget — errors are swallowed to keep the tool response fast).
+			// this gate (fire-and-forget — response is not delayed waiting for activation).
 			if (onGateDataChanged) {
-				void onGateDataChanged(workflowRunId, gateId).catch(() => {});
+				void onGateDataChanged(workflowRunId, gateId).catch((err) => {
+					log.warn(
+						`onGateDataChanged failed for gate "${gateId}" in run "${workflowRunId}":`,
+						err instanceof Error ? err.message : String(err)
+					);
+				});
 			}
 
 			return jsonResult({
@@ -774,8 +784,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			'List all channels declared in this workflow. ' +
 				'Channels define the messaging topology — which agents can communicate and whether a gate ' +
 				'guards the channel. Use this to understand the full channel map for this workflow run. ' +
-				'Note: `gateId` is not yet available — `WorkflowChannel` uses inline `gate?: WorkflowCondition` ' +
-				'instead of a separated `Gate` reference; correlation via `gateId` requires a type migration.',
+				'Each entry includes `hasGate` (true when a gate guards the channel) and `gateId` ' +
+				'(non-null when using the new separated gate architecture — use `list_gates` to read gate state).',
 			ListChannelsSchema.shape,
 			(args) => handlers.list_channels(args)
 		),

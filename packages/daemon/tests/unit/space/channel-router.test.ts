@@ -2300,19 +2300,24 @@ describe('ChannelRouter', () => {
 		});
 
 		// -----------------------------------------------------------------------
-		// Concurrent writes — SQLite serialization
+		// Incremental writes — correct accumulation pattern for vote-counting
 		// -----------------------------------------------------------------------
 
-		test('concurrent gate writes are serialized by SQLite (no race condition)', async () => {
+		test('incremental vote writes accumulate correctly and activate node at quorum', async () => {
+			// GateDataRepository.merge() does a shallow top-level merge, so each
+			// caller must write the full accumulated votes map (read-then-write pattern)
+			// rather than only their own vote. This is the correct usage pattern for
+			// vote-counting gates; direct concurrent writes that replace the same key
+			// would lose votes due to the shallow merge semantics.
 			const gate: Gate = {
-				id: 'concurrent-gate',
+				id: 'accumulate-gate',
 				condition: { type: 'count', field: 'approvals', matchValue: 'approved', min: 3 },
 				data: { approvals: {} },
 				allowedWriterRoles: ['*'],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'concurrent-gate' },
+				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'accumulate-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -2332,33 +2337,40 @@ describe('ChannelRouter', () => {
 			const run = workflowRunRepo.createRun({
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
-				title: 'Concurrent Writes Run',
+				title: 'Accumulate Votes Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 			gateDataRepo.initializeForRun(run.id, [gate]);
 
-			// Simulate 3 concurrent writes via Promise.all (SQLite serializes them)
-			await Promise.all([
-				(async () => {
-					gateDataRepo.merge(run.id, 'concurrent-gate', { approvals: { alice: 'approved' } });
-					await router.onGateDataChanged(run.id, 'concurrent-gate');
-				})(),
-				(async () => {
-					gateDataRepo.merge(run.id, 'concurrent-gate', { approvals: { bob: 'approved' } });
-					await router.onGateDataChanged(run.id, 'concurrent-gate');
-				})(),
-				(async () => {
-					gateDataRepo.merge(run.id, 'concurrent-gate', { approvals: { carol: 'approved' } });
-					await router.onGateDataChanged(run.id, 'concurrent-gate');
-				})(),
-			]);
+			// Voter 1: write only their vote (gate still closed, min=3)
+			gateDataRepo.merge(run.id, 'accumulate-gate', {
+				approvals: { alice: 'approved' },
+			});
+			let activated = await router.onGateDataChanged(run.id, 'accumulate-gate');
+			expect(activated).toHaveLength(0);
 
-			// After all 3 writes, the final gate data must have all 3 approvals
-			const record = gateDataRepo.get(run.id, 'concurrent-gate');
-			const approvals = record?.data.approvals as Record<string, string> | undefined;
-			expect(approvals).toBeDefined();
-			// At least one approval must be present (the writes may have raced on merge)
-			expect(Object.keys(approvals!).length).toBeGreaterThan(0);
+			// Voter 2: read current state then write accumulated map (2 votes, still closed)
+			const after1 = gateDataRepo.get(run.id, 'accumulate-gate')!.data;
+			gateDataRepo.merge(run.id, 'accumulate-gate', {
+				approvals: { ...(after1.approvals as Record<string, string>), bob: 'approved' },
+			});
+			activated = await router.onGateDataChanged(run.id, 'accumulate-gate');
+			expect(activated).toHaveLength(0);
+
+			// Voter 3: read current state then write accumulated map (3 votes — quorum reached)
+			const after2 = gateDataRepo.get(run.id, 'accumulate-gate')!.data;
+			gateDataRepo.merge(run.id, 'accumulate-gate', {
+				approvals: { ...(after2.approvals as Record<string, string>), carol: 'approved' },
+			});
+			activated = await router.onGateDataChanged(run.id, 'accumulate-gate');
+			expect(activated.length).toBeGreaterThan(0);
+			expect(activated[0].workflowNodeId).toBe(NODE_B);
+
+			// All 3 votes are preserved in the final state
+			const final = gateDataRepo.get(run.id, 'accumulate-gate')!;
+			const approvals = final.data.approvals as Record<string, string>;
+			expect(Object.keys(approvals)).toHaveLength(3);
+			expect(approvals).toEqual({ alice: 'approved', bob: 'approved', carol: 'approved' });
 		});
 
 		// -----------------------------------------------------------------------
