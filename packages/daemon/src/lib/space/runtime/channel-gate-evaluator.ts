@@ -55,8 +55,12 @@ export interface GateResult {
 export class ChannelGateBlockedError extends Error {
 	constructor(
 		message: string,
-		/** The gate type that caused the block (for programmatic handling). */
-		public readonly gateType: WorkflowCondition['type']
+		/**
+		 * The gate type that caused the block (for programmatic handling).
+		 * For legacy WorkflowChannel gates: one of 'always' | 'human' | 'condition' | 'task_result'.
+		 * For new Gate entities: one of 'check' | 'count' | 'all' | 'any', or a gate ID string.
+		 */
+		public readonly gateType: string
 	) {
 		super(message);
 		this.name = 'ChannelGateBlockedError';

@@ -6,10 +6,30 @@
  * - Cross-node DMs (target resolved by agent role)
  * - Fan-out (target resolved by node name → all agents in that node)
  *
- * Gate enforcement:
- * - canDeliver() evaluates gates and iteration caps without side effects
- * - deliverMessage() performs gate evaluation, cyclic iteration tracking,
- *   and lazy node activation in one atomic operation
+ * Gate enforcement — two systems are supported:
+ *
+ * 1. **New separated Channel+Gate architecture (M1.1/M1.2)**:
+ *    When a WorkflowChannel has a `gateId`, the corresponding Gate entity is
+ *    loaded from `workflow.gates`, its runtime data is fetched from `gate_data`
+ *    via `GateDataRepository`, and `evaluateGate()` is called. This is the
+ *    preferred path for new workflows.
+ *
+ * 2. **Legacy inline gate (WorkflowCondition)**:
+ *    When a WorkflowChannel has an inline `gate` (no `gateId`), the
+ *    `ChannelGateEvaluator` is used as before. Kept for backward compatibility.
+ *
+ * Channels without either `gateId` or `gate` are always open.
+ *
+ * `onGateDataChanged(runId, gateId)`:
+ *    Called by agents (via MCP write_gate) whenever gate data changes.
+ *    Re-evaluates all channels that reference the changed gate. If a previously
+ *    blocked channel is now open and its target node has no active tasks,
+ *    the node is lazily activated.
+ *
+ * `resetOnCycle`:
+ *    When a cyclic channel is traversed, gates with `resetOnCycle: true` in the
+ *    workflow have their data reset to defaults in `gate_data`. This operation
+ *    is performed in the same SQLite transaction as the iteration counter increment.
  *
  * Lazy node activation:
  * - activateNode() is idempotent: if tasks already exist for the node the
@@ -22,7 +42,9 @@
  *   ChannelRouter only creates SpaceTask DB records.
  */
 
+import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
+	Gate,
 	SpaceTask,
 	SpaceTaskType,
 	SpaceWorkflow,
@@ -32,10 +54,12 @@ import type {
 import { resolveNodeAgents } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { ChannelGateEvaluator, ChannelGateBlockedError } from './channel-gate-evaluator';
 import type { ChannelGateContext, GateResult } from './channel-gate-evaluator';
+import { evaluateGate } from './gate-evaluator';
 
 // Re-export for callers that only need to import from channel-router
 export { ChannelGateBlockedError };
@@ -116,6 +140,20 @@ export interface ChannelRouterConfig {
 	workflowManager: SpaceWorkflowManager;
 	/** Agent manager for resolving agent roles → task types */
 	agentManager: SpaceAgentManager;
+	/**
+	 * Gate data repository for reading/writing gate runtime data.
+	 * Required when workflows use the new separated Channel+Gate architecture
+	 * (WorkflowChannel.gateId). Optional for legacy-only workflows.
+	 */
+	gateDataRepo?: GateDataRepository;
+	/**
+	 * Raw SQLite database handle.
+	 * When provided, gate data resets and iteration counter increments on cyclic
+	 * channels are performed in a single atomic transaction (`db.transaction()`).
+	 * When omitted, operations are performed sequentially (still safe for most
+	 * single-process use cases but not ACID-atomic on crash).
+	 */
+	db?: BunDatabase;
 	/**
 	 * Injectable gate evaluator — omit to use the real evaluator (Bun.spawn).
 	 * Inject a mock in tests to avoid real subprocess calls.
@@ -243,6 +281,8 @@ export class ChannelRouter {
 	 * 2. **Iteration cap** — for cyclic channels, blocks when
 	 *    `run.iterationCount >= run.maxIterations`.
 	 * 3. **Gate condition** — evaluates the channel's gate using the provided context.
+	 *    For new-style channels (gateId): uses `evaluateGate()`.
+	 *    For legacy channels (inline gate): uses `ChannelGateEvaluator`.
 	 *
 	 * @param runId     - Workflow run ID
 	 * @param fromRole  - Sending agent role name
@@ -278,6 +318,13 @@ export class ChannelRouter {
 		}
 
 		// ── Gate condition evaluation ────────────────────────────────────────
+		// New separated architecture: gateId takes precedence
+		if (channel.gateId) {
+			const gateResult = this.evaluateGateById(runId, channel.gateId, workflow);
+			return { allowed: gateResult.open, reason: gateResult.reason };
+		}
+
+		// Legacy inline gate
 		if (!channel.gate) return { allowed: true };
 		return this.gateEvaluator.evaluateCondition(channel.gate, context);
 	}
@@ -292,29 +339,32 @@ export class ChannelRouter {
 	 * - `toTarget` is a node name → fan-out to the node; all agent slots are
 	 *   activated (lazy-activated if not already active)
 	 *
-	 * **Gate evaluation (when `context` is provided):**
-	 * - Locates the matching `WorkflowChannel` for the from/to pair
-	 * - Throws `ChannelGateBlockedError` if the gate blocks delivery
-	 * - When no context is given, gates are not evaluated (backward-compatible)
+	 * **Gate evaluation:**
+	 * - Channels with `gateId` (new architecture): `evaluateGate()` is called;
+	 *   gate data is loaded from `gate_data` via `GateDataRepository`.
+	 *   Does NOT require a context object.
+	 * - Channels with inline `gate` (legacy): `ChannelGateEvaluator` is used
+	 *   when a `context` object is provided.
+	 * - Channels with neither: always open.
+	 * - Throws `ChannelGateBlockedError` when a gate blocks delivery.
 	 *
 	 * **Cyclic iteration tracking:**
 	 * - If the matching channel has `isCyclic: true`, `run.iterationCount` is
-	 *   incremented after successful delivery, regardless of whether `context` is
-	 *   provided.
-	 * - If the iteration cap has already been reached, throws `ActivationError`
-	 *   (unrecoverable hard limit, not a retryable gate condition).
+	 *   incremented after successful delivery.
+	 * - Gates with `resetOnCycle: true` have their data reset to defaults in the
+	 *   same atomic operation (single SQLite transaction when `db` is in config).
+	 * - If the iteration cap has already been reached, throws `ActivationError`.
 	 *
 	 * @param runId    - Workflow run ID
 	 * @param fromRole - Role name of the sending agent (WorkflowNodeAgent.name)
 	 * @param toTarget - Role name of the receiving agent, or node name for fan-out
 	 * @param message  - Message content to deliver
-	 * @param context  - Optional gate evaluation context; omit to skip gate checks
+	 * @param context  - Optional gate evaluation context; used only for legacy inline gates
 	 * @returns DeliveredMessage descriptor; `activatedTasks` is set when the
 	 *   target node was lazily activated, undefined when it was already active
 	 * @throws ActivationError when the run, workflow, or target role/node is not
 	 *   found, or the cyclic iteration cap is exceeded
 	 * @throws ChannelGateBlockedError when a gate condition blocks delivery
-	 *   (only when `context` is provided)
 	 */
 	async deliverMessage(
 		runId: string,
@@ -345,8 +395,18 @@ export class ChannelRouter {
 				);
 			}
 
-			// Gate evaluation — only when the caller supplies evaluation context
-			if (context && channel.gate) {
+			// New separated architecture: gateId takes precedence over legacy inline gate
+			if (channel.gateId) {
+				const gateResult = this.evaluateGateById(runId, channel.gateId, workflow);
+				if (!gateResult.open) {
+					throw new ChannelGateBlockedError(
+						gateResult.reason ??
+							`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
+						channel.gateId
+					);
+				}
+			} else if (context && channel.gate) {
+				// Legacy inline gate evaluation — only when the caller supplies evaluation context
 				const gateResult = await this.gateEvaluator.evaluateCondition(channel.gate, context);
 				if (!gateResult.allowed) {
 					throw new ChannelGateBlockedError(
@@ -382,20 +442,14 @@ export class ChannelRouter {
 			activatedTasks = await this.activateNode(runId, targetNode.id);
 		}
 
-		// ── 5. Increment iteration count for cyclic channels ──────────────────
-		// Use the atomic incrementIterationCount() which runs a single SQL UPDATE
-		// with a WHERE guard (iteration_count < max_iterations), eliminating any
-		// TOCTOU race between the cap check above and this write. If another
-		// concurrent delivery already pushed the count to the cap, the atomic
-		// increment will return false — we throw to surface the cap violation even
-		// though message delivery already succeeded at this point.
+		// ── 5. Increment iteration count and reset cyclic gates ───────────────
+		// For cyclic channels: atomically increment the iteration counter and
+		// reset gate data for gates with `resetOnCycle: true` in the workflow.
+		//
+		// When `db` is in config: both operations run in a single SQLite transaction.
+		// When `db` is absent: operations run sequentially (safe in single-process JS).
 		if (channel?.isCyclic) {
-			const incremented = this.config.workflowRunRepo.incrementIterationCount(runId);
-			if (!incremented) {
-				throw new ActivationError(
-					`Cyclic channel from "${fromRole}" to "${toTarget}" reached the maximum iteration count during delivery (cap enforced atomically). Message was delivered but the cycle was not counted.`
-				);
-			}
+			this.incrementAndResetCyclicGates(runId, workflow);
 		}
 
 		return {
@@ -409,9 +463,147 @@ export class ChannelRouter {
 		};
 	}
 
+	/**
+	 * Called when gate data changes for a given gate (e.g., after an agent writes
+	 * to gate data via the `write_gate` MCP tool).
+	 *
+	 * Re-evaluates all channels in the workflow run that reference `gateId`. If the
+	 * gate is now open AND the channel's target node has no active tasks, the node
+	 * is lazily activated.
+	 *
+	 * This enables vote-counting gates: each agent write calls `onGateDataChanged()`,
+	 * and when enough votes accumulate to satisfy the condition, the target node is
+	 * automatically activated.
+	 *
+	 * @param runId  - Workflow run ID
+	 * @param gateId - ID of the gate whose data changed
+	 * @returns Array of newly activated SpaceTask records (may be empty)
+	 */
+	async onGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run || run.status === 'cancelled' || run.status === 'completed') return [];
+
+		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+		if (!workflow) return [];
+
+		if (!this.config.gateDataRepo) return [];
+
+		// Find all channels in this workflow that reference this gate
+		const channels = (workflow.channels ?? []).filter((ch) => ch.gateId === gateId);
+		if (channels.length === 0) return [];
+
+		// Evaluate the gate once (shared across all channels referencing it)
+		const gateResult = this.evaluateGateById(runId, gateId, workflow);
+		if (!gateResult.open) return [];
+
+		// Gate is open → activate target nodes for all gated channels
+		const activatedTasks: SpaceTask[] = [];
+		for (const channel of channels) {
+			const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+			for (const target of targets) {
+				// Resolve target: first by agent role, then by node name (fan-out)
+				let targetNode = this.findNodeByAgentRole(workflow, target);
+				if (!targetNode) {
+					targetNode = workflow.nodes.find((n) => n.name === target);
+				}
+				if (!targetNode) continue;
+
+				// Only activate if no active tasks for this node
+				const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
+				if (activeTasks.length === 0) {
+					try {
+						const tasks = await this.activateNode(runId, targetNode.id);
+						activatedTasks.push(...tasks);
+					} catch {
+						// Run may have transitioned to terminal state between the check above
+						// and the activation attempt — silently skip.
+					}
+				}
+			}
+		}
+
+		return activatedTasks;
+	}
+
 	// -------------------------------------------------------------------------
 	// Private helpers
 	// -------------------------------------------------------------------------
+
+	/**
+	 * Evaluates a gate by ID against its current runtime data from `gate_data`.
+	 *
+	 * Looks up the gate definition in `workflow.gates`, loads the runtime data from
+	 * `GateDataRepository` (falls back to the gate's default `data` if no DB record),
+	 * and evaluates the condition.
+	 *
+	 * Returns `{ open: false }` with a descriptive reason when:
+	 * - `gateDataRepo` is not configured
+	 * - The gate is not found in `workflow.gates`
+	 * - The condition fails
+	 */
+	private evaluateGateById(
+		runId: string,
+		gateId: string,
+		workflow: SpaceWorkflow
+	): { open: boolean; reason?: string } {
+		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
+		if (!gateDef) {
+			return {
+				open: false,
+				reason: `Gate "${gateId}" not found in workflow "${workflow.id}" — channel is closed (misconfiguration)`,
+			};
+		}
+
+		// Load runtime data from DB; fall back to gate's default data when no record exists
+		const record = this.config.gateDataRepo?.get(runId, gateId);
+		const runtimeData = record?.data ?? gateDef.data;
+
+		const gateWithData: Gate = { ...gateDef, data: runtimeData };
+		return evaluateGate(gateWithData);
+	}
+
+	/**
+	 * Atomically increments the workflow run's iteration counter and resets gate
+	 * data for all gates with `resetOnCycle: true` in the workflow.
+	 *
+	 * When `db` is in config: runs both operations in a single SQLite transaction.
+	 * When `db` is absent: runs operations sequentially (safe for single-process).
+	 *
+	 * Throws `ActivationError` if the iteration cap was already reached at the time
+	 * of the atomic increment (concurrent TOCTOU race).
+	 */
+	private incrementAndResetCyclicGates(runId: string, workflow: SpaceWorkflow): void {
+		const cyclicGates = (workflow.gates ?? []).filter((g) => g.resetOnCycle);
+
+		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {
+			// Atomic path: wrap both reset and increment in one transaction
+			const transaction = this.config.db.transaction(() => {
+				for (const gate of cyclicGates) {
+					this.config.gateDataRepo!.reset(runId, gate.id, gate.data);
+				}
+				return this.config.workflowRunRepo.incrementIterationCount(runId);
+			});
+			const incremented = transaction() as boolean;
+			if (!incremented) {
+				throw new ActivationError(
+					`Cyclic channel reached the maximum iteration count during delivery (cap enforced atomically). Message was delivered but the cycle was not counted.`
+				);
+			}
+		} else {
+			// Sequential path: reset gates first, then increment
+			if (this.config.gateDataRepo) {
+				for (const gate of cyclicGates) {
+					this.config.gateDataRepo.reset(runId, gate.id, gate.data);
+				}
+			}
+			const incremented = this.config.workflowRunRepo.incrementIterationCount(runId);
+			if (!incremented) {
+				throw new ActivationError(
+					`Cyclic channel reached the maximum iteration count during delivery (cap enforced atomically). Message was delivered but the cycle was not counted.`
+				);
+			}
+		}
+	}
 
 	/**
 	 * Returns all in-flight tasks for a given (runId, nodeId) pair.

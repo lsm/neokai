@@ -325,6 +325,8 @@ export class TaskAgentManager {
 				workflowRunRepo: this.config.workflowRunRepo,
 				workflowManager: this.config.spaceWorkflowManager,
 				agentManager: this.config.spaceAgentManager,
+				gateDataRepo: this.config.gateDataRepo,
+				db: this.config.db.getDatabase(),
 			});
 			const completionDetector = new CompletionDetector(this.config.taskRepo);
 
@@ -1038,6 +1040,8 @@ export class TaskAgentManager {
 			workflowRunRepo: this.config.workflowRunRepo,
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
+			gateDataRepo: this.config.gateDataRepo,
+			db: this.config.db.getDatabase(),
 		});
 		const rehydrateCompletionDetector = new CompletionDetector(this.config.taskRepo);
 
