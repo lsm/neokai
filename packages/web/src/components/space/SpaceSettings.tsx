@@ -25,6 +25,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [description, setDescription] = useState(space.description ?? '');
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
+	const [isArchiving, setIsArchiving] = useState(false);
+	const [isDeleting, setIsDeleting] = useState(false);
 
 	// Keep local state in sync when space prop changes (e.g. after save)
 	useEffect(() => {
@@ -92,11 +94,14 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 			return;
 		}
 		try {
+			setIsArchiving(true);
 			await hub.request('space.archive', { id: space.id });
 			toast.success(`Space "${space.name}" archived`);
 			navigateToSpaces();
 		} catch (err) {
 			toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`);
+		} finally {
+			setIsArchiving(false);
 		}
 	}
 
@@ -114,11 +119,14 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 			return;
 		}
 		try {
+			setIsDeleting(true);
 			await hub.request('space.delete', { id: space.id });
 			toast.success(`Space "${space.name}" deleted`);
 			navigateToSpaces();
 		} catch (err) {
 			toast.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+		} finally {
+			setIsDeleting(false);
 		}
 	}
 
@@ -248,7 +256,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 						variant="secondary"
 						size="sm"
 						onClick={handleArchive}
-						disabled={space.status === 'archived'}
+						disabled={space.status === 'archived' || isArchiving}
+						loading={isArchiving}
 					>
 						Archive
 					</Button>
@@ -261,7 +270,14 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 							Permanently remove this space and all its data.
 						</p>
 					</div>
-					<Button type="button" variant="danger" size="sm" onClick={handleDelete}>
+					<Button
+						type="button"
+						variant="danger"
+						size="sm"
+						onClick={handleDelete}
+						disabled={isDeleting}
+						loading={isDeleting}
+					>
 						Delete
 					</Button>
 				</div>

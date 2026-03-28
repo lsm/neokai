@@ -86,9 +86,9 @@ export function SpaceCreateTaskDialog({
 
 			toast.success(`Task "${task.title}" created`);
 			onCreated?.(task);
-			// Refresh space data so the dashboard shows the new task
-			await spaceStore.selectSpace(spaceId).catch(() => {});
 			handleClose();
+			// Refresh space data in the background so the dashboard shows the new task
+			spaceStore.selectSpace(spaceId).catch(() => {});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create task');
 		} finally {

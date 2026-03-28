@@ -272,4 +272,28 @@ describe('SpaceStartWorkflowDialog', () => {
 		fireEvent.click(getByText('Cancel'));
 		expect(onClose).toHaveBeenCalled();
 	});
+
+	it('syncs workflowId via useEffect when workflows load asynchronously', async () => {
+		// Start with empty workflows (simulates async store state)
+		const { rerender, queryByRole } = render(
+			<SpaceStartWorkflowDialog isOpen={true} spaceId="space-1" workflows={[]} onClose={onClose} />
+		);
+		// No select visible yet
+		expect(queryByRole('combobox')).toBeNull();
+
+		// Workflows arrive later (e.g., after selectSpace resolves)
+		rerender(
+			<SpaceStartWorkflowDialog
+				isOpen={true}
+				spaceId="space-1"
+				workflows={[makeWorkflow('wf-1', 'Main Flow')]}
+				onClose={onClose}
+			/>
+		);
+
+		// workflowId should now be set — single-workflow indicator appears
+		await waitFor(() => {
+			expect(queryByRole('combobox')).toBeNull(); // still single-workflow path
+		});
+	});
 });

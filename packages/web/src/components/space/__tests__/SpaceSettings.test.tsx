@@ -239,6 +239,61 @@ describe('SpaceSettings', () => {
 		expect(mockRequest).not.toHaveBeenCalled();
 	});
 
+	it('shows validation error when saving with empty name', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		const space = makeSpace();
+		const { getByDisplayValue, getByText, findByText } = render(<SpaceSettings space={space} />);
+		// Clear the name field
+		fireEvent.input(getByDisplayValue('My Space'), { target: { value: '' } });
+		fireEvent.click(getByText('Save Changes'));
+		expect(await findByText('Space name is required')).toBeTruthy();
+		expect(mockRequest).not.toHaveBeenCalled();
+	});
+
+	it('Archive button is disabled during archiving', async () => {
+		mockConfirm.mockReturnValue(true);
+		let resolveArchive: () => void;
+		const archivePromise = new Promise<{}>((res) => {
+			resolveArchive = () => res({});
+		});
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockReturnValue(archivePromise);
+
+		const space = makeSpace();
+		const { getByText } = render(<SpaceSettings space={space} />);
+		fireEvent.click(getByText('Archive'));
+
+		// Button should be disabled while in-flight
+		await waitFor(() => {
+			const btn = getByText('Loading...').closest('button')!;
+			expect(btn.disabled).toBe(true);
+		});
+
+		resolveArchive!();
+	});
+
+	it('Delete button is disabled during deletion', async () => {
+		mockConfirm.mockReturnValue(true);
+		let resolveDelete: () => void;
+		const deletePromise = new Promise<{}>((res) => {
+			resolveDelete = () => res({});
+		});
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockReturnValue(deletePromise);
+
+		const space = makeSpace();
+		const { getByText } = render(<SpaceSettings space={space} />);
+		fireEvent.click(getByText('Delete'));
+
+		// Button should be disabled while in-flight
+		await waitFor(() => {
+			const btns = document.querySelectorAll('button[disabled]');
+			expect(btns.length).toBeGreaterThan(0);
+		});
+
+		resolveDelete!();
+	});
+
 	it('calls spaceExport.bundle when Export Bundle is clicked', async () => {
 		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
 		mockRequest.mockResolvedValue({ bundle: { version: '1', spaces: [] } });

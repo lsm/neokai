@@ -2,7 +2,7 @@
  * SpaceStartWorkflowDialog — modal form to start a new workflow run in a Space.
  */
 
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { connectionManager } from '../../lib/connection-manager';
@@ -30,6 +30,13 @@ export function SpaceStartWorkflowDialog({
 	const [workflowId, setWorkflowId] = useState<string>(workflows[0]?.id ?? '');
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	// Sync workflowId when workflows load asynchronously (store starts as [] then populates)
+	useEffect(() => {
+		if (!workflowId && workflows.length > 0) {
+			setWorkflowId(workflows[0].id);
+		}
+	}, [workflows, workflowId]);
 
 	const handleClose = () => {
 		setTitle('');
@@ -75,9 +82,9 @@ export function SpaceStartWorkflowDialog({
 
 			toast.success(`Workflow run "${run.title}" started`);
 			onStarted?.(run);
-			// Refresh space data so the dashboard reflects the new run
-			await spaceStore.selectSpace(spaceId).catch(() => {});
 			handleClose();
+			// Refresh space data in the background so the dashboard reflects the new run
+			spaceStore.selectSpace(spaceId).catch(() => {});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to start workflow run');
 		} finally {
