@@ -362,6 +362,65 @@ function mapSkillByRoomRow(row: Record<string, unknown>): Record<string, unknown
 }
 
 /**
+ * Neo messages query — SDK messages from the persistent neo:global session.
+ * Returns messages ordered oldest-first (ascending timestamp) so the frontend
+ * can render a chronological chat history.
+ *
+ * Pagination: LIMIT / OFFSET params (positional, required).
+ */
+const NEO_MESSAGES_SQL = `
+SELECT
+  id,
+  session_id      AS sessionId,
+  message_type    AS messageType,
+  message_subtype AS messageSubtype,
+  sdk_message     AS content,
+  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+  send_status     AS sendStatus,
+  origin
+FROM sdk_messages
+WHERE session_id = 'neo:global'
+ORDER BY timestamp ASC, id ASC
+LIMIT ? OFFSET ?
+`.trim();
+
+/**
+ * Neo activity log query — audit log of Neo agent tool invocations.
+ * Returns entries ordered newest-first so the activity feed shows recent actions.
+ *
+ * Pagination: LIMIT / OFFSET params (positional, required).
+ * Default limit of 50 entries per page prevents unbounded result sets.
+ */
+const NEO_ACTIVITY_SQL = `
+SELECT
+  id,
+  tool_name   AS toolName,
+  input,
+  output,
+  status,
+  error,
+  target_type AS targetType,
+  target_id   AS targetId,
+  undoable,
+  undo_data   AS undoData,
+  created_at  AS createdAt
+FROM neo_activity_log
+ORDER BY created_at DESC, id DESC
+LIMIT ? OFFSET ?
+`.trim();
+
+/**
+ * Map a raw neo_activity_log row — converts the SQLite integer `undoable`
+ * column (0 / 1) to a JS boolean.
+ */
+function mapNeoActivityRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		...row,
+		undoable: row.undoable === 1,
+	};
+}
+
+/**
  * Canonical task timeline query (no projection table):
  * - SDK messages are read directly from sdk_messages joined through session_group_members.
  * - Group/system events are read from task_group_events.
@@ -498,6 +557,21 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			sql: SKILLS_BY_ROOM_SQL,
 			paramCount: 1,
 			mapRow: mapSkillByRoomRow,
+		},
+	],
+	[
+		'neo.messages',
+		{
+			sql: NEO_MESSAGES_SQL,
+			paramCount: 2,
+		},
+	],
+	[
+		'neo.activity',
+		{
+			sql: NEO_ACTIVITY_SQL,
+			paramCount: 2,
+			mapRow: mapNeoActivityRow,
 		},
 	],
 ]);

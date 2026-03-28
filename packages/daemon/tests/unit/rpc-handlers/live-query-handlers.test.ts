@@ -50,6 +50,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('sessionGroupMessages.byGroup')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('neo.messages')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('neo.activity')).toBe(true);
 	});
 
 	test('all registry entries have correct paramCount', () => {
@@ -58,6 +60,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.get('goals.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('skills.byRoom')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('neo.messages')!.paramCount).toBe(2);
+		expect(NAMED_QUERY_REGISTRY.get('neo.activity')!.paramCount).toBe(2);
 	});
 
 	// -------------------------------------------------------------------------
@@ -524,6 +528,229 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// neo.messages — sdk_messages for the neo:global session
+	// -------------------------------------------------------------------------
+
+	describe('neo.messages', () => {
+		/** Insert a minimal sdk_message for the neo:global session.
+		 *  SQLite FK enforcement is off by default in Bun, so no session row needed. */
+		function insertNeoMessage(id: string, timestampMs: number): void {
+			db.exec(
+				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)
+				 VALUES (
+				   '${id}', 'neo:global', 'assistant',
+				   '${JSON.stringify({ type: 'assistant', uuid: id })}',
+				   '${new Date(timestampMs).toISOString()}', 'consumed'
+				 )`
+			);
+		}
+
+		function queryAndMap(limit = 50, offset = 0): Record<string, unknown>[] {
+			const entry = NAMED_QUERY_REGISTRY.get('neo.messages')!;
+			const rows = db.prepare(entry.sql).all(limit, offset) as Record<string, unknown>[];
+			return entry.mapRow ? rows.map(entry.mapRow) : rows;
+		}
+
+		test('is registered in the named-query registry', () => {
+			expect(NAMED_QUERY_REGISTRY.has('neo.messages')).toBe(true);
+		});
+
+		test('paramCount is 2 (limit, offset)', () => {
+			expect(NAMED_QUERY_REGISTRY.get('neo.messages')!.paramCount).toBe(2);
+		});
+
+		test('SQL executes without error against the real schema', () => {
+			expect(() => queryAndMap()).not.toThrow();
+		});
+
+		test('returns empty array when no neo:global messages exist', () => {
+			expect(queryAndMap()).toEqual([]);
+		});
+
+		test('returns messages from neo:global session only', () => {
+			insertNeoMessage('neo-msg-1', 1000);
+			// Insert a message for a different session — should NOT appear (FK off, direct insert)
+			db.exec(
+				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)
+				 VALUES ('other-msg', 'other:session', 'assistant', '{}', '${new Date(2000).toISOString()}', 'consumed')`
+			);
+			const rows = queryAndMap();
+			expect(rows.every((r) => r.sessionId === 'neo:global')).toBe(true);
+			expect(rows).toHaveLength(1);
+		});
+
+		test('returns camelCase column aliases', () => {
+			insertNeoMessage('neo-msg-1', 1000);
+			const [row] = queryAndMap();
+			expect(row).toHaveProperty('sessionId', 'neo:global');
+			expect(row).toHaveProperty('messageType', 'assistant');
+			expect(row).toHaveProperty('createdAt');
+			expect(row).toHaveProperty('sendStatus', 'consumed');
+			expect(row).not.toHaveProperty('session_id');
+			expect(row).not.toHaveProperty('message_type');
+			expect(row).not.toHaveProperty('send_status');
+		});
+
+		test('createdAt is a millisecond integer', () => {
+			insertNeoMessage('neo-msg-1', 5000);
+			const [row] = queryAndMap();
+			expect(typeof row.createdAt).toBe('number');
+			// julianday conversion — allow ±1s rounding
+			expect(row.createdAt as number).toBeGreaterThan(0);
+		});
+
+		test('content contains the sdk_message JSON as string', () => {
+			insertNeoMessage('neo-msg-1', 1000);
+			const [row] = queryAndMap();
+			expect(typeof row.content).toBe('string');
+			const parsed = JSON.parse(row.content as string) as Record<string, unknown>;
+			expect(parsed.uuid).toBe('neo-msg-1');
+		});
+
+		test('SQL targets sdk_messages with neo:global filter', () => {
+			const entry = NAMED_QUERY_REGISTRY.get('neo.messages')!;
+			expect(entry.sql).toContain("session_id = 'neo:global'");
+			expect(entry.sql).toContain('FROM sdk_messages');
+		});
+
+		test('ORDER BY is timestamp ASC, id ASC (oldest-first)', () => {
+			const sql = NAMED_QUERY_REGISTRY.get('neo.messages')!.sql;
+			expect(sql).toContain('ORDER BY timestamp ASC, id ASC');
+		});
+
+		test('pagination: LIMIT restricts result count', () => {
+			for (let i = 0; i < 5; i++) {
+				insertNeoMessage(`neo-msg-${i}`, 1000 + i);
+			}
+			expect(queryAndMap(2, 0)).toHaveLength(2);
+			expect(queryAndMap(3, 0)).toHaveLength(3);
+		});
+
+		test('pagination: OFFSET skips rows', () => {
+			for (let i = 0; i < 5; i++) {
+				insertNeoMessage(`neo-msg-${i}`, 1000 + i);
+			}
+			const page1 = queryAndMap(2, 0).map((r) => r.id);
+			const page2 = queryAndMap(2, 2).map((r) => r.id);
+			expect(page1.length).toBe(2);
+			expect(page2.length).toBe(2);
+			// No overlap
+			expect(page1.some((id) => page2.includes(id))).toBe(false);
+		});
+
+		test('has no mapRow (column aliases sufficient)', () => {
+			expect(NAMED_QUERY_REGISTRY.get('neo.messages')!.mapRow).toBeUndefined();
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// neo.activity — neo_activity_log with pagination
+	// -------------------------------------------------------------------------
+
+	describe('neo.activity', () => {
+		function insertActivity(
+			id: string,
+			toolName: string,
+			opts: { undoable?: boolean; status?: string } = {}
+		): void {
+			const undoable = opts.undoable ? 1 : 0;
+			const status = opts.status ?? 'success';
+			db.exec(
+				`INSERT INTO neo_activity_log (id, tool_name, status, undoable, created_at)
+				 VALUES ('${id}', '${toolName}', '${status}', ${undoable}, datetime('now'))`
+			);
+		}
+
+		function queryAndMap(limit = 50, offset = 0): Record<string, unknown>[] {
+			const entry = NAMED_QUERY_REGISTRY.get('neo.activity')!;
+			const rows = db.prepare(entry.sql).all(limit, offset) as Record<string, unknown>[];
+			return entry.mapRow ? rows.map(entry.mapRow) : rows;
+		}
+
+		test('is registered in the named-query registry', () => {
+			expect(NAMED_QUERY_REGISTRY.has('neo.activity')).toBe(true);
+		});
+
+		test('paramCount is 2 (limit, offset)', () => {
+			expect(NAMED_QUERY_REGISTRY.get('neo.activity')!.paramCount).toBe(2);
+		});
+
+		test('SQL executes without error against the real schema', () => {
+			expect(() => queryAndMap()).not.toThrow();
+		});
+
+		test('returns empty array when no activity log entries exist', () => {
+			expect(queryAndMap()).toEqual([]);
+		});
+
+		test('returns camelCase column aliases', () => {
+			insertActivity('act-1', 'create_room');
+			const [row] = queryAndMap();
+			expect(row).toHaveProperty('toolName', 'create_room');
+			expect(row).toHaveProperty('createdAt');
+			expect(row).toHaveProperty('targetType');
+			expect(row).toHaveProperty('targetId');
+			expect(row).toHaveProperty('undoData');
+			expect(row).not.toHaveProperty('tool_name');
+			expect(row).not.toHaveProperty('created_at');
+			expect(row).not.toHaveProperty('target_type');
+			expect(row).not.toHaveProperty('target_id');
+			expect(row).not.toHaveProperty('undo_data');
+		});
+
+		test('undoable is converted from SQLite integer to boolean', () => {
+			insertActivity('act-undoable', 'toggle_skill', { undoable: true });
+			insertActivity('act-not-undoable', 'list_rooms', { undoable: false });
+			const rows = queryAndMap();
+			const undoable = rows.find((r) => r.id === 'act-undoable')!;
+			const notUndoable = rows.find((r) => r.id === 'act-not-undoable')!;
+			expect(undoable.undoable).toBe(true);
+			expect(notUndoable.undoable).toBe(false);
+		});
+
+		test('status column is included and passes through correctly', () => {
+			insertActivity('act-err', 'delete_room', { status: 'error' });
+			const [row] = queryAndMap();
+			expect(row.status).toBe('error');
+		});
+
+		test('has mapRow function for boolean conversion', () => {
+			expect(typeof NAMED_QUERY_REGISTRY.get('neo.activity')!.mapRow).toBe('function');
+		});
+
+		test('SQL targets neo_activity_log table', () => {
+			const entry = NAMED_QUERY_REGISTRY.get('neo.activity')!;
+			expect(entry.sql).toContain('FROM neo_activity_log');
+		});
+
+		test('ORDER BY is created_at DESC, id DESC (newest-first)', () => {
+			const sql = NAMED_QUERY_REGISTRY.get('neo.activity')!.sql;
+			expect(sql).toContain('ORDER BY created_at DESC, id DESC');
+		});
+
+		test('pagination: default limit of 50 prevents unbounded result sets', () => {
+			// 50 is the task-spec default — verify the paramCount enforces explicit passing
+			expect(NAMED_QUERY_REGISTRY.get('neo.activity')!.paramCount).toBe(2);
+			// Insert 3 rows and verify limit=2 restricts count
+			for (let i = 0; i < 3; i++) {
+				insertActivity(`act-${i}`, 'list_rooms');
+			}
+			expect(queryAndMap(2, 0)).toHaveLength(2);
+		});
+
+		test('pagination: OFFSET skips rows', () => {
+			for (let i = 0; i < 4; i++) {
+				insertActivity(`act-${i}`, 'list_rooms');
+			}
+			const page1 = queryAndMap(2, 0).map((r) => r.id);
+			const page2 = queryAndMap(2, 2).map((r) => r.id);
+			expect(page1.length).toBe(2);
+			expect(page2.length).toBe(2);
+			expect(page1.some((id) => page2.includes(id))).toBe(false);
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// General registry invariants
 	// -------------------------------------------------------------------------
 
@@ -546,8 +773,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			for (const [name, entry] of NAMED_QUERY_REGISTRY) {
 				const upperSql = entry.sql.toUpperCase();
 				expect(upperSql).toContain('ORDER BY');
+				// Strip trailing LIMIT / OFFSET clauses before checking the tiebreaker so that
+				// paginated queries (e.g. neo.messages, neo.activity) also pass this invariant.
+				const sqlForCheck = upperSql
+					.replace(/\s+LIMIT\s+\?(\s+OFFSET\s+\?)?/, '')
+					.replace(/\s+/g, ' ')
+					.trim();
 				// Must end with either `id ASC` or `id DESC` (tiebreaker)
-				const hasIdTiebreaker = /\bID\s+(ASC|DESC)\s*$/.test(upperSql.replace(/\s+/g, ' ').trim());
+				const hasIdTiebreaker = /\bID\s+(ASC|DESC)\s*$/.test(sqlForCheck);
 				expect(hasIdTiebreaker).toBe(true, `${name} ORDER BY lacks deterministic id tiebreaker`);
 			}
 		});
