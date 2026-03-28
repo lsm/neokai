@@ -142,9 +142,13 @@ test.describe('Comprehensive Space Navigation', () => {
 		// URL returns to base space route
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// All 4 tab buttons should now be visible and individually clickable
+		// All 4 tab buttons should now be visible and individually clickable.
+		// Scope to data-testid="space-tab-bar" to avoid matching the sidebar pinned
+		// "Dashboard" button, which shares the same accessible name.
+		const tabBar = page.locator('[data-testid="space-tab-bar"]');
+		await expect(tabBar).toBeVisible({ timeout: 5000 });
 		for (const tabName of ['Dashboard', 'Agents', 'Workflows', 'Settings']) {
-			const tab = page.getByRole('button', { name: tabName, exact: true });
+			const tab = tabBar.getByRole('button', { name: tabName, exact: true });
 			await expect(tab).toBeVisible({ timeout: 5000 });
 			await tab.click();
 			await expect(tab).toBeVisible({ timeout: 2000 });

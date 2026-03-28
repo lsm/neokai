@@ -177,7 +177,7 @@ export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: Spac
 			<div class="flex-1 overflow-hidden flex flex-col min-w-0">
 				{/* Tab bar — hidden when workflow editor is open (editor has its own back button) */}
 				{!showWorkflowEditor && (
-					<div class="flex border-b border-dark-700 px-4 flex-shrink-0">
+					<div class="flex border-b border-dark-700 px-4 flex-shrink-0" data-testid="space-tab-bar">
 						{TABS.map((tab) => (
 							<button
 								key={tab.id}
