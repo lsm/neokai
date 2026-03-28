@@ -70,7 +70,6 @@ let mockSpace = signal<Space | null>(null);
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceAgent[]>([]);
 let mockActiveRuns = signal<SpaceWorkflowRun[]>([]);
-let mockCurrentSpaceTaskId = signal<string | null>(null);
 
 const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
 
@@ -209,6 +208,11 @@ vi.mock('../../components/space/SpaceAgentList', () => ({
 vi.mock('../../components/space/SpaceSettings', () => ({
 	SpaceSettings: () => <div data-testid="space-settings" />,
 }));
+vi.mock('../ChatContainer', () => ({
+	default: ({ sessionId }: { sessionId: string }) => (
+		<div data-testid="chat-container" data-session-id={sessionId} />
+	),
+}));
 
 vi.mock('../../lib/space-store', () => ({
 	get spaceStore() {
@@ -225,9 +229,6 @@ vi.mock('../../lib/space-store', () => ({
 }));
 
 vi.mock('../../lib/signals', () => ({
-	get currentSpaceTaskIdSignal() {
-		return mockCurrentSpaceTaskId;
-	},
 	currentSessionIdSignal: signal(null),
 	slashCommandsSignal: signal([]),
 }));
@@ -336,7 +337,6 @@ beforeEach(() => {
 	mockWorkflows = signal([makeWorkflow()]);
 	mockAgents = signal([]);
 	mockActiveRuns = signal([]);
-	mockCurrentSpaceTaskId = signal(null);
 	capturedWorkflowEditorProps = {};
 	capturedVisualEditorProps = {};
 	capturedCanvasProps = {};
@@ -796,6 +796,64 @@ describe('SpaceIsland — quick action buttons and dialogs', () => {
 			fireEvent.click(getByTestId('quick-start-workflow'));
 			expect(getByTestId('workflow-run-start-dialog')).toBeTruthy();
 			expect(queryByTestId('space-create-task-dialog')).toBeNull();
+		});
+	});
+});
+
+describe('SpaceIsland — content priority chain', () => {
+	describe('sessionViewId prop', () => {
+		it('renders ChatContainer when sessionViewId is set', () => {
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" sessionViewId="session-abc" />);
+			expect(getByTestId('chat-container')).toBeTruthy();
+		});
+
+		it('passes sessionId to ChatContainer', () => {
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" sessionViewId="session-abc" />);
+			expect(getByTestId('chat-container').getAttribute('data-session-id')).toBe('session-abc');
+		});
+
+		it('does not render tab bar when sessionViewId is set', () => {
+			const { queryByText } = render(<SpaceIsland spaceId="space-1" sessionViewId="session-abc" />);
+			expect(queryByText('Dashboard')).toBeNull();
+		});
+
+		it('renders tab view when sessionViewId is null', () => {
+			const { getByText, queryByTestId } = render(
+				<SpaceIsland spaceId="space-1" sessionViewId={null} />
+			);
+			expect(getByText('Dashboard')).toBeTruthy();
+			expect(queryByTestId('chat-container')).toBeNull();
+		});
+
+		it('renders tab view when neither sessionViewId nor taskViewId is set', () => {
+			const { getByText, queryByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			expect(getByText('Dashboard')).toBeTruthy();
+			expect(queryByTestId('chat-container')).toBeNull();
+		});
+	});
+
+	describe('taskViewId prop', () => {
+		it('shows SpaceTaskPane when taskViewId is set', () => {
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" taskViewId="task-xyz" />);
+			expect(getByTestId('space-task-pane')).toBeTruthy();
+		});
+
+		it('still shows tab bar when only taskViewId is set', () => {
+			const { getByText } = render(<SpaceIsland spaceId="space-1" taskViewId="task-xyz" />);
+			expect(getByText('Dashboard')).toBeTruthy();
+		});
+
+		it('does not show SpaceTaskPane when taskViewId is null', () => {
+			const { queryByTestId } = render(<SpaceIsland spaceId="space-1" taskViewId={null} />);
+			expect(queryByTestId('space-task-pane')).toBeNull();
+		});
+
+		it('sessionViewId takes priority over taskViewId — renders ChatContainer', () => {
+			const { getByTestId, queryByTestId } = render(
+				<SpaceIsland spaceId="space-1" sessionViewId="session-abc" taskViewId="task-xyz" />
+			);
+			expect(getByTestId('chat-container')).toBeTruthy();
+			expect(queryByTestId('space-task-pane')).toBeNull();
 		});
 	});
 });

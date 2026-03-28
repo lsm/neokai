@@ -16,7 +16,6 @@
 
 import { useState, useEffect } from 'preact/hooks';
 import { spaceStore } from '../lib/space-store';
-import { currentSpaceTaskIdSignal } from '../lib/signals';
 import { navigateToSpace, navigateToSpaceTask } from '../lib/router';
 import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
@@ -28,10 +27,13 @@ import { WorkflowCanvas } from '../components/space/WorkflowCanvas';
 import { SpaceSettings } from '../components/space/SpaceSettings';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { WorkflowRunStartDialog } from '../components/space/WorkflowRunStartDialog';
+import ChatContainer from './ChatContainer';
 import { cn } from '../lib/utils';
 
 interface SpaceIslandProps {
 	spaceId: string;
+	sessionViewId?: string | null; // When set, show this session content instead of space tabs
+	taskViewId?: string | null; // When set, show SpaceTaskPane for this task
 }
 
 type SpaceTab = 'dashboard' | 'agents' | 'workflows' | 'settings';
@@ -59,7 +61,7 @@ function readStoredEditorMode(): EditorMode {
 	}
 }
 
-export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
+export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: SpaceIslandProps) {
 	const [activeTab, setActiveTab] = useState<SpaceTab>('dashboard');
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
@@ -68,9 +70,6 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 	const [startWorkflowOpen, setStartWorkflowOpen] = useState(false);
 	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
-
-	// Derive active task ID from the global signal
-	const activeTaskId = currentSpaceTaskIdSignal.value;
 
 	// Canvas mode: pick the first active run (runtime) or first workflow (template)
 	const activeRuns = spaceStore.activeRuns.value;
@@ -156,6 +155,11 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 			: undefined;
 
 	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
+
+	// Session view: render ChatContainer instead of tabs
+	if (sessionViewId) {
+		return <ChatContainer key={sessionViewId} sessionId={sessionViewId} />;
+	}
 
 	return (
 		<div class="flex-1 flex overflow-hidden bg-dark-900">
@@ -303,13 +307,13 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 				</div>
 			</div>
 
-			{/* Right column — task detail pane / chat panel (conditionally shown) */}
-			{activeTaskId && (
+			{/* Right column — task detail pane (conditionally shown) */}
+			{taskViewId && (
 				<div
 					class="hidden md:flex w-80 flex-shrink-0 border-l border-dark-700 overflow-hidden flex-col"
 					data-testid="space-task-pane"
 				>
-					<SpaceTaskPane taskId={activeTaskId} onClose={handleTaskPaneClose} />
+					<SpaceTaskPane taskId={taskViewId} onClose={handleTaskPaneClose} />
 				</div>
 			)}
 

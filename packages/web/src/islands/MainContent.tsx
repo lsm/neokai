@@ -4,6 +4,8 @@ import {
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
 	currentSpaceIdSignal,
+	currentSpaceSessionIdSignal,
+	currentSpaceTaskIdSignal,
 	navSectionSignal,
 	settingsSectionSignal,
 } from '../lib/signals.ts';
@@ -33,6 +35,8 @@ export default function MainContent() {
 	const roomSessionId = currentRoomSessionIdSignal.value;
 	const roomTaskId = currentRoomTaskIdSignal.value;
 	const spaceId = currentSpaceIdSignal.value;
+	const spaceSessionViewId = currentSpaceSessionIdSignal.value;
+	const spaceTaskViewId = currentSpaceTaskIdSignal.value;
 	const sessionsList = sessions.value;
 	const navSection = navSectionSignal.value;
 	const settingsSection = settingsSectionSignal.value;
@@ -66,7 +70,13 @@ export default function MainContent() {
 	function renderContent() {
 		// Space route takes priority
 		if (spaceId) {
-			return <SpaceIsland spaceId={spaceId} />;
+			return (
+				<SpaceIsland
+					spaceId={spaceId}
+					sessionViewId={spaceSessionViewId}
+					taskViewId={spaceTaskViewId}
+				/>
+			);
 		}
 
 		// /spaces route: show standalone spaces page (no sidebar)
