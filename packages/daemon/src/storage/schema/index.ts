@@ -36,8 +36,6 @@ export { runMigration58 } from './migrations';
 // knip-ignore-next-line
 export { runMigration66 } from './migrations';
 // knip-ignore-next-line
-export { runMigration67 } from './migrations';
-// knip-ignore-next-line
 export { runMigration68 } from './migrations';
 
 /**
