@@ -316,6 +316,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		liveQueries,
 		appMcpManager,
 		skillsManager,
+		neoAgentManager,
 	});
 
 	// Create WebSocket handlers

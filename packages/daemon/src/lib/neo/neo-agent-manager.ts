@@ -167,6 +167,19 @@ export class NeoAgentManager {
 	}
 
 	/**
+	 * Clear the current Neo session and start a fresh one.
+	 *
+	 * Used by the `neo.clearSession` RPC handler. Delegates to
+	 * `destroyAndRecreate()` which is atomic: if re-creation fails, the error
+	 * propagates to the caller (the session is not left in a half-destroyed
+	 * state — `destroyAndRecreate` will throw before returning).
+	 */
+	async clearSession(): Promise<void> {
+		this.logger.info('Clearing Neo session on user request');
+		await this.destroyAndRecreate();
+	}
+
+	/**
 	 * Gracefully shut down the Neo session.
 	 *
 	 * Called during daemon shutdown. Delegates to AgentSession.cleanup().

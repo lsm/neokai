@@ -80,6 +80,9 @@ import type { AppMcpLifecycleManager } from '../mcp';
 import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers';
 import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
+import { setupNeoHandlers } from './neo-handlers';
+import type { NeoAgentManager } from '../neo/neo-agent-manager';
+import { PendingActionStore } from '../neo/security-tier';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -112,6 +115,8 @@ export interface RPCHandlerDependencies {
 	appMcpManager: AppMcpLifecycleManager;
 	/** Application-level Skills manager */
 	skillsManager: SkillsManager;
+	/** Neo agent manager — singleton global AI assistant */
+	neoAgentManager: NeoAgentManager;
 }
 
 const log = new Logger('rpc-handlers');
@@ -312,6 +317,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Skills registry RPC handlers
 	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub);
+
+	// Neo global agent RPC handlers
+	// The PendingActionStore is created here (application lifecycle) so it is
+	// shared across confirmAction / cancelAction calls in the same daemon process.
+	const neoPendingActions = new PendingActionStore();
+	setupNeoHandlers(
+		deps.messageHub,
+		deps.neoAgentManager,
+		deps.sessionManager,
+		deps.settingsManager,
+		deps.db,
+		neoPendingActions
+	);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
