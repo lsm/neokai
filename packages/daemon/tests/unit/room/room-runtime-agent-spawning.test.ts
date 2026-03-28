@@ -14,6 +14,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import {
 	createRuntimeTestContext,
 	makeRoom,
+	spawnAndRouteToLeader,
 	type RuntimeTestContext,
 } from './room-runtime-test-helpers';
 import type { AgentSessionInit } from '../../../src/lib/agent/agent-session';
@@ -237,15 +238,15 @@ describe('room-runtime agent spawning paths', () => {
 
 			await ctx.runtime.tick();
 
-			// Leader init should have review context embedded in system prompt
+			// Leader init should have plan_review context embedded in the Leader agent's system prompt.
+			// The discriminating string only appears when reviewContext === 'plan_review'
+			// (see leaderRoleIntro() in leader-agent.ts — code_review uses "reviewing work done by a worker agent").
 			const leaderInit = getInitForRole(ctx.sessionFactory.calls, 'leader');
 			expect(leaderInit).toBeDefined();
 			expect(leaderInit!.agent).toBe('Leader');
-			// The leader system prompt should reference plan_review context
-			// We verify this by checking that the leader's prompt in the agents map mentions planning
 			const leaderAgentDef = leaderInit!.agents!['Leader'];
 			expect(leaderAgentDef).toBeDefined();
-			expect(leaderAgentDef.prompt).toContain('plan');
+			expect(leaderAgentDef.prompt).toContain('reviewing a plan created by a Planner Agent');
 		});
 	});
 
@@ -378,11 +379,14 @@ describe('room-runtime agent spawning paths', () => {
 				// Built-in sub-agents always present
 				expect(agentNames).toContain('leader-explorer');
 				expect(agentNames).toContain('leader-fact-checker');
-				// User-configured reviewers add reviewer agents to the map (named by model/config).
-				// With one reviewer config, buildReviewerAgents adds a reviewer agent plus
-				// reviewer-explorer and reviewer-fact-checker sub-agents for the reviewer.
-				// So agents map grows beyond the 3 built-ins.
-				expect(agentNames.length).toBeGreaterThan(3);
+				// One reviewer config with model 'claude-opus-4-5' produces 'reviewer-opus'
+				// (via toReviewerName → toShortModelName in leader-agent.ts).
+				// buildReviewerAgents also seeds reviewer-explorer and reviewer-fact-checker
+				// for that reviewer, giving exactly 6 agents total:
+				//   Leader, leader-explorer, leader-fact-checker,
+				//   reviewer-opus, reviewer-explorer, reviewer-fact-checker
+				expect(agentNames).toContain('reviewer-opus');
+				expect(agentNames).toHaveLength(6);
 			} finally {
 				ctxWithReviewer.runtime.stop();
 				ctxWithReviewer.db.close();
@@ -395,96 +399,113 @@ describe('room-runtime agent spawning paths', () => {
 	// Must reflect user-configured reviewers only, not built-in sub-agents
 	// -------------------------------------------------------------------------
 	describe('hasReviewers gate semantics', () => {
-		it('leader agents map has built-in sub-agents but hasReviewers is still false when no user reviewers are configured', async () => {
-			// This test documents the invariant:
-			// - agentSubagents.leader controls hasReviewers (PR review gate)
-			// - leader-explorer and leader-fact-checker are ALWAYS in agents map
-			// - These built-in agents do NOT influence hasReviewers
-			const roomConfig = makeRoom({ config: {} });
-			const ctxLocal = createRuntimeTestContext({ room: roomConfig });
-			ctxLocal.runtime.start();
+		it('leader agents map always has built-in sub-agents even when no user reviewers are configured', async () => {
+			// The leader agents map always contains leader-explorer and leader-fact-checker
+			// regardless of whether agentSubagents.leader is populated.
+			// These built-in sub-agents are separate from user-configured reviewers:
+			// their presence in the agents map does NOT trigger the PR review gate.
+			const { group: _ } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'coder' });
 
-			try {
-				const goal = await ctxLocal.goalManager.createGoal({ title: 'G', description: '' });
-				const task = await ctxLocal.taskManager.createTask({
-					title: 'T',
-					description: 'D',
-					assignedAgent: 'coder',
-				});
-				await ctxLocal.goalManager.linkTaskToGoal(goal.id, task.id);
+			const leaderInit = getInitForRole(ctx.sessionFactory.calls, 'leader');
+			expect(leaderInit).toBeDefined();
 
-				await ctxLocal.runtime.tick();
+			// Built-in sub-agents always present (not user-configured reviewers)
+			const agentNames = Object.keys(leaderInit!.agents!);
+			expect(agentNames).toContain('leader-explorer');
+			expect(agentNames).toContain('leader-fact-checker');
 
-				const leaderInit = getInitForRole(ctxLocal.sessionFactory.calls, 'leader');
-				expect(leaderInit).toBeDefined();
-
-				// Built-in sub-agents present — but these are NOT user-configured reviewers
-				const agentNames = Object.keys(leaderInit!.agents!);
-				expect(agentNames).toContain('leader-explorer');
-				expect(agentNames).toContain('leader-fact-checker');
-
-				// hasReviewers is derived from roomConfig.agentSubagents?.leader?.length
-				// Since room has no agentSubagents.leader, hasReviewers = false
-				// This means no PR review gate — even though built-in sub-agents are present.
-				// Verify: room config has no agentSubagents.leader
-				const roomConfigData = (roomConfig.config ?? {}) as Record<string, unknown>;
-				const agentSubs = roomConfigData.agentSubagents as Record<string, unknown[]> | undefined;
-				const hasReviewers = !!agentSubs?.leader?.length;
-				expect(hasReviewers).toBe(false);
-			} finally {
-				ctxLocal.runtime.stop();
-				ctxLocal.db.close();
-			}
+			// No user reviewer agents — only the 3 built-ins
+			expect(agentNames).toHaveLength(3);
 		});
 
-		it('hasReviewers is true only when agentSubagents.leader has entries', async () => {
-			// Verify that the hasReviewers flag is exclusively controlled by
-			// room.config.agentSubagents.leader, matching lines 1304/1420/1553 in room-runtime.ts
-			const reviewerEntry = {
-				name: 'my-reviewer',
-				description: 'A reviewer',
-				prompt: 'Review this code.',
-				model: 'claude-opus-4-5',
-			};
-			const roomConfig = makeRoom({
-				config: {
-					agentSubagents: {
-						leader: [reviewerEntry],
+		it('rooms with agentSubagents.leader invoke checkPrHasReviews during submit_for_review', async () => {
+			// Verify that the production hasReviewers derivation in room-runtime.ts (lines 1553-1554)
+			// causes the checkPrHasReviews gate to be reached when agentSubagents.leader is populated.
+			//
+			// Strategy: use a runCommand spy that makes git rev-parse succeed (to avoid
+			// checkPrHasReviews short-circuiting early) and all other commands fail open.
+			// Then assert that the unique 'gh pr view --json reviews' command was invoked.
+			const recordedCommands: string[][] = [];
+			const ctxWithReviewer = createRuntimeTestContext({
+				room: makeRoom({
+					config: {
+						agentSubagents: {
+							leader: [
+								{
+									name: 'my-reviewer',
+									description: 'A reviewer',
+									prompt: 'Review this code.',
+									model: 'claude-opus-4-5',
+								},
+							],
+						},
+					},
+				}),
+				hookOptions: {
+					runCommand: async (args) => {
+						recordedCommands.push(args);
+						// Make git rev-parse succeed so checkPrHasReviews does not short-circuit
+						if (args[0] === 'git' && args[1] === 'rev-parse') {
+							return { stdout: 'feature-branch', exitCode: 0 };
+						}
+						// All other commands fail open (exit 1 → pass: true in each hook)
+						return { stdout: '', exitCode: 1 };
 					},
 				},
 			});
 
-			const roomConfigData = (roomConfig.config ?? {}) as Record<string, unknown>;
-			const agentSubs = roomConfigData.agentSubagents as Record<string, unknown[]> | undefined;
-			const hasReviewers = !!agentSubs?.leader?.length;
-			expect(hasReviewers).toBe(true);
+			const { group } = await spawnAndRouteToLeader(ctxWithReviewer, {
+				assignedAgent: 'coder',
+			});
+			await ctxWithReviewer.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+				pr_url: 'https://github.com/org/repo/pull/1',
+			});
+
+			// checkPrHasReviews calls: gh pr view <branch> --json reviews --jq ...
+			// This is the ONLY gate that includes 'reviews' in the gh pr view command.
+			const reviewsGateInvoked = recordedCommands.some(
+				(args) => args[0] === 'gh' && args[2] === 'view' && args.includes('reviews')
+			);
+			expect(reviewsGateInvoked).toBe(true);
+
+			ctxWithReviewer.runtime.stop();
+			ctxWithReviewer.db.close();
 		});
 
-		it('hasReviewers logic ignores agentSubagents.worker', async () => {
-			// Verify that agentSubagents.worker does NOT affect hasReviewers computation.
-			// This ensures the PR review gate only depends on user intent (leader reviewers),
-			// not on whether worker sub-agents are configured.
-			const roomConfig = makeRoom({
-				config: {
-					agentSubagents: {
-						// worker is set but leader is absent
-						worker: [
-							{
-								name: 'helper',
-								description: 'A worker helper',
-								prompt: 'Help the coder.',
-								model: 'claude-opus-4-5',
-							},
-						],
+		it('rooms without agentSubagents.leader skip the checkPrHasReviews gate entirely', async () => {
+			// Verify that the production hasReviewers derivation in room-runtime.ts (lines 1553-1554)
+			// does NOT invoke checkPrHasReviews when agentSubagents.leader is absent.
+			//
+			// Same spy setup — git rev-parse succeeds so the gate WOULD be reached if hasReviewers
+			// were true. Since it is false, the 'gh pr view --json reviews' command must not appear.
+			const recordedCommands: string[][] = [];
+			const ctxNoReviewer = createRuntimeTestContext({
+				room: makeRoom({ config: {} }),
+				hookOptions: {
+					runCommand: async (args) => {
+						recordedCommands.push(args);
+						if (args[0] === 'git' && args[1] === 'rev-parse') {
+							return { stdout: 'feature-branch', exitCode: 0 };
+						}
+						return { stdout: '', exitCode: 1 };
 					},
 				},
 			});
 
-			const roomConfigData = (roomConfig.config ?? {}) as Record<string, unknown>;
-			const agentSubs = roomConfigData.agentSubagents as Record<string, unknown[]> | undefined;
-			const hasReviewers = !!agentSubs?.leader?.length;
-			// Despite worker agents being configured, hasReviewers is false (no leader reviewers)
-			expect(hasReviewers).toBe(false);
+			const { group } = await spawnAndRouteToLeader(ctxNoReviewer, {
+				assignedAgent: 'coder',
+			});
+			await ctxNoReviewer.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+				pr_url: 'https://github.com/org/repo/pull/1',
+			});
+
+			const reviewsGateInvoked = recordedCommands.some(
+				(args) => args[0] === 'gh' && args[2] === 'view' && args.includes('reviews')
+			);
+			expect(reviewsGateInvoked).toBe(false);
+
+			ctxNoReviewer.runtime.stop();
+			ctxNoReviewer.db.close();
 		});
 	});
 
