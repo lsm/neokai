@@ -1096,4 +1096,41 @@ describe('createNeoActionMcpServer: undo_last_action registration', () => {
 		const server = createNeoActionMcpServer(config);
 		expect(server.instance._registeredTools).toHaveProperty('undo_last_action');
 	});
+
+	it('undo_last_action produces an activity log entry via the logged() wrapper', async () => {
+		const db = makeDb();
+		const logger = makeLogger(db);
+		const room = makeRoom({ id: 'room-to-undo' });
+		const { config } = makeConfig({ db, rooms: [room] });
+		config.activityLogger = logger;
+
+		// Seed a create_room entry so there is something to undo.
+		logger.logAction({
+			toolName: 'create_room',
+			input: { name: 'Room To Undo' },
+			status: 'success',
+			undoable: true,
+			undoData: { roomId: 'room-to-undo' },
+		});
+
+		// Call undo through the MCP server so the logged() wrapper runs.
+		const server = createNeoActionMcpServer(config);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const reg = (server as any).instance._registeredTools as Record<
+			string,
+			{ handler: (args: Record<string, unknown>) => Promise<unknown> }
+		>;
+		await reg['undo_last_action'].handler({});
+
+		// Should now have 2 entries: original create_room (undoable=false) + undo_last_action.
+		const entries = logger.getRecentActivity(10);
+		expect(entries).toHaveLength(2);
+		// Newest first — the undo action itself is entry 0.
+		expect(entries[0].toolName).toBe('undo_last_action');
+		expect(entries[0].undoable).toBe(false);
+		// The original create_room entry was marked as undone.
+		expect(entries[1].toolName).toBe('create_room');
+		expect(entries[1].undoable).toBe(false);
+		db.close();
+	});
 });

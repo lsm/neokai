@@ -1736,10 +1736,11 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				if (!goal) throw new Error(`Goal ${goalId} no longer exists — already deleted`);
 				if (goalManager.deleteGoal) {
 					await goalManager.deleteGoal(goalId);
+					return `Deleted goal: ${goalId}`;
 				} else {
 					await goalManager.updateGoalStatus(goalId, 'archived');
+					return `Archived goal: ${goalId} (hard delete unavailable)`;
 				}
-				return `Deleted goal: ${goalId}`;
 			}
 
 			case 'set_goal_status': {
@@ -1764,10 +1765,11 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				if (!task) throw new Error(`Task ${taskId} no longer exists — already deleted`);
 				if (taskManager.deleteTask) {
 					await taskManager.deleteTask(taskId);
+					return `Deleted task: ${taskId}`;
 				} else {
 					await taskManager.setTaskStatus(taskId, 'cancelled');
+					return `Cancelled task: ${taskId} (hard delete unavailable)`;
 				}
-				return `Deleted task: ${taskId}`;
 			}
 
 			case 'set_task_status': {
@@ -1803,7 +1805,11 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				if (!mcpManager) throw new Error('MCP manager not available for undo');
 				const server = mcpManager.getMcpServer(serverId);
 				if (!server) throw new Error(`MCP server ${serverId} no longer exists`);
-				mcpManager.updateMcpServer(serverId, { enabled: previousServerEnabled });
+				const restoredServer = mcpManager.updateMcpServer(serverId, {
+					enabled: previousServerEnabled,
+				});
+				if (!restoredServer)
+					throw new Error(`Failed to restore MCP server ${serverId} — it may have been deleted`);
 				return `Restored MCP server ${serverId} enabled state to: ${previousServerEnabled}`;
 			}
 
