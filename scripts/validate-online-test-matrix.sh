@@ -84,6 +84,7 @@ CROSS_PROVIDER_FILES=(
 
 SPACE_FILES=(
   space-agent-coordination.test.ts
+  space-chat-session.test.ts
   space-edge-cases.test.ts
   space-happy-path-code-review.test.ts
   space-happy-path-full-pipeline.test.ts
