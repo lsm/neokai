@@ -9,7 +9,7 @@
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { navigateToSpaceSession } from '../../lib/router';
+import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
 import { cn } from '../../lib/utils';
 import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import { WorkflowCanvas } from './WorkflowCanvas';
@@ -66,6 +66,21 @@ const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
 	high: 'High',
 	urgent: 'Urgent',
 };
+
+const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
+	low: 'border-gray-700 bg-dark-950 text-gray-400',
+	normal: 'border-dark-700 bg-dark-950 text-gray-400',
+	high: 'border-orange-700/50 bg-orange-950/30 text-orange-300',
+	urgent: 'border-red-700/50 bg-red-950/30 text-red-300',
+};
+
+const TASK_TYPE_LABELS = {
+	planning: 'Planning',
+	coding: 'Coding',
+	research: 'Research',
+	design: 'Design',
+	review: 'Review',
+} as const;
 
 function SectionCard({
 	title,
@@ -131,6 +146,33 @@ function StatusBadge({ status }: { status: SpaceTaskStatus }) {
 			{STATUS_LABELS[status]}
 		</span>
 	);
+}
+
+function InfoBadge({
+	label,
+	className = 'border-dark-700 bg-dark-950 text-gray-400',
+}: {
+	label: string;
+	className?: string;
+}) {
+	return (
+		<span
+			class={cn(
+				'inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]',
+				className
+			)}
+		>
+			{label}
+		</span>
+	);
+}
+
+function formatAgentLabel(value: string): string {
+	return value
+		.split(/[_-\s]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
 }
 
 // ============================================================================
@@ -199,6 +241,7 @@ function HumanInputArea({ task }: HumanInputAreaProps) {
 
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
+	const agents = spaceStore.agents.value;
 	const workflowRuns = spaceStore.workflowRuns.value;
 	const workflows = spaceStore.workflows.value;
 	const tasksByRun = spaceStore.tasksByRun.value;
@@ -223,16 +266,24 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const agentSessionId = task.taskAgentSessionId;
 	const runtimeSpaceId = spaceId ?? task.spaceId;
-	const agentSessionLabel =
+	const agentActionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
 			: task.activeSession === 'worker'
 				? 'View Worker Session'
-				: 'View Agent Session';
+				: agentSessionId
+					? 'View Agent Session'
+					: 'Open Space Agent';
 	const workflowLabel = task.workflowRunId ? 'Workflow Step' : 'Standalone Task';
+	const humanHandoffPending = task.status === 'in_progress' && !!task.inputDraft && !agentSessionId;
+	const visibleCurrentStep = humanHandoffPending
+		? 'Your response was saved. Open the space agent to continue the conversation while this task resumes.'
+		: task.currentStep;
 	const attentionCopy =
 		task.status === 'needs_attention'
 			? 'This task is blocked on human input.'
+			: humanHandoffPending
+				? 'Your response was sent. Waiting for agent follow-up.'
 			: task.currentStep || 'Agent activity will surface here as the task advances.';
 	const workflowRun = task.workflowRunId
 		? (workflowRuns.find((run) => run.id === task.workflowRunId) ?? null)
@@ -248,10 +299,86 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const workflowNode = task.workflowNodeId
 		? (workflow?.nodes.find((node) => node.id === task.workflowNodeId) ?? null)
 		: null;
+	const customAgent = task.customAgentId
+		? (agents.find((agent) => agent.id === task.customAgentId) ?? null)
+		: null;
+	const assignedAgentLabel = customAgent?.name
+		? customAgent.name
+		: task.agentName
+			? formatAgentLabel(task.agentName)
+			: task.assignedAgent === 'general'
+				? 'General Agent'
+				: 'Coder Agent';
+	const threadLabel = agentSessionId ? 'Task agent thread' : 'Space agent thread';
+	const liveActorLabel =
+		task.activeSession === 'leader'
+			? 'Leader agent'
+			: task.activeSession === 'worker'
+				? 'Worker agent'
+				: agentSessionId
+					? 'Task agent'
+					: 'Space agent';
+	const activityHeadline =
+		task.status === 'needs_attention'
+			? 'Waiting on your input'
+			: task.status === 'in_progress'
+				? task.activeSession
+					? `${liveActorLabel} is working`
+					: humanHandoffPending
+						? 'Waiting for agent follow-up'
+						: 'The task is in progress'
+				: task.status === 'review'
+					? 'Review is ready'
+					: task.status === 'completed'
+						? 'The task is complete'
+						: task.status === 'pending'
+							? 'The task is queued'
+							: task.status === 'cancelled'
+								? 'This task was cancelled'
+								: task.status === 'rate_limited' || task.status === 'usage_limited'
+									? 'The task is blocked by limits'
+									: 'The task needs attention';
+	const activityDetail =
+		task.error && task.status !== 'needs_attention'
+			? task.error
+			: visibleCurrentStep ||
+				(task.status === 'completed'
+					? task.completionSummary || task.result || 'The agent finished this task.'
+					: task.status === 'review'
+						? task.completionSummary || 'An agent is waiting for your review.'
+						: task.status === 'pending'
+							? 'This task has not started yet.'
+							: `Use the ${threadLabel.toLowerCase()} to steer the next step.`);
 	const relatedWorkflowTasks = task.workflowRunId
 		? [...(tasksByRun.get(task.workflowRunId) ?? [])].sort((a, b) => b.updatedAt - a.updatedAt)
 		: [];
 	const workflowCanvasId = workflow?.id ?? null;
+	const compactRelatedTasks = task.workflowRunId
+		? relatedWorkflowTasks.map((relatedTask) => {
+				const relatedNode =
+					relatedTask.workflowNodeId && workflow
+						? (workflow.nodes.find((node) => node.id === relatedTask.workflowNodeId) ?? null)
+						: null;
+				const relatedCustomAgent = relatedTask.customAgentId
+					? (agents.find((agent) => agent.id === relatedTask.customAgentId) ?? null)
+					: null;
+				return {
+					task: relatedTask,
+					agentLabel: relatedCustomAgent?.name
+						? relatedCustomAgent.name
+						: relatedTask.agentName
+							? formatAgentLabel(relatedTask.agentName)
+							: relatedNode?.name || formatAgentLabel(relatedTask.assignedAgent ?? 'coder'),
+					summary:
+						relatedTask.currentStep ||
+						relatedTask.completionSummary ||
+						relatedTask.error ||
+						(relatedTask.activeSession
+							? `${formatAgentLabel(relatedTask.activeSession)} agent is active`
+							: STATUS_LABELS[relatedTask.status]),
+				};
+			})
+		: [];
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-950">
@@ -278,23 +405,32 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					)}
 					<div class="min-w-0 flex-1">
 						<div class="flex flex-wrap items-center gap-2">
-							<span class="rounded-full border border-dark-700 bg-dark-950 px-2.5 py-1 text-[11px] uppercase tracking-[0.2em] text-gray-500">
-								{workflowLabel}
-							</span>
+							<InfoBadge label={workflowLabel} />
 							<StatusBadge status={task.status} />
+							{task.taskType && <InfoBadge label={TASK_TYPE_LABELS[task.taskType]} />}
+							{task.priority !== 'normal' && (
+								<InfoBadge
+									label={`${PRIORITY_LABELS[task.priority]} Priority`}
+									className={PRIORITY_BADGE_CLASSES[task.priority]}
+								/>
+							)}
 						</div>
 						<h2 class="mt-3 text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
 						<p class="mt-1 text-sm text-gray-500">{attentionCopy}</p>
 					</div>
-					{agentSessionId && runtimeSpaceId && (
+					{runtimeSpaceId && (
 						<button
 							type="button"
-							onClick={() => navigateToSpaceSession(runtimeSpaceId, agentSessionId)}
+							onClick={() =>
+								agentSessionId
+									? navigateToSpaceSession(runtimeSpaceId, agentSessionId)
+									: navigateToSpaceAgent(runtimeSpaceId)
+							}
 							class="flex-shrink-0 px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700
 								text-gray-300 rounded-lg border border-dark-600 transition-colors"
-							data-testid="view-agent-session-btn"
+							data-testid={agentSessionId ? 'view-agent-session-btn' : 'open-space-agent-btn'}
 						>
-							{agentSessionLabel}
+							{agentActionLabel}
 						</button>
 					)}
 				</div>
@@ -303,56 +439,106 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			{/* Body */}
 			<div class="flex-1 overflow-y-auto">
 				<div class="max-w-5xl mx-auto px-4 py-5 space-y-4">
-					<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-						<MetaCard
-							label="Priority"
-							value={`${PRIORITY_LABELS[task.priority]} priority`}
-							helper={task.taskType ? `${task.taskType} task` : 'Execution priority'}
-							accent={
-								task.priority === 'urgent'
-									? 'bg-red-400'
-									: task.priority === 'high'
-										? 'bg-orange-400'
-										: task.priority === 'low'
-											? 'bg-gray-500'
-											: 'bg-blue-400'
-							}
-						/>
-						<MetaCard
-							label="Status"
-							value={STATUS_LABELS[task.status]}
-							helper={
-								task.status === 'needs_attention'
-									? 'Waiting on human input'
-									: task.status === 'review'
-										? 'Ready for review'
-										: 'Current execution state'
-							}
-							accent={
-								task.status === 'completed'
-									? 'bg-green-400'
-									: task.status === 'needs_attention' || task.status === 'review'
-										? 'bg-yellow-400'
-										: task.status === 'in_progress'
-											? 'bg-blue-400'
-											: 'bg-gray-500'
-							}
-						/>
-						<MetaCard
-							label="Session"
-							value={task.activeSession ? `${task.activeSession} agent` : 'Shared agent thread'}
-							helper={agentSessionId ? 'Deep-dive available in agent session' : 'No linked agent session'}
-							accent={agentSessionId ? 'bg-violet-400' : 'bg-gray-500'}
-						/>
-						<MetaCard
-							label="Source"
-							value={task.workflowRunId ? 'Workflow-generated' : 'Standalone task'}
-							helper={
-								task.workflowNodeId ? `Node ${task.workflowNodeId.slice(0, 8)}` : 'Manual task scope'
-							}
-							accent={task.workflowRunId ? 'bg-cyan-400' : 'bg-emerald-400'}
-						/>
+					<div class="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+						<SectionCard title="What&apos;s Happening" tone={task.status === 'needs_attention' ? 'warning' : 'default'}>
+							<p class="text-base font-medium text-gray-100">{activityHeadline}</p>
+							<p class="mt-2 text-sm leading-relaxed text-gray-400">{activityDetail}</p>
+							<div class="mt-4 flex flex-wrap gap-2">
+								<InfoBadge label={`Assigned: ${assignedAgentLabel}`} />
+								<InfoBadge label={`Thread: ${threadLabel}`} />
+								{task.activeSession && (
+									<InfoBadge
+										label={`Live: ${liveActorLabel}`}
+										className="border-blue-700/50 bg-blue-950/20 text-blue-300"
+									/>
+								)}
+								{task.workflowRunId && workflowRun && (
+									<InfoBadge
+										label={`Run: ${workflowRun.title}`}
+										className="border-cyan-700/50 bg-cyan-950/20 text-cyan-300"
+									/>
+								)}
+							</div>
+						</SectionCard>
+
+						<SectionCard title="Task Agent" tone={humanHandoffPending ? 'warning' : 'default'}>
+							<p class="text-sm text-gray-300">
+								{agentSessionId
+									? 'Open the linked task thread to direct the agent, answer follow-up questions, or inspect the latest result.'
+									: 'This task does not have its own live agent thread yet. Use the shared space agent to steer the work and get updates.'}
+							</p>
+							<div class="mt-4 grid gap-3">
+								<div class="rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-3">
+									<p class="text-[11px] uppercase tracking-[0.18em] text-gray-500">Current Control Point</p>
+									<p class="mt-2 text-sm text-gray-100">{agentSessionId ? 'Linked task agent' : 'Shared space agent'}</p>
+									<p class="mt-1 text-xs text-gray-500">
+										{task.status === 'needs_attention'
+											? 'Answer the open question here, then continue in the agent thread if more direction is needed.'
+											: humanHandoffPending
+												? 'Your last response is saved below. Open the agent thread if you want to keep driving the task.'
+												: 'Use the agent thread when you want to redirect execution, ask for an update, or inspect results.'}
+									</p>
+								</div>
+							</div>
+						</SectionCard>
 					</div>
+
+					<SectionCard title={compactRelatedTasks.length > 0 ? 'Agent Activity' : 'Task Activity'}>
+						{compactRelatedTasks.length > 0 ? (
+							<div class="space-y-2">
+								{compactRelatedTasks.map(({ task: relatedTask, agentLabel, summary }) => (
+									<div
+										key={relatedTask.id}
+										class="flex items-start gap-3 rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-3"
+									>
+										<span
+											class={cn(
+												'mt-1 h-2.5 w-2.5 rounded-full flex-shrink-0',
+												relatedTask.id === task.id
+													? 'bg-blue-400'
+													: STATUS_DOT_CLASSES[relatedTask.status]
+											)}
+										/>
+										<div class="min-w-0 flex-1">
+											<div class="flex flex-wrap items-center gap-2">
+												<p class="text-sm font-medium text-gray-100">{agentLabel}</p>
+												{relatedTask.id === task.id && (
+													<InfoBadge
+														label="Current Task"
+														className="border-blue-700/50 bg-blue-950/20 text-blue-300"
+													/>
+												)}
+												<StatusBadge status={relatedTask.status} />
+											</div>
+											<p class="mt-1 text-sm text-gray-300 truncate">{relatedTask.title}</p>
+											<p class="mt-1 text-xs text-gray-500">{summary}</p>
+										</div>
+									</div>
+								))}
+							</div>
+						) : (
+							<div class="rounded-xl border border-dark-700 bg-dark-900/70 px-4 py-4">
+								<div class="flex flex-wrap items-center gap-2">
+									<p class="text-sm font-medium text-gray-100">{assignedAgentLabel}</p>
+									<StatusBadge status={task.status} />
+								</div>
+								<p class="mt-2 text-sm text-gray-400">
+									{task.status === 'needs_attention'
+										? 'The agent is waiting for your answer before it can continue.'
+										: task.activeSession
+											? `${liveActorLabel} is actively producing work for this task.`
+											: agentSessionId
+												? 'This task has a dedicated agent thread, but no agent is actively speaking right now.'
+												: 'There is no dedicated task-agent session yet, so the shared space agent is your main control surface.'}
+								</p>
+								{visibleCurrentStep && (
+									<p class="mt-3 text-xs text-gray-500">
+										<span class="text-gray-400">Latest signal:</span> {visibleCurrentStep}
+									</p>
+								)}
+							</div>
+						)}
+					</SectionCard>
 
 					{/* Workflow context */}
 					{task.workflowRunId && (
@@ -411,52 +597,17 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								</div>
 							)}
 
-							{relatedWorkflowTasks.length > 0 && (
-								<div class="mt-4">
-									<div class="flex items-center justify-between gap-3">
-										<h4 class="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-											Workflow Tasks
-										</h4>
-										<span class="text-xs text-gray-600">
-											{relatedWorkflowTasks.length} task
-											{relatedWorkflowTasks.length === 1 ? '' : 's'} in this run
-										</span>
-									</div>
-								<div class="mt-2 space-y-2">
-										{relatedWorkflowTasks.map((relatedTask) => (
-											<div
-												key={relatedTask.id}
-												class="flex items-center gap-3 rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-2.5"
-											>
-												<span
-													class={cn(
-														'h-2.5 w-2.5 rounded-full flex-shrink-0',
-														relatedTask.id === task.id
-															? 'bg-blue-400'
-															: STATUS_DOT_CLASSES[relatedTask.status]
-													)}
-												/>
-												<div class="min-w-0 flex-1">
-													<p class="truncate text-sm text-gray-200">{relatedTask.title}</p>
-													<p class="mt-0.5 text-xs text-gray-500">
-														{relatedTask.workflowNodeId
-															? `Node ${relatedTask.workflowNodeId.slice(0, 8)}`
-															: 'Workflow-generated task'}
-													</p>
-												</div>
-												<div class="flex items-center gap-2">
-													{relatedTask.id === task.id && (
-														<span class="rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[11px] uppercase tracking-[0.16em] text-blue-200">
-															Current
-														</span>
-													)}
-													<StatusBadge status={relatedTask.status} />
-												</div>
-											</div>
-										))}
-									</div>
-								</div>
-							)}
+						</SectionCard>
+					)}
+
+					{task.inputDraft && task.status !== 'needs_attention' && (
+						<SectionCard title="Latest Human Handoff" tone={humanHandoffPending ? 'warning' : 'default'}>
+							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{task.inputDraft}</p>
+							<p class="mt-3 text-xs text-gray-500">
+								{humanHandoffPending
+									? 'Your response has been saved. Continue in the space agent if you want to steer the next step.'
+									: 'Most recent human input saved on this task.'}
+							</p>
 						</SectionCard>
 					)}
 
@@ -466,13 +617,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
 								{task.description}
 							</p>
-						</SectionCard>
-					)}
-
-					{/* Current step */}
-					{task.currentStep && (
-						<SectionCard title="Current Step" tone={task.status === 'needs_attention' ? 'warning' : 'default'}>
-							<p class="text-xs text-gray-400">{task.currentStep}</p>
 						</SectionCard>
 					)}
 
