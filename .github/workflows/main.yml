@@ -151,6 +151,7 @@ jobs:
           # - room-replan
           # - room-planner
           # - room-reviewer
+          - neo
           - rpc-1
           - rpc-2
           - rpc-3
@@ -209,6 +210,11 @@ jobs:
           - module: mcp
             test_path: tests/online/mcp
             mock_sdk: true
+          - module: neo
+            test_path: tests/online/neo
+            mock_sdk: true
+            enable_neo_agent: true
+            timeout: 10
           # - module: providers-anthropic-to-codex-bridge
           #   test_path: tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
           # - module: providers-anthropic-copilot
@@ -351,6 +357,7 @@ jobs:
           # This avoids proxy env var issues and TLS interception problems
           NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
           NEOKAI_ENABLE_SPACES_AGENT: ${{ matrix.enable_spaces_agent == true && '1' || '' }}
+          NEOKAI_ENABLE_NEO_AGENT: ${{ matrix.enable_neo_agent == true && '1' || '' }}
           NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
