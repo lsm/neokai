@@ -1,278 +1,198 @@
-// @ts-nocheck
 /**
- * Tests for ToolsModal Component Logic
+ * Tests for ToolsModal utility functions and logic
  *
- * Tests pure logic without mock.module to avoid polluting other tests.
+ * Imports the real utility functions from ToolsModal.utils.ts so tests cover
+ * the actual code used by the component, not re-implementations.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import {
+	isServerEnabled,
+	toggleServer,
+	toggleGroupServers,
+	computeGroupState,
+	computeSkillGroupState,
+	resolveSettingSources,
+} from '../ToolsModal.utils.ts';
 
-import { signal } from '@preact/signals';
+describe('ToolsModal Utilities', () => {
+	describe('isServerEnabled', () => {
+		it('returns true when server is not in disabled list', () => {
+			expect(isServerEnabled(['server2'], 'server1')).toBe(true);
+		});
+
+		it('returns false when server is in disabled list', () => {
+			expect(isServerEnabled(['server1'], 'server1')).toBe(false);
+		});
+
+		it('returns true for empty disabled list', () => {
+			expect(isServerEnabled([], 'any-server')).toBe(true);
+		});
+	});
+
+	describe('toggleServer', () => {
+		it('adds server to disabled list when currently enabled', () => {
+			const result = toggleServer([], 'server1');
+			expect(result).toContain('server1');
+		});
+
+		it('removes server from disabled list when currently disabled', () => {
+			const result = toggleServer(['server1', 'server2'], 'server1');
+			expect(result).not.toContain('server1');
+			expect(result).toContain('server2');
+		});
+
+		it('does not mutate the original array', () => {
+			const original = ['server1'];
+			toggleServer(original, 'server2');
+			expect(original).toEqual(['server1']);
+		});
+	});
+
+	describe('toggleGroupServers', () => {
+		it('disables all servers when all are currently enabled', () => {
+			const result = toggleGroupServers([], ['alpha', 'beta', 'gamma']);
+			expect(result).toEqual(expect.arrayContaining(['alpha', 'beta', 'gamma']));
+		});
+
+		it('enables all servers when some are disabled (not all-on)', () => {
+			const result = toggleGroupServers(['alpha'], ['alpha', 'beta', 'gamma']);
+			expect(result).not.toContain('alpha');
+			expect(result).not.toContain('beta');
+			expect(result).not.toContain('gamma');
+		});
+
+		it('enables all servers when all are disabled', () => {
+			const result = toggleGroupServers(['alpha', 'beta', 'other'], ['alpha', 'beta']);
+			expect(result).not.toContain('alpha');
+			expect(result).not.toContain('beta');
+			expect(result).toContain('other'); // outside group unaffected
+		});
+
+		it('preserves servers outside the group when disabling', () => {
+			const result = toggleGroupServers(['other'], ['alpha']);
+			expect(result).toContain('other');
+			expect(result).toContain('alpha');
+		});
+
+		it('does not add duplicates when disabling', () => {
+			// All servers are enabled (none in disabled list), so toggling disables all
+			// alpha should appear exactly once in the result
+			const result = toggleGroupServers([], ['alpha', 'beta']);
+			const alphaCount = result.filter((s) => s === 'alpha').length;
+			expect(alphaCount).toBe(1);
+		});
+
+		it('returns original disabled list (filtered) when enabling', () => {
+			const result = toggleGroupServers(['alpha', 'extra'], ['alpha', 'beta']);
+			expect(result).toContain('extra');
+		});
+	});
+
+	describe('computeGroupState', () => {
+		it('returns allEnabled=false, someEnabled=false for empty list (no vacuous truth)', () => {
+			const state = computeGroupState([], []);
+			expect(state.allEnabled).toBe(false);
+			expect(state.someEnabled).toBe(false);
+			expect(state.isIndeterminate).toBe(false);
+		});
+
+		it('returns allEnabled=true when no servers are disabled', () => {
+			const state = computeGroupState([], ['alpha', 'beta']);
+			expect(state.allEnabled).toBe(true);
+			expect(state.someEnabled).toBe(true);
+			expect(state.isIndeterminate).toBe(false);
+		});
+
+		it('returns allEnabled=false, someEnabled=false when all disabled', () => {
+			const state = computeGroupState(['alpha', 'beta'], ['alpha', 'beta']);
+			expect(state.allEnabled).toBe(false);
+			expect(state.someEnabled).toBe(false);
+			expect(state.isIndeterminate).toBe(false);
+		});
+
+		it('returns isIndeterminate=true when some but not all enabled', () => {
+			const state = computeGroupState(['alpha'], ['alpha', 'beta']);
+			expect(state.allEnabled).toBe(false);
+			expect(state.someEnabled).toBe(true);
+			expect(state.isIndeterminate).toBe(true);
+		});
+	});
+});
+
+describe('computeSkillGroupState', () => {
+	it('returns all-false for empty skills list (no vacuous truth)', () => {
+		const state = computeSkillGroupState([]);
+		expect(state.allEnabled).toBe(false);
+		expect(state.someEnabled).toBe(false);
+		expect(state.isIndeterminate).toBe(false);
+	});
+
+	it('returns allEnabled=true when all skills are enabled', () => {
+		const state = computeSkillGroupState([{ enabled: true }, { enabled: true }]);
+		expect(state.allEnabled).toBe(true);
+		expect(state.someEnabled).toBe(true);
+		expect(state.isIndeterminate).toBe(false);
+	});
+
+	it('returns allEnabled=false, someEnabled=false when all skills are disabled', () => {
+		const state = computeSkillGroupState([{ enabled: false }, { enabled: false }]);
+		expect(state.allEnabled).toBe(false);
+		expect(state.someEnabled).toBe(false);
+		expect(state.isIndeterminate).toBe(false);
+	});
+
+	it('returns isIndeterminate=true when some skills are enabled', () => {
+		const state = computeSkillGroupState([{ enabled: true }, { enabled: false }]);
+		expect(state.allEnabled).toBe(false);
+		expect(state.someEnabled).toBe(true);
+		expect(state.isIndeterminate).toBe(true);
+	});
+});
+
+describe('resolveSettingSources', () => {
+	it('returns all sources by default when tools is undefined', () => {
+		expect(resolveSettingSources(undefined)).toEqual(['user', 'project', 'local']);
+	});
+
+	it('returns all sources when neither field is set', () => {
+		expect(resolveSettingSources({})).toEqual(['user', 'project', 'local']);
+	});
+
+	it('returns settingSources when explicitly set', () => {
+		expect(resolveSettingSources({ settingSources: ['user', 'project'] })).toEqual([
+			'user',
+			'project',
+		]);
+	});
+
+	it('returns empty array for legacy loadSettingSources=false', () => {
+		expect(resolveSettingSources({ loadSettingSources: false })).toEqual([]);
+	});
+
+	it('prefers settingSources over loadSettingSources when both are present', () => {
+		expect(resolveSettingSources({ settingSources: ['local'], loadSettingSources: false })).toEqual(
+			['local']
+		);
+	});
+});
 
 describe('ToolsModal Logic', () => {
-	// Mock Session type
-	interface MockSession {
-		id: string;
-		config: {
-			tools?: {
-				useClaudeCodePreset?: boolean;
-				settingSources?: Array<'user' | 'project' | 'local'>;
-				disabledMcpServers?: string[];
-				kaiTools?: {
-					memory?: boolean;
-				};
-			};
-		};
-	}
-
-	describe('Initial State', () => {
-		it('should have Claude Code preset enabled by default', () => {
-			const useClaudeCodePreset = signal(true);
-			expect(useClaudeCodePreset.value).toBe(true);
+	describe('File-based vs app-level state separation', () => {
+		it('toggleServer only modifies the disabledMcpServers list', () => {
+			// File-based server toggles go through toggleServer → disabledMcpServers
+			const disabled = toggleServer([], 'file-server');
+			expect(disabled).toContain('file-server');
+			// The returned list contains only the server name, nothing else
+			expect(disabled).toHaveLength(1);
 		});
 
-		it('should have all setting sources enabled by default', () => {
-			const settingSources = signal<Array<'user' | 'project' | 'local'>>([
-				'user',
-				'project',
-				'local',
-			]);
-			expect(settingSources.value).toEqual(['user', 'project', 'local']);
-		});
-
-		it('should have empty disabled MCP servers by default', () => {
-			const disabledMcpServers = signal<string[]>([]);
-			expect(disabledMcpServers.value).toEqual([]);
-		});
-
-		it('should have memory disabled by default', () => {
-			const memoryEnabled = signal(false);
-			expect(memoryEnabled.value).toBe(false);
-		});
-	});
-
-	describe('Config Loading', () => {
-		it('should load config from session', () => {
-			const session: MockSession = {
-				id: 'session-1',
-				config: {
-					tools: {
-						useClaudeCodePreset: true,
-						settingSources: ['user', 'project'],
-						disabledMcpServers: ['server1'],
-						kaiTools: { memory: true },
-					},
-				},
-			};
-
-			expect(session.config.tools?.useClaudeCodePreset).toBe(true);
-			expect(session.config.tools?.settingSources).toEqual(['user', 'project']);
-			expect(session.config.tools?.disabledMcpServers).toEqual(['server1']);
-			expect(session.config.tools?.kaiTools?.memory).toBe(true);
-		});
-
-		it('should handle undefined tools config', () => {
-			const session: MockSession = {
-				id: 'session-1',
-				config: {},
-			};
-
-			const tools = session.config.tools;
-			expect(tools?.useClaudeCodePreset ?? true).toBe(true);
-			expect(tools?.settingSources ?? ['user', 'project', 'local']).toEqual([
-				'user',
-				'project',
-				'local',
-			]);
-		});
-	});
-
-	describe('MCP Server Loading', () => {
-		it('should support async server loading', async () => {
-			const loadServers = vi.fn(() =>
-				Promise.resolve({
-					servers: {
-						user: [{ name: 'server1', command: 'npx server1' }],
-						project: [],
-						local: [],
-					},
-					serverSettings: {},
-				})
-			);
-
-			const result = await loadServers();
-			expect(result.servers.user).toBeDefined();
-			expect(result.servers.project).toBeDefined();
-			expect(result.servers.local).toBeDefined();
-		});
-	});
-
-	describe('Server Enable/Disable', () => {
-		it('should check if server is enabled', () => {
-			const disabledMcpServers = ['server2'];
-			const isServerEnabled = (name: string) => !disabledMcpServers.includes(name);
-
-			expect(isServerEnabled('server1')).toBe(true);
-			expect(isServerEnabled('server2')).toBe(false);
-		});
-
-		it('should toggle server enabled state', () => {
-			let disabledMcpServers = ['server2'];
-
-			// Enable server2
-			disabledMcpServers = disabledMcpServers.filter((s) => s !== 'server2');
-			expect(disabledMcpServers).not.toContain('server2');
-
-			// Disable server1
-			disabledMcpServers = [...disabledMcpServers, 'server1'];
-			expect(disabledMcpServers).toContain('server1');
-		});
-	});
-
-	describe('Setting Source Toggle', () => {
-		it('should add setting source', () => {
-			let settingSources = ['user'] as Array<'user' | 'project' | 'local'>;
-
-			if (!settingSources.includes('project')) {
-				settingSources = [...settingSources, 'project'];
-			}
-
-			expect(settingSources).toContain('project');
-		});
-
-		it('should remove setting source', () => {
-			let settingSources = ['user', 'project', 'local'] as Array<'user' | 'project' | 'local'>;
-			settingSources = settingSources.filter((s) => s !== 'local');
-			expect(settingSources).not.toContain('local');
-		});
-
-		it('should not allow removing all sources', () => {
-			const settingSources = ['user'] as Array<'user' | 'project' | 'local'>;
-			const newSources = settingSources.filter((s) => s !== 'user');
-
-			if (newSources.length === 0) {
-				// Should show error toast
-				expect(newSources.length).toBe(0);
-			}
-		});
-	});
-
-	describe('Save Functionality', () => {
-		it('should support async save', async () => {
-			const saveFn = vi.fn(() => Promise.resolve({ success: true }));
-			const toastFn = vi.fn(() => {});
-
-			await saveFn({
-				sessionId: 'session-1',
-				tools: {
-					useClaudeCodePreset: true,
-					settingSources: ['user', 'project'],
-					disabledMcpServers: [],
-					kaiTools: { memory: false },
-				},
-			});
-
-			toastFn('Tools configuration saved');
-
-			expect(saveFn).toHaveBeenCalled();
-			expect(toastFn).toHaveBeenCalled();
-		});
-
-		it('should handle save failure', async () => {
-			const saveFn = vi.fn(() => Promise.resolve({ success: false, error: 'Failed to save' }));
-			const toastFn = vi.fn(() => {});
-
-			const result = await saveFn({ sessionId: 'session-1', tools: {} });
-			if (!result.success) {
-				toastFn('Failed to save tools configuration');
-			}
-
-			expect(toastFn).toHaveBeenCalledWith('Failed to save tools configuration');
-		});
-	});
-
-	describe('Cancel Functionality', () => {
-		it('should reset to original values on cancel', () => {
-			const originalConfig = {
-				useClaudeCodePreset: true,
-				settingSources: ['user', 'project', 'local'] as const,
-			};
-
-			// Modify values
-			let currentPreset = false;
-			let currentSources = ['user'] as const;
-
-			// Reset on cancel
-			currentPreset = originalConfig.useClaudeCodePreset;
-			currentSources = originalConfig.settingSources;
-
-			expect(currentPreset).toBe(true);
-			expect(currentSources).toEqual(['user', 'project', 'local']);
-		});
-	});
-
-	describe('Global Config Restrictions', () => {
-		it('should check if Claude Code preset is allowed', () => {
-			const globalConfig = {
-				systemPrompt: { claudeCodePreset: { allowed: false } },
-			};
-
-			const isAllowed = globalConfig.systemPrompt?.claudeCodePreset?.allowed ?? true;
-			expect(isAllowed).toBe(false);
-		});
-
-		it('should check if MCP is allowed', () => {
-			const globalConfig = {
-				mcp: { allowProjectMcp: true },
-			};
-
-			const isMcpAllowed = globalConfig.mcp?.allowProjectMcp ?? true;
-			expect(isMcpAllowed).toBe(true);
-		});
-
-		it('should check if memory is allowed', () => {
-			const globalConfig = {
-				kaiTools: { memory: { allowed: false } },
-			};
-
-			const isMemoryAllowed = globalConfig.kaiTools?.memory?.allowed ?? true;
-			expect(isMemoryAllowed).toBe(false);
-		});
-	});
-
-	describe('Has Changes Detection', () => {
-		it('should detect changes', () => {
-			const hasChanges = signal(false);
-
-			// Modify something
-			hasChanges.value = true;
-
-			expect(hasChanges.value).toBe(true);
-		});
-
-		it('should disable save button when no changes', () => {
-			const hasChanges = false;
-			const saving = false;
-
-			const saveDisabled = !hasChanges || saving;
-			expect(saveDisabled).toBe(true);
-		});
-
-		it('should disable save button when saving', () => {
-			const hasChanges = true;
-			const saving = true;
-
-			const saveDisabled = !hasChanges || saving;
-			expect(saveDisabled).toBe(true);
-		});
-	});
-
-	describe('Null Session', () => {
-		it('should return null when session is null', () => {
-			const session = null;
-			if (!session) {
-				// Component returns null
-				expect(session).toBeNull();
-			}
+		it('app-level skill ids are not mixed into disabledMcpServers', () => {
+			// App-level skills use skillsStore.setEnabled — completely separate state
+			// File-based servers only — toggleServer does not know about skill ids
+			let disabled: string[] = [];
+			disabled = toggleServer(disabled, 'file-server');
+			expect(disabled).toContain('file-server');
+			expect(disabled).not.toContain('app-skill-id');
 		});
 	});
 });
