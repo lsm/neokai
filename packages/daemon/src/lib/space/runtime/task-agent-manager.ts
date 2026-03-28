@@ -192,6 +192,14 @@ export interface TaskAgentManagerConfig {
 /** Map of stepId → all registered completion callbacks for that session */
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;
 
+interface SpawnTaskAgentOptions {
+	/**
+	 * Whether to inject the initial orchestration message immediately after spawn.
+	 * `false` keeps the session idle until an explicit inbound message arrives.
+	 */
+	kickoff?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // TaskAgentManager
 // ---------------------------------------------------------------------------
@@ -306,7 +314,9 @@ export class TaskAgentManager {
 			}
 		}
 
-		await this.spawnTaskAgent(task, space, workflow ?? null, workflowRun ?? null);
+		await this.spawnTaskAgent(task, space, workflow ?? null, workflowRun ?? null, {
+			kickoff: false,
+		});
 
 		if (task.status === 'pending') {
 			this.config.taskRepo.updateTask(taskId, { status: 'in_progress' });
@@ -450,7 +460,8 @@ export class TaskAgentManager {
 		task: SpaceTask,
 		space: Space,
 		workflow: SpaceWorkflow | null,
-		workflowRun: SpaceWorkflowRun | null
+		workflowRun: SpaceWorkflowRun | null,
+		options: SpawnTaskAgentOptions = {}
 	): Promise<string> {
 		const taskId = task.id;
 
@@ -653,16 +664,21 @@ export class TaskAgentManager {
 			// --- Start streaming query
 			await agentSession.startStreamingQuery();
 
-			// --- Inject initial task context message
-			const availableAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
-			const initialMessage = buildTaskAgentInitialMessage({
-				task,
-				space,
-				workflow: workflow ?? undefined,
-				workflowRun: workflowRun ?? undefined,
-				availableAgents,
-			});
-			await this.injectMessageIntoSession(agentSession, initialMessage);
+			// --- Optional kickoff message
+			// Event-driven mode can spawn the session in an idle state and let
+			// explicit inbound messages (human/agent) wake orchestration.
+			const shouldKickoff = options.kickoff ?? true;
+			if (shouldKickoff) {
+				const availableAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
+				const initialMessage = buildTaskAgentInitialMessage({
+					task,
+					space,
+					workflow: workflow ?? undefined,
+					workflowRun: workflowRun ?? undefined,
+					availableAgents,
+				});
+				await this.injectMessageIntoSession(agentSession, initialMessage);
+			}
 
 			log.info(`TaskAgentManager: spawned task agent for task ${taskId}, session ${sessionId}`);
 			return sessionId;
