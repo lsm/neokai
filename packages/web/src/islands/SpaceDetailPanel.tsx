@@ -101,6 +101,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	// Selection state
 	const selectedSessionId = currentSpaceSessionIdSignal.value;
 	const selectedTaskId = currentSpaceTaskIdSignal.value;
+	const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) ?? null : null;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
 	const isDashboardSelected = selectedSessionId === null && selectedTaskId === null;
@@ -110,8 +111,9 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	// rate_limited/usage_limited are grouped with active; archived with done.
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
+		let filtered: typeof sorted;
 		if (taskTab === 'active') {
-			return sorted.filter(
+			filtered = sorted.filter(
 				(t) =>
 					t.status === 'draft' ||
 					t.status === 'pending' ||
@@ -119,14 +121,24 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					t.status === 'rate_limited' ||
 					t.status === 'usage_limited'
 			);
+		} else if (taskTab === 'review') {
+			filtered = sorted.filter((t) => t.status === 'review' || t.status === 'needs_attention');
+		} else {
+			filtered = sorted.filter(
+				(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
+			);
 		}
-		if (taskTab === 'review') {
-			return sorted.filter((t) => t.status === 'review' || t.status === 'needs_attention');
+
+		// Keep the currently open task visible even if the tab filter would hide it.
+		// This avoids "No tasks" in the list while the user is actively viewing a task.
+		if (selectedTaskId && !filtered.some((t) => t.id === selectedTaskId)) {
+			const selected = sorted.find((t) => t.id === selectedTaskId);
+			if (selected) {
+				filtered = [selected, ...filtered];
+			}
 		}
-		return sorted.filter(
-			(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
-		);
-	}, [tasks, taskTab]);
+		return filtered;
+	}, [tasks, taskTab, selectedTaskId]);
 
 	// Build sessions list from available data sources
 	// (1) Space agent session — always listed
@@ -317,6 +329,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 									<span class="block text-sm text-gray-400 truncate">{task.title}</span>
 									<span class="block text-[11px] uppercase tracking-[0.14em] text-gray-600">
 										{task.workflowRunId ? 'Workflow task' : 'Standalone task'}
+										{selectedTask?.id === task.id &&
+											selectedTask.status !== 'draft' &&
+											selectedTask.status !== 'pending' &&
+											selectedTask.status !== 'in_progress' &&
+											selectedTask.status !== 'rate_limited' &&
+											selectedTask.status !== 'usage_limited' &&
+											` · ${selectedTask.status.replace('_', ' ')}`}
 									</span>
 								</div>
 							</button>

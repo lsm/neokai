@@ -340,6 +340,17 @@ describe('SpaceDetailPanel', () => {
 		expect(screen.queryByText('Done Task')).toBeNull();
 	});
 
+	it('keeps selected done task visible even when Active tab is selected', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'Active Task', 'in_progress'),
+			makeTask('t2', 'Done Task', 'completed'),
+		];
+		mockCurrentSpaceTaskIdSignal.value = 't2';
+		render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(screen.getByText('Active Task')).toBeTruthy();
+		expect(screen.getByText('Done Task')).toBeTruthy();
+	});
+
 	it('shows workflow tasks alongside standalone tasks in the unified list', () => {
 		mockWorkflowRunsSignal.value = [makeRun('r1', 'Run')];
 		mockTasksSignal.value = [
