@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { cn } from '../../lib/utils';
+import { ViaNeoIndicator } from '../neo/ViaNeoIndicator.tsx';
 import { FileDiffView } from './FileDiffView';
 
 // ============================================================================
@@ -80,6 +81,10 @@ export function GateArtifactsView({
 	// ---- Extract PR info from gate data ----
 	const prUrl = typeof gateData?.pr_url === 'string' ? gateData.pr_url : null;
 	const prNumber = typeof gateData?.pr_number === 'number' ? gateData.pr_number : null;
+	// Future integration point: when Neo's approve_gate / reject_gate tool is implemented
+	// (task M3 action tools), it should write `origin: 'neo'` into the gate data record.
+	// Until then this will always be false.
+	const isNeoDecision = gateData?.origin === 'neo';
 
 	// ---- Fetch artifacts ----
 	useEffect(() => {
@@ -159,7 +164,10 @@ export function GateArtifactsView({
 			{/* Header */}
 			<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0 bg-dark-850">
 				<div>
-					<h2 class="text-sm font-semibold text-gray-100">Review Changes</h2>
+					<div class="flex items-center gap-2">
+						<h2 class="text-sm font-semibold text-gray-100">Review Changes</h2>
+						{isNeoDecision && <ViaNeoIndicator size="xs" />}
+					</div>
 					<p class="text-xs text-gray-500 mt-0.5">Approve or reject the proposed changes</p>
 				</div>
 				{onClose && (

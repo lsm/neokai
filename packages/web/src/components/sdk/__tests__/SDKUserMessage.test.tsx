@@ -682,4 +682,27 @@ describe('SDKUserMessage', () => {
 			expect(container.querySelector('[data-testid="mention-token"]')).toBeNull();
 		});
 	});
+
+	describe('Neo origin indicator', () => {
+		it('renders ViaNeoIndicator when message.origin is "neo"', () => {
+			const message = Object.assign(createTextMessage('Hello'), { origin: 'neo' });
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeTruthy();
+		});
+
+		it('does not render ViaNeoIndicator when message.origin is "human"', () => {
+			const message = Object.assign(createTextMessage('Hello'), { origin: 'human' });
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+
+		it('does not render ViaNeoIndicator when message.origin is absent', () => {
+			const message = createTextMessage('Hello');
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+	});
 });

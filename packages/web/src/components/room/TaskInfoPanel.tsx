@@ -19,6 +19,7 @@
 
 import type { SessionInfo } from '@neokai/shared';
 import { borderColors } from '../../lib/design-tokens.ts';
+import { ViaNeoIndicator } from '../neo/ViaNeoIndicator.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { TaskViewModelSelector } from './TaskViewModelSelector.tsx';
 
@@ -73,6 +74,8 @@ export interface TaskInfoPanelProps {
 	prUrl?: string | null;
 	/** Pull request number */
 	prNumber?: number | null;
+	/** Whether this task was created or last status-changed by Neo */
+	viaNeo?: boolean;
 	/** Worktree path to display (full path shown on hover) */
 	worktreePath?: string;
 	/** Worker session info */
@@ -120,6 +123,7 @@ export function TaskInfoPanel({
 	worktreePath,
 	workerSession,
 	leaderSession,
+	viaNeo,
 	actions,
 	visibleActions,
 	disabledActions,
@@ -165,7 +169,10 @@ export function TaskInfoPanel({
 				{/* Info section */}
 				{hasWorktreeInfo && (
 					<div>
-						<h3 class="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Info</h3>
+						<div class="flex items-center gap-2 mb-2">
+							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Info</h3>
+							{viaNeo && <ViaNeoIndicator size="xs" />}
+						</div>
 						<div class="space-y-1.5 text-xs">
 							{/* Task ID */}
 							{taskId && (

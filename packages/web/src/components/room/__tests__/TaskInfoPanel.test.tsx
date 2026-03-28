@@ -748,4 +748,56 @@ describe('TaskInfoPanel', () => {
 			expect(container.textContent).toContain('short/path');
 		});
 	});
+
+	describe('viaNeo indicator', () => {
+		it('should render ViaNeoIndicator when viaNeo=true and taskId is provided', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					taskId="task-123"
+					viaNeo={true}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeTruthy();
+		});
+
+		it('should not render ViaNeoIndicator when viaNeo=false', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					taskId="task-123"
+					viaNeo={false}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+
+		it('should not render ViaNeoIndicator when viaNeo is omitted', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} taskId="task-123" actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+
+		it('should not render ViaNeoIndicator when panel is closed even if viaNeo=true', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={false}
+					taskId="task-123"
+					viaNeo={true}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+	});
 });
