@@ -108,6 +108,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					args.description,
 					args.goal_id
 				);
+
+				// Event-driven kickoff:
+				// - Runtime creates/spawns task-agent sessions in idle mode.
+				// - Space Agent explicitly sends the first orchestration message.
+				if (taskAgentManager) {
+					for (const task of tasks) {
+						await taskAgentManager.ensureTaskAgentSession(task.id);
+						await taskAgentManager.injectTaskAgentMessage(
+							task.id,
+							'Workflow run started. Spawn pending node agents for this task, then wait for inbound [STEP_*] events to continue orchestration.'
+						);
+					}
+				}
+
 				return jsonResult({ success: true, run, tasks });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);

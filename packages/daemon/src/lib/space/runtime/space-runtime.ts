@@ -821,7 +821,9 @@ export class SpaceRuntime {
 						try {
 							// spawnTaskAgent writes taskAgentSessionId to the DB as a side effect.
 							// SpaceRuntime owns the status transition to 'in_progress' after spawn.
-							await tam.spawnTaskAgent(task, space, meta.workflow, run);
+							await tam.spawnTaskAgent(task, space, meta.workflow, run, {
+								kickoff: false,
+							});
 							this.config.taskRepo.updateTask(task.id, { status: 'in_progress' });
 						} catch (err) {
 							log.error(`SpaceRuntime: failed to spawn task agent for task ${task.id}:`, err);
