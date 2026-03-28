@@ -216,6 +216,9 @@ jobs:
           - module: room-mcp
             test_path: tests/online/room/room-mcp-enablement.test.ts
             mock_sdk: true
+          - module: room-coder-subagents
+            test_path: tests/online/room/coder-agent-subagents.test.ts
+            mock_sdk: true
           # Room tests temporarily disabled during refactoring
           # - module: room-1
           #   test_path: >-
