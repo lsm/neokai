@@ -19,6 +19,7 @@ import type {
 	SpaceTaskActivityState,
 } from '@neokai/shared';
 import { WorkflowCanvas } from './WorkflowCanvas';
+import { ReadonlySessionChat } from '../room/ReadonlySessionChat';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -270,6 +271,17 @@ function describeActivityMember(member: SpaceTaskActivityMember): string {
 	return member.currentStep || 'Idle right now.';
 }
 
+function formatTaskThreadError(err: unknown): string {
+	const message = err instanceof Error ? err.message : String(err);
+	if (message.includes('No handler for method: space.task.ensureAgentSession')) {
+		return 'Task thread startup is unavailable on the current daemon. Restart the app server to load the latest task-agent RPC handlers.';
+	}
+	if (message.includes('Task Agent session not started')) {
+		return 'Task thread is still starting. Try sending again in a moment.';
+	}
+	return message || 'Failed to update task thread';
+}
+
 // ============================================================================
 // Human Input
 // ============================================================================
@@ -348,6 +360,55 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const workflowRuns = spaceStore.workflowRuns.value;
 	const workflows = spaceStore.workflows.value;
 	const tasksByRun = spaceStore.tasksByRun.value;
+	const task = taskId ? tasks.find((t) => t.id === taskId) ?? null : null;
+	const runtimeSpaceIdCandidate = task?.spaceId ?? spaceId;
+
+	const [threadSessionId, setThreadSessionId] = useState<string | null>(null);
+	const [ensuringThread, setEnsuringThread] = useState(false);
+	const [threadDraft, setThreadDraft] = useState('');
+	const [threadSendError, setThreadSendError] = useState<string | null>(null);
+	const [sendingThread, setSendingThread] = useState(false);
+
+	useEffect(() => {
+		setThreadSendError(null);
+		setThreadDraft('');
+	}, [taskId]);
+
+	useEffect(() => {
+		if (!task) {
+			setThreadSessionId(null);
+			return;
+		}
+		setThreadSessionId(task.taskAgentSessionId ?? null);
+	}, [task?.id, task?.taskAgentSessionId]);
+
+	useEffect(() => {
+		if (!task || !runtimeSpaceIdCandidate) return;
+		if (task.taskAgentSessionId) return;
+		if (task.status === 'archived' || task.status === 'cancelled') return;
+
+		let cancelled = false;
+		setEnsuringThread(true);
+		setThreadSendError(null);
+
+		spaceStore
+			.ensureTaskAgentSession(task.id)
+			.then((updatedTask) => {
+				if (cancelled) return;
+				setThreadSessionId(updatedTask.taskAgentSessionId ?? null);
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				setThreadSendError(formatTaskThreadError(err));
+			})
+			.finally(() => {
+				if (!cancelled) setEnsuringThread(false);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [task?.id, task?.taskAgentSessionId, task?.status, runtimeSpaceIdCandidate]);
 
 	if (!taskId) {
 		return (
@@ -357,8 +418,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		);
 	}
 
-	const task = tasks.find((t) => t.id === taskId);
-
 	if (!task) {
 		return (
 			<div class="flex items-center justify-center h-full p-6">
@@ -367,9 +426,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		);
 	}
 
-	const agentSessionId = task.taskAgentSessionId;
-	const activityRows = spaceStore.taskActivity.value.get(task.id) ?? [];
 	const runtimeSpaceId = spaceId ?? task.spaceId;
+	const agentSessionId = task.taskAgentSessionId ?? threadSessionId;
+	const activityRows = spaceStore.taskActivity.value.get(task.id) ?? [];
 	const agentActionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
@@ -413,7 +472,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			: task.assignedAgent === 'general'
 				? 'General Agent'
 				: 'Coder Agent';
-	const threadLabel = agentSessionId ? 'Task agent thread' : 'Space agent thread';
 	const liveActorLabel =
 		task.activeSession === 'leader'
 			? 'Leader agent'
@@ -442,17 +500,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								: task.status === 'rate_limited' || task.status === 'usage_limited'
 									? 'The task is blocked by limits'
 									: 'The task needs attention';
-	const activityDetail =
-		task.error && task.status !== 'needs_attention'
-			? task.error
-			: visibleCurrentStep ||
-				(task.status === 'completed'
-					? task.completionSummary || task.result || 'The agent finished this task.'
-					: task.status === 'review'
-						? task.completionSummary || 'An agent is waiting for your review.'
-						: task.status === 'pending'
-							? 'This task has not started yet.'
-							: `Use the ${threadLabel.toLowerCase()} to steer the next step.`);
 	const relatedWorkflowTasks = task.workflowRunId
 		? [...(tasksByRun.get(task.workflowRunId) ?? [])].sort((a, b) => b.updatedAt - a.updatedAt)
 		: [];
@@ -497,6 +544,37 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		activityRows.find((member) => member.currentStep || member.error || member.completionSummary)?.currentStep ||
 		null;
 	const showAgentActivitySection = activityRows.length > 0 || compactRelatedTasks.length > 0;
+	const canSendThreadMessage =
+		!!task &&
+		!!runtimeSpaceId &&
+		!!agentSessionId &&
+		task.status !== 'archived' &&
+		!ensuringThread &&
+		!sendingThread;
+
+	const handleThreadSend = async (e: Event) => {
+		e.preventDefault();
+		const nextMessage = threadDraft.trim();
+		if (!nextMessage) return;
+		if (!runtimeSpaceId || !task) return;
+
+		try {
+			setSendingThread(true);
+			setThreadSendError(null);
+
+			if (!agentSessionId) {
+				const ensured = await spaceStore.ensureTaskAgentSession(task.id);
+				setThreadSessionId(ensured.taskAgentSessionId ?? null);
+			}
+
+			await spaceStore.sendTaskMessage(task.id, nextMessage);
+			setThreadDraft('');
+		} catch (err) {
+			setThreadSendError(formatTaskThreadError(err));
+		} finally {
+			setSendingThread(false);
+		}
+	};
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-950">
@@ -599,25 +677,89 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						</div>
 
 						<div class="mt-4 flex flex-wrap items-center gap-3">
-							{runtimeSpaceId && (
+							{runtimeSpaceId && agentSessionId && (
 								<button
 									type="button"
-									onClick={() =>
-										agentSessionId
-											? navigateToSpaceSession(runtimeSpaceId, agentSessionId)
-											: navigateToSpaceAgent(runtimeSpaceId)
-									}
+									onClick={() => navigateToSpaceSession(runtimeSpaceId, agentSessionId)}
 									class="px-3 py-2 text-sm font-medium bg-dark-800 hover:bg-dark-700 text-gray-200 rounded-lg border border-dark-600 transition-colors"
 								>
-									{agentSessionId ? 'Open Task Agent' : 'Open Space Agent'}
+									Open Full Session
 								</button>
 							)}
 							<p class="text-sm text-gray-500">
 								{agentSessionId
-									? 'Use the task agent thread to steer direction, answer questions, or inspect results.'
-									: 'This task is currently handled through Space Agent.'}
+									? 'Task thread is active below. Steer direction, answer agent questions, and review results in place.'
+									: ensuringThread
+										? 'Starting a dedicated task thread...'
+										: 'No task thread yet. One will start automatically for active tasks.'}
 							</p>
 						</div>
+					</SectionCard>
+
+					<SectionCard title="Task Thread">
+						<div class="rounded-xl border border-dark-700 bg-dark-900/70 overflow-hidden">
+							{agentSessionId ? (
+								<div class="h-[24rem] min-h-[20rem]">
+									<ReadonlySessionChat sessionId={agentSessionId} />
+								</div>
+							) : (
+								<div class="px-4 py-10 text-center">
+									<p class="text-sm text-gray-300">
+										{ensuringThread
+											? 'Starting task thread...'
+											: 'Task thread is not available yet.'}
+									</p>
+									<p class="mt-2 text-xs text-gray-500">
+										{ensuringThread
+											? 'Connecting a dedicated Task Agent session so you can chat here.'
+											: 'Keep this view open and the thread will appear once the Task Agent session starts.'}
+									</p>
+								</div>
+							)}
+						</div>
+
+						<form onSubmit={handleThreadSend} class="mt-3 space-y-3">
+							<textarea
+								value={threadDraft}
+								onInput={(e) => setThreadDraft((e.target as HTMLTextAreaElement).value)}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' && !e.shiftKey) {
+										e.preventDefault();
+										(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+									}
+								}}
+								rows={3}
+								placeholder={
+									task.status === 'archived'
+										? 'Archived tasks cannot receive new messages.'
+										: ensuringThread
+											? 'Starting task thread...'
+											: 'Message the task agent (Enter to send, Shift+Enter for newline)'
+								}
+								disabled={task.status === 'archived' || sendingThread}
+								class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
+									placeholder-gray-600 focus:outline-none focus:border-blue-600 resize-none disabled:opacity-60"
+							/>
+							<div class="flex items-center justify-between gap-3">
+								<p class="text-xs text-gray-500">
+									{agentSessionId
+										? 'Messages sent here go directly to the task agent.'
+										: 'Waiting for task thread before messages can be sent.'}
+								</p>
+								<button
+									type="submit"
+									disabled={!canSendThreadMessage || !threadDraft.trim()}
+									class="px-3 py-1.5 text-xs font-medium bg-blue-700 hover:bg-blue-600 text-blue-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{sendingThread ? 'Sending...' : 'Send to Task Agent'}
+								</button>
+							</div>
+							{threadSendError && (
+								<p class="text-xs text-red-400 border border-red-800/50 bg-red-950/20 rounded-md px-3 py-2">
+									{threadSendError}
+								</p>
+							)}
+						</form>
 					</SectionCard>
 
 					{showAgentActivitySection && (
