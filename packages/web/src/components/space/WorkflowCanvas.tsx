@@ -226,7 +226,10 @@ function computeLayout(workflow: SpaceWorkflow): Map<string, NodeLayout> {
 		}
 	}
 
-	// BFS layer assignment from start node
+	// BFS layer assignment from start node.
+	// Workflows may contain cycles (for retry/review loops), so we only assign
+	// the first discovered layer for each node instead of continually promoting
+	// nodes deeper through the cycle.
 	const layers = new Map<string, number>();
 	const queue: string[] = [startId];
 	layers.set(startId, 0);
@@ -235,8 +238,7 @@ function computeLayout(workflow: SpaceWorkflow): Map<string, NodeLayout> {
 		const current = queue.shift()!;
 		const currentLayer = layers.get(current) ?? 0;
 		for (const next of successors.get(current) ?? []) {
-			const existing = layers.get(next);
-			if (existing === undefined || existing < currentLayer + 1) {
+			if (!layers.has(next)) {
 				layers.set(next, currentLayer + 1);
 				queue.push(next);
 			}
