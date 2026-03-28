@@ -13,6 +13,7 @@ import { Dropdown } from '../ui/Dropdown.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
+import { ViaNeoIndicator } from '../neo/ViaNeoIndicator.tsx';
 import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 import { MentionToken, parseTextWithReferences } from './MentionToken.tsx';
 import { MessageInfoButton } from './MessageInfoButton.tsx';
@@ -272,6 +273,9 @@ export function SDKUserMessage({
 		);
 	}
 
+	// Check if this message was originated by Neo (stored in DB, injected when loading history)
+	const isNeoOrigin = (message as SDKMessage & { origin?: string }).origin === 'neo';
+
 	// Get message metadata for E2E tests
 	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
@@ -338,6 +342,7 @@ export function SDKUserMessage({
 				messageSpacing.actions.padding
 			)}
 		>
+			{isNeoOrigin && <ViaNeoIndicator />}
 			<Tooltip content={getFullTimestamp()} position="left">
 				<span class="text-xs text-gray-500">{getTimestamp()}</span>
 			</Tooltip>
