@@ -163,6 +163,22 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	);
 	sections.push('');
 	sections.push(
+		`**Ask for clarification** before creating any work when:\n` +
+			`  - The request is too vague to determine what needs to be built (e.g. "improve the app", "make it better", "help me")\n` +
+			`  - The scope or success criteria are unclear\n` +
+			`  - Multiple interpretations are possible and choosing the wrong one would waste significant effort\n` +
+			`  Never start work — create tasks or workflow runs — until the request is specific enough to act on.`
+	);
+	sections.push('');
+	sections.push(
+		`**Clear requests** (ready to act on without clarification):\n` +
+			`  - "Implement user authentication with JWT tokens"\n` +
+			`  - "Fix the bug in the payment service where charges fail for international cards"\n` +
+			`  - "Add pagination to the user list endpoint"\n` +
+			`  For clear multi-step coding work, prefer \`start_workflow_run\` with a V2 workflow over \`create_standalone_task\`.`
+	);
+	sections.push('');
+	sections.push(
 		`**IMPORTANT**: Never create tasks immediately when a goal or plan is mentioned. ` +
 			`If the request involves a workflow, start the workflow run and let the workflow ` +
 			`orchestrate task creation. Only use \`create_standalone_task\` for explicitly standalone work.`
@@ -204,8 +220,10 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push('');
 	sections.push(
 		`- **\`workflow_run_completed\`** — A workflow run has finished (success or failure summary).\n` +
-			`  Payload fields: \`runId\`, \`reason\`, \`autonomyLevel\`\n` +
-			`  Action: Summarize the outcome to the user and suggest next steps if relevant.`
+			`  Payload fields: \`runId\`, \`summary\` (full Markdown summary from Done node), \`autonomyLevel\`\n` +
+			`  Action: Present the \`summary\` field verbatim to the user (it contains PR link, review outcome, ` +
+			`QA status, and next steps). If \`summary\` is empty, retrieve the run details via \`get_task_detail\` ` +
+			`and compose a brief status update.`
 	);
 
 	// Autonomy level section

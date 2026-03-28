@@ -470,12 +470,22 @@ export class AgentSession
 		db: Database,
 		messageHub: MessageHub,
 		daemonHub: DaemonHub,
-		getApiKey: () => Promise<string | null>
+		getApiKey: () => Promise<string | null>,
+		skillsManager?: import('../skills-manager').SkillsManager,
+		appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
 	): AgentSession | null {
 		const session = db.getSession(sessionId);
 		if (!session) return null;
 
-		const agentSession = new AgentSession(session, db, messageHub, daemonHub, getApiKey);
+		const agentSession = new AgentSession(
+			session,
+			db,
+			messageHub,
+			daemonHub,
+			getApiKey,
+			skillsManager,
+			appMcpServerRepo
+		);
 		// Worker/leader sessions managed by room runtime should not auto-queue /context
 		agentSession.contextAutoQueueEnabled = false;
 		return agentSession;

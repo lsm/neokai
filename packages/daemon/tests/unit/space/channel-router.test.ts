@@ -2678,6 +2678,341 @@ describe('ChannelRouter', () => {
 		// gateId takes precedence over legacy inline gate
 		// -----------------------------------------------------------------------
 
+		// -----------------------------------------------------------------------
+		// QA feedback loop — M5.1
+		// -----------------------------------------------------------------------
+
+		describe('QA feedback loop', () => {
+			const AGENT_REVIEWER = 'agent-reviewer-qa';
+			const AGENT_QA = 'agent-qa-loop';
+			const AGENT_DONE = 'agent-done-loop';
+
+			const NODE_CODING = 'node-coding-qa';
+			const NODE_REV1 = 'node-rev1-qa';
+			const NODE_REV2 = 'node-rev2-qa';
+			const NODE_REV3 = 'node-rev3-qa';
+			const NODE_QA = 'node-qa-loop';
+			const NODE_DONE = 'node-done-qa';
+
+			// Gates matching CODING_WORKFLOW_V2 design
+			const gateCodePr: Gate = {
+				id: 'code-pr-gate',
+				condition: { type: 'check', field: 'pr_url', op: 'exists' },
+				data: {},
+				allowedWriterRoles: ['coder'],
+				resetOnCycle: false, // preserved across fix cycles
+			};
+			const gateReviewVotes: Gate = {
+				id: 'review-votes-gate',
+				condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+				data: { votes: {} },
+				allowedWriterRoles: ['reviewer'],
+				resetOnCycle: true,
+			};
+			const gateReviewReject: Gate = {
+				id: 'review-reject-gate',
+				condition: { type: 'count', field: 'votes', matchValue: 'rejected', min: 1 },
+				data: {},
+				allowedWriterRoles: ['reviewer'],
+				resetOnCycle: true,
+			};
+			const gateQaResult: Gate = {
+				id: 'qa-result-gate',
+				condition: { type: 'check', field: 'result', op: '==', value: 'passed' },
+				data: {},
+				allowedWriterRoles: ['qa'],
+				resetOnCycle: true, // resets on each QA→Coding cycle
+			};
+			const gateQaFail: Gate = {
+				id: 'qa-fail-gate',
+				condition: { type: 'check', field: 'result', op: '==', value: 'failed' },
+				data: {},
+				allowedWriterRoles: ['qa'],
+				resetOnCycle: true,
+			};
+			const allGates = [gateCodePr, gateReviewVotes, gateReviewReject, gateQaResult, gateQaFail];
+
+			function buildQaWorkflow() {
+				const channels: WorkflowChannel[] = [
+					// Coding → Reviewers
+					{ from: 'Coding', to: 'Reviewer 1', direction: 'one-way', gateId: 'code-pr-gate' },
+					{ from: 'Coding', to: 'Reviewer 2', direction: 'one-way', gateId: 'code-pr-gate' },
+					{ from: 'Coding', to: 'Reviewer 3', direction: 'one-way', gateId: 'code-pr-gate' },
+					// Reviewers → QA
+					{
+						from: 'Reviewer 1',
+						to: 'QA',
+						direction: 'one-way',
+						gateId: 'review-votes-gate',
+					},
+					{
+						from: 'Reviewer 2',
+						to: 'QA',
+						direction: 'one-way',
+						gateId: 'review-votes-gate',
+					},
+					{
+						from: 'Reviewer 3',
+						to: 'QA',
+						direction: 'one-way',
+						gateId: 'review-votes-gate',
+					},
+					// QA → Done (success)
+					{ from: 'QA', to: 'Done', direction: 'one-way', gateId: 'qa-result-gate' },
+					// QA → Coding (cyclic, fail)
+					{
+						from: 'QA',
+						to: 'Coding',
+						direction: 'one-way',
+						gateId: 'qa-fail-gate',
+						isCyclic: true,
+					},
+				];
+				return buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{ id: NODE_CODING, name: 'Coding', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+						{
+							id: NODE_REV1,
+							name: 'Reviewer 1',
+							agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer-1' }],
+						},
+						{
+							id: NODE_REV2,
+							name: 'Reviewer 2',
+							agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer-2' }],
+						},
+						{
+							id: NODE_REV3,
+							name: 'Reviewer 3',
+							agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer-3' }],
+						},
+						{ id: NODE_QA, name: 'QA', agents: [{ agentId: AGENT_QA, name: 'qa' }] },
+						{
+							id: NODE_DONE,
+							name: 'Done',
+							agents: [{ agentId: AGENT_DONE, name: 'done' }],
+						},
+					],
+					channels,
+					allGates
+				);
+			}
+
+			beforeEach(() => {
+				seedAgent(db, AGENT_REVIEWER, SPACE_ID, 'reviewer');
+				seedAgent(db, AGENT_QA, SPACE_ID, 'qa');
+				seedAgent(db, AGENT_DONE, SPACE_ID, 'general');
+			});
+
+			test('QA failure via onGateDataChanged activates Coding, increments counter, resets cycle gates', async () => {
+				const workflow = buildQaWorkflow();
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'QA Fail Loop Run',
+					maxIterations: 5,
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+				gateDataRepo.initializeForRun(run.id, allGates);
+
+				// Simulate pre-existing state from a completed review cycle
+				gateDataRepo.set(run.id, 'code-pr-gate', { pr_url: 'https://github.com/org/repo/pull/42' });
+				gateDataRepo.set(run.id, 'review-votes-gate', {
+					votes: { 'reviewer-1': 'approved', 'reviewer-2': 'approved', 'reviewer-3': 'approved' },
+				});
+				gateDataRepo.set(run.id, 'review-reject-gate', { votes: { 'reviewer-1': 'approved' } });
+				gateDataRepo.set(run.id, 'qa-result-gate', { result: 'passed' });
+
+				// QA writes failed result with summary to qa-fail-gate (as the write_gate MCP tool would)
+				gateDataRepo.set(run.id, 'qa-fail-gate', {
+					result: 'failed',
+					summary: 'CI pipeline red: 3 tests failing',
+				});
+				const activated = await router.onGateDataChanged(run.id, 'qa-fail-gate');
+
+				// Exactly one task: the Coding node activated via the cyclic QA→Coding channel
+				expect(activated).toHaveLength(1);
+				expect(activated[0].workflowNodeId).toBe(NODE_CODING);
+
+				// Iteration counter must increment
+				expect(workflowRunRepo.getRun(run.id)!.iterationCount).toBe(1);
+
+				// Cyclic-reset gates must be wiped
+				expect(gateDataRepo.get(run.id, 'review-votes-gate')!.data).toEqual({ votes: {} });
+				expect(gateDataRepo.get(run.id, 'review-reject-gate')!.data).toEqual({});
+				expect(gateDataRepo.get(run.id, 'qa-result-gate')!.data).toEqual({});
+				expect(gateDataRepo.get(run.id, 'qa-fail-gate')!.data).toEqual({});
+
+				// code-pr-gate must be preserved (resetOnCycle: false)
+				expect(gateDataRepo.get(run.id, 'code-pr-gate')!.data).toEqual({
+					pr_url: 'https://github.com/org/repo/pull/42',
+				});
+			});
+
+			test('QA failure resets review-votes-gate, qa-result-gate, qa-fail-gate; preserves code-pr-gate', async () => {
+				const workflow = buildQaWorkflow();
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Gate Reset On QA Fail',
+					maxIterations: 5,
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+				gateDataRepo.initializeForRun(run.id, allGates);
+
+				// Simulate pre-existing gate state from a completed review cycle;
+				// qa-fail-gate must be set to satisfy the gated channel before delivery
+				gateDataRepo.set(run.id, 'code-pr-gate', { pr_url: 'https://github.com/org/repo/pull/42' });
+				gateDataRepo.set(run.id, 'review-votes-gate', {
+					votes: { 'reviewer-1': 'approved', 'reviewer-2': 'approved', 'reviewer-3': 'approved' },
+				});
+				gateDataRepo.set(run.id, 'review-reject-gate', {
+					votes: { 'reviewer-1': 'approved' },
+				});
+				gateDataRepo.set(run.id, 'qa-result-gate', { result: 'passed' });
+				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
+
+				// QA delivers to Coding via cyclic channel (gate already satisfied above)
+				await router.deliverMessage(run.id, 'QA', 'Coding', 'QA found issues');
+
+				// code-pr-gate must be preserved (not reset) so Coding can update the existing PR
+				const codePr = gateDataRepo.get(run.id, 'code-pr-gate');
+				expect(codePr!.data).toEqual({
+					pr_url: 'https://github.com/org/repo/pull/42',
+				});
+
+				// review-votes-gate, review-reject-gate, qa-result-gate, qa-fail-gate must reset
+				const reviewVotes = gateDataRepo.get(run.id, 'review-votes-gate');
+				expect(reviewVotes!.data).toEqual({ votes: {} });
+
+				const reviewReject = gateDataRepo.get(run.id, 'review-reject-gate');
+				expect(reviewReject!.data).toEqual({});
+
+				const qaResult = gateDataRepo.get(run.id, 'qa-result-gate');
+				expect(qaResult!.data).toEqual({});
+
+				const qaFail = gateDataRepo.get(run.id, 'qa-fail-gate');
+				expect(qaFail!.data).toEqual({});
+			});
+
+			test('QA→Coding cycle increments iteration counter', async () => {
+				const workflow = buildQaWorkflow();
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Iteration Counter Run',
+					maxIterations: 5,
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+				gateDataRepo.initializeForRun(run.id, allGates);
+
+				expect(workflowRunRepo.getRun(run.id)!.iterationCount).toBe(0);
+
+				// Must satisfy qa-fail-gate before delivering on cyclic QA→Coding channel
+				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
+				await router.deliverMessage(run.id, 'QA', 'Coding', 'QA cycle 1');
+
+				expect(workflowRunRepo.getRun(run.id)!.iterationCount).toBe(1);
+			});
+
+			test('after QA fail cycle, reviewers must re-vote from scratch (votes reset to empty)', async () => {
+				const workflow = buildQaWorkflow();
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Re-vote From Scratch',
+					maxIterations: 5,
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+				gateDataRepo.initializeForRun(run.id, allGates);
+
+				// Populate existing votes and satisfy qa-fail-gate
+				gateDataRepo.set(run.id, 'review-votes-gate', {
+					votes: { 'reviewer-1': 'approved', 'reviewer-2': 'approved', 'reviewer-3': 'approved' },
+				});
+				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
+
+				// QA→Coding cycle
+				await router.deliverMessage(run.id, 'QA', 'Coding', 'issues found');
+
+				// All votes wiped — reviewers must re-vote
+				const votes = gateDataRepo.get(run.id, 'review-votes-gate');
+				expect(votes!.data).toEqual({ votes: {} });
+
+				// QA channel now blocked (only 0/3 approved)
+				const canDeliver = await router.canDeliver(run.id, 'Reviewer 1', 'QA');
+				expect(canDeliver.allowed).toBe(false);
+			});
+
+			test('QA→Coding cycle throws ActivationError when max iterations reached', async () => {
+				const workflow = buildQaWorkflow();
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Max Iterations QA',
+					maxIterations: 2,
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+				gateDataRepo.initializeForRun(run.id, allGates);
+
+				// Use up 2 iterations (must satisfy qa-fail-gate before each delivery; gate resets on each cycle)
+				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
+				await router.deliverMessage(run.id, 'QA', 'Coding', 'QA cycle 1');
+				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
+				await router.deliverMessage(run.id, 'QA', 'Coding', 'QA cycle 2');
+
+				// Third attempt should throw
+				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
+				await expect(
+					router.deliverMessage(run.id, 'QA', 'Coding', 'QA cycle 3 — should fail')
+				).rejects.toBeInstanceOf(ActivationError);
+			});
+
+			test('onGateDataChanged throws ActivationError when cyclic channel at max iterations', async () => {
+				const workflow = buildQaWorkflow();
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Max Iterations via onGateDataChanged',
+					maxIterations: 1,
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+				gateDataRepo.initializeForRun(run.id, allGates);
+
+				// Use up the 1 iteration via onGateDataChanged
+				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
+				await router.onGateDataChanged(run.id, 'qa-fail-gate');
+				expect(workflowRunRepo.getRun(run.id)!.iterationCount).toBe(1);
+
+				// Second attempt must throw before any activation
+				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
+				await expect(router.onGateDataChanged(run.id, 'qa-fail-gate')).rejects.toBeInstanceOf(
+					ActivationError
+				);
+			});
+
+			test('QA passes → QA→Done channel opens when qa-result-gate satisfied', async () => {
+				const workflow = buildQaWorkflow();
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'QA Pass Run',
+					maxIterations: 5,
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+				gateDataRepo.initializeForRun(run.id, allGates);
+
+				// QA writes passed result
+				gateDataRepo.set(run.id, 'qa-result-gate', { result: 'passed' });
+				const activated = await router.onGateDataChanged(run.id, 'qa-result-gate');
+
+				const doneTask = activated.find((t) => t.workflowNodeId === NODE_DONE);
+				expect(doneTask).toBeDefined();
+			});
+		});
+
 		test('gateId takes precedence over legacy inline gate when both are set', async () => {
 			const gate: Gate = {
 				id: 'new-gate',

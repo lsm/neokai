@@ -6,7 +6,7 @@
  */
 
 import type { Page } from '@playwright/test';
-import { readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
 // Workspace path where settings.local.json is written
@@ -220,6 +220,31 @@ export function ensureClaudeDir(): void {
 	const claudeDir = join(WORKSPACE_PATH, '.claude');
 	if (!existsSync(claudeDir)) {
 		mkdirSync(claudeDir, { recursive: true });
+	}
+}
+
+// Path to the project-level .mcp.json file in the test workspace
+export const PROJECT_MCP_JSON_PATH = join(WORKSPACE_PATH, '.mcp.json');
+
+/**
+ * Write a .mcp.json file in the test workspace with the given server configs.
+ * Used to set up project-level MCP servers for testing the disable toggle.
+ */
+export function writeProjectMcpJson(servers: Record<string, unknown>): void {
+	mkdirSync(WORKSPACE_PATH, { recursive: true });
+	writeFileSync(PROJECT_MCP_JSON_PATH, JSON.stringify({ mcpServers: servers }, null, 2));
+}
+
+/**
+ * Remove the .mcp.json file from the test workspace.
+ */
+export function cleanupProjectMcpJson(): void {
+	try {
+		if (existsSync(PROJECT_MCP_JSON_PATH)) {
+			rmSync(PROJECT_MCP_JSON_PATH);
+		}
+	} catch {
+		// Ignore errors
 	}
 }
 

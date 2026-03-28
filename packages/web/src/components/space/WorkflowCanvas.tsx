@@ -33,6 +33,7 @@ import type {
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager';
 import { cn } from '../../lib/utils';
+import { GateArtifactsView } from './GateArtifactsView';
 
 // ============================================================================
 // Constants
@@ -91,6 +92,26 @@ function isHumanApprovalGate(condition: GateCondition): boolean {
 		return condition.conditions.some(isHumanApprovalGate);
 	}
 	return false;
+}
+
+/**
+ * Compute the current matching vote count for a count-type gate condition.
+ * Returns `{ current, min }` so the UI can render "N/M" progress.
+ * Returns `undefined` for non-count conditions.
+ */
+function computeVoteCount(
+	condition: GateCondition,
+	data: Record<string, unknown>
+): { current: number; min: number } | undefined {
+	if (condition.type !== 'count') return undefined;
+	const map = data[condition.field];
+	if (!map || typeof map !== 'object' || Array.isArray(map)) {
+		return { current: 0, min: condition.min };
+	}
+	const current = Object.values(map as Record<string, unknown>).filter(
+		(v) => v === condition.matchValue
+	).length;
+	return { current, min: condition.min };
 }
 
 /**
@@ -157,6 +178,26 @@ function evalConditionStatus(condition: GateCondition, data: Record<string, unkn
 // ============================================================================
 
 /**
+ * Build a map from node name → node UUID.
+ * Channels use node names for from/to, but layout uses UUIDs.
+ */
+function buildNameToIdMap(nodes: WorkflowNode[]): Map<string, string> {
+	const map = new Map<string, string>();
+	for (const node of nodes) {
+		if (node.name) map.set(node.name, node.id);
+	}
+	return map;
+}
+
+/**
+ * Resolve a channel endpoint (name or UUID) to a node UUID.
+ * Falls back to the original value if it's already a UUID.
+ */
+function resolveNodeId(ref: string, nameToId: Map<string, string>): string {
+	return nameToId.get(ref) ?? ref;
+}
+
+/**
  * Compute node positions using a layered DAG layout.
  * Returns a map from node ID → {x, y, width, height}.
  */
@@ -167,16 +208,20 @@ function computeLayout(workflow: SpaceWorkflow): Map<string, NodeLayout> {
 
 	if (nodes.length === 0) return new Map();
 
-	// Build successor map from channels
+	const nameToId = buildNameToIdMap(nodes);
+
+	// Build successor map from channels (resolving names to UUIDs)
 	const successors = new Map<string, Set<string>>();
 	for (const node of nodes) {
 		successors.set(node.id, new Set());
 	}
 	for (const ch of channels) {
+		const fromId = resolveNodeId(ch.from, nameToId);
 		const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
 		for (const t of targets) {
-			if (successors.has(ch.from) && successors.has(t)) {
-				successors.get(ch.from)!.add(t);
+			const toId = resolveNodeId(t, nameToId);
+			if (successors.has(fromId) && successors.has(toId)) {
+				successors.get(fromId)!.add(toId);
 			}
 		}
 	}
@@ -294,8 +339,11 @@ interface GateIconProps {
 	y: number;
 	status: GateStatus;
 	isRuntimeMode: boolean;
+	gateId?: string;
 	onApprove?: () => void;
 	onReject?: () => void;
+	onViewArtifacts?: () => void;
+	voteCount?: { current: number; min: number };
 }
 
 const GATE_ICON_R = 11; // radius
@@ -305,10 +353,21 @@ function GateIcon({
 	y,
 	status,
 	isRuntimeMode,
+	gateId,
 	onApprove,
 	onReject,
+	onViewArtifacts,
+	voteCount,
 }: GateIconProps): JSX.Element {
 	const [showActions, setShowActions] = useState(false);
+
+	// Dismiss the popup when the user clicks anywhere outside the gate icon
+	useEffect(() => {
+		if (!showActions) return;
+		const dismiss = () => setShowActions(false);
+		document.addEventListener('click', dismiss, { once: true });
+		return () => document.removeEventListener('click', dismiss);
+	}, [showActions]);
 
 	let fill: string;
 	let strokeColor: string;
@@ -390,6 +449,7 @@ function GateIcon({
 	return (
 		<g
 			data-testid={`gate-icon-${status}`}
+			data-gate-id={gateId}
 			style={{ cursor: isRuntimeMode && status === 'waiting_human' ? 'pointer' : 'default' }}
 			onClick={handleClick}
 		>
@@ -404,8 +464,21 @@ function GateIcon({
 			/>
 			<g transform={`translate(${x}, ${y})`}>{icon}</g>
 
+			{voteCount !== undefined && isRuntimeMode && (
+				<text
+					x={x}
+					y={y + GATE_ICON_R + 11}
+					textAnchor="middle"
+					dominantBaseline="middle"
+					style={{ fontSize: '9px', fill: '#a8a29e', fontFamily: 'monospace' }}
+					data-testid="gate-vote-count"
+				>
+					{voteCount.current}/{voteCount.min}
+				</text>
+			)}
+
 			{showActions && isRuntimeMode && (
-				<foreignObject x={x - 60} y={y + 14} width={120} height={56}>
+				<foreignObject x={x - 65} y={y + 14} width={130} height={onViewArtifacts ? 84 : 56}>
 					<div
 						style={{
 							background: '#1c1917',
@@ -413,37 +486,57 @@ function GateIcon({
 							borderRadius: 6,
 							padding: '6px',
 							display: 'flex',
+							flexDirection: 'column',
 							gap: '4px',
 						}}
 					>
-						<button
-							class={cn(
-								'flex-1 text-xs py-1 rounded font-medium',
-								'bg-green-900/60 text-green-300 border border-green-700/50',
-								'hover:bg-green-800/60'
-							)}
-							onClick={(e) => {
-								e.stopPropagation();
-								setShowActions(false);
-								onApprove?.();
-							}}
-						>
-							Approve
-						</button>
-						<button
-							class={cn(
-								'flex-1 text-xs py-1 rounded font-medium',
-								'bg-red-900/60 text-red-300 border border-red-700/50',
-								'hover:bg-red-800/60'
-							)}
-							onClick={(e) => {
-								e.stopPropagation();
-								setShowActions(false);
-								onReject?.();
-							}}
-						>
-							Reject
-						</button>
+						<div style={{ display: 'flex', gap: '4px' }}>
+							<button
+								class={cn(
+									'flex-1 text-xs py-1 rounded font-medium',
+									'bg-green-900/60 text-green-300 border border-green-700/50',
+									'hover:bg-green-800/60'
+								)}
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowActions(false);
+									onApprove?.();
+								}}
+							>
+								Approve
+							</button>
+							<button
+								class={cn(
+									'flex-1 text-xs py-1 rounded font-medium',
+									'bg-red-900/60 text-red-300 border border-red-700/50',
+									'hover:bg-red-800/60'
+								)}
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowActions(false);
+									onReject?.();
+								}}
+							>
+								Reject
+							</button>
+						</div>
+						{onViewArtifacts && (
+							<button
+								class={cn(
+									'w-full text-xs py-1 rounded font-medium',
+									'bg-stone-800/80 text-stone-300 border border-stone-700/50',
+									'hover:bg-stone-700/80'
+								)}
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowActions(false);
+									onViewArtifacts();
+								}}
+								data-testid="view-artifacts-btn"
+							>
+								View Artifacts
+							</button>
+						)}
 					</div>
 				</foreignObject>
 			)}
@@ -843,6 +936,9 @@ export function WorkflowCanvas({
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>>>(new Map());
 	const [gateDataLoading, setGateDataLoading] = useState(false);
 
+	// ---- Artifacts panel state (gateId of the panel open, null = closed) ----
+	const [artifactsPanelGateId, setArtifactsPanelGateId] = useState<string | null>(null);
+
 	// ---- Template-mode: local gate assignments (channelId → gateId) ----
 	const [localGateAssignments, setLocalGateAssignments] = useState<Map<string, string>>(new Map());
 
@@ -976,6 +1072,12 @@ export function WorkflowCanvas({
 		};
 	}, [layout]);
 
+	// ---- Name-to-ID map for channel endpoint resolution ----
+	const nameToId = useMemo(() => {
+		if (!workflow) return new Map<string, string>();
+		return buildNameToIdMap(workflow.nodes);
+	}, [workflow]);
+
 	// ---- Rendered channels ----
 	const renderedChannels = useMemo((): RenderedChannel[] => {
 		if (!workflow) return [];
@@ -985,12 +1087,12 @@ export function WorkflowCanvas({
 				const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
 				return targets.map((to) => ({
 					id: ch.id!,
-					fromId: ch.from,
-					toId: to,
+					fromId: resolveNodeId(ch.from, nameToId),
+					toId: resolveNodeId(to, nameToId),
 					gateId: isRuntimeMode ? ch.gateId : (localGateAssignments.get(ch.id!) ?? ch.gateId),
 				}));
 			});
-	}, [workflow, isRuntimeMode, localGateAssignments]);
+	}, [workflow, isRuntimeMode, localGateAssignments, nameToId]);
 
 	// ---- Gates by ID ----
 	const gatesById = useMemo(() => {
@@ -1112,6 +1214,8 @@ export function WorkflowCanvas({
 
 					// Channels without gates are always available (plain arrows)
 					const isHumanGate = gate ? isHumanApprovalGate(gate.condition) : false;
+					const voteCount =
+						gate && isRuntimeMode ? computeVoteCount(gate.condition, gateData) : undefined;
 
 					return (
 						<g key={`ch-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>
@@ -1141,11 +1245,18 @@ export function WorkflowCanvas({
 									y={pts.my}
 									status={gateStatus}
 									isRuntimeMode={isRuntimeMode}
+									gateId={ch.gateId}
+									voteCount={voteCount}
 									onApprove={
 										isHumanGate ? () => void handleApproveGate(ch.gateId!, true) : undefined
 									}
 									onReject={
 										isHumanGate ? () => void handleApproveGate(ch.gateId!, false) : undefined
+									}
+									onViewArtifacts={
+										isHumanGate && gateStatus === 'waiting_human'
+											? () => setArtifactsPanelGateId(ch.gateId!)
+											: undefined
 									}
 								/>
 							)}
@@ -1226,6 +1337,27 @@ export function WorkflowCanvas({
 					);
 				})}
 			</svg>
+
+			{/* Artifacts panel overlay (shown when a human gate requests it) */}
+			{artifactsPanelGateId && runId && (
+				<div
+					class="absolute inset-0 bg-stone-950/95 z-20 flex flex-col"
+					data-testid="artifacts-panel-overlay"
+				>
+					<GateArtifactsView
+						runId={runId}
+						gateId={artifactsPanelGateId}
+						spaceId={spaceId}
+						gateData={gateDataMap.get(artifactsPanelGateId)}
+						onClose={() => setArtifactsPanelGateId(null)}
+						onDecision={() => {
+							setArtifactsPanelGateId(null);
+							void fetchGateData();
+						}}
+						class="h-full"
+					/>
+				</div>
+			)}
 		</div>
 	);
 }

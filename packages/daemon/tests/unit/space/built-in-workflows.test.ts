@@ -321,7 +321,8 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		expect(gate.condition.type).toBe('check');
 		expect((gate.condition as { op: string }).op).toBe('exists');
 		expect(gate.allowedWriterRoles).toContain('coder');
-		expect(gate.resetOnCycle).toBe(true);
+		// Preserved across fix cycles — coder updates the existing PR rather than opening a new one
+		expect(gate.resetOnCycle).toBe(false);
 	});
 
 	test('review-votes-gate has count condition requiring min 3 approved', () => {
@@ -349,7 +350,8 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		expect(gate.condition.type).toBe('check');
 		expect((gate.condition as { value: unknown }).value).toBe('passed');
 		expect(gate.allowedWriterRoles).toContain('qa');
-		expect(gate.resetOnCycle).toBe(false);
+		// Resets on QA→Coding cycle so QA starts clean each time
+		expect(gate.resetOnCycle).toBe(true);
 	});
 
 	test('qa-fail-gate has check==failed condition and qa writer role', () => {
@@ -454,10 +456,10 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		}
 	});
 
-	test('QA node instructions require explicit result write on every pass', () => {
+	test('QA node instructions describe both pass and fail write targets', () => {
 		const qa = CODING_WORKFLOW_V2.nodes.find((n) => n.name === 'QA')!;
-		expect(qa.instructions).toContain('every pass');
-		expect(qa.instructions).toMatch(/do not assume/i);
+		expect(qa.instructions).toContain('qa-result-gate');
+		expect(qa.instructions).toContain('qa-fail-gate');
 	});
 
 	test('review-votes-gate description mentions read-merge-write requirement', () => {
@@ -465,10 +467,15 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		expect(gate.description).toContain('read-merge-write');
 	});
 
-	test('qa-result-gate description explains why resetOnCycle is false', () => {
+	test('qa-result-gate description explains it resets on cycle', () => {
 		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'qa-result-gate')!;
+		expect(gate.description).toContain('clean state');
+	});
+
+	test('code-pr-gate description explains it is preserved across fix cycles', () => {
+		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'code-pr-gate')!;
 		expect(gate.description).toContain('resetOnCycle');
-		expect(gate.description).toMatch(/intentionally false/i);
+		expect(gate.description).toMatch(/fix cycles/i);
 	});
 
 	test('does not reference leader', () => {

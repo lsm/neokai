@@ -932,6 +932,33 @@ describe('QueryOptionsBuilder', () => {
 			});
 		});
 
+		it('should skip disabled AppMcpServer entries even when the wrapping skill is enabled', async () => {
+			const disabledAppMcpServer = {
+				...mockAppMcpServer,
+				enabled: false,
+			};
+			const mockAppMcpServerRepo = {
+				get: mock(() => disabledAppMcpServer),
+			};
+			const mockSkillsManager = {
+				// Skill itself is enabled (getEnabledSkills returns it)
+				getEnabledSkills: mock(() => [enabledSkills[1]]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Disabled AppMcpServer must not be injected even though the skill is enabled
+			expect(options.mcpServers).toBeUndefined();
+		});
+
 		it('should skip MCP server skills when referenced app_mcp_servers entry is deleted', async () => {
 			const mockAppMcpServerRepo = {
 				get: mock(() => null), // Simulates deleted entry
@@ -1138,9 +1165,12 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.mcpServers?.['web-search-mcp']).toBeUndefined();
 		});
 
-		it('injects web-search-mcp MCP server into session options when skill is enabled', async () => {
+		it('injects web-search-mcp MCP server into session options when skill and AppMcpServer are both enabled', async () => {
 			const skill = skillsManager.listSkills().find((s) => s.name === 'web-search-mcp')!;
 			skillsManager.setSkillEnabled(skill.id, true);
+			// The backing AppMcpServer is created with enabled=false (opt-in); enable it too
+			const braveServer = appMcpServerRepo.getByName('brave-search')!;
+			appMcpServerRepo.update(braveServer.id, { enabled: true });
 
 			const context: QueryOptionsBuilderContext = {
 				session: mockSession,
@@ -1352,6 +1382,251 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.allowedTools).toContain('Skill');
 			expect(options.allowedTools).toContain('WebSearch');
 			expect(options.allowedTools).toContain('WebFetch');
+		});
+	});
+
+	// Task G7: disabled MCP servers must be excluded from mcpServers map regardless of session type
+	describe('disabledMcpServers filtering', () => {
+		it('excludes disabled servers from mcpServers for normal sessions', async () => {
+			mockSession.config.mcpServers = {
+				'my-server': { command: 'run-server' },
+				'other-server': { command: 'run-other' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: ['my-server'],
+			};
+
+			const options = await builder.build();
+
+			expect(options.mcpServers).not.toHaveProperty('my-server');
+			expect(options.mcpServers).toHaveProperty('other-server');
+		});
+
+		it('excludes disabled servers from mcpServers for room_chat sessions', async () => {
+			mockSession.type = 'room_chat';
+			mockSession.config.mcpServers = {
+				'room-agent-tools': { command: 'room-cmd' },
+				'my-project-server': { command: 'project-cmd' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: ['my-project-server'],
+			};
+
+			const options = await builder.build();
+
+			// room_chat always has strictMcpConfig: true and settingSources: []
+			expect(options.strictMcpConfig).toBe(true);
+			expect(options.settingSources).toEqual([]);
+			// Disabled server must not appear even though settingSources is empty
+			expect(options.mcpServers).not.toHaveProperty('my-project-server');
+			expect(options.mcpServers).toHaveProperty('room-agent-tools');
+		});
+
+		it('keeps all servers when disabledMcpServers is empty', async () => {
+			mockSession.config.mcpServers = {
+				'server-a': { command: 'cmd-a' },
+				'server-b': { command: 'cmd-b' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: [],
+			};
+
+			const options = await builder.build();
+
+			expect(options.mcpServers).toHaveProperty('server-a');
+			expect(options.mcpServers).toHaveProperty('server-b');
+		});
+
+		it('returns undefined mcpServers when all servers are disabled', async () => {
+			mockSession.config.mcpServers = {
+				'only-server': { command: 'cmd' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: ['only-server'],
+			};
+
+			const options = await builder.build();
+
+			expect(options.mcpServers).toBeUndefined();
+		});
+
+		it('room_chat allowedTools wildcards exclude disabled server', async () => {
+			mockSession.type = 'room_chat';
+			mockSession.config.mcpServers = {
+				'room-agent-tools': { command: 'room-cmd' },
+				'disabled-server': { command: 'dis-cmd' },
+			};
+			mockSession.config.tools = {
+				disabledMcpServers: ['disabled-server'],
+			};
+
+			const options = await builder.build();
+
+			// allowedTools wildcards are generated from the filtered mcpServers
+			expect(options.allowedTools).toContain('room-agent-tools__*');
+			expect(options.allowedTools).not.toContain('disabled-server__*');
+		});
+	});
+
+	describe('always-on agent/agents propagation (room agents)', () => {
+		const coderExplorerDef = {
+			description: 'Read-only codebase explorer.',
+			tools: ['Read', 'Grep', 'Glob', 'Bash'],
+			model: 'inherit' as const,
+			prompt: 'You are an Explorer Agent.',
+		};
+		const coderTesterDef = {
+			description: 'Test writer and runner.',
+			tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'],
+			model: 'inherit' as const,
+			prompt: 'You are a Tester Agent.',
+		};
+		const coderAgentDef = {
+			description: 'Implementation agent.',
+			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Write', 'Edit', 'Bash'],
+			model: 'inherit' as const,
+			prompt: 'You are a Coder Agent.',
+		};
+
+		it('preserves config.agent exactly when coordinatorMode is off', async () => {
+			mockSession.config.agent = 'Coder';
+			mockSession.config.agents = {
+				Coder: coderAgentDef,
+				'coder-explorer': coderExplorerDef,
+				'coder-tester': coderTesterDef,
+			};
+			mockSession.config.coordinatorMode = false;
+
+			const options = await builder.build();
+
+			expect(options.agent).toBe('Coder');
+		});
+
+		it('preserves config.agents map exactly when coordinatorMode is off', async () => {
+			mockSession.config.agent = 'Coder';
+			mockSession.config.agents = {
+				Coder: coderAgentDef,
+				'coder-explorer': coderExplorerDef,
+				'coder-tester': coderTesterDef,
+			};
+			mockSession.config.coordinatorMode = false;
+
+			const options = await builder.build();
+
+			expect(Object.keys(options.agents!)).toEqual(['Coder', 'coder-explorer', 'coder-tester']);
+			expect(options.agents!['Coder']).toEqual(coderAgentDef);
+			expect(options.agents!['coder-explorer']).toEqual(coderExplorerDef);
+			expect(options.agents!['coder-tester']).toEqual(coderTesterDef);
+		});
+
+		it('preserves config.agents when coordinatorMode is undefined (always-on default)', async () => {
+			// coordinatorMode is never set — the always-on pattern default
+			mockSession.config.agent = 'Coder';
+			mockSession.config.agents = {
+				Coder: coderAgentDef,
+				'coder-explorer': coderExplorerDef,
+				'coder-tester': coderTesterDef,
+			};
+
+			const options = await builder.build();
+
+			expect(options.agent).toBe('Coder');
+			expect(Object.keys(options.agents!)).toHaveLength(3);
+			expect(options.agents!['coder-explorer']).toEqual(coderExplorerDef);
+		});
+
+		it('coordinatorMode ON overwrites room agent config with coordinator agents', async () => {
+			// Even if room agent config is set, coordinator mode takes over
+			mockSession.config.agent = 'Coder';
+			mockSession.config.agents = {
+				Coder: coderAgentDef,
+				'coder-explorer': coderExplorerDef,
+			};
+			mockSession.config.coordinatorMode = true;
+
+			const options = await builder.build();
+
+			// Coordinator mode overwrites agent to 'Coordinator'
+			expect(options.agent).toBe('Coordinator');
+			// Coordinator specialists are present
+			expect(options.agents!['Coordinator']).toBeDefined();
+			expect(options.agents!['Debugger']).toBeDefined();
+			// The coordinator's Coder specialist wins over the room-agent Coder def
+			expect(options.agents!['Coder']).toBeDefined();
+		});
+
+		it('coordinatorMode ON merges room custom agents into coordinator agents map', async () => {
+			// Custom non-conflicting agents from room config are preserved in coordinator mode
+			mockSession.config.agents = {
+				'my-custom': { description: 'Custom agent', prompt: 'Custom.' },
+			};
+			mockSession.config.coordinatorMode = true;
+
+			const options = await builder.build();
+
+			expect(options.agent).toBe('Coordinator');
+			// Custom agent is merged in (no name conflict with specialist names)
+			expect(options.agents!['my-custom']).toBeDefined();
+			// Built-in specialists are also present
+			expect(options.agents!['Coordinator']).toBeDefined();
+			expect(options.agents!['Coder']).toBeDefined();
+		});
+
+		it('worktree isolation is in system prompt but NOT injected into room agent sub-agents', async () => {
+			mockSession.config.agent = 'Coder';
+			mockSession.config.agents = {
+				Coder: coderAgentDef,
+				'coder-explorer': coderExplorerDef,
+				'coder-tester': coderTesterDef,
+			};
+			// coordinatorMode is off (room agent mode)
+			mockSession.worktree = {
+				worktreePath: '/worktree/path',
+				mainRepoPath: '/main/repo',
+				branch: 'task/my-task',
+			};
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
+
+			const options = await newBuilder.build();
+
+			// System prompt gets worktree isolation (session-level protection)
+			const systemPrompt = options.systemPrompt as { append?: string };
+			expect(systemPrompt.append).toContain('Git Worktree Isolation');
+
+			// Sub-agent prompts are NOT modified — cwd is the worktree path,
+			// which provides the actual directory isolation for sub-agents
+			expect((options.agents!['coder-explorer'] as { prompt: string }).prompt).toBe(
+				coderExplorerDef.prompt
+			);
+			expect((options.agents!['coder-tester'] as { prompt: string }).prompt).toBe(
+				coderTesterDef.prompt
+			);
+		});
+
+		it('coordinator mode injects worktree isolation into specialist agent prompts', async () => {
+			mockSession.config.coordinatorMode = true;
+			mockSession.worktree = {
+				worktreePath: '/worktree/path',
+				mainRepoPath: '/main/repo',
+				branch: 'task/my-task',
+			};
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
+
+			const options = await newBuilder.build();
+
+			// Coordinator mode injects worktree isolation into specialist agents
+			const coderPrompt = (options.agents!['Coder'] as { prompt: string }).prompt;
+			expect(coderPrompt).toContain('Git Worktree Isolation');
+
+			// But NOT into the Coordinator itself
+			const coordinatorPrompt = (options.agents!['Coordinator'] as { prompt: string }).prompt;
+			expect(coordinatorPrompt).not.toContain('Git Worktree Isolation');
 		});
 	});
 });

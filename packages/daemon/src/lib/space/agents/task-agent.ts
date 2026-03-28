@@ -214,7 +214,8 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`- **report_workflow_done** — Explicitly mark the entire workflow run as completed and close the main task. ` +
-			`Pass an optional \`summary\` string describing what the workflow accomplished. ` +
+			`Pass a \`summary\` string describing what the workflow accomplished — use the Done node agent's ` +
+			`result summary (collected via \`check_node_status\`) as the summary when available. ` +
 			`Call this when all node agents have finished and you are certain the workflow is done. ` +
 			`This immediately marks the run completed without waiting for the automatic detector.`
 	);
@@ -270,7 +271,9 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`\`condition\` and \`task_result\` gates are evaluated automatically by the system. ` +
 			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
 			`5. **Detect completion** — When \`list_group_members\` shows all members have completed, ` +
-			`call \`report_workflow_done\` to mark the workflow run and task as completed. ` +
+			`collect the Done node agent's result summary via \`check_node_status\` (use the session ID ` +
+			`returned when you spawned the Done node agent). Then call \`report_workflow_done\` with that ` +
+			`summary to mark the workflow run and task as completed. ` +
 			`You may also use \`report_result\` directly for finer-grained status control.\n` +
 			`6. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
 			`\`status: "cancelled"\` and the error details.`

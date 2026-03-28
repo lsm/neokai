@@ -195,6 +195,7 @@ function createMockRuntimeService(): SpaceRuntimeService {
 		createOrGetRuntime: mock(async () => ({
 			startWorkflowRun: mock(async () => ({ run: mockRun, tasks: [] })),
 		})),
+		notifyGateDataChanged: mock(async () => {}),
 		start: mock(() => {}),
 		stop: mock(() => {}),
 	} as unknown as SpaceRuntimeService;
@@ -748,6 +749,114 @@ describe('space-workflow-run gate handlers', () => {
 
 			expect(result.additions).toBe(2);
 			expect(result.deletions).toBe(1);
+		});
+	});
+
+	// ─── spaceWorkflowRun.writeGateData ───────────────────────────────────────
+
+	describe('spaceWorkflowRun.writeGateData', () => {
+		it('throws if runId is missing', async () => {
+			await expect(
+				call('spaceWorkflowRun.writeGateData', { gateId: 'g1', data: {} })
+			).rejects.toThrow('runId is required');
+		});
+
+		it('throws if gateId is missing', async () => {
+			await expect(
+				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', data: {} })
+			).rejects.toThrow('gateId is required');
+		});
+
+		it('throws if data is not an object', async () => {
+			await expect(
+				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'g1', data: 'bad' })
+			).rejects.toThrow('data must be an object');
+		});
+
+		it('throws if data is an array', async () => {
+			await expect(
+				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'g1', data: [] })
+			).rejects.toThrow('data must be an object');
+		});
+
+		it('throws if run not found', async () => {
+			setup({ run: null });
+			await expect(
+				call('spaceWorkflowRun.writeGateData', { runId: 'run-1', gateId: 'g1', data: {} })
+			).rejects.toThrow('WorkflowRun not found: run-1');
+		});
+
+		it('throws if run is completed (status guard)', async () => {
+			setup({ run: { ...mockRun, status: 'completed' } });
+			await expect(
+				call('spaceWorkflowRun.writeGateData', {
+					runId: 'run-1',
+					gateId: 'review-votes-gate',
+					data: { votes: { 'Reviewer 1': 'approved' } },
+				})
+			).rejects.toThrow('Cannot write gate data on a completed workflow run');
+		});
+
+		it('throws if run is cancelled (status guard)', async () => {
+			setup({ run: { ...mockRun, status: 'cancelled' } });
+			await expect(
+				call('spaceWorkflowRun.writeGateData', {
+					runId: 'run-1',
+					gateId: 'review-votes-gate',
+					data: { votes: { 'Reviewer 1': 'approved' } },
+				})
+			).rejects.toThrow('Cannot write gate data on a cancelled workflow run');
+		});
+
+		it('throws if run is pending (status guard)', async () => {
+			setup({ run: { ...mockRun, status: 'pending' } });
+			await expect(
+				call('spaceWorkflowRun.writeGateData', {
+					runId: 'run-1',
+					gateId: 'review-votes-gate',
+					data: { votes: { 'Reviewer 1': 'approved' } },
+				})
+			).rejects.toThrow('Cannot write gate data on a pending workflow run');
+		});
+
+		it('merges gate data via gateDataRepo.merge', async () => {
+			await call('spaceWorkflowRun.writeGateData', {
+				runId: 'run-1',
+				gateId: 'review-votes-gate',
+				data: { votes: { 'Reviewer 1': 'approved' } },
+			});
+			expect(gateDataRepo.merge).toHaveBeenCalledWith('run-1', 'review-votes-gate', {
+				votes: { 'Reviewer 1': 'approved' },
+			});
+		});
+
+		it('emits space.gateData.updated with correct payload', async () => {
+			await call('spaceWorkflowRun.writeGateData', {
+				runId: 'run-1',
+				gateId: 'review-votes-gate',
+				data: { votes: { 'Reviewer 2': 'rejected' } },
+			});
+
+			expect(daemonHub.emit).toHaveBeenCalledWith(
+				'space.gateData.updated',
+				expect.objectContaining({
+					sessionId: 'global',
+					spaceId: mockRun.spaceId,
+					runId: 'run-1',
+					gateId: 'review-votes-gate',
+				})
+			);
+		});
+
+		it('returns the updated gateData record', async () => {
+			const result = (await call('spaceWorkflowRun.writeGateData', {
+				runId: 'run-1',
+				gateId: 'code-pr-gate',
+				data: { pr_url: 'https://github.com/test/repo/pull/1' },
+			})) as { gateData: { runId: string; gateId: string } };
+
+			expect(result.gateData).toBeDefined();
+			expect(result.gateData.gateId).toBe('gate-approval'); // mockGateData default id
 		});
 	});
 });

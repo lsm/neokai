@@ -47,12 +47,14 @@ RPC_FILES=(
 # due to resource usage. ROOM_FILES below tracks files that exist on disk; CI does not
 # automatically run them. Run them locally or enable per-task in the CI matrix.
 ROOM_FILES=(
+  coder-agent-subagents.test.ts
   mission-lifecycle.test.ts
   room-advanced-scenarios.test.ts
   room-chat-agent-tools.test.ts
   room-chat-constraints.test.ts
   room-mcp-enablement.test.ts
   room-multi-agent-flow.test.ts
+  planner-three-phase.test.ts
   planner-websearch.test.ts
   room-planner-two-phase.test.ts
   room-replan-recovery.test.ts

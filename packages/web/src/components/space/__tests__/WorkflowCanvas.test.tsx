@@ -16,6 +16,8 @@
  * - Completed node shows checkmark indicator
  * - Active run banner shows when run is needs_attention
  * - Gate data event subscription updates gate status
+ * - "View Artifacts" button opens artifacts panel overlay for waiting_human gate
+ * - Closing the artifacts panel overlay hides it
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
@@ -483,6 +485,187 @@ describe('WorkflowCanvas', () => {
 			'spaceWorkflowRun.listGateData',
 			expect.anything()
 		);
+	});
+
+	// ---- View Artifacts overlay ----
+
+	it('"View Artifacts" button opens artifacts panel overlay for waiting_human gate', async () => {
+		const gate = makeGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		// listGateData returns empty so gate stays waiting_human;
+		// getGateArtifacts is called by GateArtifactsView — keep it pending so we only test the overlay mount
+		mockHub.request.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			return new Promise(() => {});
+		});
+
+		const { findByText, getByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+
+		// Open the gate icon action popup
+		fireEvent.click(getByTestId('gate-icon-waiting_human'));
+		// Click "View Artifacts"
+		const viewBtn = await findByText('View Artifacts');
+		fireEvent.click(viewBtn);
+
+		// Overlay must be visible
+		await waitFor(() => expect(getByTestId('artifacts-panel-overlay')).toBeTruthy());
+	});
+
+	it('closing the artifacts panel overlay hides it', async () => {
+		const gate = makeGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			return new Promise(() => {});
+		});
+
+		const { findByText, getByTestId, queryByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+
+		// Open overlay
+		fireEvent.click(getByTestId('gate-icon-waiting_human'));
+		fireEvent.click(await findByText('View Artifacts'));
+		await waitFor(() => expect(getByTestId('artifacts-panel-overlay')).toBeTruthy());
+
+		// Close via the × button inside GateArtifactsView
+		fireEvent.click(getByTestId('artifacts-close'));
+		await waitFor(() => expect(queryByTestId('artifacts-panel-overlay')).toBeNull());
+	});
+
+	// ---- Vote count badge (count-type gates) ----
+
+	it('shows vote count badge "N/M" for a count gate with partial votes in runtime mode', async () => {
+		const gate = makeGate({
+			id: 'vote-gate',
+			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+		});
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'vote-gate',
+					data: { votes: { 'Reviewer 1': 'approved', 'Reviewer 2': 'approved' } },
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const badge = await findByTestId('gate-vote-count');
+		expect(badge.textContent).toBe('2/3');
+	});
+
+	it('shows vote count badge "0/3" when no votes written yet', async () => {
+		const gate = makeGate({
+			id: 'vote-gate',
+			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+		});
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const badge = await findByTestId('gate-vote-count');
+		expect(badge.textContent).toBe('0/3');
+	});
+
+	it('shows vote count badge "3/3" when all votes approve (gate open)', async () => {
+		const gate = makeGate({
+			id: 'vote-gate',
+			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+		});
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'vote-gate',
+					data: {
+						votes: {
+							'Reviewer 1': 'approved',
+							'Reviewer 2': 'approved',
+							'Reviewer 3': 'approved',
+						},
+					},
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		await findByTestId('gate-icon-open');
+		const badge = await findByTestId('gate-vote-count');
+		expect(badge.textContent).toBe('3/3');
+	});
+
+	it('does NOT show vote count badge in template mode', () => {
+		const gate = makeGate({
+			id: 'vote-gate',
+			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+		});
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		// No runId → template mode
+
+		const { queryByTestId } = render(<WorkflowCanvas workflowId="wf-1" spaceId="sp-1" />);
+		expect(queryByTestId('gate-vote-count')).toBeNull();
+	});
+
+	it('does NOT show vote count badge for non-count gate types', async () => {
+		const gate = makeGate({
+			id: 'check-gate',
+			condition: { type: 'check', field: 'approved', op: '==', value: true },
+		});
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'check-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { queryByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		await waitFor(() => expect(mockHub.request).toHaveBeenCalled());
+		expect(queryByTestId('gate-vote-count')).toBeNull();
 	});
 
 	// ---- Gate approval action ----

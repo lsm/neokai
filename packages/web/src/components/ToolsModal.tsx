@@ -1,16 +1,11 @@
 /**
- * Tools Modal Component
+ * Tools Modal Component (Redesigned)
  *
- * Configure tools for the current session:
- * - System Prompt: Claude Code preset
- * - Setting Sources: User/Project/Local settings selection
- * - MCP Servers: Dynamic list from selected setting sources
- * - NeoKai Tools: Memory (configurable)
- * - SDK Built-in: Always enabled, shown for information only
- *
- * SDK Terms Reference:
- * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
- * - settingSources: ['project', 'local', 'user'] - Which config files to load
+ * Unified view of all available MCP servers and tools:
+ * - App MCP Servers: from skills registry (global scope – affects all sessions)
+ * - Project MCP Servers: from settings files (session scope – affects this session)
+ * - NeoKai Tools: Memory tool (session scope)
+ * - Advanced: Claude Code Preset & Settings Sources (hidden by default)
  */
 
 import { useSignal, useComputed } from '@preact/signals';
@@ -19,41 +14,33 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
-import type { Session, ToolsConfig, GlobalToolsConfig, SettingSource } from '@neokai/shared';
+import type {
+	Session,
+	ToolsConfig,
+	GlobalToolsConfig,
+	SettingSource,
+	AppSkill,
+} from '@neokai/shared';
 import {
 	listMcpServersFromSources,
 	type McpServerFromSource,
 	type McpServersFromSourcesResponse,
 } from '../lib/api-helpers.ts';
+import { skillsStore } from '../lib/skills-store.ts';
+import {
+	isServerEnabled,
+	toggleServer as toggleServerUtil,
+	toggleGroupServers,
+	computeGroupState,
+	computeSkillGroupState,
+	resolveSettingSources,
+} from './ToolsModal.utils.ts';
 
 interface ToolsModalProps {
 	isOpen: boolean;
 	onClose: () => void;
 	session: Session | null;
 }
-
-// Setting source options with descriptions
-const SETTING_SOURCE_OPTIONS: Array<{
-	value: SettingSource;
-	label: string;
-	description: string;
-}> = [
-	{
-		value: 'user',
-		label: 'User',
-		description: 'Load settings from ~/.claude/',
-	},
-	{
-		value: 'project',
-		label: 'Project',
-		description: 'Load settings from .claude/ in workspace',
-	},
-	{
-		value: 'local',
-		label: 'Local',
-		description: 'Load settings from .claude/settings.local.json',
-	},
-];
 
 // Source label mapping
 const SOURCE_LABELS: Record<SettingSource, string> = {
@@ -62,6 +49,84 @@ const SOURCE_LABELS: Record<SettingSource, string> = {
 	local: 'Local (.claude/settings.local.json)',
 };
 
+// Scope badge component
+function ScopeBadge({ scope }: { scope: 'global' | 'session' }) {
+	if (scope === 'global') {
+		return <span class="text-xs text-amber-500/70 font-medium">All sessions</span>;
+	}
+	return <span class="text-xs text-sky-500/70 font-medium">This session</span>;
+}
+
+// Collapsible group header component
+interface GroupHeaderProps {
+	title: string;
+	isOpen: boolean;
+	onToggleOpen: () => void;
+	allEnabled: boolean;
+	someEnabled: boolean;
+	onToggleAll: () => void;
+	scope: 'global' | 'session';
+	itemCount: number;
+	disabled?: boolean;
+}
+
+function GroupHeader({
+	title,
+	isOpen,
+	onToggleOpen,
+	allEnabled,
+	someEnabled,
+	onToggleAll,
+	scope,
+	itemCount,
+	disabled = false,
+}: GroupHeaderProps) {
+	const isIndeterminate = someEnabled && !allEnabled;
+
+	return (
+		<div class="flex items-center justify-between py-2 cursor-pointer select-none group">
+			<button
+				type="button"
+				class="flex items-center gap-2 flex-1 text-left hover:text-gray-200 transition-colors"
+				onClick={onToggleOpen}
+				aria-expanded={isOpen}
+			>
+				<svg
+					class={`w-3.5 h-3.5 text-gray-500 transition-transform ${isOpen ? 'rotate-90' : ''}`}
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke="currentColor"
+				>
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M9 5l7 7-7 7" />
+				</svg>
+				<span class="text-sm font-medium text-gray-300">{title}</span>
+				<span class="text-xs text-gray-600">({itemCount})</span>
+			</button>
+			<div class="flex items-center gap-3">
+				<ScopeBadge scope={scope} />
+				<label
+					class="flex items-center gap-1.5 cursor-pointer"
+					title={allEnabled ? 'Disable all' : 'Enable all'}
+				>
+					<span class="text-xs text-gray-500">
+						{allEnabled ? 'All on' : someEnabled ? 'Mixed' : 'All off'}
+					</span>
+					<input
+						type="checkbox"
+						checked={allEnabled}
+						ref={(el) => {
+							if (el) el.indeterminate = isIndeterminate;
+						}}
+						onChange={onToggleAll}
+						disabled={disabled}
+						class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+					/>
+				</label>
+			</div>
+		</div>
+	);
+}
+
 export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const saving = useSignal(false);
 	const hasChanges = useSignal(false);
@@ -69,20 +134,35 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const mcpServersData = useSignal<McpServersFromSourcesResponse | null>(null);
 	const globalConfig = useSignal<GlobalToolsConfig | null>(null);
 
-	// Local state for editing
-	const useClaudeCodePreset = useSignal(true);
-	const settingSources = useSignal<SettingSource[]>(['user', 'project', 'local']);
-	// List of disabled MCP server names (unchecked servers)
-	// This is the inverse of the old enabledMcpPatterns approach
+	// Collapsible group state (open by default)
+	const appMcpGroupOpen = useSignal(true);
+	const fileMcpGroupOpen = useSignal(true);
+	const neoKaiGroupOpen = useSignal(true);
+	const advancedOpen = useSignal(false);
+
+	// Per-skill loading state for immediate toggles
+	const skillToggling = useSignal<Set<string>>(new Set());
+
+	// Session-local config state
 	const disabledMcpServers = useSignal<string[]>([]);
 	const memoryEnabled = useSignal(false);
+
+	// Advanced settings (hidden by default)
+	const useClaudeCodePreset = useSignal(true);
+	const settingSources = useSignal<SettingSource[]>(['user', 'project', 'local']);
 
 	// Load current config and MCP servers when modal opens
 	useEffect(() => {
 		if (isOpen && session) {
 			loadConfig();
 			loadGlobalConfig();
+			void skillsStore.subscribe().catch(() => {
+				toast.error('Failed to load App MCP Servers');
+			});
 		}
+		return () => {
+			skillsStore.unsubscribe();
+		};
 	}, [isOpen, session?.id]);
 
 	// Reload MCP servers when setting sources change
@@ -94,21 +174,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 	const loadConfig = () => {
 		if (!session) return;
-
 		const tools = session.config.tools;
-		// Handle both old and new config format for backward compatibility
 		useClaudeCodePreset.value = tools?.useClaudeCodePreset ?? true;
-		// New settingSources field or fall back to legacy loadSettingSources behavior
-		if (tools?.settingSources) {
-			settingSources.value = tools.settingSources;
-		} else if (tools?.loadSettingSources !== false) {
-			// Legacy: if loadSettingSources was true or undefined, enable all sources
-			settingSources.value = ['user', 'project', 'local'];
-		} else {
-			// Legacy: loadSettingSources was explicitly false
-			settingSources.value = [];
-		}
-		// Load disabled MCP servers (new approach)
+		settingSources.value = resolveSettingSources(tools) as SettingSource[];
 		disabledMcpServers.value = tools?.disabledMcpServers ?? [];
 		memoryEnabled.value = tools?.kaiTools?.memory ?? false;
 		hasChanges.value = false;
@@ -116,7 +184,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 	const loadMcpServers = async () => {
 		if (!session) return;
-
 		try {
 			mcpLoading.value = true;
 			const response = await listMcpServersFromSources(session.id);
@@ -134,36 +201,89 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			const response = await hub.request<{ config: GlobalToolsConfig }>('globalTools.getConfig');
 			globalConfig.value = response.config;
 		} catch {
-			// Error loading global config - will use defaults
+			// Error loading global config
 		}
 	};
 
-	// Check if tools are allowed based on global config
+	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
+	const isMemoryAllowed = useComputed(() => globalConfig.value?.kaiTools?.memory?.allowed ?? true);
 	const isClaudeCodePresetAllowed = useComputed(
 		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
 	);
-	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
-	const isMemoryAllowed = useComputed(() => globalConfig.value?.kaiTools?.memory?.allowed ?? true);
 
-	// Check if a server is enabled (not in disabled list)
-	const isServerEnabled = (serverName: string): boolean => {
-		return !disabledMcpServers.value.includes(serverName);
-	};
+	// App-level MCP skills
+	const appMcpSkills = useComputed(() =>
+		skillsStore.skills.value.filter((s) => s.sourceType === 'mcp_server')
+	);
 
-	// Toggle server enabled/disabled state
-	const toggleServer = (serverName: string) => {
-		if (disabledMcpServers.value.includes(serverName)) {
-			// Currently disabled → enable (remove from disabled list)
-			disabledMcpServers.value = disabledMcpServers.value.filter((s) => s !== serverName);
-		} else {
-			// Currently enabled → disable (add to disabled list)
-			disabledMcpServers.value = [...disabledMcpServers.value, serverName];
-		}
+	// File-based MCP server helpers
+	const handleToggleServer = (serverName: string) => {
+		disabledMcpServers.value = toggleServerUtil(disabledMcpServers.value, serverName);
 		hasChanges.value = true;
 	};
 
-	const toggleClaudeCodePreset = () => {
-		useClaudeCodePreset.value = !useClaudeCodePreset.value;
+	// App-level skill toggle (immediate, global)
+	const toggleSkill = async (skill: AppSkill) => {
+		const toggling = new Set(skillToggling.value);
+		toggling.add(skill.id);
+		skillToggling.value = toggling;
+		try {
+			await skillsStore.setEnabled(skill.id, !skill.enabled);
+		} catch {
+			toast.error(`Failed to toggle ${skill.displayName}`);
+		} finally {
+			const done = new Set(skillToggling.value);
+			done.delete(skill.id);
+			skillToggling.value = done;
+		}
+	};
+
+	// Group toggle for app-level skills
+	const toggleAppMcpGroup = async () => {
+		const skills = appMcpSkills.value;
+		if (skills.length === 0) return;
+		const allOn = skills.every((s) => s.enabled);
+		const newEnabled = !allOn;
+		const toToggle = skills.filter((s) => s.enabled !== newEnabled);
+
+		// Mark all as toggling
+		skillToggling.value = new Set([...skillToggling.value, ...toToggle.map((s) => s.id)]);
+
+		await Promise.allSettled(
+			toToggle.map((skill) =>
+				skillsStore.setEnabled(skill.id, newEnabled).catch(() => {
+					toast.error(`Failed to toggle ${skill.displayName}`);
+				})
+			)
+		);
+
+		// Clear toggling state for all
+		const done = new Set(skillToggling.value);
+		for (const skill of toToggle) done.delete(skill.id);
+		skillToggling.value = done;
+	};
+
+	// Group toggle for file-based servers by source
+	const toggleFileMcpGroup = (source: SettingSource) => {
+		const servers = mcpServersData.value?.servers[source] ?? [];
+		disabledMcpServers.value = toggleGroupServers(
+			disabledMcpServers.value,
+			servers.map((s) => s.name)
+		);
+		hasChanges.value = true;
+	};
+
+	// Group toggle for all file-based servers across all sources
+	const toggleAllFileMcp = () => {
+		const allServerNames = (['user', 'project', 'local'] as SettingSource[])
+			.filter((src) => settingSources.value.includes(src))
+			.flatMap((src) => (mcpServersData.value?.servers[src] ?? []).map((s) => s.name));
+		disabledMcpServers.value = toggleGroupServers(disabledMcpServers.value, allServerNames);
+		hasChanges.value = true;
+	};
+
+	const toggleMemory = () => {
+		memoryEnabled.value = !memoryEnabled.value;
 		hasChanges.value = true;
 	};
 
@@ -173,7 +293,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 				settingSources.value = [...settingSources.value, source];
 			}
 		} else {
-			// Ensure at least one source is enabled
 			const newSources = settingSources.value.filter((s) => s !== source);
 			if (newSources.length === 0) {
 				toast.error('At least one setting source must be enabled');
@@ -184,36 +303,21 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		hasChanges.value = true;
 	};
 
-	const toggleMemory = () => {
-		memoryEnabled.value = !memoryEnabled.value;
-		hasChanges.value = true;
-	};
-
 	const handleSave = async () => {
 		if (!session || !hasChanges.value) return;
-
 		try {
 			saving.value = true;
-
-			// Build tools config with the new file-based approach
-			// disabledMcpServers is written to .claude/settings.local.json
-			// SDK reads this file and applies server filtering automatically
 			const toolsConfig: ToolsConfig = {
 				useClaudeCodePreset: useClaudeCodePreset.value,
 				settingSources: settingSources.value,
-				// List of unchecked servers → written to settings.local.json as disabledMcpjsonServers
 				disabledMcpServers: disabledMcpServers.value,
-				kaiTools: {
-					memory: memoryEnabled.value,
-				},
+				kaiTools: { memory: memoryEnabled.value },
 			};
-
 			const hub = await connectionManager.getHub();
 			const result = await hub.request<{ success: boolean; error?: string }>('tools.save', {
 				sessionId: session.id,
 				tools: toolsConfig,
 			});
-
 			if (result.success) {
 				hasChanges.value = false;
 				toast.success('Tools configuration saved');
@@ -229,110 +333,125 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	};
 
 	const handleCancel = () => {
-		loadConfig(); // Reset to original values
+		loadConfig();
 		onClose();
 	};
 
 	if (!session) return null;
 
+	// Compute file-based server counts
+	const enabledSources = (['user', 'project', 'local'] as SettingSource[]).filter((src) =>
+		settingSources.value.includes(src)
+	);
+	const allFileMcpServers = enabledSources.flatMap(
+		(src) => mcpServersData.value?.servers[src] ?? []
+	);
+	const allFileMcpServerNames = allFileMcpServers.map((s) => s.name);
+	const { allEnabled: fileMcpAllOn, someEnabled: fileMcpSomeOn } = computeGroupState(
+		disabledMcpServers.value,
+		allFileMcpServerNames
+	);
+
+	// App MCP counts
+	const appSkills = appMcpSkills.value;
+	const { allEnabled: appAllOn, someEnabled: appSomeOn } = computeSkillGroupState(appSkills);
+	const anySkillToggling = appSkills.some((s) => skillToggling.value.has(s.id));
+
 	return (
 		<Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
-			<div class="space-y-5">
-				{/* System Prompt Section */}
+			<div class="space-y-4">
+				{/* App MCP Servers Section */}
 				<div>
-					<h3 class="text-sm font-medium text-gray-300 mb-2">System Prompt</h3>
-					<p class="text-xs text-gray-500 mb-3">Configure the system prompt preset.</p>
-					<div class="space-y-2">
-						{/* Claude Code Preset Toggle */}
-						<label
-							class={`flex items-center justify-between p-3 rounded-lg bg-dark-800/50 transition-colors ${
-								isClaudeCodePresetAllowed.value
-									? 'hover:bg-dark-800 cursor-pointer'
-									: 'opacity-50 cursor-not-allowed'
-							}`}
-						>
-							<div class="flex items-center gap-3">
-								<svg
-									class="w-5 h-5 text-blue-400"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-									/>
-								</svg>
-								<div>
-									<div class="text-sm text-gray-200">Claude Code Preset</div>
-									<div class="text-xs text-gray-500">
-										Use official Claude Code system prompt with tools
-									</div>
-								</div>
-							</div>
-							<input
-								type="checkbox"
-								checked={useClaudeCodePreset.value}
-								onChange={toggleClaudeCodePreset}
-								disabled={!isClaudeCodePresetAllowed.value}
-								class="w-5 h-5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+					{appSkills.length > 0 ? (
+						<>
+							<GroupHeader
+								title="App MCP Servers"
+								isOpen={appMcpGroupOpen.value}
+								onToggleOpen={() => {
+									appMcpGroupOpen.value = !appMcpGroupOpen.value;
+								}}
+								allEnabled={appAllOn}
+								someEnabled={appSomeOn}
+								onToggleAll={toggleAppMcpGroup}
+								scope="global"
+								itemCount={appSkills.length}
+								disabled={anySkillToggling}
 							/>
-						</label>
-					</div>
+							{appMcpGroupOpen.value && (
+								<div class="space-y-1 mt-1 ml-5">
+									{appSkills.map((skill) => {
+										const isToggling = skillToggling.value.has(skill.id);
+										return (
+											<label
+												key={skill.id}
+												class={`flex items-center justify-between p-2 rounded-lg bg-dark-800/50 transition-colors ${
+													isToggling ? 'opacity-60' : 'hover:bg-dark-800 cursor-pointer'
+												}`}
+											>
+												<div class="flex items-center gap-2 flex-1 min-w-0">
+													<svg
+														class="w-4 h-4 text-amber-400 flex-shrink-0"
+														fill="none"
+														viewBox="0 0 24 24"
+														stroke="currentColor"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															stroke-width={2}
+															d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
+														/>
+													</svg>
+													<div class="flex-1 min-w-0">
+														<div class="text-sm text-gray-200 truncate">{skill.displayName}</div>
+														{skill.description && (
+															<div class="text-xs text-gray-500 truncate">{skill.description}</div>
+														)}
+													</div>
+												</div>
+												<div class="flex items-center gap-2 flex-shrink-0">
+													{isToggling && (
+														<div class="w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+													)}
+													<input
+														type="checkbox"
+														checked={skill.enabled}
+														onChange={() => void toggleSkill(skill)}
+														disabled={isToggling}
+														class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+													/>
+												</div>
+											</label>
+										);
+									})}
+								</div>
+							)}
+						</>
+					) : (
+						<div class="flex items-center gap-2 py-1">
+							<svg
+								class="w-3.5 h-3.5 text-gray-600"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M9 5l7 7-7 7"
+								/>
+							</svg>
+							<span class="text-sm font-medium text-gray-500">App MCP Servers</span>
+							<span class="text-xs text-gray-700">(none configured)</span>
+						</div>
+					)}
 				</div>
 
-				{/* Divider */}
 				<div class={`border-t ${borderColors.ui.secondary}`} />
 
-				{/* Setting Sources Section */}
+				{/* File-based MCP Servers Section */}
 				<div>
-					<h3 class="text-sm font-medium text-gray-300 mb-2">Setting Sources</h3>
-					<p class="text-xs text-gray-500 mb-3">
-						Choose which configuration sources to load for this session.
-					</p>
-					<div class="space-y-2">
-						{SETTING_SOURCE_OPTIONS.map((option) => {
-							const isEnabled = settingSources.value.includes(option.value);
-							return (
-								<label
-									key={option.value}
-									class={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-										isEnabled
-											? `${borderColors.ui.secondary} bg-dark-800`
-											: 'border-dark-700 bg-dark-900 opacity-60'
-									}`}
-								>
-									<input
-										type="checkbox"
-										checked={isEnabled}
-										onChange={(e) =>
-											toggleSettingSource(option.value, (e.target as HTMLInputElement).checked)
-										}
-										class="mt-0.5 w-4 h-4 rounded border-gray-600 bg-dark-900 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
-									/>
-									<div class="flex-1">
-										<div class="text-sm text-gray-200 font-medium">{option.label}</div>
-										<div class="text-xs text-gray-500">{option.description}</div>
-									</div>
-								</label>
-							);
-						})}
-					</div>
-				</div>
-
-				{/* Divider */}
-				<div class={`border-t ${borderColors.ui.secondary}`} />
-
-				{/* MCP Servers Section - Dynamic from setting sources */}
-				<div>
-					<h3 class="text-sm font-medium text-gray-300 mb-2">MCP Servers</h3>
-					<p class="text-xs text-gray-500 mb-3">
-						MCP servers from enabled setting sources. Enable servers you want to use in this
-						session.
-					</p>
-
 					{!isMcpAllowed.value ? (
 						<div class="text-sm text-gray-500 py-2 italic">
 							MCP servers are disabled in global settings.
@@ -342,203 +461,257 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 							<div class="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
 							Loading servers...
 						</div>
-					) : mcpServersData.value ? (
-						<div class="space-y-3">
-							{/* Group servers by source */}
-							{(['user', 'project', 'local'] as SettingSource[])
-								.filter((source) => settingSources.value.includes(source))
-								.map((source) => {
-									const serversForSource = mcpServersData.value?.servers[source] || [];
-									if (serversForSource.length === 0) return null;
-
-									return (
-										<div key={source} class="space-y-2">
-											<div class="text-xs font-medium text-gray-400 uppercase tracking-wider">
-												{SOURCE_LABELS[source]}
-											</div>
-											<div class="space-y-1">
-												{serversForSource.map((server: McpServerFromSource) => (
-													<label
-														key={`${source}-${server.name}`}
-														class="flex items-center justify-between p-2 rounded-lg bg-dark-800/50 hover:bg-dark-800 transition-colors cursor-pointer"
-													>
-														<div class="flex items-center gap-2 flex-1 min-w-0">
-															<svg
-																class="w-4 h-4 text-purple-400 flex-shrink-0"
-																fill="none"
-																viewBox="0 0 24 24"
-																stroke="currentColor"
-															>
-																<path
-																	stroke-linecap="round"
-																	stroke-linejoin="round"
-																	stroke-width={2}
-																	d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
-																/>
-															</svg>
-															<div class="flex-1 min-w-0">
-																<div class="text-sm text-gray-200 truncate">{server.name}</div>
-																{server.command && (
-																	<div class="text-xs text-gray-500 truncate">{server.command}</div>
-																)}
-															</div>
-														</div>
-														<input
-															type="checkbox"
-															checked={isServerEnabled(server.name)}
-															onChange={() => toggleServer(server.name)}
-															class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-														/>
-													</label>
-												))}
-											</div>
+					) : (
+						<>
+							<GroupHeader
+								title="Project MCP Servers"
+								isOpen={fileMcpGroupOpen.value}
+								onToggleOpen={() => {
+									fileMcpGroupOpen.value = !fileMcpGroupOpen.value;
+								}}
+								allEnabled={fileMcpAllOn}
+								someEnabled={fileMcpSomeOn}
+								onToggleAll={toggleAllFileMcp}
+								scope="session"
+								itemCount={allFileMcpServers.length}
+							/>
+							{fileMcpGroupOpen.value && (
+								<div class="mt-1 ml-5">
+									{allFileMcpServers.length === 0 ? (
+										<div class="text-xs text-gray-600 py-2">
+											No MCP servers found in enabled setting sources.
 										</div>
-									);
-								})}
-
-							{/* No servers message */}
-							{(['user', 'project', 'local'] as SettingSource[])
-								.filter((source) => settingSources.value.includes(source))
-								.every((source) => (mcpServersData.value?.servers[source] || []).length === 0) && (
-								<div class="text-xs text-gray-500 py-2 text-center">
-									No MCP servers found in enabled setting sources.
+									) : (
+										<div class="space-y-3">
+											{enabledSources.map((source) => {
+												const servers = mcpServersData.value?.servers[source] ?? [];
+												if (servers.length === 0) return null;
+												const { allEnabled: srcAllOn, someEnabled: srcSomeOn } = computeGroupState(
+													disabledMcpServers.value,
+													servers.map((s) => s.name)
+												);
+												return (
+													<div key={source}>
+														<div class="flex items-center justify-between mb-1">
+															<span class="text-xs font-medium text-gray-500 uppercase tracking-wider">
+																{SOURCE_LABELS[source]}
+															</span>
+															<label class="flex items-center gap-1.5 cursor-pointer text-xs text-gray-500">
+																<input
+																	type="checkbox"
+																	checked={srcAllOn}
+																	ref={(el) => {
+																		if (el) el.indeterminate = srcSomeOn && !srcAllOn;
+																	}}
+																	onChange={() => toggleFileMcpGroup(source)}
+																	class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500"
+																/>
+															</label>
+														</div>
+														<div class="space-y-1">
+															{servers.map((server: McpServerFromSource) => (
+																<label
+																	key={`${source}-${server.name}`}
+																	class="flex items-center justify-between p-2 rounded-lg bg-dark-800/50 hover:bg-dark-800 transition-colors cursor-pointer"
+																>
+																	<div class="flex items-center gap-2 flex-1 min-w-0">
+																		<svg
+																			class="w-4 h-4 text-purple-400 flex-shrink-0"
+																			fill="none"
+																			viewBox="0 0 24 24"
+																			stroke="currentColor"
+																		>
+																			<path
+																				stroke-linecap="round"
+																				stroke-linejoin="round"
+																				stroke-width={2}
+																				d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
+																			/>
+																		</svg>
+																		<div class="flex-1 min-w-0">
+																			<div class="text-sm text-gray-200 truncate">
+																				{server.name}
+																			</div>
+																			{server.command && (
+																				<div class="text-xs text-gray-500 truncate">
+																					{server.command}
+																				</div>
+																			)}
+																		</div>
+																	</div>
+																	<input
+																		type="checkbox"
+																		checked={isServerEnabled(disabledMcpServers.value, server.name)}
+																		onChange={() => handleToggleServer(server.name)}
+																		class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+																	/>
+																</label>
+															))}
+														</div>
+													</div>
+												);
+											})}
+										</div>
+									)}
 								</div>
 							)}
-						</div>
-					) : (
-						<div class="text-xs text-gray-500 py-2">Failed to load MCP servers.</div>
+						</>
 					)}
 				</div>
 
-				{/* Divider */}
 				<div class={`border-t ${borderColors.ui.secondary}`} />
 
 				{/* NeoKai Tools Section */}
 				<div>
-					<h3 class="text-sm font-medium text-gray-300 mb-2">NeoKai Tools</h3>
-					<p class="text-xs text-gray-500 mb-3">Enhanced tools provided by NeoKai.</p>
-					<div class="space-y-2">
-						{/* Memory Tool */}
-						<label
-							class={`flex items-center justify-between p-3 rounded-lg bg-dark-800/50 transition-colors ${
-								isMemoryAllowed.value
-									? 'hover:bg-dark-800 cursor-pointer'
-									: 'opacity-50 cursor-not-allowed'
-							}`}
-						>
-							<div class="flex items-center gap-3">
-								<svg
-									class="w-5 h-5 text-purple-400"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-									/>
-								</svg>
-								<div>
-									<div class="text-sm text-gray-200">Memory</div>
-									<div class="text-xs text-gray-500">
-										Persistent key-value storage across sessions
+					<GroupHeader
+						title="NeoKai Tools"
+						isOpen={neoKaiGroupOpen.value}
+						onToggleOpen={() => {
+							neoKaiGroupOpen.value = !neoKaiGroupOpen.value;
+						}}
+						allEnabled={memoryEnabled.value}
+						someEnabled={memoryEnabled.value}
+						onToggleAll={() => {
+							if (isMemoryAllowed.value) toggleMemory();
+						}}
+						scope="session"
+						itemCount={1}
+						disabled={!isMemoryAllowed.value}
+					/>
+					{neoKaiGroupOpen.value && (
+						<div class="mt-1 ml-5 space-y-1">
+							<label
+								class={`flex items-center justify-between p-2 rounded-lg bg-dark-800/50 transition-colors ${
+									isMemoryAllowed.value
+										? 'hover:bg-dark-800 cursor-pointer'
+										: 'opacity-50 cursor-not-allowed'
+								}`}
+							>
+								<div class="flex items-center gap-2 flex-1 min-w-0">
+									<svg
+										class="w-4 h-4 text-purple-400 flex-shrink-0"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+										/>
+									</svg>
+									<div class="flex-1 min-w-0">
+										<div class="text-sm text-gray-200">Memory</div>
+										<div class="text-xs text-gray-500">
+											Persistent key-value storage across sessions
+										</div>
 									</div>
 								</div>
-							</div>
-							<input
-								type="checkbox"
-								checked={memoryEnabled.value}
-								onChange={toggleMemory}
-								disabled={!isMemoryAllowed.value}
-								class="w-5 h-5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-							/>
-						</label>
-					</div>
+								<input
+									type="checkbox"
+									checked={memoryEnabled.value}
+									onChange={toggleMemory}
+									disabled={!isMemoryAllowed.value}
+									class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+								/>
+							</label>
+						</div>
+					)}
 				</div>
 
-				{/* Divider */}
 				<div class={`border-t ${borderColors.ui.secondary}`} />
 
-				{/* SDK Built-in Tools Info (read-only) */}
+				{/* Advanced Section (collapsed by default) */}
 				<div>
-					<h3 class="text-sm font-medium text-gray-300 mb-2">SDK Built-in</h3>
-					<p class="text-xs text-gray-500 mb-3">Always available tools from Claude Agent SDK.</p>
+					<button
+						type="button"
+						class="flex items-center gap-2 w-full text-left py-1 hover:text-gray-300 transition-colors"
+						onClick={() => {
+							advancedOpen.value = !advancedOpen.value;
+						}}
+						aria-expanded={advancedOpen.value}
+					>
+						<svg
+							class={`w-3.5 h-3.5 text-gray-600 transition-transform ${advancedOpen.value ? 'rotate-90' : ''}`}
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M9 5l7 7-7 7"
+							/>
+						</svg>
+						<span class="text-sm font-medium text-gray-500">Advanced</span>
+					</button>
 
-					<div class="space-y-1.5 opacity-70">
-						<div class="flex items-center gap-3 p-2 rounded-lg bg-dark-700/30">
-							<svg
-								class="w-4 h-4 text-gray-500"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-								/>
-							</svg>
-							<span class="text-xs text-gray-400">
-								Read, Write, Edit, Glob, Grep, Bash, Notebook...
-							</span>
+					{advancedOpen.value && (
+						<div class="mt-3 space-y-4 ml-5">
+							{/* Claude Code Preset */}
+							<div>
+								<h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+									System Prompt
+								</h4>
+								<label
+									class={`flex items-center justify-between p-2 rounded-lg bg-dark-800/50 transition-colors ${isClaudeCodePresetAllowed.value ? 'hover:bg-dark-800 cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+								>
+									<div>
+										<div class="text-sm text-gray-200">Claude Code Preset</div>
+										<div class="text-xs text-gray-500">Use official Claude Code system prompt</div>
+									</div>
+									<input
+										type="checkbox"
+										checked={useClaudeCodePreset.value}
+										onChange={() => {
+											useClaudeCodePreset.value = !useClaudeCodePreset.value;
+											hasChanges.value = true;
+										}}
+										disabled={!isClaudeCodePresetAllowed.value}
+										class="w-4 h-4 rounded border-gray-600 text-blue-500"
+									/>
+								</label>
+							</div>
+
+							{/* Setting Sources */}
+							<div>
+								<h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+									Setting Sources
+								</h4>
+								<div class="space-y-1.5">
+									{(['user', 'project', 'local'] as SettingSource[]).map((source) => {
+										const isEnabled = settingSources.value.includes(source);
+										return (
+											<label
+												key={source}
+												class="flex items-center gap-3 p-2 rounded-lg bg-dark-800/50 hover:bg-dark-800 cursor-pointer"
+											>
+												<input
+													type="checkbox"
+													checked={isEnabled}
+													onChange={(e) =>
+														toggleSettingSource(source, (e.target as HTMLInputElement).checked)
+													}
+													class="w-4 h-4 rounded border-gray-600 bg-dark-900 text-blue-500"
+												/>
+												<div>
+													<div class="text-sm text-gray-200">
+														{source.charAt(0).toUpperCase() + source.slice(1)}
+													</div>
+													<div class="text-xs text-gray-500">{SOURCE_LABELS[source]}</div>
+												</div>
+											</label>
+										);
+									})}
+								</div>
+							</div>
 						</div>
-						<div class="flex items-center gap-3 p-2 rounded-lg bg-dark-700/30">
-							<svg
-								class="w-4 h-4 text-gray-500"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"
-								/>
-							</svg>
-							<span class="text-xs text-gray-400">WebSearch, WebFetch</span>
-						</div>
-						<div class="flex items-center gap-3 p-2 rounded-lg bg-dark-700/30">
-							<svg
-								class="w-4 h-4 text-gray-500"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
-								/>
-							</svg>
-							<span class="text-xs text-gray-400">
-								Task agents (Explore, Plan, general-purpose)
-							</span>
-						</div>
-						<div class="flex items-center gap-3 p-2 rounded-lg bg-dark-700/30">
-							<svg
-								class="w-4 h-4 text-gray-500"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
-								/>
-							</svg>
-							<span class="text-xs text-gray-400">/help, /context, /clear, /bug...</span>
-						</div>
-					</div>
+					)}
 				</div>
 
-				{/* Footer with Save/Cancel buttons */}
+				{/* Footer */}
 				<div class={`pt-4 border-t ${borderColors.ui.secondary} flex gap-3 justify-end`}>
 					<button
 						type="button"

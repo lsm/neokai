@@ -23,6 +23,8 @@ import {
 	getEnabledMcpServerCount,
 	readSettingsLocalJson,
 	getMcpConfigViaRPC,
+	writeProjectMcpJson,
+	cleanupProjectMcpJson,
 } from '../helpers/mcp-toggle-helpers';
 import {
 	createSessionViaUI,
@@ -294,6 +296,83 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		// Count should be same as initial (changes discarded)
 		const currentEnabledCount = await getEnabledMcpServerCount(page);
 		expect(currentEnabledCount).toBe(initialEnabledCount);
+	});
+});
+
+// Task G7: project-level MCP server disable toggle end-to-end test
+test.describe('MCP Toggle - Project-level server disable (G7)', () => {
+	const TEST_SERVER_NAME = 'test-kai-project-mcp';
+	let sessionId: string | null = null;
+
+	test.beforeEach(async ({ page }) => {
+		// Write a project-level .mcp.json so the server appears in the Tools modal
+		writeProjectMcpJson({
+			[TEST_SERVER_NAME]: { command: 'echo', args: ['hello'] },
+		});
+		cleanupSettingsLocalJson();
+		ensureClaudeDir();
+
+		await page.goto('/');
+		await waitForWebSocketConnected(page);
+		sessionId = await createSessionViaUI(page);
+	});
+
+	test.afterEach(async ({ page }) => {
+		if (sessionId) {
+			try {
+				await cleanupTestSession(page, sessionId);
+			} catch {
+				// best-effort
+			}
+			sessionId = null;
+		}
+		cleanupSettingsLocalJson();
+		cleanupProjectMcpJson();
+	});
+
+	test('disabling a project-level MCP server persists to settings.local.json and is reflected in UI', async ({
+		page,
+	}) => {
+		await openToolsModal(page);
+
+		// The project-level test server must appear in the modal
+		const serverNames = await getMcpServerNames(page);
+		if (!serverNames.includes(TEST_SERVER_NAME)) {
+			console.log(
+				`Skipping test - project server "${TEST_SERVER_NAME}" not found; found: ${serverNames.join(', ')}`
+			);
+			return;
+		}
+
+		// Server starts enabled
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(true);
+
+		// Disable it and save
+		await toggleMcpServer(page, TEST_SERVER_NAME);
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(false);
+		await saveToolsModal(page);
+
+		// Verify settings.local.json records the server as disabled
+		const settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toContain(TEST_SERVER_NAME);
+
+		// Reopen modal — checkbox must still be unchecked (persisted state)
+		await openToolsModal(page);
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(false);
+
+		// Re-enable it and save
+		await toggleMcpServer(page, TEST_SERVER_NAME);
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(true);
+		await saveToolsModal(page);
+
+		// Verify settings.local.json no longer lists the server as disabled
+		const updatedSettings = readSettingsLocalJson();
+		expect(updatedSettings?.disabledMcpjsonServers).not.toContain(TEST_SERVER_NAME);
+
+		// Reopen modal — checkbox must be checked again
+		await openToolsModal(page);
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(true);
+		await closeToolsModal(page);
 	});
 });
 

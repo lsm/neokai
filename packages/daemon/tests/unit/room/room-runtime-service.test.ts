@@ -1,4 +1,5 @@
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
+import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
+import { AgentSession } from '../../../src/lib/agent/agent-session';
 import { Database } from 'bun:sqlite';
 import {
 	RoomRuntimeService,
@@ -624,5 +625,235 @@ describe('SessionFactory.getCurrentModel', () => {
 			currentModel: 'cached-model',
 			provider: 'glm',
 		});
+	});
+});
+
+describe('SessionFactory.restoreSession — worker MCP injection and skills', () => {
+	type FactoryType = ReturnType<
+		typeof import('../../../src/lib/room/runtime/room-runtime-service').RoomRuntimeService.prototype.createSessionFactory
+	>;
+
+	function makeConfig(overrides: {
+		fileMcpServers?: Record<string, unknown>;
+		registryMcpServers?: Record<string, unknown>;
+		skillsManager?: unknown;
+		appMcpServerRepo?: unknown;
+	}): RoomRuntimeServiceConfig {
+		return {
+			db: { getSession: mock(() => null) } as never,
+			messageHub: {} as never,
+			daemonHub: {} as never,
+			getApiKey: async () => null,
+			roomManager: { getRoom: () => null } as never,
+			sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
+			defaultWorkspacePath: '/tmp',
+			defaultModel: 'default',
+			getGlobalSettings: () => ({}) as never,
+			settingsManager: {
+				getEnabledMcpServersConfig: mock(() => overrides.fileMcpServers ?? {}),
+			} as never,
+			appMcpManager: overrides.registryMcpServers
+				? { getEnabledMcpConfigs: mock(() => overrides.registryMcpServers) }
+				: undefined,
+			skillsManager: overrides.skillsManager as never,
+			appMcpServerRepo: overrides.appMcpServerRepo as never,
+			reactiveDb: {} as never,
+		};
+	}
+
+	function makeMockSession() {
+		const setRuntimeMcpServersSpy = mock((_servers: unknown) => {});
+		return {
+			session: {
+				contextAutoQueueEnabled: true,
+				setRuntimeMcpServers: setRuntimeMcpServersSpy,
+			} as unknown as AgentSession,
+			setRuntimeMcpServersSpy,
+		};
+	}
+
+	it('passes skillsManager and appMcpServerRepo to AgentSession.restore()', async () => {
+		const mockSkillsManager = { name: 'skillsManager' };
+		const mockAppMcpServerRepo = { name: 'appMcpServerRepo' };
+		const { session } = makeMockSession();
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
+
+		try {
+			const config = makeConfig({
+				skillsManager: mockSkillsManager,
+				appMcpServerRepo: mockAppMcpServerRepo,
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			await factory.restoreSession('coder:room-1:task-1:abc12345');
+
+			expect(restoreSpy).toHaveBeenCalledTimes(1);
+			const callArgs = restoreSpy.mock.calls[0];
+			expect(callArgs[5]).toBe(mockSkillsManager);
+			expect(callArgs[6]).toBe(mockAppMcpServerRepo);
+		} finally {
+			restoreSpy.mockRestore();
+		}
+	});
+
+	it('applies file + registry MCP merge for a restored coder session', async () => {
+		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
+
+		try {
+			const config = makeConfig({
+				fileMcpServers: { 'file-server': { command: 'npx', args: ['file-mcp'] } },
+				registryMcpServers: { 'registry-server': { command: 'npx', args: ['registry-mcp'] } },
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			await factory.restoreSession('coder:room-1:task-1:abc12345');
+
+			expect(setRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
+			const merged = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
+			expect(merged).toHaveProperty('file-server');
+			expect(merged).toHaveProperty('registry-server');
+		} finally {
+			restoreSpy.mockRestore();
+		}
+	});
+
+	it('applies file + registry MCP merge for a restored general session', async () => {
+		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
+
+		try {
+			const config = makeConfig({
+				fileMcpServers: { 'file-server': { command: 'npx', args: ['file-mcp'] } },
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			await factory.restoreSession('general:room-1:task-1:abc12345');
+
+			expect(setRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
+			const merged = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
+			expect(merged).toHaveProperty('file-server');
+		} finally {
+			restoreSpy.mockRestore();
+		}
+	});
+
+	it('file-based MCP servers take precedence over registry on name collision', async () => {
+		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
+
+		try {
+			const config = makeConfig({
+				fileMcpServers: { 'shared-name': { command: 'file-cmd', args: [] } },
+				registryMcpServers: { 'shared-name': { command: 'registry-cmd', args: [] } },
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			await factory.restoreSession('coder:room-1:task-1:abc12345');
+
+			const merged = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<
+				string,
+				{ command: string }
+			>;
+			expect(merged['shared-name'].command).toBe('file-cmd');
+		} finally {
+			restoreSpy.mockRestore();
+		}
+	});
+
+	it('does NOT apply worker MCP merge for a restored planner session', async () => {
+		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
+
+		try {
+			const config = makeConfig({
+				fileMcpServers: { 'file-server': { command: 'npx', args: ['file-mcp'] } },
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			await factory.restoreSession('planner:room-1:task-1:abc12345');
+
+			expect(setRuntimeMcpServersSpy).not.toHaveBeenCalled();
+		} finally {
+			restoreSpy.mockRestore();
+		}
+	});
+
+	it('does NOT apply worker MCP merge for a restored leader session', async () => {
+		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
+
+		try {
+			const config = makeConfig({
+				fileMcpServers: { 'file-server': { command: 'npx', args: ['file-mcp'] } },
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			await factory.restoreSession('leader:room-1:task-1:abc12345');
+
+			expect(setRuntimeMcpServersSpy).not.toHaveBeenCalled();
+		} finally {
+			restoreSpy.mockRestore();
+		}
+	});
+
+	it('does not call setRuntimeMcpServers when no MCP servers are configured', async () => {
+		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
+
+		try {
+			const config = makeConfig({
+				fileMcpServers: {},
+				registryMcpServers: {},
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			await factory.restoreSession('coder:room-1:task-1:abc12345');
+
+			expect(setRuntimeMcpServersSpy).not.toHaveBeenCalled();
+		} finally {
+			restoreSpy.mockRestore();
+		}
+	});
+
+	it('returns false and does not inject MCPs when AgentSession.restore returns null', async () => {
+		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(null);
+
+		try {
+			const config = makeConfig({
+				fileMcpServers: { 'file-server': { command: 'npx', args: [] } },
+			});
+			const service = new RoomRuntimeService(config);
+			const factory = (
+				service as unknown as { createSessionFactory: () => FactoryType }
+			).createSessionFactory();
+
+			const result = await factory.restoreSession('coder:room-1:task-1:abc12345');
+
+			expect(result).toBe(false);
+		} finally {
+			restoreSpy.mockRestore();
+		}
 	});
 });

@@ -53,6 +53,14 @@ export interface DaemonServerOptions {
 	 * Default: false
 	 */
 	useDevProxy?: boolean;
+
+	/**
+	 * Reuse an existing workspace directory instead of creating a new temp one.
+	 * Used for daemon restart scenarios: pass the workspace path from a previous
+	 * daemon instance to share the same SQLite database across restarts.
+	 * When provided, the workspace is NOT deleted in waitForExit.
+	 */
+	workspacePath?: string;
 }
 
 export interface DaemonServerContext {
@@ -96,6 +104,13 @@ export interface DaemonServerContext {
 	 * Sets ANTHROPIC_BASE_URL to point to Dev Proxy for API mocking.
 	 */
 	devProxy: DevProxyController | null;
+
+	/**
+	 * Workspace directory used by this daemon instance.
+	 * Set for in-process daemons; undefined for spawned-process daemons.
+	 * Exposed so restart helpers can spin up a new daemon on the same workspace/DB.
+	 */
+	workspacePath?: string;
 }
 
 function getDevProxyPort(options?: DevProxyOptions): number {
@@ -473,6 +488,7 @@ async function createInProcessDaemonServer(
 		env: customEnv = {},
 		devProxy: devProxyOptions,
 		useDevProxy = false,
+		workspacePath: externalWorkspacePath,
 	} = options;
 
 	// Start Dev Proxy if requested
@@ -511,9 +527,14 @@ async function createInProcessDaemonServer(
 		process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
 	}
 
-	// Create temp workspace for this test
-	const workspace = `/tmp/daemon-online-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-	await Bun.$`mkdir -p ${workspace}`;
+	// Create temp workspace for this test (or reuse an existing one for restart scenarios)
+	const workspace =
+		externalWorkspacePath ??
+		`/tmp/daemon-online-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	const isExternalWorkspace = !!externalWorkspacePath;
+	if (!isExternalWorkspace) {
+		await Bun.$`mkdir -p ${workspace}`;
+	}
 
 	// Set worktree base dir to keep worktrees under /tmp (avoids ~/.neokai path issues in CI)
 	if (!process.env.TEST_WORKTREE_BASE_DIR) {
@@ -590,6 +611,7 @@ async function createInProcessDaemonServer(
 		baseUrl: `http://127.0.0.1:${actualPort}`,
 		daemonContext, // Expose for advanced usage
 		devProxy,
+		workspacePath: workspace,
 		kill: () => {
 			// For in-process, cleanup happens in waitForExit - just return true
 			return true;
@@ -607,8 +629,10 @@ async function createInProcessDaemonServer(
 				}
 				// Then cleanup daemon (stops server, closes DB, etc.)
 				await daemonContext.cleanup();
-				// Cleanup temp workspace
-				await Bun.$`rm -rf ${workspace}`.quiet();
+				// Cleanup temp workspace (skip if workspace was provided externally)
+				if (!isExternalWorkspace) {
+					await Bun.$`rm -rf ${workspace}`.quiet();
+				}
 			};
 
 			try {
@@ -619,8 +643,10 @@ async function createInProcessDaemonServer(
 					),
 				]);
 			} catch {
-				// Timeout or error - force cleanup workspace anyway
-				await Bun.$`rm -rf ${workspace}`.quiet();
+				// Timeout or error - force cleanup workspace anyway (skip if external)
+				if (!isExternalWorkspace) {
+					await Bun.$`rm -rf ${workspace}`.quiet();
+				}
 			}
 
 			// Stop Dev Proxy and restore environment variables if Dev Proxy was started

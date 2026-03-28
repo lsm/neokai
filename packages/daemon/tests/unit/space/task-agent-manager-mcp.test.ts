@@ -147,6 +147,12 @@ function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
 // Build TaskAgentManager with optional appMcpManager
 // ---------------------------------------------------------------------------
 
+/** Captured args passed to AgentSession.fromInit or AgentSession.restore for inspection */
+interface CapturedSessionArgs {
+	skillsManager: unknown;
+	appMcpServerRepo: unknown;
+}
+
 function buildManager(opts: {
 	registryMcpServers?: Record<string, McpServerConfig>;
 	hasAppMcpManager?: boolean;
@@ -154,11 +160,14 @@ function buildManager(opts: {
 	manager: TaskAgentManager;
 	createdSessions: Map<string, MockAgentSession>;
 	fromInitSpy: ReturnType<typeof spyOn<typeof AgentSession, 'fromInit'>>;
+	capturedFromInitArgs: Map<string, CapturedSessionArgs>;
 	bunDb: BunDatabase;
 	dir: string;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
 	space: Space;
+	mockSkillsManager: object;
+	mockAppMcpServerRepo: object;
 	/** Seed a session in the mock DB (used to simulate sessions that existed before restart). */
 	seedSession: (id: string, type: string) => void;
 } {
@@ -201,6 +210,8 @@ function buildManager(opts: {
 		getDatabase: () => bunDb,
 	};
 
+	const capturedFromInitArgs = new Map<string, CapturedSessionArgs>();
+
 	const fromInitSpy = spyOn(AgentSession, 'fromInit').mockImplementation(
 		(
 			init: unknown,
@@ -208,11 +219,17 @@ function buildManager(opts: {
 			_hub: unknown,
 			_dHub: unknown,
 			_key: unknown,
-			_model: unknown
+			_model: unknown,
+			skillsMgr: unknown,
+			appMcpRepo: unknown
 		) => {
 			const { sessionId } = init as { sessionId: string };
 			const mockSession = makeMockSession(sessionId);
 			createdSessions.set(sessionId, mockSession);
+			capturedFromInitArgs.set(sessionId, {
+				skillsManager: skillsMgr,
+				appMcpServerRepo: appMcpRepo,
+			});
 			mockDb.createSession({ id: sessionId, type: 'space_task_agent' });
 			return mockSession as unknown as AgentSession;
 		}
@@ -221,6 +238,14 @@ function buildManager(opts: {
 	const appMcpManager = hasAppMcpManager
 		? { getEnabledMcpConfigs: () => registryMcpServers }
 		: undefined;
+
+	const mockSkillsManager = {
+		getEnabledSkills: async () => [],
+	} as unknown as import('../../../src/lib/skills-manager.ts').SkillsManager;
+	const mockAppMcpServerRepo = {
+		list: () => [],
+		listEnabled: () => [],
+	} as unknown as import('../../../src/storage/repositories/app-mcp-server-repository.ts').AppMcpServerRepository;
 
 	const manager = new TaskAgentManager({
 		db: mockDb as unknown as import('../../../src/storage/database.ts').Database,
@@ -242,17 +267,22 @@ function buildManager(opts: {
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
 		appMcpManager: appMcpManager as never,
+		skillsManager: mockSkillsManager,
+		appMcpServerRepo: mockAppMcpServerRepo,
 	});
 
 	return {
 		manager,
 		createdSessions,
+		capturedFromInitArgs,
 		fromInitSpy,
 		bunDb,
 		dir,
 		taskRepo,
 		taskManager,
 		space,
+		mockSkillsManager,
+		mockAppMcpServerRepo,
 		seedSession: (id: string, type: string) => {
 			mockDb.createSession({ id, type });
 		},
@@ -735,5 +765,322 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		expect(capturedConfig!['taskId']).toBe('my-task-id');
 		// Regression test for P0: workflowNodeId must come from the step task, not the parent task
 		expect(capturedConfig!['workflowNodeId']).toBe('node-p0-regression');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Skills injection tests (G1 + G2 + G3)
+// ---------------------------------------------------------------------------
+
+describe('TaskAgentManager — skills injection into fresh task agent sessions (G1)', () => {
+	const spies: Array<{ mockRestore: () => void }> = [];
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) spy.mockRestore();
+		for (const dir of dirs.splice(0)) {
+			try {
+				rmSync(dir, { recursive: true });
+			} catch {
+				// best-effort
+			}
+		}
+	});
+
+	test('AgentSession.fromInit receives skillsManager when spawning task agent', async () => {
+		const {
+			manager,
+			fromInitSpy,
+			capturedFromInitArgs,
+			dir,
+			taskManager,
+			space,
+			mockSkillsManager,
+		} = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const task = await taskManager.createTask({
+			title: 'Skills injection task',
+			description: 'desc',
+			taskType: 'coding',
+			status: 'pending',
+		});
+
+		await manager.spawnTaskAgent(task, space, null, null);
+
+		// There should be exactly one captured session (the task agent session)
+		expect(capturedFromInitArgs.size).toBeGreaterThan(0);
+		const [, args] = [...capturedFromInitArgs.entries()][0]!;
+		expect(args.skillsManager).toBe(mockSkillsManager);
+	});
+
+	test('AgentSession.fromInit receives appMcpServerRepo when spawning task agent', async () => {
+		const {
+			manager,
+			fromInitSpy,
+			capturedFromInitArgs,
+			dir,
+			taskManager,
+			space,
+			mockAppMcpServerRepo,
+		} = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const task = await taskManager.createTask({
+			title: 'AppMcpServerRepo injection task',
+			description: 'desc',
+			taskType: 'coding',
+			status: 'pending',
+		});
+
+		await manager.spawnTaskAgent(task, space, null, null);
+
+		expect(capturedFromInitArgs.size).toBeGreaterThan(0);
+		const [, args] = [...capturedFromInitArgs.entries()][0]!;
+		expect(args.appMcpServerRepo).toBe(mockAppMcpServerRepo);
+	});
+});
+
+describe('TaskAgentManager — skills injection into sub-sessions (G2)', () => {
+	const spies: Array<{ mockRestore: () => void }> = [];
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) spy.mockRestore();
+		for (const dir of dirs.splice(0)) {
+			try {
+				rmSync(dir, { recursive: true });
+			} catch {
+				// best-effort
+			}
+		}
+	});
+
+	test('AgentSession.fromInit receives skillsManager when creating sub-session', async () => {
+		const { manager, fromInitSpy, capturedFromInitArgs, dir, mockSkillsManager } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		// Create sub-session directly via public createSubSession()
+		const subSessionId = 'sub-session-skills-test';
+		const init = {
+			sessionId: subSessionId,
+			sessionType: 'space_task_agent' as const,
+			title: 'Sub-session skills test',
+			workspacePath: '/tmp',
+		};
+		await manager.createSubSession('task-1', subSessionId, init as never);
+
+		const args = capturedFromInitArgs.get(subSessionId);
+		expect(args).toBeDefined();
+		expect(args!.skillsManager).toBe(mockSkillsManager);
+	});
+
+	test('AgentSession.fromInit receives appMcpServerRepo when creating sub-session', async () => {
+		const { manager, fromInitSpy, capturedFromInitArgs, dir, mockAppMcpServerRepo } = buildManager(
+			{}
+		);
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const subSessionId = 'sub-session-appmcp-test';
+		const init = {
+			sessionId: subSessionId,
+			sessionType: 'space_task_agent' as const,
+			title: 'Sub-session appMcpServerRepo test',
+			workspacePath: '/tmp',
+		};
+		await manager.createSubSession('task-2', subSessionId, init as never);
+
+		const args = capturedFromInitArgs.get(subSessionId);
+		expect(args).toBeDefined();
+		expect(args!.appMcpServerRepo).toBe(mockAppMcpServerRepo);
+	});
+
+	test('sub-session receives registry MCPs via setRuntimeMcpServers()', async () => {
+		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
+		const { manager, fromInitSpy, createdSessions, dir } = buildManager({
+			registryMcpServers: { 'registry-mcp': registryServer },
+		});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const subSessionId = 'sub-session-registry-mcp-test';
+		const init = {
+			sessionId: subSessionId,
+			sessionType: 'space_task_agent' as const,
+			title: 'Sub-session registry MCP test',
+			workspacePath: '/tmp',
+		};
+		await manager.createSubSession('task-3', subSessionId, init as never);
+
+		const subSession = createdSessions.get(subSessionId);
+		expect(subSession).toBeDefined();
+		// Sub-session should have the registry MCP server injected
+		expect(subSession!._mcpServers['registry-mcp']).toBeDefined();
+	});
+
+	test('sub-session receives no registry MCPs when appMcpManager is absent', async () => {
+		const { manager, fromInitSpy, createdSessions, dir } = buildManager({
+			hasAppMcpManager: false,
+		});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const subSessionId = 'sub-session-no-registry-test';
+		const init = {
+			sessionId: subSessionId,
+			sessionType: 'space_task_agent' as const,
+			title: 'Sub-session no registry test',
+			workspacePath: '/tmp',
+		};
+		await manager.createSubSession('task-4', subSessionId, init as never);
+
+		const subSession = createdSessions.get(subSessionId);
+		expect(subSession).toBeDefined();
+		// No registry MCPs — _mcpServers should be empty (no setRuntimeMcpServers called with entries)
+		expect(Object.keys(subSession!._mcpServers)).toHaveLength(0);
+	});
+});
+
+describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
+	const spies: Array<{ mockRestore: () => void }> = [];
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) spy.mockRestore();
+		for (const dir of dirs.splice(0)) {
+			try {
+				rmSync(dir, { recursive: true });
+			} catch {
+				/* best-effort */
+			}
+		}
+	});
+
+	test('AgentSession.restore receives skillsManager when rehydrating task agent', async () => {
+		const {
+			manager,
+			fromInitSpy,
+			createdSessions,
+			bunDb,
+			dir,
+			taskManager,
+			space,
+			seedSession,
+			mockSkillsManager,
+		} = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const task = await taskManager.createTask({
+			title: 'Rehydration skills task',
+			description: 'desc',
+			taskType: 'coding',
+			status: 'in_progress',
+		});
+		const agentSessionId = `space:${space.id}:task:${task.id}`;
+
+		bunDb
+			.prepare(`UPDATE space_tasks SET task_agent_session_id = ?, updated_at = ? WHERE id = ?`)
+			.run(agentSessionId, Date.now(), task.id);
+
+		seedSession(agentSessionId, 'space_task_agent');
+
+		const capturedRestoreArgs = new Map<
+			string,
+			{ skillsManager: unknown; appMcpServerRepo: unknown }
+		>();
+		const agentSessionModule = await import('../../../src/lib/agent/agent-session.ts');
+		const restoreSpy = spyOn(agentSessionModule.AgentSession, 'restore').mockImplementation(
+			(
+				sessionId: string,
+				_db: unknown,
+				_hub: unknown,
+				_dHub: unknown,
+				_key: unknown,
+				skillsMgr: unknown,
+				appMcpRepo: unknown
+			) => {
+				const mockSession = makeMockSession(sessionId);
+				createdSessions.set(sessionId, mockSession);
+				capturedRestoreArgs.set(sessionId, {
+					skillsManager: skillsMgr,
+					appMcpServerRepo: appMcpRepo,
+				});
+				return mockSession as unknown as AgentSession;
+			}
+		);
+		spies.push(restoreSpy);
+
+		await manager.rehydrate();
+
+		const args = capturedRestoreArgs.get(agentSessionId);
+		expect(args).toBeDefined();
+		expect(args!.skillsManager).toBe(mockSkillsManager);
+	});
+
+	test('AgentSession.restore receives appMcpServerRepo when rehydrating task agent', async () => {
+		const {
+			manager,
+			fromInitSpy,
+			createdSessions,
+			bunDb,
+			dir,
+			taskManager,
+			space,
+			seedSession,
+			mockAppMcpServerRepo,
+		} = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const task = await taskManager.createTask({
+			title: 'Rehydration appMcpServerRepo task',
+			description: 'desc',
+			taskType: 'coding',
+			status: 'in_progress',
+		});
+		const agentSessionId = `space:${space.id}:task:${task.id}`;
+
+		bunDb
+			.prepare(`UPDATE space_tasks SET task_agent_session_id = ?, updated_at = ? WHERE id = ?`)
+			.run(agentSessionId, Date.now(), task.id);
+
+		seedSession(agentSessionId, 'space_task_agent');
+
+		const capturedRestoreArgs = new Map<
+			string,
+			{ skillsManager: unknown; appMcpServerRepo: unknown }
+		>();
+		const agentSessionModule = await import('../../../src/lib/agent/agent-session.ts');
+		const restoreSpy = spyOn(agentSessionModule.AgentSession, 'restore').mockImplementation(
+			(
+				sessionId: string,
+				_db: unknown,
+				_hub: unknown,
+				_dHub: unknown,
+				_key: unknown,
+				skillsMgr: unknown,
+				appMcpRepo: unknown
+			) => {
+				const mockSession = makeMockSession(sessionId);
+				createdSessions.set(sessionId, mockSession);
+				capturedRestoreArgs.set(sessionId, {
+					skillsManager: skillsMgr,
+					appMcpServerRepo: appMcpRepo,
+				});
+				return mockSession as unknown as AgentSession;
+			}
+		);
+		spies.push(restoreSpy);
+
+		await manager.rehydrate();
+
+		const args = capturedRestoreArgs.get(agentSessionId);
+		expect(args).toBeDefined();
+		expect(args!.appMcpServerRepo).toBe(mockAppMcpServerRepo);
 	});
 });

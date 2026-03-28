@@ -73,6 +73,15 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
+	 * Return MCP servers contributed by enabled skills for this session.
+	 * Skips skills that are room-disabled and AppMcpServer entries that are disabled.
+	 * Useful for inspecting effective skill injection without running a full build.
+	 */
+	getSkillMcpServers(): Record<string, McpServerConfig> {
+		return this.getMcpServersFromSkills();
+	}
+
+	/**
 	 * Build complete SDK query options
 	 *
 	 * Maps all SessionConfig (which extends SDKConfig) options to SDK Options
@@ -116,6 +125,17 @@ export class QueryOptionsBuilder {
 		const mcpServersFromSkills = this.getMcpServersFromSkills();
 		const mergedEnv = this.getMergedEnvironmentVars();
 		const sdkCliPath = this.getSDKCliPath();
+
+		// Disabled MCP server names from tools config.
+		// These are filtered from the mcpServers map directly so the exclusion
+		// applies to ALL session types — including room_chat which sets settingSources: []
+		// and therefore never reads disabledMcpjsonServers from settings.local.json.
+		const toolsConfig = config.tools;
+		const disabledMcpServers = toolsConfig?.disabledMcpServers ?? [];
+		const mergedMcpServers = this.filterDisabledMcpServers(
+			this.mergeMcpServers(mcpServers, mcpServersFromSkills),
+			disabledMcpServers
+		);
 
 		// Build final query options
 		// Settings-derived options first, then session-specific overrides
@@ -162,7 +182,8 @@ export class QueryOptionsBuilder {
 			// (e.g. room_chat sessions), the SDK only allows servers present in this
 			// map — user settings are ignored. By merging skill servers here, they
 			// are always available regardless of strictMcpConfig setting.
-			mcpServers: this.mergeMcpServers(mcpServers, mcpServersFromSkills) as Options['mcpServers'],
+			// Disabled servers are already filtered out by filterDisabledMcpServers above.
+			mcpServers: mergedMcpServers as Options['mcpServers'],
 			strictMcpConfig: config.strictMcpConfig,
 
 			// ============ Output Format ============
@@ -762,6 +783,25 @@ CRITICAL RULES:
 	}
 
 	/**
+	 * Filter disabled MCP servers from the merged servers map.
+	 *
+	 * This ensures disabledMcpServers takes effect for ALL session types,
+	 * including room_chat sessions that set settingSources: [] and therefore
+	 * never read disabledMcpjsonServers from .claude/settings.local.json.
+	 */
+	private filterDisabledMcpServers(
+		servers: Record<string, unknown> | undefined,
+		disabledList: string[]
+	): Record<string, unknown> | undefined {
+		if (!servers || disabledList.length === 0) return servers;
+		const filtered = { ...servers };
+		for (const name of disabledList) {
+			delete filtered[name];
+		}
+		return Object.keys(filtered).length > 0 ? filtered : undefined;
+	}
+
+	/**
 	 * Build hooks configuration
 	 */
 	private buildHooks(): Options['hooks'] {
@@ -850,6 +890,8 @@ CRITICAL RULES:
 			const appServer = this.ctx.appMcpServerRepo.get(skill.config.appMcpServerId);
 			// Skip silently if the referenced app_mcp_servers entry was deleted or no longer exists
 			if (!appServer) continue;
+			// Skip if the AppMcpServer itself is disabled, even if the wrapping skill is enabled
+			if (!appServer.enabled) continue;
 
 			servers[skill.name] = this.appMcpServerToSdkConfig(appServer);
 		}

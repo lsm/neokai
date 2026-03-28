@@ -299,6 +299,48 @@ export class RoomRuntimeService {
 		return null;
 	}
 
+	/**
+	 * Merge file-based and registry MCP servers for a worker (coder / general) session.
+	 *
+	 * Precedence (highest to lowest): file-based > registry.
+	 * File-based servers are project-local config (.mcp.json / settings.json) and are
+	 * considered more specific than the global application-level registry. When the same
+	 * server name appears in both sources, the project's local definition wins.
+	 *
+	 * Used by both createSessionFactory() (fresh sessions) and restoreSession() (recovery
+	 * after daemon restart) to avoid duplication.
+	 */
+	private static applyWorkerMcpServers(
+		session: AgentSession,
+		ctx: Pick<RoomRuntimeServiceConfig, 'settingsManager' | 'appMcpManager'>,
+		sessionId: string
+	): void {
+		const fileMcpServers = ctx.settingsManager.getEnabledMcpServersConfig();
+		const registryMcpServers = ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
+
+		// Detect and warn on name collisions (file-based wins)
+		for (const name of Object.keys(fileMcpServers)) {
+			if (Object.prototype.hasOwnProperty.call(registryMcpServers, name)) {
+				log.warn(
+					`Worker session ${sessionId}: MCP server name collision on '${name}' — ` +
+						`file-based config takes precedence over registry entry.`
+				);
+			}
+		}
+
+		// Merge: registry first, then file-based overwrites on collision.
+		// Only call setRuntimeMcpServers when there is at least one server to inject —
+		// an undefined config lets the SDK use its own default discovery, while an
+		// empty map would suppress it entirely with no benefit.
+		const merged: Record<string, McpServerConfig> = {
+			...registryMcpServers,
+			...fileMcpServers,
+		};
+		if (Object.keys(merged).length > 0) {
+			session.setRuntimeMcpServers(merged);
+		}
+	}
+
 	private createSessionFactory(): SessionFactory {
 		const ctx = this.ctx;
 		const agentSessions = this.agentSessions;
@@ -346,37 +388,8 @@ export class RoomRuntimeService {
 				// (one task per session) so a registry change mid-task would not be useful. The
 				// updated map is applied on the next session creation.
 				//
-				// Known limitation after daemon restart: recovered worker sessions re-created by
-				// restoreSession() will NOT have the merged (file + registry) MCP map reapplied —
-				// restoreMcpServersForGroup() only restores role-specific in-process tools
-				// (planner-tools, leader-agent-tools). Workers resumed from a crash will therefore
-				// run without user-configured MCP servers for the remainder of their task. This is
-				// accepted given the short-lived nature of worker sessions.
 				if (role === 'coder' || role === 'general') {
-					const fileMcpServers = ctx.settingsManager.getEnabledMcpServersConfig();
-					const registryMcpServers = ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
-
-					// Detect and warn on name collisions (file-based wins)
-					for (const name of Object.keys(fileMcpServers)) {
-						if (Object.prototype.hasOwnProperty.call(registryMcpServers, name)) {
-							log.warn(
-								`Worker session ${init.sessionId}: MCP server name collision on '${name}' — ` +
-									`file-based config takes precedence over registry entry.`
-							);
-						}
-					}
-
-					// Merge: registry first, then file-based overwrites on collision.
-					// Only call setRuntimeMcpServers when there is at least one server to inject —
-					// an undefined config lets the SDK use its own default discovery, while an
-					// empty map would suppress it entirely with no benefit.
-					const merged: Record<string, McpServerConfig> = {
-						...registryMcpServers,
-						...fileMcpServers,
-					};
-					if (Object.keys(merged).length > 0) {
-						session.setRuntimeMcpServers(merged);
-					}
+					RoomRuntimeService.applyWorkerMcpServers(session, ctx, init.sessionId);
 				}
 
 				// Leader sessions are started lazily: injectMessage() calls ensureQueryStarted()
@@ -472,12 +485,22 @@ export class RoomRuntimeService {
 					ctx.db,
 					ctx.messageHub,
 					ctx.daemonHub,
-					ctx.getApiKey
+					ctx.getApiKey,
+					ctx.skillsManager,
+					ctx.appMcpServerRepo
 				);
 				if (!session) return false;
 
 				agentSessions.set(sessionId, session);
 				ctx.sessionManager.registerSession(session);
+
+				// Re-apply the file + registry MCP merge for recovered worker sessions,
+				// matching the behaviour of freshly created coder/general workers.
+				const role = sessionId.split(':')[0];
+				if (role === 'coder' || role === 'general') {
+					RoomRuntimeService.applyWorkerMcpServers(session, ctx, sessionId);
+				}
+
 				// Don't call startStreamingQuery() here — the SDK query will be
 				// started lazily when injectMessage() is called. Eagerly starting
 				// without a queued message causes a 15s startup timeout because the
@@ -948,11 +971,10 @@ export class RoomRuntimeService {
 						runtime.restoreRecoveredGroupMirroring(group);
 
 						// Restore role-specific in-process MCP servers (planner-tools, leader-agent-tools).
-						// Note: file-based and registry-sourced MCP servers are NOT restored here for
-						// worker sessions (coder/general). This is a known limitation — recovered workers
-						// run without user-configured MCP servers for the remainder of their task.
-						// Workers are short-lived (one task per session) so this is accepted behaviour;
-						// the merged map is applied on the next session creation via createSessionFactory().
+						// Note: file-based and registry-sourced MCP servers for coder/general workers are
+						// restored earlier in the recovery path — inside sessionFactory.restoreSession(),
+						// called by recoverRuntime() above — via the shared applyWorkerMcpServers() helper.
+						// This call only handles role-specific in-process tools that are not covered there.
 						await runtime.restoreMcpServersForGroup(group);
 
 						if (!resumeAgents) {

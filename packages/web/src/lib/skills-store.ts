@@ -50,6 +50,9 @@ class SkillsStore {
 	/** Guard: true once subscribe() has been called and not yet torn down */
 	private subscribed = false;
 
+	/** Reference count — incremented by subscribe(), decremented by unsubscribe() */
+	private refCount = 0;
+
 	/**
 	 * Subscribe to the global Skills registry via LiveQuery.
 	 *
@@ -59,6 +62,7 @@ class SkillsStore {
 	 * Re-throws errors so callers can handle failures (e.g., show a toast).
 	 */
 	async subscribe(): Promise<void> {
+		this.refCount++;
 		if (this.subscribed) return;
 		this.subscribed = true;
 
@@ -134,6 +138,7 @@ class SkillsStore {
 				return;
 			}
 		} catch (err) {
+			this.refCount = Math.max(0, this.refCount - 1);
 			this.subscribed = false;
 			this.teardownCleanly();
 			this.error.value =
@@ -168,6 +173,8 @@ class SkillsStore {
 	 * Safe to call even if subscribe() was never called.
 	 */
 	unsubscribe(): void {
+		this.refCount = Math.max(0, this.refCount - 1);
+		if (this.refCount > 0) return; // still has other subscribers
 		if (!this.subscribed) {
 			// Still reset error signal even if we were never subscribed
 			// (e.g., subscribe() failed and set this.subscribed = false in its catch block)

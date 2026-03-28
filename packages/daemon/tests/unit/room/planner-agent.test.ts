@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
+	buildPlannerExplorerAgentDef,
+	buildPlannerFactCheckerAgentDef,
 	buildPlannerSystemPrompt,
 	buildPlannerTaskMessage,
 	buildPlanWriterAgentDef,
@@ -87,10 +89,78 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('depends_on');
 		});
 
-		it('should instruct to spawn the plan-writer sub-agent in Phase 1', () => {
+		it('should describe 3-stage pipeline in Phase 1', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('3-Stage Pipeline');
+			expect(prompt).toContain('Stage 1');
+			expect(prompt).toContain('Stage 2');
+			expect(prompt).toContain('Stage 3');
+		});
+
+		it('should instruct to spawn planner-explorer in Stage 1', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('planner-explorer');
+			expect(prompt).toContain('Stage 1: Codebase Exploration');
+		});
+
+		it('should instruct to collect ---EXPLORER_FINDINGS--- from planner-explorer', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('---EXPLORER_FINDINGS---');
+		});
+
+		it('should instruct to spawn planner-fact-checker in Stage 2 with explorer findings', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('planner-fact-checker');
+			expect(prompt).toContain('Stage 2: Fact-Checking');
+			// Must pass explorer findings to fact-checker
+			expect(prompt).toContain('## Explorer Findings');
+		});
+
+		it('should instruct to collect ---FACT_CHECK_RESULT--- from planner-fact-checker', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('---FACT_CHECK_RESULT---');
+		});
+
+		it('should instruct to spawn plan-writer in Stage 3 with both findings', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('plan-writer');
-			expect(prompt).toContain('plan-writer');
+			expect(prompt).toContain('Stage 3: Plan Writing');
+			// Must pass both explorer findings and fact-check results to plan-writer
+			expect(prompt).toContain('## Fact-Check Results');
+		});
+
+		it('should have stages in correct order (1 before 2 before 3)', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			const stage1Idx = prompt.indexOf('Stage 1:');
+			const stage2Idx = prompt.indexOf('Stage 2:');
+			const stage3Idx = prompt.indexOf('Stage 3:');
+			expect(stage1Idx).toBeGreaterThanOrEqual(0);
+			expect(stage2Idx).toBeGreaterThanOrEqual(0);
+			expect(stage3Idx).toBeGreaterThanOrEqual(0);
+			expect(stage1Idx).toBeLessThan(stage2Idx);
+			expect(stage2Idx).toBeLessThan(stage3Idx);
+		});
+
+		it('should document context-passing: explorer findings passed verbatim to fact-checker', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// verbatim keyword must appear near the context-passing instructions
+			const explorerFindingsIdx = prompt.indexOf('---EXPLORER_FINDINGS--- block>');
+			expect(explorerFindingsIdx).toBeGreaterThan(0);
+		});
+
+		it('should provide graceful degradation when planner-explorer fails', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// If explorer fails, proceed directly to Stage 3 (plan-writer)
+			expect(prompt).toContain('planner-explorer fails or times out');
+			expect(prompt).toContain('Skip Stage 2 and proceed directly to Stage 3');
+		});
+
+		it('should provide graceful degradation when planner-fact-checker fails', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// If fact-checker fails, proceed to plan-writer with explorer findings only
+			expect(prompt).toContain('planner-fact-checker fails or times out');
+			expect(prompt).toContain('explorer findings only');
+			expect(prompt).toContain('fact-checking was skipped');
 		});
 
 		it('should instruct to parse ---PLAN_RESULT--- from plan-writer response', () => {
@@ -131,9 +201,10 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null');
 		});
 
-		it('should mention WebSearch in pre-planning setup section', () => {
+		it('should mention WebSearch and WebFetch in pre-planning setup section', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('WebSearch');
+			expect(prompt).toContain('WebFetch');
 			// The note should appear in the Pre-Planning Setup section (before Phase 1)
 			const setupIdx = prompt.indexOf('Pre-Planning Setup (MANDATORY)');
 			const webSearchIdx = prompt.indexOf('WebSearch');
@@ -181,6 +252,17 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('00-overview.md');
 			expect(prompt).toContain('multi');
 		});
+
+		it('should instruct plan-writer to use explorer and fact-checker context as foundation', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('explorer + fact-checker context as its foundation');
+		});
+
+		it('should include feedback handling instruction for plan edits', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('Leader sends feedback on the plan');
+			expect(prompt).toContain('Edit the plan files directly');
+		});
 	});
 
 	describe('buildPlanWriterPrompt', () => {
@@ -195,15 +277,17 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('rebase fails with conflicts, stop immediately');
 		});
 
-		it('should include Explore sub-agent guidance for codebase exploration', () => {
+		it('should instruct to explore using own tools, not spawn sub-agents', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('Explore');
-			expect(prompt).toContain('subagent_type');
+			expect(prompt).toContain('do NOT attempt to spawn further sub-agents');
+			expect(prompt).not.toContain('Task(subagent_type:');
+			expect(prompt).not.toContain('subagent_type: "Explore"');
 		});
 
-		it('should recommend spawning multiple Explore agents in parallel', () => {
+		it('should describe codebase exploration using Read/Grep/Glob/Bash', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('parallel');
+			expect(prompt).toContain('Read, Grep, Glob, and Bash');
+			expect(prompt).toContain('Step 1: Codebase Exploration');
 		});
 
 		it('should define small vs large scope thresholds', () => {
@@ -259,28 +343,24 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('git checkout -b plan/<plan_slug>');
 		});
 
-		it('should include optional web research section', () => {
+		it('should include web research guidance (WebSearch/WebFetch) for verification', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('Optional: Web Research');
 			expect(prompt).toContain('WebSearch');
 			expect(prompt).toContain('WebFetch');
 		});
 
-		it('should position web research section after codebase exploration and before scope assessment', () => {
+		it('should position codebase exploration step before scope assessment', () => {
 			const prompt = buildPlanWriterPrompt();
-			const explorationIdx = prompt.indexOf('Step 1: Codebase Exploration');
-			const webResearchIdx = prompt.indexOf('Optional: Web Research');
+			const exploreIdx = prompt.indexOf('Step 1: Codebase Exploration');
 			const scopeIdx = prompt.indexOf('Step 2: Scope Assessment');
-			expect(explorationIdx).toBeGreaterThanOrEqual(0);
-			expect(webResearchIdx).toBeGreaterThanOrEqual(0);
+			expect(exploreIdx).toBeGreaterThanOrEqual(0);
 			expect(scopeIdx).toBeGreaterThanOrEqual(0);
-			expect(explorationIdx).toBeLessThan(webResearchIdx);
-			expect(webResearchIdx).toBeLessThan(scopeIdx);
+			expect(exploreIdx).toBeLessThan(scopeIdx);
 		});
 
-		it('should clarify when NOT to use web search', () => {
+		it('should clarify when NOT to use web search for general patterns', () => {
 			const prompt = buildPlanWriterPrompt();
-			expect(prompt).toContain('Do NOT search');
+			expect(prompt).toContain('not for general patterns you already know');
 		});
 	});
 
@@ -299,11 +379,11 @@ describe('planner-agent', () => {
 			expect(def.prompt).not.toContain('<plan_slug>');
 		});
 
-		it('has Task tool for spawning Explore sub-agents', () => {
+		it('does NOT have Task/TaskOutput/TaskStop tools (cannot spawn sub-agents)', () => {
 			const def = buildPlanWriterAgentDef('my-goal');
-			expect(def.tools).toContain('Task');
-			expect(def.tools).toContain('TaskOutput');
-			expect(def.tools).toContain('TaskStop');
+			expect(def.tools).not.toContain('Task');
+			expect(def.tools).not.toContain('TaskOutput');
+			expect(def.tools).not.toContain('TaskStop');
 		});
 
 		it('has standard codebase tools', () => {
@@ -498,6 +578,145 @@ describe('planner-agent', () => {
 		});
 	});
 
+	describe('buildPlannerExplorerAgentDef', () => {
+		it('returns a valid AgentDefinition', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def).toBeDefined();
+			expect(def.tools).toBeDefined();
+			expect(def.model).toBeDefined();
+			expect(def.prompt).toBeDefined();
+		});
+
+		it('has only read-only codebase tools', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.tools).toContain('Read');
+			expect(def.tools).toContain('Grep');
+			expect(def.tools).toContain('Glob');
+			expect(def.tools).toContain('Bash');
+		});
+
+		it('does NOT have write or edit tools', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.tools).not.toContain('Write');
+			expect(def.tools).not.toContain('Edit');
+		});
+
+		it('does NOT have sub-agent spawning tools', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.tools).not.toContain('Task');
+			expect(def.tools).not.toContain('TaskOutput');
+			expect(def.tools).not.toContain('TaskStop');
+		});
+
+		it('does NOT have web tools', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.tools).not.toContain('WebSearch');
+			expect(def.tools).not.toContain('WebFetch');
+		});
+
+		it('uses inherit model', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.model).toBe('inherit');
+		});
+
+		it('prompt instructs to return ---EXPLORER_FINDINGS--- block', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.prompt).toContain('---EXPLORER_FINDINGS---');
+			expect(def.prompt).toContain('---END_EXPLORER_FINDINGS---');
+		});
+
+		it('prompt includes all required sections in findings block', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.prompt).toContain('Relevant Files');
+			expect(def.prompt).toContain('Patterns Found');
+			expect(def.prompt).toContain('Dependencies');
+			expect(def.prompt).toContain('Estimated Complexity');
+			expect(def.prompt).toContain('Key Concerns');
+		});
+
+		it('prompt instructs not to write or edit files', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.prompt).toContain('Do NOT write');
+		});
+
+		it('prompt instructs not to spawn sub-agents', () => {
+			const def = buildPlannerExplorerAgentDef();
+			expect(def.prompt).toContain('Do NOT spawn');
+		});
+	});
+
+	describe('buildPlannerFactCheckerAgentDef', () => {
+		it('returns a valid AgentDefinition', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def).toBeDefined();
+			expect(def.tools).toBeDefined();
+			expect(def.model).toBeDefined();
+			expect(def.prompt).toBeDefined();
+		});
+
+		it('has only web tools', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.tools).toContain('WebSearch');
+			expect(def.tools).toContain('WebFetch');
+			expect(def.tools).toHaveLength(2);
+		});
+
+		it('does NOT have codebase tools', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.tools).not.toContain('Read');
+			expect(def.tools).not.toContain('Grep');
+			expect(def.tools).not.toContain('Glob');
+			expect(def.tools).not.toContain('Bash');
+		});
+
+		it('does NOT have write or edit tools', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.tools).not.toContain('Write');
+			expect(def.tools).not.toContain('Edit');
+		});
+
+		it('does NOT have sub-agent spawning tools', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.tools).not.toContain('Task');
+			expect(def.tools).not.toContain('TaskOutput');
+			expect(def.tools).not.toContain('TaskStop');
+		});
+
+		it('uses inherit model', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.model).toBe('inherit');
+		});
+
+		it('prompt instructs to return ---FACT_CHECK_RESULT--- block', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('---FACT_CHECK_RESULT---');
+			expect(def.prompt).toContain('---END_FACT_CHECK_RESULT---');
+		});
+
+		it('prompt includes all required sections in fact-check block', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('Validated Assumptions');
+			expect(def.prompt).toContain('Flagged Issues');
+			expect(def.prompt).toContain('Recommended Versions/Patterns');
+			expect(def.prompt).toContain('Corrections to Explorer Findings');
+		});
+
+		it('prompt instructs not to read local files', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('Do NOT read any local files');
+		});
+
+		it('prompt instructs not to spawn sub-agents', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('Do NOT spawn');
+		});
+
+		it('prompt instructs to use explorer findings as input', () => {
+			const def = buildPlannerFactCheckerAgentDef();
+			expect(def.prompt).toContain('explorer findings');
+		});
+	});
+
 	describe('createPlannerAgentInit', () => {
 		it('should always use agent/agents pattern', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
@@ -506,15 +725,39 @@ describe('planner-agent', () => {
 			expect(init.agents).toHaveProperty('Planner');
 		});
 
-		it('agents map includes plan-writer sub-agent', () => {
+		it('agents map includes all 3-stage pipeline sub-agents (exactly 4 total)', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(Object.keys(init.agents ?? {})).toHaveLength(4);
+			expect(init.agents).toHaveProperty('planner-explorer');
+			expect(init.agents).toHaveProperty('planner-fact-checker');
 			expect(init.agents).toHaveProperty('plan-writer');
 		});
 
-		it('plan-writer agent has Task tool for spawning Explore sub-agents', () => {
+		it('planner-explorer sub-agent has only read-only codebase tools', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const explorer = init.agents?.['planner-explorer'];
+			expect(explorer?.tools).toContain('Read');
+			expect(explorer?.tools).toContain('Grep');
+			expect(explorer?.tools).toContain('Glob');
+			expect(explorer?.tools).not.toContain('Write');
+			expect(explorer?.tools).not.toContain('Task');
+		});
+
+		it('planner-fact-checker sub-agent has only web tools', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const factChecker = init.agents?.['planner-fact-checker'];
+			expect(factChecker?.tools).toContain('WebSearch');
+			expect(factChecker?.tools).toContain('WebFetch');
+			expect(factChecker?.tools).not.toContain('Read');
+			expect(factChecker?.tools).not.toContain('Task');
+		});
+
+		it('plan-writer agent does NOT have Task tool (cannot spawn sub-agents)', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
 			const planWriter = init.agents?.['plan-writer'];
-			expect(planWriter?.tools).toContain('Task');
+			expect(planWriter?.tools).not.toContain('Task');
+			expect(planWriter?.tools).not.toContain('TaskOutput');
+			expect(planWriter?.tools).not.toContain('TaskStop');
 		});
 
 		it('plan-writer agent uses inherit model', () => {
@@ -567,6 +810,46 @@ describe('planner-agent', () => {
 		it('should set session type to planner', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
 			expect(init.type).toBe('planner');
+		});
+
+		it('MCP server config contains only planner-tools (no extra servers)', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const mcpKeys = Object.keys(init.mcpServers ?? {});
+			expect(mcpKeys).toHaveLength(1);
+			expect(mcpKeys).toContain('planner-tools');
+		});
+
+		it('none of the three sub-agents have Task/TaskOutput/TaskStop tools', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const SUB_AGENTS = ['planner-explorer', 'planner-fact-checker', 'plan-writer'] as const;
+			for (const name of SUB_AGENTS) {
+				const tools = init.agents?.[name]?.tools ?? [];
+				expect(tools, `${name} must not have Task`).not.toContain('Task');
+				expect(tools, `${name} must not have TaskOutput`).not.toContain('TaskOutput');
+				expect(tools, `${name} must not have TaskStop`).not.toContain('TaskStop');
+			}
+		});
+
+		it('planner system prompt includes Task() template for spawning planner-fact-checker with explorer findings', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const prompt = init.agents?.['Planner']?.prompt ?? '';
+			expect(prompt).toContain('planner-fact-checker');
+			expect(prompt).toContain('## Explorer Findings');
+		});
+
+		it('planner system prompt includes Task() template for spawning plan-writer with both findings', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const prompt = init.agents?.['Planner']?.prompt ?? '';
+			expect(prompt).toContain('plan-writer');
+			expect(prompt).toContain('## Fact-Check Results');
+		});
+
+		it('Planner agent def describes 3-stage pipeline in its prompt', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const prompt = init.agents?.['Planner']?.prompt ?? '';
+			expect(prompt).toContain('planner-explorer');
+			expect(prompt).toContain('planner-fact-checker');
+			expect(prompt).toContain('plan-writer');
 		});
 	});
 });

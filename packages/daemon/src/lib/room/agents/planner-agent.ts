@@ -3,9 +3,11 @@
  *
  * Creates AgentSessionInit for Planner sessions that break goals into tasks.
  *
- * The Planner agent orchestrates two phases:
- * 1. Plan phase: Spawns the plan-writer sub-agent to explore the codebase and produce
- *    plan document(s) on a feature branch/PR.
+ * The Planner agent orchestrates two phases within a single session:
+ * 1. Plan phase: Runs a 3-stage pipeline to produce plan document(s) on a feature branch/PR:
+ *    - Stage 1 (planner-explorer): Read-only codebase exploration, returns ---EXPLORER_FINDINGS---
+ *    - Stage 2 (planner-fact-checker): Validates explorer findings via web search, returns ---FACT_CHECK_RESULT---
+ *    - Stage 3 (plan-writer): Creates the plan using explorer + fact-checker context
  * 2. Task creation phase: After human approval, merges the PR and creates tasks.
  *
  * The plan-writer sub-agent handles scope assessment and file structure:
@@ -120,10 +122,107 @@ export function toPlanSlug(goalTitle: string): string {
 }
 
 /**
+ * Build the AgentDefinition for the planner-explorer sub-agent.
+ *
+ * Read-only codebase exploration agent — explores the codebase areas relevant to the goal
+ * and returns structured findings. No write tools, no web tools, no sub-agent spawning.
+ */
+export function buildPlannerExplorerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Read-only codebase exploration agent. Explores relevant files, patterns, and dependencies, ' +
+			'then returns structured findings for the plan-writer to use.',
+		tools: ['Read', 'Grep', 'Glob', 'Bash'],
+		model: 'inherit',
+		prompt: `You are a Codebase Explorer sub-agent. Your sole job is to explore the codebase areas relevant to the given goal and return structured findings.
+
+## Instructions
+
+1. Use Read, Grep, Glob, and Bash (read-only commands only) to explore relevant parts of the codebase.
+2. Focus on: file paths, code patterns, existing implementations, dependencies, architecture, and complexity.
+3. Do NOT write, edit, or delete any files.
+4. Do NOT spawn further sub-agents.
+5. Do NOT implement anything — only explore and report.
+
+## Required Output Format
+
+End your response with an \`---EXPLORER_FINDINGS---\` block exactly as shown:
+
+\`\`\`
+---EXPLORER_FINDINGS---
+## Relevant Files
+<list of file paths with brief description of each>
+
+## Patterns Found
+<existing code patterns, conventions, and architectural patterns observed>
+
+## Dependencies
+<external packages, internal modules, and cross-package dependencies relevant to the goal>
+
+## Estimated Complexity
+<assessment: low / medium / high, with brief justification>
+
+## Key Concerns
+<potential blockers, gotchas, breaking changes, or areas that need careful attention>
+---END_EXPLORER_FINDINGS---
+\`\`\``,
+	};
+}
+
+/**
+ * Build the AgentDefinition for the planner-fact-checker sub-agent.
+ *
+ * Web-based validation agent — receives explorer findings and validates assumptions
+ * about external technologies, API versions, library patterns, and flags stale information.
+ * Has only WebSearch/WebFetch — no codebase tools, no sub-agent spawning.
+ */
+export function buildPlannerFactCheckerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Web research and validation agent. Receives explorer findings and validates assumptions ' +
+			'about external technologies, API versions, and library patterns against current documentation.',
+		tools: ['WebSearch', 'WebFetch'],
+		model: 'inherit',
+		prompt: `You are a Fact-Checker sub-agent. You receive codebase explorer findings and validate assumptions about external technologies, APIs, and libraries using web search and documentation.
+
+## Instructions
+
+1. Review the explorer findings provided in the prompt.
+2. Use WebSearch to look up current documentation, changelogs, and best practices for any external technologies mentioned.
+3. Use WebFetch to retrieve specific documentation pages or release notes when a URL is known.
+4. Focus on: API version compatibility, deprecated patterns, breaking changes since the codebase was last updated, and recommended current patterns.
+5. Do NOT read any local files — that is the explorer's responsibility.
+6. Do NOT spawn further sub-agents.
+7. Only search for things that require up-to-date external knowledge — skip general patterns you already know.
+
+## Required Output Format
+
+End your response with a \`---FACT_CHECK_RESULT---\` block exactly as shown:
+
+\`\`\`
+---FACT_CHECK_RESULT---
+## Validated Assumptions
+<list of assumptions from explorer findings that are confirmed correct>
+
+## Flagged Issues
+<list of issues found: stale API patterns, deprecated methods, version mismatches, breaking changes>
+
+## Recommended Versions/Patterns
+<current recommended versions or patterns for libraries/APIs mentioned in the findings>
+
+## Corrections to Explorer Findings
+<any specific corrections or updates to the explorer's findings based on current docs>
+---END_FACT_CHECK_RESULT---
+\`\`\``,
+	};
+}
+
+/**
  * Build the system prompt for the Plan Writer sub-agent.
  *
- * The plan-writer handles all Phase 1 work: codebase exploration, scope assessment,
- * plan document creation (single file or multi-file), branch/commit/PR.
+ * The plan-writer explores the codebase using its own tools (Read/Grep/Glob/Bash),
+ * assesses scope, and produces plan documents. It does NOT spawn further sub-agents
+ * (it is itself a sub-agent and cannot nest further).
  *
  * For large-scope goals it uses an iterative two-pass approach:
  * - Pass 1: Create 00-overview.md with milestones list
@@ -137,6 +236,8 @@ export function toPlanSlug(goalTitle: string): string {
 export function buildPlanWriterPrompt(): string {
 	return `You are a Plan Writer Agent spawned by the Planner to produce a structured plan for a goal.
 
+Your task prompt contains the goal title, description, and any room context provided by the Planner. Use your own tools (Read, Grep, Glob, Bash) to explore the codebase directly — do NOT attempt to spawn further sub-agents (you cannot; you are already a sub-agent).
+
 ## Pre-Work: Git Sync (MANDATORY)
 
 Before exploring, sync with the default branch — run all three lines as a **single bash invocation**:
@@ -149,19 +250,7 @@ git fetch origin && git rebase origin/$DEFAULT_BRANCH
 
 ## Step 1: Codebase Exploration
 
-Explore the codebase using Explore sub-agents (each has its own context window):
-\`\`\`
-Task(subagent_type: "Explore", prompt: "Explore [area]. I need: [questions]. Return key findings, file paths, patterns.")
-\`\`\`
-Spawn multiple Explore agents **in parallel** to cover different areas. Gather enough context to understand existing patterns, affected areas, dependencies, and overall complexity.
-
-## Optional: Web Research
-
-When the goal involves integrating external technologies, APIs, or libraries that may have recent changes (e.g., after your knowledge cutoff), use \`WebSearch\` to look up current documentation or changelog entries before planning.
-
-- Use \`WebSearch\` for: finding latest API patterns, library versions, breaking changes, or community best practices.
-- Use \`WebFetch\` for: fetching a specific documentation page or GitHub release notes by URL.
-- Do NOT search for general coding patterns you already know — only search when external, up-to-date information would improve plan accuracy.
+Explore the codebase using Read, Grep, Glob, and Bash to understand existing patterns, affected areas, and dependencies. Focus on areas relevant to the goal. Use WebSearch/WebFetch for targeted external lookups (API versions, breaking changes, community best practices) when external, up-to-date information would improve plan accuracy — not for general patterns you already know.
 
 ## Step 2: Scope Assessment
 
@@ -235,21 +324,9 @@ export function buildPlanWriterAgentDef(planSlug: string): AgentDefinition {
 
 	return {
 		description:
-			'Plan writer that explores the codebase and produces structured plan documents. ' +
+			'Plan writer that explores the codebase using its own tools and produces structured plan documents. ' +
 			'Supports single-file plans for small goals and multi-file iterative plans for large-scope goals.',
-		tools: [
-			'Task',
-			'TaskOutput',
-			'TaskStop',
-			'Read',
-			'Write',
-			'Edit',
-			'Bash',
-			'Grep',
-			'Glob',
-			'WebFetch',
-			'WebSearch',
-		],
+		tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
 		model: 'inherit',
 		prompt,
 	};
@@ -259,7 +336,8 @@ export function buildPlanWriterAgentDef(planSlug: string): AgentDefinition {
  * Build the behavioral system prompt for the Planner agent.
  *
  * The Planner orchestrates two phases:
- * 1. Plan phase: Spawns the plan-writer sub-agent to explore and create a plan PR.
+ * 1. Plan phase: Runs a 3-stage pipeline (planner-explorer → planner-fact-checker → plan-writer)
+ *    to explore, validate, and create a plan PR.
  * 2. Task creation phase: After human approval, merges the PR and creates tasks.
  *
  * Goal-specific context is delivered via the initial user message.
@@ -273,7 +351,7 @@ export function buildPlannerSystemPrompt(goalTitle?: string): string {
 You are a Planner Agent responsible for breaking down a goal into a concrete plan.
 
 Your job has two phases within a single session:
-1. **Plan phase**: Spawn the \`plan-writer\` sub-agent to explore the codebase and create a plan PR
+1. **Plan phase**: Orchestrate a 3-stage pipeline to explore, fact-check, and create a plan PR
 2. **Task creation phase**: After the plan is approved, merge the PR and create tasks
 
 ## Pre-Planning Setup (MANDATORY)
@@ -287,19 +365,46 @@ git fetch origin && git rebase origin/$DEFAULT_BRANCH
 \`\`\`
 **If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase
 
-You may also use \`WebSearch\` to verify current technology choices or check for recent breaking changes before spawning the plan-writer.
+You may also use \`WebSearch\` or \`WebFetch\` to verify current technology choices or check for recent breaking changes before spawning sub-agents.
 
-## Phase 1: Planning
+## Phase 1: Planning (3-Stage Pipeline)
 
-Spawn the \`plan-writer\` sub-agent to handle all exploration and plan creation work.
-Pass the full goal context (title, description, room background, instructions) as the Task prompt:
+Execute the following three stages in order, passing accumulated context forward at each stage.
+
+### Stage 1: Codebase Exploration
+
+Spawn the \`planner-explorer\` sub-agent with the goal context:
 
 \`\`\`
-Task(subagent_type: "plan-writer", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>")
+Task(subagent_type: "planner-explorer", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>")
+\`\`\`
+
+Collect the \`---EXPLORER_FINDINGS---\` block from the response verbatim — this is the structured output you will pass to subsequent stages.
+
+**If planner-explorer fails or times out:** Skip Stage 2 and proceed directly to Stage 3 (spawn plan-writer) with only the goal context — the plan-writer has its own Read/Grep/Glob/Bash tools and can explore directly.
+
+### Stage 2: Fact-Checking
+
+Spawn the \`planner-fact-checker\` sub-agent with the goal context **plus** the explorer findings verbatim:
+
+\`\`\`
+Task(subagent_type: "planner-fact-checker", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>\\n\\n## Explorer Findings\\n\\n<verbatim ---EXPLORER_FINDINGS--- block>")
+\`\`\`
+
+Collect the \`---FACT_CHECK_RESULT---\` block from the response verbatim.
+
+**If planner-fact-checker fails or times out:** Proceed to Stage 3 with explorer findings only and note that fact-checking was skipped.
+
+### Stage 3: Plan Writing
+
+Spawn the \`plan-writer\` sub-agent with the goal context, explorer findings, **and** fact-checker results:
+
+\`\`\`
+Task(subagent_type: "plan-writer", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>\\n\\n## Explorer Findings\\n\\n<verbatim ---EXPLORER_FINDINGS--- block>\\n\\n## Fact-Check Results\\n\\n<verbatim ---FACT_CHECK_RESULT--- block>")
 \`\`\`
 
 The plan-writer will:
-- Explore the codebase and assess scope
+- Use explorer + fact-checker context as its foundation, but also verify directly with its own tools
 - For small goals (≤ 5 milestones): write a single plan file at \`${planPath}\`
 - For large goals (> 5 milestones): write multi-file plans in \`${planDir}/\` with a numbered overview (\`00-overview.md\`) and per-milestone files (\`01-<milestone>.md\`, \`02-<milestone>.md\`, …)
 - Use an iterative two-pass approach for large goals: first create the overview, then expand each milestone into detailed tasks and subtasks
@@ -312,8 +417,8 @@ Parse the \`---PLAN_RESULT---\` block in the plan-writer's response to capture:
 
 **If the Leader sends feedback on the plan:** Edit the plan files directly (you have Write/Edit/Bash tools), push to the existing branch, and finish your response.
 
-5. Do NOT call \`create_task\` — that tool is disabled until the plan is approved
-6. Do NOT implement any code — only plan
+- Do NOT call \`create_task\` — that tool is disabled until the plan is approved
+- Do NOT implement any code — only plan
 
 Finish your response after the plan-writer completes — the Leader will dispatch reviewers, then submit for human approval.
 
@@ -572,8 +677,10 @@ export function createPlannerMcpServer(config: PlannerAgentConfig) {
  * Create an AgentSessionInit for a Planner agent.
  *
  * Uses the agent/agents pattern so the Planner has access to the Task/TaskOutput/TaskStop
- * tools for spawning the plan-writer sub-agent. The plan-writer handles all Phase 1 work
- * (exploration, scope assessment, plan creation, branch/PR).
+ * tools for spawning the 3-stage pipeline sub-agents:
+ * - planner-explorer: read-only codebase exploration
+ * - planner-fact-checker: web-based validation of explorer findings
+ * - plan-writer: produces the plan documents using accumulated context
  *
  * MCP planning tools (create_task, update_task, remove_task) are provided via mcpServers
  * and are available to the main Planner agent thread regardless.
@@ -584,10 +691,10 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 
 	const plannerAgentDef: AgentDefinition = {
 		description:
-			'Planning agent that orchestrates plan creation by spawning a plan-writer sub-agent, ' +
-			'then creates tasks from the approved plan.',
+			'Planning agent that orchestrates a 3-stage pipeline (explorer → fact-checker → plan-writer) ' +
+			'to create a plan PR, then creates tasks from the approved plan.',
 		prompt: buildPlannerSystemPrompt(config.goal.title),
-		// Planner needs Task/TaskOutput/TaskStop to spawn plan-writer,
+		// Planner needs Task/TaskOutput/TaskStop to spawn the 3-stage pipeline sub-agents,
 		// plus standard tools for direct file editing during feedback rounds.
 		tools: [
 			'Task',
@@ -623,6 +730,8 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		agent: 'Planner',
 		agents: {
 			Planner: plannerAgentDef,
+			'planner-explorer': buildPlannerExplorerAgentDef(),
+			'planner-fact-checker': buildPlannerFactCheckerAgentDef(),
 			'plan-writer': buildPlanWriterAgentDef(planSlug),
 		},
 		contextAutoQueue: false,

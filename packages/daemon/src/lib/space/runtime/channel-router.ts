@@ -501,6 +501,15 @@ export class ChannelRouter {
 		const gateResult = this.evaluateGateById(runId, gateId, workflow);
 		if (!gateResult.open) return [];
 
+		// Determine if any of these channels are cyclic — if so, enforce the iteration cap
+		// before activating any node (mirrors the guard in deliverMessage).
+		const hasCyclicChannel = channels.some((ch) => ch.isCyclic);
+		if (hasCyclicChannel && run.iterationCount >= run.maxIterations) {
+			throw new ActivationError(
+				`Cyclic channel via gate "${gateId}" has reached the maximum iteration count (${run.iterationCount}/${run.maxIterations}). Increase maxIterations to allow more cycles.`
+			);
+		}
+
 		// Gate is open → collect all unique node IDs that need activation.
 		// Multiple channels may point to the same target (e.g. fan-out via node name),
 		// so deduplicate before spawning to avoid redundant activateNode() calls.
@@ -539,6 +548,14 @@ export class ChannelRouter {
 			}
 			// Rejected: run may have transitioned to terminal state between the
 			// nodeIdsToActivate check above and the activation attempt — silently skip.
+		}
+
+		// For cyclic channels: atomically increment the iteration counter and reset
+		// gates with `resetOnCycle: true`. This mirrors the logic in deliverMessage and
+		// ensures the QA→Coding feedback path (triggered via write_gate MCP tool →
+		// onGateDataChanged) correctly resets reviewer votes and advances the cycle counter.
+		if (hasCyclicChannel && activatedTasks.length > 0) {
+			this.incrementAndResetCyclicGates(runId, workflow);
 		}
 
 		return activatedTasks;
