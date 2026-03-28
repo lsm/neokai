@@ -44,27 +44,29 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	// Registry shape
 	// -------------------------------------------------------------------------
 
-	test('registry contains all expected query names', () => {
-		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom.all')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('sessionGroupMessages.byGroup')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('spaceTaskActivity.byTask')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('neo.messages')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('neo.activity')).toBe(true);
-	});
+		test('registry contains all expected query names', () => {
+			expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom')).toBe(true);
+			expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom.all')).toBe(true);
+			expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(true);
+			expect(NAMED_QUERY_REGISTRY.has('sessionGroupMessages.byGroup')).toBe(true);
+			expect(NAMED_QUERY_REGISTRY.has('spaceTaskActivity.byTask')).toBe(true);
+			expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask')).toBe(true);
+			expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(true);
+			expect(NAMED_QUERY_REGISTRY.has('neo.messages')).toBe(true);
+			expect(NAMED_QUERY_REGISTRY.has('neo.activity')).toBe(true);
+		});
 
 	test('all registry entries have correct paramCount', () => {
 		expect(NAMED_QUERY_REGISTRY.get('tasks.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('tasks.byRoom.all')!.paramCount).toBe(1);
-		expect(NAMED_QUERY_REGISTRY.get('goals.byRoom')!.paramCount).toBe(1);
-		expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
-		expect(NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!.paramCount).toBe(1);
-		expect(NAMED_QUERY_REGISTRY.get('skills.byRoom')!.paramCount).toBe(1);
-		expect(NAMED_QUERY_REGISTRY.get('neo.messages')!.paramCount).toBe(2);
-		expect(NAMED_QUERY_REGISTRY.get('neo.activity')!.paramCount).toBe(2);
-	});
+			expect(NAMED_QUERY_REGISTRY.get('goals.byRoom')!.paramCount).toBe(1);
+			expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
+			expect(NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!.paramCount).toBe(1);
+			expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
+			expect(NAMED_QUERY_REGISTRY.get('skills.byRoom')!.paramCount).toBe(1);
+			expect(NAMED_QUERY_REGISTRY.get('neo.messages')!.paramCount).toBe(2);
+			expect(NAMED_QUERY_REGISTRY.get('neo.activity')!.paramCount).toBe(2);
+		});
 
 	// -------------------------------------------------------------------------
 	// tasks.byRoom — column aliasing and JSON parsing
@@ -268,17 +270,23 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			`);
 		}
 
-		function queryAndMap(taskId: string): Record<string, unknown>[] {
-			const entry = NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!;
-			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
-			return entry.mapRow ? rows.map(entry.mapRow) : rows;
-		}
+			function queryAndMap(taskId: string): Record<string, unknown>[] {
+				const entry = NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!;
+				const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+				return entry.mapRow ? rows.map(entry.mapRow) : rows;
+			}
 
-		test('returns live activity rows with derived state and message counts', () => {
-			const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
-			insertSession(sessionId, 'space_task_agent', '{"status":"processing","phase":"thinking"}');
-			insertSdkMessage('sdk-1', sessionId);
-			insertSdkMessage('sdk-2', sessionId);
+			function queryMessages(taskId: string): Record<string, unknown>[] {
+				const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+				const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+				return entry.mapRow ? rows.map(entry.mapRow) : rows;
+			}
+
+			test('returns live activity rows with derived state and message counts', () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing","phase":"thinking"}');
+				insertSdkMessage('sdk-1', sessionId);
+				insertSdkMessage('sdk-2', sessionId);
 
 			const [row] = queryAndMap(taskId);
 			expect(row.kind).toBe('task_agent');
@@ -287,10 +295,25 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			expect(row.processingStatus).toBe('processing');
 			expect(row.processingPhase).toBe('thinking');
 			expect(row.messageCount).toBe(2);
-			expect(row.taskId).toBe(taskId);
-			expect(row.taskTitle).toBe('Ship UI review');
+				expect(row.taskId).toBe(taskId);
+				expect(row.taskTitle).toBe('Ship UI review');
+			});
+
+			test('returns unified task message rows with label and task metadata', () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId, agentName: 'coder' });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+				insertSdkMessage('sdk-msg-1', sessionId);
+
+				const [row] = queryMessages(taskId);
+				expect(row.sessionId).toBe(sessionId);
+				expect(row.kind).toBe('task_agent');
+				expect(row.label).toBe('Task Agent');
+				expect(row.taskId).toBe(taskId);
+				expect(row.messageType).toBe('assistant');
+				expect(typeof row.content).toBe('string');
+				expect((row.content as string).includes('_taskMeta')).toBe(true);
+			});
 		});
-	});
 
 	// -------------------------------------------------------------------------
 	// goals.byRoom — column aliasing, JSON parsing, snake_case exceptions

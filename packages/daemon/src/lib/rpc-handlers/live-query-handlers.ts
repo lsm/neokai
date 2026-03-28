@@ -139,6 +139,63 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
 	};
 }
 
+/**
+ * Map a raw SQLite row from `spaceTaskMessages.byTask` into a web-friendly
+ * message envelope that preserves agent/task attribution.
+ */
+function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
+	const role = String(row.role ?? 'system');
+	const label = String(row.label ?? 'Agent');
+	const kind = row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
+	const taskId = String(row.taskId ?? '');
+	const taskTitle = String(row.taskTitle ?? '');
+	const messageType = String(row.messageType ?? 'status');
+	const createdAt = Number(row.createdAt ?? Date.now());
+	const iteration = Number(row.iteration ?? 0);
+	const rawId = row.id;
+	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
+	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+
+	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
+
+	try {
+		const parsed = JSON.parse(content) as Record<string, unknown>;
+		const uuid = typeof parsed.uuid === 'string' ? parsed.uuid : String(id);
+		const shortSessionId = (sessionId ?? '').slice(0, 8);
+		const turnId = `turn_${taskId}_${iteration}_${shortSessionId}_${uuid}`;
+		content = JSON.stringify({
+			...parsed,
+			_taskMeta: {
+				authorRole: role,
+				authorLabel: label,
+				authorKind: kind,
+				authorSessionId: sessionId ?? '',
+				taskId,
+				taskTitle,
+				turnId,
+				iteration,
+			},
+		});
+	} catch {
+		// Keep original content when sdk_message is not valid JSON.
+	}
+
+	return {
+		id,
+		sessionId,
+		kind,
+		role,
+		label,
+		taskId,
+		taskTitle,
+		messageType,
+		content,
+		createdAt,
+		parentToolUseId,
+	};
+}
+
 // ============================================================================
 // SQL definitions
 // ============================================================================
@@ -586,7 +643,57 @@ ORDER BY
   CASE WHEN s.type = 'space_task_agent' THEN 0 ELSE 1 END,
   updatedAt DESC,
   rt.created_at ASC,
-  rt.id ASC
+	rt.id ASC
+`.trim();
+
+const SPACE_TASK_MESSAGES_BY_TASK_SQL = `
+WITH target_task AS (
+  SELECT *
+  FROM space_tasks
+  WHERE id = ?
+),
+relevant_tasks AS (
+  SELECT *
+  FROM target_task
+  WHERE task_agent_session_id IS NOT NULL
+  UNION
+  SELECT st.*
+  FROM space_tasks st
+  JOIN target_task tt
+    ON tt.workflow_run_id IS NOT NULL
+   AND st.workflow_run_id = tt.workflow_run_id
+  WHERE st.id != tt.id
+    AND st.task_agent_session_id IS NOT NULL
+    AND st.status != 'archived'
+)
+SELECT
+  sm.id AS id,
+  sm.session_id AS sessionId,
+  CASE
+    WHEN s.type = 'space_task_agent' THEN 'task_agent'
+    ELSE 'node_agent'
+  END AS kind,
+  CASE
+    WHEN s.type = 'space_task_agent' THEN 'task-agent'
+    ELSE COALESCE(rt.agent_name, rt.assigned_agent, 'agent')
+  END AS role,
+  CASE
+    WHEN s.type = 'space_task_agent' THEN 'Task Agent'
+    ELSE COALESCE(sa.name, rt.agent_name, rt.assigned_agent, 'agent')
+  END AS label,
+  rt.id AS taskId,
+  rt.title AS taskTitle,
+  sm.message_type AS messageType,
+  sm.sdk_message AS content,
+  CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+  CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
+  json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
+FROM relevant_tasks rt
+JOIN sdk_messages sm ON sm.session_id = rt.task_agent_session_id
+LEFT JOIN sessions s ON s.id = rt.task_agent_session_id
+LEFT JOIN space_agents sa ON sa.id = rt.custom_agent_id
+WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+ORDER BY createdAt ASC, id ASC
 `.trim();
 
 // ============================================================================
@@ -642,6 +749,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			sql: SPACE_TASK_ACTIVITY_BY_TASK_SQL,
 			paramCount: 1,
 			mapRow: mapSpaceTaskActivityRow,
+		},
+	],
+	[
+		'spaceTaskMessages.byTask',
+		{
+			sql: SPACE_TASK_MESSAGES_BY_TASK_SQL,
+			paramCount: 1,
+			mapRow: mapSpaceTaskMessageRow,
 		},
 	],
 	[
@@ -784,7 +899,7 @@ export function setupLiveQueryHandlers(
 			// not directly reachable by client-supplied IDs without prior knowledge.
 			// If new group types with finer-grained access control are introduced, extend
 			// this block with the appropriate chain validation.
-		} else if (queryName === 'spaceTaskActivity.byTask') {
+		} else if (queryName === 'spaceTaskActivity.byTask' || queryName === 'spaceTaskMessages.byTask') {
 			const taskId = params[0] as string;
 			let spaceTask: { space_id: string } | null = null;
 			try {
