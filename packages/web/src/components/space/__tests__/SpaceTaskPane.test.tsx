@@ -218,7 +218,7 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('My Awesome Task')).toBeTruthy();
 	});
 
-	it('subscribes to live task activity and renders agent roster rows', () => {
+	it('subscribes to live task activity and renders a unified activity thread', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		mockTaskActivity.value = new Map([
 			[
@@ -244,12 +244,13 @@ describe('SpaceTaskPane', () => {
 			],
 		]);
 
-		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getByText, getByTestId, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(mockSubscribeTaskActivity).toHaveBeenCalledWith('task-1');
-		expect(getByText('Task Thread')).toBeTruthy();
-		expect(getByText('Agent Activity')).toBeTruthy();
-		expect(getByText('Live: Task Agent')).toBeTruthy();
+		expect(getByTestId('task-thread-panel')).toBeTruthy();
+		expect(getByTestId('task-activity-thread')).toBeTruthy();
 		expect(getAllByText('Task Agent: Active').length).toBeGreaterThan(0);
+		expect(getByText(/Task Agent\s*·\s*Active/)).toBeTruthy();
+		expect(getByText('Reviewing the latest direction')).toBeTruthy();
 	});
 
 	it('renders status badge', () => {
@@ -264,8 +265,7 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('High Priority')).toBeTruthy();
 	});
 
-	it('shows workflow context and canvas when workflowRunId is present', () => {
-		mockWorkflows.value = [makeWorkflow()];
+	it('shows workflow run context in the unified thread header when workflowRunId is present', () => {
 		mockWorkflowRuns.value = [makeWorkflowRun()];
 		mockTasks.value = [
 			makeTask({ workflowRunId: 'run-1', workflowNodeId: 'step-abc123' }),
@@ -277,41 +277,35 @@ describe('SpaceTaskPane', () => {
 				status: 'review',
 			}),
 		];
-		const { getByText, getByTestId, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Workflow Context')).toBeTruthy();
-		expect(getByText('Coding Workflow')).toBeTruthy();
-		expect(getByText('Fix auth flow')).toBeTruthy();
-		expect(getAllByText('Plan').length).toBeGreaterThan(0);
+		const { getByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('Run: Fix auth flow')).toBeTruthy();
-		expect(getByTestId('workflow-canvas')).toBeTruthy();
+		expect(queryByText('Workflow Context')).toBeNull();
 	});
 
-	it('does NOT show workflow context without workflowRunId', () => {
+	it('does NOT show workflow run badge without workflowRunId', () => {
 		mockTasks.value = [makeTask()];
 		const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(queryByText(/Workflow Context/)).toBeNull();
+		expect(queryByText(/Run:/)).toBeNull();
 	});
 
-	it('renders description', () => {
+	it('does not render standalone description card text', () => {
 		mockTasks.value = [makeTask({ description: 'Detailed description here' })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Detailed description here')).toBeTruthy();
+		const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByText('Detailed description here')).toBeNull();
 	});
 
-	it('renders current step when present', () => {
+	it('renders current step as a task activity event when present', () => {
 		mockTasks.value = [makeTask({ currentStep: 'Running linter' })];
-		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Task Thread')).toBeTruthy();
-		expect(getAllByText('Running linter').length).toBeGreaterThan(0);
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Running linter')).toBeTruthy();
+		expect(getByText(/Task\s*·\s*Queued/)).toBeTruthy();
 	});
 
-	it('renders progress bar when progress > 0', () => {
+	it('does not render standalone progress card', () => {
 		mockTasks.value = [makeTask({ progress: 75 })];
-		const { getByText, getAllByText, container } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getAllByText('Progress').length).toBeGreaterThan(0);
-		expect(getByText('75%')).toBeTruthy();
-		const progressBar = container.querySelector('.bg-blue-500');
-		expect(progressBar).toBeTruthy();
+		const { queryByText, container } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByText('Progress')).toBeNull();
+		expect(container.querySelector('.bg-blue-500')).toBeNull();
 	});
 
 	it('does NOT render progress bar when progress is null', () => {
@@ -320,31 +314,32 @@ describe('SpaceTaskPane', () => {
 		expect(queryByText('Progress')).toBeNull();
 	});
 
-	it('renders result section when result exists', () => {
+	it('renders result as a thread activity event when present', () => {
 		mockTasks.value = [makeTask({ result: 'Build succeeded' })];
-		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Result')).toBeTruthy();
-		expect(getAllByText('Build succeeded').length).toBeGreaterThan(0);
+		const { getByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByText('Result')).toBeNull();
+		expect(getByText('Build succeeded')).toBeTruthy();
+		expect(getByText(/Task\s*·\s*Completed/)).toBeTruthy();
 	});
 
-	it('renders error section when error exists', () => {
+	it('renders error as a thread activity event when present', () => {
 		mockTasks.value = [makeTask({ error: 'Build failed: syntax error' })];
-		const { getByText, getAllByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Task Details')).toBeTruthy();
-		expect(queryByText('Error')).toBeNull();
-		expect(getAllByText('Build failed: syntax error').length).toBeGreaterThan(0);
+		const { getByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByText('Task Details')).toBeNull();
+		expect(getByText('Build failed: syntax error')).toBeTruthy();
+		expect(getByText(/Task\s*·\s*Issue/)).toBeTruthy();
 	});
 
-	it('renders PR link when prUrl is set', () => {
+	it('does not render PR link in thread-only task view', () => {
 		mockTasks.value = [makeTask({ prUrl: 'https://github.com/owner/repo/pull/42', prNumber: 42 })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('PR #42')).toBeTruthy();
+		const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByText('PR #42')).toBeNull();
 	});
 
 	it('shows waiting-on-input copy for needs_attention status', () => {
 		mockTasks.value = [makeTask({ status: 'needs_attention' })];
 		const { getByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Waiting on your input')).toBeTruthy();
+		expect(getByText('Waiting on your input.')).toBeTruthy();
 		expect(queryByText('Human Input Required')).toBeNull();
 		expect(queryByText('Submit Response')).toBeNull();
 	});
@@ -428,7 +423,7 @@ describe('SpaceTaskPane', () => {
 		expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
 	});
 
-	it('keeps the latest human handoff visible after submission', () => {
+	it('shows startup state while dedicated thread is being ensured', () => {
 		mockEnsureTaskAgentSession.mockImplementation(async () => {
 			await new Promise(() => {});
 			return makeTask({ status: 'in_progress', taskAgentSessionId: null });
@@ -442,18 +437,9 @@ describe('SpaceTaskPane', () => {
 		const { getByText, queryByText, getByTestId } = render(
 			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
 		);
-		expect(getByText('Task Thread')).toBeTruthy();
-		expect(
-			getByText('Shift the dashboard toward tasks and make the next action obvious.')
-		).toBeTruthy();
-		expect(getByText('Your response was sent. Waiting for agent follow-up.')).toBeTruthy();
 		expect(getByText('Starting task thread...')).toBeTruthy();
 		expect(getByTestId('open-space-agent-btn')).toBeTruthy();
-		expect(
-			queryByText(
-				'Your response was saved. Open the space agent to continue the conversation while this task resumes.'
-			)
-		).toBeNull();
+		expect(queryByText('Shift the dashboard toward tasks and make the next action obvious.')).toBeNull();
 	});
 });
 
