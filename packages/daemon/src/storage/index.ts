@@ -13,6 +13,7 @@ import type {
 	RoomGitHubMapping,
 	InboxItem,
 	RoomGoal,
+	MessageOrigin,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
@@ -148,8 +149,8 @@ export class Database {
 	// SDK Message operations (delegated to SDKMessageRepository)
 	// ============================================================================
 
-	saveSDKMessage(sessionId: string, message: SDKMessage): boolean {
-		return this.sdkMessageRepo.saveSDKMessage(sessionId, message);
+	saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
+		return this.sdkMessageRepo.saveSDKMessage(sessionId, message, origin);
 	}
 
 	getSDKMessages(
@@ -178,9 +179,10 @@ export class Database {
 	saveUserMessage(
 		sessionId: string,
 		message: SDKMessage,
-		sendStatus: SendStatus = 'consumed'
+		sendStatus: SendStatus = 'consumed',
+		origin?: MessageOrigin
 	): string {
-		return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus);
+		return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
 	}
 
 	getMessagesByStatus(

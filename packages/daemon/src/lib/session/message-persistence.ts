@@ -15,6 +15,7 @@ import type {
 	MessageDeliveryMode,
 	MessageHub,
 	MessageImage,
+	MessageOrigin,
 	ReferenceMetadata,
 	Session,
 } from '@neokai/shared';
@@ -38,6 +39,7 @@ export interface MessagePersistenceData {
 	content: string;
 	images?: MessageImage[];
 	deliveryMode?: MessageDeliveryMode;
+	origin?: MessageOrigin;
 }
 
 export class MessagePersistence {
@@ -123,7 +125,7 @@ export class MessagePersistence {
 	 * 7. Emit 'message.persisted' event for downstream processing
 	 */
 	async persist(data: MessagePersistenceData): Promise<void> {
-		const { sessionId, messageId, content, images, deliveryMode = 'immediate' } = data;
+		const { sessionId, messageId, content, images, deliveryMode = 'immediate', origin } = data;
 
 		const agentSession = await this.sessionCache.getAsync(sessionId);
 		if (!agentSession) {
@@ -207,7 +209,7 @@ export class MessagePersistence {
 						: 'consumed';
 			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'immediate';
 
-			const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus);
+			const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
 
 			// 6. Publish to UI immediately only when not currently in-flight.
 			// Busy-turn insertions are shown in the input overlay and rendered in chat once consumed.

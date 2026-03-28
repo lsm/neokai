@@ -12,7 +12,7 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { Room, RoomGoal, NeoTask, MessageDeliveryMode } from '@neokai/shared';
+import type { Room, RoomGoal, NeoTask, MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { Logger } from '../../logger';
 import type {
@@ -56,7 +56,7 @@ export interface SessionFactory {
 	injectMessage(
 		sessionId: string,
 		message: string,
-		opts?: { deliveryMode?: MessageDeliveryMode }
+		opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
 	): Promise<void>;
 	hasSession(sessionId: string): boolean;
 	/**

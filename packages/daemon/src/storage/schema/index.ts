@@ -35,6 +35,10 @@ export { runMigration57 } from './migrations';
 export { runMigration58 } from './migrations';
 // knip-ignore-next-line
 export { runMigration66 } from './migrations';
+// knip-ignore-next-line
+export { runMigration67 } from './migrations';
+// knip-ignore-next-line
+export { runMigration68 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -94,6 +98,7 @@ export function createTables(db: BunDatabase): void {
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
+        origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
