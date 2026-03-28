@@ -345,7 +345,7 @@ export function ContextPanel() {
 			<div
 				class={`
 					fixed md:relative
-					h-screen w-70
+					h-dvh md:h-full w-70
 					bg-dark-950 border-r ${borderColors.ui.default}
 					flex flex-col
 					z-40 md:z-auto

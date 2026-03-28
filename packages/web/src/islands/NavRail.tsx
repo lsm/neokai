@@ -46,7 +46,7 @@ export function NavRail() {
 		<div
 			class={`
 				hidden md:relative md:flex
-				w-16 h-screen
+				w-16 h-full
 				bg-dark-950 border-r ${borderColors.ui.default}
 				flex-col items-center py-4
 			`}
