@@ -71,7 +71,6 @@ import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-ha
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
-import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
 import { setupLiveQueryHandlers } from './live-query-handlers';
 import { setupReferenceHandlers } from './reference-handlers';
 import { FileIndex } from '../file-index';
@@ -84,6 +83,11 @@ import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
 import { PendingActionStore } from '../neo/security-tier';
 import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
+import type { NeoActionToolsConfig, NeoWorkflowRun } from '../neo/tools/neo-action-tools';
+import {
+	createGlobalSpacesToolHandlers,
+	type GlobalSpacesState,
+} from '../space/tools/global-spaces-tools';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -459,6 +463,112 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// needed SpaceRuntimeService. Both are now created; inject via setter.
 	spaceRuntimeService.setTaskAgentManager(taskAgentManager);
 	spaceRuntimeService.start();
+
+	// Wire Neo action tools — must happen before neoAgentManager.provision() in app.ts.
+	// spaceRuntimeService.start() must be called first so getSharedRuntime() is available.
+	// Neo uses its own GlobalSpacesState (activeSpaceId stays null — Neo always passes
+	// space_id explicitly in tool calls, never relies on an ambient active-space context).
+	const neoSpacesState: GlobalSpacesState = { activeSpaceId: null };
+	const neoActionToolsConfig: NeoActionToolsConfig = {
+		roomManager,
+		managerFactory: {
+			getGoalManager: (roomId: string) =>
+				new GoalManager(
+					deps.db.getDatabase(),
+					roomId,
+					deps.reactiveDb,
+					deps.db.getShortIdAllocator()
+				),
+			getTaskManager: (roomId: string) =>
+				new TaskManager(
+					deps.db.getDatabase(),
+					roomId,
+					deps.reactiveDb,
+					deps.db.getShortIdAllocator()
+				),
+		},
+		runtimeService: roomRuntimeService,
+		pendingStore: neoPendingActions,
+		workspaceRoot: deps.config.workspaceRoot,
+		getSecurityMode: () => deps.neoAgentManager.getSecurityMode(),
+		spaceHandlers: createGlobalSpacesToolHandlers(
+			{
+				spaceManager: deps.spaceManager,
+				spaceAgentManager: deps.spaceAgentManager,
+				runtime: spaceRuntimeService.getSharedRuntime(),
+				workflowManager: spaceWorkflowManager,
+				taskRepo: spaceTaskRepo,
+				workflowRunRepo: spaceWorkflowRunRepo,
+				db: deps.db.getDatabase(),
+			},
+			neoSpacesState
+		),
+		workflowRunRepo: spaceWorkflowRunRepo,
+		spaceTaskManagerFactory: {
+			getTaskManager: (spaceId: string) => new SpaceTaskManager(deps.db.getDatabase(), spaceId),
+		},
+		gateDataRepo,
+		onGateChanged: async (runId: string, gateId: string) => {
+			await spaceRuntimeService.notifyGateDataChanged(runId, gateId);
+		},
+		onWorkflowRunUpdated: (spaceId: string, runId: string, run: NeoWorkflowRun) => {
+			deps.daemonHub
+				.emit('space.workflowRun.updated', {
+					sessionId: 'global',
+					spaceId,
+					runId,
+					// NeoWorkflowRun is a subset of SpaceWorkflowRun — cast for hub emission
+					run: run as unknown as Record<string, unknown>,
+				})
+				.catch((err) => {
+					log.warn('Neo: failed to emit space.workflowRun.updated:', err);
+				});
+		},
+		onGateDataUpdated: (
+			spaceId: string,
+			runId: string,
+			gateId: string,
+			data: Record<string, unknown>
+		) => {
+			deps.daemonHub
+				.emit('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId,
+					runId,
+					gateId,
+					data,
+				})
+				.catch((err) => {
+					log.warn('Neo: failed to emit space.gateData.updated:', err);
+				});
+		},
+		mcpManager: {
+			createMcpServer: (params) => deps.db.appMcpServers.create(params),
+			updateMcpServer: (id, updates) => deps.db.appMcpServers.update(id, updates),
+			deleteMcpServer: (id) => deps.db.appMcpServers.delete(id),
+			getMcpServer: (id) => deps.db.appMcpServers.get(id),
+			getMcpServerByName: (name) => deps.db.appMcpServers.getByName(name),
+		},
+		skillsManager: deps.skillsManager,
+		settingsManager: deps.settingsManager,
+		sessionManager: {
+			injectMessage: (sessionId: string, message: string) =>
+				deps.sessionManager.injectMessage(sessionId, message),
+			getActiveSessionForRoom: (roomId: string) => {
+				// Room sessions use a predictable ID: room:${roomId}.
+				// Verify the session exists before returning it so callers receive
+				// null (→ clean error) instead of injecting into a non-existent session.
+				const sessionId = `room:${roomId}`;
+				return deps.sessionManager.getSession(sessionId) !== null ? sessionId : null;
+			},
+			getActiveSessionForTask: (taskId: string) => {
+				// Look up the task agent session ID stored on the SpaceTask record.
+				const task = spaceTaskRepo.getTask(taskId);
+				return task?.taskAgentSessionId ?? null;
+			},
+		},
+	};
+	deps.neoAgentManager.setActionToolsConfig(neoActionToolsConfig);
 
 	// Human ↔ Task Agent message routing handlers (require taskAgentManager)
 	setupSpaceTaskMessageHandlers(deps.messageHub, taskAgentManager, deps.db);
