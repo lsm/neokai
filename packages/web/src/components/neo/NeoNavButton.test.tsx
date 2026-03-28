@@ -5,12 +5,12 @@
  * - Renders a button with correct aria-label and tooltip
  * - Renders the sparkle SVG icon
  * - Clicking calls neoStore.togglePanel()
- * - Active state reflects neoStore.panelOpen signal
- * - onOpen callback is invoked when the panel transitions to open
+ * - Active state reflects neoStore.panelOpen signal (initial render)
+ * - Active state updates reactively when neoStore.panelOpen changes externally
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup, fireEvent, act } from '@testing-library/preact';
 
 // ---------------------------------------------------------------------------
 // Mock neoStore
@@ -71,41 +71,41 @@ describe('NeoNavButton', () => {
 	it('is not aria-pressed when panel is closed', () => {
 		neoStore.panelOpen.value = false;
 		const { container } = render(<NeoNavButton />);
-		const btn = container.querySelector('button');
-		expect(btn?.getAttribute('aria-pressed')).toBe('false');
+		expect(container.querySelector('button')?.getAttribute('aria-pressed')).toBe('false');
 	});
 
 	it('is aria-pressed when panel is open', () => {
 		neoStore.panelOpen.value = true;
 		const { container } = render(<NeoNavButton />);
-		const btn = container.querySelector('button');
-		expect(btn?.getAttribute('aria-pressed')).toBe('true');
+		expect(container.querySelector('button')?.getAttribute('aria-pressed')).toBe('true');
 	});
 
-	it('reflects updated active state after toggle', () => {
+	it('updates aria-pressed reactively when panelOpen signal changes externally', () => {
+		const { container } = render(<NeoNavButton />);
+		const btn = container.querySelector('button')!;
+
+		expect(btn.getAttribute('aria-pressed')).toBe('false');
+
+		// Simulate external signal change (e.g., keyboard shortcut path)
+		act(() => {
+			neoStore.panelOpen.value = true;
+		});
+
+		expect(btn.getAttribute('aria-pressed')).toBe('true');
+
+		act(() => {
+			neoStore.panelOpen.value = false;
+		});
+
+		expect(btn.getAttribute('aria-pressed')).toBe('false');
+	});
+
+	it('updates aria-pressed reactively after click', () => {
 		const { container } = render(<NeoNavButton />);
 		const btn = container.querySelector('button')!;
 
 		expect(btn.getAttribute('aria-pressed')).toBe('false');
 		fireEvent.click(btn);
 		expect(btn.getAttribute('aria-pressed')).toBe('true');
-	});
-
-	it('invokes onOpen callback when opening the panel', () => {
-		const onOpen = vi.fn();
-		neoStore.panelOpen.value = false;
-		const { container } = render(<NeoNavButton onOpen={onOpen} />);
-		const btn = container.querySelector('button')!;
-		fireEvent.click(btn);
-		expect(onOpen).toHaveBeenCalledOnce();
-	});
-
-	it('does NOT invoke onOpen when closing the panel', () => {
-		const onOpen = vi.fn();
-		neoStore.panelOpen.value = true;
-		const { container } = render(<NeoNavButton onOpen={onOpen} />);
-		const btn = container.querySelector('button')!;
-		fireEvent.click(btn);
-		expect(onOpen).not.toHaveBeenCalled();
 	});
 });

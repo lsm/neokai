@@ -6,7 +6,6 @@
  * and has a tooltip "Neo (⌘J)".
  */
 
-import { useComputed } from '@preact/signals';
 import { neoStore } from '../../lib/neo-store.ts';
 import { NavIconButton } from '../ui/NavIconButton.tsx';
 
@@ -21,25 +20,13 @@ function SparkleIcon() {
 	);
 }
 
-interface NeoNavButtonProps {
-	/** Called after the panel toggle so the panel can auto-focus its input */
-	onOpen?: () => void;
-}
-
-export function NeoNavButton({ onOpen }: NeoNavButtonProps) {
-	const isOpen = useComputed(() => neoStore.panelOpen.value);
-
+export function NeoNavButton() {
 	const handleClick = () => {
-		const wasOpen = isOpen.value;
 		neoStore.togglePanel();
-		if (!wasOpen) {
-			// Panel is now open — notify caller to focus the input
-			onOpen?.();
-		}
 	};
 
 	return (
-		<NavIconButton active={isOpen.value} onClick={handleClick} label="Neo (⌘J)">
+		<NavIconButton active={neoStore.panelOpen.value} onClick={handleClick} label="Neo (⌘J)">
 			<SparkleIcon />
 		</NavIconButton>
 	);
