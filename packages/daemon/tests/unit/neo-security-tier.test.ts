@@ -91,6 +91,18 @@ describe('ActionClassification', () => {
 		expect(ActionClassification['update_app_settings']).toBe('low');
 	});
 
+	it('create_room is low risk', () => {
+		expect(ActionClassification['create_room']).toBe('low');
+	});
+
+	it('create_space is low risk', () => {
+		expect(ActionClassification['create_space']).toBe('low');
+	});
+
+	it('start_workflow_run is low risk', () => {
+		expect(ActionClassification['start_workflow_run']).toBe('low');
+	});
+
 	it('delete_room is medium risk', () => {
 		expect(ActionClassification['delete_room']).toBe('medium');
 	});
@@ -129,7 +141,7 @@ describe('PendingActionStore', () => {
 	});
 
 	it('stores and retrieves a pending action', () => {
-		const id = store.store_action({ toolName: 'delete_room', input: { roomId: 'r1' } });
+		const id = store.store({ toolName: 'delete_room', input: { roomId: 'r1' } });
 		const action = store.retrieve(id);
 		expect(action).toBeDefined();
 		expect(action!.toolName).toBe('delete_room');
@@ -141,18 +153,18 @@ describe('PendingActionStore', () => {
 	});
 
 	it('remove deletes the action', () => {
-		const id = store.store_action({ toolName: 'toggle_skill', input: {} });
+		const id = store.store({ toolName: 'toggle_skill', input: {} });
 		store.remove(id);
 		expect(store.retrieve(id)).toBeUndefined();
 	});
 
 	it('cleanup removes expired entries', () => {
 		// Manually backdate the stored action by injecting with past createdAt
-		const id = store.store_action({ toolName: 'toggle_skill', input: {} });
+		const id = store.store({ toolName: 'toggle_skill', input: {} });
 
 		// Tamper with internal state to simulate expiry (cast to any for testing)
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const internal = (store as any).store as Map<
+		const internal = (store as any).map as Map<
 			string,
 			{ toolName: string; input: unknown; createdAt: number }
 		>;
@@ -168,9 +180,9 @@ describe('PendingActionStore', () => {
 	});
 
 	it('retrieve rejects expired action and removes it', () => {
-		const id = store.store_action({ toolName: 'toggle_skill', input: {} });
+		const id = store.store({ toolName: 'toggle_skill', input: {} });
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const internal = (store as any).store as Map<
+		const internal = (store as any).map as Map<
 			string,
 			{ toolName: string; input: unknown; createdAt: number }
 		>;
@@ -186,8 +198,8 @@ describe('PendingActionStore', () => {
 
 	it('size reflects stored action count', () => {
 		expect(store.size).toBe(0);
-		store.store_action({ toolName: 'toggle_skill', input: {} });
-		store.store_action({ toolName: 'delete_room', input: {} });
+		store.store({ toolName: 'toggle_skill', input: {} });
+		store.store({ toolName: 'delete_room', input: {} });
 		expect(store.size).toBe(2);
 	});
 });
@@ -202,7 +214,7 @@ describe('makeConfirmActionTool', () => {
 	});
 
 	it('executes the stored action and removes it from the store', async () => {
-		const id = store.store_action({
+		const id = store.store({
 			toolName: 'create_goal',
 			input: { roomId: 'r1', title: 'My Goal' },
 		});
@@ -226,7 +238,7 @@ describe('makeConfirmActionTool', () => {
 	});
 
 	it('returns error when executor throws', async () => {
-		const id = store.store_action({ toolName: 'delete_room', input: {} });
+		const id = store.store({ toolName: 'delete_room', input: {} });
 		const executor = async () => {
 			throw new Error('Permission denied');
 		};
@@ -244,7 +256,7 @@ describe('makeConfirmActionTool', () => {
 			captured.push({ toolName, input });
 			return {};
 		};
-		const id = store.store_action({ toolName: 'approve_gate', input: { gateId: 'g42' } });
+		const id = store.store({ toolName: 'approve_gate', input: { gateId: 'g42' } });
 		const confirm = makeConfirmActionTool(store, executor);
 		await confirm({ actionId: id });
 		expect(captured).toHaveLength(1);
@@ -263,7 +275,7 @@ describe('makeCancelActionTool', () => {
 	});
 
 	it('removes a pending action and returns success', () => {
-		const id = store.store_action({ toolName: 'delete_room', input: {} });
+		const id = store.store({ toolName: 'delete_room', input: {} });
 		const cancel = makeCancelActionTool(store);
 		const result = cancel({ actionId: id });
 		expect(result.success).toBe(true);

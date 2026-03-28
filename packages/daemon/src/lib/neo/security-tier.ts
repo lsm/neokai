@@ -21,6 +21,9 @@ export const ActionClassification: Record<string, ActionRiskLevel> = {
 	update_app_settings: 'low',
 	update_room_settings: 'low',
 	update_space: 'low',
+	create_room: 'low',
+	create_space: 'low',
+	start_workflow_run: 'low',
 	create_task: 'low',
 	update_task: 'low',
 	set_task_status: 'low',
@@ -71,6 +74,8 @@ export function shouldAutoExecute(mode: NeoSecurityMode, riskLevel: ActionRiskLe
 			return riskLevel === 'low';
 		case 'autonomous':
 			return true;
+		default:
+			return false;
 	}
 }
 
@@ -104,21 +109,21 @@ export type PendingAction = {
 };
 
 export class PendingActionStore {
-	private readonly store = new Map<string, PendingAction>();
+	private readonly map = new Map<string, PendingAction>();
 
 	/** Persist an action and return its generated ID. */
-	store_action(action: Omit<PendingAction, 'createdAt'>): string {
+	store(action: Omit<PendingAction, 'createdAt'>): string {
 		const id = randomUUID();
-		this.store.set(id, { ...action, createdAt: Date.now() });
+		this.map.set(id, { ...action, createdAt: Date.now() });
 		return id;
 	}
 
 	/** Retrieve a pending action by ID, returning undefined if expired or missing. */
 	retrieve(actionId: string): PendingAction | undefined {
-		const action = this.store.get(actionId);
+		const action = this.map.get(actionId);
 		if (!action) return undefined;
 		if (Date.now() - action.createdAt > PENDING_ACTION_TTL_MS) {
-			this.store.delete(actionId);
+			this.map.delete(actionId);
 			return undefined;
 		}
 		return action;
@@ -126,22 +131,22 @@ export class PendingActionStore {
 
 	/** Remove a pending action (after execution or cancellation). */
 	remove(actionId: string): void {
-		this.store.delete(actionId);
+		this.map.delete(actionId);
 	}
 
 	/** Remove all expired entries. */
 	cleanup(): void {
 		const now = Date.now();
-		for (const [id, action] of this.store) {
+		for (const [id, action] of this.map) {
 			if (now - action.createdAt > PENDING_ACTION_TTL_MS) {
-				this.store.delete(id);
+				this.map.delete(id);
 			}
 		}
 	}
 
 	/** Current number of pending actions (including potentially expired ones). */
 	get size(): number {
-		return this.store.size;
+		return this.map.size;
 	}
 }
 

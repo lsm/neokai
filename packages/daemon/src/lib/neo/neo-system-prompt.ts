@@ -5,15 +5,9 @@
  * behavior, and activity logging instructions.
  */
 
-/**
- * Security mode values for Neo.
- *
- * - conservative: Confirm every write action before executing.
- * - balanced: Auto-execute low-risk reads/settings; confirm medium-risk; require
- *   explicit phrasing for irreversible/destructive operations.
- * - autonomous: Execute all actions immediately without confirmation.
- */
-export type NeoSecurityMode = 'conservative' | 'balanced' | 'autonomous';
+// NeoSecurityMode is canonical in security-tier.ts; re-exported here for stable import paths.
+import type { NeoSecurityMode } from './security-tier';
+export type { NeoSecurityMode };
 
 /**
  * Build the system prompt for Neo.
