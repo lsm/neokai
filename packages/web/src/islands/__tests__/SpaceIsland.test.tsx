@@ -189,6 +189,8 @@ vi.mock('../../lib/signals', () => ({
 	get currentSpaceTaskIdSignal() {
 		return mockCurrentSpaceTaskId;
 	},
+	currentSessionIdSignal: signal(null),
+	slashCommandsSignal: signal([]),
 }));
 
 vi.mock('../../lib/router', () => ({
@@ -660,6 +662,16 @@ describe('SpaceIsland — canvas integration (dashboard tab)', () => {
 			const { queryByText } = render(<SpaceIsland spaceId="space-1" />);
 			// Banner text "in progress" / "pending" should not appear
 			expect(queryByText('in progress')).toBeNull();
+		});
+	});
+
+	describe('Agents tab', () => {
+		it('renders SpaceAgentList inside a padded wrapper', () => {
+			const { getByTestId, getByText } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByText('Agents'));
+			const agentList = getByTestId('space-agent-list');
+			const wrapper = agentList.parentElement;
+			expect(wrapper?.className).toContain('p-6');
 		});
 	});
 

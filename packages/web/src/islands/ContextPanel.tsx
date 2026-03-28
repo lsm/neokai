@@ -210,7 +210,6 @@ export function ContextPanel() {
 		},
 		spaces: {
 			title: 'Spaces',
-			emptyIcon: '🚀',
 			emptyTitle: 'No spaces yet',
 			emptyDesc: 'Create a space to orchestrate agents',
 			actionLabel: 'Create Space',
