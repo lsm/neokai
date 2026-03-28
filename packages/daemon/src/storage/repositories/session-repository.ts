@@ -68,7 +68,7 @@ export class SessionRepository {
 	 * @param options.includeArchived - If true, returns all sessions regardless of status.
 	 */
 	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
-		let sql = `SELECT * FROM sessions WHERE type != 'lobby' AND type != 'spaces_global'`;
+		let sql = `SELECT * FROM sessions WHERE type != 'lobby' AND type != 'spaces_global' AND type != 'neo'`;
 		const params: string[] = [];
 
 		if (options?.status) {
