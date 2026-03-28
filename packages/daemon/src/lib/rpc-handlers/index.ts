@@ -555,9 +555,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			injectMessage: (sessionId: string, message: string) =>
 				deps.sessionManager.injectMessage(sessionId, message),
 			getActiveSessionForRoom: (roomId: string) => {
-				// Room sessions use a predictable ID: room:${roomId}
-				// This is the leader session that processes human messages.
-				return `room:${roomId}`;
+				// Room sessions use a predictable ID: room:${roomId}.
+				// Verify the session exists before returning it so callers receive
+				// null (→ clean error) instead of injecting into a non-existent session.
+				const sessionId = `room:${roomId}`;
+				return deps.sessionManager.getSession(sessionId) !== null ? sessionId : null;
 			},
 			getActiveSessionForTask: (taskId: string) => {
 				// Look up the task agent session ID stored on the SpaceTask record.
