@@ -556,9 +556,9 @@ a:focus-visible {
 
 /* Safe area inset support for iOS notch/home indicator */
 .pb-safe {
-	padding-bottom: env(safe-area-inset-bottom);
+	padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .pt-safe {
-	padding-top: env(safe-area-inset-top);
+	padding-top: env(safe-area-inset-top, 0px);
 }
