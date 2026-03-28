@@ -5,14 +5,12 @@
 import { useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { connectionManager } from '../../lib/connection-manager';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import type { SpaceTask, SpaceTaskPriority, SpaceTaskType } from '@neokai/shared';
 
 interface SpaceCreateTaskDialogProps {
 	isOpen: boolean;
-	spaceId: string;
 	onClose: () => void;
 	onCreated?: (task: SpaceTask) => void;
 }
@@ -32,12 +30,7 @@ const TASK_TYPE_OPTIONS: { value: SpaceTaskType; label: string }[] = [
 	{ value: 'review', label: 'Review' },
 ];
 
-export function SpaceCreateTaskDialog({
-	isOpen,
-	spaceId,
-	onClose,
-	onCreated,
-}: SpaceCreateTaskDialogProps) {
+export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreateTaskDialogProps) {
 	const [title, setTitle] = useState('');
 	const [description, setDescription] = useState('');
 	const [priority, setPriority] = useState<SpaceTaskPriority>('normal');
@@ -62,33 +55,20 @@ export function SpaceCreateTaskDialog({
 			return;
 		}
 
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			setError('Not connected to server');
-			return;
-		}
-
 		try {
 			setSubmitting(true);
 			setError(null);
 
-			const task = await hub.request<SpaceTask>('spaceTask.create', {
-				spaceId,
+			const task = await spaceStore.createTask({
 				title: title.trim(),
 				description: description.trim(),
 				priority,
 				taskType,
 			});
 
-			if (!task) {
-				throw new Error('Server returned no data');
-			}
-
 			toast.success(`Task "${task.title}" created`);
 			onCreated?.(task);
 			handleClose();
-			// Refresh space data in the background so the dashboard shows the new task
-			spaceStore.selectSpace(spaceId).catch(() => {});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create task');
 		} finally {

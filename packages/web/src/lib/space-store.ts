@@ -838,12 +838,6 @@ class SpaceStore {
 
 	/**
 	 * Start a new workflow run.
-	 *
-	 * TODO(M6): The `spaceWorkflowRun.create` RPC handler is not yet registered
-	 * in the daemon — workflow runs are currently created internally by the
-	 * SpaceRuntime. This method is a stub for the future client-initiated API.
-	 * The event subscriptions for space.workflowRun.created/updated are already
-	 * active and will reflect runs created by the runtime.
 	 */
 	async startWorkflowRun(
 		params: Omit<CreateWorkflowRunParams, 'spaceId'>
@@ -854,7 +848,7 @@ class SpaceStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		const run = await hub.request<SpaceWorkflowRun>('spaceWorkflowRun.create', {
+		const { run } = await hub.request<{ run: SpaceWorkflowRun }>('spaceWorkflowRun.start', {
 			...params,
 			spaceId,
 		});

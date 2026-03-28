@@ -307,11 +307,7 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 			)}
 
 			{/* Quick action dialogs */}
-			<SpaceCreateTaskDialog
-				isOpen={createTaskOpen}
-				spaceId={spaceId}
-				onClose={() => setCreateTaskOpen(false)}
-			/>
+			<SpaceCreateTaskDialog isOpen={createTaskOpen} onClose={() => setCreateTaskOpen(false)} />
 			<SpaceStartWorkflowDialog
 				isOpen={startWorkflowOpen}
 				spaceId={spaceId}
