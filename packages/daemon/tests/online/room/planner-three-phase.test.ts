@@ -80,8 +80,17 @@ const GROUP_POLL_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
 const PIPELINE_POLL_TIMEOUT = IS_MOCK ? 30_000 : 180_000;
 
 // Use Sonnet for room agents — save and restore to avoid cross-test leakage.
+// Top-level afterAll ensures the restore runs even if only Section 1 tests execute.
 const savedModel = process.env.DEFAULT_MODEL;
 process.env.DEFAULT_MODEL = 'sonnet';
+
+afterAll(() => {
+	if (savedModel !== undefined) {
+		process.env.DEFAULT_MODEL = savedModel;
+	} else {
+		delete process.env.DEFAULT_MODEL;
+	}
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Section 1: Configuration tests (no daemon, no API calls)
@@ -207,11 +216,6 @@ describe('Planner 3-phase pipeline — integration (dev-proxy)', () => {
 
 	afterAll(
 		async () => {
-			if (savedModel !== undefined) {
-				process.env.DEFAULT_MODEL = savedModel;
-			} else {
-				delete process.env.DEFAULT_MODEL;
-			}
 			if (daemon) {
 				daemon.kill('SIGTERM');
 				await daemon.waitForExit();
@@ -358,7 +362,7 @@ async function pollForTaskCalls(
 			return lastCalls;
 		}
 
-		await Bun.sleep(1_000);
+		await Bun.sleep(IS_MOCK ? 200 : 1_000);
 	}
 
 	const found = lastCalls.map((c) => c.subagentType).join(', ');
