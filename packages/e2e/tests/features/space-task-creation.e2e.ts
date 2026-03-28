@@ -110,8 +110,9 @@ test.describe('Space Task Creation', () => {
 		await dialog.getByRole('button', { name: 'Cancel' }).click();
 		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
 
-		// No task pane should appear — the right-column task detail pane only opens
-		// when a task is selected (currentSpaceTaskIdSignal non-null), which Cancel never triggers
-		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeVisible();
+		// The task pane wrapper (data-testid="space-task-pane") is only mounted in SpaceIsland
+		// when activeTaskId is truthy. Cancel never sets a taskId, so the wrapper is absent
+		// from the DOM entirely. not.toBeAttached() fails if the element is unexpectedly mounted.
+		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
 	});
 });

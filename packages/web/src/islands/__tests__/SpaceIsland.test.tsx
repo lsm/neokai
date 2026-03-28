@@ -175,7 +175,7 @@ vi.mock('../../components/space/SpaceDashboard', () => ({
 	),
 }));
 vi.mock('../../components/space/SpaceTaskPane', () => ({
-	SpaceTaskPane: () => <div data-testid="space-task-pane" />,
+	SpaceTaskPane: () => <div />,
 }));
 
 vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
