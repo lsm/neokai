@@ -83,6 +83,7 @@ import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
 import { PendingActionStore } from '../neo/security-tier';
+import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -347,6 +348,29 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		},
 	};
 	const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
+
+	// Wire Neo query tools — must happen before neoAgentManager.provision() is called
+	// in app.ts (setupRPCHandlers runs first). The in-process neo-query server is merged
+	// with registry-sourced servers; in-process wins on name collision.
+	const neoToolsConfig: NeoToolsConfig = {
+		roomManager,
+		goalRepository: deps.db.getGoalRepo(),
+		taskRepository: deps.db.getTaskRepo(),
+		sessionManager: deps.sessionManager,
+		settingsManager: deps.settingsManager,
+		authManager: deps.authManager,
+		mcpServerRepository: deps.db.appMcpServers,
+		skillsManager: deps.skillsManager,
+		workspaceRoot: deps.config.workspaceRoot,
+		appVersion: '0.1.1',
+		startedAt: Date.now(),
+		spaceManager: deps.spaceManager,
+		spaceAgentManager: deps.spaceAgentManager,
+		spaceWorkflowManager,
+		workflowRunRepository: spaceWorkflowRunRepo,
+		spaceTaskRepository: spaceTaskRepo,
+	};
+	deps.neoAgentManager.setToolsConfig(neoToolsConfig, deps.appMcpManager);
 
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);

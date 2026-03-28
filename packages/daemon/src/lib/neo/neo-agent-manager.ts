@@ -15,9 +15,11 @@
  * `neoSecurityMode` and `neoModel` keys in GlobalSettings.
  */
 
+import type { McpServerConfig } from '@neokai/shared';
 import type { AgentSession } from '../agent/agent-session';
 import { Logger } from '../logger';
 import { buildNeoSystemPrompt, type NeoSecurityMode } from './neo-system-prompt';
+import { createNeoQueryMcpServer, type NeoToolsConfig } from './tools/neo-query-tools';
 
 export const NEO_SESSION_ID = 'neo:global';
 const NEO_SESSION_TITLE = 'Neo';
@@ -39,9 +41,18 @@ export interface NeoSettingsManager {
 	getGlobalSettings(): { neoSecurityMode?: string; neoModel?: string; model?: string };
 }
 
+/**
+ * Minimal interface for the AppMcpLifecycleManager — only the surface used by NeoAgentManager.
+ */
+export interface NeoAppMcpManager {
+	getEnabledMcpConfigs(): Record<string, McpServerConfig>;
+}
+
 export class NeoAgentManager {
 	private readonly logger = new Logger('NeoAgentManager');
 	private session: AgentSession | null = null;
+	private toolsConfig: NeoToolsConfig | null = null;
+	private appMcpManager: NeoAppMcpManager | null = null;
 
 	constructor(
 		private readonly sessionManager: NeoSessionManager,
@@ -109,6 +120,22 @@ export class NeoAgentManager {
 	 */
 	getSession(): AgentSession | null {
 		return this.session;
+	}
+
+	/**
+	 * Wire in the query tools dependencies and optional MCP registry manager.
+	 *
+	 * Must be called before `provision()`. When set, `provision()` will create the
+	 * neo-query MCP server and attach it to the session alongside any registry-sourced
+	 * servers from AppMcpLifecycleManager (same pattern as provisionGlobalSpacesAgent).
+	 *
+	 * @param toolsConfig  All dependencies needed by createNeoQueryMcpServer().
+	 * @param appMcpManager  Optional registry manager; when provided, its globally-enabled
+	 *   servers are merged in. The in-process neo-query server always wins on collision.
+	 */
+	setToolsConfig(toolsConfig: NeoToolsConfig, appMcpManager?: NeoAppMcpManager): void {
+		this.toolsConfig = toolsConfig;
+		this.appMcpManager = appMcpManager ?? null;
 	}
 
 	/**
@@ -275,8 +302,10 @@ export class NeoAgentManager {
 	/**
 	 * Apply runtime configuration to the current session.
 	 *
-	 * Sets the system prompt (based on the active security mode) and the model
-	 * override from settings. Both values are in-memory only (not persisted to DB).
+	 * Sets the system prompt (based on the active security mode), the model
+	 * override from settings, and — when toolsConfig has been provided via
+	 * setToolsConfig() — the neo-query MCP server merged with any registry-
+	 * sourced servers. All values are in-memory only (not persisted to DB).
 	 */
 	private applyRuntimeConfig(): void {
 		if (!this.session) return;
@@ -287,5 +316,40 @@ export class NeoAgentManager {
 
 		const model = this.getModel();
 		this.session.setRuntimeModel(model);
+
+		this.attachQueryTools();
+	}
+
+	/**
+	 * Attach the neo-query MCP server to the current session, merged with any
+	 * globally-enabled registry servers from AppMcpLifecycleManager.
+	 *
+	 * Mirrors the pattern used in provisionGlobalSpacesAgent():
+	 *   - Registry servers loaded from appMcpManager (if set).
+	 *   - In-process 'neo-query' server always wins on name collision.
+	 *   - No subscription to mcp.registry.changed — registry changes take effect
+	 *     on the next daemon restart (consistent with the global spaces agent).
+	 *
+	 * No-op when toolsConfig has not been set via setToolsConfig().
+	 */
+	private attachQueryTools(): void {
+		if (!this.session || !this.toolsConfig) return;
+
+		const mcpServer = createNeoQueryMcpServer(this.toolsConfig);
+		const registryMcpServers = this.appMcpManager?.getEnabledMcpConfigs() ?? {};
+
+		for (const name of Object.keys(registryMcpServers)) {
+			if (name === 'neo-query') {
+				this.logger.warn(
+					`Neo: MCP server name collision on 'neo-query' — ` +
+						`in-process server takes precedence over registry entry.`
+				);
+			}
+		}
+
+		this.session.setRuntimeMcpServers({
+			...registryMcpServers,
+			'neo-query': mcpServer as unknown as McpServerConfig,
+		});
 	}
 }
