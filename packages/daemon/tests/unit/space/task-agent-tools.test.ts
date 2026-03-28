@@ -1416,7 +1416,7 @@ describe('createTaskAgentMcpServer', () => {
 		const { server } = await makeServerCtx();
 		const entry = server.instance._registeredTools['check_node_status'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain('Poll the status of a running node agent sub-session');
+		expect(entry.description).toContain('Inspect the status of a node agent sub-session on demand');
 	});
 
 	test('report_result has correct description', async () => {
