@@ -82,6 +82,47 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 
 const log = new Logger('task-agent-manager');
 
+const WORKFLOW_SELECTION_STOP_WORDS = new Set([
+	'the',
+	'and',
+	'for',
+	'are',
+	'but',
+	'not',
+	'you',
+	'all',
+	'can',
+	'was',
+	'one',
+	'our',
+	'out',
+	'day',
+	'get',
+	'has',
+	'him',
+	'his',
+	'how',
+	'its',
+	'may',
+	'new',
+	'now',
+	'old',
+	'see',
+	'two',
+	'use',
+	'way',
+	'who',
+	'did',
+	'let',
+	'put',
+	'say',
+	'she',
+	'too',
+	'had',
+	'any',
+	'via',
+]);
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -248,10 +289,22 @@ export class TaskAgentManager {
 			throw new Error(`Space not found: ${task.spaceId}`);
 		}
 
-		const workflowRun = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
-		const workflow = workflowRun
+		let workflowRun = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
+		let workflow = workflowRun
 			? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
 			: null;
+
+		// Fallback path: standalone task without an assigned workflow.
+		// We auto-select a workflow, start a run, and attach this existing task to it
+		// so the Task Agent can use workflow-aware tools immediately.
+		if (!workflowRun) {
+			const autoAttached = await this.attachFallbackWorkflowRun(task, space);
+			if (autoAttached) {
+				task = autoAttached.task;
+				workflowRun = autoAttached.workflowRun;
+				workflow = autoAttached.workflow;
+			}
+		}
 
 		await this.spawnTaskAgent(task, space, workflow ?? null, workflowRun ?? null);
 
@@ -264,6 +317,114 @@ export class TaskAgentManager {
 			throw new Error(`Failed to reload task after starting Task Agent: ${taskId}`);
 		}
 		return refreshed;
+	}
+
+	/**
+	 * Attach a workflow run to a standalone task when no workflow was explicitly set.
+	 *
+	 * Strategy:
+	 * - Pick a workflow from this space using lightweight keyword ranking.
+	 * - Start a workflow run through SpaceRuntime.
+	 * - Rebind the existing task to the run as the orchestration task (workflowNodeId: null).
+	 * - Keep node-scoped tasks created by runtime for actual step execution.
+	 *
+	 * Returns null when no workflows exist in the space (task remains standalone).
+	 */
+	private async attachFallbackWorkflowRun(
+		task: SpaceTask,
+		space: Space
+	): Promise<{ task: SpaceTask; workflow: SpaceWorkflow; workflowRun: SpaceWorkflowRun } | null> {
+		const selectedWorkflow = this.selectFallbackWorkflow(task, space.id);
+		if (!selectedWorkflow) {
+			log.info(
+				`TaskAgentManager.ensureTaskAgentSession: task ${task.id} has no workflow and space ${space.id} has no workflows; continuing as standalone`
+			);
+			return null;
+		}
+
+		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(space.id);
+		const { run, tasks: startTasks } = await runtime.startWorkflowRun(
+			space.id,
+			selectedWorkflow.id,
+			task.title,
+			task.description,
+			task.goalId
+		);
+
+		const bootstrapTask = startTasks[0];
+		if (!bootstrapTask) {
+			throw new Error(
+				`Fallback workflow run "${run.id}" did not create any start tasks for workflow "${selectedWorkflow.id}"`
+			);
+		}
+
+		this.config.taskRepo.updateTask(task.id, {
+			workflowRunId: run.id,
+			// Keep orchestration tasks detached from concrete workflow nodes.
+			// Node-scoped tasks are created by the runtime as separate rows.
+			workflowNodeId: null,
+		});
+
+		const reboundTask = this.config.taskRepo.getTask(task.id);
+		if (!reboundTask) {
+			throw new Error(`Failed to reload task after fallback workflow attachment: ${task.id}`);
+		}
+
+		log.info(
+			`TaskAgentManager.ensureTaskAgentSession: auto-attached workflow "${selectedWorkflow.id}" (run ${run.id}) to task ${task.id}`
+		);
+
+		return {
+			task: reboundTask,
+			workflow: selectedWorkflow,
+			workflowRun: run,
+		};
+	}
+
+	/**
+	 * Deterministically select a fallback workflow for a standalone task.
+	 *
+	 * Preference order:
+	 * 1. Highest keyword overlap with task title/description.
+	 * 2. Workflows tagged `default`.
+	 * 3. Workflows tagged `v2`.
+	 * 4. Most recently updated workflow.
+	 */
+	private selectFallbackWorkflow(task: SpaceTask, spaceId: string): SpaceWorkflow | null {
+		const workflows = this.config.spaceWorkflowManager.listWorkflows(spaceId);
+		if (workflows.length === 0) return null;
+		if (workflows.length === 1) return workflows[0];
+
+		const keywords = `${task.title} ${task.description}`
+			.toLowerCase()
+			.split(/\W+/)
+			.filter((w) => w.length >= 3 && !WORKFLOW_SELECTION_STOP_WORDS.has(w));
+
+		const scored = workflows.map((workflow) => {
+			const haystack = [workflow.name, workflow.description ?? '', ...(workflow.tags ?? [])]
+				.join(' ')
+				.toLowerCase();
+			const hits =
+				keywords.length === 0
+					? 0
+					: keywords.filter((kw) => haystack.includes(kw)).length;
+			const tags = workflow.tags ?? [];
+			return {
+				workflow,
+				hits,
+				isDefault: tags.includes('default') ? 1 : 0,
+				isV2: tags.includes('v2') ? 1 : 0,
+			};
+		});
+
+		scored.sort((a, b) => {
+			if (b.hits !== a.hits) return b.hits - a.hits;
+			if (b.isDefault !== a.isDefault) return b.isDefault - a.isDefault;
+			if (b.isV2 !== a.isV2) return b.isV2 - a.isV2;
+			return b.workflow.updatedAt - a.workflow.updatedAt;
+		});
+
+		return scored[0]?.workflow ?? null;
 	}
 
 	/**

@@ -426,6 +426,61 @@ describe('TaskAgentManager', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// ensureTaskAgentSession
+	// -----------------------------------------------------------------------
+
+	describe('ensureTaskAgentSession', () => {
+		test('auto-attaches a fallback workflow run for standalone tasks', async () => {
+			const fallbackStepId = 'step-fallback';
+			const fallbackWorkflow = ctx.workflowManager.createWorkflow({
+				spaceId: ctx.spaceId,
+				name: 'Fallback Coding Workflow',
+				description: 'Default coding path',
+				nodes: [
+					{
+						id: fallbackStepId,
+						name: 'Coding',
+						agentId: ctx.agentId,
+						instructions: 'Implement the requested change.',
+					},
+				],
+				startNodeId: fallbackStepId,
+				tags: ['default'],
+			});
+
+			const task = await makeTask(ctx.taskManager);
+			const ensured = await ctx.manager.ensureTaskAgentSession(task.id);
+
+			expect(ensured.workflowRunId).toBeDefined();
+			expect(ensured.workflowNodeId).toBeUndefined();
+			expect(ensured.taskAgentSessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
+
+			const run = ctx.workflowRunRepo.getRun(ensured.workflowRunId!);
+			expect(run).not.toBeNull();
+			expect(run!.workflowId).toBe(fallbackWorkflow.id);
+
+			const runTasks = ctx.taskRepo.listByWorkflowRun(run!.id);
+			const orchestratorTask = runTasks.find((t) => t.id === task.id);
+			const startStepTask = runTasks.find(
+				(t) => t.id !== task.id && t.workflowNodeId === fallbackStepId
+			);
+
+			expect(orchestratorTask).toBeDefined();
+			expect(orchestratorTask?.workflowNodeId).toBeUndefined();
+			expect(startStepTask).toBeDefined();
+			expect(startStepTask?.taskAgentSessionId ?? null).toBeNull();
+		});
+
+		test('keeps standalone behavior when space has no workflows', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const ensured = await ctx.manager.ensureTaskAgentSession(task.id);
+
+			expect(ensured.workflowRunId).toBeUndefined();
+			expect(ensured.taskAgentSessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// spawnTaskAgent — idempotency
 	// -----------------------------------------------------------------------
 
