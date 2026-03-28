@@ -14,13 +14,17 @@ import type { SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
 // Hoisted mocks
 // -------------------------------------------------------
 
-const { mockNavigateToSpace, mockNavigateToSpaceSession, mockNavigateToSpaceTask } = vi.hoisted(
-	() => ({
-		mockNavigateToSpace: vi.fn(),
-		mockNavigateToSpaceSession: vi.fn(),
-		mockNavigateToSpaceTask: vi.fn(),
-	})
-);
+const {
+	mockNavigateToSpace,
+	mockNavigateToSpaceAgent,
+	mockNavigateToSpaceSession,
+	mockNavigateToSpaceTask,
+} = vi.hoisted(() => ({
+	mockNavigateToSpace: vi.fn(),
+	mockNavigateToSpaceAgent: vi.fn(),
+	mockNavigateToSpaceSession: vi.fn(),
+	mockNavigateToSpaceTask: vi.fn(),
+}));
 
 // -------------------------------------------------------
 // Signals used in mocks
@@ -85,6 +89,7 @@ vi.mock('../../lib/space-store.ts', () => ({
 
 vi.mock('../../lib/router.ts', () => ({
 	navigateToSpace: mockNavigateToSpace,
+	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 	navigateToSpaceSession: mockNavigateToSpaceSession,
 	navigateToSpaceTask: mockNavigateToSpaceTask,
 }));
@@ -274,11 +279,11 @@ describe('SpaceDetailPanel', () => {
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 
-	it('navigates to space agent session and calls onNavigate', () => {
+	it('navigates to space agent route and calls onNavigate', () => {
 		const onNavigate = vi.fn();
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 		fireEvent.click(screen.getByText('Space Agent'));
-		expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:chat:space-1');
+		expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 

@@ -13,7 +13,12 @@
 import { useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/room/CollapsibleSection';
 import { spaceStore } from '../lib/space-store';
-import { navigateToSpace, navigateToSpaceSession, navigateToSpaceTask } from '../lib/router';
+import {
+	navigateToSpace,
+	navigateToSpaceAgent,
+	navigateToSpaceSession,
+	navigateToSpaceTask,
+} from '../lib/router';
 import { currentSpaceSessionIdSignal, currentSpaceTaskIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
 
@@ -204,7 +209,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	};
 
 	const handleSpaceAgentClick = () => {
-		navigateToSpaceSession(spaceId, spaceAgentSessionId);
+		navigateToSpaceAgent(spaceId);
 		onNavigate?.();
 	};
 
