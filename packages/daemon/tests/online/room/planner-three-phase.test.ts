@@ -27,9 +27,17 @@
  *    - plan-writer           → ---PLAN_RESULT--- with PLNR_PLAN_3P_2025_SENTINEL
  *    - Planner after plan-writer → end_turn
  *
- *    Test assertions inspect the planner's SDK messages to find the Task tool_use
- *    blocks and verify their prompts contain the expected sentinel strings, proving
- *    context was threaded across pipeline stages.
+ *    Stage-transition mocks (planner after explorer/fact-checker/plan-writer) match on
+ *    tool_use_ids (toolu_3p_explorer_001 etc.), which only appear in the planner's request
+ *    body AFTER the corresponding sub-agent's tool_result has been returned by the SDK.
+ *    This proves the SDK correctly threads tool_results between stages.
+ *
+ *    Note on sentinel assertions: the sentinels in factCheckerCall.prompt and
+ *    planWriterCall.prompt come from the hardcoded mock responses, not from real LLM
+ *    inference. What the assertions actually verify is (a) the correct stage-transition
+ *    mock fired (proven by the tool_use_id match), and (b) extractTaskCalls found the
+ *    Task call with the expected agent type. Real context-threading by the planner LLM
+ *    can only be verified via real API tests (NEOKAI_TEST_ONLINE=true).
  *
  * Run:
  *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/room/planner-three-phase.test.ts
@@ -324,8 +332,7 @@ interface TaskCall {
  * (planner-explorer, planner-fact-checker, plan-writer) appear, or the timeout
  * elapses.
  *
- * Returns the calls found — test assertions are responsible for verifying
- * completeness and content.
+ * Throws on timeout with a diagnostic message listing which stages were found.
  */
 async function pollForTaskCalls(
 	daemon: DaemonServerContext,
@@ -354,14 +361,11 @@ async function pollForTaskCalls(
 		await Bun.sleep(1_000);
 	}
 
-	// Log diagnostic info on timeout to help debug failing tests
 	const found = lastCalls.map((c) => c.subagentType).join(', ');
-	console.log(
+	throw new Error(
 		`pollForTaskCalls timed out after ${timeout}ms. ` +
 			`Found Task calls: [${found || 'none'}] for session ${sessionId}`
 	);
-
-	return lastCalls;
 }
 
 /**
