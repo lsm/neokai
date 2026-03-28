@@ -279,6 +279,28 @@ export interface NeoActionToolsConfig {
 	 * activate if the gate is now open (mirrors fireGateChanged in the RPC layer).
 	 */
 	onGateChanged?: NeoGateChangedNotifier;
+	/**
+	 * Optional callback invoked after a workflow run's status changes.
+	 * Mirrors the `space.workflowRun.updated` event emitted by the RPC layer
+	 * so that the frontend LiveQuery subscriptions receive the update.
+	 * Called by cancel_workflow_run, approve_gate, and reject_gate.
+	 */
+	onWorkflowRunUpdated?: (
+		spaceId: string,
+		runId: string,
+		run: NeoWorkflowRun
+	) => void | Promise<void>;
+	/**
+	 * Optional callback invoked after gate data is written.
+	 * Mirrors the `space.gateData.updated` event emitted by the RPC layer.
+	 * Called by approve_gate and reject_gate.
+	 */
+	onGateDataUpdated?: (
+		spaceId: string,
+		runId: string,
+		gateId: string,
+		data: Record<string, unknown>
+	) => void | Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +377,8 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 		spaceTaskManagerFactory,
 		gateDataRepo,
 		onGateChanged,
+		onWorkflowRunUpdated,
+		onGateDataUpdated,
 	} = config;
 
 	return {
@@ -752,12 +776,12 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			instructions?: string;
 			autonomy_level?: SpaceAutonomyLevel;
 		}): Promise<ToolResult> {
-			if (!spaceHandlers) {
-				return errorResult('Space operations are not available');
-			}
-			return withSecurityCheck('create_space', args as Record<string, unknown>, config, () =>
-				spaceHandlers.create_space(args)
-			);
+			return withSecurityCheck('create_space', args as Record<string, unknown>, config, () => {
+				if (!spaceHandlers) {
+					return Promise.resolve(errorResult('Space operations are not available'));
+				}
+				return spaceHandlers.create_space(args);
+			});
 		},
 
 		async update_space(args: {
@@ -769,9 +793,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			default_model?: string;
 			autonomy_level?: SpaceAutonomyLevel;
 		}): Promise<ToolResult> {
-			if (!spaceHandlers) {
-				return errorResult('Space operations are not available');
-			}
+			// Input validation — stays outside the security check (no backend needed to validate)
 			const hasUpdates =
 				args.name !== undefined ||
 				args.description !== undefined ||
@@ -782,18 +804,21 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			if (!hasUpdates) {
 				return errorResult('No update fields provided');
 			}
-			return withSecurityCheck('update_space', args as Record<string, unknown>, config, () =>
-				spaceHandlers.update_space(args)
-			);
+			return withSecurityCheck('update_space', args as Record<string, unknown>, config, () => {
+				if (!spaceHandlers) {
+					return Promise.resolve(errorResult('Space operations are not available'));
+				}
+				return spaceHandlers.update_space(args);
+			});
 		},
 
 		async delete_space(args: { space_id: string }): Promise<ToolResult> {
-			if (!spaceHandlers) {
-				return errorResult('Space operations are not available');
-			}
-			return withSecurityCheck('delete_space', args as Record<string, unknown>, config, () =>
-				spaceHandlers.delete_space(args)
-			);
+			return withSecurityCheck('delete_space', args as Record<string, unknown>, config, () => {
+				if (!spaceHandlers) {
+					return Promise.resolve(errorResult('Space operations are not available'));
+				}
+				return spaceHandlers.delete_space(args);
+			});
 		},
 
 		// ── Workflow ──────────────────────────────────────────────────────────
@@ -805,23 +830,29 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			description?: string;
 			goal_id?: string;
 		}): Promise<ToolResult> {
-			if (!spaceHandlers) {
-				return errorResult('Workflow operations are not available');
-			}
-			return withSecurityCheck('start_workflow_run', args as Record<string, unknown>, config, () =>
-				spaceHandlers.start_workflow_run(args)
+			return withSecurityCheck(
+				'start_workflow_run',
+				args as Record<string, unknown>,
+				config,
+				() => {
+					if (!spaceHandlers) {
+						return Promise.resolve(errorResult('Workflow operations are not available'));
+					}
+					return spaceHandlers.start_workflow_run(args);
+				}
 			);
 		},
 
 		async cancel_workflow_run(args: { run_id: string }): Promise<ToolResult> {
-			if (!workflowRunRepo || !spaceTaskManagerFactory) {
-				return errorResult('Workflow run operations are not available');
-			}
 			return withSecurityCheck(
 				'cancel_workflow_run',
 				args as Record<string, unknown>,
 				config,
 				async () => {
+					if (!workflowRunRepo || !spaceTaskManagerFactory) {
+						return errorResult('Workflow run operations are not available');
+					}
+
 					const run = workflowRunRepo.getRun(args.run_id);
 					if (!run) {
 						return errorResult(`Workflow run not found: ${args.run_id}`);
@@ -839,12 +870,13 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					for (const task of tasks) {
 						if (task.status === 'pending' || task.status === 'in_progress') {
 							await taskManager.cancelTask(task.id).catch(() => {
-								/* best-effort */
+								/* best-effort — individual task failures do not abort run cancellation */
 							});
 						}
 					}
 
-					workflowRunRepo.transitionStatus(args.run_id, 'cancelled');
+					const updated = workflowRunRepo.transitionStatus(args.run_id, 'cancelled');
+					await onWorkflowRunUpdated?.(run.spaceId, run.id, updated);
 					return successResult({ runId: args.run_id });
 				}
 			);
@@ -857,14 +889,15 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			gate_id: string;
 			reason?: string;
 		}): Promise<ToolResult> {
-			if (!workflowRunRepo || !gateDataRepo) {
-				return errorResult('Gate operations are not available');
-			}
 			return withSecurityCheck(
 				'approve_gate',
 				args as Record<string, unknown>,
 				config,
 				async () => {
+					if (!workflowRunRepo || !gateDataRepo) {
+						return errorResult('Gate operations are not available');
+					}
+
 					const run = workflowRunRepo.getRun(args.run_id);
 					if (!run) {
 						return errorResult(`Workflow run not found: ${args.run_id}`);
@@ -892,12 +925,16 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 						approvedAt: Date.now(),
 					});
 
-					// If previously rejected, transition back to in_progress
+					// If previously rejected, transition back to in_progress and clear failure reason
+					let currentRun = run;
 					if (run.status === 'needs_attention' && run.failureReason === 'humanRejected') {
-						workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
-						workflowRunRepo.updateRun(args.run_id, { failureReason: null });
+						currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
+						currentRun =
+							workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
+						await onWorkflowRunUpdated?.(run.spaceId, run.id, currentRun);
 					}
 
+					await onGateDataUpdated?.(run.spaceId, run.id, args.gate_id, gateData.data);
 					await onGateChanged?.(args.run_id, args.gate_id);
 
 					return successResult({
@@ -914,10 +951,11 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			gate_id: string;
 			reason?: string;
 		}): Promise<ToolResult> {
-			if (!workflowRunRepo || !gateDataRepo) {
-				return errorResult('Gate operations are not available');
-			}
 			return withSecurityCheck('reject_gate', args as Record<string, unknown>, config, async () => {
+				if (!workflowRunRepo || !gateDataRepo) {
+					return errorResult('Gate operations are not available');
+				}
+
 				const run = workflowRunRepo.getRun(args.run_id);
 				if (!run) {
 					return errorResult(`Workflow run not found: ${args.run_id}`);
@@ -945,7 +983,11 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				if (run.status !== 'needs_attention') {
 					workflowRunRepo.transitionStatus(args.run_id, 'needs_attention');
 				}
-				workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' });
+				const updatedRun =
+					workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' }) ?? run;
+
+				await onWorkflowRunUpdated?.(run.spaceId, run.id, updatedRun);
+				await onGateDataUpdated?.(run.spaceId, run.id, args.gate_id, gateData.data);
 
 				return successResult({
 					runId: args.run_id,

@@ -331,6 +331,17 @@ function makeConfig(
 		spaceTaskManagerFactory?: NeoActionSpaceTaskManagerFactory;
 		gateDataRepo?: NeoActionGateDataRepository;
 		onGateChanged?: (runId: string, gateId: string) => Promise<void> | void;
+		onWorkflowRunUpdated?: (
+			spaceId: string,
+			runId: string,
+			run: NeoWorkflowRun
+		) => void | Promise<void>;
+		onGateDataUpdated?: (
+			spaceId: string,
+			runId: string,
+			gateId: string,
+			data: Record<string, unknown>
+		) => void | Promise<void>;
 	} = {}
 ): NeoActionToolsConfig {
 	const room = makeRoom();
@@ -362,6 +373,8 @@ function makeConfig(
 		spaceTaskManagerFactory: opts.spaceTaskManagerFactory,
 		gateDataRepo: opts.gateDataRepo,
 		onGateChanged: opts.onGateChanged,
+		onWorkflowRunUpdated: opts.onWorkflowRunUpdated,
+		onGateDataUpdated: opts.onGateDataUpdated,
 	};
 }
 
@@ -1342,6 +1355,56 @@ describe('cancel_workflow_run', () => {
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('not available');
 	});
+
+	it('still cancels run when individual cancelTask throws (best-effort)', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const runRepo = makeWorkflowRunRepo([run]);
+		// All task cancellations throw
+		const failingTaskFactory: NeoActionSpaceTaskManagerFactory = {
+			getTaskManager: () => ({
+				listTasksByWorkflowRun: async () => [
+					makeSpaceTask({ id: 'st-1', status: 'pending' }),
+					makeSpaceTask({ id: 'st-2', status: 'in_progress' }),
+				],
+				cancelTask: async () => {
+					throw new Error('cancel failed');
+				},
+			}),
+		};
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			spaceTaskManagerFactory: failingTaskFactory,
+		});
+		const { cancel_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(await cancel_workflow_run({ run_id: 'run-1' }));
+		// Run is still cancelled despite task failures
+		expect(result.success).toBe(true);
+		expect(runRepo._runs.get('run-1')?.status).toBe('cancelled');
+	});
+
+	it('calls onWorkflowRunUpdated after cancellation', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', spaceId: 'space-1', status: 'in_progress' });
+		const runRepo = makeWorkflowRunRepo([run]);
+		let updatedSpaceId = '';
+		let updatedRunId = '';
+		let updatedStatus = '';
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			spaceTaskManagerFactory: makeSpaceTaskManagerFactory(),
+			onWorkflowRunUpdated: (_spaceId, _runId, updatedRun) => {
+				updatedSpaceId = _spaceId;
+				updatedRunId = _runId;
+				updatedStatus = updatedRun.status;
+			},
+		});
+		const { cancel_workflow_run } = createNeoActionToolHandlers(config);
+		await cancel_workflow_run({ run_id: 'run-1' });
+		expect(updatedSpaceId).toBe('space-1');
+		expect(updatedRunId).toBe('run-1');
+		expect(updatedStatus).toBe('cancelled');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1470,6 +1533,56 @@ describe('approve_gate', () => {
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('not available');
 	});
+
+	it('calls onWorkflowRunUpdated and onGateDataUpdated after approving a rejected gate', async () => {
+		const run = makeWorkflowRun({
+			id: 'run-1',
+			spaceId: 'space-1',
+			status: 'needs_attention',
+			failureReason: 'humanRejected',
+		});
+		const runUpdates: Array<{ spaceId: string; runId: string; status: string }> = [];
+		const gateUpdates: Array<{ spaceId: string; runId: string; gateId: string }> = [];
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: makeGateDataRepo(),
+			onWorkflowRunUpdated: (spaceId, runId, updatedRun) => {
+				runUpdates.push({ spaceId, runId, status: updatedRun.status });
+			},
+			onGateDataUpdated: (spaceId, runId, gateId) => {
+				gateUpdates.push({ spaceId, runId, gateId });
+			},
+		});
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' });
+		expect(runUpdates).toHaveLength(1);
+		expect(runUpdates[0].status).toBe('in_progress');
+		expect(gateUpdates).toHaveLength(1);
+		expect(gateUpdates[0].gateId).toBe('gate-1');
+	});
+
+	it('calls onGateDataUpdated but not onWorkflowRunUpdated for in_progress approval', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', spaceId: 'space-1', status: 'in_progress' });
+		let runUpdateCalls = 0;
+		let gateUpdateCalls = 0;
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: makeGateDataRepo(),
+			onWorkflowRunUpdated: () => {
+				runUpdateCalls++;
+			},
+			onGateDataUpdated: () => {
+				gateUpdateCalls++;
+			},
+		});
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' });
+		// No run status change — onWorkflowRunUpdated should NOT be called
+		expect(runUpdateCalls).toBe(0);
+		expect(gateUpdateCalls).toBe(1);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1573,6 +1686,34 @@ describe('reject_gate', () => {
 		const result = parseResult(await reject_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('not available');
+	});
+
+	it('calls onWorkflowRunUpdated and onGateDataUpdated after rejection', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', spaceId: 'space-1', status: 'in_progress' });
+		const runUpdates: Array<{ spaceId: string; status: string; failureReason: unknown }> = [];
+		const gateUpdates: Array<{ spaceId: string; gateId: string }> = [];
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: makeGateDataRepo(),
+			onWorkflowRunUpdated: (spaceId, _runId, updatedRun) => {
+				runUpdates.push({
+					spaceId,
+					status: updatedRun.status,
+					failureReason: updatedRun.failureReason,
+				});
+			},
+			onGateDataUpdated: (spaceId, _runId, gateId) => {
+				gateUpdates.push({ spaceId, gateId });
+			},
+		});
+		const { reject_gate } = createNeoActionToolHandlers(config);
+		await reject_gate({ run_id: 'run-1', gate_id: 'gate-1', reason: 'Not ready' });
+		expect(runUpdates).toHaveLength(1);
+		expect(runUpdates[0].status).toBe('needs_attention');
+		expect(runUpdates[0].failureReason).toBe('humanRejected');
+		expect(gateUpdates).toHaveLength(1);
+		expect(gateUpdates[0].gateId).toBe('gate-1');
 	});
 });
 
