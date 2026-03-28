@@ -8,6 +8,7 @@ export { SpaceContextPanel } from './SpaceContextPanel';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
 export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 export { SpaceStartWorkflowDialog } from './SpaceStartWorkflowDialog';
+export { WorkflowRunStartDialog } from './WorkflowRunStartDialog';
 export { SpaceDashboard } from './SpaceDashboard';
 export { SpaceNavPanel } from './SpaceNavPanel';
 export { SpaceSettings } from './SpaceSettings';
