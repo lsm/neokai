@@ -109,16 +109,6 @@ const ACTIVITY_STATE_BADGE_CLASSES: Record<SpaceTaskActivityState, string> = {
 	interrupted: 'border-orange-700/50 bg-orange-950/20 text-orange-300',
 };
 
-const ACTIVITY_STATE_DOT_CLASSES: Record<SpaceTaskActivityState, string> = {
-	active: 'bg-blue-400',
-	queued: 'bg-gray-400',
-	idle: 'bg-gray-600',
-	waiting_for_input: 'bg-yellow-400',
-	completed: 'bg-green-400',
-	failed: 'bg-red-400',
-	interrupted: 'bg-orange-400',
-};
-
 function SectionCard({
 	title,
 	children,
@@ -212,63 +202,22 @@ function formatAgentLabel(value: string): string {
 		.join(' ');
 }
 
-function ActivityStateBadge({ state }: { state: SpaceTaskActivityState }) {
-	return (
-		<InfoBadge label={ACTIVITY_STATE_LABELS[state]} className={ACTIVITY_STATE_BADGE_CLASSES[state]} />
-	);
+function normalizeNarrative(value: string | null | undefined): string {
+	return (value ?? '')
+		.trim()
+		.toLowerCase()
+		.replace(/\s+/g, ' ');
 }
 
-function ConversationBubble({
-	speaker,
-	tone = 'default',
-	children,
-}: {
-	speaker: string;
-	tone?: 'default' | 'agent' | 'warning';
-	children: ComponentChildren;
-}) {
-	const toneClasses =
-		tone === 'agent'
-			? 'border-blue-800/40 bg-blue-950/10'
-			: tone === 'warning'
-				? 'border-yellow-800/40 bg-yellow-950/10'
-				: 'border-dark-700 bg-dark-900/70';
-	const labelClasses =
-		tone === 'agent'
-			? 'text-blue-300'
-			: tone === 'warning'
-				? 'text-yellow-300'
-				: 'text-gray-500';
+function isInstructionalStep(value: string | null | undefined): boolean {
+	const normalized = normalizeNarrative(value);
+	if (!normalized) return false;
 	return (
-		<div class={cn('rounded-xl border px-4 py-4', toneClasses)}>
-			<p class={cn('text-[11px] uppercase tracking-[0.18em]', labelClasses)}>{speaker}</p>
-			<div class="mt-2 text-sm leading-relaxed text-gray-200">{children}</div>
-		</div>
+		normalized.startsWith('describe ') ||
+		normalized.includes('submit your response') ||
+		normalized.includes('continue the conversation') ||
+		normalized.includes('to continue')
 	);
-}
-
-function describeActivityMember(member: SpaceTaskActivityMember): string {
-	if (member.error) return member.error;
-	if (member.state === 'active') {
-		return member.currentStep
-			? member.currentStep
-			: member.processingPhase
-				? `${member.label} is ${member.processingPhase}.`
-				: `${member.label} is working.`;
-	}
-	if (member.state === 'waiting_for_input') {
-		return member.currentStep || 'Waiting for a human response before continuing.';
-	}
-	if (member.state === 'completed') {
-		return member.completionSummary || member.currentStep || 'Finished its assigned work.';
-	}
-	if (member.state === 'failed' || member.state === 'interrupted') {
-		return member.currentStep || 'This agent needs attention before it can continue.';
-	}
-	if (member.state === 'queued') {
-		return member.currentStep || 'Queued to run when capacity is available.';
-	}
-	return member.currentStep || 'Idle right now.';
 }
 
 function formatTaskThreadError(err: unknown): string {
@@ -280,70 +229,6 @@ function formatTaskThreadError(err: unknown): string {
 		return 'Task thread is still starting. Try sending again in a moment.';
 	}
 	return message || 'Failed to update task thread';
-}
-
-// ============================================================================
-// Human Input
-// ============================================================================
-
-interface HumanInputAreaProps {
-	task: SpaceTask;
-}
-
-function HumanInputArea({ task }: HumanInputAreaProps) {
-	const [inputText, setInputText] = useState(task.inputDraft ?? '');
-	const [submitting, setSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const handleSubmit = async (e: Event) => {
-		e.preventDefault();
-		if (!inputText.trim()) return;
-
-		try {
-			setSubmitting(true);
-			setError(null);
-			// Persist the draft first so it is never lost even if the status transition fails
-			await spaceStore.updateTask(task.id, { inputDraft: inputText.trim() });
-			// Then attempt to resume the task — the server validates the transition
-			await spaceStore.updateTask(task.id, { status: 'in_progress' });
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to submit response');
-		} finally {
-			setSubmitting(false);
-		}
-	};
-
-	return (
-		<div class="mt-4 border border-yellow-800/50 rounded-lg p-4 bg-yellow-900/10">
-			<h3 class="text-sm font-medium text-yellow-300 mb-2">Human Input Required</h3>
-			<p class="text-xs text-gray-400 mb-3">
-				This task needs your attention before it can continue.
-			</p>
-			{error && (
-				<div class="mb-3 text-xs text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
-					{error}
-				</div>
-			)}
-			<form onSubmit={handleSubmit} class="space-y-3">
-				<textarea
-					value={inputText}
-					onInput={(e) => setInputText((e.target as HTMLTextAreaElement).value)}
-					placeholder="Type your response or approval..."
-					rows={3}
-					class="w-full bg-dark-800 border border-dark-600 rounded-md px-3 py-2 text-gray-100
-						placeholder-gray-600 focus:outline-none focus:border-yellow-600 resize-none text-sm"
-				/>
-				<button
-					type="submit"
-					disabled={submitting || !inputText.trim()}
-					class="px-4 py-1.5 text-xs font-medium bg-yellow-700 hover:bg-yellow-600
-						text-yellow-100 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-				>
-					{submitting ? 'Submitting...' : 'Submit Response'}
-				</button>
-			</form>
-		</div>
-	);
 }
 
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
@@ -359,7 +244,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const agents = spaceStore.agents.value;
 	const workflowRuns = spaceStore.workflowRuns.value;
 	const workflows = spaceStore.workflows.value;
-	const tasksByRun = spaceStore.tasksByRun.value;
 	const task = taskId ? tasks.find((t) => t.id === taskId) ?? null : null;
 	const runtimeSpaceIdCandidate = task?.spaceId ?? spaceId;
 
@@ -368,6 +252,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [threadDraft, setThreadDraft] = useState('');
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
+	const [reopeningTask, setReopeningTask] = useState(false);
 
 	useEffect(() => {
 		setThreadSendError(null);
@@ -385,7 +270,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	useEffect(() => {
 		if (!task || !runtimeSpaceIdCandidate) return;
 		if (task.taskAgentSessionId) return;
-		if (task.status === 'archived' || task.status === 'cancelled') return;
+		if (task.status === 'archived' || task.status === 'cancelled' || task.status === 'completed')
+			return;
 
 		let cancelled = false;
 		setEnsuringThread(true);
@@ -439,15 +325,51 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					: 'Open Space Agent';
 	const workflowLabel = task.workflowRunId ? 'Workflow Step' : 'Standalone Task';
 	const humanHandoffPending = task.status === 'in_progress' && !!task.inputDraft && !agentSessionId;
+	const normalizedDescription = normalizeNarrative(task.description);
+	const normalizedTaskCurrentStep = normalizeNarrative(task.currentStep);
+	const currentStepMatchesDescription =
+		!!normalizedTaskCurrentStep &&
+		!!normalizedDescription &&
+		(normalizedTaskCurrentStep === normalizedDescription ||
+			normalizedTaskCurrentStep.includes(normalizedDescription) ||
+			normalizedDescription.includes(normalizedTaskCurrentStep));
+	const taskCurrentStep =
+		task.currentStep && !currentStepMatchesDescription && !isInstructionalStep(task.currentStep)
+			? task.currentStep
+			: null;
+	const liveActivityStep =
+		activityRows.find(
+			(member) =>
+				!!member.currentStep &&
+				(member.state === 'active' ||
+					member.state === 'waiting_for_input' ||
+					member.state === 'failed' ||
+					member.state === 'interrupted')
+		)?.currentStep ?? null;
+	const taskAgentActivity = activityRows.find((member) => member.kind === 'task_agent') ?? activityRows[0] ?? null;
+	const activityStatusCopy = taskAgentActivity
+		? `${taskAgentActivity.label} is ${ACTIVITY_STATE_LABELS[taskAgentActivity.state].toLowerCase()}.`
+		: null;
+	const memberStepRows = activityRows.filter(
+		(member) =>
+			!!member.currentStep &&
+			(member.state === 'active' ||
+				member.state === 'waiting_for_input' ||
+				member.state === 'failed' ||
+				member.state === 'interrupted')
+	);
+	const hasMemberStepRows = memberStepRows.length > 0;
 	const visibleCurrentStep = humanHandoffPending
 		? 'Your response was saved. Open the space agent to continue the conversation while this task resumes.'
-		: task.currentStep;
+		: !hasMemberStepRows
+			? liveActivityStep ?? taskCurrentStep
+			: null;
 	const attentionCopy =
 		task.status === 'needs_attention'
 			? 'This task is blocked on human input.'
 			: humanHandoffPending
 				? 'Your response was sent. Waiting for agent follow-up.'
-			: task.currentStep || 'Agent activity will surface here as the task advances.';
+				: activityStatusCopy || visibleCurrentStep || 'Agent activity will surface here as the task advances.';
 	const workflowRun = task.workflowRunId
 		? (workflowRuns.find((run) => run.id === task.workflowRunId) ?? null)
 		: null;
@@ -500,57 +422,26 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								: task.status === 'rate_limited' || task.status === 'usage_limited'
 									? 'The task is blocked by limits'
 									: 'The task needs attention';
-	const relatedWorkflowTasks = task.workflowRunId
-		? [...(tasksByRun.get(task.workflowRunId) ?? [])].sort((a, b) => b.updatedAt - a.updatedAt)
-		: [];
 	const workflowCanvasId = workflow?.id ?? null;
-	const compactRelatedTasks = task.workflowRunId
-		? relatedWorkflowTasks.map((relatedTask) => {
-				const relatedNode =
-					relatedTask.workflowNodeId && workflow
-						? (workflow.nodes.find((node) => node.id === relatedTask.workflowNodeId) ?? null)
-						: null;
-				const relatedCustomAgent = relatedTask.customAgentId
-					? (agents.find((agent) => agent.id === relatedTask.customAgentId) ?? null)
-					: null;
-				return {
-					task: relatedTask,
-					agentLabel: relatedCustomAgent?.name
-						? relatedCustomAgent.name
-						: relatedTask.agentName
-							? formatAgentLabel(relatedTask.agentName)
-							: relatedNode?.name || formatAgentLabel(relatedTask.assignedAgent ?? 'coder'),
-					summary:
-						relatedTask.currentStep ||
-						relatedTask.completionSummary ||
-						relatedTask.error ||
-						(relatedTask.activeSession
-							? `${formatAgentLabel(relatedTask.activeSession)} agent is active`
-							: STATUS_LABELS[relatedTask.status]),
-				};
-			})
-		: [];
 	const liveTaskAgent = activityRows.find((member) => member.kind === 'task_agent') ?? null;
-	const conversationLabel = liveTaskAgent
-		? liveTaskAgent.label
-		: agentSessionId
-			? 'Task Agent'
-			: 'Space Agent';
-	const latestAgentUpdate =
-		task.error ||
-		task.result ||
-		task.completionSummary ||
-		visibleCurrentStep ||
-		activityRows.find((member) => member.currentStep || member.error || member.completionSummary)?.currentStep ||
+	const isTerminalTask =
+		task.status === 'completed' || task.status === 'cancelled' || task.status === 'archived';
+	const showAgentActivitySection = !isTerminalTask && activityRows.length > 0;
+	const activityIssue =
+		task.error ??
+		activityRows.find((member) => member.state === 'failed' || member.state === 'interrupted')?.error ??
 		null;
-	const showAgentActivitySection = activityRows.length > 0 || compactRelatedTasks.length > 0;
+	const isTaskReadOnly = isTerminalTask;
+	const showInlineComposer = !!agentSessionId && !isTaskReadOnly;
+	const showThreadStartupHint = !agentSessionId;
 	const canSendThreadMessage =
 		!!task &&
 		!!runtimeSpaceId &&
 		!!agentSessionId &&
-		task.status !== 'archived' &&
+		!isTaskReadOnly &&
 		!ensuringThread &&
 		!sendingThread;
+	const showHeaderSessionAction = !!runtimeSpaceId && (!!agentSessionId || !isTerminalTask);
 
 	const handleThreadSend = async (e: Event) => {
 		e.preventDefault();
@@ -573,6 +464,19 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setThreadSendError(formatTaskThreadError(err));
 		} finally {
 			setSendingThread(false);
+		}
+	};
+
+	const handleReopenTask = async () => {
+		if (!task || task.status !== 'completed') return;
+		try {
+			setReopeningTask(true);
+			setThreadSendError(null);
+			await spaceStore.updateTask(task.id, { status: 'in_progress' });
+		} catch (err) {
+			setThreadSendError(formatTaskThreadError(err));
+		} finally {
+			setReopeningTask(false);
 		}
 	};
 
@@ -615,7 +519,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						<p class="mt-1 text-sm text-gray-300">{activityHeadline}</p>
 						<p class="mt-1 text-sm text-gray-500">{attentionCopy}</p>
 					</div>
-					{runtimeSpaceId && (
+					{showHeaderSessionAction && (
 						<button
 							type="button"
 							onClick={() =>
@@ -636,31 +540,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			{/* Body */}
 			<div class="flex-1 overflow-y-auto">
 				<div class="max-w-5xl mx-auto px-4 py-5 space-y-4">
-					<SectionCard title="Conversation" tone={task.status === 'needs_attention' ? 'warning' : 'default'}>
-						<div class="space-y-3">
-							{task.inputDraft && (
-								<ConversationBubble speaker="You" tone={humanHandoffPending ? 'warning' : 'default'}>
-									<p class="whitespace-pre-wrap">{task.inputDraft}</p>
-								</ConversationBubble>
-							)}
-
-							{latestAgentUpdate && (
-								<ConversationBubble
-									speaker={conversationLabel}
-									tone={task.error ? 'warning' : 'agent'}
-								>
-									<p class="whitespace-pre-wrap">{latestAgentUpdate}</p>
-								</ConversationBubble>
-							)}
-
-							{!task.inputDraft && !latestAgentUpdate && (
-								<ConversationBubble speaker={conversationLabel} tone="agent">
-									<p>No conversation history yet. Use the agent thread to start or redirect the work.</p>
-								</ConversationBubble>
-							)}
-						</div>
-
-						<div class="mt-4 flex flex-wrap items-center gap-2">
+					<SectionCard title="Task Thread">
+						<div class="mb-3 flex flex-wrap items-center gap-2">
 							<InfoBadge label={`Assigned: ${assignedAgentLabel}`} />
 							{task.workflowRunId && workflowRun && (
 								<InfoBadge
@@ -668,35 +549,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									className="border-cyan-700/50 bg-cyan-950/20 text-cyan-300"
 								/>
 							)}
-							{task.activeSession && (
+							{liveTaskAgent && (
 								<InfoBadge
-									label={`Live: ${liveActorLabel}`}
+									label={`Live: ${liveTaskAgent.label}`}
 									className="border-blue-700/50 bg-blue-950/20 text-blue-300"
 								/>
 							)}
 						</div>
 
-						<div class="mt-4 flex flex-wrap items-center gap-3">
-							{runtimeSpaceId && agentSessionId && (
-								<button
-									type="button"
-									onClick={() => navigateToSpaceSession(runtimeSpaceId, agentSessionId)}
-									class="px-3 py-2 text-sm font-medium bg-dark-800 hover:bg-dark-700 text-gray-200 rounded-lg border border-dark-600 transition-colors"
-								>
-									Open Full Session
-								</button>
-							)}
-							<p class="text-sm text-gray-500">
-								{agentSessionId
-									? 'Task thread is active below. Steer direction, answer agent questions, and review results in place.'
-									: ensuringThread
-										? 'Starting a dedicated task thread...'
-										: 'No task thread yet. One will start automatically for active tasks.'}
-							</p>
-						</div>
-					</SectionCard>
-
-					<SectionCard title="Task Thread">
 						<div class="rounded-xl border border-dark-700 bg-dark-900/70 overflow-hidden">
 							{agentSessionId ? (
 								<div class="h-[24rem] min-h-[20rem]">
@@ -718,150 +578,109 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 
-						<form onSubmit={handleThreadSend} class="mt-3 space-y-3">
-							<textarea
-								value={threadDraft}
-								onInput={(e) => setThreadDraft((e.target as HTMLTextAreaElement).value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter' && !e.shiftKey) {
-										e.preventDefault();
-										(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
-									}
-								}}
-								rows={3}
-								placeholder={
-									task.status === 'archived'
-										? 'Archived tasks cannot receive new messages.'
-										: ensuringThread
+						{showInlineComposer && (
+							<form onSubmit={handleThreadSend} class="mt-3 space-y-3">
+								<textarea
+									value={threadDraft}
+									onInput={(e) => setThreadDraft((e.target as HTMLTextAreaElement).value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault();
+											(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+										}
+									}}
+									rows={3}
+									placeholder={
+										ensuringThread
 											? 'Starting task thread...'
 											: 'Message the task agent (Enter to send, Shift+Enter for newline)'
-								}
-								disabled={task.status === 'archived' || sendingThread}
-								class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
-									placeholder-gray-600 focus:outline-none focus:border-blue-600 resize-none disabled:opacity-60"
-							/>
-							<div class="flex items-center justify-between gap-3">
-								<p class="text-xs text-gray-500">
-									{agentSessionId
-										? 'Messages sent here go directly to the task agent.'
-										: 'Waiting for task thread before messages can be sent.'}
-								</p>
+									}
+									disabled={sendingThread}
+									class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
+										placeholder-gray-600 focus:outline-none focus:border-blue-600 resize-none disabled:opacity-60"
+								/>
+								<div class="flex items-center justify-between gap-3">
+									<p class="text-xs text-gray-500">Messages sent here go directly to the task agent.</p>
+									<button
+										type="submit"
+										disabled={!canSendThreadMessage || !threadDraft.trim()}
+										class="px-3 py-1.5 text-xs font-medium bg-blue-700 hover:bg-blue-600 text-blue-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										{sendingThread ? 'Sending...' : 'Send to Task Agent'}
+									</button>
+								</div>
+							</form>
+						)}
+
+						{showThreadStartupHint && (
+							<p class="mt-3 text-xs text-gray-500">
+								Waiting for task thread before messages can be sent.
+							</p>
+						)}
+
+						{isTaskReadOnly && (
+							<div class="mt-3 flex flex-wrap items-center gap-3">
+								<p class="text-xs text-gray-500">This task is read-only in its current state.</p>
+								{task.status === 'completed' && (
+									<button
+										type="button"
+										onClick={() => void handleReopenTask()}
+										disabled={reopeningTask}
+										class="px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700 text-gray-200 rounded-lg border border-dark-600 transition-colors disabled:opacity-50"
+									>
+										{reopeningTask ? 'Reopening...' : 'Reopen Task'}
+									</button>
+								)}
+							</div>
+						)}
+
+						{runtimeSpaceId && agentSessionId && (
+							<div class="mt-3">
 								<button
-									type="submit"
-									disabled={!canSendThreadMessage || !threadDraft.trim()}
-									class="px-3 py-1.5 text-xs font-medium bg-blue-700 hover:bg-blue-600 text-blue-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+									type="button"
+									onClick={() => navigateToSpaceSession(runtimeSpaceId, agentSessionId)}
+									class="px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700 text-gray-200 rounded-lg border border-dark-600 transition-colors"
 								>
-									{sendingThread ? 'Sending...' : 'Send to Task Agent'}
+									View Full Session
 								</button>
 							</div>
-							{threadSendError && (
-								<p class="text-xs text-red-400 border border-red-800/50 bg-red-950/20 rounded-md px-3 py-2">
-									{threadSendError}
-								</p>
-							)}
-						</form>
+						)}
+
+						{threadSendError && (
+							<p class="mt-3 text-xs text-red-400 border border-red-800/50 bg-red-950/20 rounded-md px-3 py-2">
+								{threadSendError}
+							</p>
+						)}
 					</SectionCard>
 
 					{showAgentActivitySection && (
 						<SectionCard title="Agent Activity">
-							{activityRows.length > 0 ? (
-							<div class="space-y-2">
+							<div class="flex flex-wrap gap-2">
 								{activityRows.map((member) => (
-									<div
+									<InfoBadge
 										key={member.id}
-										class="flex items-start gap-3 rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-3"
-									>
-										<span
-											class={cn(
-												'mt-1 h-2.5 w-2.5 rounded-full flex-shrink-0',
-												ACTIVITY_STATE_DOT_CLASSES[member.state]
-											)}
-										/>
-										<div class="min-w-0 flex-1">
-											<div class="flex flex-wrap items-center gap-2">
-												<p class="text-sm font-medium text-gray-100">{member.label}</p>
-												{member.kind === 'task_agent' && (
-													<InfoBadge
-														label="Task Agent"
-														className="border-violet-700/50 bg-violet-950/20 text-violet-300"
-													/>
-												)}
-												{member.taskId === task.id && (
-													<InfoBadge
-														label="Current Task"
-														className="border-blue-700/50 bg-blue-950/20 text-blue-300"
-													/>
-												)}
-												<ActivityStateBadge state={member.state} />
-											</div>
-											<p class="mt-1 text-sm text-gray-300 truncate">
-												{member.taskTitle ?? task.title}
-											</p>
-											<p class="mt-1 text-xs text-gray-500">{describeActivityMember(member)}</p>
-										</div>
-										<div class="text-right flex-shrink-0">
-											<p class="text-[11px] uppercase tracking-[0.16em] text-gray-600">Messages</p>
-											<p class="mt-1 text-sm text-gray-300">{member.messageCount}</p>
-											{member.processingPhase && member.state === 'active' && (
-												<p class="mt-1 text-[11px] text-blue-300 uppercase tracking-[0.16em]">
-													{member.processingPhase}
-												</p>
-											)}
-										</div>
-									</div>
+										label={`${member.label}: ${ACTIVITY_STATE_LABELS[member.state]}`}
+										className={ACTIVITY_STATE_BADGE_CLASSES[member.state]}
+									/>
 								))}
 							</div>
-						) : compactRelatedTasks.length > 0 ? (
-							<div class="space-y-2">
-								{compactRelatedTasks.map(({ task: relatedTask, agentLabel, summary }) => (
-									<div
-										key={relatedTask.id}
-										class="flex items-start gap-3 rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-3"
-									>
-										<span
-											class={cn(
-												'mt-1 h-2.5 w-2.5 rounded-full flex-shrink-0',
-												relatedTask.id === task.id
-													? 'bg-blue-400'
-													: STATUS_DOT_CLASSES[relatedTask.status]
-											)}
-										/>
-										<div class="min-w-0 flex-1">
-											<div class="flex flex-wrap items-center gap-2">
-												<p class="text-sm font-medium text-gray-100">{agentLabel}</p>
-												{relatedTask.id === task.id && (
-													<InfoBadge
-														label="Current Task"
-														className="border-blue-700/50 bg-blue-950/20 text-blue-300"
-													/>
-												)}
-												<StatusBadge status={relatedTask.status} />
-											</div>
-											<p class="mt-1 text-sm text-gray-300 truncate">{relatedTask.title}</p>
-											<p class="mt-1 text-xs text-gray-500">{summary}</p>
-										</div>
-									</div>
-								))}
-							</div>
-						) : (
-							<div class="rounded-xl border border-dark-700 bg-dark-900/70 px-4 py-4">
-								<p class="text-sm font-medium text-gray-100">No live agent roster yet</p>
-								<p class="mt-2 text-sm text-gray-400">
-									{task.status === 'needs_attention'
-										? 'The agent is waiting for your answer before it can continue.'
-										: task.activeSession
-											? `${liveActorLabel} is actively producing work for this task.`
-											: agentSessionId
-												? 'This task has a dedicated agent thread, but no agent is actively speaking right now.'
-												: 'There is no dedicated task-agent session yet, so the shared space agent is your main control surface.'}
+							{hasMemberStepRows && (
+								<div class="mt-3 space-y-2">
+									{memberStepRows.map((member) => (
+										<p key={`${member.id}-step`} class="text-sm text-gray-400">
+											<span class="text-gray-500">{member.label}:</span> {member.currentStep}
+										</p>
+									))}
+								</div>
+							)}
+							{activityIssue && (
+								<p class="mt-3 text-xs text-red-300 border border-red-800/40 bg-red-950/20 rounded-md px-3 py-2">
+									{activityIssue}
 								</p>
-								{visibleCurrentStep && (
-									<p class="mt-3 text-xs text-gray-500">
-										<span class="text-gray-400">Latest signal:</span> {visibleCurrentStep}
-									</p>
-								)}
-							</div>
-						)}
+							)}
+							{visibleCurrentStep && (
+								<p class="mt-3 text-sm text-gray-400">{visibleCurrentStep}</p>
+							)}
 						</SectionCard>
 					)}
 
@@ -921,53 +740,44 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									/>
 								</div>
 							)}
-
 						</SectionCard>
 					)}
 
-					{/* Description */}
-					{task.description && (
-						<SectionCard title="Description">
-							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
-								{task.description}
-							</p>
-						</SectionCard>
-					)}
-
-					{/* Progress */}
-					{task.progress != null && task.progress > 0 && (
-						<SectionCard title="Progress">
-							<div class="flex items-center justify-between mb-1">
-								<span class="text-xs text-gray-500">Progress</span>
-								<span class="text-xs text-gray-500">{task.progress}%</span>
-							</div>
-							<div class="w-full bg-dark-700 rounded-full h-1.5">
-								<div
-									class="bg-blue-500 h-1.5 rounded-full transition-all"
-									style={{ width: `${task.progress}%` }}
-								/>
-							</div>
-						</SectionCard>
-					)}
-
-					{/* Result */}
-					{task.result && (
-						<SectionCard title="Result">
-							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{task.result}</p>
-						</SectionCard>
-					)}
-
-					{/* Error */}
-					{task.error && (
-						<SectionCard title="Error" tone="error">
-							<p class="text-sm text-red-400 leading-relaxed whitespace-pre-wrap">{task.error}</p>
-						</SectionCard>
-					)}
-
-					{/* PR link */}
-					{task.prUrl && (
-						<SectionCard title="Pull Request">
-							<div class="flex items-center gap-2">
+					<SectionCard title="Task Details">
+						<div class="space-y-3 text-sm text-gray-300">
+							{task.inputDraft && (
+								<div class="rounded-lg border border-yellow-800/40 bg-yellow-950/10 px-3 py-2">
+									<p class="text-[11px] uppercase tracking-[0.16em] text-yellow-300">Latest Human Direction</p>
+									<p class="mt-1 leading-relaxed whitespace-pre-wrap text-yellow-100/90">{task.inputDraft}</p>
+								</div>
+							)}
+							{task.description && <p class="leading-relaxed whitespace-pre-wrap">{task.description}</p>}
+							{task.progress != null && task.progress > 0 && (
+								<div>
+									<div class="flex items-center justify-between mb-1">
+										<span class="text-xs text-gray-500">Progress</span>
+										<span class="text-xs text-gray-500">{task.progress}%</span>
+									</div>
+									<div class="w-full bg-dark-700 rounded-full h-1.5">
+										<div
+											class="bg-blue-500 h-1.5 rounded-full transition-all"
+											style={{ width: `${task.progress}%` }}
+										/>
+									</div>
+								</div>
+							)}
+							{task.result && (
+								<div>
+									<p class="text-xs uppercase tracking-[0.16em] text-gray-500 mb-1">Result</p>
+									<p class="leading-relaxed whitespace-pre-wrap">{task.result}</p>
+								</div>
+							)}
+							{task.error && (
+								<div class="text-red-300 border border-red-800/40 bg-red-950/20 rounded-md px-3 py-2 whitespace-pre-wrap">
+									{task.error}
+								</div>
+							)}
+							{task.prUrl && (
 								<a
 									href={task.prUrl}
 									target="_blank"
@@ -976,12 +786,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								>
 									{task.prNumber ? `PR #${task.prNumber}` : 'Pull Request'}
 								</a>
-							</div>
-						</SectionCard>
-					)}
-
-					{/* Human input area */}
-					{task.status === 'needs_attention' && <HumanInputArea task={task} />}
+							)}
+						</div>
+					</SectionCard>
 				</div>
 			</div>
 		</div>
