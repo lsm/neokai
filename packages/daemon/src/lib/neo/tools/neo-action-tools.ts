@@ -1,10 +1,10 @@
 /**
  * Neo Action Tools - MCP tools for write operations
  *
- * Implements room, goal, task, space, and workflow write operations with
- * security-tier enforcement.  Each tool checks whether the current security
- * mode requires confirmation before execution and either runs immediately or
- * returns a `confirmationRequired` payload.
+ * Implements room, goal, task, space, workflow, configuration, and messaging
+ * write operations with security-tier enforcement. Each tool checks whether
+ * the current security mode requires confirmation before execution and either
+ * runs immediately or returns a `confirmationRequired` payload.
  *
  * Pattern: two-layer design (testable handlers + MCP server wrapper)
  *   createNeoActionToolHandlers(config) → plain handler functions
@@ -39,6 +39,24 @@
  *   - cancel_workflow_run
  *   - approve_gate
  *   - reject_gate
+ *
+ *   Configuration management
+ *   - add_mcp_server
+ *   - update_mcp_server
+ *   - delete_mcp_server
+ *   - toggle_mcp_server
+ *   - add_skill
+ *   - update_skill
+ *   - delete_skill
+ *   - toggle_skill
+ *   - update_app_settings
+ *
+ *   Messaging & session control
+ *   - send_message_to_room
+ *   - send_message_to_task
+ *   - stop_session
+ *   - pause_schedule
+ *   - resume_schedule
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -55,6 +73,12 @@ import type {
 	AutonomyLevel,
 	WorkspacePath,
 	SpaceAutonomyLevel,
+	AppMcpServer,
+	AppMcpServerSourceType,
+	AppSkill,
+	AppSkillConfig,
+	SkillSourceType,
+	GlobalSettings,
 } from '@neokai/shared';
 import {
 	ActionClassification,
@@ -114,7 +138,11 @@ export interface NeoActionGoalManager {
 			autonomyLevel?: AutonomyLevel;
 		}
 	): Promise<RoomGoal>;
-	updateGoalStatus(id: string, status: GoalStatus): Promise<RoomGoal>;
+	updateGoalStatus(
+		id: string,
+		status: GoalStatus,
+		updates?: { schedulePaused?: boolean }
+	): Promise<RoomGoal>;
 }
 
 export interface NeoActionTaskManager {
@@ -149,6 +177,7 @@ export interface NeoActionRuntime {
 		message: string,
 		opts: { approved: boolean }
 	): Promise<boolean>;
+	interruptTaskSession(taskId: string): Promise<{ success: boolean }>;
 }
 
 export interface NeoActionRuntimeService {
@@ -254,6 +283,95 @@ export interface NeoActionGateDataRepository {
 /** Optional callback to notify the runtime that gate data changed. */
 export type NeoGateChangedNotifier = (runId: string, gateId: string) => Promise<void> | void;
 
+// ---------------------------------------------------------------------------
+// Configuration management interfaces
+// ---------------------------------------------------------------------------
+
+export interface NeoMcpManager {
+	/** Create a new app-level MCP server entry */
+	createMcpServer(params: {
+		name: string;
+		sourceType: AppMcpServerSourceType;
+		description?: string;
+		command?: string;
+		args?: string[];
+		env?: Record<string, string>;
+		url?: string;
+		headers?: Record<string, string>;
+		enabled?: boolean;
+	}): AppMcpServer;
+	/** Update an existing MCP server entry */
+	updateMcpServer(
+		id: string,
+		updates: {
+			name?: string;
+			description?: string;
+			command?: string;
+			args?: string[];
+			env?: Record<string, string>;
+			url?: string;
+			headers?: Record<string, string>;
+			enabled?: boolean;
+		}
+	): AppMcpServer | null;
+	/** Delete an MCP server entry, returns true if deleted */
+	deleteMcpServer(id: string): boolean;
+	/** Get an MCP server entry by id */
+	getMcpServer(id: string): AppMcpServer | null;
+	/** Get an MCP server entry by name (for lookups) */
+	getMcpServerByName(name: string): AppMcpServer | null;
+}
+
+export interface NeoSkillsManager {
+	/** Add a new skill */
+	addSkill(params: {
+		name: string;
+		displayName: string;
+		description: string;
+		sourceType: SkillSourceType;
+		config: AppSkillConfig;
+		enabled?: boolean;
+		validationStatus?: 'pending' | 'valid' | 'invalid' | 'unknown';
+	}): AppSkill;
+	/** Update an existing skill (user-editable fields only) */
+	updateSkill(
+		id: string,
+		params: { displayName?: string; description?: string; config?: AppSkillConfig }
+	): AppSkill;
+	/** Toggle skill enabled state */
+	setSkillEnabled(id: string, enabled: boolean): AppSkill;
+	/** Remove a skill by ID, returns false if built-in or not found */
+	removeSkill(id: string): boolean;
+	/** Get a skill by ID */
+	getSkill(id: string): AppSkill | null;
+}
+
+export interface NeoSettingsManager {
+	getGlobalSettings(): GlobalSettings;
+	updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings;
+}
+
+// ---------------------------------------------------------------------------
+// Messaging & session control interfaces
+// ---------------------------------------------------------------------------
+
+export interface NeoSessionManager {
+	/**
+	 * Inject a message into a session. `sessionId` is the target session.
+	 * Used by send_message_to_room and send_message_to_task.
+	 */
+	injectMessage(sessionId: string, message: string): Promise<void>;
+	/**
+	 * Find the active session ID for a room. Returns the first active session
+	 * or null if there are none.
+	 */
+	getActiveSessionForRoom(roomId: string): string | null;
+	/**
+	 * Find the active worker session ID for a task. Returns null if not found.
+	 */
+	getActiveSessionForTask(taskId: string): string | null;
+}
+
 export interface NeoActionToolsConfig {
 	roomManager: NeoActionRoomManager;
 	managerFactory: NeoActionManagerFactory;
@@ -301,6 +419,14 @@ export interface NeoActionToolsConfig {
 		gateId: string,
 		data: Record<string, unknown>
 	) => void | Promise<void>;
+	/** MCP server CRUD operations (optional — config tools disabled if absent) */
+	mcpManager?: NeoMcpManager;
+	/** Skills CRUD operations (optional — skill tools disabled if absent) */
+	skillsManager?: NeoSkillsManager;
+	/** App settings manager (optional — update_app_settings disabled if absent) */
+	settingsManager?: NeoSettingsManager;
+	/** Session manager for message injection (optional — messaging tools disabled if absent) */
+	sessionManager?: NeoSessionManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +505,10 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 		onGateChanged,
 		onWorkflowRunUpdated,
 		onGateDataUpdated,
+		mcpManager,
+		skillsManager,
+		settingsManager,
+		sessionManager,
 	} = config;
 
 	return {
@@ -946,6 +1076,398 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			);
 		},
 
+		// ── MCP server configuration ──────────────────────────────────────────
+
+		async add_mcp_server(args: {
+			name: string;
+			source_type: string;
+			description?: string;
+			command?: string;
+			args?: string[];
+			env?: Record<string, string>;
+			url?: string;
+			headers?: Record<string, string>;
+			enabled?: boolean;
+		}): Promise<ToolResult> {
+			if (!mcpManager) {
+				return errorResult('MCP manager not available');
+			}
+			return withSecurityCheck(
+				'add_mcp_server',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					try {
+						const server = mcpManager.createMcpServer({
+							name: args.name,
+							sourceType: args.source_type as AppMcpServerSourceType,
+							description: args.description,
+							command: args.command,
+							args: args.args,
+							env: args.env,
+							url: args.url,
+							headers: args.headers,
+							enabled: args.enabled,
+						});
+						return successResult({ server });
+					} catch (err) {
+						return errorResult(err instanceof Error ? err.message : String(err));
+					}
+				}
+			);
+		},
+
+		async update_mcp_server(args: {
+			server_id: string;
+			name?: string;
+			description?: string;
+			command?: string;
+			args?: string[];
+			env?: Record<string, string>;
+			url?: string;
+			headers?: Record<string, string>;
+		}): Promise<ToolResult> {
+			if (!mcpManager) {
+				return errorResult('MCP manager not available');
+			}
+
+			const hasUpdates =
+				args.name !== undefined ||
+				args.description !== undefined ||
+				args.command !== undefined ||
+				args.args !== undefined ||
+				args.env !== undefined ||
+				args.url !== undefined ||
+				args.headers !== undefined;
+			if (!hasUpdates) {
+				return errorResult('No update fields provided');
+			}
+
+			return withSecurityCheck(
+				'update_mcp_server',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					try {
+						const server = mcpManager.updateMcpServer(args.server_id, {
+							name: args.name,
+							description: args.description,
+							command: args.command,
+							args: args.args,
+							env: args.env,
+							url: args.url,
+							headers: args.headers,
+						});
+						if (!server) {
+							return errorResult(`MCP server not found: ${args.server_id}`);
+						}
+						return successResult({ server });
+					} catch (err) {
+						return errorResult(err instanceof Error ? err.message : String(err));
+					}
+				}
+			);
+		},
+
+		async delete_mcp_server(args: { server_id: string }): Promise<ToolResult> {
+			if (!mcpManager) {
+				return errorResult('MCP manager not available');
+			}
+			return withSecurityCheck(
+				'delete_mcp_server',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const server = mcpManager.getMcpServer(args.server_id);
+					if (!server) {
+						return errorResult(`MCP server not found: ${args.server_id}`);
+					}
+					const deleted = mcpManager.deleteMcpServer(args.server_id);
+					if (!deleted) {
+						return errorResult(`Failed to delete MCP server: ${args.server_id}`);
+					}
+					return successResult({ serverId: args.server_id });
+				}
+			);
+		},
+
+		async toggle_mcp_server(args: { server_id: string; enabled: boolean }): Promise<ToolResult> {
+			if (!mcpManager) {
+				return errorResult('MCP manager not available');
+			}
+			return withSecurityCheck(
+				'toggle_mcp_server',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const server = mcpManager.updateMcpServer(args.server_id, {
+						enabled: args.enabled,
+					});
+					if (!server) {
+						return errorResult(`MCP server not found: ${args.server_id}`);
+					}
+					return successResult({ server });
+				}
+			);
+		},
+
+		// ── Skill configuration ───────────────────────────────────────────────
+
+		async add_skill(args: {
+			name: string;
+			display_name: string;
+			description: string;
+			source_type: string;
+			config: Record<string, unknown>;
+			enabled?: boolean;
+		}): Promise<ToolResult> {
+			if (!skillsManager) {
+				return errorResult('Skills manager not available');
+			}
+			return withSecurityCheck('add_skill', args as Record<string, unknown>, config, async () => {
+				try {
+					const skill = skillsManager.addSkill({
+						name: args.name,
+						displayName: args.display_name,
+						description: args.description,
+						sourceType: args.source_type as SkillSourceType,
+						config: args.config as unknown as AppSkillConfig,
+						enabled: args.enabled,
+					});
+					return successResult({ skill });
+				} catch (err) {
+					return errorResult(err instanceof Error ? err.message : String(err));
+				}
+			});
+		},
+
+		async update_skill(args: {
+			skill_id: string;
+			display_name?: string;
+			description?: string;
+			config?: Record<string, unknown>;
+		}): Promise<ToolResult> {
+			if (!skillsManager) {
+				return errorResult('Skills manager not available');
+			}
+
+			const hasUpdates =
+				args.display_name !== undefined ||
+				args.description !== undefined ||
+				args.config !== undefined;
+			if (!hasUpdates) {
+				return errorResult('No update fields provided');
+			}
+
+			return withSecurityCheck(
+				'update_skill',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					try {
+						const existing = skillsManager.getSkill(args.skill_id);
+						if (!existing) {
+							return errorResult(`Skill not found: ${args.skill_id}`);
+						}
+						const skill = skillsManager.updateSkill(args.skill_id, {
+							displayName: args.display_name,
+							description: args.description,
+							config: args.config as unknown as AppSkillConfig | undefined,
+						});
+						return successResult({ skill });
+					} catch (err) {
+						return errorResult(err instanceof Error ? err.message : String(err));
+					}
+				}
+			);
+		},
+
+		async delete_skill(args: { skill_id: string }): Promise<ToolResult> {
+			if (!skillsManager) {
+				return errorResult('Skills manager not available');
+			}
+			return withSecurityCheck(
+				'delete_skill',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const existing = skillsManager.getSkill(args.skill_id);
+					if (!existing) {
+						return errorResult(`Skill not found: ${args.skill_id}`);
+					}
+					if (existing.builtIn) {
+						return errorResult(
+							`Cannot delete built-in skill "${existing.name}". Use toggle_skill to disable it instead.`
+						);
+					}
+					const deleted = skillsManager.removeSkill(args.skill_id);
+					if (!deleted) {
+						return errorResult(`Failed to delete skill: ${args.skill_id}`);
+					}
+					return successResult({ skillId: args.skill_id });
+				}
+			);
+		},
+
+		async toggle_skill(args: { skill_id: string; enabled: boolean }): Promise<ToolResult> {
+			if (!skillsManager) {
+				return errorResult('Skills manager not available');
+			}
+			return withSecurityCheck(
+				'toggle_skill',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					try {
+						const skill = skillsManager.setSkillEnabled(args.skill_id, args.enabled);
+						return successResult({ skill });
+					} catch (err) {
+						return errorResult(err instanceof Error ? err.message : String(err));
+					}
+				}
+			);
+		},
+
+		// ── App settings ──────────────────────────────────────────────────────
+
+		async update_app_settings(args: {
+			model?: string;
+			thinking_level?: string;
+			auto_scroll?: boolean;
+			max_concurrent_workers?: number;
+		}): Promise<ToolResult> {
+			if (!settingsManager) {
+				return errorResult('Settings manager not available');
+			}
+
+			const hasUpdates =
+				args.model !== undefined ||
+				args.thinking_level !== undefined ||
+				args.auto_scroll !== undefined ||
+				args.max_concurrent_workers !== undefined;
+			if (!hasUpdates) {
+				return errorResult('No update fields provided');
+			}
+
+			return withSecurityCheck(
+				'update_app_settings',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const updates: Partial<GlobalSettings> = {};
+					if (args.model !== undefined) updates.model = args.model;
+					if (args.thinking_level !== undefined)
+						updates.thinkingLevel = args.thinking_level as GlobalSettings['thinkingLevel'];
+					if (args.auto_scroll !== undefined) updates.autoScroll = args.auto_scroll;
+					if (args.max_concurrent_workers !== undefined)
+						updates.maxConcurrentWorkers = args.max_concurrent_workers;
+					const settings = settingsManager.updateGlobalSettings(updates);
+					return successResult({ settings });
+				}
+			);
+		},
+
+		// ── Messaging & session control ───────────────────────────────────────
+
+		async send_message_to_room(args: { room_id: string; message: string }): Promise<ToolResult> {
+			if (!sessionManager) {
+				return errorResult('Session manager not available');
+			}
+			return withSecurityCheck(
+				'send_message_to_room',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const room = roomManager.getRoom(args.room_id);
+					if (!room) {
+						return errorResult(`Room not found: ${args.room_id}`);
+					}
+					const sessionId = sessionManager.getActiveSessionForRoom(args.room_id);
+					if (!sessionId) {
+						return errorResult(`No active session found for room: ${args.room_id}`);
+					}
+					await sessionManager.injectMessage(sessionId, args.message);
+					return successResult({ sessionId });
+				}
+			);
+		},
+
+		async send_message_to_task(args: {
+			room_id: string;
+			task_id: string;
+			message: string;
+		}): Promise<ToolResult> {
+			if (!sessionManager) {
+				return errorResult('Session manager not available');
+			}
+			return withSecurityCheck(
+				'send_message_to_task',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const room = roomManager.getRoom(args.room_id);
+					if (!room) {
+						return errorResult(`Room not found: ${args.room_id}`);
+					}
+					const taskManager = managerFactory.getTaskManager(args.room_id);
+					const task = await taskManager.getTask(args.task_id);
+					if (!task) {
+						return errorResult(`Task not found: ${args.task_id}`);
+					}
+					const sessionId = sessionManager.getActiveSessionForTask(args.task_id);
+					if (!sessionId) {
+						return errorResult(`No active session found for task: ${args.task_id}`);
+					}
+					await sessionManager.injectMessage(sessionId, args.message);
+					return successResult({ sessionId });
+				}
+			);
+		},
+
+		async stop_session(args: { room_id: string; task_id: string }): Promise<ToolResult> {
+			return withSecurityCheck(
+				'stop_session',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const room = roomManager.getRoom(args.room_id);
+					if (!room) {
+						return errorResult(`Room not found: ${args.room_id}`);
+					}
+
+					if (!runtimeService) {
+						return errorResult('Runtime service not available');
+					}
+					const runtime = runtimeService.getRuntime(args.room_id);
+					if (!runtime) {
+						return errorResult(`No runtime found for room: ${args.room_id}`);
+					}
+
+					const taskManager = managerFactory.getTaskManager(args.room_id);
+					const task = await taskManager.getTask(args.task_id);
+					if (!task) {
+						return errorResult(`Task not found: ${args.task_id}`);
+					}
+
+					if (task.status !== 'in_progress' && task.status !== 'review') {
+						return errorResult(
+							`Task cannot be interrupted (current status: ${task.status}). Only in_progress or review tasks can be interrupted.`
+						);
+					}
+
+					const result = await runtime.interruptTaskSession(args.task_id);
+					if (!result.success) {
+						return errorResult(`Failed to interrupt session for task ${args.task_id}`);
+					}
+
+					return successResult({
+						taskId: args.task_id,
+						message: `Generation interrupted for task ${args.task_id}. Task remains active and awaiting input.`,
+					});
+				}
+			);
+		},
+
 		async reject_gate(args: {
 			run_id: string;
 			gate_id: string;
@@ -995,6 +1517,65 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					gateData: gateData.data,
 				});
 			});
+		},
+
+		async pause_schedule(args: { room_id: string; goal_id: string }): Promise<ToolResult> {
+			return withSecurityCheck(
+				'pause_schedule',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const room = roomManager.getRoom(args.room_id);
+					if (!room) {
+						return errorResult(`Room not found: ${args.room_id}`);
+					}
+
+					const goalManager = managerFactory.getGoalManager(args.room_id);
+					const goal = await goalManager.getGoal(args.goal_id);
+					if (!goal) {
+						return errorResult(`Goal not found: ${args.goal_id}`);
+					}
+					if (goal.missionType !== 'recurring') {
+						return errorResult(`Goal ${args.goal_id} is not a recurring mission`);
+					}
+
+					const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
+						schedulePaused: true,
+					});
+					return successResult({ goal: updated });
+				}
+			);
+		},
+
+		async resume_schedule(args: { room_id: string; goal_id: string }): Promise<ToolResult> {
+			return withSecurityCheck(
+				'resume_schedule',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					const room = roomManager.getRoom(args.room_id);
+					if (!room) {
+						return errorResult(`Room not found: ${args.room_id}`);
+					}
+
+					const goalManager = managerFactory.getGoalManager(args.room_id);
+					const goal = await goalManager.getGoal(args.goal_id);
+					if (!goal) {
+						return errorResult(`Goal not found: ${args.goal_id}`);
+					}
+					if (goal.missionType !== 'recurring') {
+						return errorResult(`Goal ${args.goal_id} is not a recurring mission`);
+					}
+					if (!goal.schedule) {
+						return errorResult(`Goal ${args.goal_id} has no schedule set. Set a schedule first.`);
+					}
+
+					const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
+						schedulePaused: false,
+					});
+					return successResult({ goal: updated });
+				}
+			);
 		},
 	};
 }
@@ -1282,6 +1863,208 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				reason: z.string().optional().describe('Reason for the rejection'),
 			},
 			(args) => handlers.reject_gate(args)
+		),
+
+		// ── MCP server configuration ──────────────────────────────────────────
+		tool(
+			'add_mcp_server',
+			'Register a new MCP server in the application registry. Medium risk — requires confirmation in balanced mode.',
+			{
+				name: z.string().describe('Unique name for the MCP server'),
+				source_type: z
+					.enum(['stdio', 'sse', 'http'])
+					.describe('Transport type: stdio, sse, or http'),
+				description: z.string().optional().describe('Description of what the server provides'),
+				command: z.string().optional().describe('Executable command (stdio servers)'),
+				args: z.array(z.string()).optional().describe('Command arguments (stdio servers)'),
+				env: z
+					.record(z.string(), z.string())
+					.optional()
+					.describe('Environment variable overrides (stdio servers)'),
+				url: z.string().optional().describe('Server URL (sse or http servers)'),
+				headers: z
+					.record(z.string(), z.string())
+					.optional()
+					.describe('Additional HTTP headers (sse or http servers)'),
+				enabled: z.boolean().optional().describe('Whether to enable immediately (default: false)'),
+			},
+			(args) => handlers.add_mcp_server(args)
+		),
+
+		tool(
+			'update_mcp_server',
+			'Update an existing MCP server entry. Medium risk — requires confirmation in balanced mode.',
+			{
+				server_id: z.string().describe('ID of the MCP server to update'),
+				name: z.string().optional().describe('New name for the server'),
+				description: z.string().optional().describe('New description'),
+				command: z.string().optional().describe('New command (stdio servers)'),
+				args: z.array(z.string()).optional().describe('New command arguments (stdio servers)'),
+				env: z
+					.record(z.string(), z.string())
+					.optional()
+					.describe('New environment variables (stdio servers)'),
+				url: z.string().optional().describe('New URL (sse or http servers)'),
+				headers: z
+					.record(z.string(), z.string())
+					.optional()
+					.describe('New headers (sse or http servers)'),
+			},
+			(args) => handlers.update_mcp_server(args)
+		),
+
+		tool(
+			'delete_mcp_server',
+			'Remove an MCP server from the registry. Medium risk — requires confirmation in balanced mode.',
+			{
+				server_id: z.string().describe('ID of the MCP server to delete'),
+			},
+			(args) => handlers.delete_mcp_server(args)
+		),
+
+		tool(
+			'toggle_mcp_server',
+			'Enable or disable an MCP server globally. Low risk — auto-executes in balanced mode.',
+			{
+				server_id: z.string().describe('ID of the MCP server to toggle'),
+				enabled: z.boolean().describe('Whether to enable or disable the server'),
+			},
+			(args) => handlers.toggle_mcp_server(args)
+		),
+
+		// ── Skill configuration ───────────────────────────────────────────────
+		tool(
+			'add_skill',
+			'Register a new skill in the application registry. Medium risk — requires confirmation in balanced mode.',
+			{
+				name: z
+					.string()
+					.describe(
+						'Unique internal name (slug-style, e.g. "my-skill"). Immutable after creation.'
+					),
+				display_name: z.string().describe('Human-readable display name shown in the UI'),
+				description: z.string().describe('Short description of what the skill does'),
+				source_type: z
+					.enum(['builtin', 'plugin', 'mcp_server'])
+					.describe('Where the skill comes from'),
+				config: z
+					.record(z.string(), z.unknown())
+					.describe(
+						'Source-type-specific configuration (e.g. {"type":"plugin","pluginPath":"/path/to/plugin"})'
+					),
+				enabled: z.boolean().optional().describe('Whether to enable immediately (default: false)'),
+			},
+			(args) => handlers.add_skill(args)
+		),
+
+		tool(
+			'update_skill',
+			'Update an existing skill entry. Low risk — auto-executes in balanced mode.',
+			{
+				skill_id: z.string().describe('ID of the skill to update'),
+				display_name: z.string().optional().describe('New human-readable display name'),
+				description: z.string().optional().describe('New description'),
+				config: z
+					.record(z.string(), z.unknown())
+					.optional()
+					.describe('New source-type-specific configuration'),
+			},
+			(args) => handlers.update_skill(args)
+		),
+
+		tool(
+			'delete_skill',
+			'Remove a skill from the registry. Built-in skills cannot be deleted — use toggle_skill instead. Medium risk — requires confirmation in balanced mode.',
+			{
+				skill_id: z.string().describe('ID of the skill to delete'),
+			},
+			(args) => handlers.delete_skill(args)
+		),
+
+		tool(
+			'toggle_skill',
+			'Enable or disable a skill globally. Low risk — auto-executes in balanced mode.',
+			{
+				skill_id: z.string().describe('ID of the skill to toggle'),
+				enabled: z.boolean().describe('Whether to enable or disable the skill'),
+			},
+			(args) => handlers.toggle_skill(args)
+		),
+
+		// ── App settings ──────────────────────────────────────────────────────
+		tool(
+			'update_app_settings',
+			'Update global application settings such as model, thinking level, or max workers. Low risk — auto-executes in balanced mode.',
+			{
+				model: z
+					.string()
+					.optional()
+					.describe('Default model ID for new sessions (e.g. "sonnet", "opus")'),
+				thinking_level: z
+					.enum(['none', 'low', 'medium', 'high'])
+					.optional()
+					.describe('Default thinking level for new sessions'),
+				auto_scroll: z.boolean().optional().describe('Whether to auto-scroll chat to new messages'),
+				max_concurrent_workers: z
+					.number()
+					.int()
+					.min(1)
+					.optional()
+					.describe('Maximum number of concurrent worker sessions per room agent'),
+			},
+			(args) => handlers.update_app_settings(args)
+		),
+
+		// ── Messaging & session control ───────────────────────────────────────
+		tool(
+			'send_message_to_room',
+			'Inject a message into the active session of a room. Medium risk — requires confirmation in balanced mode.',
+			{
+				room_id: z.string().describe('ID of the room to send the message to'),
+				message: z.string().describe('Message content to inject into the session'),
+			},
+			(args) => handlers.send_message_to_room(args)
+		),
+
+		tool(
+			'send_message_to_task',
+			'Inject a message into the active worker session for a specific task. Medium risk — requires confirmation in balanced mode.',
+			{
+				room_id: z.string().describe('ID of the room containing the task'),
+				task_id: z.string().describe('ID of the task whose session to send the message to'),
+				message: z.string().describe('Message content to inject into the task session'),
+			},
+			(args) => handlers.send_message_to_task(args)
+		),
+
+		tool(
+			'stop_session',
+			'Interrupt the running agent session for a task. Only works for in_progress or review tasks. Medium risk — requires confirmation in balanced mode.',
+			{
+				room_id: z.string().describe('ID of the room containing the task'),
+				task_id: z.string().describe('ID of the task whose session to stop'),
+			},
+			(args) => handlers.stop_session(args)
+		),
+
+		tool(
+			'pause_schedule',
+			'Pause the schedule for a recurring mission. While paused, the mission will not trigger automatically. Low risk — auto-executes in balanced mode.',
+			{
+				room_id: z.string().describe('ID of the room containing the goal'),
+				goal_id: z.string().describe('ID of the recurring goal to pause'),
+			},
+			(args) => handlers.pause_schedule(args)
+		),
+
+		tool(
+			'resume_schedule',
+			'Resume a paused recurring mission schedule. Low risk — auto-executes in balanced mode.',
+			{
+				room_id: z.string().describe('ID of the room containing the goal'),
+				goal_id: z.string().describe('ID of the recurring goal to resume'),
+			},
+			(args) => handlers.resume_schedule(args)
 		),
 	];
 
