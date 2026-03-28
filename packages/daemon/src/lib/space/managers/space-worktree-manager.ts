@@ -18,6 +18,8 @@ import { SpaceWorktreeRepository } from '../../../storage/repositories/space-wor
 import { SpaceRepository } from '../../../storage/repositories/space-repository';
 import { worktreeSlug } from '../worktree-slug';
 import { Logger } from '../../logger';
+import { retryWithBackoff } from '../runtime/retry-utils';
+import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants';
 
 export interface SpaceWorktreeInfo {
 	slug: string;
@@ -134,12 +136,27 @@ export class SpaceWorktreeManager {
 		}
 
 		try {
-			execFileSync(
-				'git',
-				['worktree', 'add', worktreePath, '-b', branchName, baseBranch ?? 'HEAD'],
+			await retryWithBackoff(
+				() =>
+					Promise.resolve(
+						execFileSync(
+							'git',
+							['worktree', 'add', worktreePath, '-b', branchName, baseBranch ?? 'HEAD'],
+							{
+								cwd: space.workspacePath,
+								timeout: 30_000,
+							}
+						)
+					),
 				{
-					cwd: space.workspacePath,
-					timeout: 30_000,
+					maxRetries: MAX_NETWORK_RETRIES,
+					delaysMs: NETWORK_RETRY_DELAYS_MS,
+					onRetry: (attempt, err) => {
+						this.logger.warn(
+							`git worktree add failed (attempt ${attempt}), retrying: ` +
+								`${err instanceof Error ? err.message : String(err)}`
+						);
+					},
 				}
 			);
 		} catch (err) {

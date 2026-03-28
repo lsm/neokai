@@ -41,7 +41,7 @@ import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
-import { autoCompleteStuckAgents } from './agent-liveness';
+import { autoCompleteStuckAgents, resolveNodeTimeout } from './agent-liveness';
 import { CompletionDetector } from './completion-detector';
 
 const log = new Logger('space-runtime');
@@ -743,7 +743,9 @@ export class SpaceRuntime {
 				meta.spaceId,
 				this.config.taskRepo,
 				tam,
-				this.safeNotify.bind(this)
+				this.safeNotify.bind(this),
+				undefined,
+				(task) => resolveNodeTimeout(task.agentName ?? 'general')
 			);
 			if (autoCompleted.length > 0) {
 				log.warn(

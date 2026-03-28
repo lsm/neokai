@@ -25,24 +25,32 @@ export class GateDataRepository {
 
 	/**
 	 * Get gate data for a specific `(run_id, gate_id)` pair.
-	 * Returns null when no data has been written for this gate in this run.
+	 * Returns null when no data has been written for this gate in this run,
+	 * OR when the stored JSON is corrupted (so the caller can fall back to the
+	 * gate's default data — e.g. `{ approved: false, waiting: true }` for
+	 * human-approval gates — rather than operating on an empty object).
 	 */
 	get(runId: string, gateId: string): GateDataRecord | null {
 		const row = this.db
 			.prepare('SELECT * FROM gate_data WHERE run_id = ? AND gate_id = ?')
 			.get(runId, gateId) as Record<string, unknown> | undefined;
 		if (!row) return null;
-		return this.rowToRecord(row);
+		return this.rowToRecord(row, /* returnNullOnCorruption */ true);
 	}
 
 	/**
 	 * Get all gate data records for a workflow run.
+	 * Corrupted records are included with `data: {}` so callers can still
+	 * inspect all gate IDs; use `get()` for evaluation (which returns null on
+	 * corruption so the caller falls back to the gate's default data).
 	 */
 	listByRun(runId: string): GateDataRecord[] {
 		const rows = this.db
 			.prepare('SELECT * FROM gate_data WHERE run_id = ? ORDER BY gate_id')
 			.all(runId) as Record<string, unknown>[];
-		return rows.map((r) => this.rowToRecord(r));
+		return rows
+			.map((r) => this.rowToRecord(r, false))
+			.filter((r): r is GateDataRecord => r !== null);
 	}
 
 	/**
@@ -122,30 +130,37 @@ export class GateDataRepository {
 		return this.set(runId, gateId, defaultData);
 	}
 
-	private rowToRecord(row: Record<string, unknown>): GateDataRecord {
+	/**
+	 * @param row                   Raw SQLite row.
+	 * @param returnNullOnCorruption When true, returns null if JSON is corrupted so
+	 *                              the caller can fall back to the gate's default data
+	 *                              (e.g. `{ approved: false, waiting: true }` for
+	 *                              human-approval gates).  When false, returns the record
+	 *                              with `data: {}` so the caller can still inspect the
+	 *                              gate ID even when the payload is unreadable.
+	 */
+	private rowToRecord(
+		row: Record<string, unknown>,
+		returnNullOnCorruption: boolean
+	): GateDataRecord | null {
 		const runId = row.run_id as string;
 		const gateId = row.gate_id as string;
-		let data: Record<string, unknown> = {};
 		const raw = row.data as string;
 		try {
-			data = JSON.parse(raw) as Record<string, unknown>;
+			const data = JSON.parse(raw) as Record<string, unknown>;
+			return { runId, gateId, data, updatedAt: row.updated_at as number };
 		} catch (err) {
-			// Gate data is corrupted — reset to empty object and log so engineers can
-			// investigate. Human-approval gates still block correctly: an empty `{}`
-			// means no approval key exists, so the gate condition (`check: exists`)
-			// remains closed until a human explicitly approves.
 			log.error(
 				`GateDataRepository: corrupted gate data for run=${runId} gate=${gateId} — ` +
 					`JSON.parse failed (${err instanceof Error ? err.message : String(err)}). ` +
-					`Resetting to {} to allow gate evaluation to continue.`
+					(returnNullOnCorruption
+						? 'Returning null so caller falls back to gate default data.'
+						: 'Returning {} for inspection.')
 			);
-			data = {};
+			if (returnNullOnCorruption) {
+				return null;
+			}
+			return { runId, gateId, data: {}, updatedAt: row.updated_at as number };
 		}
-		return {
-			runId,
-			gateId,
-			data,
-			updatedAt: row.updated_at as number,
-		};
 	}
 }
