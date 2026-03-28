@@ -3,6 +3,7 @@ import {
 	navSectionSignal,
 	contextPanelOpenSignal,
 	currentRoomIdSignal,
+	currentSpaceIdSignal,
 	settingsSectionSignal,
 	createRoomModalSignal,
 	type NavSection,
@@ -31,6 +32,7 @@ import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { RoomContextPanel } from './RoomContextPanel.tsx';
 import { SpaceContextPanel } from '../components/space/SpaceContextPanel.tsx';
+import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { spaceStore } from '../lib/space-store.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
@@ -172,12 +174,16 @@ export function ContextPanel() {
 	}, [navSection]);
 	const activeSettingsSection = settingsSectionSignal.value;
 	const currentRoomId = currentRoomIdSignal.value;
+	const currentSpaceId = currentSpaceIdSignal.value;
 
 	// Inbox takes full content width — no sidebar needed
 	if (navSection === 'inbox') return null;
 
 	// When a specific room is selected in the rooms section, show room-specific panel
 	const isRoomDetail = navSection === 'rooms' && currentRoomId !== null;
+
+	// When a specific space is selected in the spaces section, show space-specific panel
+	const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
 
 	// Section config
 	const sectionConfig = {
@@ -204,7 +210,6 @@ export function ContextPanel() {
 		},
 		spaces: {
 			title: 'Spaces',
-			emptyIcon: '🚀',
 			emptyTitle: 'No spaces yet',
 			emptyDesc: 'Create a space to orchestrate agents',
 			actionLabel: 'Create Space',
@@ -236,9 +241,11 @@ export function ContextPanel() {
 	const isSpaces = navSection === 'spaces';
 	const headerTitle = isRoomDetail
 		? (roomStore.room.value?.name ?? 'Room')
-		: isSpaces
-			? null
-			: config.title;
+		: isSpaceDetail
+			? (spaceStore.space.value?.name ?? 'Space')
+			: isSpaces
+				? null
+				: config.title;
 
 	const handleCreateSession = async () => {
 		if (connectionState.value !== 'connected') {
@@ -376,7 +383,7 @@ export function ContextPanel() {
 				{/* Header */}
 				<div class={`p-4 border-b ${borderColors.ui.default}`}>
 					<div class="flex items-center justify-between mb-3">
-						{isSpaces ? (
+						{isSpaces && !isSpaceDetail ? (
 							<button
 								onClick={() => navigateToSpaces()}
 								class={cn(
@@ -445,7 +452,9 @@ export function ContextPanel() {
 
 				{/* Content — key triggers fade-in (animate-fadeIn) on section change */}
 				<div
-					key={navSection + (isRoomDetail ? '-detail' : '')}
+					key={
+						navSection + (isRoomDetail ? '-detail' : '') + (isSpaceDetail ? '-space-detail' : '')
+					}
 					class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
 				>
 					{navSection === 'home' && (
@@ -463,7 +472,13 @@ export function ContextPanel() {
 					{navSection === 'rooms' && !isRoomDetail && (
 						<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
 					)}
-					{navSection === 'spaces' && (
+					{navSection === 'spaces' && isSpaceDetail && (
+						<SpaceDetailPanel
+							spaceId={currentSpaceId!}
+							onNavigate={() => (contextPanelOpenSignal.value = false)}
+						/>
+					)}
+					{navSection === 'spaces' && !isSpaceDetail && (
 						<SpaceContextPanel
 							onSpaceSelect={() => (contextPanelOpenSignal.value = false)}
 							onCreateSpace={() => setCreateSpaceOpen(true)}

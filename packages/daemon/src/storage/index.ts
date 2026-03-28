@@ -38,6 +38,7 @@ import { TaskRepository } from './repositories/task-repository';
 import { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
 import { SkillRepository } from './repositories/skill-repository';
 import { RoomSkillOverrideRepository } from './repositories/room-skill-override-repository';
+import { NeoActivityLogRepository } from './repositories/neo-activity-log-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -63,6 +64,12 @@ export { AppMcpServerRepository } from './repositories/app-mcp-server-repository
 export { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
 export { SkillRepository } from './repositories/skill-repository';
 export { RoomSkillOverrideRepository } from './repositories/room-skill-override-repository';
+export { NeoActivityLogRepository } from './repositories/neo-activity-log-repository';
+export type {
+	NeoActivityLogEntry,
+	InsertNeoActivityParams,
+	ListNeoActivityParams,
+} from './repositories/neo-activity-log-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -84,6 +91,7 @@ export class Database {
 	private roomMcpEnablementRepo!: RoomMcpEnablementRepository;
 	private skillRepo!: SkillRepository;
 	private roomSkillOverrideRepo!: RoomSkillOverrideRepository;
+	private neoActivityLogRepo!: NeoActivityLogRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -109,6 +117,7 @@ export class Database {
 		this.roomMcpEnablementRepo = new RoomMcpEnablementRepository(db, reactiveDb);
 		this.skillRepo = new SkillRepository(db, reactiveDb);
 		this.roomSkillOverrideRepo = new RoomSkillOverrideRepository(db, reactiveDb);
+		this.neoActivityLogRepo = new NeoActivityLogRepository(db);
 	}
 
 	// ============================================================================
@@ -479,6 +488,13 @@ export class Database {
 	 */
 	get roomSkillOverrides(): RoomSkillOverrideRepository {
 		return this.roomSkillOverrideRepo;
+	}
+
+	/**
+	 * Get the Neo activity log repository
+	 */
+	get neoActivityLog(): NeoActivityLogRepository {
+		return this.neoActivityLogRepo;
 	}
 
 	close(): void {

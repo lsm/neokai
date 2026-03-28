@@ -33,6 +33,8 @@ export { runMigration56 } from './migrations';
 export { runMigration57 } from './migrations';
 // knip-ignore-next-line
 export { runMigration58 } from './migrations';
+// knip-ignore-next-line
+export { runMigration66 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -59,7 +61,7 @@ export function createTables(db: BunDatabase): void {
         processing_state TEXT,
         archived_at TEXT,
         parent_id TEXT,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'neo')),
         session_context TEXT
       )
     `);
@@ -396,6 +398,23 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// Neo activity log — audit log of all Neo agent tool invocations
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS neo_activity_log (
+        id          TEXT PRIMARY KEY,
+        tool_name   TEXT NOT NULL,
+        input       TEXT,
+        output      TEXT,
+        status      TEXT NOT NULL DEFAULT 'success' CHECK(status IN ('success', 'error', 'cancelled')),
+        error       TEXT,
+        target_type TEXT,
+        target_id   TEXT,
+        undoable    INTEGER DEFAULT 0,
+        undo_data   TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+
 	db.exec(`
       CREATE TABLE IF NOT EXISTS job_queue (
         id TEXT PRIMARY KEY,
@@ -470,4 +489,7 @@ function createIndexes(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
 	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`
+	);
 }

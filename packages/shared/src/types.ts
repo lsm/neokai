@@ -74,7 +74,8 @@ export type SessionType =
 	| 'general'
 	| 'lobby'
 	| 'spaces_global'
-	| 'space_task_agent';
+	| 'space_task_agent'
+	| 'neo';
 
 /**
  * Context for room/lobby/space sessions
@@ -86,6 +87,8 @@ export interface SessionContext {
 	spaceId?: string;
 	/** Task ID for Space Task Agent sessions */
 	taskId?: string;
+	/** Neo session ID for the global Neo agent */
+	neoId?: string;
 }
 
 /**
@@ -542,16 +545,7 @@ export interface SessionMetadata {
 	};
 	// Session architecture fields
 	/** Type of session in architecture context */
-	sessionType?:
-		| 'room_chat'
-		| 'planner'
-		| 'coder'
-		| 'leader'
-		| 'general'
-		| 'worker'
-		| 'lobby'
-		| 'spaces_global'
-		| 'space_task_agent';
+	sessionType?: SessionType;
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
 	/** For manager/worker: ID of the parent RoomSession */
