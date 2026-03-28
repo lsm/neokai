@@ -181,6 +181,14 @@ describe('NavRail', () => {
 			const navRail = container.querySelector('div');
 			expect(navRail?.className).toContain('w-16');
 		});
+
+		it('should use h-full instead of h-screen to avoid overflowing safe-area-padded parent', () => {
+			const { container } = render(<NavRail />);
+
+			const navRail = container.querySelector('div');
+			expect(navRail?.className).toContain('h-full');
+			expect(navRail?.className).not.toContain('h-screen');
+		});
 	});
 
 	describe('Layout Structure', () => {

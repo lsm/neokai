@@ -567,11 +567,13 @@ describe('ContextPanel', () => {
 			expect(header).toBeTruthy();
 		});
 
-		it('should have full screen height', () => {
+		it('should use h-dvh on mobile and h-full on desktop to respect safe-area boundary', () => {
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('h-screen');
+			expect(panel?.className).toContain('h-dvh');
+			expect(panel?.className).toContain('md:h-full');
+			expect(panel?.className).not.toContain('h-screen');
 		});
 	});
 });

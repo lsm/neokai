@@ -156,10 +156,7 @@ export function App() {
 
 	return (
 		<>
-			<div
-				class="flex h-dvh overflow-hidden bg-dark-950 relative pt-safe"
-				style={{ height: '100dvh' }}
-			>
+			<div class="flex h-dvh overflow-hidden bg-dark-950 relative pt-safe">
 				{/* Navigation Rail (desktop only) */}
 				<NavRail />
 
