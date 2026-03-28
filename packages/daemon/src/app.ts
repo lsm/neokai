@@ -29,6 +29,7 @@ import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE } from './lib/job-queue-constants';
 import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
+import { NeoAgentManager } from './lib/neo/neo-agent-manager';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -82,6 +83,8 @@ export interface DaemonAppContext {
 	appMcpManager: AppMcpLifecycleManager;
 	/** Application-level Skills manager — registry CRUD and validation */
 	skillsManager: SkillsManager;
+	/** Neo agent manager — singleton global AI assistant */
+	neoAgentManager: NeoAgentManager;
 	/** Workspace file index for fast fuzzy file/folder search */
 	fileIndex: FileIndex;
 	/**
@@ -237,6 +240,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Register session title generation handler before jobProcessor starts
 	sessionManager.start();
+
+	// Initialize Neo agent manager (singleton global AI assistant).
+	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
+	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
 	// Initialize State Manager (listens to EventBus, clean dependency graph!)
 	const stateManager = new StateManager(
@@ -448,10 +455,21 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	jobProcessor.start();
 	logInfo('[Daemon] Job queue processor started');
 
-	// TODO(neo-task-1.3): Wire NeoAgentManager here.
-	// Instantiate NeoAgentManager(sessionManager, settingsManager), call provision()
-	// at startup, and call cleanup() in the graceful-shutdown block below.
-	// See packages/daemon/src/lib/neo/neo-agent-manager.ts.
+	// Provision the Neo agent session (skip in test mode unless explicitly enabled).
+	// Mirrors the spaces agent guard: test runs are clean by default; online/e2e
+	// tests that need Neo set NEOKAI_ENABLE_NEO_AGENT=1.
+	if (process.env.NODE_ENV !== 'test' || process.env.NEOKAI_ENABLE_NEO_AGENT === '1') {
+		try {
+			await neoAgentManager.provision();
+			logInfo('[Daemon] Neo agent provisioned');
+		} catch (err) {
+			// Non-fatal: daemon continues without Neo. The Neo session will be null
+			// and the frontend will receive no responses from neo.* RPC calls.
+			// TODO(neo): publish a status channel event so the frontend can surface
+			// a "Neo unavailable" indicator when provisioning fails.
+			logError('[Daemon] Neo agent provisioning failed (non-fatal):', err);
+		}
+	}
 
 	// On startup: clean up orphaned worktrees (directories missing from disk) and run the TTL reaper.
 	// Both are non-blocking — errors are logged but never propagate to block server start.
@@ -567,6 +585,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// Task Agent sessions are interrupted cleanly before the session pool drains.
 			await taskAgentManager.cleanupAll();
 
+			// Shut down the Neo agent session before the session pool drains.
+			await neoAgentManager.cleanup();
+			logInfo('[Daemon] Neo agent stopped');
+
 			// Stop all agent sessions first — this closes any open SSE connections
 			// that are held by providers (e.g. AnthropicToCopilotBridgeProvider's embedded
 			// HTTP server). Provider shutdown must follow so server.close() is not
@@ -616,6 +638,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobProcessor,
 		appMcpManager,
 		skillsManager,
+		neoAgentManager,
 		fileIndex,
 		cleanup,
 	};
