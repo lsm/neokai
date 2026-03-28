@@ -241,12 +241,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	useEffect(() => {
 		if (!task || !runtimeSpaceIdCandidate) return;
-		if (task.taskAgentSessionId) return;
 		if (task.status === 'archived' || task.status === 'cancelled' || task.status === 'completed')
 			return;
 
 		let cancelled = false;
-		setEnsuringThread(true);
+		const showSpawnLoading = !task.taskAgentSessionId;
+		if (showSpawnLoading) setEnsuringThread(true);
 		setThreadSendError(null);
 
 		spaceStore
@@ -260,7 +260,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				setThreadSendError(formatTaskThreadError(err));
 			})
 			.finally(() => {
-				if (!cancelled) setEnsuringThread(false);
+				if (!cancelled && showSpawnLoading) setEnsuringThread(false);
 			});
 
 		return () => {
