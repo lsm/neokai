@@ -99,9 +99,36 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: true, goalId: goal.id, goal });
 		},
 
-		async list_goals(): Promise<ToolResult> {
-			const goals = await goalManager.listGoals();
-			return jsonResult({ success: true, goals });
+		async list_goals(
+			args: {
+				status?: 'active' | 'needs_human' | 'completed' | 'archived';
+				search?: string;
+				limit?: number;
+				offset?: number;
+				compact?: boolean;
+			} = {}
+		): Promise<ToolResult> {
+			let goals = await goalManager.listGoals(args.status);
+			if (args.search) {
+				const q = args.search.toLowerCase();
+				goals = goals.filter((g) => g.title.toLowerCase().includes(q));
+			}
+			const total = goals.length;
+			const limit = args.limit ?? 50;
+			const offset = args.offset ?? 0;
+			goals = goals.slice(offset, offset + limit);
+			if (args.compact) {
+				const compactGoals = goals.map((g) => ({
+					id: g.id,
+					title: g.title,
+					status: g.status,
+					priority: g.priority,
+					missionType: g.missionType ?? 'one_shot',
+					createdAt: g.createdAt,
+				}));
+				return jsonResult({ success: true, total, goals: compactGoals });
+			}
+			return jsonResult({ success: true, total, goals });
 		},
 
 		async update_goal(args: {
@@ -238,7 +265,14 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: true, taskId: task.id, task });
 		},
 
-		async list_tasks(args: { goal_id?: string; status?: TaskStatus }): Promise<ToolResult> {
+		async list_tasks(args: {
+			goal_id?: string;
+			status?: TaskStatus;
+			search?: string;
+			limit?: number;
+			offset?: number;
+			compact?: boolean;
+		}): Promise<ToolResult> {
 			// When explicitly filtering by 'archived', we must pass includeArchived:true
 			// because listTasks excludes archived tasks by default.
 			const filter = args.status
@@ -252,7 +286,29 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					tasks = tasks.filter((t) => linkedIds.has(t.id));
 				}
 			}
-			return jsonResult({ success: true, tasks });
+			if (args.search) {
+				const q = args.search.toLowerCase();
+				tasks = tasks.filter((t) => t.title.toLowerCase().includes(q));
+			}
+			const total = tasks.length;
+			const limit = args.limit ?? 50;
+			const offset = args.offset ?? 0;
+			tasks = tasks.slice(offset, offset + limit);
+			if (args.compact) {
+				const compactTasks = tasks.map((t) => ({
+					id: t.id,
+					shortId: t.shortId,
+					title: t.title,
+					status: t.status,
+					priority: t.priority,
+					taskType: t.taskType,
+					assignedAgent: t.assignedAgent,
+					dependsOn: t.dependsOn,
+					createdAt: t.createdAt,
+				}));
+				return jsonResult({ success: true, total, tasks: compactTasks });
+			}
+			return jsonResult({ success: true, total, tasks });
 		},
 
 		async update_task(args: {
@@ -997,7 +1053,39 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			},
 			(args) => handlers.create_goal(args)
 		),
-		tool('list_goals', 'List all goals in this room', {}, () => handlers.list_goals()),
+		tool(
+			'list_goals',
+			'List goals in this room. Filterable by status. Use compact:true and limit/offset to reduce payload size when there are many goals.',
+			{
+				status: z
+					.enum(['active', 'needs_human', 'completed', 'archived'])
+					.optional()
+					.describe('Filter by goal status'),
+				search: z.string().optional().describe('Substring match on goal title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of goals to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of goals to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, title, status, priority, missionType, createdAt) to reduce payload size'
+					),
+			},
+			(args) => handlers.list_goals(args)
+		),
 		tool(
 			'update_goal',
 			'Update an existing goal. Provide only the fields you want to change; omitted fields keep their current values.',
@@ -1065,7 +1153,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'list_tasks',
-			'List tasks in this room, optionally filtered by goal',
+			'List tasks in this room. Filterable by goal, status. Use compact:true and limit/offset to reduce payload size.',
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z
@@ -1081,6 +1169,28 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					])
 					.optional()
 					.describe('Filter by status'),
+				search: z.string().optional().describe('Substring match on task title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of tasks to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of tasks to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, shortId, title, status, priority, taskType, assignedAgent, dependsOn, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_tasks(args)
 		),
@@ -1275,10 +1385,42 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 	const handlers = createRoomAgentToolHandlers(config);
 
 	const tools = [
-		tool('list_goals', 'List all goals in this room', {}, () => handlers.list_goals()),
+		tool(
+			'list_goals',
+			'List goals in this room. Filterable by status. Use compact:true and limit/offset to reduce payload size when there are many goals.',
+			{
+				status: z
+					.enum(['active', 'needs_human', 'completed', 'archived'])
+					.optional()
+					.describe('Filter by goal status'),
+				search: z.string().optional().describe('Substring match on goal title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of goals to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of goals to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, title, status, priority, missionType, createdAt) to reduce payload size'
+					),
+			},
+			(args) => handlers.list_goals(args)
+		),
 		tool(
 			'list_tasks',
-			'List tasks in this room, optionally filtered by goal',
+			'List tasks in this room. Filterable by goal, status. Use compact:true and limit/offset to reduce payload size.',
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z
@@ -1294,6 +1436,28 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 					])
 					.optional()
 					.describe('Filter by status'),
+				search: z.string().optional().describe('Substring match on task title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of tasks to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of tasks to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, shortId, title, status, priority, taskType, assignedAgent, dependsOn, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_tasks(args)
 		),

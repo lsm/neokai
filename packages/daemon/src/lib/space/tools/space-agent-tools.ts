@@ -284,6 +284,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		async list_tasks(args: {
 			status?: SpaceTaskStatus;
 			workflow_run_id?: string;
+			search?: string;
+			limit?: number;
+			offset?: number;
+			compact?: boolean;
 		}): Promise<ToolResult> {
 			let tasks;
 			if (args.workflow_run_id) {
@@ -296,7 +300,25 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			} else {
 				tasks = taskRepo.listBySpace(spaceId);
 			}
-			return jsonResult({ success: true, tasks });
+			if (args.search) {
+				const q = args.search.toLowerCase();
+				tasks = tasks.filter((t) => t.title.toLowerCase().includes(q));
+			}
+			const total = tasks.length;
+			const limit = args.limit ?? 50;
+			const offset = args.offset ?? 0;
+			tasks = tasks.slice(offset, offset + limit);
+			if (args.compact) {
+				const compactTasks = tasks.map((t) => ({
+					id: t.id,
+					title: t.title,
+					status: t.status,
+					priority: t.priority,
+					createdAt: t.createdAt,
+				}));
+				return jsonResult({ success: true, total, tasks: compactTasks });
+			}
+			return jsonResult({ success: true, total, tasks });
 		},
 
 		/**
@@ -558,7 +580,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'list_tasks',
-			'List SpaceTasks for this space. Optionally filter by status or by a specific workflow run.',
+			'List SpaceTasks for this space. Filterable by status and workflow run. Use compact:true and limit/offset to reduce payload size.',
 			{
 				status: z
 					.enum([
@@ -576,6 +598,28 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.string()
 					.optional()
 					.describe('Filter to only tasks belonging to a specific workflow run'),
+				search: z.string().optional().describe('Substring match on task title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of tasks to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of tasks to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, title, status, priority, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_tasks(args)
 		),

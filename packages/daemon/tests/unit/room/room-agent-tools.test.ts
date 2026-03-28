@@ -243,6 +243,82 @@ describe('Room Agent Tools', () => {
 			const result = parseResult(await handlers.list_goals());
 			expect(result.success).toBe(true);
 			expect((result.goals as unknown[]).length).toBe(2);
+			expect(result.total).toBe(2);
+		});
+
+		it('should filter by status', async () => {
+			await handlers.create_goal({ title: 'Active Goal' });
+			const created = parseResult(await handlers.create_goal({ title: 'Completed Goal' }));
+			await handlers.update_goal({ goal_id: created.goalId as string, status: 'completed' });
+			const result = parseResult(await handlers.list_goals({ status: 'active' }));
+			expect(result.success).toBe(true);
+			expect((result.goals as unknown[]).length).toBe(1);
+			expect(result.total).toBe(1);
+		});
+
+		it('should filter by search substring', async () => {
+			await handlers.create_goal({ title: 'Add health check' });
+			await handlers.create_goal({ title: 'Fix login bug' });
+			await handlers.create_goal({ title: 'Add logging' });
+			const result = parseResult(await handlers.list_goals({ search: 'Add' }));
+			expect(result.success).toBe(true);
+			expect(result.total).toBe(2);
+			expect((result.goals as unknown[]).length).toBe(2);
+		});
+
+		it('should paginate with limit and offset', async () => {
+			for (let i = 1; i <= 5; i++) {
+				await handlers.create_goal({ title: `Goal ${i}` });
+			}
+			const page1 = parseResult(await handlers.list_goals({ limit: 2, offset: 0 }));
+			expect(page1.success).toBe(true);
+			expect(page1.total).toBe(5);
+			expect((page1.goals as unknown[]).length).toBe(2);
+
+			const page2 = parseResult(await handlers.list_goals({ limit: 2, offset: 2 }));
+			expect(page2.total).toBe(5);
+			expect((page2.goals as unknown[]).length).toBe(2);
+
+			const page3 = parseResult(await handlers.list_goals({ limit: 2, offset: 4 }));
+			expect(page3.total).toBe(5);
+			expect((page3.goals as unknown[]).length).toBe(1);
+		});
+
+		it('should return compact fields when compact:true', async () => {
+			await handlers.create_goal({ title: 'Compact Goal', description: 'Large description here' });
+			const result = parseResult(await handlers.list_goals({ compact: true }));
+			expect(result.success).toBe(true);
+			const goals = result.goals as Array<Record<string, unknown>>;
+			expect(goals.length).toBe(1);
+			// Compact fields present
+			expect(goals[0].id).toBeDefined();
+			expect(goals[0].title).toBe('Compact Goal');
+			expect(goals[0].status).toBeDefined();
+			expect(goals[0].priority).toBeDefined();
+			expect(goals[0].missionType).toBeDefined();
+			expect(goals[0].createdAt).toBeDefined();
+			// Large fields excluded
+			expect(goals[0].description).toBeUndefined();
+			expect(goals[0].linkedTaskIds).toBeUndefined();
+			expect(goals[0].structuredMetrics).toBeUndefined();
+		});
+
+		it('should return total=0 when no goals match search', async () => {
+			await handlers.create_goal({ title: 'My goal' });
+			const result = parseResult(await handlers.list_goals({ search: 'zzz-nomatch' }));
+			expect(result.success).toBe(true);
+			expect(result.total).toBe(0);
+			expect((result.goals as unknown[]).length).toBe(0);
+		});
+
+		it('should default limit to 50', async () => {
+			// Create 3 goals and verify all returned when within default limit
+			for (let i = 1; i <= 3; i++) {
+				await handlers.create_goal({ title: `Goal ${i}` });
+			}
+			const result = parseResult(await handlers.list_goals());
+			expect(result.total).toBe(3);
+			expect((result.goals as unknown[]).length).toBe(3);
 		});
 	});
 
@@ -465,6 +541,7 @@ describe('Room Agent Tools', () => {
 			await handlers.create_task({ title: 'T2', description: 'd2' });
 			const result = parseResult(await handlers.list_tasks({}));
 			expect((result.tasks as unknown[]).length).toBe(2);
+			expect(result.total).toBe(2);
 		});
 
 		it('should filter by goal_id', async () => {
@@ -478,6 +555,75 @@ describe('Room Agent Tools', () => {
 			await handlers.create_task({ title: 'Unlinked', description: 'd' });
 
 			const result = parseResult(await handlers.list_tasks({ goal_id: goalId }));
+			expect((result.tasks as unknown[]).length).toBe(1);
+			expect(result.total).toBe(1);
+		});
+
+		it('should filter by search substring', async () => {
+			await handlers.create_task({ title: 'Implement login', description: 'd' });
+			await handlers.create_task({ title: 'Fix login bug', description: 'd' });
+			await handlers.create_task({ title: 'Add tests', description: 'd' });
+			const result = parseResult(await handlers.list_tasks({ search: 'login' }));
+			expect(result.total).toBe(2);
+			expect((result.tasks as unknown[]).length).toBe(2);
+		});
+
+		it('should paginate with limit and offset', async () => {
+			for (let i = 1; i <= 5; i++) {
+				await handlers.create_task({ title: `Task ${i}`, description: `d${i}` });
+			}
+			const page1 = parseResult(await handlers.list_tasks({ limit: 2, offset: 0 }));
+			expect(page1.total).toBe(5);
+			expect((page1.tasks as unknown[]).length).toBe(2);
+
+			const page2 = parseResult(await handlers.list_tasks({ limit: 2, offset: 2 }));
+			expect(page2.total).toBe(5);
+			expect((page2.tasks as unknown[]).length).toBe(2);
+
+			const page3 = parseResult(await handlers.list_tasks({ limit: 2, offset: 4 }));
+			expect(page3.total).toBe(5);
+			expect((page3.tasks as unknown[]).length).toBe(1);
+		});
+
+		it('should return compact fields when compact:true', async () => {
+			await handlers.create_task({
+				title: 'Compact Task',
+				description: 'A very long description that should not appear in compact mode',
+			});
+			const result = parseResult(await handlers.list_tasks({ compact: true }));
+			expect(result.total).toBe(1);
+			const tasks = result.tasks as Array<Record<string, unknown>>;
+			expect(tasks.length).toBe(1);
+			// Compact fields present
+			expect(tasks[0].id).toBeDefined();
+			expect(tasks[0].title).toBe('Compact Task');
+			expect(tasks[0].status).toBeDefined();
+			expect(tasks[0].priority).toBeDefined();
+			expect(tasks[0].taskType).toBeDefined();
+			expect(tasks[0].assignedAgent).toBeDefined();
+			expect(tasks[0].createdAt).toBeDefined();
+			// Large fields excluded
+			expect(tasks[0].description).toBeUndefined();
+			expect(tasks[0].result).toBeUndefined();
+			expect(tasks[0].error).toBeUndefined();
+			expect(tasks[0].currentStep).toBeUndefined();
+		});
+
+		it('should return total=0 when no tasks match search', async () => {
+			await handlers.create_task({ title: 'My task', description: 'd' });
+			const result = parseResult(await handlers.list_tasks({ search: 'zzz-nomatch' }));
+			expect(result.total).toBe(0);
+			expect((result.tasks as unknown[]).length).toBe(0);
+		});
+
+		it('total should reflect filters before pagination', async () => {
+			await handlers.create_task({ title: 'Search match 1', description: 'd' });
+			await handlers.create_task({ title: 'Search match 2', description: 'd' });
+			await handlers.create_task({ title: 'Other task', description: 'd' });
+			const result = parseResult(
+				await handlers.list_tasks({ search: 'Search', limit: 1, offset: 0 })
+			);
+			expect(result.total).toBe(2); // 2 match, even though only 1 returned
 			expect((result.tasks as unknown[]).length).toBe(1);
 		});
 	});

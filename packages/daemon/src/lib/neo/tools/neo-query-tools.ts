@@ -675,6 +675,10 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			room_id?: string;
 			status?: string;
 			mission_type?: string;
+			search?: string;
+			limit?: number;
+			offset?: number;
+			compact?: boolean;
 		}): Promise<ToolResult> {
 			// Determine which rooms to query
 			const rooms = args.room_id
@@ -716,7 +720,32 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				}
 			}
 
-			return jsonResult(allGoals);
+			// Search filter (applied after cross-room aggregation)
+			const filtered = args.search
+				? allGoals.filter((g) =>
+						(g.title as string).toLowerCase().includes(args.search!.toLowerCase())
+					)
+				: allGoals;
+
+			const total = filtered.length;
+			const limit = args.limit ?? 50;
+			const offset = args.offset ?? 0;
+			const paged = filtered.slice(offset, offset + limit);
+
+			if (args.compact) {
+				const compactGoals = paged.map((g) => ({
+					id: g.id,
+					roomId: g.roomId,
+					title: g.title,
+					status: g.status,
+					priority: g.priority,
+					missionType: g.missionType,
+					createdAt: g.createdAt,
+				}));
+				return jsonResult({ success: true, total, goals: compactGoals });
+			}
+
+			return jsonResult({ success: true, total, goals: paged });
 		},
 
 		/**
@@ -821,6 +850,10 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			status?: string;
 			assigned_agent?: string;
 			include_archived?: boolean;
+			search?: string;
+			limit?: number;
+			offset?: number;
+			compact?: boolean;
 		}): Promise<ToolResult> {
 			// Auto-include archived tasks when the caller explicitly requests archived status,
 			// otherwise the repository filter would hide them and return zero results.
@@ -872,7 +905,33 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				}
 			}
 
-			return jsonResult(allTasks);
+			// Search filter (applied after cross-room aggregation)
+			const filtered = args.search
+				? allTasks.filter((t) =>
+						(t.title as string).toLowerCase().includes(args.search!.toLowerCase())
+					)
+				: allTasks;
+
+			const total = filtered.length;
+			const limit = args.limit ?? 50;
+			const offset = args.offset ?? 0;
+			const paged = filtered.slice(offset, offset + limit);
+
+			if (args.compact) {
+				const compactTasks = paged.map((t) => ({
+					id: t.id,
+					shortId: t.shortId,
+					title: t.title,
+					status: t.status,
+					priority: t.priority,
+					taskType: t.taskType,
+					assignedAgent: t.assignedAgent,
+					createdAt: t.createdAt,
+				}));
+				return jsonResult({ success: true, total, tasks: compactTasks });
+			}
+
+			return jsonResult({ success: true, total, tasks: paged });
 		},
 
 		/**
@@ -1073,7 +1132,7 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 		// Goal and task query tools
 		tool(
 			'list_goals',
-			'List goals across all rooms or a specific room. Filterable by room, status, and mission type.',
+			'List goals across all rooms or a specific room. Filterable by room, status, and mission type. Use compact:true and limit/offset to reduce payload size.',
 			{
 				room_id: z
 					.string()
@@ -1087,6 +1146,28 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 					.enum(['one_shot', 'measurable', 'recurring'])
 					.optional()
 					.describe('Filter by mission type'),
+				search: z.string().optional().describe('Substring match on goal title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of goals to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of goals to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, title, status, priority, missionType, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_goals(args)
 		),
@@ -1118,7 +1199,7 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 
 		tool(
 			'list_tasks',
-			'List tasks across all rooms or a specific room. Filterable by room, status, and assigned agent.',
+			'List tasks across all rooms or a specific room. Filterable by room, status, and assigned agent. Use compact:true and limit/offset to reduce payload size.',
 			{
 				room_id: z
 					.string()
@@ -1148,6 +1229,28 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 					.optional()
 					.default(false)
 					.describe('Include archived tasks (default: false)'),
+				search: z.string().optional().describe('Substring match on task title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of tasks to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of tasks to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, shortId, title, status, priority, taskType, assignedAgent, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_tasks(args)
 		),

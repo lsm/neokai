@@ -1575,3 +1575,109 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 		expect(parsed.workflows[0].name).toBe('Coding Workflow V2');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// list_tasks — search, pagination, compact mode, total
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns total count in response', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 1' });
+		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 2' });
+
+		const result = await makeHandlers(ctx).list_tasks({});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.total).toBe(2);
+		expect(parsed.tasks).toHaveLength(2);
+	});
+
+	test('filters tasks by search substring', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+		const r1 = await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 1' });
+		const r2 = await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 2' });
+		const task1Id = JSON.parse(r1.content[0].text).tasks[0].id;
+		const task2Id = JSON.parse(r2.content[0].text).tasks[0].id;
+
+		// Rename one task to have a unique searchable title
+		ctx.taskRepo.updateTask(task1Id, { title: 'Review PR #42' });
+		ctx.taskRepo.updateTask(task2Id, { title: 'Deploy service' });
+
+		const result = await makeHandlers(ctx).list_tasks({ search: 'Review' });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.total).toBe(1);
+		expect(parsed.tasks).toHaveLength(1);
+		expect(parsed.tasks[0].title).toBe('Review PR #42');
+	});
+
+	test('paginates with limit and offset', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+		for (let i = 0; i < 4; i++) {
+			await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: `run ${i + 1}` });
+		}
+
+		const page1 = JSON.parse(
+			(await makeHandlers(ctx).list_tasks({ limit: 2, offset: 0 })).content[0].text
+		);
+		expect(page1.total).toBe(4);
+		expect(page1.tasks).toHaveLength(2);
+
+		const page2 = JSON.parse(
+			(await makeHandlers(ctx).list_tasks({ limit: 2, offset: 2 })).content[0].text
+		);
+		expect(page2.total).toBe(4);
+		expect(page2.tasks).toHaveLength(2);
+	});
+
+	test('returns compact fields when compact:true', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 1' });
+
+		const result = await makeHandlers(ctx).list_tasks({ compact: true });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.total).toBe(1);
+		const task = parsed.tasks[0] as Record<string, unknown>;
+		// Compact fields present
+		expect(task.id).toBeDefined();
+		expect(task.title).toBeDefined();
+		expect(task.status).toBeDefined();
+		expect(task.priority).toBeDefined();
+		expect(task.createdAt).toBeDefined();
+		// Large fields excluded
+		expect(task.workflowRunId).toBeUndefined();
+		expect(task.description).toBeUndefined();
+	});
+
+	test('total reflects post-filter count before pagination', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+		for (let i = 0; i < 4; i++) {
+			const r = await makeHandlers(ctx).start_workflow_run({
+				workflow_id: wf.id,
+				title: `run ${i + 1}`,
+			});
+			const taskId = JSON.parse(r.content[0].text).tasks[0].id;
+			if (i < 2) {
+				ctx.taskRepo.updateTask(taskId, { title: `Match task ${i}` });
+			} else {
+				ctx.taskRepo.updateTask(taskId, { title: `Other task ${i}` });
+			}
+		}
+
+		const result = await makeHandlers(ctx).list_tasks({ search: 'Match', limit: 1, offset: 0 });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.total).toBe(2); // 2 match, even though only 1 returned
+		expect(parsed.tasks).toHaveLength(1);
+	});
+});
