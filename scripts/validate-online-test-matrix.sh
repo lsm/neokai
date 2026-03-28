@@ -2,7 +2,7 @@
 # Validates that all daemon online test files are covered by the CI matrix.
 #
 # The CI matrix in .github/workflows/main.yml splits some modules (rpc, room,
-# features) into shards with explicit file lists. This script catches new test
+# features, space) into shards with explicit file lists. This script catches new test
 # files that were added but not included in any shard.
 #
 # NOTE: providers-anthropic-to-codex-bridge shard is disabled (requires OPENAI_API_KEY).
@@ -81,6 +81,17 @@ CROSS_PROVIDER_FILES=(
   cross-provider-model-switch.test.ts
 )
 
+SPACE_FILES=(
+  space-agent-coordination.test.ts
+  space-edge-cases.test.ts
+  space-happy-path-code-review.test.ts
+  space-happy-path-full-pipeline.test.ts
+  space-happy-path-plan-to-approve.test.ts
+  space-happy-path-qa-completion.test.ts
+  task-agent-lifecycle.test.ts
+  task-agent-skills.test.ts
+)
+
 check_split_module() {
   local module_name=$1
   shift
@@ -124,6 +135,7 @@ check_split_module "room" "${ROOM_FILES[@]}"
 check_split_module "features" "${FEATURES_FILES[@]}"
 check_split_module "providers" "${PROVIDERS_FILES[@]}"
 check_split_module "cross-provider" "${CROSS_PROVIDER_FILES[@]}"
+check_split_module "space" "${SPACE_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).

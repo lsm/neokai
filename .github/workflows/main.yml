@@ -156,6 +156,8 @@ jobs:
           - rpc-3
           - rpc-4
           - sdk
+          - space-1
+          - space-2
           - websocket
         include:
           # mock_sdk: true → uses Dev Proxy (NEOKAI_USE_DEV_PROXY) for mocking instead of real API calls.
