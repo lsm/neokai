@@ -1,17 +1,21 @@
 /**
  * SpaceTaskPane Component
  *
- * Right column task detail pane for the Space layout.
+ * Full-width task detail view for the Space layout.
  * Shows task details, status, and human input area when needed.
+ * Displayed as the full content area (replacing the tab view) when a task is selected.
  */
 
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
+import { navigateToSpaceSession } from '../../lib/router';
 import { cn } from '../../lib/utils';
 import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
+	/** Space ID — required to enable "View Agent Session" navigation */
+	spaceId?: string;
 	onClose?: () => void;
 }
 
@@ -132,7 +136,7 @@ function HumanInputArea({ task }: HumanInputAreaProps) {
 	);
 }
 
-export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
+export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
 
 	if (!taskId) {
@@ -153,139 +157,164 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 		);
 	}
 
+	const agentSessionId = task.taskAgentSessionId;
+	const agentSessionLabel =
+		task.activeSession === 'leader'
+			? 'View Leader Session'
+			: task.activeSession === 'worker'
+				? 'View Worker Session'
+				: 'View Agent Session';
+
 	return (
-		<div class="flex flex-col h-full overflow-y-auto">
+		<div class="flex flex-col h-full overflow-hidden">
 			{/* Header */}
-			<div class="flex items-start justify-between px-4 py-3 border-b border-dark-700">
-				<h2 class="text-sm font-semibold text-gray-100 flex-1 mr-2 leading-snug">{task.title}</h2>
+			<div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0">
 				{onClose && (
 					<button
+						type="button"
 						onClick={onClose}
-						class="text-gray-600 hover:text-gray-400 transition-colors flex-shrink-0 mt-0.5"
-						aria-label="Close task pane"
+						class="text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
+						aria-label="Back"
+						data-testid="task-back-button"
 					>
 						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
 								stroke-width={2}
-								d="M6 18L18 6M6 6l12 12"
+								d="M15 19l-7-7 7-7"
 							/>
 						</svg>
+					</button>
+				)}
+				<h2 class="text-sm font-semibold text-gray-100 flex-1 min-w-0 truncate">{task.title}</h2>
+				<StatusBadge status={task.status} />
+				{agentSessionId && spaceId && (
+					<button
+						type="button"
+						onClick={() => navigateToSpaceSession(spaceId, agentSessionId)}
+						class="flex-shrink-0 px-3 py-1 text-xs font-medium bg-dark-700 hover:bg-dark-600
+							text-gray-300 rounded border border-dark-600 transition-colors"
+						data-testid="view-agent-session-btn"
+					>
+						{agentSessionLabel}
 					</button>
 				)}
 			</div>
 
 			{/* Body */}
-			<div class="flex-1 px-4 py-4 space-y-4">
-				{/* Status + Priority row */}
-				<div class="flex items-center gap-3 flex-wrap">
-					<StatusBadge status={task.status} />
-					<span class={cn('text-xs font-medium', PRIORITY_CLASSES[task.priority])}>
-						{PRIORITY_LABELS[task.priority]} priority
-					</span>
-					{task.taskType && <span class="text-xs text-gray-600 capitalize">{task.taskType}</span>}
-				</div>
-
-				{/* Workflow step indicator */}
-				{task.workflowRunId && (
-					<div class="flex items-center gap-2 text-xs text-gray-500">
-						<svg
-							class="w-3.5 h-3.5 flex-shrink-0"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M4 6h16M4 10h16M4 14h16M4 18h16"
-							/>
-						</svg>
-						<span>
-							Workflow Step
-							{task.workflowNodeId && (
-								<span class="ml-1 font-mono text-gray-600">{task.workflowNodeId.slice(0, 8)}</span>
-							)}
+			<div class="flex-1 overflow-y-auto">
+				<div class="max-w-3xl mx-auto px-4 py-4 space-y-4">
+					{/* Priority row */}
+					<div class="flex items-center gap-3 flex-wrap">
+						<span class={cn('text-xs font-medium', PRIORITY_CLASSES[task.priority])}>
+							{PRIORITY_LABELS[task.priority]} priority
 						</span>
+						{task.taskType && <span class="text-xs text-gray-600 capitalize">{task.taskType}</span>}
 					</div>
-				)}
 
-				{/* Description */}
-				{task.description && (
-					<div>
-						<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-							Description
-						</h3>
-						<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
-							{task.description}
-						</p>
-					</div>
-				)}
-
-				{/* Current step */}
-				{task.currentStep && (
-					<div>
-						<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-							Current Step
-						</h3>
-						<p class="text-xs text-gray-400">{task.currentStep}</p>
-					</div>
-				)}
-
-				{/* Progress */}
-				{task.progress != null && task.progress > 0 && (
-					<div>
-						<div class="flex items-center justify-between mb-1">
-							<span class="text-xs text-gray-500">Progress</span>
-							<span class="text-xs text-gray-500">{task.progress}%</span>
+					{/* Workflow step indicator */}
+					{task.workflowRunId && (
+						<div class="flex items-center gap-2 text-xs text-gray-500">
+							<svg
+								class="w-3.5 h-3.5 flex-shrink-0"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M4 6h16M4 10h16M4 14h16M4 18h16"
+								/>
+							</svg>
+							<span>
+								Workflow Step
+								{task.workflowNodeId && (
+									<span class="ml-1 font-mono text-gray-600">
+										{task.workflowNodeId.slice(0, 8)}
+									</span>
+								)}
+							</span>
 						</div>
-						<div class="w-full bg-dark-700 rounded-full h-1.5">
-							<div
-								class="bg-blue-500 h-1.5 rounded-full transition-all"
-								style={{ width: `${task.progress}%` }}
-							/>
+					)}
+
+					{/* Description */}
+					{task.description && (
+						<div>
+							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+								Description
+							</h3>
+							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+								{task.description}
+							</p>
 						</div>
-					</div>
-				)}
+					)}
 
-				{/* Result */}
-				{task.result && (
-					<div>
-						<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-							Result
-						</h3>
-						<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{task.result}</p>
-					</div>
-				)}
+					{/* Current step */}
+					{task.currentStep && (
+						<div>
+							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+								Current Step
+							</h3>
+							<p class="text-xs text-gray-400">{task.currentStep}</p>
+						</div>
+					)}
 
-				{/* Error */}
-				{task.error && (
-					<div>
-						<h3 class="text-xs font-semibold text-red-500 uppercase tracking-wider mb-1.5">
-							Error
-						</h3>
-						<p class="text-sm text-red-400 leading-relaxed whitespace-pre-wrap">{task.error}</p>
-					</div>
-				)}
+					{/* Progress */}
+					{task.progress != null && task.progress > 0 && (
+						<div>
+							<div class="flex items-center justify-between mb-1">
+								<span class="text-xs text-gray-500">Progress</span>
+								<span class="text-xs text-gray-500">{task.progress}%</span>
+							</div>
+							<div class="w-full bg-dark-700 rounded-full h-1.5">
+								<div
+									class="bg-blue-500 h-1.5 rounded-full transition-all"
+									style={{ width: `${task.progress}%` }}
+								/>
+							</div>
+						</div>
+					)}
 
-				{/* PR link */}
-				{task.prUrl && (
-					<div class="flex items-center gap-2">
-						<a
-							href={task.prUrl}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-						>
-							{task.prNumber ? `PR #${task.prNumber}` : 'Pull Request'}
-						</a>
-					</div>
-				)}
+					{/* Result */}
+					{task.result && (
+						<div>
+							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+								Result
+							</h3>
+							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{task.result}</p>
+						</div>
+					)}
 
-				{/* Human input area */}
-				{task.status === 'needs_attention' && <HumanInputArea task={task} />}
+					{/* Error */}
+					{task.error && (
+						<div>
+							<h3 class="text-xs font-semibold text-red-500 uppercase tracking-wider mb-1.5">
+								Error
+							</h3>
+							<p class="text-sm text-red-400 leading-relaxed whitespace-pre-wrap">{task.error}</p>
+						</div>
+					)}
+
+					{/* PR link */}
+					{task.prUrl && (
+						<div class="flex items-center gap-2">
+							<a
+								href={task.prUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+							>
+								{task.prNumber ? `PR #${task.prNumber}` : 'Pull Request'}
+							</a>
+						</div>
+					)}
+
+					{/* Human input area */}
+					{task.status === 'needs_attention' && <HumanInputArea task={task} />}
+				</div>
 			</div>
 		</div>
 	);

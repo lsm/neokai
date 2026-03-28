@@ -1,9 +1,10 @@
 /**
  * SpaceIsland — main content area for the Space view.
  *
- * 2-column layout:
- * - Main (flex-1): tabbed view — Dashboard | Agents | Workflows | Settings
- * - Right (~320px, conditional): SpaceTaskPane when a task is selected
+ * Content priority chain (full-width, each replaces the next):
+ * 1. sessionViewId set → ChatContainer (agent/session chat)
+ * 2. taskViewId set    → SpaceTaskPane (full-width task detail)
+ * 3. default          → tabbed view — Dashboard | Agents | Workflows | Settings
  *
  * Dashboard tab shows WorkflowCanvas:
  *   - Runtime mode when an active workflow run exists (read-only, live status)
@@ -161,6 +162,15 @@ export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: Spac
 		return <ChatContainer key={sessionViewId} sessionId={sessionViewId} />;
 	}
 
+	// Task view: render SpaceTaskPane full-width instead of tabs
+	if (taskViewId) {
+		return (
+			<div class="flex-1 flex flex-col overflow-hidden bg-dark-900" data-testid="space-task-pane">
+				<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+			</div>
+		);
+	}
+
 	return (
 		<div class="flex-1 flex overflow-hidden bg-dark-900">
 			{/* Main content — tabbed view */}
@@ -306,16 +316,6 @@ export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: Spac
 					)}
 				</div>
 			</div>
-
-			{/* Right column — task detail pane (conditionally shown) */}
-			{taskViewId && (
-				<div
-					class="hidden md:flex w-80 flex-shrink-0 border-l border-dark-700 overflow-hidden flex-col"
-					data-testid="space-task-pane"
-				>
-					<SpaceTaskPane taskId={taskViewId} onClose={handleTaskPaneClose} />
-				</div>
-			)}
 
 			{/* Quick action dialogs */}
 			<SpaceCreateTaskDialog isOpen={createTaskOpen} onClose={() => setCreateTaskOpen(false)} />

@@ -174,7 +174,13 @@ vi.mock('../../components/space/SpaceDashboard', () => ({
 	),
 }));
 vi.mock('../../components/space/SpaceTaskPane', () => ({
-	SpaceTaskPane: () => <div />,
+	SpaceTaskPane: (props: { taskId: string | null; spaceId?: string; onClose?: () => void }) => (
+		<div
+			data-testid="space-task-pane-inner"
+			data-task-id={props.taskId ?? ''}
+			data-space-id={props.spaceId ?? ''}
+		/>
+	),
 }));
 
 vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
@@ -833,14 +839,22 @@ describe('SpaceIsland — content priority chain', () => {
 	});
 
 	describe('taskViewId prop', () => {
-		it('shows SpaceTaskPane when taskViewId is set', () => {
+		it('shows SpaceTaskPane wrapper when taskViewId is set', () => {
 			const { getByTestId } = render(<SpaceIsland spaceId="space-1" taskViewId="task-xyz" />);
 			expect(getByTestId('space-task-pane')).toBeTruthy();
 		});
 
-		it('still shows tab bar when only taskViewId is set', () => {
-			const { getByText } = render(<SpaceIsland spaceId="space-1" taskViewId="task-xyz" />);
-			expect(getByText('Dashboard')).toBeTruthy();
+		it('hides tab bar when taskViewId is set (full-width task view)', () => {
+			const { queryByText } = render(<SpaceIsland spaceId="space-1" taskViewId="task-xyz" />);
+			expect(queryByText('Dashboard')).toBeNull();
+			expect(queryByText('Agents')).toBeNull();
+		});
+
+		it('passes spaceId and taskId to SpaceTaskPane', () => {
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" taskViewId="task-xyz" />);
+			const inner = getByTestId('space-task-pane-inner');
+			expect(inner.getAttribute('data-task-id')).toBe('task-xyz');
+			expect(inner.getAttribute('data-space-id')).toBe('space-1');
 		});
 
 		it('does not show SpaceTaskPane when taskViewId is null', () => {
