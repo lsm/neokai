@@ -18,6 +18,14 @@ interface ParsedThreadRow {
 	fallbackText: string | null;
 }
 
+interface ThreadGroup {
+	id: string;
+	label: string;
+	taskId: string;
+	taskTitle: string;
+	rows: ParsedThreadRow[];
+}
+
 function parseThreadRow(
 	row: ReturnType<typeof useSpaceTaskMessages>['rows'][number]
 ): ParsedThreadRow {
@@ -59,6 +67,28 @@ export function SpaceTaskUnifiedThread({ taskId }: SpaceTaskUnifiedThreadProps) 
 		[parsedRows]
 	);
 	const maps = useMessageMaps(parsedMessages, `space-task-${taskId}`);
+	const groups = useMemo<ThreadGroup[]>(() => {
+		const next: ThreadGroup[] = [];
+		for (const row of parsedRows) {
+			const previous = next[next.length - 1];
+			const isSameGroup =
+				previous &&
+				previous.label === row.label &&
+				previous.taskId === row.taskId;
+			if (isSameGroup) {
+				previous.rows.push(row);
+				continue;
+			}
+			next.push({
+				id: `${row.label}-${row.taskId}-${row.id}`,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				rows: [row],
+			});
+		}
+		return next;
+	}, [parsedRows]);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -92,37 +122,36 @@ export function SpaceTaskUnifiedThread({ taskId }: SpaceTaskUnifiedThreadProps) 
 	return (
 		<div
 			ref={containerRef}
-			class="h-full overflow-y-auto px-4 py-3 space-y-3"
+			class="h-full overflow-y-auto py-3 space-y-5"
 			data-testid="space-task-unified-thread"
 		>
-			{parsedRows.map((row) => (
-				<div
-					key={String(row.id)}
-					class="rounded-lg border border-dark-700 bg-dark-900/55 px-3 py-2"
-					data-testid="space-task-thread-row"
-				>
+			{groups.map((group) => (
+				<div key={group.id} data-testid="space-task-thread-row">
 					<div class="mb-2 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-gray-500">
-						<span>{row.label}</span>
-						{row.taskId !== taskId && (
-							<span class="rounded-full border border-dark-600 bg-dark-950 px-2 py-0.5 text-gray-400">
-								{row.taskTitle}
-							</span>
-						)}
+						<span>{group.label}</span>
+						{group.taskId !== taskId && <span>{group.taskTitle}</span>}
 					</div>
 
-					{row.message ? (
-						<SDKMessageRenderer
-							message={row.message}
-							sessionId={row.sessionId ?? undefined}
-							toolResultsMap={maps.toolResultsMap}
-							toolInputsMap={maps.toolInputsMap}
-							subagentMessagesMap={maps.subagentMessagesMap}
-							sessionInfo={maps.sessionInfoMap.get((row.message as { uuid?: string }).uuid ?? '')}
-							taskContext={true}
-						/>
-					) : (
-						<pre class="whitespace-pre-wrap text-sm text-gray-300 font-mono">{row.fallbackText}</pre>
-					)}
+					<div class="space-y-2">
+						{group.rows.map((row) =>
+							row.message ? (
+								<SDKMessageRenderer
+									key={String(row.id)}
+									message={row.message}
+									sessionId={row.sessionId ?? undefined}
+									toolResultsMap={maps.toolResultsMap}
+									toolInputsMap={maps.toolInputsMap}
+									subagentMessagesMap={maps.subagentMessagesMap}
+									sessionInfo={maps.sessionInfoMap.get((row.message as { uuid?: string }).uuid ?? '')}
+									taskContext={true}
+								/>
+							) : (
+								<pre key={String(row.id)} class="whitespace-pre-wrap text-sm text-gray-300 font-mono">
+									{row.fallbackText}
+								</pre>
+							)
+						)}
+					</div>
 				</div>
 			))}
 		</div>

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
-import { cn } from '../../lib/utils';
 import type { SpaceTaskPriority, SpaceTaskStatus } from '@neokai/shared';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 
@@ -24,64 +23,12 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
 	usage_limited: 'Usage Limited',
 };
 
-const STATUS_CLASSES: Record<SpaceTaskStatus, string> = {
-	draft: 'bg-gray-800 text-gray-400 border-gray-700',
-	pending: 'bg-gray-800 text-gray-300 border-gray-600',
-	in_progress: 'bg-blue-900/30 text-blue-300 border-blue-700/50',
-	review: 'bg-purple-900/30 text-purple-300 border-purple-700/50',
-	completed: 'bg-green-900/30 text-green-300 border-green-700/50',
-	needs_attention: 'bg-yellow-900/30 text-yellow-300 border-yellow-700/50',
-	cancelled: 'bg-gray-800 text-gray-500 border-gray-700',
-	archived: 'bg-gray-900 text-gray-600 border-gray-800',
-	rate_limited: 'bg-orange-900/30 text-orange-300 border-orange-700/50',
-	usage_limited: 'bg-orange-900/30 text-orange-400 border-orange-700/50',
-};
-
 const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
 	low: 'Low',
 	normal: 'Normal',
 	high: 'High',
 	urgent: 'Urgent',
 };
-
-const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
-	low: 'border-gray-700 bg-dark-950 text-gray-400',
-	normal: 'border-dark-700 bg-dark-950 text-gray-400',
-	high: 'border-orange-700/50 bg-orange-950/30 text-orange-300',
-	urgent: 'border-red-700/50 bg-red-950/30 text-red-300',
-};
-
-function StatusBadge({ status }: { status: SpaceTaskStatus }) {
-	return (
-		<span
-			class={cn(
-				'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border',
-				STATUS_CLASSES[status]
-			)}
-		>
-			{STATUS_LABELS[status]}
-		</span>
-	);
-}
-
-function InfoBadge({
-	label,
-	className = 'border-dark-700 bg-dark-950 text-gray-400',
-}: {
-	label: string;
-	className?: string;
-}) {
-	return (
-		<span
-			class={cn(
-				'inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.16em]',
-				className
-			)}
-		>
-			{label}
-		</span>
-	);
-}
 
 function formatTaskThreadError(err: unknown): string {
 	const message = err instanceof Error ? err.message : String(err);
@@ -174,12 +121,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const showInlineComposer = !!agentSessionId && !isTerminalTask;
 	const canSendThreadMessage = !!agentSessionId && !isTerminalTask && !ensuringThread && !sendingThread;
 	const showHeaderSessionAction = !!runtimeSpaceId && (!!agentSessionId || !isTerminalTask);
-	const activitySummary =
-		task.status === 'needs_attention'
-			? 'Waiting on your input.'
-			: task.status === 'in_progress'
-				? 'Task is running.'
-				: STATUS_LABELS[task.status];
+	const activitySummary = STATUS_LABELS[task.status];
 	const agentActionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
@@ -228,8 +170,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-950">
-			<div class="border-b border-dark-800 bg-dark-900/85 px-4 py-4 flex-shrink-0">
-				<div class="flex items-start gap-3">
+			<div class="px-4 py-3 flex-shrink-0">
+				<div class="flex items-start gap-3 border-b border-dark-800 pb-3">
 					{onClose && (
 						<button
 							type="button"
@@ -244,17 +186,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						</button>
 					)}
 					<div class="min-w-0 flex-1">
-						<div class="flex flex-wrap items-center gap-2">
-							<StatusBadge status={task.status} />
+						<h2 class="text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
+						<div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-400">
+							<span>{activitySummary}</span>
 							{task.priority !== 'normal' && (
-								<InfoBadge
-									label={`${PRIORITY_LABELS[task.priority]} Priority`}
-									className={PRIORITY_BADGE_CLASSES[task.priority]}
-								/>
+								<span class="text-xs uppercase tracking-[0.12em] text-gray-500">
+									{PRIORITY_LABELS[task.priority]} Priority
+								</span>
 							)}
 						</div>
-						<h2 class="mt-3 text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
-						<p class="mt-1 text-sm text-gray-400">{activitySummary}</p>
 					</div>
 					{showHeaderSessionAction && (
 						<button
@@ -264,7 +204,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									? navigateToSpaceSession(runtimeSpaceId, agentSessionId)
 									: navigateToSpaceAgent(runtimeSpaceId)
 							}
-							class="flex-shrink-0 px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700 text-gray-300 rounded-lg border border-dark-600 transition-colors"
+							class="flex-shrink-0 px-2 py-1 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors"
 							data-testid={agentSessionId ? 'view-agent-session-btn' : 'open-space-agent-btn'}
 						>
 							{agentActionLabel}
@@ -273,9 +213,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				</div>
 			</div>
 
-			<div class="flex-1 min-h-0 overflow-hidden px-4 py-4">
-				<div class="h-full rounded-xl border border-dark-700 bg-dark-900/60 overflow-hidden flex flex-col">
-					<div class="flex-1 min-h-0 border-b border-dark-700 bg-dark-900/50" data-testid="task-thread-panel">
+			<div class="flex-1 min-h-0 overflow-hidden px-4">
+				<div class="h-full flex flex-col">
+					<div class="flex-1 min-h-0" data-testid="task-thread-panel">
 						{agentSessionId ? (
 							<SpaceTaskUnifiedThread taskId={task.id} />
 						) : (
@@ -292,7 +232,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						)}
 					</div>
 
-					<div class="px-4 py-3 space-y-3 bg-dark-950/60">
+					<div class="py-3 space-y-3 border-t border-dark-800">
 						{showInlineComposer && (
 							<form onSubmit={handleThreadSend} class="space-y-3">
 								<textarea
@@ -307,7 +247,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									rows={3}
 									placeholder="Message the task agent (Enter to send, Shift+Enter for newline)"
 									disabled={sendingThread}
-									class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-600 resize-none disabled:opacity-60"
+									class="w-full bg-transparent border-0 rounded-none px-0 py-0 text-sm text-gray-100 placeholder-gray-600 focus:outline-none resize-none disabled:opacity-60"
 								/>
 								<div class="flex items-center justify-between gap-3">
 									<p class="text-xs text-gray-500">
@@ -316,7 +256,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									<button
 										type="submit"
 										disabled={!canSendThreadMessage || !threadDraft.trim()}
-										class="px-3 py-1.5 text-xs font-medium bg-blue-700 hover:bg-blue-600 text-blue-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+										class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 									>
 										{sendingThread ? 'Sending...' : 'Send to Task Agent'}
 									</button>
@@ -336,7 +276,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 										type="button"
 										onClick={() => void handleReopenTask()}
 										disabled={reopeningTask}
-										class="px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700 text-gray-200 rounded-lg border border-dark-600 transition-colors disabled:opacity-50"
+										class="px-2 py-1 text-xs font-medium text-gray-300 hover:text-gray-100 transition-colors disabled:opacity-50"
 									>
 										{reopeningTask ? 'Reopening...' : 'Reopen Task'}
 									</button>
@@ -345,7 +285,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						)}
 
 						{threadSendError && (
-							<p class="text-xs text-red-300 border border-red-800/50 bg-red-950/20 rounded-md px-3 py-2">
+							<p class="text-xs text-red-300">
 								{threadSendError}
 							</p>
 						)}
@@ -355,4 +295,3 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		</div>
 	);
 }
-
