@@ -1,6 +1,7 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
 import { useNeoKeyboardShortcut } from './hooks/useNeoKeyboardShortcut.ts';
+import { NeoPanel } from './components/neo/NeoPanel.tsx';
 import { NavRail } from './islands/NavRail.tsx';
 import { BottomTabBar } from './islands/BottomTabBar.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
@@ -192,6 +193,9 @@ export function App() {
 
 			{/* Connection Overlay - blocks UI when disconnected */}
 			<ConnectionOverlay />
+
+			{/* Neo AI Assistant Panel */}
+			<NeoPanel />
 		</>
 	);
 }
