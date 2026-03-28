@@ -156,6 +156,8 @@ jobs:
           - rpc-3
           - rpc-4
           - sdk
+          - space-1
+          - space-2
           - websocket
         include:
           # mock_sdk: true → uses Dev Proxy (NEOKAI_USE_DEV_PROXY) for mocking instead of real API calls.
@@ -283,8 +285,21 @@ jobs:
           - module: sdk
             test_path: tests/online/sdk
             mock_sdk: true
-          - module: space
-            test_path: tests/online/space
+          # Online space tests - split into 2 parallel jobs to reduce overall CI time.
+          - module: space-1
+            test_path: >-
+              tests/online/space/space-agent-coordination.test.ts
+              tests/online/space/space-edge-cases.test.ts
+              tests/online/space/space-happy-path-code-review.test.ts
+              tests/online/space/space-happy-path-full-pipeline.test.ts
+            mock_sdk: true
+            enable_spaces_agent: true
+          - module: space-2
+            test_path: >-
+              tests/online/space/space-happy-path-plan-to-approve.test.ts
+              tests/online/space/space-happy-path-qa-completion.test.ts
+              tests/online/space/task-agent-lifecycle.test.ts
+              tests/online/space/task-agent-skills.test.ts
             mock_sdk: true
             enable_spaces_agent: true
           - module: websocket
