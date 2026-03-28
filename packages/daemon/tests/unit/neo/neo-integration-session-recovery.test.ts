@@ -141,7 +141,7 @@ function makeActivityLogger(pruneReturnValue = 0): NeoActivityLogger & { _pruneC
 // ---------------------------------------------------------------------------
 
 describe('healthCheck({ source: runtime }): null session → auto-recovery', () => {
-	test('returns false when session is null', async () => {
+	test('returns false even after auto-recovery from null session', async () => {
 		// existingSession not set (undefined) so firstGet does not overwrite the sessions map.
 		// This simulates the manager never having been provisioned (session is null).
 		const sm = makeSessionManager({ createdSession: makeSession() });

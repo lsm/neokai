@@ -15,6 +15,7 @@
  * - Error in one manager propagates cleanly (other managers not called)
  * - NeoAgentManager.provision() calls activityLogger.pruneOldEntries()
  * - NeoAgentManager.setActivityLogger() propagates to actionToolsConfig
+ * - Origin metadata: Neo-injected messages persist origin='neo' in sdk_messages
  */
 
 import { mock } from 'bun:test';
@@ -53,9 +54,6 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { createTables } from '../../../src/storage/schema';
-import { NeoActivityLogRepository } from '../../../src/storage/repositories/neo-activity-log-repository';
-import { NeoActivityLogger } from '../../../src/lib/neo/activity-logger';
 import {
 	createNeoActionToolHandlers,
 	createNeoActionMcpServer,
@@ -67,7 +65,6 @@ import {
 	type NeoSessionManager,
 } from '../../../src/lib/neo/tools/neo-action-tools';
 import { PendingActionStore } from '../../../src/lib/neo/security-tier';
-import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
 import {
 	NeoAgentManager,
 	NEO_SESSION_ID,
@@ -75,142 +72,70 @@ import {
 	type NeoSettingsManager,
 } from '../../../src/lib/neo/neo-agent-manager';
 import type { AgentSession } from '../../../src/lib/agent/agent-session';
+import type { NeoActivityLogger } from '../../../src/lib/neo/activity-logger';
+import { SDKMessageRepository } from '../../../src/storage/repositories/sdk-message-repository';
+import {
+	makeDb,
+	makeLogger,
+	makeRoom,
+	makeGoal,
+	makeNeoTask,
+	makeRoomManager as makeBaseRoomManager,
+	makeGoalManager as makeBaseGoalManager,
+	NOW,
+} from './neo-test-helpers';
+import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
-// DB / logger helpers
-// ---------------------------------------------------------------------------
-
-function makeDb(): BunDatabase {
-	const db = new BunDatabase(':memory:');
-	createTables(db);
-	return db;
-}
-
-function makeLogger(db: BunDatabase): NeoActivityLogger {
-	return new NeoActivityLogger(new NeoActivityLogRepository(db));
-}
-
-// ---------------------------------------------------------------------------
-// Entity fixtures
-// ---------------------------------------------------------------------------
-
-const NOW = 1_700_000_000_000;
-
-function makeRoom(overrides: Partial<Room> = {}): Room {
-	return {
-		id: 'room-1',
-		name: 'Test Room',
-		status: 'active',
-		sessionIds: [],
-		allowedPaths: [],
-		createdAt: NOW,
-		updatedAt: NOW,
-		...overrides,
-	};
-}
-
-function makeGoal(overrides: Partial<RoomGoal> = {}): RoomGoal {
-	return {
-		id: 'goal-1',
-		roomId: 'room-1',
-		title: 'Test Goal',
-		description: '',
-		status: 'active',
-		priority: 'normal',
-		progress: 0,
-		linkedTaskIds: [],
-		metrics: {},
-		createdAt: NOW,
-		updatedAt: NOW,
-		missionType: 'one_shot',
-		autonomyLevel: 'supervised',
-		...overrides,
-	};
-}
-
-function makeNeoTask(overrides: Partial<NeoTask> = {}): NeoTask {
-	return {
-		id: 'task-1',
-		roomId: 'room-1',
-		title: 'Test Task',
-		description: '',
-		status: 'pending',
-		priority: 'normal',
-		progress: 0,
-		dependsOn: [],
-		createdAt: NOW,
-		updatedAt: NOW,
-		taskType: 'coding',
-		assignedAgent: 'coder',
-		...overrides,
-	} as NeoTask;
-}
-
-// ---------------------------------------------------------------------------
-// Manager mock factories
+// Instrumented manager mocks (add _callLog for call-order verification)
+// These extend the base mocks from neo-test-helpers with tracking.
 // ---------------------------------------------------------------------------
 
 function makeRoomManager(rooms: Room[] = []): NeoActionRoomManager & { _callLog: string[] } {
-	const store = new Map<string, Room>(rooms.map((r) => [r.id, r]));
+	const base = makeBaseRoomManager(rooms);
 	const callLog: string[] = [];
 	return {
 		_callLog: callLog,
 		createRoom: (params) => {
 			callLog.push('createRoom');
-			const room = makeRoom({ id: `room-${Date.now()}`, name: params.name });
-			store.set(room.id, room);
-			return room;
+			return base.createRoom(params);
 		},
 		deleteRoom: (id) => {
 			callLog.push(`deleteRoom:${id}`);
-			return store.delete(id);
+			return base.deleteRoom(id);
 		},
 		getRoom: (id) => {
 			callLog.push(`getRoom:${id}`);
-			return store.get(id) ?? null;
+			return base.getRoom(id);
 		},
 		updateRoom: (id, params) => {
 			callLog.push(`updateRoom:${id}`);
-			const room = store.get(id);
-			if (!room) return null;
-			const updated = { ...room, ...params, updatedAt: NOW + 1 } as Room;
-			store.set(id, updated);
-			return updated;
+			return base.updateRoom(id, params);
 		},
-		getActiveSessionCount: (_id) => 0,
+		getActiveSessionCount: (id) => base.getActiveSessionCount?.(id) ?? 0,
 	};
 }
 
 function makeGoalManager(goals: RoomGoal[] = []): NeoActionGoalManager & { _callLog: string[] } {
-	const store = new Map<string, RoomGoal>(goals.map((g) => [g.id, g]));
+	const base = makeBaseGoalManager(goals);
 	const callLog: string[] = [];
 	return {
 		_callLog: callLog,
 		createGoal: async (params) => {
 			callLog.push('createGoal');
-			const goal = makeGoal({ id: `goal-${Date.now()}`, ...params });
-			store.set(goal.id, goal);
-			return goal;
+			return base.createGoal(params);
 		},
 		getGoal: async (id) => {
 			callLog.push(`getGoal:${id}`);
-			return store.get(id) ?? null;
+			return base.getGoal(id);
 		},
 		patchGoal: async (id, patch) => {
 			callLog.push(`patchGoal:${id}`);
-			const goal = store.get(id);
-			if (!goal) throw new Error(`Goal not found: ${id}`);
-			const updated = { ...goal, ...patch, updatedAt: NOW + 1 };
-			store.set(id, updated);
-			return updated;
+			return base.patchGoal(id, patch);
 		},
 		updateGoalStatus: async (id, status) => {
 			callLog.push(`updateGoalStatus:${id}`);
-			const goal = store.get(id);
-			if (!goal) throw new Error(`Goal not found: ${id}`);
-			const updated = { ...goal, status, updatedAt: NOW + 1 };
-			store.set(id, updated);
-			return updated;
+			return base.updateGoalStatus(id, status);
 		},
 	};
 }
@@ -540,7 +465,6 @@ describe('cross-system: send_message_to_room coordinates roomManager + sessionMa
 	});
 
 	test('injectMessage is NOT called when room has no active session', async () => {
-		// sessionMgr maps room-1 to no session
 		const noSessionMgr = makeSessionManager(new Map()); // no active sessions
 		const config = makeConfig({}, roomManager, undefined, undefined, noSessionMgr);
 		const h = createNeoActionToolHandlers(config);
@@ -713,5 +637,120 @@ describe('NeoAgentManager.setActivityLogger() propagates to actionToolsConfig', 
 
 		// Propagated even though setActionToolsConfig was called first
 		expect(actionConfig.activityLogger).toBe(logger);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Origin metadata end-to-end
+//
+// Verifies that messages injected by Neo (origin='neo') are persisted to the
+// sdk_messages table and can be retrieved with the origin field intact.
+// This covers the "via Neo" indicator flow: Neo sends message → origin stored
+// in DB → frontend queries sdk_messages and sees origin='neo'.
+// ---------------------------------------------------------------------------
+
+describe('origin metadata: Neo-injected messages persist origin field', () => {
+	let db: BunDatabase;
+	let repo: SDKMessageRepository;
+
+	beforeEach(() => {
+		db = makeDb();
+		repo = new SDKMessageRepository(
+			db as Parameters<(typeof SDKMessageRepository)['prototype']['constructor']>[0]
+		);
+	});
+
+	afterEach(() => db.close());
+
+	test('saveUserMessage with origin=neo persists the origin field', () => {
+		const message = {
+			type: 'user' as const,
+			uuid: crypto.randomUUID(),
+			session_id: 'room-session-1',
+			parent_tool_use_id: null,
+			message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'Hello' }] },
+		};
+
+		repo.saveUserMessage('room-session-1', message, 'consumed', 'neo');
+
+		const { messages } = repo.getSDKMessages('room-session-1', 1);
+		expect(messages).toHaveLength(1);
+		expect((messages[0] as { origin?: string }).origin).toBe('neo');
+	});
+
+	test('saveUserMessage without origin does not inject origin field', () => {
+		const message = {
+			type: 'user' as const,
+			uuid: crypto.randomUUID(),
+			session_id: 'room-session-1',
+			parent_tool_use_id: null,
+			message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'Hello' }] },
+		};
+
+		repo.saveUserMessage('room-session-1', message, 'consumed');
+
+		const { messages } = repo.getSDKMessages('room-session-1', 1);
+		expect(messages).toHaveLength(1);
+		// Default human messages have no origin field (omitted, not null)
+		expect((messages[0] as { origin?: string }).origin).toBeUndefined();
+	});
+
+	test('multiple messages in same session can have different origins', () => {
+		const base = {
+			type: 'user' as const,
+			parent_tool_use_id: null,
+			message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'x' }] },
+		};
+
+		repo.saveUserMessage(
+			'sess-1',
+			{ ...base, uuid: crypto.randomUUID(), session_id: 'sess-1' },
+			'consumed'
+		);
+		repo.saveUserMessage(
+			'sess-1',
+			{ ...base, uuid: crypto.randomUUID(), session_id: 'sess-1' },
+			'consumed',
+			'neo'
+		);
+		repo.saveUserMessage(
+			'sess-1',
+			{ ...base, uuid: crypto.randomUUID(), session_id: 'sess-1' },
+			'consumed',
+			'system'
+		);
+
+		const { messages } = repo.getSDKMessages('sess-1', 10);
+		expect(messages).toHaveLength(3);
+		const origins = messages.map((m) => (m as { origin?: string }).origin);
+		expect(origins).toContain(undefined); // human message: no origin field
+		expect(origins).toContain('neo');
+		expect(origins).toContain('system');
+	});
+
+	test('origin field is session-isolated: neo message in session A does not affect session B', () => {
+		const base = {
+			type: 'user' as const,
+			parent_tool_use_id: null,
+			message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'x' }] },
+		};
+
+		repo.saveUserMessage(
+			'sess-A',
+			{ ...base, uuid: crypto.randomUUID(), session_id: 'sess-A' },
+			'consumed',
+			'neo'
+		);
+		repo.saveUserMessage(
+			'sess-B',
+			{ ...base, uuid: crypto.randomUUID(), session_id: 'sess-B' },
+			'consumed'
+		);
+
+		const { messages: messagesA } = repo.getSDKMessages('sess-A', 10);
+		const { messages: messagesB } = repo.getSDKMessages('sess-B', 10);
+
+		expect((messagesA[0] as { origin?: string }).origin).toBe('neo');
+		expect((messagesB[0] as { origin?: string }).origin).toBeUndefined();
 	});
 });

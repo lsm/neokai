@@ -59,133 +59,24 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { createTables } from '../../../src/storage/schema';
-import { NeoActivityLogRepository } from '../../../src/storage/repositories/neo-activity-log-repository';
 import { NeoActivityLogger } from '../../../src/lib/neo/activity-logger';
 import {
 	createNeoActionToolHandlers,
 	createNeoActionMcpServer,
 	type NeoActionToolsConfig,
-	type NeoActionRoomManager,
-	type NeoActionGoalManager,
-	type NeoActionManagerFactory,
 } from '../../../src/lib/neo/tools/neo-action-tools';
 import {
 	PendingActionStore,
 	makeConfirmActionTool,
 	makeCancelActionTool,
 } from '../../../src/lib/neo/security-tier';
-import type { Room, RoomGoal } from '@neokai/shared';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeDb(): BunDatabase {
-	const db = new BunDatabase(':memory:');
-	createTables(db);
-	return db;
-}
-
-function makeLogger(db: BunDatabase): NeoActivityLogger {
-	return new NeoActivityLogger(new NeoActivityLogRepository(db));
-}
-
-const NOW = 1_700_000_000_000;
-
-function makeRoom(overrides: Partial<Room> = {}): Room {
-	return {
-		id: 'room-1',
-		name: 'Test Room',
-		status: 'active',
-		sessionIds: [],
-		allowedPaths: [],
-		createdAt: NOW,
-		updatedAt: NOW,
-		...overrides,
-	};
-}
-
-function makeGoal(overrides: Partial<RoomGoal> = {}): RoomGoal {
-	return {
-		id: 'goal-1',
-		roomId: 'room-1',
-		title: 'Test Goal',
-		description: '',
-		status: 'active',
-		priority: 'normal',
-		progress: 0,
-		linkedTaskIds: [],
-		metrics: {},
-		createdAt: NOW,
-		updatedAt: NOW,
-		missionType: 'one_shot',
-		autonomyLevel: 'supervised',
-		...overrides,
-	};
-}
-
-function makeRoomManager(rooms: Room[] = []): NeoActionRoomManager {
-	const store = new Map<string, Room>(rooms.map((r) => [r.id, r]));
-	return {
-		createRoom: (params) => {
-			const room = makeRoom({ id: `room-${Date.now()}`, name: params.name });
-			store.set(room.id, room);
-			return room;
-		},
-		deleteRoom: (id) => store.delete(id),
-		getRoom: (id) => store.get(id) ?? null,
-		updateRoom: (id, params) => {
-			const room = store.get(id);
-			if (!room) return null;
-			const updated = { ...room, ...params, updatedAt: NOW + 1 } as Room;
-			store.set(id, updated);
-			return updated;
-		},
-		getActiveSessionCount: () => 0,
-	};
-}
-
-function makeGoalManager(goals: RoomGoal[] = []): NeoActionGoalManager {
-	const store = new Map<string, RoomGoal>(goals.map((g) => [g.id, g]));
-	return {
-		createGoal: async (params) => {
-			const goal = makeGoal({ id: `goal-${Date.now()}`, ...params });
-			store.set(goal.id, goal);
-			return goal;
-		},
-		getGoal: async (id) => store.get(id) ?? null,
-		patchGoal: async (id, patch) => {
-			const goal = store.get(id);
-			if (!goal) throw new Error(`Goal not found: ${id}`);
-			return { ...goal, ...patch, updatedAt: NOW + 1 };
-		},
-		updateGoalStatus: async (id, status) => {
-			const goal = store.get(id);
-			if (!goal) throw new Error(`Goal not found: ${id}`);
-			return { ...goal, status, updatedAt: NOW + 1 };
-		},
-	};
-}
-
-function makeManagerFactory(goalManager?: NeoActionGoalManager): NeoActionManagerFactory {
-	const gm = goalManager ?? makeGoalManager();
-	return {
-		getGoalManager: () => gm,
-		getTaskManager: () => ({
-			createTask: async () => {
-				throw new Error('not implemented');
-			},
-			getTask: async () => null,
-			updateTaskFields: async () => {
-				throw new Error('not implemented');
-			},
-			setTaskStatus: async () => {
-				throw new Error('not implemented');
-			},
-		}),
-	};
-}
+import {
+	makeDb,
+	makeLogger,
+	makeRoom,
+	makeRoomManager,
+	makeManagerFactory,
+} from './neo-test-helpers';
 
 // ---------------------------------------------------------------------------
 // Tests: confirmationRequired response when security requires it
@@ -234,7 +125,7 @@ describe('withSecurityCheck: returns confirmationRequired for medium-risk tools'
 		expect(store.size).toBe(0);
 	});
 
-	test('low-risk tool auto-executes in conservative mode returns confirmationRequired', async () => {
+	test('low-risk tool requires confirmation in conservative mode', async () => {
 		// Conservative mode: even low-risk requires confirmation
 		const conservConfig: NeoActionToolsConfig = {
 			...config,
@@ -360,7 +251,10 @@ describe('makeConfirmActionTool: confirmation round-trip with activityLogger', (
 	test('TTL-expired action is rejected on confirm', () => {
 		const id = store.store({ toolName: 'create_room', input: { name: 'Temp' } });
 
-		// Backdate the stored action by 6 minutes (past 5-min TTL)
+		// Backdate the stored action by 6 minutes (past 5-min TTL).
+		// PendingActionStore.map is private; there is no public API to set createdAt
+		// to an arbitrary time, so we access the backing Map directly — the same
+		// technique used in neo-security-tier.test.ts for TTL-expiry assertions.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const internal = (store as any).map as Map<
 			string,
@@ -481,7 +375,9 @@ describe('PendingActionStore: multi-action management', () => {
 		const id1 = store.store({ toolName: 'delete_room', input: {} });
 		const id2 = store.store({ toolName: 'approve_gate', input: {} });
 
-		// Backdate id2 past TTL
+		// Backdate id2 past TTL by mutating the private backing Map directly.
+		// PendingActionStore exposes no public API to control createdAt, so this
+		// is the only way to simulate expiry without real time-based waiting.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const internal = (store as any).map as Map<
 			string,
