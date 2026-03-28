@@ -191,23 +191,6 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
 			<div class="px-3 pt-3 pb-2 space-y-3 border-b border-dark-800">
-				<div class="rounded-2xl border border-dark-700 bg-dark-900/80 px-3 py-3">
-					<div class="flex items-center justify-between gap-3">
-						<div class="min-w-0">
-							<p class="text-[11px] uppercase tracking-[0.2em] text-gray-600">Current Space</p>
-							<p class="mt-1 truncate text-sm font-medium text-gray-100">
-								{space?.name ?? 'Space'}
-							</p>
-						</div>
-						<span class="rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-blue-200">
-							{activeCount > 0 ? 'Live' : 'Ready'}
-						</span>
-					</div>
-					{space?.workspacePath && (
-						<p class="mt-2 truncate font-mono text-[11px] text-gray-500">{space.workspacePath}</p>
-					)}
-				</div>
-
 				{hasTasks ? (
 					<div class="grid grid-cols-3 gap-2">
 						<div class="rounded-xl border border-dark-700 bg-dark-900/60 px-2.5 py-2">
@@ -224,7 +207,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 						</div>
 					</div>
 				) : (
-					<span class="text-xs text-gray-600">No tasks</span>
+					<div class="space-y-1 px-1 pb-1">
+						<p class="text-[11px] uppercase tracking-[0.18em] text-gray-600">Space Activity</p>
+						<p class="text-xs text-gray-500">No tasks yet.</p>
+						{space?.workspacePath && (
+							<p class="truncate font-mono text-[11px] text-gray-600">{space.workspacePath}</p>
+						)}
+					</div>
 				)}
 			</div>
 
