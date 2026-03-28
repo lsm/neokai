@@ -4,13 +4,13 @@
  * Verifies all four space URL patterns render the correct content when
  * navigated to directly (deep links) and that browser back/forward works:
  *
- *   /space/:id           → dashboard tabs (SpaceIsland default)
- *   /space/:id/agent     → ChatContainer (space agent chat)
- *   /space/:id/session/:sid → ChatContainer (session within space)
- *   /space/:id/task/:tid → SpaceTaskPane (full-width task view)
+ *   /space/:id               → dashboard tabs (SpaceIsland default)
+ *   /space/:id/agent         → ChatContainer (space agent chat)
+ *   /space/:id/session/:sid  → ChatContainer (session within space)
+ *   /space/:id/task/:tid     → SpaceTaskPane (full-width task view)
  *
- * Setup: creates a space and a task via RPC (infrastructure)
- * Cleanup: deletes the space via RPC in afterEach (infrastructure)
+ * Setup: creates a space, a task, and a session via RPC (infrastructure)
+ * Cleanup: deletes the space and session via RPC in afterEach (infrastructure)
  */
 
 import { test, expect } from '../../fixtures';
@@ -45,11 +45,52 @@ async function createTaskViaRpc(
 	return id;
 }
 
+/**
+ * Create a standalone session via RPC. For use in beforeEach setup only.
+ * Returns the new session's id (a UUID).
+ */
+async function createSessionViaRpc(
+	page: Parameters<typeof waitForWebSocketConnected>[0],
+	workspacePath: string
+): Promise<string> {
+	const id = await page.evaluate(async (path) => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub?.request) throw new Error('MessageHub not available');
+		const result = (await hub.request('session.create', {
+			workspacePath: path,
+			title: 'E2E space session route test',
+		})) as { sessionId: string };
+		return result.sessionId;
+	}, workspacePath);
+	if (!id) throw new Error('session.create returned no id');
+	return id;
+}
+
+/**
+ * Delete a session via RPC. Best-effort for afterEach cleanup.
+ */
+async function deleteSessionViaRpc(
+	page: Parameters<typeof waitForWebSocketConnected>[0],
+	sessionId: string
+): Promise<void> {
+	if (!sessionId) return;
+	try {
+		await page.evaluate(async (id) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) return;
+			await hub.request('session.delete', { sessionId: id });
+		}, sessionId);
+	} catch {
+		// Best-effort cleanup
+	}
+}
+
 test.describe('Space Sub-Routes Deep Links', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
 	let taskId = '';
+	let sessionId = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
@@ -59,9 +100,14 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		const spaceName = `E2E Sub-Routes Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
 		taskId = await createTaskViaRpc(page, spaceId, `Test Task ${Date.now()}`);
+		sessionId = await createSessionViaRpc(page, workspaceRoot);
 	});
 
 	test.afterEach(async ({ page }) => {
+		if (sessionId) {
+			await deleteSessionViaRpc(page, sessionId);
+			sessionId = '';
+		}
 		if (spaceId) {
 			await deleteSpaceViaRpc(page, spaceId);
 			spaceId = '';
@@ -73,13 +119,13 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Dashboard tabs should be visible
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
-			timeout: 5000,
-		});
-		await expect(page.getByRole('button', { name: 'Agents', exact: true })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Workflows', exact: true })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
+		// Tab bar should be visible — scoped to the space tab bar container
+		const tabBar = page.locator('[data-testid="space-tab-bar"]');
+		await expect(tabBar).toBeVisible({ timeout: 5000 });
+		await expect(tabBar.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible();
+		await expect(tabBar.getByRole('button', { name: 'Agents', exact: true })).toBeVisible();
+		await expect(tabBar.getByRole('button', { name: 'Workflows', exact: true })).toBeVisible();
+		await expect(tabBar.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
 
 		// No ChatContainer or task pane
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
@@ -94,7 +140,22 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
 		// Tab bar should not be visible (ChatContainer replaced it)
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible();
+		await expect(page.locator('[data-testid="space-tab-bar"]')).not.toBeAttached();
+
+		// No task pane
+		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
+	});
+
+	test('direct navigation to /space/:id/session/:sid renders ChatContainer', async ({ page }) => {
+		await page.goto(`/space/${spaceId}/session/${sessionId}`);
+		await page.waitForURL(`/space/${spaceId}/session/${sessionId}`, { timeout: 10000 });
+
+		// ChatContainer message input should be visible
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		await expect(messageInput).toBeVisible({ timeout: 10000 });
+
+		// Tab bar should not be visible (ChatContainer replaced it)
+		await expect(page.locator('[data-testid="space-tab-bar"]')).not.toBeAttached();
 
 		// No task pane
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
@@ -108,73 +169,70 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 5000 });
 
 		// Tab bar should not be visible (task pane replaced it)
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible();
-		await expect(page.getByRole('button', { name: 'Agents', exact: true })).not.toBeVisible();
+		await expect(page.locator('[data-testid="space-tab-bar"]')).not.toBeAttached();
 	});
 
 	test('browser back/forward navigates correctly between space views', async ({ page }) => {
 		// Step 1: Start at dashboard
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(page.locator('[data-testid="space-tab-bar"]')).toBeVisible({ timeout: 5000 });
 
 		// Step 2: Navigate to agent chat
 		await page.goto(`/space/${spaceId}/agent`);
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
-		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-		await expect(messageInput).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Step 3: Navigate to task view
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 5000 });
 
-		// Step 4: Back — should return to agent chat
+		// Step 4: Browser back — should return to agent chat
 		await page.goBack();
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
-		await expect(messageInput).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
+			timeout: 10000,
+		});
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
 
-		// Step 5: Back — should return to dashboard
+		// Step 5: Browser back — should return to dashboard
 		await page.goBack();
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
-			timeout: 5000,
-		});
-		await expect(messageInput).not.toBeVisible();
+		await expect(page.locator('[data-testid="space-tab-bar"]')).toBeVisible({ timeout: 5000 });
 
-		// Step 6: Forward — should return to agent chat
+		// Step 6: Browser forward — should return to agent chat
 		await page.goForward();
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
-		await expect(messageInput).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
-	test('navigating between sub-routes via UI updates URL and content', async ({ page }) => {
-		// Start at dashboard
+	test('clicking Space Agent in sidebar navigates to /agent route and back returns to dashboard', async ({
+		page,
+	}) => {
+		// Navigate to the space dashboard
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(page.locator('[data-testid="space-tab-bar"]')).toBeVisible({ timeout: 5000 });
 
-		// Click "Space Agent" in the SpaceDetailPanel to go to agent view
+		// Click "Space Agent" in the SpaceDetailPanel sidebar
 		await page.getByRole('button', { name: 'Space Agent', exact: true }).click();
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
 
 		// ChatContainer should be visible
-		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-		await expect(messageInput).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
+			timeout: 10000,
+		});
+		// Tab bar should be hidden (ChatContainer replaced the tab view)
+		await expect(page.locator('[data-testid="space-tab-bar"]')).not.toBeAttached();
 
-		// Click the back button to return to the space dashboard
-		// (Use browser back since SpaceDetailPanel's "Space Agent" entry acts as nav)
+		// Browser back returns to dashboard
 		await page.goBack();
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-
-		// Tab bar should be restored
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(page.locator('[data-testid="space-tab-bar"]')).toBeVisible({ timeout: 5000 });
 	});
 });
