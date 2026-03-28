@@ -161,6 +161,15 @@ export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: Spac
 		return <ChatContainer key={sessionViewId} sessionId={sessionViewId} />;
 	}
 
+	// Task view: render SpaceTaskPane full-width instead of tabs
+	if (taskViewId) {
+		return (
+			<div class="flex-1 flex flex-col overflow-hidden bg-dark-900" data-testid="space-task-pane">
+				<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+			</div>
+		);
+	}
+
 	return (
 		<div class="flex-1 flex overflow-hidden bg-dark-900">
 			{/* Main content — tabbed view */}
@@ -306,16 +315,6 @@ export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: Spac
 					)}
 				</div>
 			</div>
-
-			{/* Right column — task detail pane (conditionally shown) */}
-			{taskViewId && (
-				<div
-					class="hidden md:flex w-80 flex-shrink-0 border-l border-dark-700 overflow-hidden flex-col"
-					data-testid="space-task-pane"
-				>
-					<SpaceTaskPane taskId={taskViewId} onClose={handleTaskPaneClose} />
-				</div>
-			)}
 
 			{/* Quick action dialogs */}
 			<SpaceCreateTaskDialog isOpen={createTaskOpen} onClose={() => setCreateTaskOpen(false)} />
