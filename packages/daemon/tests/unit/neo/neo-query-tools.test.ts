@@ -21,7 +21,12 @@
  * - list_space_agents: found, not found, agent fields
  * - list_space_workflows: found, not found, workflow fields
  * - list_space_runs: found, not found, status filter, sort order
- * - MCP server: all 15 tools are registered
+ * - list_goals: cross-room, room filter, status filter, mission_type filter
+ * - get_goal_details: found, not found, execution history
+ * - get_metrics: measurable goal, non-measurable goal, not found
+ * - list_tasks: cross-room, room filter, status filter, assigned_agent filter
+ * - get_task_detail: found, not found
+ * - MCP server: all 20 tools are registered
  */
 
 import { describe, expect, it, beforeEach } from 'bun:test';
@@ -31,6 +36,7 @@ import {
 	type NeoToolsConfig,
 	type NeoQueryRoomManager,
 	type NeoQueryGoalRepository,
+	type NeoQueryTaskRepository,
 	type NeoQuerySessionManager,
 	type NeoQuerySettingsManager,
 	type NeoQueryAuthManager,
@@ -52,6 +58,8 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	SpaceTask,
+	NeoTask,
+	MissionExecution,
 } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -92,6 +100,38 @@ function makeGoal(overrides: Partial<RoomGoal> = {}): RoomGoal {
 	};
 }
 
+function makeTask(overrides: Partial<NeoTask> = {}): NeoTask {
+	return {
+		id: 'task-1',
+		roomId: 'room-1',
+		title: 'Test Task',
+		description: 'A test task',
+		status: 'pending',
+		priority: 'normal',
+		taskType: 'coding',
+		assignedAgent: 'coder',
+		dependsOn: [],
+		activeSession: null,
+		restrictions: null,
+		createdAt: NOW - 3_000,
+		updatedAt: NOW,
+		...overrides,
+	};
+}
+
+function makeExecution(overrides: Partial<MissionExecution> = {}): MissionExecution {
+	return {
+		id: 'exec-1',
+		goalId: 'goal-1',
+		executionNumber: 1,
+		startedAt: Math.floor((NOW - 5_000) / 1000),
+		status: 'running',
+		taskIds: [],
+		planningAttempts: 0,
+		...overrides,
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Mock factories
 // ---------------------------------------------------------------------------
@@ -115,9 +155,38 @@ function makeRoomManager(
 	};
 }
 
-function makeGoalRepository(goalsByRoom: Record<string, RoomGoal[]> = {}): NeoQueryGoalRepository {
+function makeGoalRepository(
+	goalsByRoom: Record<string, RoomGoal[]> = {},
+	goalsById: Record<string, RoomGoal> = {},
+	executionsByGoal: Record<string, MissionExecution[]> = {}
+): NeoQueryGoalRepository {
 	return {
 		listGoals: (roomId) => goalsByRoom[roomId] ?? [],
+		getGoal: (id) => goalsById[id] ?? null,
+		listExecutions: (goalId, limit) => {
+			const execs = executionsByGoal[goalId] ?? [];
+			return limit !== undefined ? execs.slice(0, limit) : execs;
+		},
+	};
+}
+
+function makeTaskRepository(
+	tasksByRoom: Record<string, NeoTask[]> = {},
+	tasksById: Record<string, NeoTask> = {}
+): NeoQueryTaskRepository {
+	return {
+		listTasks: (roomId, filter) => {
+			let tasks = tasksByRoom[roomId] ?? [];
+			if (!filter?.includeArchived) {
+				tasks = tasks.filter((t) => t.status !== 'archived');
+			}
+			if (filter?.status) {
+				tasks = tasks.filter((t) => t.status === filter.status);
+			}
+			// Note: no assignedAgent in real TaskFilter — handler filters in-memory
+			return tasks;
+		},
+		getTask: (id) => tasksById[id] ?? null,
 	};
 }
 
@@ -342,6 +411,7 @@ function makeConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToolsConfig {
 	return {
 		roomManager: makeRoomManager(),
 		goalRepository: makeGoalRepository(),
+		taskRepository: makeTaskRepository(),
 		sessionManager: makeSessionManager(),
 		settingsManager: makeSettingsManager(),
 		authManager: makeAuthManager(true),
@@ -960,7 +1030,6 @@ describe('get_skill_details', () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // list_spaces
 // ---------------------------------------------------------------------------
 
@@ -1349,6 +1418,546 @@ describe('list_space_runs', () => {
 });
 
 // ---------------------------------------------------------------------------
+// list_goals
+// ---------------------------------------------------------------------------
+
+describe('list_goals', () => {
+	it('returns empty array when no goals exist', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_goals({}));
+		expect(result).toEqual([]);
+	});
+
+	it('returns goals across all rooms when no room_id filter', async () => {
+		const room1 = makeRoom({ id: 'room-1', name: 'Room 1' });
+		const room2 = makeRoom({ id: 'room-2', name: 'Room 2' });
+		const goal1 = makeGoal({ id: 'g1', roomId: 'room-1' });
+		const goal2 = makeGoal({ id: 'g2', roomId: 'room-2' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room1, room2]),
+				goalRepository: makeGoalRepository({ 'room-1': [goal1], 'room-2': [goal2] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_goals({}));
+		expect(result).toHaveLength(2);
+		expect(result.map((g: { id: string }) => g.id)).toEqual(expect.arrayContaining(['g1', 'g2']));
+	});
+
+	it('includes roomName in each goal', async () => {
+		const room = makeRoom({ id: 'room-1', name: 'My Room' });
+		const goal = makeGoal({ id: 'g1', roomId: 'room-1' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({ 'room-1': [goal] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_goals({}));
+		expect(result[0].roomName).toBe('My Room');
+	});
+
+	it('filters to a specific room when room_id is provided', async () => {
+		const room1 = makeRoom({ id: 'room-1', name: 'Room 1' });
+		const room2 = makeRoom({ id: 'room-2', name: 'Room 2' });
+		const goal1 = makeGoal({ id: 'g1', roomId: 'room-1' });
+		const goal2 = makeGoal({ id: 'g2', roomId: 'room-2' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room1, room2]),
+				goalRepository: makeGoalRepository({ 'room-1': [goal1], 'room-2': [goal2] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_goals({ room_id: 'room-1' }));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('g1');
+	});
+
+	it('returns error when room_id refers to non-existent room', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_goals({ room_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('filters by mission_type', async () => {
+		const room = makeRoom();
+		const goals = [
+			makeGoal({ id: 'g1', missionType: 'one_shot' }),
+			makeGoal({ id: 'g2', missionType: 'measurable' }),
+			makeGoal({ id: 'g3', missionType: 'recurring' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({ 'room-1': goals }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_goals({ mission_type: 'measurable' }));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('g2');
+	});
+
+	it('includes nextRunAt and schedulePaused for recurring goals', async () => {
+		const room = makeRoom();
+		const goal = makeGoal({
+			id: 'g1',
+			missionType: 'recurring',
+			nextRunAt: 9999,
+			schedulePaused: true,
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({ 'room-1': [goal] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_goals({}));
+		expect(result[0].nextRunAt).toBe(9999);
+		expect(result[0].schedulePaused).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// get_goal_details
+// ---------------------------------------------------------------------------
+
+describe('get_goal_details', () => {
+	it('returns error when goal not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.get_goal_details({ goal_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns full goal details', async () => {
+		const room = makeRoom({ id: 'room-1', name: 'Test Room' });
+		const goal = makeGoal({
+			id: 'g1',
+			shortId: 'G001',
+			title: 'My Goal',
+			description: 'Goal description',
+			status: 'active',
+			structuredMetrics: [{ name: 'coverage', target: 80, current: 60, unit: '%' }],
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({}, { g1: goal }, {}),
+			})
+		);
+
+		const result = parseResult(await handlers.get_goal_details({ goal_id: 'g1' }));
+		expect(result.id).toBe('g1');
+		expect(result.shortId).toBe('G001');
+		expect(result.roomName).toBe('Test Room');
+		expect(result.title).toBe('My Goal');
+		expect(result.description).toBe('Goal description');
+		expect(result.structuredMetrics).toHaveLength(1);
+		expect(result.structuredMetrics[0].name).toBe('coverage');
+		expect(result.executions).toEqual([]);
+	});
+
+	it('includes execution history', async () => {
+		const room = makeRoom();
+		const goal = makeGoal({ id: 'g1' });
+		const executions = [
+			makeExecution({ id: 'e1', executionNumber: 2, status: 'completed', completedAt: 9999 }),
+			makeExecution({ id: 'e2', executionNumber: 1, status: 'completed' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({}, { g1: goal }, { g1: executions }),
+			})
+		);
+
+		const result = parseResult(await handlers.get_goal_details({ goal_id: 'g1' }));
+		expect(result.executions).toHaveLength(2);
+		expect(result.executions[0].id).toBe('e1');
+		expect(result.executions[0].executionNumber).toBe(2);
+		expect(result.executions[0].completedAt).toBe(9999);
+	});
+
+	it('respects execution_limit', async () => {
+		const room = makeRoom();
+		const goal = makeGoal({ id: 'g1' });
+		const executions = [1, 2, 3, 4, 5].map((n) =>
+			makeExecution({ id: `e${n}`, executionNumber: n })
+		);
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({}, { g1: goal }, { g1: executions }),
+			})
+		);
+
+		const result = parseResult(
+			await handlers.get_goal_details({ goal_id: 'g1', execution_limit: 2 })
+		);
+		expect(result.executions).toHaveLength(2);
+	});
+
+	it('returns null roomName when room is not found', async () => {
+		const goal = makeGoal({ id: 'g1', roomId: 'deleted-room' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				goalRepository: makeGoalRepository({}, { g1: goal }, {}),
+			})
+		);
+
+		const result = parseResult(await handlers.get_goal_details({ goal_id: 'g1' }));
+		expect(result.roomName).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// get_metrics
+// ---------------------------------------------------------------------------
+
+describe('get_metrics', () => {
+	it('returns error when goal not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.get_metrics({ goal_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns error for non-measurable goal', async () => {
+		const goal = makeGoal({ id: 'g1', missionType: 'one_shot' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				goalRepository: makeGoalRepository({}, { g1: goal }, {}),
+			})
+		);
+
+		const result = parseResult(await handlers.get_metrics({ goal_id: 'g1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not a measurable mission');
+	});
+
+	it('returns metrics for measurable goal', async () => {
+		const goal = makeGoal({
+			id: 'g1',
+			missionType: 'measurable',
+			structuredMetrics: [
+				{ name: 'coverage', target: 80, current: 60, unit: '%' },
+				{
+					name: 'errors',
+					target: 0,
+					current: 5,
+					unit: 'count',
+					direction: 'decrease',
+					baseline: 20,
+				},
+			],
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				goalRepository: makeGoalRepository({}, { g1: goal }, {}),
+			})
+		);
+
+		const result = parseResult(await handlers.get_metrics({ goal_id: 'g1' }));
+		expect(result.goalId).toBe('g1');
+		expect(result.missionType).toBe('measurable');
+		expect(result.metrics).toHaveLength(2);
+
+		const coverage = result.metrics[0];
+		expect(coverage.name).toBe('coverage');
+		expect(coverage.target).toBe(80);
+		expect(coverage.current).toBe(60);
+		expect(coverage.unit).toBe('%');
+		// progress: 60/80 * 100 = 75
+		expect(coverage.progressPct).toBe(75);
+
+		const errors = result.metrics[1];
+		expect(errors.name).toBe('errors');
+		expect(errors.direction).toBe('decrease');
+		// progress: (20-5)/(20-0) * 100 = 75
+		expect(errors.progressPct).toBe(75);
+	});
+
+	it('handles goal with no structuredMetrics', async () => {
+		const goal = makeGoal({ id: 'g1', missionType: 'measurable', structuredMetrics: [] });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				goalRepository: makeGoalRepository({}, { g1: goal }, {}),
+			})
+		);
+
+		const result = parseResult(await handlers.get_metrics({ goal_id: 'g1' }));
+		expect(result.metrics).toEqual([]);
+	});
+
+	it('returns 100% progress when decrease metric baseline equals target', async () => {
+		const goal = makeGoal({
+			id: 'g1',
+			missionType: 'measurable',
+			// baseline === target means the goal was already at its target when created
+			structuredMetrics: [
+				{ name: 'errors', target: 0, current: 0, direction: 'decrease', baseline: 0 },
+			],
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				goalRepository: makeGoalRepository({}, { g1: goal }, {}),
+			})
+		);
+
+		const result = parseResult(await handlers.get_metrics({ goal_id: 'g1' }));
+		expect(result.metrics[0].progressPct).toBe(100);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// list_tasks
+// ---------------------------------------------------------------------------
+
+describe('list_tasks', () => {
+	it('returns empty array when no tasks exist', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_tasks({}));
+		expect(result).toEqual([]);
+	});
+
+	it('returns tasks across all rooms when no room_id filter', async () => {
+		const room1 = makeRoom({ id: 'room-1', name: 'Room 1' });
+		const room2 = makeRoom({ id: 'room-2', name: 'Room 2' });
+		const task1 = makeTask({ id: 't1', roomId: 'room-1' });
+		const task2 = makeTask({ id: 't2', roomId: 'room-2' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room1, room2]),
+				taskRepository: makeTaskRepository({ 'room-1': [task1], 'room-2': [task2] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({}));
+		expect(result).toHaveLength(2);
+		expect(result.map((t: { id: string }) => t.id)).toEqual(expect.arrayContaining(['t1', 't2']));
+	});
+
+	it('includes roomName in each task', async () => {
+		const room = makeRoom({ id: 'room-1', name: 'My Room' });
+		const task = makeTask({ id: 't1', roomId: 'room-1' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': [task] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({}));
+		expect(result[0].roomName).toBe('My Room');
+	});
+
+	it('filters to a specific room when room_id is provided', async () => {
+		const room1 = makeRoom({ id: 'room-1', name: 'Room 1' });
+		const room2 = makeRoom({ id: 'room-2', name: 'Room 2' });
+		const task1 = makeTask({ id: 't1', roomId: 'room-1' });
+		const task2 = makeTask({ id: 't2', roomId: 'room-2' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room1, room2]),
+				taskRepository: makeTaskRepository({ 'room-1': [task1], 'room-2': [task2] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({ room_id: 'room-1' }));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('t1');
+	});
+
+	it('returns error when room_id refers to non-existent room', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_tasks({ room_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('filters by status', async () => {
+		const room = makeRoom();
+		const tasks = [
+			makeTask({ id: 't1', status: 'pending' }),
+			makeTask({ id: 't2', status: 'in_progress' }),
+			makeTask({ id: 't3', status: 'completed' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': tasks }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({ status: 'pending' }));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('t1');
+	});
+
+	it('filters by assigned_agent', async () => {
+		const room = makeRoom();
+		const tasks = [
+			makeTask({ id: 't1', assignedAgent: 'coder' }),
+			makeTask({ id: 't2', assignedAgent: 'general' }),
+			makeTask({ id: 't3', assignedAgent: 'planner' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': tasks }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({ assigned_agent: 'planner' }));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('t3');
+	});
+
+	it('excludes archived tasks by default', async () => {
+		const room = makeRoom();
+		const tasks = [
+			makeTask({ id: 't1', status: 'pending' }),
+			makeTask({ id: 't2', status: 'archived' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': tasks }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({}));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('t1');
+	});
+
+	it('includes archived tasks when include_archived is true', async () => {
+		const room = makeRoom();
+		const tasks = [
+			makeTask({ id: 't1', status: 'pending' }),
+			makeTask({ id: 't2', status: 'archived' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': tasks }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({ include_archived: true }));
+		expect(result).toHaveLength(2);
+	});
+
+	it('auto-enables include_archived when status="archived" to avoid zero results', async () => {
+		const room = makeRoom();
+		const tasks = [
+			makeTask({ id: 't1', status: 'pending' }),
+			makeTask({ id: 't2', status: 'archived' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': tasks }),
+			})
+		);
+
+		// Without auto-include fix, requesting archived status would return zero results
+		const result = parseResult(await handlers.list_tasks({ status: 'archived' }));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('t2');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// get_task_detail
+// ---------------------------------------------------------------------------
+
+describe('get_task_detail', () => {
+	it('returns error when task not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.get_task_detail({ task_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns full task details', async () => {
+		const room = makeRoom({ id: 'room-1', name: 'Test Room' });
+		const task = makeTask({
+			id: 't1',
+			shortId: 'T001',
+			title: 'My Task',
+			description: 'Task description',
+			status: 'in_progress',
+			priority: 'high',
+			taskType: 'coding',
+			assignedAgent: 'coder',
+			dependsOn: ['dep-1'],
+			prUrl: 'https://github.com/org/repo/pulls/42',
+			prNumber: 42,
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({}, { t1: task }),
+			})
+		);
+
+		const result = parseResult(await handlers.get_task_detail({ task_id: 't1' }));
+		expect(result.id).toBe('t1');
+		expect(result.shortId).toBe('T001');
+		expect(result.roomName).toBe('Test Room');
+		expect(result.title).toBe('My Task');
+		expect(result.description).toBe('Task description');
+		expect(result.status).toBe('in_progress');
+		expect(result.priority).toBe('high');
+		expect(result.dependsOn).toEqual(['dep-1']);
+		expect(result.prUrl).toBe('https://github.com/org/repo/pulls/42');
+		expect(result.prNumber).toBe(42);
+	});
+
+	it('returns null for optional fields when unset', async () => {
+		const task = makeTask({ id: 't1' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				taskRepository: makeTaskRepository({}, { t1: task }),
+			})
+		);
+
+		const result = parseResult(await handlers.get_task_detail({ task_id: 't1' }));
+		expect(result.shortId).toBeNull();
+		expect(result.roomName).toBeNull();
+		expect(result.progress).toBeNull();
+		expect(result.currentStep).toBeNull();
+		expect(result.result).toBeNull();
+		expect(result.error).toBeNull();
+		expect(result.prUrl).toBeNull();
+		expect(result.prNumber).toBeNull();
+		expect(result.startedAt).toBeNull();
+		expect(result.completedAt).toBeNull();
+		expect(result.archivedAt).toBeNull();
+		expect(result.restrictions).toBeNull();
+	});
+
+	it('includes createdByTaskId when set', async () => {
+		const task = makeTask({ id: 't1', createdByTaskId: 'parent-task' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				taskRepository: makeTaskRepository({}, { t1: task }),
+			})
+		);
+
+		const result = parseResult(await handlers.get_task_detail({ task_id: 't1' }));
+		expect(result.createdByTaskId).toBe('parent-task');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // MCP server — tool registration
 // ---------------------------------------------------------------------------
 
@@ -1423,7 +2032,27 @@ describe('createNeoQueryMcpServer', () => {
 		expect(server.instance._registeredTools).toHaveProperty('list_space_runs');
 	});
 
-	it('registers exactly 15 tools', () => {
-		expect(Object.keys(server.instance._registeredTools)).toHaveLength(15);
+	it('registers list_goals tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('list_goals');
+	});
+
+	it('registers get_goal_details tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('get_goal_details');
+	});
+
+	it('registers get_metrics tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('get_metrics');
+	});
+
+	it('registers list_tasks tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('list_tasks');
+	});
+
+	it('registers get_task_detail tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('get_task_detail');
+	});
+
+	it('registers exactly 20 tools', () => {
+		expect(Object.keys(server.instance._registeredTools)).toHaveLength(20);
 	});
 });

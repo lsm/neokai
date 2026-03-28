@@ -17,6 +17,11 @@
  * - list_space_agents
  * - list_space_workflows
  * - list_space_runs
+ * - list_goals
+ * - get_goal_details
+ * - get_metrics
+ * - list_tasks
+ * - get_task_detail
  *
  * Pattern: two-layer design (testable handlers + MCP server wrapper)
  *   createNeoQueryToolHandlers(config) → plain handler functions
@@ -38,6 +43,8 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	SpaceTask,
+	NeoTask,
+	MissionExecution,
 } from '@neokai/shared';
 import { isWorkerSessionId } from '../../room/session-utils';
 
@@ -59,6 +66,21 @@ export interface NeoQueryRoomManager {
 export interface NeoQueryGoalRepository {
 	/** List goals for a specific room, optionally filtered by status */
 	listGoals(roomId: string, status?: string): RoomGoal[];
+	/** Get a single goal by ID */
+	getGoal(id: string): RoomGoal | null;
+	/** List execution history for a goal (most recent first) */
+	listExecutions(goalId: string, limit?: number): MissionExecution[];
+}
+
+export interface NeoQueryTaskRepository {
+	/**
+	 * List tasks for a specific room, optionally filtered by status and archived state.
+	 * Note: assignedAgent filtering is NOT in the real TaskFilter; it is applied in-memory
+	 * by the tool handler after calling this method.
+	 */
+	listTasks(roomId: string, filter?: { status?: string; includeArchived?: boolean }): NeoTask[];
+	/** Get a single task by ID */
+	getTask(id: string): NeoTask | null;
 }
 
 export interface NeoQuerySessionManager {
@@ -122,6 +144,7 @@ export interface NeoQuerySpaceTaskRepository {
 export interface NeoToolsConfig {
 	roomManager: NeoQueryRoomManager;
 	goalRepository: NeoQueryGoalRepository;
+	taskRepository: NeoQueryTaskRepository;
 	sessionManager: NeoQuerySessionManager;
 	settingsManager: NeoQuerySettingsManager;
 	authManager: NeoQueryAuthManager;
@@ -170,6 +193,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 	const {
 		roomManager,
 		goalRepository,
+		taskRepository,
 		sessionManager,
 		settingsManager,
 		authManager,
@@ -639,6 +663,258 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				}))
 			);
 		},
+
+		// -----------------------------------------------------------------------
+		// Goal and task query tools
+		// -----------------------------------------------------------------------
+
+		/**
+		 * List goals across all rooms (or a specific room), with optional filters.
+		 */
+		async list_goals(args: {
+			room_id?: string;
+			status?: string;
+			mission_type?: string;
+		}): Promise<ToolResult> {
+			// Determine which rooms to query
+			const rooms = args.room_id
+				? (() => {
+						const r = roomManager.getRoom(args.room_id);
+						return r ? [r] : null;
+					})()
+				: roomManager.listRooms(true); // include archived rooms for cross-room visibility
+
+			if (rooms === null) {
+				return errorResult(`Room not found: ${args.room_id}`);
+			}
+
+			const allGoals: Record<string, unknown>[] = [];
+			for (const room of rooms) {
+				const goals = goalRepository.listGoals(room.id, args.status as string | undefined);
+				for (const g of goals) {
+					// Filter by mission_type if provided (repository does not support this natively)
+					if (args.mission_type && (g.missionType ?? 'one_shot') !== args.mission_type) {
+						continue;
+					}
+					allGoals.push({
+						id: g.id,
+						shortId: g.shortId ?? null,
+						roomId: g.roomId,
+						roomName: room.name,
+						title: g.title,
+						status: g.status,
+						priority: g.priority,
+						progress: g.progress,
+						missionType: g.missionType ?? 'one_shot',
+						autonomyLevel: g.autonomyLevel ?? 'supervised',
+						linkedTaskCount: g.linkedTaskIds.length,
+						nextRunAt: g.nextRunAt ?? null,
+						schedulePaused: g.schedulePaused ?? false,
+						createdAt: g.createdAt,
+						updatedAt: g.updatedAt,
+					});
+				}
+			}
+
+			return jsonResult(allGoals);
+		},
+
+		/**
+		 * Get full details for a goal including metrics and execution history.
+		 */
+		async get_goal_details(args: {
+			goal_id: string;
+			execution_limit?: number;
+		}): Promise<ToolResult> {
+			const goal = goalRepository.getGoal(args.goal_id);
+			if (!goal) {
+				return errorResult(`Goal not found: ${args.goal_id}`);
+			}
+
+			const room = roomManager.getRoom(goal.roomId);
+			const executions = goalRepository.listExecutions(goal.id, args.execution_limit ?? 10);
+
+			return jsonResult({
+				id: goal.id,
+				shortId: goal.shortId ?? null,
+				roomId: goal.roomId,
+				roomName: room?.name ?? null,
+				title: goal.title,
+				description: goal.description,
+				status: goal.status,
+				priority: goal.priority,
+				progress: goal.progress,
+				missionType: goal.missionType ?? 'one_shot',
+				autonomyLevel: goal.autonomyLevel ?? 'supervised',
+				linkedTaskIds: goal.linkedTaskIds,
+				metrics: goal.metrics ?? {},
+				structuredMetrics: goal.structuredMetrics ?? [],
+				schedule: goal.schedule ?? null,
+				schedulePaused: goal.schedulePaused ?? false,
+				nextRunAt: goal.nextRunAt ?? null,
+				consecutiveFailures: goal.consecutiveFailures ?? 0,
+				maxConsecutiveFailures: goal.maxConsecutiveFailures ?? 3,
+				replanCount: goal.replanCount ?? 0,
+				createdAt: goal.createdAt,
+				updatedAt: goal.updatedAt,
+				completedAt: goal.completedAt ?? null,
+				executions: executions.map((e) => ({
+					id: e.id,
+					executionNumber: e.executionNumber,
+					status: e.status,
+					startedAt: e.startedAt,
+					completedAt: e.completedAt ?? null,
+					resultSummary: e.resultSummary ?? null,
+					taskCount: e.taskIds.length,
+				})),
+			});
+		},
+
+		/**
+		 * Get current metric values for a measurable goal.
+		 */
+		async get_metrics(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = goalRepository.getGoal(args.goal_id);
+			if (!goal) {
+				return errorResult(`Goal not found: ${args.goal_id}`);
+			}
+
+			if ((goal.missionType ?? 'one_shot') !== 'measurable') {
+				return errorResult(
+					`Goal ${args.goal_id} is not a measurable mission (type: ${goal.missionType ?? 'one_shot'})`
+				);
+			}
+
+			const structuredMetrics = goal.structuredMetrics ?? [];
+
+			return jsonResult({
+				goalId: goal.id,
+				goalTitle: goal.title,
+				missionType: goal.missionType ?? 'one_shot',
+				metrics: structuredMetrics.map((m) => ({
+					name: m.name,
+					target: m.target,
+					current: m.current,
+					unit: m.unit ?? null,
+					direction: m.direction ?? 'increase',
+					baseline: m.baseline ?? null,
+					progressPct: (() => {
+						if (m.direction === 'decrease' && m.baseline !== undefined) {
+							// baseline === target means the goal is already at target; treat as 100%
+							if (m.baseline === m.target) return 100;
+							return Math.round(((m.baseline - m.current) / (m.baseline - m.target)) * 100);
+						}
+						// increase direction (default)
+						if (m.target !== 0) return Math.round((m.current / m.target) * 100);
+						return m.current >= m.target ? 100 : 0;
+					})(),
+				})),
+				legacyMetrics: goal.metrics ?? {},
+			});
+		},
+
+		/**
+		 * List tasks across all rooms (or a specific room), with optional filters.
+		 */
+		async list_tasks(args: {
+			room_id?: string;
+			status?: string;
+			assigned_agent?: string;
+			include_archived?: boolean;
+		}): Promise<ToolResult> {
+			// Auto-include archived tasks when the caller explicitly requests archived status,
+			// otherwise the repository filter would hide them and return zero results.
+			const includeArchived = args.include_archived ?? args.status === 'archived';
+
+			// Determine which rooms to query
+			const rooms = args.room_id
+				? (() => {
+						const r = roomManager.getRoom(args.room_id);
+						return r ? [r] : null;
+					})()
+				: roomManager.listRooms(true); // include archived rooms for cross-room visibility
+
+			if (rooms === null) {
+				return errorResult(`Room not found: ${args.room_id}`);
+			}
+
+			const allTasks: Record<string, unknown>[] = [];
+			for (const room of rooms) {
+				// Note: assignedAgent is not in real TaskFilter, so we filter in-memory below.
+				const filter: { status?: string; includeArchived?: boolean } = { includeArchived };
+				if (args.status) filter.status = args.status;
+
+				let tasks = taskRepository.listTasks(room.id, filter);
+
+				// In-memory filter for assignedAgent (not supported at the SQL level in TaskFilter)
+				if (args.assigned_agent) {
+					tasks = tasks.filter((t) => (t.assignedAgent ?? 'coder') === args.assigned_agent);
+				}
+
+				for (const t of tasks) {
+					allTasks.push({
+						id: t.id,
+						shortId: t.shortId ?? null,
+						roomId: t.roomId,
+						roomName: room.name,
+						title: t.title,
+						status: t.status,
+						priority: t.priority,
+						taskType: t.taskType ?? 'coding',
+						assignedAgent: t.assignedAgent ?? 'coder',
+						progress: t.progress ?? null,
+						activeSession: t.activeSession,
+						prUrl: t.prUrl ?? null,
+						prNumber: t.prNumber ?? null,
+						createdAt: t.createdAt,
+						updatedAt: t.updatedAt,
+					});
+				}
+			}
+
+			return jsonResult(allTasks);
+		},
+
+		/**
+		 * Get full details for a specific task.
+		 */
+		async get_task_detail(args: { task_id: string }): Promise<ToolResult> {
+			const task = taskRepository.getTask(args.task_id);
+			if (!task) {
+				return errorResult(`Task not found: ${args.task_id}`);
+			}
+
+			const room = roomManager.getRoom(task.roomId);
+
+			return jsonResult({
+				id: task.id,
+				shortId: task.shortId ?? null,
+				roomId: task.roomId,
+				roomName: room?.name ?? null,
+				title: task.title,
+				description: task.description,
+				status: task.status,
+				priority: task.priority,
+				taskType: task.taskType ?? 'coding',
+				assignedAgent: task.assignedAgent ?? 'coder',
+				createdByTaskId: task.createdByTaskId ?? null,
+				progress: task.progress ?? null,
+				currentStep: task.currentStep ?? null,
+				result: task.result ?? null,
+				error: task.error ?? null,
+				dependsOn: task.dependsOn,
+				activeSession: task.activeSession,
+				prUrl: task.prUrl ?? null,
+				prNumber: task.prNumber ?? null,
+				prCreatedAt: task.prCreatedAt ?? null,
+				restrictions: task.restrictions ?? null,
+				createdAt: task.createdAt,
+				startedAt: task.startedAt ?? null,
+				completedAt: task.completedAt ?? null,
+				archivedAt: task.archivedAt ?? null,
+				updatedAt: task.updatedAt,
+			});
+		},
 	};
 }
 
@@ -792,6 +1068,97 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 					.describe('Filter runs by status'),
 			},
 			(args) => handlers.list_space_runs(args)
+		),
+
+		// Goal and task query tools
+		tool(
+			'list_goals',
+			'List goals across all rooms or a specific room. Filterable by room, status, and mission type.',
+			{
+				room_id: z
+					.string()
+					.optional()
+					.describe('Filter to goals in a specific room (omit for all rooms)'),
+				status: z
+					.enum(['active', 'needs_human', 'completed', 'archived'])
+					.optional()
+					.describe('Filter by goal status'),
+				mission_type: z
+					.enum(['one_shot', 'measurable', 'recurring'])
+					.optional()
+					.describe('Filter by mission type'),
+			},
+			(args) => handlers.list_goals(args)
+		),
+
+		tool(
+			'get_goal_details',
+			'Get full details for a goal including structured metrics, execution history, and schedule information.',
+			{
+				goal_id: z.string().describe('ID of the goal to query'),
+				execution_limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(10)
+					.describe('Maximum number of executions to return (default: 10)'),
+			},
+			(args) => handlers.get_goal_details(args)
+		),
+
+		tool(
+			'get_metrics',
+			'Get current metric values for a measurable goal, including target vs current values and computed progress percentages.',
+			{
+				goal_id: z.string().describe('ID of the measurable goal to query'),
+			},
+			(args) => handlers.get_metrics(args)
+		),
+
+		tool(
+			'list_tasks',
+			'List tasks across all rooms or a specific room. Filterable by room, status, and assigned agent.',
+			{
+				room_id: z
+					.string()
+					.optional()
+					.describe('Filter to tasks in a specific room (omit for all rooms)'),
+				status: z
+					.enum([
+						'draft',
+						'pending',
+						'in_progress',
+						'review',
+						'completed',
+						'needs_attention',
+						'cancelled',
+						'archived',
+						'rate_limited',
+						'usage_limited',
+					])
+					.optional()
+					.describe('Filter by task status'),
+				assigned_agent: z
+					.enum(['coder', 'general', 'planner'])
+					.optional()
+					.describe('Filter by assigned agent type'),
+				include_archived: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe('Include archived tasks (default: false)'),
+			},
+			(args) => handlers.list_tasks(args)
+		),
+
+		tool(
+			'get_task_detail',
+			'Get full details for a specific task including description, result, error, dependencies, and PR information.',
+			{
+				task_id: z.string().describe('ID of the task to query'),
+			},
+			(args) => handlers.get_task_detail(args)
 		),
 	];
 
