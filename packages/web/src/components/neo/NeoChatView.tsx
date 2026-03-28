@@ -4,16 +4,17 @@
  * The main chat interface inside the Neo panel.
  * - Renders user messages and Neo (assistant) responses
  * - Auto-scrolls to the newest message
- * - Renders structured JSON responses as formatted cards
+ * - Uses SDKMessageRenderer for proper assistant message rendering
  * - Shows inline NeoConfirmationCard when Neo needs user input
  * - Displays error states as styled cards (not alerts/modals)
  * - Input bar at the bottom
  */
 
 import { useEffect, useRef, useState } from 'preact/hooks';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { neoStore, type NeoMessage } from '../../lib/neo-store.ts';
 import { NeoConfirmationCard } from './NeoConfirmationCard.tsx';
-import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
+import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer.tsx';
 
 // ---------------------------------------------------------------------------
 // Error state helpers
@@ -112,137 +113,43 @@ function ErrorCard({ errorCode, onDismiss }: ErrorCardProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Message content parsers
+// SDK message parsing helpers
 // ---------------------------------------------------------------------------
 
-/** Extract displayable text from a raw SDK message content JSON string. */
-function extractTextContent(content: string): string {
+/** Safely parse a raw sdk_message JSON string into an SDKMessage. Returns null on failure. */
+function parseSDKMessage(content: string): SDKMessage | null {
 	try {
 		const parsed: unknown = JSON.parse(content);
-		if (typeof parsed === 'string') return parsed;
-		// SDK messages use content arrays: [{ type: 'text', text: '...' }, ...]
-		if (Array.isArray(parsed)) {
-			return parsed
-				.filter(
-					(block): block is { type: string; text: string } =>
-						typeof block === 'object' &&
-						block !== null &&
-						'type' in block &&
-						(block as { type: string }).type === 'text' &&
-						'text' in block
-				)
-				.map((block) => block.text)
-				.join('\n');
+		if (typeof parsed === 'object' && parsed !== null && 'type' in parsed) {
+			return parsed as SDKMessage;
 		}
-		// Fallback: some messages store content as a direct string field
-		if (typeof parsed === 'object' && parsed !== null && 'text' in parsed) {
-			const text = (parsed as { text: unknown }).text;
-			if (typeof text === 'string') return text;
-		}
-		return '';
-	} catch {
-		return content;
-	}
-}
-
-/** Try to parse content as structured JSON data (object/array). Returns null if plain text. */
-function tryParseStructured(content: string): unknown | null {
-	try {
-		const parsed: unknown = JSON.parse(content);
-		if (Array.isArray(parsed)) return parsed;
-		if (typeof parsed === 'object' && parsed !== null) return parsed;
 		return null;
 	} catch {
 		return null;
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Structured data renderer
-// ---------------------------------------------------------------------------
+type UserSDKMessage = Extract<SDKMessage, { type: 'user' }>;
 
-function StructuredDataCard({ data }: { data: unknown }) {
-	const [expanded, setExpanded] = useState(false);
-
-	if (Array.isArray(data)) {
-		return (
-			<div class="my-1 rounded-lg border border-gray-700 overflow-hidden text-xs">
-				<div
-					class="flex items-center justify-between px-2 py-1.5 bg-gray-800/80 cursor-pointer hover:bg-gray-700/60 transition-colors"
-					onClick={() => setExpanded((v) => !v)}
-				>
-					<span class="text-gray-400 font-medium">
-						Array ({data.length} item{data.length !== 1 ? 's' : ''})
-					</span>
-					<svg
-						class={`w-3 h-3 text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`}
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth={2}
-						aria-hidden="true"
-					>
-						<path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-					</svg>
-				</div>
-				{expanded && (
-					<div class="overflow-x-auto">
-						<table class="w-full text-xs">
-							<tbody>
-								{data.map((item, i) => (
-									<tr key={i} class="border-t border-gray-700/50 hover:bg-gray-800/40">
-										<td class="px-2 py-1 text-gray-600 font-mono w-8">{i}</td>
-										<td class="px-2 py-1 text-gray-300 font-mono whitespace-pre-wrap break-all">
-											{typeof item === 'object' ? JSON.stringify(item, null, 2) : String(item)}
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				)}
-			</div>
-		);
+/** Extract plain text from a user SDK message for rendering in the chat bubble. */
+function extractUserText(sdkMsg: UserSDKMessage): string {
+	const content = sdkMsg.message.content;
+	if (typeof content === 'string') return content;
+	if (Array.isArray(content)) {
+		return content
+			.filter(
+				(block): block is { type: 'text'; text: string } =>
+					typeof block === 'object' &&
+					block !== null &&
+					'type' in block &&
+					(block as { type: string }).type === 'text' &&
+					'text' in block &&
+					typeof (block as { type: string; text: unknown }).text === 'string'
+			)
+			.map((block) => block.text)
+			.join('\n');
 	}
-
-	// Plain object
-	const entries = Object.entries(data as Record<string, unknown>);
-	return (
-		<div class="my-1 rounded-lg border border-gray-700 overflow-hidden text-xs">
-			<div
-				class="flex items-center justify-between px-2 py-1.5 bg-gray-800/80 cursor-pointer hover:bg-gray-700/60 transition-colors"
-				onClick={() => setExpanded((v) => !v)}
-			>
-				<span class="text-gray-400 font-medium">Structured data</span>
-				<svg
-					class={`w-3 h-3 text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`}
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth={2}
-					aria-hidden="true"
-				>
-					<path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-				</svg>
-			</div>
-			{expanded && (
-				<div class="overflow-x-auto">
-					<table class="w-full text-xs">
-						<tbody>
-							{entries.map(([k, v]) => (
-								<tr key={k} class="border-t border-gray-700/50 hover:bg-gray-800/40">
-									<td class="px-2 py-1 text-gray-500 font-mono whitespace-nowrap align-top">{k}</td>
-									<td class="px-2 py-1 text-gray-300 font-mono whitespace-pre-wrap break-all">
-										{typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v)}
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-			)}
-		</div>
-	);
+	return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -264,24 +171,26 @@ function MessageBubble({ msg, pendingActionId, isLastAssistant }: MessageBubbleP
 	// Skip internal result/system messages in this simplified view
 	if (isResult || isSystem) return null;
 
-	const rawText = extractTextContent(msg.content);
+	// Parse the raw sdk_message JSON into a typed SDK message
+	const parsedMsg = parseSDKMessage(msg.content);
 
 	// Only the last assistant message should render the confirmation card.
 	const hasPendingConfirmation = !isUser && isLastAssistant && pendingActionId;
 
 	if (isUser) {
+		// Extract text from the parsed user SDK message for the chat bubble
+		const userText =
+			parsedMsg?.type === 'user' ? extractUserText(parsedMsg as UserSDKMessage) : msg.content;
 		return (
 			<div data-testid="neo-user-message" class="flex justify-end mb-3">
 				<div class="max-w-[85%] bg-blue-600 text-white rounded-[20px] rounded-br-md px-3.5 py-2 text-sm leading-relaxed break-words">
-					{rawText}
+					{userText}
 				</div>
 			</div>
 		);
 	}
 
-	// Assistant message
-	const structured = rawText ? null : tryParseStructured(msg.content);
-
+	// Assistant message — use SDKMessageRenderer for proper SDK message rendering
 	return (
 		<div data-testid="neo-assistant-message" class="mb-3">
 			{/* Sparkle avatar */}
@@ -297,12 +206,7 @@ function MessageBubble({ msg, pendingActionId, isLastAssistant }: MessageBubbleP
 					</svg>
 				</div>
 				<div class="flex-1 min-w-0">
-					{rawText && (
-						<div class="text-sm text-gray-200 leading-relaxed">
-							<MarkdownRenderer content={rawText} class="text-sm text-gray-200" />
-						</div>
-					)}
-					{structured && <StructuredDataCard data={structured} />}
+					{parsedMsg && <SDKMessageRenderer message={parsedMsg} />}
 					{hasPendingConfirmation && (
 						<NeoConfirmationCard
 							actionId={pendingActionId}

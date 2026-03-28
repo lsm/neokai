@@ -3,8 +3,10 @@
  *
  * Verifies:
  * - Empty state renders when no messages
- * - User messages render as right-aligned bubbles
- * - Assistant messages render with sparkle avatar
+ * - User messages render as right-aligned bubbles with correct text
+ * - Assistant messages render with sparkle avatar using SDKMessageRenderer
+ * - SDK messages with content arrays are parsed and rendered correctly
+ * - Tool call messages render via SDKMessageRenderer
  * - Sending a message calls neoStore.sendMessage
  * - Enter key submits; Shift+Enter does not
  * - Send button disabled when input is empty or sending
@@ -40,27 +42,56 @@ vi.mock('./NeoConfirmationCard.tsx', () => ({
 	),
 }));
 
-// Mock MarkdownRenderer
-vi.mock('../chat/MarkdownRenderer.tsx', () => ({
-	default: ({ content }: { content: string }) => (
-		<div data-testid="markdown-renderer">{content}</div>
-	),
+// Mock SDKMessageRenderer — renders text content from the SDK message for assertions
+vi.mock('../sdk/SDKMessageRenderer.tsx', () => ({
+	SDKMessageRenderer: ({ message }: { message: unknown }) => {
+		const msg = message as {
+			type: string;
+			message?: {
+				content?: Array<{ type: string; text?: string }> | string;
+			};
+		};
+		let text = '';
+		if (msg.type === 'assistant') {
+			const content = msg.message?.content;
+			if (Array.isArray(content)) {
+				text = content
+					.filter((b) => b.type === 'text')
+					.map((b) => b.text ?? '')
+					.join('\n');
+			}
+		}
+		return (
+			<div data-testid="sdk-message-renderer" data-message-type={msg.type}>
+				{text}
+			</div>
+		);
+	},
 }));
 
 import { NeoChatView } from './NeoChatView.tsx';
 import { neoStore } from '../../lib/neo-store.ts';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers — build realistic SDK message JSON strings
 // ---------------------------------------------------------------------------
 
 function makeUserMsg(id: string, text: string) {
+	const sdkMsg = {
+		type: 'user',
+		message: {
+			role: 'user',
+			content: [{ type: 'text', text }],
+		},
+		parent_tool_use_id: null,
+		session_id: 'sess-1',
+	};
 	return {
 		id,
 		sessionId: 'sess-1',
 		messageType: 'user',
 		messageSubtype: null,
-		content: JSON.stringify([{ type: 'text', text }]),
+		content: JSON.stringify(sdkMsg),
 		createdAt: Date.now(),
 		sendStatus: null,
 		origin: 'human',
@@ -68,12 +99,60 @@ function makeUserMsg(id: string, text: string) {
 }
 
 function makeAssistantMsg(id: string, text: string) {
+	const sdkMsg = {
+		type: 'assistant',
+		message: {
+			id: `msg-${id}`,
+			content: [{ type: 'text', text }],
+			model: 'claude-3-5-sonnet-20241022',
+			role: 'assistant',
+			stop_reason: 'end_turn',
+			usage: { input_tokens: 10, output_tokens: 5 },
+		},
+		parent_tool_use_id: null,
+		uuid: id,
+		session_id: 'sess-1',
+	};
 	return {
 		id,
 		sessionId: 'sess-1',
 		messageType: 'assistant',
 		messageSubtype: null,
-		content: JSON.stringify([{ type: 'text', text }]),
+		content: JSON.stringify(sdkMsg),
+		createdAt: Date.now(),
+		sendStatus: null,
+		origin: null,
+	};
+}
+
+function makeAssistantMsgWithToolCall(id: string, toolName: string) {
+	const sdkMsg = {
+		type: 'assistant',
+		message: {
+			id: `msg-${id}`,
+			content: [
+				{
+					type: 'tool_use',
+					id: `tool-${id}`,
+					name: toolName,
+					input: { query: 'test' },
+				},
+			],
+			model: 'claude-3-5-sonnet-20241022',
+			role: 'assistant',
+			stop_reason: 'tool_use',
+			usage: { input_tokens: 10, output_tokens: 5 },
+		},
+		parent_tool_use_id: null,
+		uuid: id,
+		session_id: 'sess-1',
+	};
+	return {
+		id,
+		sessionId: 'sess-1',
+		messageType: 'assistant',
+		messageSubtype: null,
+		content: JSON.stringify(sdkMsg),
 		createdAt: Date.now(),
 		sendStatus: null,
 		origin: null,
@@ -114,11 +193,31 @@ describe('NeoChatView', () => {
 		expect(getByText('Hi there')).toBeTruthy();
 	});
 
-	it('renders assistant message with sparkle avatar', () => {
+	it('renders assistant message with sparkle avatar and SDKMessageRenderer', () => {
 		neoStore.messages.value = [makeAssistantMsg('1', 'Hello from Neo')];
-		const { getByTestId, getByText } = render(<NeoChatView />);
+		const { getByTestId } = render(<NeoChatView />);
 		expect(getByTestId('neo-assistant-message')).toBeTruthy();
+		expect(getByTestId('sdk-message-renderer')).toBeTruthy();
+	});
+
+	it('renders assistant text content via SDKMessageRenderer', () => {
+		neoStore.messages.value = [makeAssistantMsg('1', 'Hello from Neo')];
+		const { getByText } = render(<NeoChatView />);
 		expect(getByText('Hello from Neo')).toBeTruthy();
+	});
+
+	it('passes correct SDK message type to SDKMessageRenderer', () => {
+		neoStore.messages.value = [makeAssistantMsg('1', 'Hey!')];
+		const { getByTestId } = render(<NeoChatView />);
+		const renderer = getByTestId('sdk-message-renderer');
+		expect(renderer.getAttribute('data-message-type')).toBe('assistant');
+	});
+
+	it('renders tool call messages via SDKMessageRenderer', () => {
+		neoStore.messages.value = [makeAssistantMsgWithToolCall('1', 'list_rooms')];
+		const { getByTestId } = render(<NeoChatView />);
+		expect(getByTestId('neo-assistant-message')).toBeTruthy();
+		expect(getByTestId('sdk-message-renderer')).toBeTruthy();
 	});
 
 	it('skips result and system messages', () => {
@@ -322,5 +421,40 @@ describe('NeoChatView', () => {
 			fireEvent.click(getByTestId('neo-error-dismiss'));
 		});
 		expect(queryByTestId('neo-error-provider-unavailable')).toBeNull();
+	});
+
+	it('renders multiple messages in order', () => {
+		neoStore.messages.value = [
+			makeUserMsg('1', 'What rooms do I have?'),
+			makeAssistantMsg('2', 'You have 3 rooms: Alpha, Beta, Gamma.'),
+		];
+		const { getAllByTestId } = render(<NeoChatView />);
+		expect(getAllByTestId('neo-user-message')).toHaveLength(1);
+		expect(getAllByTestId('neo-assistant-message')).toHaveLength(1);
+	});
+
+	it('renders user message with string content from SDK message', () => {
+		// User message with string content (not array)
+		const sdkMsg = {
+			type: 'user',
+			message: { role: 'user', content: 'Hello as a string' },
+			parent_tool_use_id: null,
+			session_id: 'sess-1',
+		};
+		neoStore.messages.value = [
+			{
+				id: '1',
+				sessionId: 'sess-1',
+				messageType: 'user',
+				messageSubtype: null,
+				content: JSON.stringify(sdkMsg),
+				createdAt: Date.now(),
+				sendStatus: null,
+				origin: 'human',
+			},
+		];
+		const { getByTestId, getByText } = render(<NeoChatView />);
+		expect(getByTestId('neo-user-message')).toBeTruthy();
+		expect(getByText('Hello as a string')).toBeTruthy();
 	});
 });
