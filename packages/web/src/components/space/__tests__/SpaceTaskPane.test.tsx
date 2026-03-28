@@ -28,8 +28,12 @@ import type { SpaceTask, SpaceAgent, SpaceWorkflow, SpaceWorkflowRun } from '@ne
 const { mockNavigateToSpaceSession } = vi.hoisted(() => ({
 	mockNavigateToSpaceSession: vi.fn(),
 }));
+const { mockNavigateToSpaceAgent } = vi.hoisted(() => ({
+	mockNavigateToSpaceAgent: vi.fn(),
+}));
 vi.mock('../../../lib/router', () => ({
 	navigateToSpaceSession: mockNavigateToSpaceSession,
+	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 }));
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
@@ -160,6 +164,7 @@ describe('SpaceTaskPane', () => {
 		mockWorkflowRuns.value = [];
 		mockUpdateTask.mockClear();
 		mockNavigateToSpaceSession.mockClear();
+		mockNavigateToSpaceAgent.mockClear();
 	});
 
 	afterEach(() => {
@@ -192,7 +197,7 @@ describe('SpaceTaskPane', () => {
 	it('renders priority indicator', () => {
 		mockTasks.value = [makeTask({ priority: 'high' })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('High priority')).toBeTruthy();
+		expect(getByText('High Priority')).toBeTruthy();
 	});
 
 	it('shows workflow context and canvas when workflowRunId is present', () => {
@@ -208,12 +213,12 @@ describe('SpaceTaskPane', () => {
 				status: 'review',
 			}),
 		];
-		const { getByText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getByText, getByTestId, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('Workflow Context')).toBeTruthy();
 		expect(getByText('Coding Workflow')).toBeTruthy();
 		expect(getByText('Fix auth flow')).toBeTruthy();
-		expect(getByText('Plan')).toBeTruthy();
-		expect(getByText('Workflow Tasks')).toBeTruthy();
+		expect(getAllByText('Plan').length).toBeGreaterThan(0);
+		expect(getByText('Agent Activity')).toBeTruthy();
 		expect(getByText('Sibling Task')).toBeTruthy();
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 	});
@@ -233,7 +238,7 @@ describe('SpaceTaskPane', () => {
 	it('renders current step when present', () => {
 		mockTasks.value = [makeTask({ currentStep: 'Running linter' })];
 		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Current Step')).toBeTruthy();
+		expect(getByText("What's Happening")).toBeTruthy();
 		expect(getAllByText('Running linter').length).toBeGreaterThan(0);
 	});
 
@@ -261,9 +266,9 @@ describe('SpaceTaskPane', () => {
 
 	it('renders error section when error exists', () => {
 		mockTasks.value = [makeTask({ error: 'Build failed: syntax error' })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('Error')).toBeTruthy();
-		expect(getByText('Build failed: syntax error')).toBeTruthy();
+		expect(getAllByText('Build failed: syntax error').length).toBeGreaterThan(0);
 	});
 
 	it('renders PR link when prUrl is set', () => {
@@ -311,6 +316,7 @@ describe('SpaceTaskPane', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: null })];
 		const { container } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 		expect(container.querySelector('[data-testid="view-agent-session-btn"]')).toBeNull();
+		expect(container.querySelector('[data-testid="open-space-agent-btn"]')).toBeTruthy();
 	});
 
 	it('shows "View Agent Session" button when task provides its own spaceId', () => {
@@ -343,6 +349,39 @@ describe('SpaceTaskPane', () => {
 		fireEvent.click(getByTestId('view-agent-session-btn'));
 		expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'session-abc');
 	});
+
+	it('shows "Open Space Agent" button when task has no linked agent session', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: null })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		expect(getByTestId('open-space-agent-btn').textContent).toBe('Open Space Agent');
+	});
+
+	it('calls navigateToSpaceAgent when "Open Space Agent" button is clicked', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: null })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('open-space-agent-btn'));
+		expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
+	});
+
+	it('keeps the latest human handoff visible after submission', () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'in_progress',
+				inputDraft: 'Shift the dashboard toward tasks and make the next action obvious.',
+			}),
+		];
+		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		expect(getByText('Latest Human Handoff')).toBeTruthy();
+		expect(
+			getByText('Shift the dashboard toward tasks and make the next action obvious.')
+		).toBeTruthy();
+		expect(getByText('Your response was sent. Waiting for agent follow-up.')).toBeTruthy();
+		expect(
+			getAllByText(
+				'Your response was saved. Open the space agent to continue the conversation while this task resumes.'
+			).length
+		).toBeGreaterThan(0);
+	});
 });
 
 describe('SpaceTaskPane — HumanInputArea submit behavior', () => {
@@ -352,6 +391,7 @@ describe('SpaceTaskPane — HumanInputArea submit behavior', () => {
 		mockAgents.value = [];
 		mockUpdateTask.mockClear();
 		mockNavigateToSpaceSession.mockClear();
+		mockNavigateToSpaceAgent.mockClear();
 	});
 
 	afterEach(() => {
