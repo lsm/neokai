@@ -1,8 +1,8 @@
 /**
  * Tests for SpaceDetailPanel component.
  *
- * Covers: stats strip counts, pinned item highlighting, workflow run expansion,
- * task tab filtering, click navigation, sessions section, and empty states.
+ * Covers: stats strip counts, pinned item highlighting, unified task list filtering,
+ * click navigation, sessions section, and empty states.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -329,93 +329,9 @@ describe('SpaceDetailPanel', () => {
 		expect(agentBtn?.className).not.toContain('bg-dark-700');
 	});
 
-	// -- Workflow Runs section --
+	// -- Tasks section --
 
-	it('shows "No active runs" when there are no active workflow runs', () => {
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('No active runs')).toBeTruthy();
-	});
-
-	it('renders active workflow runs with title', () => {
-		mockWorkflowRunsSignal.value = [makeRun('r1', 'Deploy Run')];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Deploy Run')).toBeTruthy();
-	});
-
-	it('does not render completed workflow runs in the active runs section', () => {
-		mockWorkflowRunsSignal.value = [
-			makeRun('r1', 'Active Run', 'in_progress'),
-			makeRun('r2', 'Done Run', 'completed'),
-		];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Active Run')).toBeTruthy();
-		expect(screen.queryByText('Done Run')).toBeNull();
-	});
-
-	it('expands a workflow run to show its tasks on click', () => {
-		mockWorkflowRunsSignal.value = [makeRun('r1', 'My Run')];
-		mockTasksSignal.value = [
-			makeTask('t1', 'Run Task A', 'in_progress', { workflowRunId: 'r1' }),
-			makeTask('t2', 'Run Task B', 'pending', { workflowRunId: 'r1' }),
-		];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-
-		// Tasks not visible initially
-		expect(screen.queryByText('Run Task A')).toBeNull();
-
-		// Click the run to expand
-		fireEvent.click(screen.getByText('My Run'));
-		expect(screen.getByText('Run Task A')).toBeTruthy();
-		expect(screen.getByText('Run Task B')).toBeTruthy();
-	});
-
-	it('collapses an expanded workflow run on second click', () => {
-		mockWorkflowRunsSignal.value = [makeRun('r1', 'My Run')];
-		mockTasksSignal.value = [makeTask('t1', 'Run Task', 'in_progress', { workflowRunId: 'r1' })];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-
-		fireEvent.click(screen.getByText('My Run'));
-		expect(screen.getByText('Run Task')).toBeTruthy();
-
-		fireEvent.click(screen.getByText('My Run'));
-		expect(screen.queryByText('Run Task')).toBeNull();
-	});
-
-	it('shows "No tasks" inside expanded run when run has no tasks', () => {
-		mockWorkflowRunsSignal.value = [makeRun('r1', 'Empty Run')];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		fireEvent.click(screen.getByText('Empty Run'));
-		// The "No tasks" text inside the run expansion
-		expect(screen.getAllByText('No tasks').length).toBeGreaterThanOrEqual(1);
-	});
-
-	it('navigates to task when clicking a run task and calls onNavigate', () => {
-		const onNavigate = vi.fn();
-		mockWorkflowRunsSignal.value = [makeRun('r1', 'My Run')];
-		mockTasksSignal.value = [makeTask('t1', 'Run Task', 'pending', { workflowRunId: 'r1' })];
-		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
-
-		fireEvent.click(screen.getByText('My Run'));
-		fireEvent.click(screen.getByText('Run Task'));
-
-		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 't1');
-		expect(onNavigate).toHaveBeenCalledOnce();
-	});
-
-	it('highlights selected task inside an expanded run', () => {
-		mockWorkflowRunsSignal.value = [makeRun('r1', 'My Run')];
-		mockTasksSignal.value = [makeTask('t1', 'Run Task', 'in_progress', { workflowRunId: 'r1' })];
-		mockCurrentSpaceTaskIdSignal.value = 't1';
-		render(<SpaceDetailPanel spaceId="space-1" />);
-
-		fireEvent.click(screen.getByText('My Run'));
-		const taskBtn = screen.getByText('Run Task').closest('button');
-		expect(taskBtn?.className).toContain('bg-dark-700');
-	});
-
-	// -- Tasks section (standalone tasks) --
-
-	it('shows standalone tasks under Active tab by default', () => {
+	it('shows active tasks under Active tab by default', () => {
 		mockTasksSignal.value = [
 			makeTask('t1', 'Active Task', 'in_progress'),
 			makeTask('t2', 'Done Task', 'completed'),
@@ -425,16 +341,17 @@ describe('SpaceDetailPanel', () => {
 		expect(screen.queryByText('Done Task')).toBeNull();
 	});
 
-	it('does not show workflow-run tasks in standalone Tasks section', () => {
+	it('shows workflow tasks alongside standalone tasks in the unified list', () => {
 		mockWorkflowRunsSignal.value = [makeRun('r1', 'Run')];
 		mockTasksSignal.value = [
 			makeTask('t1', 'Run Task', 'in_progress', { workflowRunId: 'r1' }),
 			makeTask('t2', 'Standalone Task', 'pending'),
 		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(screen.getByText('Run Task')).toBeTruthy();
 		expect(screen.getByText('Standalone Task')).toBeTruthy();
-		// Run Task only appears when the run is expanded
-		expect(screen.queryByText('Run Task')).toBeNull();
+		expect(screen.getByText('Workflow task')).toBeTruthy();
+		expect(screen.getByText('Standalone task')).toBeTruthy();
 	});
 
 	it('shows draft and pending tasks under Active tab', () => {
@@ -505,12 +422,10 @@ describe('SpaceDetailPanel', () => {
 
 	it('shows "No tasks" in Tasks section when filtered list is empty', () => {
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		// "No active runs" + "No tasks" (Tasks section)
-		const noTasksEls = screen.getAllByText('No tasks');
-		expect(noTasksEls.length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('No tasks').length).toBeGreaterThanOrEqual(1);
 	});
 
-	it('navigates to standalone task on click and calls onNavigate', () => {
+	it('navigates to a task on click and calls onNavigate', () => {
 		const onNavigate = vi.fn();
 		mockTasksSignal.value = [makeTask('t1', 'Click Me', 'pending')];
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
@@ -520,7 +435,7 @@ describe('SpaceDetailPanel', () => {
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 
-	it('highlights selected task in standalone tasks list', () => {
+	it('highlights selected task in the task list', () => {
 		mockTasksSignal.value = [makeTask('t1', 'Selected Task', 'pending')];
 		mockCurrentSpaceTaskIdSignal.value = 't1';
 		render(<SpaceDetailPanel spaceId="space-1" />);
