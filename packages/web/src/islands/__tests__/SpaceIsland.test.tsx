@@ -736,19 +736,9 @@ describe('SpaceIsland — canvas integration (dashboard tab)', () => {
 
 describe('SpaceIsland — quick action buttons and dialogs', () => {
 	beforeEach(() => {
-		mockLoading = signal(false);
-		mockError = signal(null);
-		mockSpace = signal(makeSpace());
+		// Override the module-level beforeEach: no workflows → showCanvas is false,
+		// so the SpaceDashboard fallback (with quick-action buttons) is in the DOM.
 		mockWorkflows = signal([]);
-		mockAgents = signal([]);
-		mockActiveRuns = signal([]);
-		mockCurrentSpaceTaskId = signal(null);
-		(localStorage.getItem as ReturnType<typeof vi.fn>).mockReturnValue(null);
-		vi.stubGlobal('confirm', vi.fn().mockReturnValue(true));
-	});
-
-	afterEach(() => {
-		cleanup();
 	});
 
 	describe('Create Task dialog', () => {

@@ -5,7 +5,8 @@
  * - "Create Task" quick action button opens SpaceCreateTaskDialog
  * - "Start Workflow Run" quick action button opens WorkflowRunStartDialog
  * - Filling and submitting the Create Task form creates a task
- * - Created task title appears in the SpaceDetailPanel Tasks section
+ * - Created task title appears in SpaceDashboard's Recent Activity section
+ * - Cancelling the dialog dismisses it without creating a task
  *
  * Setup: creates a space via RPC (infrastructure), navigates to its Dashboard tab
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
@@ -13,44 +14,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
-
-async function createSpaceViaRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	workspacePath: string,
-	name: string
-): Promise<string> {
-	const id = await page.evaluate(
-		async ({ workspacePath, name }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			const space = (await hub.request('space.create', { workspacePath, name })) as {
-				id: string;
-			};
-			return space.id;
-		},
-		{ workspacePath, name }
-	);
-	if (!id) throw new Error('space.create returned no id');
-	return id;
-}
-
-async function deleteSpaceViaRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
-): Promise<void> {
-	if (!spaceId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('space.delete', { id });
-		}, spaceId);
-	} catch {
-		// Best-effort cleanup
-	}
-}
 
 test.describe('Space Task Creation', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
@@ -83,15 +49,16 @@ test.describe('Space Task Creation', () => {
 	});
 
 	test('Create Task button opens SpaceCreateTaskDialog', async ({ page }) => {
-		// The SpaceDashboard fallback is shown when no workflows exist (fresh space)
+		// Fresh space has no workflows → SpaceDashboard fallback is shown with quick actions
 		const createTaskBtn = page.getByRole('button', { name: 'Create Task' }).first();
 		await expect(createTaskBtn).toBeVisible({ timeout: 5000 });
 
 		await createTaskBtn.click();
 
-		// The Create Task modal should open
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 3000 });
-		await expect(page.getByText('Create Task').first()).toBeVisible();
+		// The Create Task modal should open — scope assertions to the dialog itself
+		const dialog = page.getByRole('dialog');
+		await expect(dialog).toBeVisible({ timeout: 3000 });
+		await expect(dialog.getByRole('heading', { name: 'Create Task' })).toBeVisible();
 	});
 
 	test('Start Workflow Run button opens WorkflowRunStartDialog', async ({ page }) => {
@@ -100,49 +67,51 @@ test.describe('Space Task Creation', () => {
 
 		await startWorkflowBtn.click();
 
-		// The Start Workflow Run modal should open
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 3000 });
-		await expect(page.getByText('Start Workflow Run').first()).toBeVisible();
+		// The Start Workflow Run modal should open — scope assertions to the dialog
+		const dialog = page.getByRole('dialog');
+		await expect(dialog).toBeVisible({ timeout: 3000 });
+		await expect(dialog.getByRole('heading', { name: 'Start Workflow Run' })).toBeVisible();
 	});
 
-	test('filling and submitting Create Task form creates a task visible in the panel', async ({
-		page,
-	}) => {
+	test('submitting the Create Task form creates a task in Recent Activity', async ({ page }) => {
 		const taskTitle = `E2E Task ${Date.now()}`;
 
-		// Click "Create Task" quick action (the first button with that text — in SpaceDashboard)
+		// Click "Create Task" quick action (the first button with that text in SpaceDashboard)
 		await page.getByRole('button', { name: 'Create Task' }).first().click();
 
-		// Dialog is now open — fill in the title field
+		// Fill in the title field
 		const titleInput = page.getByPlaceholder('e.g., Implement authentication module');
 		await expect(titleInput).toBeVisible({ timeout: 3000 });
 		await titleInput.fill(taskTitle);
 
-		// Submit the form — the submit button inside the dialog also says "Create Task"
-		// Use the dialog scope to disambiguate
+		// Submit via the dialog's "Create Task" button — scope to dialog to disambiguate
 		const dialog = page.getByRole('dialog');
 		await dialog.getByRole('button', { name: 'Create Task' }).click();
 
-		// Toast notification confirming creation
+		// Toast notification confirming creation appears
 		await expect(page.getByText(`Task "${taskTitle}" created`)).toBeVisible({ timeout: 5000 });
 
-		// Dialog should close
+		// Dialog should close after successful submission
 		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
 
-		// The task should appear in the SpaceDetailPanel Tasks section in the right sidebar
-		await expect(page.getByText(taskTitle)).toBeVisible({ timeout: 5000 });
+		// The task title should appear in SpaceDashboard's Recent Activity section.
+		// The store updates reactively via live-query after creation.
+		// Use exact: true to avoid matching the taskTitle substring in the toast.
+		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 	});
 
-	test('Create Task dialog can be dismissed without creating a task', async ({ page }) => {
+	test('Cancel dismisses the dialog without creating a task', async ({ page }) => {
 		await page.getByRole('button', { name: 'Create Task' }).first().click();
 
 		const dialog = page.getByRole('dialog');
 		await expect(dialog).toBeVisible({ timeout: 3000 });
 
-		// Click Cancel
+		// Click Cancel — dialog should close
 		await dialog.getByRole('button', { name: 'Cancel' }).click();
-
-		// Dialog should close
 		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
+
+		// No task pane should appear — the right-column task detail pane only opens
+		// when a task is selected (currentSpaceTaskIdSignal non-null), which Cancel never triggers
+		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeVisible();
 	});
 });
