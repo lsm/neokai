@@ -82,6 +82,7 @@ import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
+import { PendingActionStore } from '../neo/security-tier';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -318,12 +319,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub);
 
 	// Neo global agent RPC handlers
+	// The PendingActionStore is created here (application lifecycle) so it is
+	// shared across confirmAction / cancelAction calls in the same daemon process.
+	const neoPendingActions = new PendingActionStore();
 	setupNeoHandlers(
 		deps.messageHub,
 		deps.neoAgentManager,
 		deps.sessionManager,
 		deps.settingsManager,
-		deps.db
+		deps.db,
+		neoPendingActions
 	);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)

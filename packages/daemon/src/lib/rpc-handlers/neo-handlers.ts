@@ -19,36 +19,37 @@ import type { Database } from '../../storage/database';
 import { PendingActionStore } from '../neo/security-tier';
 import { NEO_SESSION_ID } from '../neo/neo-agent-manager';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
-import { randomUUID } from 'crypto';
 import { Logger } from '../logger';
 
 const log = new Logger('neo-handlers');
-
-/**
- * Singleton pending action store — shared across all neo.confirmAction /
- * neo.cancelAction calls within the same daemon process.
- */
-export const pendingActionStore = new PendingActionStore();
 
 export function setupNeoHandlers(
 	messageHub: MessageHub,
 	neoAgentManager: NeoAgentManager,
 	sessionManager: SessionManager,
 	settingsManager: SettingsManager,
-	db: Database
+	db: Database,
+	/**
+	 * Pending action store. Defaults to a new instance if not provided.
+	 * Accept as a parameter so callers (and tests) can inject their own store.
+	 */
+	pendingActions: PendingActionStore = new PendingActionStore()
 ): void {
 	// ── neo.send ──────────────────────────────────────────────────────────────
 	/**
 	 * Send a message to the Neo session.
 	 *
 	 * Flow:
-	 * 1. Verify credentials are present — return NO_CREDENTIALS if missing.
+	 * 1. Verify session exists — return NO_CREDENTIALS if not provisioned.
 	 * 2. Run health-check + auto-recover (runtime source).
 	 * 3. Inject the message via SessionManager.injectMessage().
-	 * 4. Return { success, messageId }.
+	 * 4. Return { success: true }.
 	 *
 	 * Provider-level errors (rate limits, 5xx, network) are caught and returned
 	 * as { success: false, error, errorCode: 'PROVIDER_ERROR' }.
+	 *
+	 * Note: no messageId is returned because SessionManager.injectMessage()
+	 * returns void — the persisted message ID is not available to this layer.
 	 */
 	messageHub.onRequest('neo.send', async (data) => {
 		const { message } = data as { message: string };
@@ -81,17 +82,17 @@ export function setupNeoHandlers(
 			};
 		}
 
-		const messageId = randomUUID();
-
 		try {
 			await sessionManager.injectMessage(NEO_SESSION_ID, message, {
 				origin: 'human',
 			});
-			return { success: true, messageId };
+			return { success: true };
 		} catch (err) {
 			log.error('neo.send injection failed:', err);
 
-			// Classify provider-level errors.
+			// Classify provider-level errors by message patterns.
+			// These cover the most common cases across Anthropic, GLM, and Copilot
+			// providers. Unknown errors are re-thrown so callers get the raw RPC error.
 			const msg = err instanceof Error ? err.message : String(err);
 			const isProviderError = /rate.?limit|429|503|502|500|network|timeout|ECONNREFUSED/i.test(msg);
 			const isModelError = /model.*not.*found|model.*unavailable|invalid.*model/i.test(msg);
@@ -155,23 +156,23 @@ export function setupNeoHandlers(
 	/**
 	 * Stop the current Neo session and create a fresh one.
 	 *
-	 * This destroys the existing session (stopping any in-flight queries) and
-	 * provisions a brand-new one. Message history for the old session remains
-	 * in the DB under its original session ID — the new session starts empty.
+	 * Delegates to NeoAgentManager.clearSession() which wraps destroyAndRecreate().
+	 * The operation is atomic: if re-creation fails the error propagates and the
+	 * response includes the error message so callers can surface it to the user.
+	 * Message history for the old session remains in the DB.
 	 *
-	 * Returns: { success: boolean }
+	 * Returns: { success: boolean, error?: string }
 	 */
 	messageHub.onRequest('neo.clearSession', async () => {
 		try {
-			// destroyAndRecreate is private — use the public provision path by
-			// first invoking cleanup (gracefully stops current session), then
-			// calling provision() which will detect the missing session and create one.
-			await neoAgentManager.cleanup();
-			await neoAgentManager.provision();
+			await neoAgentManager.clearSession();
 			return { success: true };
 		} catch (err) {
 			log.error('neo.clearSession failed:', err);
-			return { success: false };
+			return {
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			};
 		}
 	});
 
@@ -243,8 +244,11 @@ export function setupNeoHandlers(
 	 * Execute a pending action by its actionId.
 	 *
 	 * This is the primary confirmation path called by NeoConfirmationCard UI.
-	 * It retrieves the stored PendingAction, executes it via the provided
-	 * executor, and injects a system result message into the Neo chat.
+	 * It retrieves the stored PendingAction, executes it, and injects a system
+	 * result message into the Neo chat.
+	 *
+	 * TODO: wire actual tool execution once Neo tool registry is implemented
+	 * (task M3 action tools). Currently performs a no-op placeholder.
 	 *
 	 * Parameters:
 	 *   actionId — UUID returned when the action was stored
@@ -258,19 +262,17 @@ export function setupNeoHandlers(
 			throw new Error('actionId is required');
 		}
 
-		const action = pendingActionStore.retrieve(actionId);
+		const action = pendingActions.retrieve(actionId);
 		if (!action) {
 			return { success: false, error: 'Action not found or expired' };
 		}
 
-		pendingActionStore.remove(actionId);
+		pendingActions.remove(actionId);
 
 		try {
-			// Actions are placeholders until Neo tool execution is wired.
-			// For now execute a no-op and inject a confirmation system message.
 			const resultMessage = `[System] Action "${action.toolName}" confirmed and executed.`;
 			await sessionManager.injectMessage(NEO_SESSION_ID, resultMessage, {
-				origin: 'system' as const,
+				origin: 'system',
 			});
 			return { success: true, result: { toolName: action.toolName, input: action.input } };
 		} catch (err) {
@@ -301,17 +303,17 @@ export function setupNeoHandlers(
 			throw new Error('actionId is required');
 		}
 
-		const action = pendingActionStore.retrieve(actionId);
-		const existed = action !== undefined;
-		pendingActionStore.remove(actionId);
+		const action = pendingActions.retrieve(actionId);
+		pendingActions.remove(actionId);
 
-		const cancelMessage = existed
-			? `[System] Action "${action!.toolName}" was cancelled by the user.`
-			: '[System] Action cancellation requested (action not found or already expired).';
+		const cancelMessage =
+			action !== undefined
+				? `[System] Action "${action.toolName}" was cancelled by the user.`
+				: '[System] Action cancellation requested (action not found or already expired).';
 
 		try {
 			await sessionManager.injectMessage(NEO_SESSION_ID, cancelMessage, {
-				origin: 'system' as const,
+				origin: 'system',
 			});
 		} catch (err) {
 			// Non-fatal: log but still return success if the action was removed.

@@ -4,7 +4,7 @@
  * Covers:
  *   neo.send           — message injection, missing session, provider errors, model errors
  *   neo.history        — paginated history via AgentSession and DB fallback
- *   neo.clearSession   — cleanup + re-provision flow
+ *   neo.clearSession   — delegates to NeoAgentManager.clearSession(); surfaces errors
  *   neo.getSettings    — returns security mode + model from NeoAgentManager
  *   neo.updateSettings — validates and persists settings via SettingsManager
  *   neo.confirmAction  — retrieves + executes pending action, injects result message
@@ -13,7 +13,8 @@
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
-import { setupNeoHandlers, pendingActionStore } from '../../../src/lib/rpc-handlers/neo-handlers';
+import { setupNeoHandlers } from '../../../src/lib/rpc-handlers/neo-handlers';
+import { PendingActionStore } from '../../../src/lib/neo/security-tier';
 import type { NeoAgentManager } from '../../../src/lib/neo/neo-agent-manager';
 import type { SessionManager } from '../../../src/lib/session-manager';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
@@ -74,6 +75,7 @@ function createMockNeoAgentManager(
 	return {
 		getSession: mock(() => session),
 		healthCheck: mock(async () => true),
+		clearSession: mock(async () => {}),
 		cleanup: mock(async () => {}),
 		provision: mock(async () => {}),
 		getSecurityMode: mock(() => 'balanced' as const),
@@ -118,6 +120,7 @@ describe('Neo RPC Handlers', () => {
 	let sessionManager: ReturnType<typeof createMockSessionManager>;
 	let settingsManager: ReturnType<typeof createMockSettingsManager>;
 	let db: ReturnType<typeof createMockDb>;
+	let store: PendingActionStore;
 
 	beforeEach(() => {
 		hubData = createMockMessageHub();
@@ -125,11 +128,10 @@ describe('Neo RPC Handlers', () => {
 		sessionManager = createMockSessionManager();
 		settingsManager = createMockSettingsManager();
 		db = createMockDb();
+		// Fresh store per test — no shared singleton, no private internals access.
+		store = new PendingActionStore();
 
-		setupNeoHandlers(hubData.hub, neoManager, sessionManager, settingsManager, db);
-
-		// Clean the shared pending store before each test.
-		(pendingActionStore as unknown as { map: Map<string, unknown> }).map.clear();
+		setupNeoHandlers(hubData.hub, neoManager, sessionManager, settingsManager, db, store);
 	});
 
 	afterEach(() => {
@@ -145,11 +147,10 @@ describe('Neo RPC Handlers', () => {
 
 			const result = (await handler!({ message: 'Hello Neo' }, {})) as {
 				success: boolean;
-				messageId: string;
 			};
 			expect(result.success).toBe(true);
-			expect(typeof result.messageId).toBe('string');
-			expect(result.messageId.length).toBeGreaterThan(0);
+			// messageId is intentionally not returned (injectMessage returns void)
+			expect((result as Record<string, unknown>).messageId).toBeUndefined();
 			expect(sessionManager.injectMessage).toHaveBeenCalledTimes(1);
 		});
 
@@ -162,7 +163,7 @@ describe('Neo RPC Handlers', () => {
 		it('returns NO_CREDENTIALS when session is null', async () => {
 			const managerNoSession = createMockNeoAgentManager(null);
 			const { hub, handlers } = createMockMessageHub();
-			setupNeoHandlers(hub, managerNoSession, sessionManager, settingsManager, db);
+			setupNeoHandlers(hub, managerNoSession, sessionManager, settingsManager, db, store);
 
 			const handler = handlers.get('neo.send');
 			const result = (await handler!({ message: 'hi' }, {})) as {
@@ -293,7 +294,7 @@ describe('Neo RPC Handlers', () => {
 			const managerNoSession = createMockNeoAgentManager(null);
 			const { hub, handlers } = createMockMessageHub();
 
-			// Mock the DB to return some rows.
+			// Mock the DB to return one row.
 			const mockRows = [
 				{
 					sdk_message: JSON.stringify({ type: 'user' }),
@@ -308,7 +309,7 @@ describe('Neo RPC Handlers', () => {
 				})),
 			} as unknown as Database;
 
-			setupNeoHandlers(hub, managerNoSession, sessionManager, settingsManager, mockDb);
+			setupNeoHandlers(hub, managerNoSession, sessionManager, settingsManager, mockDb, store);
 
 			const handler = handlers.get('neo.history');
 			const result = (await handler!({ limit: 5 }, {})) as {
@@ -324,24 +325,24 @@ describe('Neo RPC Handlers', () => {
 	// ── neo.clearSession ──────────────────────────────────────────────────────
 
 	describe('neo.clearSession', () => {
-		it('calls cleanup then provision', async () => {
+		it('delegates to neoAgentManager.clearSession()', async () => {
 			const handler = hubData.handlers.get('neo.clearSession');
 			expect(handler).toBeDefined();
 
 			const result = (await handler!({}, {})) as { success: boolean };
 			expect(result.success).toBe(true);
-			expect(neoManager.cleanup).toHaveBeenCalledTimes(1);
-			expect(neoManager.provision).toHaveBeenCalledTimes(1);
+			expect(neoManager.clearSession).toHaveBeenCalledTimes(1);
 		});
 
-		it('returns success:false when provision throws', async () => {
-			neoManager.provision = mock(async () => {
+		it('returns success:false with error message when clearSession throws', async () => {
+			neoManager.clearSession = mock(async () => {
 				throw new Error('provision failed');
 			});
 
 			const handler = hubData.handlers.get('neo.clearSession');
-			const result = (await handler!({}, {})) as { success: boolean };
+			const result = (await handler!({}, {})) as { success: boolean; error?: string };
 			expect(result.success).toBe(false);
+			expect(result.error).toBe('provision failed');
 		});
 	});
 
@@ -422,7 +423,7 @@ describe('Neo RPC Handlers', () => {
 
 	describe('neo.confirmAction', () => {
 		it('executes stored action and injects result message', async () => {
-			const actionId = pendingActionStore.store({
+			const actionId = store.store({
 				toolName: 'create_room',
 				input: { name: 'my-room' },
 			});
@@ -442,7 +443,7 @@ describe('Neo RPC Handlers', () => {
 		});
 
 		it('removes action from store after confirm', async () => {
-			const actionId = pendingActionStore.store({
+			const actionId = store.store({
 				toolName: 'delete_room',
 				input: { roomId: 'r1' },
 			});
@@ -474,7 +475,7 @@ describe('Neo RPC Handlers', () => {
 				throw new Error('inject failed');
 			});
 
-			const actionId = pendingActionStore.store({
+			const actionId = store.store({
 				toolName: 'toggle_skill',
 				input: { skillId: 's1' },
 			});
@@ -489,7 +490,7 @@ describe('Neo RPC Handlers', () => {
 
 	describe('neo.cancelAction', () => {
 		it('removes action and injects cancellation message', async () => {
-			const actionId = pendingActionStore.store({
+			const actionId = store.store({
 				toolName: 'delete_space',
 				input: { spaceId: 'sp1' },
 			});
@@ -528,7 +529,7 @@ describe('Neo RPC Handlers', () => {
 				throw new Error('DB unavailable');
 			});
 
-			const actionId = pendingActionStore.store({
+			const actionId = store.store({
 				toolName: 'stop_session',
 				input: {},
 			});
