@@ -33,6 +33,8 @@ export { runMigration56 } from './migrations';
 export { runMigration57 } from './migrations';
 // knip-ignore-next-line
 export { runMigration58 } from './migrations';
+// knip-ignore-next-line
+export { runMigration66 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -403,7 +405,7 @@ export function createTables(db: BunDatabase): void {
         tool_name   TEXT NOT NULL,
         input       TEXT,
         output      TEXT,
-        status      TEXT NOT NULL DEFAULT 'success',
+        status      TEXT NOT NULL DEFAULT 'success' CHECK(status IN ('success', 'error', 'cancelled')),
         error       TEXT,
         target_type TEXT,
         target_id   TEXT,

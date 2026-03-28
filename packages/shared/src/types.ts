@@ -545,16 +545,7 @@ export interface SessionMetadata {
 	};
 	// Session architecture fields
 	/** Type of session in architecture context */
-	sessionType?:
-		| 'room_chat'
-		| 'planner'
-		| 'coder'
-		| 'leader'
-		| 'general'
-		| 'worker'
-		| 'lobby'
-		| 'spaces_global'
-		| 'space_task_agent';
+	sessionType?: SessionType;
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
 	/** For manager/worker: ID of the parent RoomSession */

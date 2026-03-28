@@ -4292,7 +4292,7 @@ function runMigration65(db: BunDatabase): void {
  *   undo_data   - JSON blob needed to reverse the action
  *   created_at  - ISO 8601 timestamp (default: current UTC time)
  */
-function runMigration66(db: BunDatabase): void {
+export function runMigration66(db: BunDatabase): void {
 	// --- Part 1: Expand sessions.type CHECK constraint to include 'neo' ---
 	if (tableExists(db, 'sessions')) {
 		try {
@@ -4363,7 +4363,7 @@ function runMigration66(db: BunDatabase): void {
 			tool_name   TEXT NOT NULL,
 			input       TEXT,
 			output      TEXT,
-			status      TEXT NOT NULL DEFAULT 'success',
+			status      TEXT NOT NULL DEFAULT 'success' CHECK(status IN ('success', 'error', 'cancelled')),
 			error       TEXT,
 			target_type TEXT,
 			target_id   TEXT,

@@ -41,8 +41,11 @@ export interface InsertNeoActivityParams {
 export interface ListNeoActivityParams {
 	/** Number of entries to return (default: 50) */
 	limit?: number;
-	/** Cursor for pagination: return entries older than this created_at value */
-	before?: string;
+	/**
+	 * Cursor for pagination: return entries strictly older than this (created_at, id) pair.
+	 * Both fields must be provided together for collision-safe pagination.
+	 */
+	before?: { createdAt: string; id: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -123,24 +126,34 @@ export class NeoActivityLogRepository {
 
 	/**
 	 * List activity log entries, newest first, with optional cursor-based pagination.
+	 * The cursor is a compound (createdAt, id) pair to avoid dropping entries when
+	 * multiple records share the same millisecond timestamp.
 	 */
 	list(params: ListNeoActivityParams = {}): NeoActivityLogEntry[] {
 		const limit = params.limit ?? 50;
 		if (params.before) {
+			// Compound cursor: entries where created_at is strictly earlier, OR created_at
+			// is equal but id sorts before the cursor id (lexicographic, UUIDs are random
+			// so this is just a stable tiebreaker, not meaningful ordering).
 			const rows = this.db
 				.prepare(
 					`SELECT * FROM neo_activity_log
-           WHERE created_at < ?
-           ORDER BY created_at DESC
+           WHERE created_at < ? OR (created_at = ? AND id < ?)
+           ORDER BY created_at DESC, id DESC
            LIMIT ?`
 				)
-				.all(params.before, limit) as ActivityRow[];
+				.all(
+					params.before.createdAt,
+					params.before.createdAt,
+					params.before.id,
+					limit
+				) as ActivityRow[];
 			return rows.map(rowToEntry);
 		}
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM neo_activity_log
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, id DESC
          LIMIT ?`
 			)
 			.all(limit) as ActivityRow[];

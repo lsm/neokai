@@ -146,11 +146,39 @@ describe('NeoActivityLogRepository', () => {
 			`UPDATE neo_activity_log SET created_at = '2025-01-01T00:00:03Z' WHERE id = 'log-3'`
 		).run();
 
-		// Fetch entries before log-3's timestamp
-		const entries = repo.list({ before: '2025-01-01T00:00:03Z' });
+		// Fetch entries before log-3 using compound cursor
+		const entries = repo.list({ before: { createdAt: '2025-01-01T00:00:03Z', id: 'log-3' } });
 		expect(entries.length).toBe(2);
 		expect(entries[0].id).toBe('log-2');
 		expect(entries[1].id).toBe('log-1');
+	});
+
+	test('list with before cursor handles same-millisecond entries via id tiebreaker', () => {
+		// Two entries with identical created_at — compound cursor must not drop either
+		repo.insert({ id: 'log-a', toolName: 'tool' });
+		repo.insert({ id: 'log-b', toolName: 'tool' });
+		const sameTs = '2025-01-01T00:00:01Z';
+		db.prepare(`UPDATE neo_activity_log SET created_at = ? WHERE id IN ('log-a', 'log-b')`).run(
+			sameTs
+		);
+		repo.insert({ id: 'log-c', toolName: 'tool' });
+		db.prepare(
+			`UPDATE neo_activity_log SET created_at = '2025-01-01T00:00:02Z' WHERE id = 'log-c'`
+		).run();
+
+		// First page: all 3 entries
+		const page1 = repo.list({ limit: 3 });
+		expect(page1.length).toBe(3);
+		expect(page1[0].id).toBe('log-c');
+
+		// Second page: use the last entry of page1 as cursor
+		const lastOnPage1 = page1[page1.length - 1];
+		const page2 = repo.list({
+			before: { createdAt: lastOnPage1.createdAt, id: lastOnPage1.id },
+			limit: 10,
+		});
+		// Entries older than the last page1 entry are returned without duplication
+		expect(page2.every((e) => e.id !== lastOnPage1.id)).toBe(true);
 	});
 
 	test('getLatestUndoable returns null when no undoable entries exist', () => {
