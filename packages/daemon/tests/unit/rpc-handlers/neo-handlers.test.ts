@@ -406,10 +406,18 @@ describe('Neo RPC Handlers', () => {
 			);
 		});
 
+		it('clears neoModel override when model is null', async () => {
+			const handler = hubData.handlers.get('neo.updateSettings');
+			await handler!({ model: null }, {});
+			expect(settingsManager.updateGlobalSettings).toHaveBeenCalledWith(
+				expect.objectContaining({ neoModel: null })
+			);
+		});
+
 		it('throws for empty model string', async () => {
 			const handler = hubData.handlers.get('neo.updateSettings');
 			await expect(handler!({ model: '   ' }, {})).rejects.toThrow(
-				'model must be a non-empty string'
+				'model must be a non-empty string or null'
 			);
 		});
 
