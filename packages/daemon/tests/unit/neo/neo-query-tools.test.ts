@@ -15,7 +15,13 @@
  * - get_mcp_server_status: found (stdio), found (sse), not found
  * - list_skills: happy path, empty list
  * - get_skill_details: found, not found
- * - MCP server: all 9 tools are registered
+ * - list_spaces: happy path, empty list, include_archived flag, agent/workflow counts
+ * - get_space_status: found, not found, task counts by status, active run count
+ * - get_space_details: found with agents/workflows/runs, not found
+ * - list_space_agents: found, not found, agent fields
+ * - list_space_workflows: found, not found, workflow fields
+ * - list_space_runs: found, not found, status filter, sort order
+ * - MCP server: all 15 tools are registered
  */
 
 import { describe, expect, it, beforeEach } from 'bun:test';
@@ -30,8 +36,23 @@ import {
 	type NeoQueryAuthManager,
 	type NeoQueryMcpServerRepository,
 	type NeoQuerySkillsManager,
+	type NeoQuerySpaceManager,
+	type NeoQuerySpaceAgentManager,
+	type NeoQuerySpaceWorkflowManager,
+	type NeoQueryWorkflowRunRepository,
+	type NeoQuerySpaceTaskRepository,
 } from '../../../src/lib/neo/tools/neo-query-tools';
-import type { Room, RoomGoal, AppMcpServer, AppSkill } from '@neokai/shared';
+import type {
+	Room,
+	RoomGoal,
+	AppMcpServer,
+	AppSkill,
+	Space,
+	SpaceAgent,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+	SpaceTask,
+} from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -191,6 +212,132 @@ function makeSkillsManager(skills: AppSkill[] = []): NeoQuerySkillsManager {
 	};
 }
 
+// ---------------------------------------------------------------------------
+// Space test fixtures
+// ---------------------------------------------------------------------------
+
+function makeSpace(overrides: Partial<Space> = {}): Space {
+	return {
+		id: 'space-1',
+		slug: 'test-space',
+		name: 'Test Space',
+		description: 'A test space',
+		backgroundContext: '',
+		instructions: '',
+		workspacePath: '/workspace/test',
+		status: 'active',
+		sessionIds: [],
+		createdAt: NOW - 10_000,
+		updatedAt: NOW,
+		...overrides,
+	};
+}
+
+function makeSpaceAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+	return {
+		id: 'agent-1',
+		spaceId: 'space-1',
+		name: 'Coder',
+		role: 'coder',
+		createdAt: NOW - 5_000,
+		updatedAt: NOW,
+		...overrides,
+	};
+}
+
+function makeSpaceWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
+	return {
+		id: 'wf-1',
+		spaceId: 'space-1',
+		name: 'Test Workflow',
+		nodes: [],
+		startNodeId: 'node-1',
+		rules: [],
+		tags: [],
+		createdAt: NOW - 5_000,
+		updatedAt: NOW,
+		...overrides,
+	};
+}
+
+function makeWorkflowRun(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkflowRun {
+	return {
+		id: 'run-1',
+		spaceId: 'space-1',
+		workflowId: 'wf-1',
+		title: 'Test Run',
+		status: 'completed',
+		iterationCount: 0,
+		maxIterations: 10,
+		createdAt: NOW - 3_000,
+		updatedAt: NOW,
+		...overrides,
+	};
+}
+
+function makeSpaceTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
+	return {
+		id: 'task-1',
+		spaceId: 'space-1',
+		taskNumber: 1,
+		title: 'Test Task',
+		description: 'A test task',
+		status: 'pending',
+		priority: 'normal',
+		createdAt: NOW - 2_000,
+		updatedAt: NOW,
+		...overrides,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Space mock factories
+// ---------------------------------------------------------------------------
+
+function makeSpaceManager(spaces: Space[] = []): NeoQuerySpaceManager {
+	return {
+		listSpaces: (includeArchived = false) => {
+			if (includeArchived) return spaces;
+			return spaces.filter((s) => s.status !== 'archived');
+		},
+		getSpace: (id) => spaces.find((s) => s.id === id) ?? null,
+	};
+}
+
+function makeSpaceAgentManager(
+	agentsBySpace: Record<string, SpaceAgent[]> = {}
+): NeoQuerySpaceAgentManager {
+	return {
+		listBySpaceId: (spaceId) => agentsBySpace[spaceId] ?? [],
+	};
+}
+
+function makeSpaceWorkflowManager(
+	workflowsBySpace: Record<string, SpaceWorkflow[]> = {}
+): NeoQuerySpaceWorkflowManager {
+	return {
+		listWorkflows: (spaceId) => workflowsBySpace[spaceId] ?? [],
+	};
+}
+
+function makeWorkflowRunRepository(
+	runsBySpace: Record<string, SpaceWorkflowRun[]> = {}
+): NeoQueryWorkflowRunRepository {
+	return {
+		listBySpace: (spaceId) => runsBySpace[spaceId] ?? [],
+	};
+}
+
+function makeSpaceTaskRepository(
+	tasksBySpace: Record<string, SpaceTask[]> = {}
+): NeoQuerySpaceTaskRepository {
+	return {
+		listBySpace: (spaceId) => tasksBySpace[spaceId] ?? [],
+		listByStatus: (spaceId, status) =>
+			(tasksBySpace[spaceId] ?? []).filter((t) => t.status === status),
+	};
+}
+
 function makeConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToolsConfig {
 	return {
 		roomManager: makeRoomManager(),
@@ -203,6 +350,11 @@ function makeConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToolsConfig {
 		workspaceRoot: '/workspace',
 		appVersion: '0.1.1',
 		startedAt: NOW - 60_000,
+		spaceManager: makeSpaceManager(),
+		spaceAgentManager: makeSpaceAgentManager(),
+		spaceWorkflowManager: makeSpaceWorkflowManager(),
+		workflowRunRepository: makeWorkflowRunRepository(),
+		spaceTaskRepository: makeSpaceTaskRepository(),
 		...overrides,
 	};
 }
@@ -809,6 +961,394 @@ describe('get_skill_details', () => {
 });
 
 // ---------------------------------------------------------------------------
+// list_spaces
+// ---------------------------------------------------------------------------
+
+describe('list_spaces', () => {
+	it('returns empty array when no spaces exist', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_spaces({}));
+		expect(result).toEqual([]);
+	});
+
+	it('returns active spaces with agent and workflow counts', async () => {
+		const space = makeSpace();
+		const agents = [makeSpaceAgent({ id: 'a1' }), makeSpaceAgent({ id: 'a2' })];
+		const workflows = [makeSpaceWorkflow({ id: 'w1' })];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				spaceAgentManager: makeSpaceAgentManager({ 'space-1': agents }),
+				spaceWorkflowManager: makeSpaceWorkflowManager({ 'space-1': workflows }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_spaces({}));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('space-1');
+		expect(result[0].name).toBe('Test Space');
+		expect(result[0].status).toBe('active');
+		expect(result[0].agentCount).toBe(2);
+		expect(result[0].workflowCount).toBe(1);
+	});
+
+	it('excludes archived spaces by default', async () => {
+		const active = makeSpace({ id: 's-a', name: 'Active', status: 'active' });
+		const archived = makeSpace({ id: 's-b', name: 'Archived', status: 'archived' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ spaceManager: makeSpaceManager([active, archived]) })
+		);
+
+		const result = parseResult(await handlers.list_spaces({}));
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('s-a');
+	});
+
+	it('includes archived spaces when include_archived is true', async () => {
+		const active = makeSpace({ id: 's-a', status: 'active' });
+		const archived = makeSpace({ id: 's-b', status: 'archived' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ spaceManager: makeSpaceManager([active, archived]) })
+		);
+
+		const result = parseResult(await handlers.list_spaces({ include_archived: true }));
+		expect(result).toHaveLength(2);
+	});
+
+	it('returns null defaultModel when not set', async () => {
+		const space = makeSpace({ defaultModel: undefined });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ spaceManager: makeSpaceManager([space]) })
+		);
+		const result = parseResult(await handlers.list_spaces({}));
+		expect(result[0].defaultModel).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// get_space_status
+// ---------------------------------------------------------------------------
+
+describe('get_space_status', () => {
+	it('returns error when space not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.get_space_status({ space_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns space status with run and task counts', async () => {
+		const space = makeSpace({ autonomyLevel: 'supervised', defaultModel: 'claude-opus-4' });
+		const runs = [
+			makeWorkflowRun({ id: 'r1', status: 'in_progress' }),
+			makeWorkflowRun({ id: 'r2', status: 'needs_attention' }),
+			makeWorkflowRun({ id: 'r3', status: 'completed' }),
+		];
+		const tasks = [
+			makeSpaceTask({ id: 't1', status: 'pending' }),
+			makeSpaceTask({ id: 't2', status: 'pending' }),
+			makeSpaceTask({ id: 't3', status: 'completed' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				workflowRunRepository: makeWorkflowRunRepository({ 'space-1': runs }),
+				spaceTaskRepository: makeSpaceTaskRepository({ 'space-1': tasks }),
+			})
+		);
+
+		const result = parseResult(await handlers.get_space_status({ space_id: 'space-1' }));
+		expect(result.id).toBe('space-1');
+		expect(result.name).toBe('Test Space');
+		expect(result.totalRunCount).toBe(3);
+		// in_progress + needs_attention = 2
+		expect(result.activeRunCount).toBe(2);
+		expect(result.totalTaskCount).toBe(3);
+		expect(result.taskCountByStatus.pending).toBe(2);
+		expect(result.taskCountByStatus.completed).toBe(1);
+		expect(result.autonomyLevel).toBe('supervised');
+		expect(result.defaultModel).toBe('claude-opus-4');
+	});
+
+	it('returns zero counts when no runs or tasks exist', async () => {
+		const space = makeSpace();
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ spaceManager: makeSpaceManager([space]) })
+		);
+		const result = parseResult(await handlers.get_space_status({ space_id: 'space-1' }));
+		expect(result.totalRunCount).toBe(0);
+		expect(result.activeRunCount).toBe(0);
+		expect(result.totalTaskCount).toBe(0);
+		expect(result.taskCountByStatus).toEqual({});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// get_space_details
+// ---------------------------------------------------------------------------
+
+describe('get_space_details', () => {
+	it('returns error when space not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.get_space_details({ space_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns full space details with agents, workflows, and recent runs', async () => {
+		const space = makeSpace({
+			instructions: 'Be thorough',
+			backgroundContext: 'TypeScript monorepo',
+			allowedModels: ['claude-sonnet-4'],
+		});
+		const agents = [makeSpaceAgent({ name: 'Coder', role: 'coder' })];
+		const workflows = [makeSpaceWorkflow({ name: 'Dev Workflow', nodes: [{ id: 'n1' } as never] })];
+		const runs = [
+			makeWorkflowRun({ id: 'r1', status: 'completed', createdAt: NOW - 1000 }),
+			makeWorkflowRun({ id: 'r2', status: 'in_progress', createdAt: NOW - 500 }),
+		];
+
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				spaceAgentManager: makeSpaceAgentManager({ 'space-1': agents }),
+				spaceWorkflowManager: makeSpaceWorkflowManager({ 'space-1': workflows }),
+				workflowRunRepository: makeWorkflowRunRepository({ 'space-1': runs }),
+			})
+		);
+
+		const result = parseResult(await handlers.get_space_details({ space_id: 'space-1' }));
+		expect(result.id).toBe('space-1');
+		expect(result.instructions).toBe('Be thorough');
+		expect(result.backgroundContext).toBe('TypeScript monorepo');
+		expect(result.allowedModels).toEqual(['claude-sonnet-4']);
+		expect(result.agents).toHaveLength(1);
+		expect(result.agents[0].name).toBe('Coder');
+		expect(result.agents[0].role).toBe('coder');
+		expect(result.workflows).toHaveLength(1);
+		expect(result.workflows[0].name).toBe('Dev Workflow');
+		expect(result.workflows[0].nodeCount).toBe(1);
+		// recentRuns sorted newest first
+		expect(result.recentRuns).toHaveLength(2);
+		expect(result.recentRuns[0].id).toBe('r2');
+		expect(result.recentRuns[1].id).toBe('r1');
+	});
+
+	it('caps recentRuns at 10', async () => {
+		const space = makeSpace();
+		const runs = Array.from({ length: 15 }, (_, i) =>
+			makeWorkflowRun({ id: `run-${i}`, createdAt: NOW - i * 100 })
+		);
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				workflowRunRepository: makeWorkflowRunRepository({ 'space-1': runs }),
+			})
+		);
+
+		const result = parseResult(await handlers.get_space_details({ space_id: 'space-1' }));
+		expect(result.recentRuns).toHaveLength(10);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// list_space_agents
+// ---------------------------------------------------------------------------
+
+describe('list_space_agents', () => {
+	it('returns error when space not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_space_agents({ space_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns agents for a space with correct fields', async () => {
+		const space = makeSpace();
+		const agents = [
+			makeSpaceAgent({
+				id: 'a1',
+				name: 'Coder',
+				role: 'coder',
+				model: 'claude-haiku-4-5',
+				description: 'Writes code',
+			}),
+			makeSpaceAgent({ id: 'a2', name: 'Planner', role: 'planner' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				spaceAgentManager: makeSpaceAgentManager({ 'space-1': agents }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_space_agents({ space_id: 'space-1' }));
+		expect(result).toHaveLength(2);
+		expect(result[0].id).toBe('a1');
+		expect(result[0].name).toBe('Coder');
+		expect(result[0].role).toBe('coder');
+		expect(result[0].model).toBe('claude-haiku-4-5');
+		expect(result[0].description).toBe('Writes code');
+		expect(result[1].model).toBeNull();
+	});
+
+	it('returns empty array when space has no agents', async () => {
+		const space = makeSpace();
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ spaceManager: makeSpaceManager([space]) })
+		);
+		const result = parseResult(await handlers.list_space_agents({ space_id: 'space-1' }));
+		expect(result).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// list_space_workflows
+// ---------------------------------------------------------------------------
+
+describe('list_space_workflows', () => {
+	it('returns error when space not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_space_workflows({ space_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns workflows with node count and tags', async () => {
+		const space = makeSpace();
+		const workflows = [
+			makeSpaceWorkflow({
+				id: 'w1',
+				name: 'Dev',
+				description: 'Development workflow',
+				nodes: [{ id: 'n1' } as never, { id: 'n2' } as never],
+				tags: ['dev', 'ci'],
+			}),
+			makeSpaceWorkflow({ id: 'w2', name: 'Review', nodes: [] }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				spaceWorkflowManager: makeSpaceWorkflowManager({ 'space-1': workflows }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_space_workflows({ space_id: 'space-1' }));
+		expect(result).toHaveLength(2);
+		expect(result[0].id).toBe('w1');
+		expect(result[0].name).toBe('Dev');
+		expect(result[0].description).toBe('Development workflow');
+		expect(result[0].nodeCount).toBe(2);
+		expect(result[0].tags).toEqual(['dev', 'ci']);
+		expect(result[1].nodeCount).toBe(0);
+	});
+
+	it('returns empty array when space has no workflows', async () => {
+		const space = makeSpace();
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ spaceManager: makeSpaceManager([space]) })
+		);
+		const result = parseResult(await handlers.list_space_workflows({ space_id: 'space-1' }));
+		expect(result).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// list_space_runs
+// ---------------------------------------------------------------------------
+
+describe('list_space_runs', () => {
+	it('returns error when space not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_space_runs({ space_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns runs sorted newest first', async () => {
+		const space = makeSpace();
+		const runs = [
+			makeWorkflowRun({ id: 'r1', title: 'Old Run', createdAt: NOW - 3000 }),
+			makeWorkflowRun({ id: 'r2', title: 'New Run', createdAt: NOW - 1000 }),
+			makeWorkflowRun({ id: 'r3', title: 'Mid Run', createdAt: NOW - 2000 }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				workflowRunRepository: makeWorkflowRunRepository({ 'space-1': runs }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_space_runs({ space_id: 'space-1' }));
+		expect(result).toHaveLength(3);
+		expect(result[0].id).toBe('r2');
+		expect(result[1].id).toBe('r3');
+		expect(result[2].id).toBe('r1');
+	});
+
+	it('filters runs by status', async () => {
+		const space = makeSpace();
+		const runs = [
+			makeWorkflowRun({ id: 'r1', status: 'completed' }),
+			makeWorkflowRun({ id: 'r2', status: 'in_progress' }),
+			makeWorkflowRun({ id: 'r3', status: 'completed' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				workflowRunRepository: makeWorkflowRunRepository({ 'space-1': runs }),
+			})
+		);
+
+		const result = parseResult(
+			await handlers.list_space_runs({ space_id: 'space-1', status: 'completed' })
+		);
+		expect(result).toHaveLength(2);
+		expect(result.every((r: { status: string }) => r.status === 'completed')).toBe(true);
+	});
+
+	it('returns run fields including goalId and completedAt', async () => {
+		const space = makeSpace();
+		const runs = [
+			makeWorkflowRun({
+				id: 'r1',
+				title: 'My Run',
+				description: 'A run',
+				status: 'completed',
+				workflowId: 'wf-1',
+				goalId: 'goal-1',
+				completedAt: NOW,
+				iterationCount: 2,
+			}),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				spaceManager: makeSpaceManager([space]),
+				workflowRunRepository: makeWorkflowRunRepository({ 'space-1': runs }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_space_runs({ space_id: 'space-1' }));
+		const run = result[0];
+		expect(run.title).toBe('My Run');
+		expect(run.description).toBe('A run');
+		expect(run.workflowId).toBe('wf-1');
+		expect(run.goalId).toBe('goal-1');
+		expect(run.completedAt).toBe(NOW);
+		expect(run.iterationCount).toBe(2);
+	});
+
+	it('returns empty array when no runs exist', async () => {
+		const space = makeSpace();
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ spaceManager: makeSpaceManager([space]) })
+		);
+		const result = parseResult(await handlers.list_space_runs({ space_id: 'space-1' }));
+		expect(result).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // MCP server — tool registration
 // ---------------------------------------------------------------------------
 
@@ -859,7 +1399,31 @@ describe('createNeoQueryMcpServer', () => {
 		expect(server.instance._registeredTools).toHaveProperty('get_skill_details');
 	});
 
-	it('registers exactly 9 tools', () => {
-		expect(Object.keys(server.instance._registeredTools)).toHaveLength(9);
+	it('registers list_spaces tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('list_spaces');
+	});
+
+	it('registers get_space_status tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('get_space_status');
+	});
+
+	it('registers get_space_details tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('get_space_details');
+	});
+
+	it('registers list_space_agents tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('list_space_agents');
+	});
+
+	it('registers list_space_workflows tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('list_space_workflows');
+	});
+
+	it('registers list_space_runs tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('list_space_runs');
+	});
+
+	it('registers exactly 15 tools', () => {
+		expect(Object.keys(server.instance._registeredTools)).toHaveLength(15);
 	});
 });
