@@ -61,6 +61,7 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import type { NeoActivityLogger } from '../activity-logger';
 import type {
 	Room,
 	RoomGoal,
@@ -427,6 +428,8 @@ export interface NeoActionToolsConfig {
 	settingsManager?: NeoSettingsManager;
 	/** Session manager for message injection (optional — messaging tools disabled if absent) */
 	sessionManager?: NeoSessionManager;
+	/** Activity logger for recording every tool invocation (optional — logging disabled if absent) */
+	activityLogger?: NeoActivityLogger;
 }
 
 // ---------------------------------------------------------------------------
@@ -1644,8 +1647,105 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 // MCP server wrapper
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for the per-tool activity logging wrapper inside createNeoActionMcpServer.
+ *
+ * Non-undoable tools: only toolName + args needed (targetType/Id optional).
+ * Undoable tools additionally supply preCapture (for update ops) or postCapture
+ * (for create ops) to record undo data alongside the log entry.
+ */
+interface LoggingOpts {
+	/** Entity category for the activity feed (e.g. 'room', 'goal', 'skill'). */
+	targetType?: string;
+	/**
+	 * Extract the target entity ID from the tool args and/or result data.
+	 * args: raw tool arguments; data: parsed JSON result object.
+	 */
+	getTargetId?: (args: Record<string, unknown>, data: Record<string, unknown>) => string | null;
+	/**
+	 * Whether a successful execution of this tool can be reversed via
+	 * `undo_last_action`.  Set to true only for tools in the undoable list.
+	 */
+	undoable?: boolean;
+	/**
+	 * Async function run BEFORE the handler executes.
+	 * Used to capture the entity's current state so the undo step knows what to
+	 * restore (e.g. previous enabled flag, previous status, previous settings).
+	 * Return null if the entity cannot be found (undo becomes unavailable).
+	 */
+	preCapture?: () => Promise<Record<string, unknown> | null>;
+	/**
+	 * Synchronous function run AFTER the handler executes (only when successful).
+	 * Used for create operations to extract the new entity ID from the result.
+	 * Return null when undo data is unavailable (e.g. entity not in result).
+	 */
+	postCapture?: (data: Record<string, unknown>) => Record<string, unknown> | null;
+}
+
 export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 	const handlers = createNeoActionToolHandlers(config);
+	const activityLogger = config.activityLogger;
+
+	// ── Activity logging helpers ──────────────────────────────────────────────
+
+	/** Parse the JSON payload out of a ToolResult without throwing. */
+	function parseResultData(result: ToolResult): Record<string, unknown> {
+		try {
+			return JSON.parse(result.content[0]?.text ?? '{}') as Record<string, unknown>;
+		} catch {
+			return {};
+		}
+	}
+
+	/**
+	 * Wrap a tool callback with pre/post activity logging.
+	 *
+	 * The logger is only invoked when:
+	 * 1. `activityLogger` is set on the config (no-op otherwise).
+	 * 2. The result is NOT a `confirmationRequired` response (deferred actions
+	 *    are not yet executed — nothing to log until they are confirmed).
+	 *
+	 * Undo data is captured in two phases:
+	 * - Pre-capture: runs before execution, reads current entity state.
+	 * - Post-capture: runs after execution, extracts the created entity ID.
+	 * Exactly one of these should be set for undoable tools.
+	 */
+	async function logged(
+		toolName: string,
+		args: Record<string, unknown>,
+		fn: () => Promise<ToolResult>,
+		opts: LoggingOpts = {}
+	): Promise<ToolResult> {
+		if (!activityLogger) return fn();
+
+		const preUndoData = opts.undoable && opts.preCapture ? await opts.preCapture() : null;
+		const result = await fn();
+		const data = parseResultData(result);
+
+		// Confirmation-required responses are pending — nothing has executed yet.
+		if (data.confirmationRequired === true) return result;
+
+		const isError = data.success === false;
+		const targetId = opts.getTargetId ? opts.getTargetId(args, data) : null;
+		const postUndoData =
+			opts.undoable && !isError && opts.postCapture ? opts.postCapture(data) : null;
+		const undoData = postUndoData ?? preUndoData;
+
+		activityLogger.logAction({
+			toolName,
+			input: args,
+			output: result.content[0]?.text ?? null,
+			status: isError ? 'error' : 'success',
+			error: isError ? ((data.error as string) ?? null) : null,
+			targetType: opts.targetType ?? null,
+			targetId,
+			// Only mark as undoable when the action succeeded AND undo data was captured.
+			undoable: (opts.undoable ?? false) && !isError && undoData !== null,
+			undoData: undoData ?? undefined,
+		});
+
+		return result;
+	}
 
 	const tools = [
 		// ── Room ─────────────────────────────────────────────────────────────
@@ -1661,7 +1761,17 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.describe('Absolute path to the workspace directory for this room'),
 				default_model: z.string().optional().describe('Default model ID for new sessions'),
 			},
-			(args) => handlers.create_room(args)
+			(args) =>
+				logged('create_room', args as Record<string, unknown>, () => handlers.create_room(args), {
+					targetType: 'room',
+					getTargetId: (_, d) => ((d.room as Record<string, unknown>)?.id as string) ?? null,
+					undoable: true,
+					// Undo = delete the created room; capture its ID from the result.
+					postCapture: (d) => {
+						const id = (d.room as Record<string, unknown>)?.id as string | undefined;
+						return id ? { roomId: id } : null;
+					},
+				})
 		),
 
 		tool(
@@ -1670,7 +1780,12 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 			{
 				room_id: z.string().describe('ID of the room to delete'),
 			},
-			(args) => handlers.delete_room(args)
+			// Non-undoable: data is permanently deleted, cannot reconstruct.
+			(args) =>
+				logged('delete_room', args as Record<string, unknown>, () => handlers.delete_room(args), {
+					targetType: 'room',
+					getTargetId: (a) => (a.room_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -1687,7 +1802,30 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.optional()
 					.describe('Allowed model IDs (empty = all allowed)'),
 			},
-			(args) => handlers.update_room_settings(args)
+			(args) =>
+				logged(
+					'update_room_settings',
+					args as Record<string, unknown>,
+					() => handlers.update_room_settings(args),
+					{
+						targetType: 'room',
+						getTargetId: (a) => (a.room_id as string) ?? null,
+						undoable: true,
+						// Capture the room's current settings BEFORE the update so we can restore them.
+						preCapture: async () => {
+							const room = config.roomManager.getRoom(args.room_id);
+							if (!room) return null;
+							return {
+								roomId: room.id,
+								previousName: room.name,
+								previousBackground: room.background ?? null,
+								previousInstructions: room.instructions ?? null,
+								previousDefaultModel: room.defaultModel ?? null,
+								previousAllowedModels: room.allowedModels ?? [],
+							};
+						},
+					}
+				)
 		),
 
 		// ── Goal ─────────────────────────────────────────────────────────────
@@ -1711,7 +1849,17 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.optional()
 					.describe('Autonomy level (default: supervised)'),
 			},
-			(args) => handlers.create_goal(args)
+			(args) =>
+				logged('create_goal', args as Record<string, unknown>, () => handlers.create_goal(args), {
+					targetType: 'goal',
+					getTargetId: (_, d) => ((d.goal as Record<string, unknown>)?.id as string) ?? null,
+					undoable: true,
+					// Undo = delete the created goal; capture its ID from the result.
+					postCapture: (d) => {
+						const id = (d.goal as Record<string, unknown>)?.id as string | undefined;
+						return id ? { goalId: id } : null;
+					},
+				})
 		),
 
 		tool(
@@ -1732,7 +1880,11 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.optional()
 					.describe('New autonomy level'),
 			},
-			(args) => handlers.update_goal(args)
+			(args) =>
+				logged('update_goal', args as Record<string, unknown>, () => handlers.update_goal(args), {
+					targetType: 'goal',
+					getTargetId: (a) => (a.goal_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -1745,7 +1897,23 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.enum(['active', 'completed', 'needs_human', 'archived'])
 					.describe('New goal status'),
 			},
-			(args) => handlers.set_goal_status(args)
+			(args) =>
+				logged(
+					'set_goal_status',
+					args as Record<string, unknown>,
+					() => handlers.set_goal_status(args),
+					{
+						targetType: 'goal',
+						getTargetId: (a) => (a.goal_id as string) ?? null,
+						undoable: true,
+						// Capture the goal's current status BEFORE transition.
+						preCapture: async () => {
+							const goalManager = config.managerFactory.getGoalManager(args.room_id);
+							const goal = await goalManager.getGoal(args.goal_id);
+							return goal ? { goalId: goal.id, previousStatus: goal.status } : null;
+						},
+					}
+				)
 		),
 
 		// ── Task ─────────────────────────────────────────────────────────────
@@ -1762,7 +1930,17 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.describe('Task priority (default: normal)'),
 				depends_on: z.array(z.string()).optional().describe('IDs of tasks this task depends on'),
 			},
-			(args) => handlers.create_task(args)
+			(args) =>
+				logged('create_task', args as Record<string, unknown>, () => handlers.create_task(args), {
+					targetType: 'task',
+					getTargetId: (_, d) => ((d.task as Record<string, unknown>)?.id as string) ?? null,
+					undoable: true,
+					// Undo = delete the created task; capture its ID from the result.
+					postCapture: (d) => {
+						const id = (d.task as Record<string, unknown>)?.id as string | undefined;
+						return id ? { taskId: id } : null;
+					},
+				})
 		),
 
 		tool(
@@ -1776,7 +1954,11 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
 				depends_on: z.array(z.string()).optional().describe('New dependency task IDs'),
 			},
-			(args) => handlers.update_task(args)
+			(args) =>
+				logged('update_task', args as Record<string, unknown>, () => handlers.update_task(args), {
+					targetType: 'task',
+					getTargetId: (a) => (a.task_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -1803,7 +1985,23 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				result: z.string().optional().describe('Result summary (for completed/review statuses)'),
 				error: z.string().optional().describe('Error message (for needs_attention status)'),
 			},
-			(args) => handlers.set_task_status(args)
+			(args) =>
+				logged(
+					'set_task_status',
+					args as Record<string, unknown>,
+					() => handlers.set_task_status(args),
+					{
+						targetType: 'task',
+						getTargetId: (a) => (a.task_id as string) ?? null,
+						undoable: true,
+						// Capture the task's current status BEFORE transition.
+						preCapture: async () => {
+							const taskManager = config.managerFactory.getTaskManager(args.room_id);
+							const task = await taskManager.getTask(args.task_id);
+							return task ? { taskId: task.id, previousStatus: task.status } : null;
+						},
+					}
+				)
 		),
 
 		tool(
@@ -1813,7 +2011,12 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				room_id: z.string().describe('ID of the room containing the task'),
 				task_id: z.string().describe('ID of the task to approve'),
 			},
-			(args) => handlers.approve_task(args)
+			// Non-undoable: task review decision may have triggered agent actions.
+			(args) =>
+				logged('approve_task', args as Record<string, unknown>, () => handlers.approve_task(args), {
+					targetType: 'task',
+					getTargetId: (a) => (a.task_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -1824,7 +2027,12 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				task_id: z.string().describe('ID of the task to reject'),
 				feedback: z.string().describe('Feedback explaining why the task was rejected'),
 			},
-			(args) => handlers.reject_task(args)
+			// Non-undoable: task review decision may have triggered agent actions.
+			(args) =>
+				logged('reject_task', args as Record<string, unknown>, () => handlers.reject_task(args), {
+					targetType: 'task',
+					getTargetId: (a) => (a.task_id as string) ?? null,
+				})
 		),
 
 		// ── Space ─────────────────────────────────────────────────────────────
@@ -1846,7 +2054,10 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 						'Autonomy level: "supervised" (default) waits for human approval on judgment calls; "semi_autonomous" handles simple cases independently'
 					),
 			},
-			(args) => handlers.create_space(args)
+			(args) =>
+				logged('create_space', args as Record<string, unknown>, () => handlers.create_space(args), {
+					targetType: 'space',
+				})
 		),
 
 		tool(
@@ -1864,7 +2075,11 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.optional()
 					.describe('New autonomy level'),
 			},
-			(args) => handlers.update_space(args)
+			(args) =>
+				logged('update_space', args as Record<string, unknown>, () => handlers.update_space(args), {
+					targetType: 'space',
+					getTargetId: (a) => (a.space_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -1873,7 +2088,12 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 			{
 				space_id: z.string().describe('ID of the space to delete'),
 			},
-			(args) => handlers.delete_space(args)
+			// Non-undoable: data is permanently deleted, cannot reconstruct.
+			(args) =>
+				logged('delete_space', args as Record<string, unknown>, () => handlers.delete_space(args), {
+					targetType: 'space',
+					getTargetId: (a) => (a.space_id as string) ?? null,
+				})
 		),
 
 		// ── Workflow ──────────────────────────────────────────────────────────
@@ -1890,7 +2110,14 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				description: z.string().optional().describe('Description of the work'),
 				goal_id: z.string().optional().describe('Goal/mission ID to associate with this run'),
 			},
-			(args) => handlers.start_workflow_run(args)
+			// Non-undoable: creates cascading side effects (tasks, agent sessions).
+			(args) =>
+				logged(
+					'start_workflow_run',
+					args as Record<string, unknown>,
+					() => handlers.start_workflow_run(args),
+					{ targetType: 'workflow_run' }
+				)
 		),
 
 		tool(
@@ -1899,7 +2126,17 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 			{
 				run_id: z.string().describe('ID of the workflow run to cancel'),
 			},
-			(args) => handlers.cancel_workflow_run(args)
+			// Non-undoable: cascading side effects cannot be cleanly reversed.
+			(args) =>
+				logged(
+					'cancel_workflow_run',
+					args as Record<string, unknown>,
+					() => handlers.cancel_workflow_run(args),
+					{
+						targetType: 'workflow_run',
+						getTargetId: (a) => (a.run_id as string) ?? null,
+					}
+				)
 		),
 
 		// ── Gate ──────────────────────────────────────────────────────────────
@@ -1911,7 +2148,12 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				gate_id: z.string().describe('ID of the gate to approve'),
 				reason: z.string().optional().describe('Optional reason for the approval'),
 			},
-			(args) => handlers.approve_gate(args)
+			// Non-undoable: gate decision may have triggered downstream workflow steps.
+			(args) =>
+				logged('approve_gate', args as Record<string, unknown>, () => handlers.approve_gate(args), {
+					targetType: 'gate',
+					getTargetId: (a) => (a.gate_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -1922,7 +2164,12 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				gate_id: z.string().describe('ID of the gate to reject'),
 				reason: z.string().optional().describe('Reason for the rejection'),
 			},
-			(args) => handlers.reject_gate(args)
+			// Non-undoable: gate decision may have triggered downstream workflow steps.
+			(args) =>
+				logged('reject_gate', args as Record<string, unknown>, () => handlers.reject_gate(args), {
+					targetType: 'gate',
+					getTargetId: (a) => (a.gate_id as string) ?? null,
+				})
 		),
 
 		// ── MCP server configuration ──────────────────────────────────────────
@@ -1948,7 +2195,13 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.describe('Additional HTTP headers (sse or http servers)'),
 				enabled: z.boolean().optional().describe('Whether to enable immediately (default: false)'),
 			},
-			(args) => handlers.add_mcp_server(args)
+			(args) =>
+				logged(
+					'add_mcp_server',
+					args as Record<string, unknown>,
+					() => handlers.add_mcp_server(args),
+					{ targetType: 'mcp_server' }
+				)
 		),
 
 		tool(
@@ -1970,7 +2223,16 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.optional()
 					.describe('New headers (sse or http servers)'),
 			},
-			(args) => handlers.update_mcp_server(args)
+			(args) =>
+				logged(
+					'update_mcp_server',
+					args as Record<string, unknown>,
+					() => handlers.update_mcp_server(args),
+					{
+						targetType: 'mcp_server',
+						getTargetId: (a) => (a.server_id as string) ?? null,
+					}
+				)
 		),
 
 		tool(
@@ -1979,7 +2241,17 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 			{
 				server_id: z.string().describe('ID of the MCP server to delete'),
 			},
-			(args) => handlers.delete_mcp_server(args)
+			// Non-undoable: data is permanently deleted, cannot reconstruct.
+			(args) =>
+				logged(
+					'delete_mcp_server',
+					args as Record<string, unknown>,
+					() => handlers.delete_mcp_server(args),
+					{
+						targetType: 'mcp_server',
+						getTargetId: (a) => (a.server_id as string) ?? null,
+					}
+				)
 		),
 
 		tool(
@@ -1989,7 +2261,23 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				server_id: z.string().describe('ID of the MCP server to toggle'),
 				enabled: z.boolean().describe('Whether to enable or disable the server'),
 			},
-			(args) => handlers.toggle_mcp_server(args)
+			(args) =>
+				logged(
+					'toggle_mcp_server',
+					args as Record<string, unknown>,
+					() => handlers.toggle_mcp_server(args),
+					{
+						targetType: 'mcp_server',
+						getTargetId: (a) => (a.server_id as string) ?? null,
+						undoable: true,
+						// Capture the server's current enabled state BEFORE the toggle.
+						preCapture: async () => {
+							if (!config.mcpManager) return null;
+							const server = config.mcpManager.getMcpServer(args.server_id);
+							return server ? { serverId: server.id, previousEnabled: server.enabled } : null;
+						},
+					}
+				)
 		),
 
 		// ── Skill configuration ───────────────────────────────────────────────
@@ -2014,7 +2302,10 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					),
 				enabled: z.boolean().optional().describe('Whether to enable immediately (default: false)'),
 			},
-			(args) => handlers.add_skill(args)
+			(args) =>
+				logged('add_skill', args as Record<string, unknown>, () => handlers.add_skill(args), {
+					targetType: 'skill',
+				})
 		),
 
 		tool(
@@ -2029,7 +2320,11 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.optional()
 					.describe('New source-type-specific configuration'),
 			},
-			(args) => handlers.update_skill(args)
+			(args) =>
+				logged('update_skill', args as Record<string, unknown>, () => handlers.update_skill(args), {
+					targetType: 'skill',
+					getTargetId: (a) => (a.skill_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -2038,7 +2333,12 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 			{
 				skill_id: z.string().describe('ID of the skill to delete'),
 			},
-			(args) => handlers.delete_skill(args)
+			// Non-undoable: data is permanently deleted, cannot reconstruct.
+			(args) =>
+				logged('delete_skill', args as Record<string, unknown>, () => handlers.delete_skill(args), {
+					targetType: 'skill',
+					getTargetId: (a) => (a.skill_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -2048,7 +2348,18 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				skill_id: z.string().describe('ID of the skill to toggle'),
 				enabled: z.boolean().describe('Whether to enable or disable the skill'),
 			},
-			(args) => handlers.toggle_skill(args)
+			(args) =>
+				logged('toggle_skill', args as Record<string, unknown>, () => handlers.toggle_skill(args), {
+					targetType: 'skill',
+					getTargetId: (a) => (a.skill_id as string) ?? null,
+					undoable: true,
+					// Capture the skill's current enabled state BEFORE the toggle.
+					preCapture: async () => {
+						if (!config.skillsManager) return null;
+						const skill = config.skillsManager.getSkill(args.skill_id);
+						return skill ? { skillId: skill.id, previousEnabled: skill.enabled } : null;
+					},
+				})
 		),
 
 		// ── App settings ──────────────────────────────────────────────────────
@@ -2072,7 +2383,29 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.optional()
 					.describe('Maximum number of concurrent worker sessions per room agent'),
 			},
-			(args) => handlers.update_app_settings(args)
+			(args) =>
+				logged(
+					'update_app_settings',
+					args as Record<string, unknown>,
+					() => handlers.update_app_settings(args),
+					{
+						targetType: 'settings',
+						undoable: true,
+						// Capture only the settings fields being changed BEFORE the update.
+						preCapture: async () => {
+							if (!config.settingsManager) return null;
+							const current = config.settingsManager.getGlobalSettings();
+							const previous: Record<string, unknown> = {};
+							if (args.model !== undefined) previous.model = current.model ?? null;
+							if (args.thinking_level !== undefined)
+								previous.thinkingLevel = current.thinkingLevel ?? null;
+							if (args.auto_scroll !== undefined) previous.autoScroll = current.autoScroll ?? null;
+							if (args.max_concurrent_workers !== undefined)
+								previous.maxConcurrentWorkers = current.maxConcurrentWorkers ?? null;
+							return Object.keys(previous).length > 0 ? { previousSettings: previous } : null;
+						},
+					}
+				)
 		),
 
 		// ── Messaging & session control ───────────────────────────────────────
@@ -2083,7 +2416,17 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				room_id: z.string().describe('ID of the room to send the message to'),
 				message: z.string().describe('Message content to inject into the session'),
 			},
-			(args) => handlers.send_message_to_room(args)
+			// Non-undoable: messages injected into agent sessions may have been acted upon.
+			(args) =>
+				logged(
+					'send_message_to_room',
+					args as Record<string, unknown>,
+					() => handlers.send_message_to_room(args),
+					{
+						targetType: 'room',
+						getTargetId: (a) => (a.room_id as string) ?? null,
+					}
+				)
 		),
 
 		tool(
@@ -2094,7 +2437,17 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				task_id: z.string().describe('ID of the task whose session to send the message to'),
 				message: z.string().describe('Message content to inject into the task session'),
 			},
-			(args) => handlers.send_message_to_task(args)
+			// Non-undoable: messages injected into agent sessions may have been acted upon.
+			(args) =>
+				logged(
+					'send_message_to_task',
+					args as Record<string, unknown>,
+					() => handlers.send_message_to_task(args),
+					{
+						targetType: 'task',
+						getTargetId: (a) => (a.task_id as string) ?? null,
+					}
+				)
 		),
 
 		tool(
@@ -2104,7 +2457,12 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				room_id: z.string().describe('ID of the room containing the task'),
 				task_id: z.string().describe('ID of the task whose session to stop'),
 			},
-			(args) => handlers.stop_session(args)
+			// Non-undoable: session interruption may have cascading side effects.
+			(args) =>
+				logged('stop_session', args as Record<string, unknown>, () => handlers.stop_session(args), {
+					targetType: 'task',
+					getTargetId: (a) => (a.task_id as string) ?? null,
+				})
 		),
 
 		tool(
@@ -2114,7 +2472,16 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				room_id: z.string().describe('ID of the room containing the goal'),
 				goal_id: z.string().describe('ID of the recurring goal to pause'),
 			},
-			(args) => handlers.pause_schedule(args)
+			(args) =>
+				logged(
+					'pause_schedule',
+					args as Record<string, unknown>,
+					() => handlers.pause_schedule(args),
+					{
+						targetType: 'goal',
+						getTargetId: (a) => (a.goal_id as string) ?? null,
+					}
+				)
 		),
 
 		tool(
@@ -2124,7 +2491,16 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				room_id: z.string().describe('ID of the room containing the goal'),
 				goal_id: z.string().describe('ID of the recurring goal to resume'),
 			},
-			(args) => handlers.resume_schedule(args)
+			(args) =>
+				logged(
+					'resume_schedule',
+					args as Record<string, unknown>,
+					() => handlers.resume_schedule(args),
+					{
+						targetType: 'goal',
+						getTargetId: (a) => (a.goal_id as string) ?? null,
+					}
+				)
 		),
 	];
 

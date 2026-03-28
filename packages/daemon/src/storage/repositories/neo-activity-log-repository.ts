@@ -38,6 +38,16 @@ export interface InsertNeoActivityParams {
 	undoData?: string | null;
 }
 
+export interface UpdateNeoActivityParams {
+	output?: string | null;
+	status?: 'success' | 'error' | 'cancelled';
+	error?: string | null;
+	targetType?: string | null;
+	targetId?: string | null;
+	undoable?: boolean;
+	undoData?: string | null;
+}
+
 export interface ListNeoActivityParams {
 	/** Number of entries to return (default: 50) */
 	limit?: number;
@@ -183,5 +193,81 @@ export class NeoActivityLogRepository {
 			)
 			.get() as ActivityRow | undefined;
 		return row ? rowToEntry(row) : null;
+	}
+
+	/**
+	 * Update an existing log entry by ID. Only the provided fields are changed.
+	 * Returns the updated entry, or null if the entry does not exist.
+	 */
+	update(id: string, params: UpdateNeoActivityParams): NeoActivityLogEntry | null {
+		const setClauses: string[] = [];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const values: any[] = [];
+
+		if (params.output !== undefined) {
+			setClauses.push('output = ?');
+			values.push(params.output);
+		}
+		if (params.status !== undefined) {
+			setClauses.push('status = ?');
+			values.push(params.status);
+		}
+		if (params.error !== undefined) {
+			setClauses.push('error = ?');
+			values.push(params.error);
+		}
+		if (params.targetType !== undefined) {
+			setClauses.push('target_type = ?');
+			values.push(params.targetType);
+		}
+		if (params.targetId !== undefined) {
+			setClauses.push('target_id = ?');
+			values.push(params.targetId);
+		}
+		if (params.undoable !== undefined) {
+			setClauses.push('undoable = ?');
+			values.push(params.undoable ? 1 : 0);
+		}
+		if (params.undoData !== undefined) {
+			setClauses.push('undo_data = ?');
+			values.push(params.undoData);
+		}
+
+		if (setClauses.length === 0) return this.getById(id);
+
+		values.push(id);
+		this.db
+			.prepare(`UPDATE neo_activity_log SET ${setClauses.join(', ')} WHERE id = ?`)
+			.run(...values);
+		return this.getById(id);
+	}
+
+	/**
+	 * Prune old entries to keep the table within retention limits:
+	 * 1. Delete entries older than 30 days.
+	 * 2. Trim to at most 10,000 rows (keeping the newest).
+	 *
+	 * Returns the total number of rows deleted.
+	 */
+	pruneOldEntries(): number {
+		const byAge = this.db
+			.prepare(
+				`DELETE FROM neo_activity_log
+         WHERE created_at < datetime('now', '-30 days')`
+			)
+			.run();
+
+		const byCount = this.db
+			.prepare(
+				`DELETE FROM neo_activity_log
+         WHERE id NOT IN (
+           SELECT id FROM neo_activity_log
+           ORDER BY created_at DESC, id DESC
+           LIMIT 10000
+         )`
+			)
+			.run();
+
+		return Number(byAge.changes) + Number(byCount.changes);
 	}
 }
