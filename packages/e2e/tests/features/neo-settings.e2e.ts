@@ -16,7 +16,8 @@
  * Setup: no room needed; tests the Global Settings > Neo Agent panel directly.
  */
 
-import { test, expect, type Page } from '../../fixtures';
+import { test, expect } from '../../fixtures';
+import type { Page } from '@playwright/test';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
 import { openSettingsModal } from '../helpers/settings-modal-helpers';
 
@@ -41,24 +42,42 @@ async function openNeoSettings(page: Page): Promise<void> {
 
 /**
  * Return a locator for the Neo Agent section container (h3's parent div).
- * Scoping selectors to this container avoids fragile positional indexing.
+ * Scoping selectors to this container prevents cross-section interference.
  */
 function getNeoSectionLocator(page: Page) {
 	return page.locator('h3:has-text("Neo Agent")').locator('..');
 }
 
 /**
- * Return the Security Mode <select> scoped inside the Neo Agent section.
+ * Return the select for a given SettingsRow label within the Neo Agent section.
+ *
+ * SettingsRow structure:
+ *   div.flex                   ← row
+ *     div.flex-1
+ *       div.text-sm "label"    ← matched by hasText; navigate up to div.flex-1
+ *       div.text-xs "desc"
+ *     div.flex-shrink-0        ← following-sibling of div.flex-1
+ *       select                 ← the control
+ *
+ * The XPath `../following-sibling::div` walks from the label div up one level
+ * (to div.flex-1) and then to its sibling (div.flex-shrink-0), so the result
+ * is resilient to row reordering within the Neo section.
  */
-function getSecurityModeSelect(page: Page) {
-	return getNeoSectionLocator(page).locator('select').first();
+function getSelectByLabel(page: Page, label: string) {
+	return getNeoSectionLocator(page)
+		.locator('div', { hasText: new RegExp(`^${label}$`) })
+		.locator('xpath=../following-sibling::div')
+		.locator('select');
 }
 
-/**
- * Return the Model <select> scoped inside the Neo Agent section.
- */
+/** Security Mode <select> — identified by its row label. */
+function getSecurityModeSelect(page: Page) {
+	return getSelectByLabel(page, 'Security Mode');
+}
+
+/** Model <select> — identified by its row label. */
 function getModelSelect(page: Page) {
-	return getNeoSectionLocator(page).locator('select').nth(1);
+	return getSelectByLabel(page, 'Model');
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
