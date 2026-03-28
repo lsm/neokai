@@ -1,14 +1,20 @@
 /**
  * Comprehensive Space Navigation E2E Tests
  *
- * Exercises the full two-layer space navigation flow:
- * - Level 1 (spaces list): NavRail → SpaceContextPanel in sidebar
- * - Level 2 (space detail): SpaceDetailPanel with Dashboard, Space Agent, Tasks
- * - Agent chat: SpaceDetailPanel "Space Agent" → ChatContainer in content area
- * - Dashboard: SpaceDetailPanel "Dashboard" → tabbed view with 4 clickable tabs
- * - Task drill-down: task click → full-width task pane → back → tabs return
- * - Back navigation: Level 2 → Level 1 via back button
- * - Deep link: direct navigation to /space/:id/agent
+ * Exercises navigation paths that are NOT fully covered by the narrower test files:
+ * - Space Agent: click "Space Agent" in SpaceDetailPanel → ChatContainer renders + active state
+ * - Dashboard tab cycling: all 4 tabs (Dashboard/Agents/Workflows/Settings) are clickable
+ * - Deep link: direct /space/:id/agent loads space with agent chat
+ *
+ * Also provides integration-level coverage for the two-layer nav flow as a single chain:
+ * - Level 1→2: NavRail → SpaceContextPanel → click space → SpaceDetailPanel
+ * - Task drill-down: create task → click → full-width pane → back → tabs return
+ * - Level 2→1: back button → SpaceContextPanel + SpacesPage content
+ *
+ * Note: Space Agent and Dashboard use `data-testid="space-detail-agent"` /
+ * `data-testid="space-detail-dashboard"` selectors to disambiguate the sidebar
+ * pinned buttons from the SpaceIsland tab-bar buttons, which have identical
+ * accessible names ("Dashboard", "Agents", etc.) but live in different DOM regions.
  *
  * Setup: creates a space via RPC in beforeEach (infrastructure)
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
@@ -19,6 +25,12 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-hel
 import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
+
+// Locator helpers — the sidebar and tab bar share the same button names, so we
+// use data-testid for the sidebar pinned items to avoid ambiguity.
+// "Agents" only exists in the tab bar (not the sidebar), so it is the canonical
+// signal for "tab bar visible" / "tab bar hidden".
+const TAB_BAR_SIGNAL = 'Agents'; // exists only in SpaceIsland tab bar
 
 test.describe('Comprehensive Space Navigation', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
@@ -43,7 +55,7 @@ test.describe('Comprehensive Space Navigation', () => {
 	});
 
 	// ---------------------------------------------------------------------------
-	// Level 1 → Level 2 transition
+	// Level 1 → Level 2 transition (integration chain)
 	// ---------------------------------------------------------------------------
 
 	test('Level 1→2: NavRail Spaces → SpaceContextPanel → click space → SpaceDetailPanel', async ({
@@ -52,12 +64,10 @@ test.describe('Comprehensive Space Navigation', () => {
 		// Navigate to Spaces via NavRail
 		await page.getByRole('button', { name: 'Spaces', exact: true }).click();
 
-		// SpaceContextPanel should be showing (Create Space button present)
+		// SpaceContextPanel visible: "Create Space" button present
 		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
-
-		// Level 1 heading visible
 		await expect(page.getByRole('heading', { name: 'Spaces', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
@@ -65,102 +75,95 @@ test.describe('Comprehensive Space Navigation', () => {
 		// Back button should NOT be visible at Level 1
 		await expect(page.getByTitle('Back to Spaces')).not.toBeVisible();
 
-		// Click the created space in the list to drill into Level 2
-		await page.getByText(spaceName).click();
+		// Click the created space to drill into Level 2
+		await page.getByText(spaceName, { exact: true }).click();
 
-		// SpaceDetailPanel should now show the two pinned items
-		await expect(page.getByText('Dashboard')).toBeVisible({ timeout: 10000 });
-		await expect(page.getByText('Space Agent')).toBeVisible({ timeout: 5000 });
+		// SpaceDetailPanel: pinned sidebar items visible
+		await expect(page.locator('[data-testid="space-detail-dashboard"]')).toBeVisible({
+			timeout: 10000,
+		});
+		await expect(page.locator('[data-testid="space-detail-agent"]')).toBeVisible({ timeout: 5000 });
 
-		// Back button should be present
+		// Back button present and space name in header
 		await expect(page.getByTitle('Back to Spaces')).toBeVisible({ timeout: 5000 });
-
-		// Space name should appear in the ContextPanel header
 		await expect(page.getByRole('heading', { name: spaceName })).toBeVisible({ timeout: 5000 });
 	});
 
 	// ---------------------------------------------------------------------------
-	// Space Agent
+	// Space Agent navigation + active state
 	// ---------------------------------------------------------------------------
 
-	test('Space Agent: click in SpaceDetailPanel → ChatContainer renders → agent highlighted', async ({
-		page,
-	}) => {
-		// Navigate directly into the space
+	test('Space Agent: click → ChatContainer renders → sidebar item is active', async ({ page }) => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Verify tabbed dashboard is the default view
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		// Tab bar visible by default
+		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 
-		// Click "Space Agent" in SpaceDetailPanel sidebar
-		await page.getByRole('button', { name: 'Space Agent', exact: true }).click();
+		// Click "Space Agent" via the sidebar data-testid (avoids name ambiguity)
+		await page.locator('[data-testid="space-detail-agent"]').click();
 
-		// URL should update to the agent route
+		// URL updates to agent sub-route
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
 
-		// ChatContainer must be rendered — the message textarea is the canonical signal
+		// ChatContainer rendered — message textarea is the canonical signal
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Tab bar should be hidden (ChatContainer replaced it)
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible();
+		// Tab bar hidden (Agents tab button only exists in tab bar)
+		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).not.toBeVisible();
 
-		// "Space Agent" item should be visually highlighted (has bg-dark-700 active class)
-		// We verify it exists in the sidebar and does NOT look like an inactive item
-		const spaceAgentBtn = page.getByRole('button', { name: 'Space Agent', exact: true });
-		await expect(spaceAgentBtn).toBeVisible();
-		await expect(spaceAgentBtn).toHaveClass(/bg-dark-700/);
+		// Sidebar "Space Agent" item should report active state via data-active attribute
+		await expect(page.locator('[data-testid="space-detail-agent"]')).toHaveAttribute(
+			'data-active',
+			'true'
+		);
 	});
 
 	// ---------------------------------------------------------------------------
-	// Dashboard
+	// Dashboard: click returns to tabbed view + all 4 tabs clickable
 	// ---------------------------------------------------------------------------
 
-	test('Dashboard: click in SpaceDetailPanel → tabbed view returns → 4 tabs clickable', async ({
-		page,
-	}) => {
-		// Start in agent view so we can verify Dashboard click returns to tabs
+	test('Dashboard: click → tabbed view returns → all 4 tabs clickable', async ({ page }) => {
+		// Start in agent view so clicking Dashboard exercises the navigation
 		await page.goto(`/space/${spaceId}/agent`);
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
 
-		// Confirm we're in chat (no tab bar)
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible({
+		// Confirm tab bar is gone
+		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).not.toBeVisible({
 			timeout: 5000,
 		});
 
-		// Click "Dashboard" pinned item in SpaceDetailPanel
-		await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+		// Click the Dashboard pinned item via data-testid
+		await page.locator('[data-testid="space-detail-dashboard"]').click();
 
-		// URL should return to base space route
+		// URL returns to base space route
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// All 4 tab buttons should now be visible and clickable
+		// All 4 tab buttons should now be visible and individually clickable
 		for (const tabName of ['Dashboard', 'Agents', 'Workflows', 'Settings']) {
 			const tab = page.getByRole('button', { name: tabName, exact: true });
 			await expect(tab).toBeVisible({ timeout: 5000 });
 			await tab.click();
-			// Each tab should remain selected (no crash)
 			await expect(tab).toBeVisible({ timeout: 2000 });
 		}
 	});
 
 	// ---------------------------------------------------------------------------
-	// Task navigation
+	// Task drill-down (integration chain)
 	// ---------------------------------------------------------------------------
 
-	test('Task: click task → full-width task view → back → tabs return', async ({ page }) => {
-		// Navigate to the space dashboard
+	test('Task: click task → full-width pane → back → tabs return', async ({ page }) => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 
-		// Create a task via the Quick Action button
+		// Create a task via Quick Action
 		const taskTitle = `Nav Task ${Date.now()}`;
 		await page.getByRole('button', { name: 'Create Task' }).first().click();
 
@@ -169,34 +172,25 @@ test.describe('Comprehensive Space Navigation', () => {
 		await dialog.getByPlaceholder('e.g., Implement authentication module').fill(taskTitle);
 		await dialog.getByRole('button', { name: 'Create Task' }).click();
 
-		// Wait for the task to appear
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
-		// Tab bar visible before drilling into task
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible();
-
-		// Click the task title (first match) to open full-width task pane
+		// Click task to open full-width pane
 		await page.getByText(taskTitle, { exact: true }).first().click();
 		await page.waitForURL(`/space/${spaceId}/task/**`, { timeout: 5000 });
 
-		// Full-width task pane should render
+		// Full-width task pane rendered
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 3000 });
 
-		// Tab bar should be hidden while task view is active
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible();
+		// Tab bar hidden (Agents only exists in tab bar)
+		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).not.toBeVisible();
 
-		// Click the back button in the task pane header
+		// Back button in task pane returns to tab view
 		await page.locator('[data-testid="task-back-button"]').click();
-
-		// Should return to the base space route
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 5000 });
 
-		// Tab bar should be visible again
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).toBeVisible({
 			timeout: 3000,
 		});
-
-		// Task pane should be gone
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
 	});
 
@@ -204,35 +198,25 @@ test.describe('Comprehensive Space Navigation', () => {
 	// Level 2 → Level 1 back navigation
 	// ---------------------------------------------------------------------------
 
-	test('Level 2→1: back button in ContextPanel header → SpaceContextPanel + SpacesPage', async ({
-		page,
-	}) => {
-		// Start inside the space at Level 2
+	test('Level 2→1: back button → SpaceContextPanel + SpacesPage content', async ({ page }) => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Confirm we're at Level 2 — SpaceDetailPanel is visible
 		await expect(page.getByTitle('Back to Spaces')).toBeVisible({ timeout: 10000 });
-		await expect(page.getByRole('heading', { name: spaceName })).toBeVisible({ timeout: 5000 });
 
-		// Click the back button in the ContextPanel header
+		// Click back
 		await page.getByTitle('Back to Spaces').click();
 
-		// Level 1 should be restored: SpaceContextPanel with Create Space button
+		// Level 1 restored
 		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
-
-		// Level 1 heading should be visible
 		await expect(page.getByRole('heading', { name: 'Spaces', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
-
-		// Back button should be gone
 		await expect(page.getByTitle('Back to Spaces')).not.toBeVisible();
 
-		// Content area should show the global spaces agent chat (SpacesPage)
-		// SpacesPage renders ChatContainer with 'spaces:global' session — look for message input
+		// SpacesPage renders the global spaces agent chat
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 	});
@@ -242,22 +226,23 @@ test.describe('Comprehensive Space Navigation', () => {
 	// ---------------------------------------------------------------------------
 
 	test('deep link /space/:id/agent → space loads with ChatContainer', async ({ page }) => {
-		// Navigate directly to the agent sub-route (no prior navigation)
 		await page.goto(`/space/${spaceId}/agent`);
-		await waitForWebSocketConnected(page);
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
 
-		// ContextPanel should be at Level 2 — space name in header
+		// Wait for WS after hard navigation
+		await waitForWebSocketConnected(page);
+
+		// ContextPanel at Level 2 — space name in header
 		await expect(page.getByRole('heading', { name: spaceName })).toBeVisible({ timeout: 10000 });
 
-		// SpaceDetailPanel pinned items should be visible
-		await expect(page.getByText('Space Agent')).toBeVisible({ timeout: 5000 });
+		// SpaceDetailPanel sidebar items visible
+		await expect(page.locator('[data-testid="space-detail-agent"]')).toBeVisible({ timeout: 5000 });
 
-		// Content area must show ChatContainer
+		// ChatContainer rendered
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Tab bar should NOT be visible (ChatContainer is active)
-		await expect(page.getByRole('button', { name: 'Agents', exact: true })).not.toBeVisible();
+		// Tab bar hidden
+		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).not.toBeVisible();
 	});
 });

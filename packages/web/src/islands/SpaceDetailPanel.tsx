@@ -242,6 +242,8 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 			{/* Pinned items */}
 			<button
 				onClick={handleDashboardClick}
+				data-testid="space-detail-dashboard"
+				data-active={isDashboardSelected ? 'true' : 'false'}
 				class={cn(
 					'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors',
 					isDashboardSelected ? 'bg-dark-700' : 'hover:bg-dark-800'
@@ -267,6 +269,8 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 			<button
 				onClick={handleSpaceAgentClick}
+				data-testid="space-detail-agent"
+				data-active={isSpaceAgentSelected ? 'true' : 'false'}
 				class={cn(
 					'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors',
 					isSpaceAgentSelected ? 'bg-dark-700' : 'hover:bg-dark-800'
