@@ -234,7 +234,7 @@ describe('SpaceTaskPane', () => {
 		expect(mockSubscribeTaskActivity).toHaveBeenCalledWith('task-1');
 		expect(getByText('Agent Activity')).toBeTruthy();
 		expect(getAllByText('Task Agent').length).toBeGreaterThan(0);
-		expect(getByText('Reviewing the latest direction')).toBeTruthy();
+		expect(getAllByText('Reviewing the latest direction').length).toBeGreaterThan(0);
 		expect(getByText('Messages')).toBeTruthy();
 		expect(getByText('3')).toBeTruthy();
 	});
@@ -289,7 +289,7 @@ describe('SpaceTaskPane', () => {
 	it('renders current step when present', () => {
 		mockTasks.value = [makeTask({ currentStep: 'Running linter' })];
 		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText("What's Happening")).toBeTruthy();
+		expect(getByText('Conversation')).toBeTruthy();
 		expect(getAllByText('Running linter').length).toBeGreaterThan(0);
 	});
 
@@ -310,9 +310,9 @@ describe('SpaceTaskPane', () => {
 
 	it('renders result section when result exists', () => {
 		mockTasks.value = [makeTask({ result: 'Build succeeded' })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('Result')).toBeTruthy();
-		expect(getByText('Build succeeded')).toBeTruthy();
+		expect(getAllByText('Build succeeded').length).toBeGreaterThan(0);
 	});
 
 	it('renders error section when error exists', () => {
@@ -421,12 +421,16 @@ describe('SpaceTaskPane', () => {
 				inputDraft: 'Shift the dashboard toward tasks and make the next action obvious.',
 			}),
 		];
-		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		expect(getByText('Latest Human Handoff')).toBeTruthy();
+		const { getByText, getAllByText, getByTestId } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+		expect(getByText('Conversation')).toBeTruthy();
 		expect(
 			getByText('Shift the dashboard toward tasks and make the next action obvious.')
 		).toBeTruthy();
 		expect(getByText('Your response was sent. Waiting for agent follow-up.')).toBeTruthy();
+		expect(getByText('This task is currently handled through Space Agent.')).toBeTruthy();
+		expect(getByTestId('open-space-agent-btn')).toBeTruthy();
 		expect(
 			getAllByText(
 				'Your response was saved. Open the space agent to continue the conversation while this task resumes.'
