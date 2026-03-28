@@ -61,6 +61,7 @@ ROOM_FILES=(
   room-reviewer-flow.test.ts
   room-tick-job.test.ts
   short-id-flow.test.ts
+  reviewer-leader-subagents.test.ts
 )
 
 FEATURES_FILES=(
@@ -74,6 +75,11 @@ FEATURES_FILES=(
 PROVIDERS_FILES=(
   anthropic-to-copilot-bridge-provider.test.ts
   anthropic-to-codex-bridge-provider.test.ts  # CI shard disabled — kept here so validator doesn't flag it
+)
+
+CROSS_PROVIDER_FILES=(
+  conversation-continuity-after-switch.test.ts
+  cross-provider-model-switch.test.ts
 )
 
 check_split_module() {
@@ -118,6 +124,7 @@ check_split_module "rpc" "${RPC_FILES[@]}"
 check_split_module "room" "${ROOM_FILES[@]}"
 check_split_module "features" "${FEATURES_FILES[@]}"
 check_split_module "providers" "${PROVIDERS_FILES[@]}"
+check_split_module "cross-provider" "${CROSS_PROVIDER_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).
