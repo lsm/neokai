@@ -55,6 +55,7 @@ import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
 import type { Database } from '../../../storage/database';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { DaemonHub } from '../../daemon-hub';
 import type { SessionManager } from '../../session-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -90,6 +91,8 @@ export interface TaskAgentManagerConfig {
 	db: Database;
 	/** SessionManager — used to delete sessions during cleanup */
 	sessionManager: SessionManager;
+	/** Reactive DB invalidation hooks for LiveQuery-backed task activity */
+	reactiveDb?: ReactiveDatabase;
 	/** Space manager — used to look up spaces */
 	spaceManager: SpaceManager;
 	/** Space agent manager — used to look up agents for context */
@@ -330,7 +333,11 @@ export class TaskAgentManager {
 			);
 
 			// --- Build the SpaceTaskManager for this space (needed by tool handlers)
-			const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
+			const taskManager = new SpaceTaskManager(
+				this.config.db.getDatabase(),
+				spaceId,
+				this.config.reactiveDb
+			);
 
 			// --- Build and attach MCP server with live runtime dependencies
 			const subSessionFactory = this.createSubSessionFactory(taskId);
@@ -917,7 +924,11 @@ export class TaskAgentManager {
 			try {
 				const spaceId = this.getSpaceIdForTask(taskId);
 				if (spaceId) {
-					const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
+					const taskManager = new SpaceTaskManager(
+						this.config.db.getDatabase(),
+						spaceId,
+						this.config.reactiveDb
+					);
 					await taskManager.setTaskStatus(stepTask.id, 'completed');
 				}
 			} catch (err) {
@@ -1063,7 +1074,11 @@ export class TaskAgentManager {
 		})();
 
 		// --- Build the SpaceTaskManager for this space
-		const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
+		const taskManager = new SpaceTaskManager(
+			this.config.db.getDatabase(),
+			spaceId,
+			this.config.reactiveDb
+		);
 
 		// --- Build and attach MCP server (runtime-only, not persisted)
 		const subSessionFactory = this.createSubSessionFactory(taskId);

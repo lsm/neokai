@@ -17,6 +17,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
@@ -37,6 +38,7 @@ export interface SpaceRuntimeServiceConfig {
 	spaceWorkflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	reactiveDb?: ReactiveDatabase;
 	/**
 	 * Optional Task Agent Manager to wire into the underlying SpaceRuntime.
 	 *
@@ -203,7 +205,7 @@ export class SpaceRuntimeService {
 			workflowManager: spaceWorkflowManager,
 			taskRepo,
 			workflowRunRepo,
-			taskManager: new SpaceTaskManager(db, space.id),
+			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,
 			taskAgentManager: this.taskAgentManager,
 		});
