@@ -1055,7 +1055,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'list_goals',
-			'List goals in this room. Use compact:true and limit/offset to reduce payload size when there are many goals.',
+			'List goals in this room. Filterable by status. Use compact:true and limit/offset to reduce payload size when there are many goals.',
 			{
 				status: z
 					.enum(['active', 'needs_human', 'completed', 'archived'])
@@ -1153,7 +1153,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'list_tasks',
-			'List tasks in this room, optionally filtered by goal. Use compact:true and limit/offset to reduce payload size.',
+			'List tasks in this room. Filterable by goal, status. Use compact:true and limit/offset to reduce payload size.',
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z
@@ -1387,7 +1387,7 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 	const tools = [
 		tool(
 			'list_goals',
-			'List goals in this room. Use compact:true and limit/offset to reduce payload size when there are many goals.',
+			'List goals in this room. Filterable by status. Use compact:true and limit/offset to reduce payload size when there are many goals.',
 			{
 				status: z
 					.enum(['active', 'needs_human', 'completed', 'archived'])
@@ -1420,7 +1420,7 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 		),
 		tool(
 			'list_tasks',
-			'List tasks in this room, optionally filtered by goal. Use compact:true and limit/offset to reduce payload size.',
+			'List tasks in this room. Filterable by goal, status. Use compact:true and limit/offset to reduce payload size.',
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z

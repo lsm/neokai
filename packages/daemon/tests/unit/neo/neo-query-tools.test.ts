@@ -1425,6 +1425,7 @@ describe('list_goals', () => {
 	it('returns empty array when no goals exist', async () => {
 		const handlers = createNeoQueryToolHandlers(makeConfig());
 		const result = parseResult(await handlers.list_goals({}));
+		expect(result.success).toBe(true);
 		expect(result.total).toBe(0);
 		expect(result.goals).toEqual([]);
 	});
@@ -1569,8 +1570,8 @@ describe('list_goals', () => {
 	});
 
 	it('returns compact fields when compact:true', async () => {
-		const room = makeRoom();
-		const goal = makeGoal({ id: 'g1', title: 'My Goal' });
+		const room = makeRoom({ id: 'room-1' });
+		const goal = makeGoal({ id: 'g1', title: 'My Goal', roomId: 'room-1' });
 		const handlers = createNeoQueryToolHandlers(
 			makeConfig({
 				roomManager: makeRoomManager([room]),
@@ -1582,6 +1583,7 @@ describe('list_goals', () => {
 		expect(result.total).toBe(1);
 		const goals = result.goals as Array<Record<string, unknown>>;
 		expect(goals[0].id).toBe('g1');
+		expect(goals[0].roomId).toBe('room-1');
 		expect(goals[0].title).toBe('My Goal');
 		expect(goals[0].status).toBeDefined();
 		expect(goals[0].priority).toBeDefined();
@@ -1793,6 +1795,7 @@ describe('list_tasks', () => {
 	it('returns empty array when no tasks exist', async () => {
 		const handlers = createNeoQueryToolHandlers(makeConfig());
 		const result = parseResult(await handlers.list_tasks({}));
+		expect(result.success).toBe(true);
 		expect(result.total).toBe(0);
 		expect(result.tasks).toEqual([]);
 	});

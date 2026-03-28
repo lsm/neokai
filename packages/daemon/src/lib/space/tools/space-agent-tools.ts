@@ -580,7 +580,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'list_tasks',
-			'List SpaceTasks for this space. Use compact:true and limit/offset to reduce payload size.',
+			'List SpaceTasks for this space. Filterable by status and workflow run. Use compact:true and limit/offset to reduce payload size.',
 			{
 				status: z
 					.enum([

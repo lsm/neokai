@@ -622,7 +622,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'list_tasks',
-			'List tasks in a space. Use compact:true and limit/offset to reduce payload size.',
+			'List tasks in a space. Filterable by space, status, and workflow run. Use compact:true and limit/offset to reduce payload size.',
 			{
 				space_id: z
 					.string()

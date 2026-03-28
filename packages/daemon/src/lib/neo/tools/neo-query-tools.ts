@@ -735,16 +735,17 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			if (args.compact) {
 				const compactGoals = paged.map((g) => ({
 					id: g.id,
+					roomId: g.roomId,
 					title: g.title,
 					status: g.status,
 					priority: g.priority,
 					missionType: g.missionType,
 					createdAt: g.createdAt,
 				}));
-				return jsonResult({ total, goals: compactGoals });
+				return jsonResult({ success: true, total, goals: compactGoals });
 			}
 
-			return jsonResult({ total, goals: paged });
+			return jsonResult({ success: true, total, goals: paged });
 		},
 
 		/**
@@ -927,10 +928,10 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 					assignedAgent: t.assignedAgent,
 					createdAt: t.createdAt,
 				}));
-				return jsonResult({ total, tasks: compactTasks });
+				return jsonResult({ success: true, total, tasks: compactTasks });
 			}
 
-			return jsonResult({ total, tasks: paged });
+			return jsonResult({ success: true, total, tasks: paged });
 		},
 
 		/**
@@ -1131,7 +1132,7 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 		// Goal and task query tools
 		tool(
 			'list_goals',
-			'List goals across all rooms or a specific room. Use compact:true and limit/offset to reduce payload size.',
+			'List goals across all rooms or a specific room. Filterable by room, status, and mission type. Use compact:true and limit/offset to reduce payload size.',
 			{
 				room_id: z
 					.string()
@@ -1198,7 +1199,7 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 
 		tool(
 			'list_tasks',
-			'List tasks across all rooms or a specific room. Use compact:true and limit/offset to reduce payload size.',
+			'List tasks across all rooms or a specific room. Filterable by room, status, and assigned agent. Use compact:true and limit/offset to reduce payload size.',
 			{
 				room_id: z
 					.string()
