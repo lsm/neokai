@@ -203,7 +203,7 @@ export function setupNeoHandlers(
 	messageHub.onRequest('neo.updateSettings', async (data) => {
 		const { securityMode, model } = (data ?? {}) as {
 			securityMode?: string;
-			model?: string;
+			model?: string | null;
 		};
 
 		const updates: Record<string, unknown> = {};
@@ -218,10 +218,14 @@ export function setupNeoHandlers(
 		}
 
 		if (model !== undefined) {
-			if (typeof model !== 'string' || model.trim() === '') {
-				throw new Error('model must be a non-empty string');
+			if (model === null) {
+				// null clears the override — Neo falls back to the app's primary model
+				updates.neoModel = null;
+			} else if (typeof model !== 'string' || model.trim() === '') {
+				throw new Error('model must be a non-empty string or null');
+			} else {
+				updates.neoModel = model.trim();
 			}
-			updates.neoModel = model.trim();
 		}
 
 		if (Object.keys(updates).length === 0) {

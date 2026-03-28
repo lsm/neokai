@@ -81,21 +81,28 @@ describe('NeoSettings', () => {
 		});
 	});
 
-	it('renders security mode selector', async () => {
+	it('shows loading state before settings are fetched', () => {
+		// Never resolves — stays in loading state
+		mockGetHub.mockReturnValue(new Promise(() => {}));
+		render(<NeoSettings />);
+		expect(screen.getByText('Loading…')).toBeTruthy();
+	});
+
+	it('renders security mode selector after load', async () => {
 		render(<NeoSettings />);
 		await waitFor(() => {
 			expect(screen.getByText('Security Mode')).toBeTruthy();
 		});
 	});
 
-	it('renders model selector', async () => {
+	it('renders model selector after load', async () => {
 		render(<NeoSettings />);
 		await waitFor(() => {
 			expect(screen.getByText('Model')).toBeTruthy();
 		});
 	});
 
-	it('renders clear session button', async () => {
+	it('renders clear session button after load', async () => {
 		render(<NeoSettings />);
 		await waitFor(() => {
 			expect(screen.getByRole('button', { name: 'Clear Session' })).toBeTruthy();
@@ -138,7 +145,7 @@ describe('NeoSettings', () => {
 		});
 	});
 
-	it('calls neo.updateSettings when security mode changes', async () => {
+	it('calls neo.updateSettings and shows success toast when security mode changes', async () => {
 		const requestFn = vi.fn().mockImplementation((method) => {
 			if (method === 'neo.getSettings') {
 				return Promise.resolve({ securityMode: 'balanced', model: null });
@@ -150,7 +157,6 @@ describe('NeoSettings', () => {
 
 		render(<NeoSettings />);
 
-		// Wait for settings to load
 		await waitFor(() => {
 			expect(screen.getByText('Security Mode')).toBeTruthy();
 		});
@@ -160,10 +166,11 @@ describe('NeoSettings', () => {
 
 		await waitFor(() => {
 			expect(requestFn).toHaveBeenCalledWith('neo.updateSettings', { securityMode: 'autonomous' });
+			expect(mockToastSuccess).toHaveBeenCalledWith('Security mode updated');
 		});
 	});
 
-	it('calls neo.updateSettings when model changes', async () => {
+	it('calls neo.updateSettings and shows success toast when model changes', async () => {
 		const requestFn = vi.fn().mockImplementation((method) => {
 			if (method === 'neo.getSettings') {
 				return Promise.resolve({ securityMode: 'balanced', model: null });
@@ -184,10 +191,11 @@ describe('NeoSettings', () => {
 
 		await waitFor(() => {
 			expect(requestFn).toHaveBeenCalledWith('neo.updateSettings', { model: 'sonnet' });
+			expect(mockToastSuccess).toHaveBeenCalledWith('Model updated');
 		});
 	});
 
-	it('treats empty string model value as null when persisting', async () => {
+	it('sends model: null when "App default" is selected (clears override)', async () => {
 		const requestFn = vi.fn().mockImplementation((method) => {
 			if (method === 'neo.getSettings') {
 				return Promise.resolve({ securityMode: 'balanced', model: 'opus' });
@@ -208,7 +216,9 @@ describe('NeoSettings', () => {
 		fireEvent.change(selects[1], { target: { value: '' } });
 
 		await waitFor(() => {
+			// null is sent so the backend clears the neoModel override
 			expect(requestFn).toHaveBeenCalledWith('neo.updateSettings', { model: null });
+			expect(mockToastSuccess).toHaveBeenCalledWith('Model updated');
 		});
 	});
 
@@ -318,5 +328,33 @@ describe('NeoSettings', () => {
 			const afterSelects = screen.getAllByRole('combobox');
 			expect((afterSelects[0] as HTMLSelectElement).value).toBe('balanced');
 		});
+	});
+
+	it('model select stays enabled after a security mode update completes', async () => {
+		const requestFn = vi.fn().mockImplementation((method) => {
+			if (method === 'neo.getSettings') {
+				return Promise.resolve({ securityMode: 'balanced', model: null });
+			}
+			return Promise.resolve({ success: true });
+		});
+		const hub = { request: requestFn };
+		mockGetHub.mockResolvedValue(hub);
+
+		render(<NeoSettings />);
+
+		await waitFor(() => {
+			expect(screen.getByText('Security Mode')).toBeTruthy();
+		});
+
+		const selects = screen.getAllByRole('combobox');
+		fireEvent.change(selects[0], { target: { value: 'autonomous' } });
+
+		// After the security mode update completes, the model select should not be disabled
+		await waitFor(() => {
+			expect(mockToastSuccess).toHaveBeenCalledWith('Security mode updated');
+		});
+
+		const afterSelects = screen.getAllByRole('combobox');
+		expect((afterSelects[1] as HTMLSelectElement).disabled).toBe(false);
 	});
 });

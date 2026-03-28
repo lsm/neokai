@@ -43,7 +43,8 @@ export function NeoSettings() {
 		securityMode: 'balanced',
 		model: null,
 	});
-	const [isUpdating, setIsUpdating] = useState(false);
+	const [isUpdatingMode, setIsUpdatingMode] = useState(false);
+	const [isUpdatingModel, setIsUpdatingModel] = useState(false);
 	const [isLoading, setIsLoading] = useState(true);
 	const [showClearConfirm, setShowClearConfirm] = useState(false);
 	const [isClearing, setIsClearing] = useState(false);
@@ -83,31 +84,34 @@ export function NeoSettings() {
 		const mode = value as NeoSecurityMode;
 		const prev = settings.securityMode;
 		setSettings((s) => ({ ...s, securityMode: mode }));
-		setIsUpdating(true);
+		setIsUpdatingMode(true);
 		try {
 			const hub = await connectionManager.getHub();
 			await hub.request('neo.updateSettings', { securityMode: mode });
+			toast.success('Security mode updated');
 		} catch {
 			toast.error('Failed to update security mode');
 			setSettings((s) => ({ ...s, securityMode: prev }));
 		} finally {
-			setIsUpdating(false);
+			setIsUpdatingMode(false);
 		}
 	};
 
 	const handleModelChange = async (value: string) => {
+		// Empty string means "app default" — send null to clear the override
 		const model = value === '' ? null : value;
 		const prev = settings.model;
 		setSettings((s) => ({ ...s, model }));
-		setIsUpdating(true);
+		setIsUpdatingModel(true);
 		try {
 			const hub = await connectionManager.getHub();
 			await hub.request('neo.updateSettings', { model });
+			toast.success('Model updated');
 		} catch {
 			toast.error('Failed to update Neo model');
 			setSettings((s) => ({ ...s, model: prev }));
 		} finally {
-			setIsUpdating(false);
+			setIsUpdatingModel(false);
 		}
 	};
 
@@ -130,6 +134,14 @@ export function NeoSettings() {
 
 	const selectedMode = SECURITY_MODE_OPTIONS.find((o) => o.value === settings.securityMode);
 
+	if (isLoading) {
+		return (
+			<SettingsSection title="Neo Agent">
+				<div class="text-sm text-gray-500">Loading…</div>
+			</SettingsSection>
+		);
+	}
+
 	return (
 		<SettingsSection title="Neo Agent">
 			<SettingsRow
@@ -142,7 +154,7 @@ export function NeoSettings() {
 					value={settings.securityMode}
 					onChange={handleSecurityModeChange}
 					options={SECURITY_MODE_OPTIONS}
-					disabled={isUpdating || isLoading}
+					disabled={isUpdatingMode}
 				/>
 			</SettingsRow>
 
@@ -151,7 +163,7 @@ export function NeoSettings() {
 					value={settings.model ?? ''}
 					onChange={handleModelChange}
 					options={MODEL_OPTIONS}
-					disabled={isUpdating || isLoading}
+					disabled={isUpdatingModel}
 				/>
 			</SettingsRow>
 
