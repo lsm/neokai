@@ -279,7 +279,7 @@ function makeSpaceTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 	return {
 		id: 'task-1',
 		spaceId: 'space-1',
-		spaceTaskNumber: 1,
+		taskNumber: 1,
 		title: 'Test Task',
 		description: 'A test task',
 		status: 'pending',
