@@ -188,7 +188,7 @@ export class NeoActivityLogRepository {
 			.prepare(
 				`SELECT * FROM neo_activity_log
          WHERE undoable = 1
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, id DESC
          LIMIT 1`
 			)
 			.get() as ActivityRow | undefined;

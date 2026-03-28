@@ -1718,8 +1718,37 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 	): Promise<ToolResult> {
 		if (!activityLogger) return fn();
 
-		const preUndoData = opts.undoable && opts.preCapture ? await opts.preCapture() : null;
-		const result = await fn();
+		// preCapture is best-effort: a capture failure must never prevent the
+		// tool from executing.
+		let preUndoData: Record<string, unknown> | null = null;
+		if (opts.undoable && opts.preCapture) {
+			try {
+				preUndoData = await opts.preCapture();
+			} catch {
+				// Swallow — proceed without undo data.
+			}
+		}
+
+		let result: ToolResult;
+		try {
+			result = await fn();
+		} catch (err) {
+			// Tool handler threw — log the failure and re-throw so the MCP layer
+			// can return an error response to the caller.
+			activityLogger.logAction({
+				toolName,
+				input: args,
+				output: null,
+				status: 'error',
+				error: err instanceof Error ? err.message : String(err),
+				targetType: opts.targetType ?? null,
+				targetId: null,
+				undoable: false,
+				undoData: undefined,
+			});
+			throw err;
+		}
+
 		const data = parseResultData(result);
 
 		// Confirmation-required responses are pending — nothing has executed yet.

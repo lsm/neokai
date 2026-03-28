@@ -623,113 +623,129 @@ describe('createNeoActionMcpServer — activity logging', () => {
 		return { config, createNeoActionMcpServer };
 	}
 
+	/** Invoke a tool through the MCP server's registered tool map. */
 	async function callTool(
 		server: ReturnType<
 			typeof import('../../../src/lib/neo/tools/neo-action-tools').createNeoActionMcpServer
 		>,
 		toolName: string,
 		args: Record<string, unknown>
-	): Promise<Record<string, unknown>> {
-		// The SDK MCP server exposes tools via a map keyed by name.
-		// Access the internal tool map to invoke the handler directly.
+	): Promise<{ content: Array<{ text: string }> }> {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const tools = (server as any)._tools as Map<
+		const reg = (server as any).instance._registeredTools as Record<
 			string,
 			{ handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }
 		>;
-		const t = tools?.get(toolName);
+		const t = reg[toolName];
 		if (!t) throw new Error(`Tool '${toolName}' not found on server`);
 		return t.handler(args);
 	}
 
-	// ── Undoable tools ────────────────────────────────────────────────────────
-
-	test('create_room: logs undoable entry with room ID as undo data', async () => {
-		const { config, createNeoActionMcpServer } = makeConfig();
-		const server = createNeoActionMcpServer(config);
-
-		// Invoke via handler directly for simplicity.
-		const { createNeoActionToolHandlers } =
-			require('../../../src/lib/neo/tools/neo-action-tools') as typeof import('../../../src/lib/neo/tools/neo-action-tools');
-		const handlers = createNeoActionToolHandlers(config);
-		// The MCP server wraps handlers with logging — but createNeoActionToolHandlers does NOT log.
-		// We need to invoke through createNeoActionMcpServer's tool callback.
-		// Since SDK wrapping is opaque, test via config.activityLogger after direct handler call
-		// to verify the logger was called from the MCP level.
-
-		// Simulate full execution path: directly call handler + verify log via config override.
-		let loggedEntry: import('../../../src/lib/neo/activity-logger').LogActionParams | null = null;
-		const spyLogger = {
-			...logger,
-			logAction: (params: import('../../../src/lib/neo/activity-logger').LogActionParams) => {
-				loggedEntry = params;
+	/** Build a spy logger that records logAction calls. */
+	function makeSpyLogger() {
+		const calls: import('../../../src/lib/neo/activity-logger').LogActionParams[] = [];
+		const spy: import('../../../src/lib/neo/activity-logger').NeoActivityLogger = {
+			logAction: (params) => {
+				calls.push(params);
 				return logger.logAction(params);
 			},
 			pruneOldEntries: () => 0,
 			getRecentActivity: () => [],
 			getLatestUndoable: () => null,
+		} as unknown as import('../../../src/lib/neo/activity-logger').NeoActivityLogger;
+		return { spy, calls };
+	}
+
+	// ── End-to-end wrapper tests ───────────────────────────────────────────────
+
+	test('create_room: logged wrapper calls logAction with success status and undo data', async () => {
+		const { config, createNeoActionMcpServer } = makeConfig();
+		const { spy, calls } = makeSpyLogger();
+		config.activityLogger = spy;
+		const server = createNeoActionMcpServer(config);
+
+		await callTool(server, 'create_room', { name: 'My Room' });
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].toolName).toBe('create_room');
+		expect(calls[0].status).toBe('success');
+		expect(calls[0].undoable).toBe(true);
+		expect(calls[0].undoData).toMatchObject({ roomId: 'new-room-id' });
+		expect(calls[0].targetType).toBe('room');
+		expect(calls[0].targetId).toBe('new-room-id');
+	});
+
+	test('toggle_skill: logged wrapper captures previous enabled state as undo data', async () => {
+		const { config, createNeoActionMcpServer } = makeConfig({ skillEnabled: false });
+		const { spy, calls } = makeSpyLogger();
+		config.activityLogger = spy;
+		const server = createNeoActionMcpServer(config);
+
+		await callTool(server, 'toggle_skill', { skill_id: 'skill-abc', enabled: true });
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].toolName).toBe('toggle_skill');
+		expect(calls[0].status).toBe('success');
+		expect(calls[0].undoable).toBe(true);
+		// preCapture should have recorded the state before the toggle (enabled=false).
+		expect(calls[0].undoData).toMatchObject({ skillId: 'skill-abc', previousEnabled: false });
+	});
+
+	test('confirmationRequired result: logged wrapper does not call logAction', async () => {
+		// Use conservative security mode so delete_room triggers a confirmationRequired response.
+		const { config, createNeoActionMcpServer } = makeConfig();
+		config.getSecurityMode = () => 'conservative';
+		const { spy, calls } = makeSpyLogger();
+		config.activityLogger = spy;
+		const server = createNeoActionMcpServer(config);
+
+		const result = await callTool(server, 'delete_room', { room_id: 'r-1' });
+		const data = JSON.parse(result.content[0].text);
+		expect(data.confirmationRequired).toBe(true);
+		// Nothing has executed — the wrapper must NOT log.
+		expect(calls).toHaveLength(0);
+	});
+
+	test('logged wrapper logs error entry and re-throws when handler throws', async () => {
+		const { config, createNeoActionMcpServer } = makeConfig();
+		const { spy, calls } = makeSpyLogger();
+		config.activityLogger = spy;
+		// Make roomManager.createRoom throw to simulate an unexpected handler error.
+		config.roomManager!.createRoom = () => {
+			throw new Error('DB connection lost');
 		};
-		config.activityLogger = spyLogger as unknown as typeof logger;
+		const server = createNeoActionMcpServer(config);
 
-		// Rebuild server with spy logger.
-		const serverWithSpy = createNeoActionMcpServer(config);
-		// Invoke create_room handler directly (bypassing MCP transport).
-		await handlers.create_room({ name: 'Test Room' });
+		await expect(callTool(server, 'create_room', { name: 'Boom' })).rejects.toThrow(
+			'DB connection lost'
+		);
 
-		// The handler itself doesn't log — the MCP wrapper does.
-		// Verify via the activity logger's actual DB entries after full invocation.
-		// Since we can't easily call through SDK MCP without full transport,
-		// we verify the logging configuration is wired correctly instead.
-		expect(config.activityLogger).toBe(spyLogger);
-		expect(serverWithSpy).toBeDefined();
+		expect(calls).toHaveLength(1);
+		expect(calls[0].toolName).toBe('create_room');
+		expect(calls[0].status).toBe('error');
+		expect(calls[0].error).toBe('DB connection lost');
+		expect(calls[0].undoable).toBe(false);
 	});
 
-	test('toggle_skill: logs undoable entry capturing previous enabled state', async () => {
-		// Use the handlers + manual logging call pattern to test undo data capture
-		const { createNeoActionToolHandlers } =
-			require('../../../src/lib/neo/tools/neo-action-tools') as typeof import('../../../src/lib/neo/tools/neo-action-tools');
-		const { config } = makeConfig({ skillEnabled: false });
+	test('logged wrapper proceeds normally when preCapture throws', async () => {
+		const { config, createNeoActionMcpServer } = makeConfig({ skillEnabled: true });
+		const { spy, calls } = makeSpyLogger();
+		config.activityLogger = spy;
+		// Make getSkill throw to simulate a preCapture failure.
+		config.skillsManager!.getSkill = () => {
+			throw new Error('lookup failed');
+		};
+		const server = createNeoActionMcpServer(config);
 
-		// Before toggle: skill is disabled (skillEnabled=false)
-		// After toggle: we enable it
-		const handlers = createNeoActionToolHandlers(config);
-		const result = await handlers.toggle_skill({ skill_id: 'skill-abc', enabled: true });
-		const data = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text);
+		// The tool should still succeed — preCapture failure must not crash the call.
+		const result = await callTool(server, 'toggle_skill', { skill_id: 'sk-1', enabled: false });
+		const data = JSON.parse(result.content[0].text);
 		expect(data.success).toBe(true);
 
-		// The undo data should capture previousEnabled=false (from before the toggle).
-		// We test this by verifying getSkill is called with the right ID during pre-capture.
-		// Since we can't easily hook the MCP wrapper, verify the skillsManager.getSkill interface.
-		expect(config.skillsManager?.getSkill('skill-abc')).toMatchObject({ enabled: false });
-	});
-
-	test('toggle_mcp_server: logs undoable entry capturing previous enabled state', async () => {
-		const { createNeoActionToolHandlers } =
-			require('../../../src/lib/neo/tools/neo-action-tools') as typeof import('../../../src/lib/neo/tools/neo-action-tools');
-		const { config } = makeConfig({ mcpEnabled: true });
-
-		const handlers = createNeoActionToolHandlers(config);
-		const result = await handlers.toggle_mcp_server({ server_id: 'mcp-abc', enabled: false });
-		const data = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text);
-		expect(data.success).toBe(true);
-
-		// Verify getMcpServer returns current state before toggle.
-		expect(config.mcpManager?.getMcpServer('mcp-abc')).toMatchObject({ enabled: true });
-	});
-
-	test('update_app_settings: logs undoable entry capturing previous settings', async () => {
-		const { createNeoActionToolHandlers } =
-			require('../../../src/lib/neo/tools/neo-action-tools') as typeof import('../../../src/lib/neo/tools/neo-action-tools');
-		const { config } = makeConfig({ settingsValue: { model: 'opus' } });
-
-		const handlers = createNeoActionToolHandlers(config);
-		// Read current settings before update.
-		const prevSettings = config.settingsManager!.getGlobalSettings();
-		expect(prevSettings.model).toBe('opus');
-
-		const result = await handlers.update_app_settings({ model: 'haiku' });
-		const data = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text);
-		expect(data.success).toBe(true);
+		// Logged but not undoable (undo data was unavailable).
+		expect(calls).toHaveLength(1);
+		expect(calls[0].status).toBe('success');
+		expect(calls[0].undoable).toBe(false);
 	});
 
 	// ── Logging infrastructure ────────────────────────────────────────────────
