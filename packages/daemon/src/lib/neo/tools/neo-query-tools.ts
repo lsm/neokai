@@ -11,6 +11,12 @@
  * - get_mcp_server_status
  * - list_skills
  * - get_skill_details
+ * - list_spaces
+ * - get_space_status
+ * - get_space_details
+ * - list_space_agents
+ * - list_space_workflows
+ * - list_space_runs
  *
  * Pattern: two-layer design (testable handlers + MCP server wrapper)
  *   createNeoQueryToolHandlers(config) → plain handler functions
@@ -27,6 +33,11 @@ import type {
 	TaskSummary,
 	AppMcpServer,
 	AppSkill,
+	Space,
+	SpaceAgent,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+	SpaceTask,
 } from '@neokai/shared';
 import { isWorkerSessionId } from '../../room/session-utils';
 
@@ -76,6 +87,35 @@ export interface NeoQuerySkillsManager {
 	getSkill(id: string): AppSkill | null;
 }
 
+// ---------------------------------------------------------------------------
+// Space-related interfaces (delegating to SpaceManager / SpaceAgentManager /
+// SpaceWorkflowManager and the workflow-run / task repositories)
+// ---------------------------------------------------------------------------
+
+export interface NeoQuerySpaceManager {
+	/** Returns all spaces, optionally including archived ones. */
+	listSpaces(includeArchived?: boolean): Space[] | Promise<Space[]>;
+	/** Returns a single space by ID, or null if not found. */
+	getSpace(id: string): Space | null | Promise<Space | null>;
+}
+
+export interface NeoQuerySpaceAgentManager {
+	listBySpaceId(spaceId: string): SpaceAgent[];
+}
+
+export interface NeoQuerySpaceWorkflowManager {
+	listWorkflows(spaceId: string): SpaceWorkflow[];
+}
+
+export interface NeoQueryWorkflowRunRepository {
+	listBySpace(spaceId: string): SpaceWorkflowRun[];
+}
+
+export interface NeoQuerySpaceTaskRepository {
+	listBySpace(spaceId: string): SpaceTask[];
+	listByStatus(spaceId: string, status: string): SpaceTask[];
+}
+
 /**
  * All dependencies required by the Neo query tools.
  */
@@ -93,6 +133,12 @@ export interface NeoToolsConfig {
 	appVersion: string;
 	/** Unix timestamp (ms) when the daemon process started */
 	startedAt: number;
+	// Space query dependencies (reuse the same manager instances as the Global Spaces Agent)
+	spaceManager: NeoQuerySpaceManager;
+	spaceAgentManager: NeoQuerySpaceAgentManager;
+	spaceWorkflowManager: NeoQuerySpaceWorkflowManager;
+	workflowRunRepository: NeoQueryWorkflowRunRepository;
+	spaceTaskRepository: NeoQuerySpaceTaskRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +178,11 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 		workspaceRoot,
 		appVersion,
 		startedAt,
+		spaceManager,
+		spaceAgentManager,
+		spaceWorkflowManager,
+		workflowRunRepository,
+		spaceTaskRepository,
 	} = config;
 
 	return {
@@ -375,6 +426,219 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				createdAt: skill.createdAt,
 			});
 		},
+
+		// -----------------------------------------------------------------------
+		// Space query tools — delegate to the same SpaceManager /
+		// SpaceAgentManager / SpaceWorkflowManager used by the Global Spaces Agent
+		// -----------------------------------------------------------------------
+
+		/**
+		 * List all spaces with summary information (agent count, workflow count).
+		 */
+		async list_spaces(args: { include_archived?: boolean }): Promise<ToolResult> {
+			const includeArchived = args.include_archived ?? false;
+			const spaces = await spaceManager.listSpaces(includeArchived);
+
+			const result = spaces.map((space) => {
+				const agents = spaceAgentManager.listBySpaceId(space.id);
+				const workflows = spaceWorkflowManager.listWorkflows(space.id);
+				return {
+					id: space.id,
+					slug: space.slug,
+					name: space.name,
+					status: space.status,
+					description: space.description,
+					agentCount: agents.length,
+					workflowCount: workflows.length,
+					defaultModel: space.defaultModel ?? null,
+					autonomyLevel: space.autonomyLevel ?? null,
+					createdAt: space.createdAt,
+					updatedAt: space.updatedAt,
+				};
+			});
+
+			return jsonResult(result);
+		},
+
+		/**
+		 * Get a space's current operational status including active runs and task counts.
+		 * Archived tasks are excluded from counts (matches UI behavior).
+		 */
+		async get_space_status(args: { space_id: string }): Promise<ToolResult> {
+			const space = await spaceManager.getSpace(args.space_id);
+			if (!space) {
+				return errorResult(`Space not found: ${args.space_id}`);
+			}
+
+			const runs = workflowRunRepository.listBySpace(space.id);
+			const activeRuns = runs.filter(
+				(r) => r.status === 'in_progress' || r.status === 'needs_attention'
+			);
+
+			// listBySpace defaults to includeArchived=false, matching the UI behavior.
+			// Archived tasks are intentionally excluded from the counts here.
+			const tasks = spaceTaskRepository.listBySpace(space.id);
+			const taskCountByStatus: Record<string, number> = {};
+			for (const task of tasks) {
+				taskCountByStatus[task.status] = (taskCountByStatus[task.status] ?? 0) + 1;
+			}
+
+			return jsonResult({
+				id: space.id,
+				slug: space.slug,
+				name: space.name,
+				status: space.status,
+				autonomyLevel: space.autonomyLevel ?? null,
+				defaultModel: space.defaultModel ?? null,
+				totalRunCount: runs.length,
+				activeRunCount: activeRuns.length,
+				totalTaskCount: tasks.length,
+				taskCountByStatus,
+				updatedAt: space.updatedAt,
+			});
+		},
+
+		/**
+		 * Get full space details including agents, workflows, and recent runs.
+		 */
+		async get_space_details(args: { space_id: string }): Promise<ToolResult> {
+			const space = await spaceManager.getSpace(args.space_id);
+			if (!space) {
+				return errorResult(`Space not found: ${args.space_id}`);
+			}
+
+			const agents = spaceAgentManager.listBySpaceId(space.id);
+			const workflows = spaceWorkflowManager.listWorkflows(space.id);
+			const runs = workflowRunRepository.listBySpace(space.id);
+
+			// Return the 10 most recent runs
+			const recentRuns = runs
+				.slice()
+				.sort((a, b) => b.createdAt - a.createdAt)
+				.slice(0, 10)
+				.map((r) => ({
+					id: r.id,
+					title: r.title,
+					status: r.status,
+					workflowId: r.workflowId,
+					createdAt: r.createdAt,
+					completedAt: r.completedAt ?? null,
+				}));
+
+			const agentsSummary = agents.map((a) => ({
+				id: a.id,
+				name: a.name,
+				role: a.role,
+				model: a.model ?? null,
+			}));
+
+			const workflowsSummary = workflows.map((w) => ({
+				id: w.id,
+				name: w.name,
+				description: w.description ?? null,
+				nodeCount: w.nodes?.length ?? 0,
+			}));
+
+			return jsonResult({
+				id: space.id,
+				slug: space.slug,
+				name: space.name,
+				status: space.status,
+				description: space.description,
+				backgroundContext: space.backgroundContext,
+				instructions: space.instructions,
+				defaultModel: space.defaultModel ?? null,
+				allowedModels: space.allowedModels ?? [],
+				autonomyLevel: space.autonomyLevel ?? null,
+				agents: agentsSummary,
+				workflows: workflowsSummary,
+				recentRuns,
+				sessionIds: space.sessionIds,
+				createdAt: space.createdAt,
+				updatedAt: space.updatedAt,
+			});
+		},
+
+		/**
+		 * List all agents configured in a space.
+		 */
+		async list_space_agents(args: { space_id: string }): Promise<ToolResult> {
+			const space = await spaceManager.getSpace(args.space_id);
+			if (!space) {
+				return errorResult(`Space not found: ${args.space_id}`);
+			}
+
+			const agents = spaceAgentManager.listBySpaceId(space.id);
+			return jsonResult(
+				agents.map((a) => ({
+					id: a.id,
+					name: a.name,
+					role: a.role,
+					description: a.description ?? null,
+					model: a.model ?? null,
+					provider: a.provider ?? null,
+					injectWorkflowContext: a.injectWorkflowContext ?? false,
+					createdAt: a.createdAt,
+					updatedAt: a.updatedAt,
+				}))
+			);
+		},
+
+		/**
+		 * List all workflows defined in a space.
+		 */
+		async list_space_workflows(args: { space_id: string }): Promise<ToolResult> {
+			const space = await spaceManager.getSpace(args.space_id);
+			if (!space) {
+				return errorResult(`Space not found: ${args.space_id}`);
+			}
+
+			const workflows = spaceWorkflowManager.listWorkflows(space.id);
+			return jsonResult(
+				workflows.map((w) => ({
+					id: w.id,
+					name: w.name,
+					description: w.description ?? null,
+					nodeCount: w.nodes?.length ?? 0,
+					tags: w.tags ?? [],
+					createdAt: w.createdAt,
+					updatedAt: w.updatedAt,
+				}))
+			);
+		},
+
+		/**
+		 * List workflow runs for a space, with their status.
+		 */
+		async list_space_runs(args: { space_id: string; status?: string }): Promise<ToolResult> {
+			const space = await spaceManager.getSpace(args.space_id);
+			if (!space) {
+				return errorResult(`Space not found: ${args.space_id}`);
+			}
+
+			let runs = workflowRunRepository.listBySpace(space.id);
+			if (args.status) {
+				runs = runs.filter((r) => r.status === args.status);
+			}
+
+			// Sort newest first
+			const sorted = runs.slice().sort((a, b) => b.createdAt - a.createdAt);
+
+			return jsonResult(
+				sorted.map((r) => ({
+					id: r.id,
+					title: r.title,
+					description: r.description ?? null,
+					status: r.status,
+					workflowId: r.workflowId,
+					goalId: r.goalId ?? null,
+					iterationCount: r.iterationCount,
+					createdAt: r.createdAt,
+					updatedAt: r.updatedAt,
+					completedAt: r.completedAt ?? null,
+				}))
+			);
+		},
 	};
 }
 
@@ -465,6 +729,69 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 				skill_id: z.string().describe('ID of the skill to query'),
 			},
 			(args) => handlers.get_skill_details(args)
+		),
+
+		// Space query tools
+		tool(
+			'list_spaces',
+			'List all spaces in the NeoKai system with summary info (id, name, status, agent count, workflow count).',
+			{
+				include_archived: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe('Include archived spaces in the results (default: false)'),
+			},
+			(args) => handlers.list_spaces(args)
+		),
+
+		tool(
+			'get_space_status',
+			'Get the current operational status of a specific space, including active workflow runs and task counts by status. Archived tasks are excluded from counts.',
+			{
+				space_id: z.string().describe('ID of the space to query'),
+			},
+			(args) => handlers.get_space_status(args)
+		),
+
+		tool(
+			'get_space_details',
+			'Get full details for a space including its agents, workflows, and recent workflow runs.',
+			{
+				space_id: z.string().describe('ID of the space to query'),
+			},
+			(args) => handlers.get_space_details(args)
+		),
+
+		tool(
+			'list_space_agents',
+			'List all agents configured in a space (name, role, model).',
+			{
+				space_id: z.string().describe('ID of the space to query'),
+			},
+			(args) => handlers.list_space_agents(args)
+		),
+
+		tool(
+			'list_space_workflows',
+			'List all workflows defined in a space.',
+			{
+				space_id: z.string().describe('ID of the space to query'),
+			},
+			(args) => handlers.list_space_workflows(args)
+		),
+
+		tool(
+			'list_space_runs',
+			'List workflow runs for a space, optionally filtered by status. Returns all matching runs (unbounded) sorted newest first.',
+			{
+				space_id: z.string().describe('ID of the space to query'),
+				status: z
+					.enum(['pending', 'in_progress', 'completed', 'cancelled', 'needs_attention'])
+					.optional()
+					.describe('Filter runs by status'),
+			},
+			(args) => handlers.list_space_runs(args)
 		),
 	];
 
