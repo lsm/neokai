@@ -3,9 +3,9 @@
  *
  * Space-specific context panel for the three-column layout.
  * Mirrors RoomContextPanel's visual structure for a space:
- * 1. Task stats strip (active · review · done counts)
+ * 1. Space activity header (no status counters)
  * 2. Pinned items: Dashboard, Space Agent
- * 3. Tasks section (single task list with active/review/done filters)
+ * 3. Tasks section (single task list with active/review filters)
  * 4. Sessions section (collapsible, default collapsed)
  */
 
@@ -21,7 +21,7 @@ import {
 import { currentSpaceSessionIdSignal, currentSpaceTaskIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
 
-type OrphanTab = 'active' | 'review' | 'done';
+type OrphanTab = 'active' | 'review';
 
 const taskStatusColors: Record<string, string> = {
 	draft: 'bg-gray-500',
@@ -71,44 +71,17 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	const [taskTab, setTaskTab] = useState<OrphanTab>('active');
 
-	// Task stats strip counts
-	// rate_limited/usage_limited are transient throttle states — counted as active (still running).
-	// archived is a terminal state — counted as done.
-	const activeCount = useMemo(
-		() =>
-			tasks.filter(
-				(t) =>
-					t.status === 'draft' ||
-					t.status === 'pending' ||
-					t.status === 'in_progress' ||
-					t.status === 'rate_limited' ||
-					t.status === 'usage_limited'
-			).length,
-		[tasks]
-	);
-	const reviewCount = useMemo(
-		() => tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention').length,
-		[tasks]
-	);
-	const doneCount = useMemo(
-		() =>
-			tasks.filter(
-				(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
-			).length,
-		[tasks]
-	);
-
 	// Selection state
 	const selectedSessionId = currentSpaceSessionIdSignal.value;
 	const selectedTaskId = currentSpaceTaskIdSignal.value;
-	const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) ?? null : null;
+	const selectedTask = selectedTaskId ? (tasks.find((t) => t.id === selectedTaskId) ?? null) : null;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
 	const isDashboardSelected = selectedSessionId === null && selectedTaskId === null;
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 
 	// Tasks filtered by tab.
-	// rate_limited/usage_limited are grouped with active; archived with done.
+	// rate_limited/usage_limited are grouped with active.
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
 		let filtered: typeof sorted;
@@ -121,12 +94,8 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					t.status === 'rate_limited' ||
 					t.status === 'usage_limited'
 			);
-		} else if (taskTab === 'review') {
-			filtered = sorted.filter((t) => t.status === 'review' || t.status === 'needs_attention');
 		} else {
-			filtered = sorted.filter(
-				(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
-			);
+			filtered = sorted.filter((t) => t.status === 'review' || t.status === 'needs_attention');
 		}
 
 		// Keep the currently open task visible even if the tab filter would hide it.
@@ -140,42 +109,30 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		return filtered;
 	}, [tasks, taskTab, selectedTaskId]);
 
-	// Build sessions list from available data sources
-	// (1) Space agent session — always listed
-	// (2) Task agent sessions linked via SpaceTask.taskAgentSessionId
-	// (3) Manually created sessions from space.sessionIds
+	// Sessions list: only manually created sessions from space.sessionIds.
+	// Excludes built-in Space Agent + task/workflow orchestration sessions.
 	const sessions = useMemo(() => {
-		const list: { id: string; title: string; isAgent: boolean }[] = [];
+		const list: { id: string; title: string }[] = [];
 		const seen = new Set<string>();
+		const isSystemSpaceSession = (sid: string): boolean =>
+			sid === spaceAgentSessionId ||
+			sid.startsWith(`space:${spaceId}:task:`) ||
+			sid.startsWith(`space:${spaceId}:workflow:`);
 
-		// Always include space agent session
-		list.push({ id: spaceAgentSessionId, title: 'Space Agent', isAgent: true });
-		seen.add(spaceAgentSessionId);
-
-		// Task agent sessions
-		for (const task of tasks) {
-			if (task.taskAgentSessionId && !seen.has(task.taskAgentSessionId)) {
-				list.push({
-					id: task.taskAgentSessionId,
-					title: `${task.title} (agent)`,
-					isAgent: true,
-				});
-				seen.add(task.taskAgentSessionId);
-			}
-		}
-
-		// Manually created sessions from space.sessionIds
 		if (space?.sessionIds) {
 			for (const sid of space.sessionIds) {
+				if (isSystemSpaceSession(sid)) {
+					continue;
+				}
 				if (!seen.has(sid)) {
-					list.push({ id: sid, title: sid.slice(0, 8), isAgent: false });
+					list.push({ id: sid, title: sid.slice(0, 8) });
 					seen.add(sid);
 				}
 			}
 		}
 
 		return list;
-	}, [tasks, space, spaceAgentSessionId]);
+	}, [space, spaceAgentSessionId, spaceId]);
 
 	// Navigation handlers
 	const handleDashboardClick = () => {
@@ -198,35 +155,20 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		onNavigate?.();
 	};
 
-	const hasTasks = activeCount > 0 || reviewCount > 0 || doneCount > 0;
-
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
 			<div class="px-3 pt-3 pb-2 space-y-3 border-b border-dark-800">
-				{hasTasks ? (
-					<div class="grid grid-cols-3 gap-2">
-						<div class="rounded-xl border border-dark-700 bg-dark-900/60 px-2.5 py-2">
-							<p class="text-[11px] uppercase tracking-[0.16em] text-gray-600">Active</p>
-							<p class="mt-1 text-sm text-blue-300">{activeCount} active</p>
-						</div>
-						<div class="rounded-xl border border-dark-700 bg-dark-900/60 px-2.5 py-2">
-							<p class="text-[11px] uppercase tracking-[0.16em] text-gray-600">Review</p>
-							<p class="mt-1 text-sm text-purple-300">{reviewCount} review</p>
-						</div>
-						<div class="rounded-xl border border-dark-700 bg-dark-900/60 px-2.5 py-2">
-							<p class="text-[11px] uppercase tracking-[0.16em] text-gray-600">Done</p>
-							<p class="mt-1 text-sm text-gray-300">{doneCount} done</p>
-						</div>
-					</div>
-				) : (
-					<div class="space-y-1 px-1 pb-1">
-						<p class="text-[11px] uppercase tracking-[0.18em] text-gray-600">Space Activity</p>
-						<p class="text-xs text-gray-500">No tasks yet.</p>
-						{space?.workspacePath && (
-							<p class="truncate font-mono text-[11px] text-gray-600">{space.workspacePath}</p>
-						)}
-					</div>
-				)}
+				<div class="space-y-1 px-1 pb-1">
+					<p class="text-[11px] uppercase tracking-[0.18em] text-gray-600">Space Activity</p>
+					<p class="text-xs text-gray-500">
+						{tasks.length === 0
+							? 'No tasks yet.'
+							: 'Use Tasks and Space Agent to monitor and steer ongoing work.'}
+					</p>
+					{space?.workspacePath && (
+						<p class="truncate font-mono text-[11px] text-gray-600">{space.workspacePath}</p>
+					)}
+				</div>
 			</div>
 
 			{/* Pinned items */}
@@ -297,7 +239,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 				<CollapsibleSection title="Tasks">
 					{/* Tab bar */}
 					<div class="flex items-center gap-1 px-3 py-1.5">
-						{(['active', 'review', 'done'] as const).map((tab) => (
+						{(['active', 'review'] as const).map((tab) => (
 							<button
 								key={tab}
 								onClick={() => setTaskTab(tab)}
@@ -381,12 +323,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 									selectedSessionId === session.id ? 'bg-dark-700' : 'hover:bg-dark-800'
 								)}
 							>
-								<div
-									class={cn(
-										'w-2 h-2 rounded-full flex-shrink-0',
-										session.isAgent ? 'bg-purple-500' : 'bg-gray-500'
-									)}
-								/>
+								<div class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-500" />
 								<span class="flex-1 text-sm text-gray-300 truncate text-left">{session.title}</span>
 							</button>
 						))
