@@ -5,9 +5,8 @@
  * Mirrors RoomContextPanel's visual structure for a space:
  * 1. Task stats strip (active · review · done counts)
  * 2. Pinned items: Dashboard, Space Agent
- * 3. Workflow Runs section (active runs with expandable tasks)
- * 4. Tasks section (standalone tasks with active/review/done tab filter)
- * 5. Sessions section (collapsible, default collapsed)
+ * 3. Tasks section (single task list with active/review/done filters)
+ * 4. Sessions section (collapsible, default collapsed)
  */
 
 import { useMemo, useState } from 'preact/hooks';
@@ -37,30 +36,10 @@ const taskStatusColors: Record<string, string> = {
 	usage_limited: 'bg-orange-600',
 };
 
-const workflowRunStatusColors: Record<string, string> = {
-	pending: 'bg-yellow-500',
-	in_progress: 'bg-blue-500 animate-pulse',
-	completed: 'bg-green-500',
-	failed: 'bg-red-500',
-	cancelled: 'bg-gray-600',
-	needs_attention: 'bg-orange-500',
-};
-
 function TaskStatusDot({ status }: { status: string }) {
 	return (
 		<div
 			class={cn('w-2 h-2 rounded-full flex-shrink-0', taskStatusColors[status] ?? 'bg-gray-500')}
-		/>
-	);
-}
-
-function RunStatusDot({ status }: { status: string }) {
-	return (
-		<div
-			class={cn(
-				'w-2 h-2 rounded-full flex-shrink-0',
-				workflowRunStatusColors[status] ?? 'bg-gray-500'
-			)}
 		/>
 	);
 }
@@ -75,9 +54,6 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const isLoading = spaceStore.loading.value;
 	const loadedSpaceId = spaceStore.spaceId.value;
 	const tasks = spaceStore.tasks.value;
-	const activeRuns = spaceStore.activeRuns.value;
-	const tasksByRun = spaceStore.tasksByRun.value;
-	const standaloneTasks = spaceStore.standaloneTasks.value;
 	const space = spaceStore.space.value;
 
 	// Show a loading state when the store hasn't loaded data for this space yet.
@@ -93,8 +69,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		);
 	}
 
-	const [expandedRuns, setExpandedRuns] = useState<Set<string>>(() => new Set());
-	const [orphanTab, setOrphanTab] = useState<OrphanTab>('active');
+	const [taskTab, setTaskTab] = useState<OrphanTab>('active');
 
 	// Task stats strip counts
 	// rate_limited/usage_limited are transient throttle states — counted as active (still running).
@@ -131,24 +106,12 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const isDashboardSelected = selectedSessionId === null && selectedTaskId === null;
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 
-	// Workflow run expand/collapse
-	const toggleRun = (runId: string) => {
-		setExpandedRuns((prev) => {
-			const next = new Set(prev);
-			if (next.has(runId)) {
-				next.delete(runId);
-			} else {
-				next.add(runId);
-			}
-			return next;
-		});
-	};
-
-	// Standalone tasks filtered by tab.
+	// Tasks filtered by tab.
 	// rate_limited/usage_limited are grouped with active; archived with done.
-	const orphanTasksForTab = useMemo(() => {
-		if (orphanTab === 'active') {
-			return standaloneTasks.filter(
+	const tasksForTab = useMemo(() => {
+		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
+		if (taskTab === 'active') {
+			return sorted.filter(
 				(t) =>
 					t.status === 'draft' ||
 					t.status === 'pending' ||
@@ -157,13 +120,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					t.status === 'usage_limited'
 			);
 		}
-		if (orphanTab === 'review') {
-			return standaloneTasks.filter((t) => t.status === 'review' || t.status === 'needs_attention');
+		if (taskTab === 'review') {
+			return sorted.filter((t) => t.status === 'review' || t.status === 'needs_attention');
 		}
-		return standaloneTasks.filter(
+		return sorted.filter(
 			(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
 		);
-	}, [standaloneTasks, orphanTab]);
+	}, [tasks, taskTab]);
 
 	// Build sessions list from available data sources
 	// (1) Space agent session — always listed
@@ -237,7 +200,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 							</p>
 						</div>
 						<span class="rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-blue-200">
-							{activeRuns.length > 0 ? 'Live' : 'Ready'}
+							{activeCount > 0 ? 'Live' : 'Ready'}
 						</span>
 					</div>
 					{space?.workspacePath && (
@@ -329,64 +292,17 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 			{/* Scrollable sections */}
 			<div class="flex-1 overflow-y-auto">
-				{/* Workflow Runs section */}
-				<CollapsibleSection title="Workflow Runs" count={activeRuns.length}>
-					{activeRuns.length === 0 ? (
-						<div class="px-4 py-3 text-xs text-gray-600">No active runs</div>
-					) : (
-						activeRuns.map((run) => {
-							const isExpanded = expandedRuns.has(run.id);
-							const runTasks = tasksByRun.get(run.id) ?? [];
-							return (
-								<div key={run.id}>
-									<button
-										onClick={() => toggleRun(run.id)}
-										class="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-dark-800 transition-colors text-left"
-									>
-										<span class="text-gray-500 text-[10px] leading-none w-3 flex-shrink-0">
-											{isExpanded ? '▼' : '▶'}
-										</span>
-										<RunStatusDot status={run.status} />
-										<span class="flex-1 text-sm text-gray-300 truncate">{run.title}</span>
-									</button>
-									{isExpanded && (
-										<>
-											{runTasks.length === 0 ? (
-												<div class="pl-8 pr-3 py-1.5 text-xs text-gray-600">No tasks</div>
-											) : (
-												runTasks.map((task) => (
-													<button
-														key={task.id}
-														onClick={() => handleTaskClick(task.id)}
-														class={cn(
-															'w-full pl-8 pr-3 py-1.5 flex items-center gap-2 transition-colors text-left',
-															selectedTaskId === task.id ? 'bg-dark-700' : 'hover:bg-dark-800'
-														)}
-													>
-														<TaskStatusDot status={task.status} />
-														<span class="flex-1 text-sm text-gray-400 truncate">{task.title}</span>
-													</button>
-												))
-											)}
-										</>
-									)}
-								</div>
-							);
-						})
-					)}
-				</CollapsibleSection>
-
-				{/* Tasks section (standalone tasks without a workflow run) */}
+				{/* Tasks section */}
 				<CollapsibleSection title="Tasks">
 					{/* Tab bar */}
 					<div class="flex items-center gap-1 px-3 py-1.5">
 						{(['active', 'review', 'done'] as const).map((tab) => (
 							<button
 								key={tab}
-								onClick={() => setOrphanTab(tab)}
+								onClick={() => setTaskTab(tab)}
 								class={cn(
 									'px-2 py-0.5 text-xs rounded transition-colors capitalize',
-									orphanTab === tab
+									taskTab === tab
 										? 'bg-dark-600 text-gray-200'
 										: 'text-gray-500 hover:text-gray-300'
 								)}
@@ -395,10 +311,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 							</button>
 						))}
 					</div>
-					{orphanTasksForTab.length === 0 ? (
+					{tasksForTab.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No tasks</div>
 					) : (
-						orphanTasksForTab.map((task) => (
+						tasksForTab.map((task) => (
 							<button
 								key={task.id}
 								onClick={() => handleTaskClick(task.id)}
@@ -408,7 +324,12 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 								)}
 							>
 								<TaskStatusDot status={task.status} />
-								<span class="flex-1 text-sm text-gray-400 truncate">{task.title}</span>
+								<div class="min-w-0 flex-1">
+									<span class="block text-sm text-gray-400 truncate">{task.title}</span>
+									<span class="block text-[11px] uppercase tracking-[0.14em] text-gray-600">
+										{task.workflowRunId ? 'Workflow task' : 'Standalone task'}
+									</span>
+								</div>
 							</button>
 						))
 					)}
