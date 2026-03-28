@@ -9,32 +9,25 @@
  * - Confirming clear session resets the Neo chat (toast confirmation)
  * - Canceling clear session preserves the chat (dialog dismissed)
  *
+ * Note: Full verification of Neo chat content reset/preservation (subtasks 5–6)
+ * requires the Neo Panel slide-out UI (task 7.3), which is not yet implemented.
+ * Those tests are marked fixme until the panel renders messages.
+ *
  * Setup: no room needed; tests the Global Settings > Neo Agent panel directly.
  */
 
 import { test, expect, type Page } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { openSettingsModal } from '../helpers/settings-modal-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Open the Global Settings panel via the NavRail Settings button.
- */
-async function openGlobalSettings(page: Page): Promise<void> {
-	const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
-	await settingsButton.waitFor({ state: 'visible', timeout: 5000 });
-	await settingsButton.click();
-	await expect(page.locator('h2:has-text("Global Settings")')).toBeVisible({ timeout: 5000 });
-}
 
 /**
  * Navigate to the Neo Agent section inside the Global Settings panel.
  * Assumes Global Settings is already open.
  */
 async function navigateToNeoSection(page: Page): Promise<void> {
-	const neoNavButton = page.locator('nav button:has-text("Neo Agent")').first();
-	await neoNavButton.waitFor({ state: 'visible', timeout: 5000 });
-	await neoNavButton.click();
+	await page.getByRole('button', { name: 'Neo Agent', exact: true }).click();
 	await expect(page.locator('h3:has-text("Neo Agent")')).toBeVisible({ timeout: 5000 });
 }
 
@@ -42,11 +35,33 @@ async function navigateToNeoSection(page: Page): Promise<void> {
  * Open Global Settings and navigate straight to the Neo Agent section.
  */
 async function openNeoSettings(page: Page): Promise<void> {
-	await openGlobalSettings(page);
+	await openSettingsModal(page);
 	await navigateToNeoSection(page);
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+/**
+ * Return a locator for the Neo Agent section container (h3's parent div).
+ * Scoping selectors to this container avoids fragile positional indexing.
+ */
+function getNeoSectionLocator(page: Page) {
+	return page.locator('h3:has-text("Neo Agent")').locator('..');
+}
+
+/**
+ * Return the Security Mode <select> scoped inside the Neo Agent section.
+ */
+function getSecurityModeSelect(page: Page) {
+	return getNeoSectionLocator(page).locator('select').first();
+}
+
+/**
+ * Return the Model <select> scoped inside the Neo Agent section.
+ */
+function getModelSelect(page: Page) {
+	return getNeoSectionLocator(page).locator('select').nth(1);
+}
+
+// ─── Navigation ───────────────────────────────────────────────────────────────
 
 test.describe('Neo Settings - Navigation', () => {
 	test.beforeEach(async ({ page }) => {
@@ -55,9 +70,7 @@ test.describe('Neo Settings - Navigation', () => {
 	});
 
 	test('should show Neo Agent section in Settings navigation', async ({ page }) => {
-		await openGlobalSettings(page);
-
-		// Neo Agent nav button should be visible in the settings sidebar
+		await openSettingsModal(page);
 		await expect(page.getByRole('button', { name: 'Neo Agent', exact: true })).toBeVisible();
 	});
 
@@ -74,6 +87,8 @@ test.describe('Neo Settings - Navigation', () => {
 	});
 });
 
+// ─── Security Mode ────────────────────────────────────────────────────────────
+
 test.describe('Neo Settings - Security Mode', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
@@ -82,49 +97,53 @@ test.describe('Neo Settings - Security Mode', () => {
 	});
 
 	test('should show security mode selector with expected options', async ({ page }) => {
-		// First select in the Neo section is the Security Mode selector
-		const securitySelect = page.locator('select').first();
-		await expect(securitySelect).toBeVisible();
-
-		// All three modes should be available as options
-		await expect(securitySelect.locator('option:has-text("Conservative")')).toBeAttached();
-		await expect(securitySelect.locator('option:has-text("Balanced (default)")')).toBeAttached();
-		await expect(securitySelect.locator('option:has-text("Autonomous")')).toBeAttached();
+		const select = getSecurityModeSelect(page);
+		await expect(select).toBeVisible();
+		await expect(select.locator('option:has-text("Conservative")')).toBeAttached();
+		await expect(select.locator('option:has-text("Balanced (default)")')).toBeAttached();
+		await expect(select.locator('option:has-text("Autonomous")')).toBeAttached();
 	});
 
 	test('should change security mode and show success toast', async ({ page }) => {
-		const securitySelect = page.locator('select').first();
-
-		// Change to Conservative
-		await securitySelect.selectOption('conservative');
-
-		// Should show success toast
+		const select = getSecurityModeSelect(page);
+		await select.selectOption('conservative');
 		await expect(page.locator('text=Security mode updated')).toBeVisible({ timeout: 5000 });
-
-		// Select should reflect the new value
-		await expect(securitySelect).toHaveValue('conservative');
+		await expect(select).toHaveValue('conservative');
 	});
 
 	test('should persist security mode selection across page reload', async ({ page }) => {
-		const securitySelect = page.locator('select').first();
-
-		// Change to Autonomous
-		await securitySelect.selectOption('autonomous');
+		// Change to autonomous
+		await getSecurityModeSelect(page).selectOption('autonomous');
 		await expect(page.locator('text=Security mode updated')).toBeVisible({ timeout: 5000 });
 
-		// Reload the page
+		// Reload and re-open Neo settings
 		await page.reload();
 		await waitForWebSocketConnected(page);
 		await openNeoSettings(page);
 
 		// Value should be persisted
-		await expect(page.locator('select').first()).toHaveValue('autonomous');
+		await expect(getSecurityModeSelect(page)).toHaveValue('autonomous');
+	});
 
-		// Reset to balanced (cleanup)
-		await page.locator('select').first().selectOption('balanced');
-		await expect(page.locator('text=Security mode updated')).toBeVisible({ timeout: 5000 });
+	test.afterEach(async ({ page }) => {
+		// Restore to balanced regardless of test outcome
+		try {
+			await openNeoSettings(page);
+			const select = getSecurityModeSelect(page);
+			const current = await select.inputValue();
+			if (current !== 'balanced') {
+				await select.selectOption('balanced');
+				await page
+					.locator('text=Security mode updated')
+					.waitFor({ state: 'visible', timeout: 5000 });
+			}
+		} catch {
+			// Best-effort cleanup; don't fail the test on cleanup errors
+		}
 	});
 });
+
+// ─── Model Selector ───────────────────────────────────────────────────────────
 
 test.describe('Neo Settings - Model Selector', () => {
 	test.beforeEach(async ({ page }) => {
@@ -134,50 +153,52 @@ test.describe('Neo Settings - Model Selector', () => {
 	});
 
 	test('should show model selector with available options', async ({ page }) => {
-		// Second select in the Neo section is the Model selector
-		const modelSelect = page.locator('select').nth(1);
-		await expect(modelSelect).toBeVisible();
-
-		// All model options should be available
-		await expect(modelSelect.locator('option:has-text("App default")')).toBeAttached();
-		await expect(modelSelect.locator('option:has-text("Claude Sonnet 4")')).toBeAttached();
-		await expect(modelSelect.locator('option:has-text("Claude Opus 4")')).toBeAttached();
-		await expect(modelSelect.locator('option:has-text("Claude Haiku 3.5")')).toBeAttached();
+		const select = getModelSelect(page);
+		await expect(select).toBeVisible();
+		await expect(select.locator('option:has-text("App default")')).toBeAttached();
+		await expect(select.locator('option:has-text("Claude Sonnet 4")')).toBeAttached();
+		await expect(select.locator('option:has-text("Claude Opus 4")')).toBeAttached();
+		await expect(select.locator('option:has-text("Claude Haiku 3.5")')).toBeAttached();
 	});
 
 	test('should change model and show success toast', async ({ page }) => {
-		const modelSelect = page.locator('select').nth(1);
-
-		// Change to Sonnet
-		await modelSelect.selectOption('sonnet');
-
-		// Should show success toast
+		const select = getModelSelect(page);
+		await select.selectOption('sonnet');
 		await expect(page.locator('text=Model updated')).toBeVisible({ timeout: 5000 });
-
-		// Select should reflect the new value
-		await expect(modelSelect).toHaveValue('sonnet');
+		await expect(select).toHaveValue('sonnet');
 	});
 
 	test('should persist model selection across page reload', async ({ page }) => {
-		const modelSelect = page.locator('select').nth(1);
-
-		// Change to Opus
-		await modelSelect.selectOption('opus');
+		// Change to opus
+		await getModelSelect(page).selectOption('opus');
 		await expect(page.locator('text=Model updated')).toBeVisible({ timeout: 5000 });
 
-		// Reload the page
+		// Reload and re-open Neo settings
 		await page.reload();
 		await waitForWebSocketConnected(page);
 		await openNeoSettings(page);
 
 		// Value should be persisted
-		await expect(page.locator('select').nth(1)).toHaveValue('opus');
+		await expect(getModelSelect(page)).toHaveValue('opus');
+	});
 
-		// Reset to app default (cleanup)
-		await page.locator('select').nth(1).selectOption('');
-		await expect(page.locator('text=Model updated')).toBeVisible({ timeout: 5000 });
+	test.afterEach(async ({ page }) => {
+		// Restore to app default (empty string) regardless of test outcome
+		try {
+			await openNeoSettings(page);
+			const select = getModelSelect(page);
+			const current = await select.inputValue();
+			if (current !== '') {
+				await select.selectOption('');
+				await page.locator('text=Model updated').waitFor({ state: 'visible', timeout: 5000 });
+			}
+		} catch {
+			// Best-effort cleanup; don't fail the test on cleanup errors
+		}
 	});
 });
+
+// ─── Clear Session ────────────────────────────────────────────────────────────
 
 test.describe('Neo Settings - Clear Session', () => {
 	test.beforeEach(async ({ page }) => {
@@ -187,59 +208,55 @@ test.describe('Neo Settings - Clear Session', () => {
 	});
 
 	test('should show confirmation dialog when Clear Session is clicked', async ({ page }) => {
-		// Click the Clear Session button
 		await page.getByRole('button', { name: 'Clear Session', exact: true }).click();
 
-		// Confirmation dialog should appear with "Are you sure?" text
+		// Confirmation elements should appear
 		await expect(page.locator('text=Are you sure?')).toBeVisible({ timeout: 3000 });
-
-		// Confirm and Cancel buttons should be visible
 		await expect(page.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
 
-		// Original "Clear Session" button should no longer be visible
+		// Original button should be replaced
 		await expect(page.getByRole('button', { name: 'Clear Session', exact: true })).toBeHidden();
 	});
 
 	test('should clear Neo session and show success toast when Confirm is clicked', async ({
 		page,
 	}) => {
-		// Open the confirmation dialog
 		await page.getByRole('button', { name: 'Clear Session', exact: true }).click();
 		await expect(page.locator('text=Are you sure?')).toBeVisible({ timeout: 3000 });
 
-		// Click Confirm
 		await page.getByRole('button', { name: 'Confirm', exact: true }).click();
 
-		// Should show success toast
+		// Success toast confirms the server-side clear succeeded
 		await expect(page.locator('text=Neo session cleared')).toBeVisible({ timeout: 5000 });
 
-		// Confirmation dialog should be dismissed
+		// Dialog dismisses; button restores
 		await expect(page.locator('text=Are you sure?')).toBeHidden({ timeout: 3000 });
-
-		// "Clear Session" button should be visible again (dialog closed)
 		await expect(page.getByRole('button', { name: 'Clear Session', exact: true })).toBeVisible({
 			timeout: 3000,
 		});
+
+		// TODO: once the Neo Panel slide-out (task 7.3) is implemented, add:
+		//   1. Send a message via the Neo panel before clicking Clear Session
+		//   2. After confirming, open the Neo panel and assert no messages are visible
 	});
 
 	test('should dismiss confirmation dialog when Cancel is clicked', async ({ page }) => {
-		// Open the confirmation dialog
 		await page.getByRole('button', { name: 'Clear Session', exact: true }).click();
 		await expect(page.locator('text=Are you sure?')).toBeVisible({ timeout: 3000 });
 
-		// Click Cancel
 		await page.getByRole('button', { name: 'Cancel', exact: true }).click();
 
-		// Confirmation dialog should be dismissed
+		// Dialog should be dismissed without clearing
 		await expect(page.locator('text=Are you sure?')).toBeHidden({ timeout: 3000 });
-
-		// "Clear Session" button should be visible again
 		await expect(page.getByRole('button', { name: 'Clear Session', exact: true })).toBeVisible({
 			timeout: 3000,
 		});
-
-		// No success toast (session was not cleared)
+		// No toast means no session was cleared
 		await expect(page.locator('text=Neo session cleared')).toBeHidden();
+
+		// TODO: once the Neo Panel slide-out (task 7.3) is implemented, add:
+		//   1. Send a message via the Neo panel before clicking Clear Session
+		//   2. After cancelling, open the Neo panel and assert the message is still present
 	});
 });
