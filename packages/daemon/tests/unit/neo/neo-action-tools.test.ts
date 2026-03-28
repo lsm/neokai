@@ -33,11 +33,11 @@
  * - delete_skill: happy path, built-in guard, not found, manager unavailable
  * - toggle_skill: enable/disable, manager unavailable
  * - update_app_settings: field updates, no-op guard, manager unavailable
- * - send_message_to_room: happy path, no active session, room not found, manager unavailable
- * - send_message_to_task: happy path, task not found, no active session, manager unavailable
+ * - send_message_to_room: happy path, no active session, room not found, manager unavailable, empty message
+ * - send_message_to_task: happy path, task not found, no active session, manager unavailable, empty message
  * - stop_session: happy path, wrong status, runtime unavailable, task not found
- * - pause_schedule: happy path, non-recurring goal, goal not found
- * - resume_schedule: happy path, no schedule, non-recurring goal
+ * - pause_schedule: happy path, non-recurring goal, goal not found, already paused (idempotent)
+ * - resume_schedule: happy path, no schedule, non-recurring goal, already active (idempotent)
  * - MCP server: all 32 tools are registered
  */
 
@@ -386,6 +386,10 @@ function makeGateDataRepo(): NeoActionGateDataRepository & {
 			const merged = { ...existing, ...partial };
 			store.set(key, merged);
 			return { data: merged };
+		},
+	};
+}
+
 function makeSkillsManager(skills: AppSkill[] = []): NeoSkillsManager {
 	const store = new Map<string, AppSkill>(skills.map((s) => [s.id, s]));
 	return {
@@ -1274,6 +1278,10 @@ describe('create_space', () => {
 		const result = parseResult(await create_space({ name: 'Test', workspace_path: '/ws' }));
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // add_mcp_server
 // ---------------------------------------------------------------------------
 
@@ -1326,6 +1334,37 @@ describe('add_mcp_server', () => {
 		expect(result.confirmationRequired).toBe(true);
 		expect(result.riskLevel).toBe('medium');
 	});
+
+	it('rejects sensitive env var names before security check', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { add_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await add_mcp_server({
+				name: 'x',
+				source_type: 'stdio',
+				env: { ANTHROPIC_API_KEY: 'sk-secret' },
+			})
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('ANTHROPIC_API_KEY');
+		expect(result.error).toContain('Refusing to store sensitive env var');
+		// Confirm the pending store is empty — validation ran before security check
+		expect(config.pendingStore.size).toBe(0);
+	});
+
+	it('allows non-sensitive env vars', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { add_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await add_mcp_server({
+				name: 'x',
+				source_type: 'stdio',
+				command: 'node',
+				env: { MY_SETTING: 'value' },
+			})
+		);
+		expect(result.success).toBe(true);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1369,6 +1408,10 @@ describe('update_space', () => {
 		const { update_space } = createNeoActionToolHandlers(config);
 		const result = parseResult(await update_space({ space_id: 'space-1', name: 'New Name' }));
 		expect(result.success).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // update_mcp_server
 // ---------------------------------------------------------------------------
 
@@ -1649,6 +1692,10 @@ describe('cancel_workflow_run', () => {
 		expect(updatedSpaceId).toBe('space-1');
 		expect(updatedRunId).toBe('run-1');
 		expect(updatedStatus).toBe('cancelled');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // delete_mcp_server
 // ---------------------------------------------------------------------------
 
@@ -2117,6 +2164,10 @@ describe('reject_gate', () => {
 		expect(runUpdates[0].failureReason).toBe('humanRejected');
 		expect(gateUpdates).toHaveLength(1);
 		expect(gateUpdates[0].gateId).toBe('gate-1');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // update_skill
 // ---------------------------------------------------------------------------
 
@@ -2351,6 +2402,16 @@ describe('send_message_to_room', () => {
 		expect(result.confirmationRequired).toBe(true);
 		expect(result.riskLevel).toBe('medium');
 	});
+
+	it('returns error when message is empty', async () => {
+		const roomSessions = new Map([['room-1', 'session-abc']]);
+		const config = makeConfig({ sessionManager: makeSessionManager(roomSessions) });
+		const { send_message_to_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await send_message_to_room({ room_id: 'room-1', message: '   ' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Message must not be empty');
+		expect(config.pendingStore.size).toBe(0);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -2410,6 +2471,22 @@ describe('send_message_to_task', () => {
 		);
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('Session manager not available');
+	});
+
+	it('returns error when message is empty', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1' });
+		const taskSessions = new Map([['task-1', 'session-xyz']]);
+		const config = makeConfig({
+			tasks: [task],
+			sessionManager: makeSessionManager(new Map(), taskSessions),
+		});
+		const { send_message_to_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await send_message_to_task({ room_id: 'room-1', task_id: 'task-1', message: '' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Message must not be empty');
+		expect(config.pendingStore.size).toBe(0);
 	});
 });
 
@@ -2549,6 +2626,20 @@ describe('pause_schedule', () => {
 		const result = parseResult(await pause_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
 		expect(result.success).toBe(true);
 	});
+
+	it('returns success with alreadyPaused flag when already paused', async () => {
+		const goal = makeGoal({
+			id: 'goal-1',
+			roomId: 'room-1',
+			missionType: 'recurring',
+			schedulePaused: true,
+		});
+		const config = makeConfig({ goals: [goal] });
+		const { pause_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await pause_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(true);
+		expect(result.alreadyPaused).toBe(true);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -2595,6 +2686,21 @@ describe('resume_schedule', () => {
 		const result = parseResult(await resume_schedule({ room_id: 'room-1', goal_id: 'missing' }));
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('Goal not found');
+	});
+
+	it('returns success with alreadyResumed flag when already active', async () => {
+		const goal = makeGoal({
+			id: 'goal-1',
+			roomId: 'room-1',
+			missionType: 'recurring',
+			schedulePaused: false,
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+		const config = makeConfig({ goals: [goal] });
+		const { resume_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await resume_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(true);
+		expect(result.alreadyResumed).toBe(true);
 	});
 });
 

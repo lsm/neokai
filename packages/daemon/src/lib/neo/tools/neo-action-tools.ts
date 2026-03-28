@@ -434,6 +434,26 @@ export interface NeoActionToolsConfig {
 // ---------------------------------------------------------------------------
 
 /**
+ * Well-known sensitive environment variable names that must not be stored
+ * in the MCP registry.  Secret values should live in the host process
+ * environment (process.env) and are inherited by MCP child processes
+ * automatically — they must never be persisted to SQLite.
+ */
+const SENSITIVE_ENV_VARS = new Set([
+	'ANTHROPIC_API_KEY',
+	'CLAUDE_CODE_OAUTH_TOKEN',
+	'ANTHROPIC_AUTH_TOKEN',
+	'GLM_API_KEY',
+	'ZHIPU_API_KEY',
+	'OPENAI_API_KEY',
+	'BRAVE_API_KEY',
+	'COPILOT_GITHUB_TOKEN',
+	'GITHUB_TOKEN',
+	'AWS_SECRET_ACCESS_KEY',
+	'AWS_SESSION_TOKEN',
+]);
+
+/**
  * Approval message sent to the worker agent when a task is approved.
  * The worker is expected to merge the PR as its final step.
  */
@@ -1092,6 +1112,18 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			if (!mcpManager) {
 				return errorResult('MCP manager not available');
 			}
+			// Reject well-known sensitive env vars to prevent credential injection.
+			// Raw secret values must never be stored in the MCP registry — they
+			// should be pre-set in the host process environment and referenced by key.
+			if (args.env) {
+				const rejected = Object.keys(args.env).filter((k) => SENSITIVE_ENV_VARS.has(k));
+				if (rejected.length > 0) {
+					return errorResult(
+						`Refusing to store sensitive env var(s): ${rejected.join(', ')}. ` +
+							'Set these in the host environment instead; the MCP process inherits them automatically.'
+					);
+				}
+			}
 			return withSecurityCheck(
 				'add_mcp_server',
 				args as Record<string, unknown>,
@@ -1127,6 +1159,9 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			url?: string;
 			headers?: Record<string, string>;
 		}): Promise<ToolResult> {
+			// Note: `source_type` is intentionally omitted from update params — it is
+			// immutable after creation (similar to skill.name).  To change transport
+			// type, delete and re-create the entry.
 			if (!mcpManager) {
 				return errorResult('MCP manager not available');
 			}
@@ -1370,6 +1405,10 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 		// ── Messaging & session control ───────────────────────────────────────
 
 		async send_message_to_room(args: { room_id: string; message: string }): Promise<ToolResult> {
+			// Validate before the security check so we don't waste a pending action slot.
+			if (!args.message?.trim()) {
+				return errorResult('Message must not be empty');
+			}
 			if (!sessionManager) {
 				return errorResult('Session manager not available');
 			}
@@ -1397,6 +1436,10 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			task_id: string;
 			message: string;
 		}): Promise<ToolResult> {
+			// Validate before the security check so we don't waste a pending action slot.
+			if (!args.message?.trim()) {
+				return errorResult('Message must not be empty');
+			}
 			if (!sessionManager) {
 				return errorResult('Session manager not available');
 			}
@@ -1539,6 +1582,10 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 						return errorResult(`Goal ${args.goal_id} is not a recurring mission`);
 					}
 
+					if (goal.schedulePaused) {
+						return successResult({ goal, alreadyPaused: true });
+					}
+
 					const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
 						schedulePaused: true,
 					});
@@ -1568,6 +1615,10 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					}
 					if (!goal.schedule) {
 						return errorResult(`Goal ${args.goal_id} has no schedule set. Set a schedule first.`);
+					}
+
+					if (!goal.schedulePaused) {
+						return successResult({ goal, alreadyResumed: true });
 					}
 
 					const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
