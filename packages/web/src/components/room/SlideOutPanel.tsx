@@ -106,7 +106,7 @@ export function SlideOutPanel({
 				aria-modal="true"
 				aria-label={`Session chat for ${displayLabel}`}
 				class={[
-					'fixed top-0 right-0 h-screen z-50',
+					'fixed top-0 right-0 h-dvh pt-safe z-50',
 					widthClass,
 					'flex flex-col',
 					'bg-gray-900 border-l border-gray-700 shadow-2xl',
