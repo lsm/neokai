@@ -99,10 +99,11 @@ test.describe('Neo Settings - Navigation', () => {
 		// Section heading
 		await expect(page.locator('h3:has-text("Neo Agent")')).toBeVisible();
 
-		// All three setting rows should be present
-		await expect(page.locator('text=Security Mode')).toBeVisible();
-		await expect(page.locator('text=Model')).toBeVisible();
-		await expect(page.locator('text=Clear Session')).toBeVisible();
+		// All three setting rows should be present (scoped to avoid sidebar matches)
+		const neoSection = getNeoSectionLocator(page);
+		await expect(neoSection.locator('text=Security Mode')).toBeVisible();
+		await expect(neoSection.locator('div', { hasText: /^Model$/ })).toBeVisible();
+		await expect(neoSection.locator('text=Clear Session')).toBeVisible();
 	});
 });
 
@@ -188,8 +189,12 @@ test.describe('Neo Settings - Model Selector', () => {
 	});
 
 	test('should persist model selection across page reload', async ({ page }) => {
-		// Change to opus
-		await getModelSelect(page).selectOption('opus');
+		// Pick a target value different from whatever is currently set
+		const select = getModelSelect(page);
+		const current = await select.inputValue();
+		const target = current === 'opus' ? 'sonnet' : 'opus';
+
+		await select.selectOption(target);
 		await expect(page.locator('text=Model updated')).toBeVisible({ timeout: 5000 });
 
 		// Reload and re-open Neo settings
@@ -198,7 +203,7 @@ test.describe('Neo Settings - Model Selector', () => {
 		await openNeoSettings(page);
 
 		// Value should be persisted
-		await expect(getModelSelect(page)).toHaveValue('opus');
+		await expect(getModelSelect(page)).toHaveValue(target);
 	});
 
 	test.afterEach(async ({ page }) => {
