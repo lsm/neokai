@@ -366,9 +366,9 @@ jobs:
           NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.ANTHROPIC_API_KEY || '') }}
+          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'cross-provider-3') && secrets.ANTHROPIC_API_KEY || '') }}
           ANTHROPIC_AUTH_TOKEN: ""
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'cross-provider-3') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ""
           # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
           # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
