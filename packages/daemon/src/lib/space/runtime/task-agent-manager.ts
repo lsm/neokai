@@ -216,13 +216,31 @@ export class TaskAgentManager {
 	 * Returns the latest task snapshot from the repository.
 	 */
 	async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
-		const task = this.config.taskRepo.getTask(taskId);
-		if (!task) {
+		const initialTask = this.config.taskRepo.getTask(taskId);
+		if (!initialTask) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
+		let task = initialTask;
+
 		if (task.taskAgentSessionId) {
-			return task;
+			const existingSession = this.config.sessionManager.getSessionFromDB(task.taskAgentSessionId);
+			if (existingSession) {
+				return task;
+			}
+
+			log.warn(
+				`TaskAgentManager.ensureTaskAgentSession: stale taskAgentSessionId "${task.taskAgentSessionId}" on task ${taskId}; clearing and respawning`
+			);
+
+			this.taskAgentSessions.delete(taskId);
+			this.config.taskRepo.updateTask(taskId, { taskAgentSessionId: null });
+
+			const refreshedTask = this.config.taskRepo.getTask(taskId);
+			if (!refreshedTask) {
+				throw new Error(`Failed to reload task after clearing stale session: ${taskId}`);
+			}
+			task = refreshedTask;
 		}
 
 		const space = await this.config.spaceManager.getSpace(task.spaceId);

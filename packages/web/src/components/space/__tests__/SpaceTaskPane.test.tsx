@@ -480,7 +480,7 @@ describe('SpaceTaskPane — Task thread composer behavior', () => {
 		await waitFor(() =>
 			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me')
 		);
-		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
+		expect(mockEnsureTaskAgentSession).toHaveBeenCalledWith('task-1');
 		expect(mockUpdateTask).not.toHaveBeenCalled();
 	});
 
