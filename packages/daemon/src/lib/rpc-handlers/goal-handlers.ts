@@ -206,7 +206,35 @@ export function setupGoalHandlers(
 		const hasV2Fields = v2Fields.some((f) => f in params.updates);
 
 		let goal: RoomGoal;
-		if (status) {
+		if (hasV2Fields) {
+			// Apply V2 patch fields (title, description, missionType, autonomyLevel,
+			// structuredMetrics, schedule) and priority via patchGoal first.
+			// This ensures autonomyLevel and other V2 fields are never silently dropped
+			// when a status update is present in the same request.
+			const patch: Record<string, unknown> = { ...rest };
+			if (priority) patch.priority = priority;
+			for (const f of v2Fields) {
+				if (f in params.updates) patch[f] = params.updates[f as keyof typeof params.updates];
+			}
+			goal = await goalManager.patchGoal(goalId, patch);
+
+			// Apply status/progress if also present in this request.
+			// Note: two sequential DB writes -- if the second fails, V2 fields are already
+			// persisted but status is not. Both are local SQLite calls so partial failure is unlikely.
+			if (status) {
+				goal = await goalManager.updateGoalStatus(
+					goalId,
+					status,
+					progress !== undefined ? { progress } : {}
+				);
+			} else if (progress !== undefined) {
+				goal = await goalManager.updateGoalProgress(
+					goalId,
+					progress,
+					metrics as Record<string, number> | undefined
+				);
+			}
+		} else if (status) {
 			goal = await goalManager.updateGoalStatus(goalId, status, {
 				...(progress !== undefined ? { progress } : {}),
 				...(priority ? { priority } : {}),
@@ -218,15 +246,6 @@ export function setupGoalHandlers(
 				progress,
 				metrics as Record<string, number> | undefined
 			);
-		} else if (hasV2Fields) {
-			// General patch: handles title, description, missionType, autonomyLevel,
-			// structuredMetrics, schedule. Also picks up priority when present alongside V2 fields.
-			const patch: Record<string, unknown> = {};
-			if (priority) patch.priority = priority;
-			for (const f of v2Fields) {
-				if (f in params.updates) patch[f] = params.updates[f as keyof typeof params.updates];
-			}
-			goal = await goalManager.patchGoal(goalId, patch);
 		} else if (priority) {
 			goal = await goalManager.updateGoalPriority(goalId, priority);
 		} else {

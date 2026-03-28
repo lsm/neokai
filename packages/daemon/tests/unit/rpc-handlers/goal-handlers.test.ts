@@ -22,6 +22,8 @@ import {
 	type GoalPriority,
 	type NeoTask,
 	type MissionExecution,
+	type AutonomyLevel,
+	type MissionType,
 } from '@neokai/shared';
 import {
 	setupGoalHandlers,
@@ -616,6 +618,99 @@ describe('Goal RPC Handlers', () => {
 				structuredMetrics: metrics,
 				schedule,
 			});
+		});
+
+		it('preserves autonomyLevel when status + autonomyLevel are combined in same update', async () => {
+			// Regression: combined status + V2 fields must apply both via patchGoal then updateGoalStatus.
+			// Previously, the status branch ran first and V2 fields (including autonomyLevel) were
+			// silently bypassed — causing semi_autonomous goals to appear unchanged when expected.
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			await handler!(
+				{
+					roomId: 'room-123',
+					goalId: 'goal-123',
+					updates: {
+						status: 'active' as GoalStatus,
+						autonomyLevel: 'semi_autonomous' as AutonomyLevel,
+					},
+				},
+				{}
+			);
+
+			// patchGoal must be called with autonomyLevel first
+			expect(mockGoalManager.patchGoal).toHaveBeenCalledWith('goal-123', {
+				autonomyLevel: 'semi_autonomous',
+			});
+			// updateGoalStatus must be called after to apply the status change
+			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith('goal-123', 'active', {});
+		});
+
+		it('preserves autonomyLevel when status + autonomyLevel + priority are combined', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			await handler!(
+				{
+					roomId: 'room-123',
+					goalId: 'goal-123',
+					updates: {
+						status: 'completed' as GoalStatus,
+						autonomyLevel: 'semi_autonomous' as AutonomyLevel,
+						priority: 'high' as GoalPriority,
+					},
+				},
+				{}
+			);
+
+			expect(mockGoalManager.patchGoal).toHaveBeenCalledWith('goal-123', {
+				priority: 'high',
+				autonomyLevel: 'semi_autonomous',
+			});
+			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith('goal-123', 'completed', {});
+		});
+
+		it('applies patchGoal before updateGoalStatus when both V2 fields and status present', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			const stubGoal: RoomGoal = {
+				id: 'goal-123',
+				roomId: 'room-123',
+				title: 'Test Goal',
+				description: '',
+				status: 'active' as GoalStatus,
+				priority: 'normal' as GoalPriority,
+				progress: 0,
+				linkedTaskIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+			const callOrder: string[] = [];
+			(mockGoalManager.patchGoal as ReturnType<typeof mock>).mockImplementation(async () => {
+				callOrder.push('patchGoal');
+				return stubGoal;
+			});
+			(mockGoalManager.updateGoalStatus as ReturnType<typeof mock>).mockImplementation(async () => {
+				callOrder.push('updateGoalStatus');
+				return stubGoal;
+			});
+
+			await handler!(
+				{
+					roomId: 'room-123',
+					goalId: 'goal-123',
+					updates: {
+						status: 'active' as GoalStatus,
+						missionType: 'measurable' as MissionType,
+						autonomyLevel: 'semi_autonomous' as AutonomyLevel,
+					},
+				},
+				{}
+			);
+
+			expect(callOrder).toEqual(['patchGoal', 'updateGoalStatus']);
 		});
 
 		it('throws error when updates has truly no recognized fields', async () => {
