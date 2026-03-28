@@ -104,6 +104,14 @@ export class NeoActivityLogger {
 		return this.repo.getLatestUndoable();
 	}
 
+	/**
+	 * Mark a log entry as no longer undoable (e.g. after it has been reversed).
+	 * Safe to call with a non-existent ID — no-op in that case.
+	 */
+	markUndone(id: string): void {
+		this.repo.update(id, { undoable: false });
+	}
+
 	// ── Maintenance ───────────────────────────────────────────────────────────
 
 	/**

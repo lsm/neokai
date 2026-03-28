@@ -57,6 +57,9 @@
  *   - stop_session
  *   - pause_schedule
  *   - resume_schedule
+ *
+ *   Undo
+ *   - undo_last_action
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -144,6 +147,8 @@ export interface NeoActionGoalManager {
 		status: GoalStatus,
 		updates?: { schedulePaused?: boolean }
 	): Promise<RoomGoal>;
+	/** Hard-delete a goal by ID. Used by undo of create_goal. */
+	deleteGoal?(id: string): Promise<boolean>;
 }
 
 export interface NeoActionTaskManager {
@@ -169,6 +174,8 @@ export interface NeoActionTaskManager {
 		status: TaskStatus,
 		opts?: { result?: string; error?: string }
 	): Promise<NeoTask>;
+	/** Hard-delete a task by ID. Used by undo of create_task. */
+	deleteTask?(id: string): Promise<boolean>;
 }
 
 /** Optional runtime — if not provided, approve/reject fallback gracefully */
@@ -1640,7 +1647,187 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				}
 			);
 		},
+		// ── Undo ─────────────────────────────────────────────────────────────
+
+		async undo_last_action(): Promise<ToolResult> {
+			const activityLogger = config.activityLogger;
+			if (!activityLogger) {
+				return errorResult(
+					'Activity logging is not available — undo requires activity logging to be enabled'
+				);
+			}
+
+			return withSecurityCheck('undo_last_action', {}, config, async () => {
+				const entry = activityLogger.getLatestUndoable();
+				if (!entry) {
+					return errorResult('Nothing to undo — no undoable actions in the activity log');
+				}
+
+				let undoData: Record<string, unknown>;
+				try {
+					undoData = JSON.parse(entry.undoData ?? '{}') as Record<string, unknown>;
+				} catch {
+					return errorResult(`Undo data is corrupt for action: ${entry.toolName}`);
+				}
+
+				// Execute the reverse operation
+				let message: string;
+				try {
+					message = await executeUndo(entry.toolName, undoData);
+				} catch (err) {
+					return errorResult(
+						`Undo failed for ${entry.toolName}: ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+
+				// Mark original entry as no longer undoable (prevents double-undo)
+				activityLogger.markUndone(entry.id);
+
+				return successResult({
+					undoneActionId: entry.id,
+					undoneToolName: entry.toolName,
+					message,
+				});
+			});
+		},
 	};
+
+	// ---------------------------------------------------------------------------
+	// Internal undo dispatch
+	// ---------------------------------------------------------------------------
+
+	async function executeUndo(toolName: string, undoData: Record<string, unknown>): Promise<string> {
+		switch (toolName) {
+			case 'create_room': {
+				const roomId = undoData.roomId as string | undefined;
+				if (!roomId) throw new Error('Missing roomId in undo data');
+				const room = roomManager.getRoom(roomId);
+				if (!room) throw new Error(`Room ${roomId} no longer exists — already deleted`);
+				roomManager.deleteRoom(roomId);
+				return `Deleted room: ${roomId}`;
+			}
+
+			case 'update_room_settings': {
+				const roomId = undoData.roomId as string | undefined;
+				if (!roomId) throw new Error('Missing roomId in undo data');
+				const room = roomManager.getRoom(roomId);
+				if (!room) throw new Error(`Room ${roomId} no longer exists`);
+				const updateParams: Parameters<typeof roomManager.updateRoom>[1] = {};
+				if ('previousName' in undoData) updateParams.name = undoData.previousName as string;
+				if ('previousBackground' in undoData)
+					updateParams.background = undoData.previousBackground as string | null;
+				if ('previousInstructions' in undoData)
+					updateParams.instructions = undoData.previousInstructions as string | null;
+				if ('previousDefaultModel' in undoData)
+					updateParams.defaultModel = undoData.previousDefaultModel as string | null;
+				if ('previousAllowedModels' in undoData)
+					updateParams.allowedModels = undoData.previousAllowedModels as string[];
+				const updated = roomManager.updateRoom(roomId, updateParams);
+				if (!updated) throw new Error(`Failed to restore room ${roomId} settings`);
+				return `Restored previous settings for room: ${roomId}`;
+			}
+
+			case 'create_goal': {
+				const goalId = undoData.goalId as string | undefined;
+				const goalRoomId = undoData.roomId as string | undefined;
+				if (!goalId || !goalRoomId) throw new Error('Missing goalId or roomId in undo data');
+				const goalManager = managerFactory.getGoalManager(goalRoomId);
+				const goal = await goalManager.getGoal(goalId);
+				if (!goal) throw new Error(`Goal ${goalId} no longer exists — already deleted`);
+				if (goalManager.deleteGoal) {
+					await goalManager.deleteGoal(goalId);
+				} else {
+					await goalManager.updateGoalStatus(goalId, 'archived');
+				}
+				return `Deleted goal: ${goalId}`;
+			}
+
+			case 'set_goal_status': {
+				const goalId = undoData.goalId as string | undefined;
+				const goalRoomId = undoData.roomId as string | undefined;
+				const previousGoalStatus = undoData.previousStatus as GoalStatus | undefined;
+				if (!goalId || !goalRoomId || !previousGoalStatus)
+					throw new Error('Missing goalId, roomId, or previousStatus in undo data');
+				const goalManager = managerFactory.getGoalManager(goalRoomId);
+				const goal = await goalManager.getGoal(goalId);
+				if (!goal) throw new Error(`Goal ${goalId} no longer exists`);
+				await goalManager.updateGoalStatus(goalId, previousGoalStatus);
+				return `Restored goal ${goalId} status to: ${previousGoalStatus}`;
+			}
+
+			case 'create_task': {
+				const taskId = undoData.taskId as string | undefined;
+				const taskRoomId = undoData.roomId as string | undefined;
+				if (!taskId || !taskRoomId) throw new Error('Missing taskId or roomId in undo data');
+				const taskManager = managerFactory.getTaskManager(taskRoomId);
+				const task = await taskManager.getTask(taskId);
+				if (!task) throw new Error(`Task ${taskId} no longer exists — already deleted`);
+				if (taskManager.deleteTask) {
+					await taskManager.deleteTask(taskId);
+				} else {
+					await taskManager.setTaskStatus(taskId, 'cancelled');
+				}
+				return `Deleted task: ${taskId}`;
+			}
+
+			case 'set_task_status': {
+				const taskId = undoData.taskId as string | undefined;
+				const taskRoomId = undoData.roomId as string | undefined;
+				const previousTaskStatus = undoData.previousStatus as TaskStatus | undefined;
+				if (!taskId || !taskRoomId || !previousTaskStatus)
+					throw new Error('Missing taskId, roomId, or previousStatus in undo data');
+				const taskManager = managerFactory.getTaskManager(taskRoomId);
+				const task = await taskManager.getTask(taskId);
+				if (!task) throw new Error(`Task ${taskId} no longer exists`);
+				await taskManager.setTaskStatus(taskId, previousTaskStatus);
+				return `Restored task ${taskId} status to: ${previousTaskStatus}`;
+			}
+
+			case 'toggle_skill': {
+				const skillId = undoData.skillId as string | undefined;
+				const previousEnabled = undoData.previousEnabled as boolean | undefined;
+				if (!skillId || previousEnabled === undefined)
+					throw new Error('Missing skillId or previousEnabled in undo data');
+				if (!skillsManager) throw new Error('Skills manager not available for undo');
+				const skill = skillsManager.getSkill(skillId);
+				if (!skill) throw new Error(`Skill ${skillId} no longer exists`);
+				skillsManager.setSkillEnabled(skillId, previousEnabled);
+				return `Restored skill ${skillId} enabled state to: ${previousEnabled}`;
+			}
+
+			case 'toggle_mcp_server': {
+				const serverId = undoData.serverId as string | undefined;
+				const previousServerEnabled = undoData.previousEnabled as boolean | undefined;
+				if (!serverId || previousServerEnabled === undefined)
+					throw new Error('Missing serverId or previousEnabled in undo data');
+				if (!mcpManager) throw new Error('MCP manager not available for undo');
+				const server = mcpManager.getMcpServer(serverId);
+				if (!server) throw new Error(`MCP server ${serverId} no longer exists`);
+				mcpManager.updateMcpServer(serverId, { enabled: previousServerEnabled });
+				return `Restored MCP server ${serverId} enabled state to: ${previousServerEnabled}`;
+			}
+
+			case 'update_app_settings': {
+				const previousSettings = undoData.previousSettings as Record<string, unknown> | undefined;
+				if (!previousSettings) throw new Error('Missing previousSettings in undo data');
+				if (!settingsManager) throw new Error('Settings manager not available for undo');
+				const settingsUpdates: Partial<GlobalSettings> = {};
+				if ('model' in previousSettings) settingsUpdates.model = previousSettings.model as string;
+				if ('thinkingLevel' in previousSettings)
+					settingsUpdates.thinkingLevel =
+						previousSettings.thinkingLevel as GlobalSettings['thinkingLevel'];
+				if ('autoScroll' in previousSettings)
+					settingsUpdates.autoScroll = previousSettings.autoScroll as boolean;
+				if ('maxConcurrentWorkers' in previousSettings)
+					settingsUpdates.maxConcurrentWorkers = previousSettings.maxConcurrentWorkers as number;
+				settingsManager.updateGlobalSettings(settingsUpdates);
+				return 'Restored previous app settings';
+			}
+
+			default:
+				throw new Error(`No undo handler for tool: ${toolName}`);
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1883,10 +2070,10 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					targetType: 'goal',
 					getTargetId: (_, d) => ((d.goal as Record<string, unknown>)?.id as string) ?? null,
 					undoable: true,
-					// Undo = delete the created goal; capture its ID from the result.
+					// Undo = delete the created goal; capture its ID + roomId from the result.
 					postCapture: (d) => {
 						const id = (d.goal as Record<string, unknown>)?.id as string | undefined;
-						return id ? { goalId: id } : null;
+						return id ? { goalId: id, roomId: args.room_id } : null;
 					},
 				})
 		),
@@ -1939,7 +2126,9 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 						preCapture: async () => {
 							const goalManager = config.managerFactory.getGoalManager(args.room_id);
 							const goal = await goalManager.getGoal(args.goal_id);
-							return goal ? { goalId: goal.id, previousStatus: goal.status } : null;
+							return goal
+								? { goalId: goal.id, roomId: args.room_id, previousStatus: goal.status }
+								: null;
 						},
 					}
 				)
@@ -1964,10 +2153,10 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					targetType: 'task',
 					getTargetId: (_, d) => ((d.task as Record<string, unknown>)?.id as string) ?? null,
 					undoable: true,
-					// Undo = delete the created task; capture its ID from the result.
+					// Undo = delete the created task; capture its ID + roomId from the result.
 					postCapture: (d) => {
 						const id = (d.task as Record<string, unknown>)?.id as string | undefined;
-						return id ? { taskId: id } : null;
+						return id ? { taskId: id, roomId: args.room_id } : null;
 					},
 				})
 		),
@@ -2027,7 +2216,9 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 						preCapture: async () => {
 							const taskManager = config.managerFactory.getTaskManager(args.room_id);
 							const task = await taskManager.getTask(args.task_id);
-							return task ? { taskId: task.id, previousStatus: task.status } : null;
+							return task
+								? { taskId: task.id, roomId: args.room_id, previousStatus: task.status }
+								: null;
 						},
 					}
 				)
@@ -2530,6 +2721,18 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 						getTargetId: (a) => (a.goal_id as string) ?? null,
 					}
 				)
+		),
+		// ── Undo ─────────────────────────────────────────────────────────────
+		tool(
+			'undo_last_action',
+			'Reverse the most recent undoable Neo action (e.g. undo a toggle, status change, settings update, or created entity). High risk — requires confirmation in balanced mode.',
+			{},
+			(_args) =>
+				logged('undo_last_action', {}, () => handlers.undo_last_action(), {
+					// targetType is null because it depends on the action being undone;
+					// the relevant context is in the output JSON (undoneToolName).
+					undoable: false,
+				})
 		),
 	];
 

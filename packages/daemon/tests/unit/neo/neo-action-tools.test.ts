@@ -38,7 +38,7 @@
  * - stop_session: happy path, wrong status, runtime unavailable, task not found
  * - pause_schedule: happy path, non-recurring goal, goal not found, already paused (idempotent)
  * - resume_schedule: happy path, no schedule, non-recurring goal, already active (idempotent)
- * - MCP server: all 32 tools are registered
+ * - MCP server: all 33 tools are registered
  */
 
 import { describe, expect, it, beforeEach } from 'bun:test';
@@ -2865,7 +2865,7 @@ describe('createNeoActionMcpServer', () => {
 		expect(server.instance._registeredTools).toHaveProperty('resume_schedule');
 	});
 
-	it('registers exactly 32 tools', () => {
-		expect(Object.keys(server.instance._registeredTools)).toHaveLength(32);
+	it('registers exactly 33 tools', () => {
+		expect(Object.keys(server.instance._registeredTools)).toHaveLength(33);
 	});
 });
