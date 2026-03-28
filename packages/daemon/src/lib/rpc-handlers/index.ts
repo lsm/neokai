@@ -362,7 +362,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		mcpServerRepository: deps.db.appMcpServers,
 		skillsManager: deps.skillsManager,
 		workspaceRoot: deps.config.workspaceRoot,
-		appVersion: '0.1.1',
+		appVersion: '0.1.1', // TODO: centralise into a shared VERSION constant (same value in system-handlers.ts and state-manager.ts)
 		startedAt: Date.now(),
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
