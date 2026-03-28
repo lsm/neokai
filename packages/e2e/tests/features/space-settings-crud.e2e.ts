@@ -58,14 +58,15 @@ test.describe('Space Settings CRUD', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
+	let spaceName = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
-		const uniqueName = `E2E Settings Test ${Date.now()}`;
-		spaceId = await createSpaceViaRpc(page, workspaceRoot, uniqueName);
+		spaceName = `E2E Settings Test ${Date.now()}`;
+		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
 
 		// Navigate to the space
 		await page.goto(`/space/${spaceId}`);
@@ -84,8 +85,10 @@ test.describe('Space Settings CRUD', () => {
 	});
 
 	test('renders settings tab with name, description, workspace path', async ({ page }) => {
-		// Name input should be visible and contain the space name
-		await expect(page.locator('input[type="text"]').first()).toBeVisible();
+		// Name input should be visible and pre-populated with the space name
+		const nameInput = page.locator('input[type="text"]').first();
+		await expect(nameInput).toBeVisible();
+		await expect(nameInput).toHaveValue(spaceName);
 
 		// Workspace path should be shown as read-only text
 		const workspaceRoot = await getWorkspaceRoot(page);
@@ -152,6 +155,8 @@ test.describe('Space Settings CRUD', () => {
 
 		// Should redirect to /spaces
 		await page.waitForURL('/spaces', { timeout: 10000 });
+		// spaceId is intentionally left set — afterEach will delete the (archived) space via
+		// space.delete, which succeeds regardless of archive status.
 	});
 
 	test('Delete space shows confirm dialog and redirects to spaces list', async ({ page }) => {
