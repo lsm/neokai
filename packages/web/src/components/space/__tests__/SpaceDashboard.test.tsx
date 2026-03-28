@@ -206,4 +206,13 @@ describe('SpaceDashboard', () => {
 		// Path should be truncated (starts with ellipsis)
 		expect(pathEl?.textContent?.startsWith('…')).toBe(true);
 	});
+
+	it('calls onSelectTask when a recent task row is clicked', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'completed')];
+		const onSelectTask = vi.fn();
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" onSelectTask={onSelectTask} />);
+		fireEvent.click(getByText('Task t1').closest('button')!);
+		expect(onSelectTask).toHaveBeenCalledWith('t1');
+	});
 });

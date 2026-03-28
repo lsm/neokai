@@ -5,6 +5,7 @@
  * - Sessions: /session/:sessionId
  * - Rooms: /room/:roomId
  * - Room Agent: /room/:roomId/agent
+ * - Space Agent: /space/:spaceId/agent
  *
  * Features:
  * - URL sync: Updates URL when session/room changes
@@ -37,6 +38,7 @@ const SPACES_ROUTE_PATTERN = /^\/spaces$/;
 const ROOM_CHAT_COMPAT_PATTERN = /^\/room\/([a-f0-9-]+)\/chat$/;
 /** Space routes accept both UUIDs (a-f0-9-) and slugs (a-z0-9-) */
 const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/;
+const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
 const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-f0-9-]+)$/;
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/;
 
@@ -126,11 +128,23 @@ export function getSpaceIdFromPath(path: string): string | null {
 	const match = path.match(SPACE_ROUTE_PATTERN);
 	if (match) return match[1];
 
+	const spaceAgentMatch = path.match(SPACE_AGENT_ROUTE_PATTERN);
+	if (spaceAgentMatch) return spaceAgentMatch[1];
+
 	const spaceSessionMatch = path.match(SPACE_SESSION_ROUTE_PATTERN);
 	if (spaceSessionMatch) return spaceSessionMatch[1];
 
 	const spaceTaskMatch = path.match(SPACE_TASK_ROUTE_PATTERN);
 	return spaceTaskMatch ? spaceTaskMatch[1] : null;
+}
+
+/**
+ * Extract space ID from agent route path
+ * Returns null if not on a space agent route
+ */
+export function getSpaceAgentFromPath(path: string): string | null {
+	const match = path.match(SPACE_AGENT_ROUTE_PATTERN);
+	return match ? match[1] : null;
 }
 
 /**
@@ -216,6 +230,13 @@ export function createSpaceSessionPath(spaceId: string, sessionId: string): stri
  */
 export function createSpaceTaskPath(spaceId: string, taskId: string): string {
 	return `/space/${spaceId}/task/${taskId}`;
+}
+
+/**
+ * Create space agent URL path
+ */
+export function createSpaceAgentPath(spaceId: string): string {
+	return `/space/${spaceId}/agent`;
 }
 
 /**
@@ -825,6 +846,54 @@ export function navigateToSpaceTask(spaceId: string, taskId: string, replace = f
 }
 
 /**
+ * Navigate to the Space Agent view
+ * Updates URL to /space/:spaceId/agent and sets signals for ChatContainer rendering
+ *
+ * @param spaceId - The space ID
+ * @param replace - Whether to replace current history entry (default: false)
+ */
+export function navigateToSpaceAgent(spaceId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const targetPath = createSpaceAgentPath(spaceId);
+	const currentPath = getCurrentPath();
+
+	if (currentPath === targetPath) {
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceSessionIdSignal.value = `space:chat:${spaceId}`;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ spaceId, path: targetPath }, '', targetPath);
+
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceSessionIdSignal.value = `space:chat:${spaceId}`;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
  * Handle popstate event (browser back/forward buttons)
  */
 function handlePopState(_event: PopStateEvent): void {
@@ -840,6 +909,7 @@ function handlePopState(_event: PopStateEvent): void {
 	const roomTask = getRoomTaskIdFromPath(path);
 	const spaceTask = getSpaceTaskIdFromPath(path);
 	const spaceSession = getSpaceSessionIdFromPath(path);
+	const spaceAgent = getSpaceAgentFromPath(path);
 	const spaceId = getSpaceIdFromPath(path);
 
 	// Update the signals to match the URL
@@ -859,6 +929,15 @@ function handlePopState(_event: PopStateEvent): void {
 	} else if (spaceSession) {
 		currentSpaceIdSignal.value = spaceSession.spaceId;
 		currentSpaceSessionIdSignal.value = spaceSession.sessionId;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (spaceAgent) {
+		currentSpaceIdSignal.value = spaceAgent;
+		currentSpaceSessionIdSignal.value = `space:chat:${spaceAgent}`;
 		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
@@ -978,6 +1057,7 @@ export function initializeRouter(): string | null {
 	const initialRoomTask = getRoomTaskIdFromPath(initialPath);
 	const initialSpaceTask = getSpaceTaskIdFromPath(initialPath);
 	const initialSpaceSession = getSpaceSessionIdFromPath(initialPath);
+	const initialSpaceAgent = getSpaceAgentFromPath(initialPath);
 	const initialSpaceId = getSpaceIdFromPath(initialPath);
 
 	// Set initial signals — space routes take priority, then room routes
@@ -994,6 +1074,15 @@ export function initializeRouter(): string | null {
 	} else if (initialSpaceSession) {
 		currentSpaceIdSignal.value = initialSpaceSession.spaceId;
 		currentSpaceSessionIdSignal.value = initialSpaceSession.sessionId;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (initialSpaceAgent) {
+		currentSpaceIdSignal.value = initialSpaceAgent;
+		currentSpaceSessionIdSignal.value = `space:chat:${initialSpaceAgent}`;
 		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
