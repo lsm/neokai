@@ -137,6 +137,19 @@ function makeRun(
 	} as SpaceWorkflowRun;
 }
 
+function makeSpace(id: string, overrides: Partial<Space> = {}): Space {
+	return {
+		id,
+		name: `Space ${id}`,
+		status: 'active',
+		workspacePath: '/workspace',
+		sessionIds: [],
+		createdAt: 0,
+		updatedAt: 0,
+		...overrides,
+	} as unknown as Space;
+}
+
 // -------------------------------------------------------
 // Tests
 // -------------------------------------------------------
@@ -171,6 +184,16 @@ describe('SpaceDetailPanel', () => {
 		expect(container.textContent).toContain('3 active');
 	});
 
+	it('counts rate_limited and usage_limited as active (transient throttle states)', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'T1', 'rate_limited'),
+			makeTask('t2', 'T2', 'usage_limited'),
+			makeTask('t3', 'T3', 'in_progress'),
+		];
+		const { container } = render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(container.textContent).toContain('3 active');
+	});
+
 	it('counts review tasks (review, needs_attention)', () => {
 		mockTasksSignal.value = [
 			makeTask('t1', 'T1', 'review'),
@@ -182,6 +205,12 @@ describe('SpaceDetailPanel', () => {
 
 	it('counts done tasks (completed, cancelled)', () => {
 		mockTasksSignal.value = [makeTask('t1', 'T1', 'completed'), makeTask('t2', 'T2', 'cancelled')];
+		const { container } = render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(container.textContent).toContain('2 done');
+	});
+
+	it('counts archived tasks as done', () => {
+		mockTasksSignal.value = [makeTask('t1', 'T1', 'completed'), makeTask('t2', 'T2', 'archived')];
 		const { container } = render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(container.textContent).toContain('2 done');
 	});
@@ -416,6 +445,28 @@ describe('SpaceDetailPanel', () => {
 		expect(screen.queryByText('Active Task')).toBeNull();
 	});
 
+	it('shows rate_limited tasks under Active tab', () => {
+		mockTasksSignal.value = [makeTask('t1', 'Throttled Task', 'rate_limited')];
+		render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(screen.getByText('Throttled Task')).toBeTruthy();
+	});
+
+	it('shows usage_limited tasks under Active tab', () => {
+		mockTasksSignal.value = [makeTask('t1', 'Limited Task', 'usage_limited')];
+		render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(screen.getByText('Limited Task')).toBeTruthy();
+	});
+
+	it('shows archived tasks under Done tab', () => {
+		mockTasksSignal.value = [makeTask('t1', 'Archived Task', 'archived')];
+		render(<SpaceDetailPanel spaceId="space-1" />);
+
+		const doneTab = screen.getAllByRole('button').find((b) => b.textContent === 'done');
+		fireEvent.click(doneTab!);
+
+		expect(screen.getByText('Archived Task')).toBeTruthy();
+	});
+
 	it('shows "No tasks" in Tasks section when filtered list is empty', () => {
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		// "No active runs" + "No tasks" (Tasks section)
@@ -469,13 +520,7 @@ describe('SpaceDetailPanel', () => {
 	});
 
 	it('shows manually created sessions from space.sessionIds', () => {
-		mockSpaceSignal.value = {
-			id: 'space-1',
-			name: 'Test Space',
-			sessionIds: ['manual-session-abc123'],
-			createdAt: 0,
-			updatedAt: 0,
-		} as unknown as Space;
+		mockSpaceSignal.value = makeSpace('space-1', { sessionIds: ['manual-session-abc123'] });
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		fireEvent.click(screen.getByLabelText('Sessions section'));
 		// Manually created sessions show first 8 chars of ID
@@ -508,14 +553,10 @@ describe('SpaceDetailPanel', () => {
 	});
 
 	it('deduplicates sessions — space agent not listed twice even if in sessionIds', () => {
-		mockSpaceSignal.value = {
-			id: 'space-1',
-			name: 'Test Space',
-			// Include the space agent session ID in sessionIds — should not appear twice
+		// Include the space agent session ID in sessionIds — should not appear twice
+		mockSpaceSignal.value = makeSpace('space-1', {
 			sessionIds: ['space:chat:space-1', 'other-session'],
-			createdAt: 0,
-			updatedAt: 0,
-		} as unknown as Space;
+		});
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		fireEvent.click(screen.getByLabelText('Sessions section'));
 

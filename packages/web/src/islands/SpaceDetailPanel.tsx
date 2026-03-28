@@ -76,10 +76,17 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const [orphanTab, setOrphanTab] = useState<OrphanTab>('active');
 
 	// Task stats strip counts
+	// rate_limited/usage_limited are transient throttle states — counted as active (still running).
+	// archived is a terminal state — counted as done.
 	const activeCount = useMemo(
 		() =>
 			tasks.filter(
-				(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
+				(t) =>
+					t.status === 'draft' ||
+					t.status === 'pending' ||
+					t.status === 'in_progress' ||
+					t.status === 'rate_limited' ||
+					t.status === 'usage_limited'
 			).length,
 		[tasks]
 	);
@@ -88,7 +95,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		[tasks]
 	);
 	const doneCount = useMemo(
-		() => tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled').length,
+		() =>
+			tasks.filter(
+				(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
+			).length,
 		[tasks]
 	);
 
@@ -113,16 +123,26 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		});
 	};
 
-	// Standalone (orphan) tasks filtered by tab — read standaloneTasks directly
-	// so Preact Signals auto-tracking picks up changes when the underlying list updates.
-	const orphanTasksForTab =
-		orphanTab === 'active'
-			? standaloneTasks.filter(
-					(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
-				)
-			: orphanTab === 'review'
-				? standaloneTasks.filter((t) => t.status === 'review' || t.status === 'needs_attention')
-				: standaloneTasks.filter((t) => t.status === 'completed' || t.status === 'cancelled');
+	// Standalone tasks filtered by tab.
+	// rate_limited/usage_limited are grouped with active; archived with done.
+	const orphanTasksForTab = useMemo(() => {
+		if (orphanTab === 'active') {
+			return standaloneTasks.filter(
+				(t) =>
+					t.status === 'draft' ||
+					t.status === 'pending' ||
+					t.status === 'in_progress' ||
+					t.status === 'rate_limited' ||
+					t.status === 'usage_limited'
+			);
+		}
+		if (orphanTab === 'review') {
+			return standaloneTasks.filter((t) => t.status === 'review' || t.status === 'needs_attention');
+		}
+		return standaloneTasks.filter(
+			(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
+		);
+	}, [standaloneTasks, orphanTab]);
 
 	// Build sessions list from available data sources
 	// (1) Space agent session — always listed
@@ -353,10 +373,11 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 						<button
 							onClick={(e: MouseEvent) => {
 								e.stopPropagation();
-								// Future: create a new session in this space
 							}}
-							class="text-gray-500 hover:text-gray-300 transition-colors p-0.5"
+							disabled
+							class="text-gray-600 cursor-not-allowed p-0.5"
 							aria-label="Create session"
+							title="Session creation coming soon"
 						>
 							<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
