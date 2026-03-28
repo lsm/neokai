@@ -5,7 +5,7 @@
  * Tests:
  * - Dialog renders when open / hidden when closed
  * - Title required validation
- * - Submit calls spaceTask.create RPC with correct params
+ * - Submit calls spaceStore.createTask with correct params
  * - Shows toast and calls onCreated on success
  * - Shows error message on failure
  * - Cancel closes and resets form
@@ -15,24 +15,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
 
-const mockRequest = vi.fn();
-const mockGetHubIfConnected = vi.fn();
-const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
+const mockCreateTask = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 
-vi.mock('../../../lib/connection-manager', () => ({
-	connectionManager: {
-		get getHubIfConnected() {
-			return mockGetHubIfConnected;
-		},
-	},
-}));
-
 vi.mock('../../../lib/space-store', () => ({
 	spaceStore: {
-		get selectSpace() {
-			return mockSelectSpace;
+		get createTask() {
+			return mockCreateTask;
 		},
 	},
 }));
@@ -93,8 +83,7 @@ describe('SpaceCreateTaskDialog', () => {
 		cleanup();
 		onClose = vi.fn();
 		onCreated = vi.fn();
-		mockRequest.mockReset();
-		mockGetHubIfConnected.mockReset();
+		mockCreateTask.mockReset();
 		mockToastSuccess.mockReset();
 		mockToastError.mockReset();
 	});
@@ -104,61 +93,36 @@ describe('SpaceCreateTaskDialog', () => {
 	});
 
 	it('renders nothing when isOpen is false', () => {
-		const { container } = render(
-			<SpaceCreateTaskDialog isOpen={false} spaceId="space-1" onClose={onClose} />
-		);
+		const { container } = render(<SpaceCreateTaskDialog isOpen={false} onClose={onClose} />);
 		expect(container.querySelector('[role="dialog"]')).toBeNull();
 	});
 
 	it('renders dialog when isOpen is true', () => {
-		const { getByRole } = render(
-			<SpaceCreateTaskDialog isOpen={true} spaceId="space-1" onClose={onClose} />
-		);
+		const { getByRole } = render(<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />);
 		expect(getByRole('dialog')).toBeTruthy();
 	});
 
 	it('shows title required indicator', () => {
-		const { getByText } = render(
-			<SpaceCreateTaskDialog isOpen={true} spaceId="space-1" onClose={onClose} />
-		);
+		const { getByText } = render(<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />);
 		expect(getByText('Title')).toBeTruthy();
 		expect(getByText('*')).toBeTruthy();
 	});
 
 	it('shows validation error when title is empty', async () => {
-		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
 		const { getByRole, findByText } = render(
-			<SpaceCreateTaskDialog isOpen={true} spaceId="space-1" onClose={onClose} />
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
 		);
 		const form = getByRole('dialog').querySelector('form');
 		fireEvent.submit(form);
 		expect(await findByText('Task title is required')).toBeTruthy();
-		expect(mockRequest).not.toHaveBeenCalled();
+		expect(mockCreateTask).not.toHaveBeenCalled();
 	});
 
-	it('shows error when not connected', async () => {
-		mockGetHubIfConnected.mockReturnValue(null);
-		const { getByPlaceholderText, getByRole, findByText } = render(
-			<SpaceCreateTaskDialog isOpen={true} spaceId="space-1" onClose={onClose} />
-		);
-		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
-			target: { value: 'My task' },
-		});
-		fireEvent.submit(getByRole('dialog').querySelector('form'));
-		expect(await findByText('Not connected to server')).toBeTruthy();
-	});
-
-	it('calls spaceTask.create with correct params on submit', async () => {
-		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-		mockRequest.mockResolvedValue(TASK_MOCK);
+	it('calls spaceStore.createTask with correct params on submit', async () => {
+		mockCreateTask.mockResolvedValue(TASK_MOCK);
 
 		const { getByPlaceholderText, getByRole } = render(
-			<SpaceCreateTaskDialog
-				isOpen={true}
-				spaceId="space-1"
-				onClose={onClose}
-				onCreated={onCreated}
-			/>
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} onCreated={onCreated} />
 		);
 
 		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
@@ -168,8 +132,7 @@ describe('SpaceCreateTaskDialog', () => {
 		fireEvent.submit(getByRole('dialog').querySelector('form'));
 
 		await waitFor(() => {
-			expect(mockRequest).toHaveBeenCalledWith('spaceTask.create', {
-				spaceId: 'space-1',
+			expect(mockCreateTask).toHaveBeenCalledWith({
 				title: 'My new task',
 				description: '',
 				priority: 'normal',
@@ -179,16 +142,10 @@ describe('SpaceCreateTaskDialog', () => {
 	});
 
 	it('calls onCreated and closes on success', async () => {
-		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-		mockRequest.mockResolvedValue(TASK_MOCK);
+		mockCreateTask.mockResolvedValue(TASK_MOCK);
 
 		const { getByPlaceholderText, getByRole } = render(
-			<SpaceCreateTaskDialog
-				isOpen={true}
-				spaceId="space-1"
-				onClose={onClose}
-				onCreated={onCreated}
-			/>
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} onCreated={onCreated} />
 		);
 
 		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
@@ -203,12 +160,11 @@ describe('SpaceCreateTaskDialog', () => {
 		});
 	});
 
-	it('shows error message when spaceTask.create fails', async () => {
-		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-		mockRequest.mockRejectedValue(new Error('Server error'));
+	it('shows error message when createTask fails', async () => {
+		mockCreateTask.mockRejectedValue(new Error('Server error'));
 
 		const { getByPlaceholderText, getByRole, findByText } = render(
-			<SpaceCreateTaskDialog isOpen={true} spaceId="space-1" onClose={onClose} />
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
 		);
 
 		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
@@ -220,20 +176,32 @@ describe('SpaceCreateTaskDialog', () => {
 		expect(onClose).not.toHaveBeenCalled();
 	});
 
-	it('calls onClose when Cancel is clicked', () => {
-		const { getByText } = render(
-			<SpaceCreateTaskDialog isOpen={true} spaceId="space-1" onClose={onClose} />
+	it('shows error when no space is selected (createTask throws)', async () => {
+		mockCreateTask.mockRejectedValue(new Error('No space selected'));
+
+		const { getByPlaceholderText, getByRole, findByText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
 		);
+
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My task' },
+		});
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+
+		expect(await findByText('No space selected')).toBeTruthy();
+	});
+
+	it('calls onClose when Cancel is clicked', () => {
+		const { getByText } = render(<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />);
 		fireEvent.click(getByText('Cancel'));
 		expect(onClose).toHaveBeenCalled();
 	});
 
 	it('sends correct priority when changed', async () => {
-		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-		mockRequest.mockResolvedValue(TASK_MOCK);
+		mockCreateTask.mockResolvedValue(TASK_MOCK);
 
 		const { getByPlaceholderText, getByRole, getAllByRole } = render(
-			<SpaceCreateTaskDialog isOpen={true} spaceId="space-1" onClose={onClose} />
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
 		);
 
 		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
@@ -246,8 +214,7 @@ describe('SpaceCreateTaskDialog', () => {
 		fireEvent.submit(getByRole('dialog').querySelector('form'));
 
 		await waitFor(() => {
-			expect(mockRequest).toHaveBeenCalledWith(
-				'spaceTask.create',
+			expect(mockCreateTask).toHaveBeenCalledWith(
 				expect.objectContaining({
 					priority: 'urgent',
 				})
