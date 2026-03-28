@@ -51,6 +51,7 @@ function makeSession(
 		}),
 		isCleaningUp: mock(() => cleaningUp),
 		setRuntimeSystemPrompt: mock(() => undefined),
+		setRuntimeModel: mock(() => undefined),
 		setRuntimeMcpServers: mock(() => undefined),
 		cleanup: mock(async () => undefined),
 		queryPromise,
@@ -382,6 +383,34 @@ describe('NeoAgentManager', () => {
 		test('falls back to sonnet when neither neoModel nor model is set', () => {
 			const mgr = new NeoAgentManager(makeSessionManager(), makeSettingsManager({}));
 			expect(mgr.getModel()).toBe('sonnet');
+		});
+	});
+
+	describe('applyRuntimeConfig()', () => {
+		test('sets model on session from neoModel setting', async () => {
+			const session = makeSession();
+			const sm = makeSessionManager({ existingSession: null, createdSession: session });
+			const mgr = new NeoAgentManager(
+				sm,
+				makeSettingsManager({ neoModel: 'claude-opus-4', model: 'sonnet' })
+			);
+
+			await mgr.provision();
+
+			const calls = (session.setRuntimeModel as ReturnType<typeof mock>).mock.calls;
+			expect(calls.length).toBe(1);
+			expect(calls[0][0]).toBe('claude-opus-4');
+		});
+
+		test('falls back to global model when neoModel is absent', async () => {
+			const session = makeSession();
+			const sm = makeSessionManager({ existingSession: null, createdSession: session });
+			const mgr = new NeoAgentManager(sm, makeSettingsManager({ model: 'haiku' }));
+
+			await mgr.provision();
+
+			const calls = (session.setRuntimeModel as ReturnType<typeof mock>).mock.calls;
+			expect(calls[0][0]).toBe('haiku');
 		});
 	});
 

@@ -262,15 +262,17 @@ export class NeoAgentManager {
 	/**
 	 * Apply runtime configuration to the current session.
 	 *
-	 * Sets the system prompt based on the active security mode and the model
-	 * from settings. These values are runtime-only (not persisted to DB).
+	 * Sets the system prompt (based on the active security mode) and the model
+	 * override from settings. Both values are in-memory only (not persisted to DB).
 	 */
 	private applyRuntimeConfig(): void {
 		if (!this.session) return;
 
 		const securityMode = this.getSecurityMode();
 		const systemPromptText = buildNeoSystemPrompt(securityMode);
-
 		this.session.setRuntimeSystemPrompt(systemPromptText);
+
+		const model = this.getModel();
+		this.session.setRuntimeModel(model);
 	}
 }
