@@ -81,6 +81,9 @@ export function GateArtifactsView({
 	// ---- Extract PR info from gate data ----
 	const prUrl = typeof gateData?.pr_url === 'string' ? gateData.pr_url : null;
 	const prNumber = typeof gateData?.pr_number === 'number' ? gateData.pr_number : null;
+	// Future integration point: when Neo's approve_gate / reject_gate tool is implemented
+	// (task M3 action tools), it should write `origin: 'neo'` into the gate data record.
+	// Until then this will always be false.
 	const isNeoDecision = gateData?.origin === 'neo';
 
 	// ---- Fetch artifacts ----

@@ -306,4 +306,34 @@ describe('GateArtifactsView', () => {
 		);
 		await waitFor(() => expect(queryByTestId('pr-link')).toBeNull());
 	});
+
+	describe('Neo origin indicator', () => {
+		it('renders ViaNeoIndicator in header when gateData.origin is "neo"', async () => {
+			mockRequest.mockResolvedValue(makeArtifacts());
+			const { container } = render(
+				<GateArtifactsView {...defaultProps()} gateData={{ origin: 'neo' }} />
+			);
+			await waitFor(() =>
+				expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeTruthy()
+			);
+		});
+
+		it('does not render ViaNeoIndicator when gateData.origin is absent', async () => {
+			mockRequest.mockResolvedValue(makeArtifacts());
+			const { container } = render(
+				<GateArtifactsView {...defaultProps()} gateData={{ pr_url: 'https://example.com' }} />
+			);
+			await waitFor(() =>
+				expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull()
+			);
+		});
+
+		it('does not render ViaNeoIndicator when gateData is undefined', async () => {
+			mockRequest.mockResolvedValue(makeArtifacts());
+			const { container } = render(<GateArtifactsView {...defaultProps()} />);
+			await waitFor(() =>
+				expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull()
+			);
+		});
+	});
 });
