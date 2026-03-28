@@ -12,7 +12,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Space, SpaceTask, SpaceWorkflowRun, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type {
+	Space,
+	SpaceTask,
+	SpaceWorkflowRun,
+	SpaceAgent,
+	SpaceWorkflow,
+	SpaceTaskActivityMember,
+} from '@neokai/shared';
 
 // -------------------------------------------------------
 // Mocks — declared before imports so vi.mock hoisting works
@@ -100,10 +107,37 @@ function makeWorkflow(id: string): SpaceWorkflow {
 	};
 }
 
+function makeTaskActivityRows(taskId = 't1'): SpaceTaskActivityMember[] {
+	return [
+		{
+			id: `session-${taskId}`,
+			sessionId: `session-${taskId}`,
+			kind: 'task_agent',
+			label: 'Task Agent',
+			role: 'task-agent',
+			state: 'active',
+			processingStatus: 'processing',
+			processingPhase: 'thinking',
+			messageCount: 2,
+			taskId,
+			taskTitle: `Task ${taskId}`,
+			taskStatus: 'in_progress',
+			workflowNodeId: null,
+			agentName: 'task-agent',
+			currentStep: 'Working',
+			error: null,
+			completionSummary: null,
+			updatedAt: Date.now(),
+			lastMessageAt: Date.now(),
+		},
+	];
+}
+
 function makeMockHub() {
 	return {
 		joinChannel: vi.fn(),
 		leaveChannel: vi.fn(),
+		onConnection: vi.fn(() => () => {}),
 		onEvent: vi.fn((eventName: string, handler: (e: unknown) => void) => {
 			// Single-handler map — last registration wins (used by most existing tests)
 			mockEventHandlers.set(eventName, handler);
@@ -821,6 +855,48 @@ describe('SpaceStore — CRUD methods', () => {
 		await expect(
 			spaceStore.startWorkflowRun({ workflowId: 'wf-1', title: 'Run 1' })
 		).rejects.toThrow('Server returned no run data');
+	});
+
+	it('subscribeTaskActivity subscribes to LiveQuery and applies snapshots', async () => {
+		await spaceStore.selectSpace('space-1');
+		await spaceStore.subscribeTaskActivity('t1');
+		const rows = makeTaskActivityRows('t1');
+
+		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+			queryName: 'spaceTaskActivity.byTask',
+			params: ['t1'],
+			subscriptionId: 'spaceTaskActivity-t1',
+		});
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'spaceTaskActivity-t1',
+			rows,
+			version: 1,
+		});
+		expect(spaceStore.taskActivity.value.get('t1')).toEqual(rows);
+	});
+
+	it('subscribeTaskActivity applies deltas and unsubscribeTaskActivity tears down the subscription', async () => {
+		await spaceStore.selectSpace('space-1');
+		await spaceStore.subscribeTaskActivity('t1');
+		const rows = makeTaskActivityRows('t1');
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'spaceTaskActivity-t1',
+			rows,
+			version: 1,
+		});
+
+		const updatedRow = { ...rows[0], state: 'waiting_for_input' as const };
+		fireMockEvent('liveQuery.delta', {
+			subscriptionId: 'spaceTaskActivity-t1',
+			updated: [updatedRow],
+			version: 2,
+		});
+		expect(spaceStore.taskActivity.value.get('t1')).toEqual([updatedRow]);
+
+		spaceStore.unsubscribeTaskActivity();
+		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.unsubscribe', {
+			subscriptionId: 'spaceTaskActivity-t1',
+		});
 	});
 
 	it('createAgent calls spaceAgent.create RPC', async () => {

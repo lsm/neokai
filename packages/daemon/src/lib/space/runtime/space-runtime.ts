@@ -35,6 +35,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { TaskAgentManager } from './task-agent-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor } from './workflow-executor';
@@ -64,6 +65,8 @@ export interface SpaceRuntimeConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Task repository for querying tasks by run/step */
 	taskRepo: SpaceTaskRepository;
+	/** Optional reactive DB invalidation hooks for task LiveQuery surfaces */
+	reactiveDb?: ReactiveDatabase;
 	/**
 	 * Optional TaskAgentManager for Task Agent mode.
 	 *
@@ -1059,7 +1062,7 @@ export class SpaceRuntime {
 	private getOrCreateTaskManager(spaceId: string): SpaceTaskManager {
 		let manager = this.taskManagers.get(spaceId);
 		if (!manager) {
-			manager = new SpaceTaskManager(this.config.db, spaceId);
+			manager = new SpaceTaskManager(this.config.db, spaceId, this.config.reactiveDb);
 			this.taskManagers.set(spaceId, manager);
 		}
 		return manager;

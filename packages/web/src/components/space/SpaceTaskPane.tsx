@@ -7,11 +7,17 @@
  */
 
 import type { ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
 import { cn } from '../../lib/utils';
-import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import type {
+	SpaceTask,
+	SpaceTaskStatus,
+	SpaceTaskPriority,
+	SpaceTaskActivityMember,
+	SpaceTaskActivityState,
+} from '@neokai/shared';
 import { WorkflowCanvas } from './WorkflowCanvas';
 
 interface SpaceTaskPaneProps {
@@ -81,6 +87,36 @@ const TASK_TYPE_LABELS = {
 	design: 'Design',
 	review: 'Review',
 } as const;
+
+const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
+	active: 'Active',
+	queued: 'Queued',
+	idle: 'Idle',
+	waiting_for_input: 'Needs Input',
+	completed: 'Completed',
+	failed: 'Issue',
+	interrupted: 'Interrupted',
+};
+
+const ACTIVITY_STATE_BADGE_CLASSES: Record<SpaceTaskActivityState, string> = {
+	active: 'border-blue-700/50 bg-blue-950/20 text-blue-300',
+	queued: 'border-gray-700 bg-dark-950 text-gray-400',
+	idle: 'border-dark-700 bg-dark-950 text-gray-500',
+	waiting_for_input: 'border-yellow-700/50 bg-yellow-950/20 text-yellow-300',
+	completed: 'border-green-700/50 bg-green-950/20 text-green-300',
+	failed: 'border-red-700/50 bg-red-950/20 text-red-300',
+	interrupted: 'border-orange-700/50 bg-orange-950/20 text-orange-300',
+};
+
+const ACTIVITY_STATE_DOT_CLASSES: Record<SpaceTaskActivityState, string> = {
+	active: 'bg-blue-400',
+	queued: 'bg-gray-400',
+	idle: 'bg-gray-600',
+	waiting_for_input: 'bg-yellow-400',
+	completed: 'bg-green-400',
+	failed: 'bg-red-400',
+	interrupted: 'bg-orange-400',
+};
 
 function SectionCard({
 	title,
@@ -175,6 +211,36 @@ function formatAgentLabel(value: string): string {
 		.join(' ');
 }
 
+function ActivityStateBadge({ state }: { state: SpaceTaskActivityState }) {
+	return (
+		<InfoBadge label={ACTIVITY_STATE_LABELS[state]} className={ACTIVITY_STATE_BADGE_CLASSES[state]} />
+	);
+}
+
+function describeActivityMember(member: SpaceTaskActivityMember): string {
+	if (member.error) return member.error;
+	if (member.state === 'active') {
+		return member.currentStep
+			? member.currentStep
+			: member.processingPhase
+				? `${member.label} is ${member.processingPhase}.`
+				: `${member.label} is working.`;
+	}
+	if (member.state === 'waiting_for_input') {
+		return member.currentStep || 'Waiting for a human response before continuing.';
+	}
+	if (member.state === 'completed') {
+		return member.completionSummary || member.currentStep || 'Finished its assigned work.';
+	}
+	if (member.state === 'failed' || member.state === 'interrupted') {
+		return member.currentStep || 'This agent needs attention before it can continue.';
+	}
+	if (member.state === 'queued') {
+		return member.currentStep || 'Queued to run when capacity is available.';
+	}
+	return member.currentStep || 'Idle right now.';
+}
+
 // ============================================================================
 // Human Input
 // ============================================================================
@@ -240,6 +306,14 @@ function HumanInputArea({ task }: HumanInputAreaProps) {
 }
 
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
+	useEffect(() => {
+		if (!taskId) return;
+		void spaceStore.subscribeTaskActivity(taskId).catch(() => {});
+		return () => {
+			spaceStore.unsubscribeTaskActivity(taskId);
+		};
+	}, [taskId]);
+
 	const tasks = spaceStore.tasks.value;
 	const agents = spaceStore.agents.value;
 	const workflowRuns = spaceStore.workflowRuns.value;
@@ -265,6 +339,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	}
 
 	const agentSessionId = task.taskAgentSessionId;
+	const activityRows = spaceStore.taskActivity.value.get(task.id) ?? [];
 	const runtimeSpaceId = spaceId ?? task.spaceId;
 	const agentActionLabel =
 		task.activeSession === 'leader'
@@ -379,6 +454,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				};
 			})
 		: [];
+	const liveTaskAgent = activityRows.find((member) => member.kind === 'task_agent') ?? null;
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-950">
@@ -463,14 +539,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 						<SectionCard title="Task Agent" tone={humanHandoffPending ? 'warning' : 'default'}>
 							<p class="text-sm text-gray-300">
-								{agentSessionId
+								{liveTaskAgent || agentSessionId
 									? 'Open the linked task thread to direct the agent, answer follow-up questions, or inspect the latest result.'
 									: 'This task does not have its own live agent thread yet. Use the shared space agent to steer the work and get updates.'}
 							</p>
 							<div class="mt-4 grid gap-3">
 								<div class="rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-3">
 									<p class="text-[11px] uppercase tracking-[0.18em] text-gray-500">Current Control Point</p>
-									<p class="mt-2 text-sm text-gray-100">{agentSessionId ? 'Linked task agent' : 'Shared space agent'}</p>
+									<p class="mt-2 text-sm text-gray-100">
+										{liveTaskAgent || agentSessionId ? 'Linked task agent' : 'Shared space agent'}
+									</p>
 									<p class="mt-1 text-xs text-gray-500">
 										{task.status === 'needs_attention'
 											? 'Answer the open question here, then continue in the agent thread if more direction is needed.'
@@ -483,8 +561,55 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						</SectionCard>
 					</div>
 
-					<SectionCard title={compactRelatedTasks.length > 0 ? 'Agent Activity' : 'Task Activity'}>
-						{compactRelatedTasks.length > 0 ? (
+					<SectionCard title="Agent Activity">
+						{activityRows.length > 0 ? (
+							<div class="space-y-2">
+								{activityRows.map((member) => (
+									<div
+										key={member.id}
+										class="flex items-start gap-3 rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-3"
+									>
+										<span
+											class={cn(
+												'mt-1 h-2.5 w-2.5 rounded-full flex-shrink-0',
+												ACTIVITY_STATE_DOT_CLASSES[member.state]
+											)}
+										/>
+										<div class="min-w-0 flex-1">
+											<div class="flex flex-wrap items-center gap-2">
+												<p class="text-sm font-medium text-gray-100">{member.label}</p>
+												{member.kind === 'task_agent' && (
+													<InfoBadge
+														label="Task Agent"
+														className="border-violet-700/50 bg-violet-950/20 text-violet-300"
+													/>
+												)}
+												{member.taskId === task.id && (
+													<InfoBadge
+														label="Current Task"
+														className="border-blue-700/50 bg-blue-950/20 text-blue-300"
+													/>
+												)}
+												<ActivityStateBadge state={member.state} />
+											</div>
+											<p class="mt-1 text-sm text-gray-300 truncate">
+												{member.taskTitle ?? task.title}
+											</p>
+											<p class="mt-1 text-xs text-gray-500">{describeActivityMember(member)}</p>
+										</div>
+										<div class="text-right flex-shrink-0">
+											<p class="text-[11px] uppercase tracking-[0.16em] text-gray-600">Messages</p>
+											<p class="mt-1 text-sm text-gray-300">{member.messageCount}</p>
+											{member.processingPhase && member.state === 'active' && (
+												<p class="mt-1 text-[11px] text-blue-300 uppercase tracking-[0.16em]">
+													{member.processingPhase}
+												</p>
+											)}
+										</div>
+									</div>
+								))}
+							</div>
+						) : compactRelatedTasks.length > 0 ? (
 							<div class="space-y-2">
 								{compactRelatedTasks.map(({ task: relatedTask, agentLabel, summary }) => (
 									<div
@@ -518,10 +643,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							</div>
 						) : (
 							<div class="rounded-xl border border-dark-700 bg-dark-900/70 px-4 py-4">
-								<div class="flex flex-wrap items-center gap-2">
-									<p class="text-sm font-medium text-gray-100">{assignedAgentLabel}</p>
-									<StatusBadge status={task.status} />
-								</div>
+								<p class="text-sm font-medium text-gray-100">No live agent roster yet</p>
 								<p class="mt-2 text-sm text-gray-400">
 									{task.status === 'needs_attention'
 										? 'The agent is waiting for your answer before it can continue.'

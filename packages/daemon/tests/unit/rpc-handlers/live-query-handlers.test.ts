@@ -49,6 +49,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom.all')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('sessionGroupMessages.byGroup')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('spaceTaskActivity.byTask')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('neo.messages')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('neo.activity')).toBe(true);
@@ -59,6 +60,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.get('tasks.byRoom.all')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('goals.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('skills.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('neo.messages')!.paramCount).toBe(2);
 		expect(NAMED_QUERY_REGISTRY.get('neo.activity')!.paramCount).toBe(2);
@@ -171,6 +173,122 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			const defaultKeys = Object.keys(defaultRows[0]).sort();
 			const allKeys = Object.keys(allRows[0]).sort();
 			expect(allKeys).toEqual(defaultKeys);
+		});
+	});
+
+	describe('spaceTaskActivity.byTask', () => {
+		const spaceId = 'space-live-query-space';
+		const sessionId = 'space:task:1';
+		const nowIso = new Date(now).toISOString();
+
+		beforeEach(() => {
+			db.exec(`
+				CREATE TABLE IF NOT EXISTS spaces (
+					id TEXT PRIMARY KEY,
+					slug TEXT,
+					workspace_path TEXT NOT NULL,
+					name TEXT NOT NULL,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL
+				);
+				CREATE TABLE IF NOT EXISTS space_agents (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					name TEXT NOT NULL
+				);
+				CREATE TABLE IF NOT EXISTS space_tasks (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					task_number INTEGER NOT NULL,
+					title TEXT NOT NULL,
+					description TEXT NOT NULL,
+					status TEXT NOT NULL,
+					priority TEXT NOT NULL,
+					assigned_agent TEXT,
+					custom_agent_id TEXT,
+					agent_name TEXT,
+					completion_summary TEXT,
+					workflow_run_id TEXT,
+					workflow_node_id TEXT,
+					task_agent_session_id TEXT,
+					depends_on TEXT NOT NULL DEFAULT '[]',
+					current_step TEXT,
+					error TEXT,
+					result TEXT,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL
+				);
+			`);
+			db.exec(
+				`INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+				 VALUES ('${spaceId}', '${spaceId}', '/tmp/test-space', 'Test Space', ${now}, ${now})`
+			);
+		});
+
+		function insertSpaceTask(overrides: Record<string, unknown> = {}): string {
+			const id = (overrides.id as string) ?? `space-task-${Date.now()}-${Math.random()}`;
+			db.exec(`
+				INSERT INTO space_tasks (
+					id, space_id, task_number, title, description, status, priority, assigned_agent,
+					agent_name, workflow_run_id, workflow_node_id, task_agent_session_id, depends_on,
+					created_at, updated_at
+				) VALUES (
+					'${id}', '${spaceId}', 1, 'Ship UI review', 'Describe progress', '${overrides.status ?? 'in_progress'}',
+					'normal', 'coder', ${overrides.agentName ? `'${String(overrides.agentName)}'` : 'NULL'},
+					${overrides.workflowRunId ? `'${String(overrides.workflowRunId)}'` : 'NULL'},
+					${overrides.workflowNodeId ? `'${String(overrides.workflowNodeId)}'` : 'NULL'},
+					${overrides.taskAgentSessionId ? `'${String(overrides.taskAgentSessionId)}'` : 'NULL'},
+					'[]', ${now}, ${now}
+				)
+			`);
+			return id;
+		}
+
+		function insertSession(id: string, type: string, processingState: string): void {
+			db.exec(`
+				INSERT INTO sessions (
+					id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+					is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id,
+					available_commands, processing_state, archived_at, type, session_context
+				) VALUES (
+					'${id}', 'Session', '/tmp/test-space', '${nowIso}', '${nowIso}', 'active', '{}', '{}',
+					0, NULL, NULL, NULL, NULL, NULL, NULL, '${processingState}', NULL, '${type}', '{}'
+				)
+			`);
+		}
+
+		function insertSdkMessage(id: string, sessionIdValue: string): void {
+			db.exec(`
+				INSERT INTO sdk_messages (
+					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin
+				) VALUES (
+					'${id}', '${sessionIdValue}', 'assistant', NULL, '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}',
+					'${nowIso}', 'consumed', 'system'
+				)
+			`);
+		}
+
+		function queryAndMap(taskId: string): Record<string, unknown>[] {
+			const entry = NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			return entry.mapRow ? rows.map(entry.mapRow) : rows;
+		}
+
+		test('returns live activity rows with derived state and message counts', () => {
+			const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+			insertSession(sessionId, 'space_task_agent', '{"status":"processing","phase":"thinking"}');
+			insertSdkMessage('sdk-1', sessionId);
+			insertSdkMessage('sdk-2', sessionId);
+
+			const [row] = queryAndMap(taskId);
+			expect(row.kind).toBe('task_agent');
+			expect(row.label).toBe('Task Agent');
+			expect(row.state).toBe('active');
+			expect(row.processingStatus).toBe('processing');
+			expect(row.processingPhase).toBe('thinking');
+			expect(row.messageCount).toBe(2);
+			expect(row.taskId).toBe(taskId);
+			expect(row.taskTitle).toBe('Ship UI review');
 		});
 	});
 
