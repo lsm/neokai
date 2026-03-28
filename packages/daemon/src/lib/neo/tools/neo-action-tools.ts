@@ -1178,6 +1178,15 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				return errorResult('No update fields provided');
 			}
 
+			if (args.env) {
+				const rejected = Object.keys(args.env).filter((k) => SENSITIVE_ENV_VARS.has(k));
+				if (rejected.length > 0) {
+					return errorResult(
+						`Refusing to store sensitive env var(s): ${rejected.join(', ')}. Use a secrets manager or set them in the process environment instead.`
+					);
+				}
+			}
+
 			return withSecurityCheck(
 				'update_mcp_server',
 				args as Record<string, unknown>,
@@ -2010,7 +2019,7 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 
 		tool(
 			'update_skill',
-			'Update an existing skill entry. Low risk — auto-executes in balanced mode.',
+			'Update an existing skill entry. Medium risk — requires confirmation in balanced mode.',
 			{
 				skill_id: z.string().describe('ID of the skill to update'),
 				display_name: z.string().optional().describe('New human-readable display name'),

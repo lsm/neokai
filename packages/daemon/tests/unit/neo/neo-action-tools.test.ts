@@ -25,7 +25,7 @@
  * - approve_gate: happy path, idempotent, rejection override, terminal-run error
  * - reject_gate: happy path, idempotent, reason propagation, terminal-run error
  * - add_mcp_server: happy path, manager unavailable, error propagation, confirmation paths
- * - update_mcp_server: field patching, no-op guard, manager unavailable
+ * - update_mcp_server: field patching, no-op guard, manager unavailable, sensitive env var rejection
  * - delete_mcp_server: happy path, not found error, manager unavailable
  * - toggle_mcp_server: enable/disable, not found, manager unavailable
  * - add_skill: happy path, manager unavailable, error propagation
@@ -1453,6 +1453,24 @@ describe('update_mcp_server', () => {
 		const result = parseResult(await update_mcp_server({ server_id: 'x', name: 'y' }));
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('MCP manager not available');
+	});
+
+	it('rejects sensitive env var names before security check', async () => {
+		const existing: AppMcpServer = {
+			id: 'mcp-1',
+			name: 'x',
+			sourceType: 'stdio',
+			enabled: false,
+		};
+		const config = makeConfig({ mcpManager: makeMcpManager([existing]) });
+		const { update_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await update_mcp_server({ server_id: 'mcp-1', env: { ANTHROPIC_API_KEY: 'sk-secret' } })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('ANTHROPIC_API_KEY');
+		expect(result.error).toContain('Refusing to store sensitive env var');
+		expect(config.pendingStore.size).toBe(0);
 	});
 });
 
