@@ -203,11 +203,10 @@ describe('SpaceDetailPanel', () => {
 
 	// -- Stats strip --
 
-	it('renders "No tasks" in the stats strip when there are no tasks', () => {
+	it('renders the empty activity summary when there are no tasks', () => {
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		// Both the stats strip and Tasks section show "No tasks" when there are no tasks
-		const noTasksEls = screen.getAllByText('No tasks');
-		expect(noTasksEls.length).toBeGreaterThanOrEqual(1);
+		expect(screen.getByText('Space Activity')).toBeTruthy();
+		expect(screen.getByText('No tasks yet.')).toBeTruthy();
 	});
 
 	it('counts active tasks (draft, pending, in_progress)', () => {

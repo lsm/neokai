@@ -1,72 +1,69 @@
 /**
- * SpaceDashboard Component
+ * SpaceDashboard
  *
- * Default middle-column view for the Space layout.
- * Shows space overview, active run progress, and quick-action cards.
+ * Task-centric overview for a Space.
+ * Prioritizes:
+ * - What needs attention now
+ * - What is actively moving
+ * - What finished recently
+ * - The next action a human should take
  */
 
-import type { ComponentType } from 'preact';
+import type { ComponentChildren, ComponentType } from 'preact';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 
 interface SpaceDashboardProps {
 	spaceId: string;
-	onStartWorkflow?: () => void;
-	onCreateTask?: () => void;
-	/** Navigate to a task's detail pane */
+	onOpenSpaceAgent?: () => void;
 	onSelectTask?: (taskId: string) => void;
 	compact?: boolean;
 }
 
-/**
- * Truncate a long path for display, showing trailing segments
- */
-function truncatePath(p: string, maxLen = 48): string {
-	if (p.length <= maxLen) return p;
-	return '…' + p.slice(-(maxLen - 1));
+function truncatePath(path: string, maxLen = 64): string {
+	if (path.length <= maxLen) return path;
+	return '…' + path.slice(-(maxLen - 1));
 }
 
-interface QuickActionCardProps {
+function ActionButton({
+	title,
+	description,
+	icon: Icon,
+	onClick,
+	tone = 'secondary',
+}: {
 	title: string;
 	description: string;
 	icon: ComponentType;
 	onClick?: () => void;
-	compact?: boolean;
-}
-
-function QuickActionCard({ title, description, icon: Icon, onClick, compact }: QuickActionCardProps) {
+	tone?: 'primary' | 'secondary';
+}) {
 	return (
 		<button
+			type="button"
 			onClick={onClick}
 			class={cn(
-				'flex items-start gap-3 border border-dark-700 rounded-xl text-left w-full group transition-all',
-				compact
-					? 'p-3 bg-dark-900/80 hover:bg-dark-850'
-					: 'p-4 bg-dark-850 hover:bg-dark-800 hover:border-dark-600'
+				'w-full rounded-2xl border px-4 py-4 text-left transition-all',
+				tone === 'primary'
+					? 'border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/15'
+					: 'border-dark-700 bg-dark-900/70 hover:border-dark-600 hover:bg-dark-900'
 			)}
 		>
-			<div
-				class={cn(
-					'mt-0.5 flex-shrink-0 transition-colors',
-					compact ? 'text-gray-400 group-hover:text-gray-200' : 'text-gray-500 group-hover:text-gray-300'
-				)}
-			>
-				<Icon />
-			</div>
-			<div>
-				<p
+			<div class="flex items-start gap-3">
+				<div
 					class={cn(
-						'font-medium transition-colors',
-						compact
-							? 'text-xs text-gray-200 group-hover:text-white'
-							: 'text-sm text-gray-300 group-hover:text-gray-100'
+						'mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl',
+						tone === 'primary' ? 'bg-blue-500/15 text-blue-200' : 'bg-dark-800 text-gray-300'
 					)}
 				>
-					{title}
-				</p>
-				<p class={cn('mt-0.5 text-xs', compact ? 'text-gray-500' : 'text-gray-600')}>
-					{description}
-				</p>
+					<Icon />
+				</div>
+				<div class="min-w-0">
+					<p class={cn('text-sm font-medium', tone === 'primary' ? 'text-blue-50' : 'text-gray-100')}>
+						{title}
+					</p>
+					<p class="mt-1 text-xs leading-5 text-gray-500">{description}</p>
+				</div>
 			</div>
 		</button>
 	);
@@ -75,150 +72,157 @@ function QuickActionCard({ title, description, icon: Icon, onClick, compact }: Q
 function StatCard({
 	label,
 	value,
-	accentClass,
 	helper,
-	compact,
+	accent,
 }: {
 	label: string;
 	value: string;
-	accentClass: string;
 	helper: string;
-	compact?: boolean;
+	accent: string;
 }) {
 	return (
-		<div
-			class={cn(
-				'rounded-xl border border-dark-700 bg-dark-900/80',
-				compact ? 'px-3 py-3' : 'px-4 py-4'
-			)}
-		>
+		<div class="rounded-2xl border border-dark-700 bg-dark-900/70 px-4 py-4">
 			<div class="flex items-center justify-between gap-3">
-				<p class="text-[11px] uppercase tracking-[0.2em] text-gray-500">{label}</p>
-				<span class={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', accentClass)} />
+				<p class="text-[11px] uppercase tracking-[0.18em] text-gray-500">{label}</p>
+				<span class={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', accent)} />
 			</div>
-			<p class={cn('mt-2 font-semibold text-gray-100', compact ? 'text-lg' : 'text-2xl')}>{value}</p>
+			<p class="mt-2 text-2xl font-semibold text-gray-100">{value}</p>
 			<p class="mt-1 text-xs text-gray-500">{helper}</p>
 		</div>
 	);
 }
 
-function ActivityItem({
-	label,
-	title,
-	status,
-	compact,
-	clickable,
+function QueueItem({
+	task,
 	onClick,
 }: {
-	label: string;
-	title: string;
-	status: string;
-	compact?: boolean;
-	clickable?: boolean;
-	onClick?: () => void;
+	task: {
+		id: string;
+		title: string;
+		status: string;
+		workflowRunId?: string;
+		currentStep?: string | null;
+	};
+	onClick?: (taskId: string) => void;
 }) {
-	const className = cn(
-		'w-full rounded-xl border border-dark-800 bg-dark-900/70 text-left',
-		compact ? 'px-3 py-2.5' : 'px-4 py-3',
-		clickable && 'transition-colors hover:bg-dark-850 hover:border-dark-700'
-	);
-	const content = (
-		<div class="flex items-center gap-3">
-			<span class="text-[11px] uppercase tracking-[0.18em] text-gray-600">{label}</span>
-			<span class="min-w-0 flex-1 truncate text-sm text-gray-200">{title}</span>
-			<span class="text-xs text-gray-500 capitalize">{status.replace('_', ' ')}</span>
-		</div>
-	);
-
-	if (clickable) {
-		return (
-			<button type="button" onClick={onClick} class={className}>
-				{content}
-			</button>
-		);
-	}
-
 	return (
-		<div class={className}>
-			<div class="flex items-center gap-3">
-				<span class="text-[11px] uppercase tracking-[0.18em] text-gray-600">{label}</span>
-				<span class="min-w-0 flex-1 truncate text-sm text-gray-200">{title}</span>
-				<span class="text-xs text-gray-500 capitalize">{status.replace('_', ' ')}</span>
+		<button
+			type="button"
+			onClick={() => onClick?.(task.id)}
+			disabled={!onClick}
+			class={cn(
+				'w-full rounded-2xl border border-dark-700 bg-dark-900/60 px-4 py-3 text-left',
+				onClick && 'transition-colors hover:border-dark-600 hover:bg-dark-900'
+			)}
+		>
+			<div class="flex items-start gap-3">
+				<div class="pt-1">
+					<span
+						class={cn(
+							'block h-2.5 w-2.5 rounded-full',
+							task.status === 'in_progress'
+								? 'bg-blue-400'
+								: task.status === 'review'
+									? 'bg-purple-400'
+									: task.status === 'needs_attention'
+										? 'bg-amber-400'
+										: task.status === 'completed'
+											? 'bg-green-400'
+											: 'bg-gray-500'
+						)}
+					/>
+				</div>
+				<div class="min-w-0 flex-1">
+					<div class="flex items-center gap-2">
+						<p class="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">{task.title}</p>
+						<span class="text-[11px] uppercase tracking-[0.14em] text-gray-500">
+							{task.status.replace('_', ' ')}
+						</span>
+					</div>
+					<p class="mt-1 text-xs text-gray-500">
+						{task.currentStep ||
+							(task.workflowRunId ? 'Part of a workflow-backed task flow.' : 'Standalone task.')}
+					</p>
+				</div>
+			</div>
+		</button>
+	);
+}
+
+function Section({
+	title,
+	eyebrow,
+	children,
+}: {
+	title: string;
+	eyebrow?: string;
+	children: ComponentChildren;
+}) {
+	return (
+		<section class="rounded-2xl border border-dark-700 bg-dark-950/70 p-4">
+			<div class="mb-3 flex items-center justify-between gap-3">
+				<div>
+					<p class="text-[11px] uppercase tracking-[0.18em] text-gray-600">{eyebrow ?? title}</p>
+					<h2 class="mt-1 text-sm font-medium text-gray-100">{title}</h2>
+				</div>
+			</div>
+			{children}
+		</section>
+	);
+}
+
+function EmptyState({
+	title,
+	copy,
+	fill = false,
+}: {
+	title: string;
+	copy: string;
+	fill?: boolean;
+}) {
+	return (
+		<div
+			class={cn(
+				'rounded-2xl border border-dashed border-dark-700 bg-dark-900/40 px-5 py-8 text-center',
+				fill && 'h-full'
+			)}
+		>
+			<div class={cn(fill && 'flex min-h-full flex-col items-center justify-center')}>
+				<p class="text-sm text-gray-200">{title}</p>
+				<p class="mt-2 text-sm text-gray-500">{copy}</p>
 			</div>
 		</div>
 	);
 }
 
-function EmptyPanel({
-	title,
-	copy,
-	compact,
-}: {
-	title: string;
-	copy: string;
-	compact?: boolean;
-}) {
+function SparkIcon() {
 	return (
-		<div
-			class={cn(
-				'rounded-xl border border-dashed border-dark-700 bg-dark-900/50 text-center',
-				compact ? 'px-4 py-5' : 'px-6 py-8'
-			)}
-		>
-			<p class="text-sm text-gray-300">{title}</p>
-			<p class="mt-1 text-xs text-gray-500">{copy}</p>
-		</div>
-	);
-}
-
-function PlayIcon() {
-	return (
-		<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 			<path
 				stroke-linecap="round"
 				stroke-linejoin="round"
 				stroke-width={2}
-				d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+				d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8-5-3.6-5 3.6 1.9-5.8L4 8.8h6.1L12 3z"
 			/>
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width={2}
-				d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-			/>
-		</svg>
-	);
-}
-
-function PlusIcon() {
-	return (
-		<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-			<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M12 4v16m8-8H4" />
 		</svg>
 	);
 }
 
 export function SpaceDashboard({
 	spaceId: _spaceId,
-	onStartWorkflow,
-	onCreateTask,
+	onOpenSpaceAgent,
 	onSelectTask,
 	compact = false,
 }: SpaceDashboardProps) {
 	const space = spaceStore.space.value;
 	const loading = spaceStore.loading.value;
-	const activeRuns = spaceStore.activeRuns.value;
-	const activeTasks = spaceStore.activeTasks.value;
 	const tasks = spaceStore.tasks.value;
-	const workflowRuns = spaceStore.workflowRuns.value;
-	const workflows = spaceStore.workflows?.value ?? [];
-	const agents = spaceStore.agents?.value ?? [];
 
 	if (loading) {
 		return (
-			<div class="flex items-center justify-center h-full">
+			<div class="flex h-full items-center justify-center">
 				<div class="text-center">
-					<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+					<div class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
 					<p class="text-sm text-gray-500">Loading space...</p>
 				</div>
 			</div>
@@ -227,181 +231,148 @@ export function SpaceDashboard({
 
 	if (!space) {
 		return (
-			<div class="flex items-center justify-center h-full">
+			<div class="flex h-full items-center justify-center">
 				<p class="text-sm text-gray-500">Space not found</p>
 			</div>
 		);
 	}
 
-	// Recent activity: last 5 items by updatedAt
-	const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
-
-	const recentRuns = [...workflowRuns].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
+	const activeTasks = tasks.filter(
+		(task) =>
+			task.status === 'draft' ||
+			task.status === 'pending' ||
+			task.status === 'in_progress' ||
+			task.status === 'rate_limited' ||
+			task.status === 'usage_limited'
+	);
 	const reviewTasks = tasks.filter((task) => task.status === 'review' || task.status === 'needs_attention');
 	const completedTasks = tasks.filter(
 		(task) => task.status === 'completed' || task.status === 'cancelled' || task.status === 'archived'
 	);
-	const heroDescription =
+	const recentCompleted = [...completedTasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6);
+	const activeQueue = [...activeTasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6);
+	const attentionQueue = [...reviewTasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6);
+	const totalTasks = tasks.length;
+	const empty = totalTasks === 0;
+	const description =
 		space.description ||
-		'Coordinate workflows, task agents, and human approvals from one focused control surface.';
-	const showActivity = recentTasks.length > 0 || recentRuns.length > 0;
+		'Organize execution through tasks, use workflows when they help, and keep the space agent nearby for coordination.';
 
 	return (
-		<div class={cn('flex flex-col h-full overflow-y-auto', compact ? 'p-4 space-y-4' : 'p-6 space-y-6')}>
-			<div
-				class={cn(
-					'relative overflow-hidden rounded-2xl border border-dark-700',
-					compact ? 'px-4 py-4 bg-dark-900' : 'px-5 py-5 bg-dark-900/90'
-				)}
-			>
-				<div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(96,165,250,0.16),transparent_38%),radial-gradient(circle_at_85%_20%,rgba(168,85,247,0.14),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.02),transparent)]" />
-				<div class="relative">
-					<div class="flex items-start justify-between gap-4">
+		<div class={cn('flex h-full min-h-0 flex-col overflow-y-auto', compact ? 'p-4' : 'p-6')}>
+			<div class="flex w-full flex-1 min-h-0 flex-col gap-6">
+				<section class="rounded-[28px] border border-dark-700 bg-dark-900/90 px-6 py-6">
+					<div class="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
 						<div class="min-w-0">
-							<span class="inline-flex items-center gap-2 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[11px] uppercase tracking-[0.2em] text-blue-200">
-								<span class="h-2 w-2 rounded-full bg-blue-400" />
-								{activeRuns.length > 0 || activeTasks.length > 0 ? 'Live Space' : 'Ready'}
-							</span>
-							<h1 class={cn('mt-3 font-semibold text-gray-100', compact ? 'text-lg' : 'text-2xl')}>
-								{space.name}
-							</h1>
-							<p class={cn('mt-2 max-w-2xl text-gray-400', compact ? 'text-xs leading-5' : 'text-sm leading-6')}>
-								{heroDescription}
-							</p>
+							<p class="text-[11px] uppercase tracking-[0.22em] text-gray-600">Overview</p>
+							<h1 class="mt-3 text-3xl font-semibold tracking-tight text-gray-100">{space.name}</h1>
+							<p class="mt-3 max-w-3xl text-sm leading-6 text-gray-400">{description}</p>
+							{space.workspacePath && (
+								<p class="mt-3 font-mono text-[11px] text-gray-600" title={space.workspacePath}>
+									{truncatePath(space.workspacePath)}
+								</p>
+							)}
 						</div>
-						<div class="hidden sm:flex flex-col items-end gap-2 text-right">
-							<span class="text-[11px] uppercase tracking-[0.18em] text-gray-600">Workspace</span>
-							<span
-								class="max-w-[18rem] truncate rounded-full border border-dark-700 bg-dark-950/80 px-3 py-1 font-mono text-[11px] text-gray-400"
-								title={space.workspacePath}
-							>
-								{truncatePath(space.workspacePath, compact ? 30 : 48)}
-							</span>
+						<div class="w-full xl:w-[22rem]">
+							<ActionButton
+								title="Ask Space Agent"
+								description="Use the shared agent thread to shape the task, refine the scope, and let the system choose the right workflow behind the scenes."
+								icon={SparkIcon}
+								onClick={onOpenSpaceAgent}
+								tone="primary"
+							/>
 						</div>
 					</div>
+				</section>
 
-					<div class={cn('mt-4 grid gap-3', compact ? 'grid-cols-2' : 'grid-cols-2 xl:grid-cols-4')}>
-						<StatCard
-							label="Active Tasks"
-							value={String(activeTasks.length)}
-							helper={activeTasks.length === 1 ? 'Agent is currently working' : 'Agents are currently working'}
-							accentClass="bg-blue-400"
-							compact={compact}
-						/>
-						<StatCard
-							label="Review Queue"
-							value={String(reviewTasks.length)}
-							helper={reviewTasks.length === 0 ? 'No blockers waiting on you' : 'Tasks need review or attention'}
-							accentClass="bg-amber-400"
-							compact={compact}
-						/>
-						<StatCard
-							label="Live Flows"
-							value={String(activeRuns.length)}
-							helper={
-								activeRuns.length === 0
-									? 'No task-driven workflow execution right now'
-									: 'Tasks are actively moving through workflows'
-							}
-							accentClass="bg-violet-400"
-							compact={compact}
-						/>
-						<StatCard
-							label="Coverage"
-							value={`${agents.length}/${Math.max(workflows.length, 1)}`}
-							helper={workflows.length > 0 ? 'Agents to workflow templates' : 'Agents configured in this space'}
-							accentClass="bg-emerald-400"
-							compact={compact}
-						/>
-					</div>
-				</div>
-			</div>
-
-			<div>
-				<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-					Launchpad
-				</h2>
-				<div class={cn('grid gap-3', compact ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2')}>
-					<QuickActionCard
-						title="Start Workflow Run"
-						description="Kick off orchestration for a prepared workflow"
-						icon={PlayIcon}
-						onClick={onStartWorkflow}
-						compact={compact}
+				<div class="grid gap-4 md:grid-cols-3">
+					<StatCard
+						label="Active"
+						value={String(activeTasks.length)}
+						helper={
+							activeTasks.length === 0 ? 'Nothing is running right now.' : 'Tasks currently moving.'
+						}
+						accent="bg-blue-400"
 					/>
-					<QuickActionCard
-						title="Create Task"
-						description="Open a focused standalone task with its own agent thread"
-						icon={PlusIcon}
-						onClick={onCreateTask}
-						compact={compact}
+					<StatCard
+						label="Needs Attention"
+						value={String(reviewTasks.length)}
+						helper={
+							reviewTasks.length === 0 ? 'Nothing is waiting on you.' : 'Review or unblock these tasks next.'
+						}
+						accent="bg-amber-400"
+					/>
+					<StatCard
+						label="Completed"
+						value={String(completedTasks.length)}
+						helper={
+							completedTasks.length === 0 ? 'No finished work yet.' : 'Completed work in this space.'
+						}
+						accent="bg-green-400"
 					/>
 				</div>
-			</div>
 
-			<div class={cn('grid gap-4', compact ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-[1.2fr_0.8fr]')}>
-				<div class="space-y-3">
-					<div class="flex items-center justify-between gap-3">
-						<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Focus Queue</h2>
-						{completedTasks.length > 0 && (
-							<span class="text-xs text-gray-600">{completedTasks.length} completed recently</span>
-						)}
+				{empty ? (
+					<div class="flex flex-1 min-h-[22rem]">
+						<div class="flex h-full flex-1">
+							<div class="h-full w-full">
+								<EmptyState
+									title="This space has no tasks yet."
+									copy="Create the first task or ask the space agent to help you shape the work before reaching for a workflow."
+									fill
+								/>
+							</div>
+						</div>
 					</div>
-					{recentTasks.length === 0 ? (
-						<EmptyPanel
-							title="No tasks yet"
-							copy="Create the first task to give this space a live execution history."
-							compact={compact}
-						/>
-					) : (
-						<div class="space-y-2">
-							{recentTasks.map((task) => (
-								<ActivityItem
-									key={task.id}
-									label="Task"
-									title={task.title}
-									status={task.status}
-									compact={compact}
-									clickable={!!onSelectTask}
-									onClick={() => onSelectTask?.(task.id)}
+				) : (
+					<div class="grid flex-1 min-h-[24rem] gap-4 xl:grid-cols-[1.1fr_1.1fr_0.9fr]">
+						<Section title="Needs Attention" eyebrow="Attention Queue">
+							{attentionQueue.length === 0 ? (
+								<EmptyState
+									title="Nothing is blocked on you."
+									copy="Reviews, approvals, and escalations will collect here."
 								/>
-							))}
-						</div>
-					)}
-				</div>
+							) : (
+								<div class="space-y-2">
+									{attentionQueue.map((task) => (
+										<QueueItem key={task.id} task={task} onClick={onSelectTask} />
+									))}
+								</div>
+							)}
+						</Section>
 
-				<div class="space-y-3">
-					<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Workflow Pulse</h2>
-					{recentRuns.length === 0 ? (
-						<EmptyPanel
-							title="No workflow runs yet"
-							copy="Start a workflow run to light up the canvas and track orchestration in real time."
-							compact={compact}
-						/>
-					) : (
-						<div class="space-y-2">
-							{recentRuns.map((run) => (
-								<ActivityItem
-									key={run.id}
-									label="Run"
-									title={run.title}
-									status={run.status}
-									compact={compact}
+						<Section title="In Progress" eyebrow="Active Queue">
+							{activeQueue.length === 0 ? (
+								<EmptyState
+									title="No tasks are moving right now."
+									copy="New tasks and workflow-backed work will appear here while active."
 								/>
-							))}
-						</div>
-					)}
-				</div>
+							) : (
+								<div class="space-y-2">
+									{activeQueue.map((task) => (
+										<QueueItem key={task.id} task={task} onClick={onSelectTask} />
+									))}
+								</div>
+							)}
+						</Section>
+
+						<Section title="Recently Finished" eyebrow="Recent Activity">
+							{recentCompleted.length === 0 ? (
+								<EmptyState
+									title="Nothing finished yet."
+									copy="Completed tasks will form the execution trail for this space."
+								/>
+							) : (
+								<div class="space-y-2">
+									{recentCompleted.map((task) => (
+										<QueueItem key={task.id} task={task} onClick={onSelectTask} />
+									))}
+								</div>
+							)}
+						</Section>
+					</div>
+				)}
 			</div>
-
-			{!showActivity && !compact && (
-				<div class="rounded-2xl border border-dark-700 bg-dark-900/70 px-5 py-5">
-					<p class="text-sm text-gray-300">This space is quiet right now.</p>
-					<p class="mt-1 text-sm text-gray-500">
-						Start a workflow or create a task to establish the first execution trail.
-					</p>
-				</div>
-			)}
 		</div>
 	);
 }
