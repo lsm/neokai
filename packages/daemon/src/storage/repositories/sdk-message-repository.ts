@@ -81,7 +81,12 @@ export class SDKMessageRepository {
 		limit?: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		return this._getSDKMessagesImpl(sessionId, limit ?? 100, before, since);
 	}
 
@@ -94,7 +99,12 @@ export class SDKMessageRepository {
 		limit: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		// Step 1: Get top-level messages (excluding subagent messages)
 		// Show user messages that were consumed to SDK, plus any that failed to deliver.
 		let query = `SELECT sdk_message, timestamp, send_status, origin FROM sdk_messages
@@ -157,7 +167,7 @@ export class SDKMessageRepository {
 		});
 
 		// Fetch subagent messages that have parent_tool_use_id matching any of the tool use IDs
-		let subagentMessages: SDKMessage[] = [];
+		let subagentMessages: Array<SDKMessage & { timestamp: number }> = [];
 		if (toolUseIds.size > 0) {
 			const placeholders = Array.from(toolUseIds)
 				.map(() => '?')

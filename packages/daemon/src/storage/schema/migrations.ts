@@ -4467,11 +4467,10 @@ export function runMigration68(db: BunDatabase): void {
 	if (!tableExists(db, 'sdk_messages')) {
 		return;
 	}
-	try {
-		// Check if column already exists
-		db.prepare(`SELECT origin FROM sdk_messages LIMIT 1`).all();
-	} catch {
-		// Column doesn't exist, add it
+	// Use PRAGMA table_info() to check for the column — consistent with the rest of the codebase
+	const columns = db.prepare(`PRAGMA table_info(sdk_messages)`).all() as Array<{ name: string }>;
+	const hasOrigin = columns.some((col) => col.name === 'origin');
+	if (!hasOrigin) {
 		db.exec(
 			`ALTER TABLE sdk_messages ADD COLUMN origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system'))`
 		);

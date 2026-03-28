@@ -26,7 +26,7 @@ import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } fr
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../../storage/database';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, MessageOrigin } from '@neokai/shared';
 import type { DaemonHub } from '../../daemon-hub';
 import type { SessionManager } from '../../session-manager';
 import type { SessionFactory } from './task-group-manager';
@@ -407,6 +407,7 @@ export class RoomRuntimeService {
 				}
 
 				const deliveryMode = opts?.deliveryMode ?? 'immediate';
+				const origin: MessageOrigin | undefined = opts?.origin;
 				const state = session.getProcessingState();
 				const isBusy = state.status === 'processing' || state.status === 'queued';
 
@@ -433,7 +434,7 @@ export class RoomRuntimeService {
 				// - otherwise => enqueue now ('enqueued') so worker can start ASAP when idle
 				if (deliveryMode === 'defer' && isBusy) {
 					log.debug(`[injectMessage] Session ${sessionId}: deferring message ${messageId} (busy)`);
-					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred');
+					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
 					return;
 				}
 
@@ -444,7 +445,7 @@ export class RoomRuntimeService {
 					`[injectMessage] Session ${sessionId}: calling ensureQueryStarted before enqueue`
 				);
 				await session.ensureQueryStarted();
-				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
 				log.debug(
 					`[injectMessage] Session ${sessionId}: saved user message ${messageId}, ` +
 						`enqueuing into messageQueue (isRunning=${session.messageQueue.isRunning?.() ?? 'unknown'})`

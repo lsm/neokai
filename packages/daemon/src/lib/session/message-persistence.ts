@@ -213,6 +213,12 @@ export class MessagePersistence {
 
 			// 6. Publish to UI immediately only when not currently in-flight.
 			// Busy-turn insertions are shown in the input overlay and rendered in chat once consumed.
+			//
+			// Note: `origin` is intentionally NOT included in the live-push event payload.
+			// `origin` is a DB-level annotation only — the SDK message blob never carries it.
+			// The frontend reads `origin` from the DB (via getSDKMessages) after page load or
+			// on full re-fetch. This means "via Neo" indicators may not appear on first render
+			// of an injected message; they appear after the client re-fetches the message list.
 			if (isManualMode || !isAgentBusy) {
 				try {
 					this.messageHub.event(

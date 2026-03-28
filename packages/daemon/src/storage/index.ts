@@ -158,7 +158,12 @@ export class Database {
 		limit?: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		return this.sdkMessageRepo.getSDKMessages(sessionId, limit, before, since);
 	}
 
