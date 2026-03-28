@@ -204,6 +204,28 @@ describe('WorkflowCanvas', () => {
 		expect(getByTestId('channel-ch-1')).toBeTruthy();
 	});
 
+	it('renders cyclic workflows without hanging the layout pass', () => {
+		mockWorkflows.value = [
+			makeWorkflow({
+				nodes: [
+					{ id: 'n1', name: 'Plan' },
+					{ id: 'n2', name: 'Code' },
+					{ id: 'n3', name: 'Verify' },
+				],
+				startNodeId: 'n1',
+				channels: [
+					{ id: 'ch-1', from: 'Plan', to: 'Code', direction: 'one-way' },
+					{ id: 'ch-2', from: 'Code', to: 'Verify', direction: 'one-way' },
+					{ id: 'ch-3', from: 'Verify', to: 'Plan', direction: 'one-way' },
+				],
+			}),
+		];
+		const { getByTestId } = render(<WorkflowCanvas workflowId="wf-1" spaceId="sp-1" />);
+		expect(getByTestId('node-n1')).toBeTruthy();
+		expect(getByTestId('node-n2')).toBeTruthy();
+		expect(getByTestId('node-n3')).toBeTruthy();
+	});
+
 	// ---- Gate rendering on channel lines ----
 
 	it('renders gate icon ON the channel line (not as separate node)', () => {
