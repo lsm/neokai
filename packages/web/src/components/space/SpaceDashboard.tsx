@@ -12,6 +12,8 @@ interface SpaceDashboardProps {
 	spaceId: string;
 	onStartWorkflow?: () => void;
 	onCreateTask?: () => void;
+	/** Navigate to a task's detail pane */
+	onSelectTask?: (taskId: string) => void;
 }
 
 /**
@@ -80,6 +82,7 @@ export function SpaceDashboard({
 	spaceId: _spaceId,
 	onStartWorkflow,
 	onCreateTask,
+	onSelectTask,
 }: SpaceDashboardProps) {
 	const space = spaceStore.space.value;
 	const loading = spaceStore.loading.value;
@@ -146,7 +149,6 @@ export function SpaceDashboard({
 			)}
 
 			{/* Quick actions */}
-			{/* TODO: onStartWorkflow and onCreateTask are unwired scaffolding — will be connected once workflow/task creation dialogs are implemented */}
 			<div>
 				<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
 					Quick Actions
@@ -185,16 +187,21 @@ export function SpaceDashboard({
 							</div>
 						))}
 						{recentTasks.map((task) => (
-							<div
+							<button
 								key={task.id}
-								class="flex items-center gap-3 px-3 py-2 rounded-md bg-dark-850 border border-dark-800"
+								type="button"
+								onClick={() => onSelectTask?.(task.id)}
+								class="flex items-center gap-3 px-3 py-2 rounded-md bg-dark-850 border border-dark-800 w-full text-left hover:bg-dark-800 hover:border-dark-700 transition-colors group"
+								disabled={!onSelectTask}
 							>
 								<span class="text-xs text-gray-600 font-medium w-16 flex-shrink-0">Task</span>
-								<span class="text-xs text-gray-300 truncate flex-1">{task.title}</span>
+								<span class="text-xs text-gray-300 truncate flex-1 group-hover:text-gray-100 transition-colors">
+									{task.title}
+								</span>
 								<span class="text-xs text-gray-600 capitalize">
 									{task.status.replace('_', ' ')}
 								</span>
-							</div>
+							</button>
 						))}
 					</div>
 				</div>

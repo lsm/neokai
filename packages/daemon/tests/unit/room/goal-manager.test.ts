@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { getNextRunAt } from '../../../src/lib/room/runtime/cron-utils';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
@@ -910,8 +911,9 @@ describe('GoalManager.patchGoal — schedule nextRunAt auto-computation', () => 
 		expect(goal.nextRunAt).toBeDefined();
 		const originalNextRunAt = goal.nextRunAt!;
 
-		// Patch the schedule to @weekly — guaranteed different nextRunAt than @daily
-		// (they can coincide at midnight for @hourly or @daily).
+		// Patch the schedule to @weekly.
+		// Capture the expected nextRunAt immediately before patching so it uses the same clock tick.
+		const expectedWeeklyNextRunAt = getNextRunAt('@weekly', 'UTC');
 		const before = Math.floor(Date.now() / 1000);
 		const patched = await goalManager.patchGoal(goal.id, {
 			schedule: { expression: '@weekly', timezone: 'UTC' },
@@ -923,8 +925,11 @@ describe('GoalManager.patchGoal — schedule nextRunAt auto-computation', () => 
 		expect(patched.nextRunAt!).toBeGreaterThan(before);
 		// @weekly fires within the next week
 		expect(patched.nextRunAt!).toBeLessThanOrEqual(after);
-		// nextRunAt should change when the cron expression changes
-		expect(patched.nextRunAt!).not.toBe(originalNextRunAt);
+		// nextRunAt must match what getNextRunAt('@weekly') computes — verifies patchGoal
+		// correctly recomputed nextRunAt for the new schedule expression.
+		// (Asserting `not.toBe(originalNextRunAt)` is fragile: on Saturdays, @daily and @weekly
+		// both fire at Sunday midnight and produce the same timestamp.)
+		expect(patched.nextRunAt!).toBe(expectedWeeklyNextRunAt);
 	});
 
 	it('auto-computes nextRunAt when changing missionType to recurring with a schedule', async () => {

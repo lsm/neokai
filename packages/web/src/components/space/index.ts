@@ -6,6 +6,8 @@ export { SpaceAgentEditor } from './SpaceAgentEditor';
 export { SpaceAgentList } from './SpaceAgentList';
 export { SpaceContextPanel } from './SpaceContextPanel';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
+export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
+export { SpaceStartWorkflowDialog } from './SpaceStartWorkflowDialog';
 export { SpaceDashboard } from './SpaceDashboard';
 export { SpaceNavPanel } from './SpaceNavPanel';
 export { SpaceSettings } from './SpaceSettings';
