@@ -1425,7 +1425,8 @@ describe('list_goals', () => {
 	it('returns empty array when no goals exist', async () => {
 		const handlers = createNeoQueryToolHandlers(makeConfig());
 		const result = parseResult(await handlers.list_goals({}));
-		expect(result).toEqual([]);
+		expect(result.total).toBe(0);
+		expect(result.goals).toEqual([]);
 	});
 
 	it('returns goals across all rooms when no room_id filter', async () => {
@@ -1441,8 +1442,10 @@ describe('list_goals', () => {
 		);
 
 		const result = parseResult(await handlers.list_goals({}));
-		expect(result).toHaveLength(2);
-		expect(result.map((g: { id: string }) => g.id)).toEqual(expect.arrayContaining(['g1', 'g2']));
+		expect(result.total).toBe(2);
+		expect((result.goals as Array<{ id: string }>).map((g) => g.id)).toEqual(
+			expect.arrayContaining(['g1', 'g2'])
+		);
 	});
 
 	it('includes roomName in each goal', async () => {
@@ -1456,7 +1459,7 @@ describe('list_goals', () => {
 		);
 
 		const result = parseResult(await handlers.list_goals({}));
-		expect(result[0].roomName).toBe('My Room');
+		expect((result.goals as Array<{ roomName: string }>)[0].roomName).toBe('My Room');
 	});
 
 	it('filters to a specific room when room_id is provided', async () => {
@@ -1472,8 +1475,8 @@ describe('list_goals', () => {
 		);
 
 		const result = parseResult(await handlers.list_goals({ room_id: 'room-1' }));
-		expect(result).toHaveLength(1);
-		expect(result[0].id).toBe('g1');
+		expect(result.total).toBe(1);
+		expect((result.goals as Array<{ id: string }>)[0].id).toBe('g1');
 	});
 
 	it('returns error when room_id refers to non-existent room', async () => {
@@ -1498,8 +1501,8 @@ describe('list_goals', () => {
 		);
 
 		const result = parseResult(await handlers.list_goals({ mission_type: 'measurable' }));
-		expect(result).toHaveLength(1);
-		expect(result[0].id).toBe('g2');
+		expect(result.total).toBe(1);
+		expect((result.goals as Array<{ id: string }>)[0].id).toBe('g2');
 	});
 
 	it('includes nextRunAt and schedulePaused for recurring goals', async () => {
@@ -1518,8 +1521,75 @@ describe('list_goals', () => {
 		);
 
 		const result = parseResult(await handlers.list_goals({}));
-		expect(result[0].nextRunAt).toBe(9999);
-		expect(result[0].schedulePaused).toBe(true);
+		const goals = result.goals as Array<{ nextRunAt: number; schedulePaused: boolean }>;
+		expect(goals[0].nextRunAt).toBe(9999);
+		expect(goals[0].schedulePaused).toBe(true);
+	});
+
+	it('filters by search substring', async () => {
+		const room = makeRoom();
+		const goals = [
+			makeGoal({ id: 'g1', title: 'Add health check' }),
+			makeGoal({ id: 'g2', title: 'Fix login bug' }),
+			makeGoal({ id: 'g3', title: 'Add logging' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({ 'room-1': goals }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_goals({ search: 'Add' }));
+		expect(result.total).toBe(2);
+		const ids = (result.goals as Array<{ id: string }>).map((g) => g.id);
+		expect(ids).toContain('g1');
+		expect(ids).toContain('g3');
+	});
+
+	it('paginates with limit and offset', async () => {
+		const room = makeRoom();
+		const goals = Array.from({ length: 5 }, (_, i) =>
+			makeGoal({ id: `g${i + 1}`, title: `Goal ${i + 1}` })
+		);
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({ 'room-1': goals }),
+			})
+		);
+
+		const page1 = parseResult(await handlers.list_goals({ limit: 2, offset: 0 }));
+		expect(page1.total).toBe(5);
+		expect((page1.goals as unknown[]).length).toBe(2);
+
+		const page3 = parseResult(await handlers.list_goals({ limit: 2, offset: 4 }));
+		expect(page3.total).toBe(5);
+		expect((page3.goals as unknown[]).length).toBe(1);
+	});
+
+	it('returns compact fields when compact:true', async () => {
+		const room = makeRoom();
+		const goal = makeGoal({ id: 'g1', title: 'My Goal' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				goalRepository: makeGoalRepository({ 'room-1': [goal] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_goals({ compact: true }));
+		expect(result.total).toBe(1);
+		const goals = result.goals as Array<Record<string, unknown>>;
+		expect(goals[0].id).toBe('g1');
+		expect(goals[0].title).toBe('My Goal');
+		expect(goals[0].status).toBeDefined();
+		expect(goals[0].priority).toBeDefined();
+		expect(goals[0].missionType).toBeDefined();
+		expect(goals[0].createdAt).toBeDefined();
+		// Large fields excluded in compact mode
+		expect(goals[0].roomName).toBeUndefined();
+		expect(goals[0].linkedTaskCount).toBeUndefined();
 	});
 });
 
@@ -1723,7 +1793,8 @@ describe('list_tasks', () => {
 	it('returns empty array when no tasks exist', async () => {
 		const handlers = createNeoQueryToolHandlers(makeConfig());
 		const result = parseResult(await handlers.list_tasks({}));
-		expect(result).toEqual([]);
+		expect(result.total).toBe(0);
+		expect(result.tasks).toEqual([]);
 	});
 
 	it('returns tasks across all rooms when no room_id filter', async () => {
@@ -1739,8 +1810,10 @@ describe('list_tasks', () => {
 		);
 
 		const result = parseResult(await handlers.list_tasks({}));
-		expect(result).toHaveLength(2);
-		expect(result.map((t: { id: string }) => t.id)).toEqual(expect.arrayContaining(['t1', 't2']));
+		expect(result.total).toBe(2);
+		expect((result.tasks as Array<{ id: string }>).map((t) => t.id)).toEqual(
+			expect.arrayContaining(['t1', 't2'])
+		);
 	});
 
 	it('includes roomName in each task', async () => {
@@ -1754,7 +1827,7 @@ describe('list_tasks', () => {
 		);
 
 		const result = parseResult(await handlers.list_tasks({}));
-		expect(result[0].roomName).toBe('My Room');
+		expect((result.tasks as Array<{ roomName: string }>)[0].roomName).toBe('My Room');
 	});
 
 	it('filters to a specific room when room_id is provided', async () => {
@@ -1770,8 +1843,8 @@ describe('list_tasks', () => {
 		);
 
 		const result = parseResult(await handlers.list_tasks({ room_id: 'room-1' }));
-		expect(result).toHaveLength(1);
-		expect(result[0].id).toBe('t1');
+		expect(result.total).toBe(1);
+		expect((result.tasks as Array<{ id: string }>)[0].id).toBe('t1');
 	});
 
 	it('returns error when room_id refers to non-existent room', async () => {
@@ -1796,8 +1869,8 @@ describe('list_tasks', () => {
 		);
 
 		const result = parseResult(await handlers.list_tasks({ status: 'pending' }));
-		expect(result).toHaveLength(1);
-		expect(result[0].id).toBe('t1');
+		expect(result.total).toBe(1);
+		expect((result.tasks as Array<{ id: string }>)[0].id).toBe('t1');
 	});
 
 	it('filters by assigned_agent', async () => {
@@ -1815,8 +1888,8 @@ describe('list_tasks', () => {
 		);
 
 		const result = parseResult(await handlers.list_tasks({ assigned_agent: 'planner' }));
-		expect(result).toHaveLength(1);
-		expect(result[0].id).toBe('t3');
+		expect(result.total).toBe(1);
+		expect((result.tasks as Array<{ id: string }>)[0].id).toBe('t3');
 	});
 
 	it('excludes archived tasks by default', async () => {
@@ -1833,8 +1906,8 @@ describe('list_tasks', () => {
 		);
 
 		const result = parseResult(await handlers.list_tasks({}));
-		expect(result).toHaveLength(1);
-		expect(result[0].id).toBe('t1');
+		expect(result.total).toBe(1);
+		expect((result.tasks as Array<{ id: string }>)[0].id).toBe('t1');
 	});
 
 	it('includes archived tasks when include_archived is true', async () => {
@@ -1851,7 +1924,7 @@ describe('list_tasks', () => {
 		);
 
 		const result = parseResult(await handlers.list_tasks({ include_archived: true }));
-		expect(result).toHaveLength(2);
+		expect(result.total).toBe(2);
 	});
 
 	it('auto-enables include_archived when status="archived" to avoid zero results', async () => {
@@ -1869,8 +1942,76 @@ describe('list_tasks', () => {
 
 		// Without auto-include fix, requesting archived status would return zero results
 		const result = parseResult(await handlers.list_tasks({ status: 'archived' }));
-		expect(result).toHaveLength(1);
-		expect(result[0].id).toBe('t2');
+		expect(result.total).toBe(1);
+		expect((result.tasks as Array<{ id: string }>)[0].id).toBe('t2');
+	});
+
+	it('filters by search substring', async () => {
+		const room = makeRoom();
+		const tasks = [
+			makeTask({ id: 't1', title: 'Implement login' }),
+			makeTask({ id: 't2', title: 'Fix login bug' }),
+			makeTask({ id: 't3', title: 'Add tests' }),
+		];
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': tasks }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({ search: 'login' }));
+		expect(result.total).toBe(2);
+		const ids = (result.tasks as Array<{ id: string }>).map((t) => t.id);
+		expect(ids).toContain('t1');
+		expect(ids).toContain('t2');
+	});
+
+	it('paginates with limit and offset', async () => {
+		const room = makeRoom();
+		const tasks = Array.from({ length: 5 }, (_, i) =>
+			makeTask({ id: `t${i + 1}`, title: `Task ${i + 1}` })
+		);
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': tasks }),
+			})
+		);
+
+		const page1 = parseResult(await handlers.list_tasks({ limit: 2, offset: 0 }));
+		expect(page1.total).toBe(5);
+		expect((page1.tasks as unknown[]).length).toBe(2);
+
+		const page3 = parseResult(await handlers.list_tasks({ limit: 2, offset: 4 }));
+		expect(page3.total).toBe(5);
+		expect((page3.tasks as unknown[]).length).toBe(1);
+	});
+
+	it('returns compact fields when compact:true', async () => {
+		const room = makeRoom();
+		const task = makeTask({ id: 't1', title: 'My Task' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({
+				roomManager: makeRoomManager([room]),
+				taskRepository: makeTaskRepository({ 'room-1': [task] }),
+			})
+		);
+
+		const result = parseResult(await handlers.list_tasks({ compact: true }));
+		expect(result.total).toBe(1);
+		const tasks = result.tasks as Array<Record<string, unknown>>;
+		expect(tasks[0].id).toBe('t1');
+		expect(tasks[0].title).toBe('My Task');
+		expect(tasks[0].status).toBeDefined();
+		expect(tasks[0].priority).toBeDefined();
+		expect(tasks[0].taskType).toBeDefined();
+		expect(tasks[0].assignedAgent).toBeDefined();
+		expect(tasks[0].createdAt).toBeDefined();
+		// Large fields excluded in compact mode
+		expect(tasks[0].roomName).toBeUndefined();
+		expect(tasks[0].prUrl).toBeUndefined();
+		expect(tasks[0].progress).toBeUndefined();
 	});
 });
 
