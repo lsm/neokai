@@ -7,10 +7,12 @@
  * Test scenarios:
  * 1. Empty state shows correctly before any messages
  * 2. User messages appear in the correct bubble style (right-aligned blue bubble)
- * 3. Neo sparkle avatar appears next to assistant messages
- * 4. Assistant messages render as readable text, NOT a "Structured data" card
- * 5. No parse-error fallback for valid responses
- * 6. Empty state disappears once a message is sent
+ * 3. Empty state disappears once a message is sent
+ * 4. Neo sparkle avatar appears next to assistant messages  [AI-dependent]
+ * 5. Assistant messages render as readable text, NOT a "Structured data" card  [AI-dependent]
+ *
+ * Tests 1–3 require only a working server connection (no AI credentials).
+ * Tests 4–5 require Neo credentials and are skipped when not available.
  *
  * E2E Principles (from CLAUDE.md):
  * - All test actions go through UI (clicks, typing, keyboard shortcuts).
@@ -26,6 +28,7 @@ import {
 	NEO_ASSISTANT_MESSAGE_TESTID,
 	openNeoPanel,
 	sendNeoMessage,
+	waitForNeoUserMessage,
 	waitForNeoAssistantResponse,
 	isNeoAvailable,
 } from '../helpers/neo-helpers';
@@ -40,6 +43,15 @@ test.describe('Neo Chat Rendering', () => {
 		await waitForWebSocketConnected(page);
 		// Clear persisted panel state so tests start with panel closed
 		await page.evaluate(() => localStorage.removeItem('neo:panelOpen'));
+		// Clear the Neo session so each test starts with an empty chat history.
+		// This is infrastructure setup (allowed in beforeEach per E2E rules) and
+		// ensures tests 1 and 3 reliably see the empty state on first open.
+		await page.evaluate(async () => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (hub?.request) {
+				await hub.request('neo.clearSession', {}).catch(() => {});
+			}
+		});
 		await page.reload();
 		await waitForWebSocketConnected(page);
 	});
@@ -67,6 +79,51 @@ test.describe('Neo Chat Rendering', () => {
 		await expect(page.getByTestId(NEO_ASSISTANT_MESSAGE_TESTID)).toHaveCount(0);
 	});
 
+	// ── 2. User message bubble style ─────────────────────────────────────────────
+	// Does not require an AI response — only verifies that the user message
+	// bubble is rendered correctly after sendNeoMessage() creates it via RPC.
+
+	test('user messages appear in right-aligned blue bubble after sending', async ({ page }) => {
+		await openNeoPanel(page);
+
+		await sendNeoMessage(page, 'Hello Neo');
+
+		// Wait for user message bubble to appear
+		await waitForNeoUserMessage(page, 'Hello Neo');
+		const userMsg = page
+			.getByTestId(NEO_USER_MESSAGE_TESTID)
+			.filter({ hasText: 'Hello Neo' })
+			.first();
+
+		// The outer wrapper is right-aligned (justify-end)
+		await expect(userMsg).toHaveClass(/justify-end/);
+
+		// The inner bubble has blue background styling
+		const bubble = userMsg.locator('div').first();
+		await expect(bubble).toHaveClass(/bg-blue-600/);
+		await expect(bubble).toHaveClass(/text-white/);
+
+		// The text content is readable
+		await expect(userMsg).toContainText('Hello Neo');
+	});
+
+	// ── 3. Empty state disappears after first message ──────────────────────────
+	// Does not require an AI response — only verifies the empty state hides
+	// once a user message is in the DOM.
+
+	test('empty state disappears once a message is sent', async ({ page }) => {
+		await openNeoPanel(page);
+
+		// Empty state is shown initially (session cleared in beforeEach)
+		await expect(page.getByTestId('neo-empty-state')).toBeVisible();
+
+		await sendNeoMessage(page, 'Hi');
+
+		// Wait for user message to appear, then verify empty state is gone
+		await waitForNeoUserMessage(page, 'Hi');
+		await expect(page.getByTestId('neo-empty-state')).not.toBeVisible();
+	});
+
 	// ── AI-dependent tests: skip when Neo credentials are not configured ────────
 
 	test.describe('Neo Chat — AI-dependent rendering', () => {
@@ -77,31 +134,7 @@ test.describe('Neo Chat Rendering', () => {
 			}
 		});
 
-		// ── 2. User message bubble style ─────────────────────────────────────────
-
-		test('user messages appear in right-aligned blue bubble after sending', async ({ page }) => {
-			await sendNeoMessage(page, 'Hello Neo');
-
-			// User message bubble appears
-			const userMsg = page
-				.getByTestId(NEO_USER_MESSAGE_TESTID)
-				.filter({ hasText: 'Hello Neo' })
-				.first();
-			await userMsg.waitFor({ state: 'visible', timeout: 10000 });
-
-			// The outer wrapper is right-aligned (justify-end)
-			await expect(userMsg).toHaveClass(/justify-end/);
-
-			// The inner bubble has blue background styling
-			const bubble = userMsg.locator('div').first();
-			await expect(bubble).toHaveClass(/bg-blue-600/);
-			await expect(bubble).toHaveClass(/text-white/);
-
-			// The text content is readable
-			await expect(userMsg).toContainText('Hello Neo');
-		});
-
-		// ── 3. Sparkle avatar next to assistant messages ──────────────────────────
+		// ── 4. Sparkle avatar next to assistant messages ──────────────────────────
 
 		test('Neo sparkle avatar appears next to assistant messages', async ({ page }) => {
 			await sendNeoMessage(page, 'Say hi back');
@@ -120,7 +153,7 @@ test.describe('Neo Chat Rendering', () => {
 			await expect(sparkle).toBeAttached();
 		});
 
-		// ── 4. Assistant messages render as readable text, not raw JSON ────────────
+		// ── 5. Assistant messages render as readable text, not raw JSON ────────────
 
 		test('assistant messages render as readable text, not raw JSON or structured data', async ({
 			page,
@@ -131,52 +164,20 @@ test.describe('Neo Chat Rendering', () => {
 			const assistantMsg = page.getByTestId(NEO_ASSISTANT_MESSAGE_TESTID).last();
 			await expect(assistantMsg).toBeVisible();
 
-			// The message content area should not show a "Structured data" heading —
-			// which would indicate the old broken StructuredDataCard path is being used
+			// No "Structured data" heading — that would indicate the broken StructuredDataCard path
 			await expect(assistantMsg).not.toContainText('Structured data');
 
-			// The message should not display raw JSON characters that would indicate
-			// unparsed SDK message content leaking through
+			// No raw JSON leaking through (unparsed SDK message content)
 			const text = await assistantMsg.textContent();
 			expect(text).not.toMatch(/^\s*\{/); // should not start with `{`
 			expect(text).not.toContain('"type":"assistant"');
 			expect(text).not.toContain('"content":[');
 
-			// The parse-error fallback should not be shown
+			// The parse-error fallback must not be shown for valid responses
 			await expect(page.getByTestId('neo-message-parse-error')).not.toBeVisible();
 
-			// The message should contain some actual readable text (non-empty)
+			// Message contains actual readable text (non-empty)
 			expect((text ?? '').trim().length).toBeGreaterThan(0);
-		});
-
-		// ── 5. No parse errors for valid responses ────────────────────────────────
-
-		test('assistant messages do not show parse-error fallback for valid responses', async ({
-			page,
-		}) => {
-			await sendNeoMessage(page, 'Hello');
-			await waitForNeoAssistantResponse(page);
-
-			// SDKMessageRenderer is used, not the parse-error fallback
-			await expect(page.getByTestId('neo-message-parse-error')).not.toBeVisible();
-
-			// An assistant message is present and visible
-			await expect(page.getByTestId(NEO_ASSISTANT_MESSAGE_TESTID).last()).toBeVisible();
-		});
-
-		// ── 6. Empty state disappears after first message ─────────────────────────
-
-		test('empty state disappears once a message is sent', async ({ page }) => {
-			// Empty state is shown initially (panel opened in beforeEach)
-			await expect(page.getByTestId('neo-empty-state')).toBeVisible();
-
-			await sendNeoMessage(page, 'Hi');
-
-			// Empty state disappears once the user message appears
-			const userMsg = page.getByTestId(NEO_USER_MESSAGE_TESTID).first();
-			await userMsg.waitFor({ state: 'visible', timeout: 10000 });
-
-			await expect(page.getByTestId('neo-empty-state')).not.toBeVisible();
 		});
 	});
 });

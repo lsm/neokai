@@ -66,7 +66,10 @@ export async function waitForNeoUserMessage(page: Page, text: string): Promise<v
 /**
  * Wait for a new Neo assistant response to appear (any content).
  * Uses count-based detection so previous responses don't trigger a false positive.
- * Waits for the input to become re-enabled as the signal that streaming is complete.
+ *
+ * Note: `sending` in NeoChatView goes false after the initial `neo.send` RPC
+ * resolves, not after the assistant message is streamed. The count-based
+ * `waitForFunction` is therefore the authoritative wait signal here.
  */
 export async function waitForNeoAssistantResponse(
 	page: Page,
@@ -80,18 +83,36 @@ export async function waitForNeoAssistantResponse(
 		initialCount,
 		{ timeout }
 	);
-	// Wait for the input to be re-enabled (disabled only while `sending` is true)
-	await page.getByTestId(NEO_CHAT_INPUT_TESTID).waitFor({ state: 'enabled', timeout: 10000 });
 }
 
 // ─── Availability helpers ──────────────────────────────────────────────────────
 
 /**
+ * Wait for the Neo chat panel content to reach a stable state after opening.
+ * Resolves once the empty state or an error card is attached to the DOM,
+ * preventing a race between `isNeoAvailable` and async store initialisation.
+ */
+export async function waitForNeoChatReady(page: Page): Promise<void> {
+	await page
+		.locator(
+			'[data-testid="neo-empty-state"], [data-testid="neo-error-no-credentials"], [data-testid="neo-error-provider-unavailable"]'
+		)
+		.first()
+		.waitFor({ state: 'attached', timeout: 10000 })
+		.catch(() => {
+			// Tolerate timeout — isNeoAvailable will return false below, which is safe
+		});
+}
+
+/**
  * Check whether the Neo agent is provisioned (not showing an error card).
  * Must be called with the Neo panel already open so error cards are rendered.
+ * Waits for the panel content to settle before checking, avoiding a race between
+ * `openNeoPanel` and async Neo store subscription.
  * Returns true if Neo appears functional.
  */
 export async function isNeoAvailable(page: Page): Promise<boolean> {
+	await waitForNeoChatReady(page);
 	const hasNoCredentials = await page
 		.getByTestId('neo-error-no-credentials')
 		.isVisible()
