@@ -22,6 +22,8 @@ import {
 	type GoalPriority,
 	type NeoTask,
 	type MissionExecution,
+	type AutonomyLevel,
+	type MissionType,
 } from '@neokai/shared';
 import {
 	setupGoalHandlers,
@@ -686,16 +688,14 @@ describe('Goal RPC Handlers', () => {
 				updatedAt: Date.now(),
 			};
 			const callOrder: string[] = [];
-			(mockGoalManager.patchGoal as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+			(mockGoalManager.patchGoal as ReturnType<typeof mock>).mockImplementation(async () => {
 				callOrder.push('patchGoal');
 				return stubGoal;
 			});
-			(mockGoalManager.updateGoalStatus as ReturnType<typeof vi.fn>).mockImplementation(
-				async () => {
-					callOrder.push('updateGoalStatus');
-					return stubGoal;
-				}
-			);
+			(mockGoalManager.updateGoalStatus as ReturnType<typeof mock>).mockImplementation(async () => {
+				callOrder.push('updateGoalStatus');
+				return stubGoal;
+			});
 
 			await handler!(
 				{

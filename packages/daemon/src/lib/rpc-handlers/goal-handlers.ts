@@ -211,7 +211,7 @@ export function setupGoalHandlers(
 			// structuredMetrics, schedule) and priority via patchGoal first.
 			// This ensures autonomyLevel and other V2 fields are never silently dropped
 			// when a status update is present in the same request.
-			const patch: Record<string, unknown> = {};
+			const patch: Record<string, unknown> = { ...rest };
 			if (priority) patch.priority = priority;
 			for (const f of v2Fields) {
 				if (f in params.updates) patch[f] = params.updates[f as keyof typeof params.updates];
@@ -219,6 +219,8 @@ export function setupGoalHandlers(
 			goal = await goalManager.patchGoal(goalId, patch);
 
 			// Apply status/progress if also present in this request.
+			// Note: two sequential DB writes -- if the second fails, V2 fields are already
+			// persisted but status is not. Both are local SQLite calls so partial failure is unlikely.
 			if (status) {
 				goal = await goalManager.updateGoalStatus(
 					goalId,
