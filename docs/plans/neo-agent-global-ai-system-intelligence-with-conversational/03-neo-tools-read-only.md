@@ -89,7 +89,7 @@ Implement the read-only system query tools that allow Neo to inspect the entire 
      - Wraps each handler in a `tool()` definition with Zod schemas for parameters
      - Returns an MCP server via `createSdkMcpServer()`
   3. Define clear tool descriptions that help Neo understand when to use each tool
-  4. Attach the MCP server to the Neo session during initialization in `NeoSessionService`
+  4. Attach the MCP server to the Neo session via `NeoAgentHandle.getSession().setRuntimeMcpServers()` (the handle returned by `provisionNeoAgent()`)
   5. Write an integration test that verifies tools are registered and callable
 - **Acceptance criteria**:
   - MCP server registers all read-only tools with correct parameter schemas

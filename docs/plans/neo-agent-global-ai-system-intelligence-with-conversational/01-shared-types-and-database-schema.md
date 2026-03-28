@@ -15,8 +15,8 @@ Define all Neo-related shared types, extend existing types with Neo support, cre
   1. Create `packages/shared/src/types/neo.ts` with:
      - `NeoSecurityMode = 'conservative' | 'balanced' | 'autonomous'`
      - `NeoActionRiskLevel = 'low' | 'medium' | 'high'`
-     - `NeoActionStatus = 'pending_confirmation' | 'confirmed' | 'auto_executed' | 'cancelled' | 'failed' | 'undone'`
-     - `NeoActionLog` interface: `id`, `actionType`, `toolName`, `toolInput` (JSON), `toolOutput` (JSON), `riskLevel`, `status`, `targetType` (room/space/goal/task/skill/mcp/settings), `targetId`, `undoData` (JSON, nullable -- stores reversal info), `createdAt`, `completedAt`
+     - `NeoActionStatus = 'pending_confirmation' | 'pending_explicit' | 'confirmed' | 'auto_executed' | 'cancelled' | 'failed' | 'undone'` (note: `pending_explicit` distinguishes `require_explicit` actions from regular `confirm` actions)
+     - `NeoActionLog` interface: `id`, `actionType`, `toolName`, `toolInput` (JSON), `toolOutput` (JSON), `riskLevel`, `status`, `targetType` (room/space/goal/task/skill/mcp/settings), `targetId`, `undoData` (JSON, nullable -- stores reversal info), `expectedPhrase` (string, nullable -- stores the required confirmation phrase for `require_explicit` actions), `createdAt`, `completedAt`
      - `NeoMessage` interface: `id`, `role` ('user' | 'assistant'), `content` (string), `toolCalls` (optional array), `createdAt`. **Note**: This is a frontend projection type — Neo messages are stored in the `sdk_messages` table (same as all sessions) and projected via row mappers. `NeoMessage` is NOT a DB table.
      - `NeoSettings` interface: `securityMode` (default 'balanced'), `model` (optional), `sessionId` (optional -- stored after first creation)
      - `MessageOrigin = 'human' | 'neo' | 'system'`
@@ -49,10 +49,11 @@ Define all Neo-related shared types, extend existing types with Neo support, cre
        tool_input TEXT NOT NULL DEFAULT '{}',
        tool_output TEXT,
        risk_level TEXT NOT NULL CHECK(risk_level IN ('low', 'medium', 'high')),
-       status TEXT NOT NULL CHECK(status IN ('pending_confirmation', 'confirmed', 'auto_executed', 'cancelled', 'failed', 'undone')),
+       status TEXT NOT NULL CHECK(status IN ('pending_confirmation', 'pending_explicit', 'confirmed', 'auto_executed', 'cancelled', 'failed', 'undone')),
        target_type TEXT,
        target_id TEXT,
        undo_data TEXT,
+       expected_phrase TEXT,
        created_at TEXT NOT NULL,
        completed_at TEXT
      )

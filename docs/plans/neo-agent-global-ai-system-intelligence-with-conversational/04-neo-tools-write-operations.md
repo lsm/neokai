@@ -18,9 +18,9 @@ Implement the write/action tools that allow Neo to make changes across the NeoKa
      - **Medium risk**: `delete_space`, `delete_room` (without active tasks), `cancel_workflow_run`, `send_message_to_room`, `send_message_to_task`, `approve_gate`, `reject_gate`, `add_mcp_server`, `update_mcp_server`, `delete_mcp_server`, `add_skill`, `update_skill`, `delete_skill`
      - **High risk**: `delete_room` (with active tasks), bulk operations, `stop_session`
   3. Implement `determineActionBehavior(toolName: string, riskLevel: NeoActionRiskLevel, securityMode: NeoSecurityMode): 'auto_execute' | 'confirm' | 'require_explicit'`:
-     - Conservative: confirm everything (all actions require confirmation)
+     - Conservative: confirm everything (all actions require confirmation via confirm card)
      - Balanced: auto-execute low, confirm medium, require-explicit high
-     - Autonomous: auto-execute everything
+     - Autonomous: auto-execute everything **including high-risk actions**. The user explicitly chose this mode understanding the risk. The Neo settings UI shows a warning when selecting autonomous mode: "All actions will execute immediately, including deletions and irreversible operations."
   4. **Define `require_explicit` behavior clearly**: Unlike `confirm` (which shows a one-click Confirm/Cancel card), `require_explicit` requires the user to type a confirmation phrase that includes the target name. Example: to delete room "my-project" with active tasks, Neo responds with "This is an irreversible action. To proceed, type: DELETE my-project". The RPC handler validates the exact phrase match. This prevents accidental confirmation of high-risk operations.
   5. Implement `assessRisk(toolName: string, toolInput: Record<string, unknown>): NeoActionRiskLevel` -- context-aware risk assessment (e.g., deleting a room with active tasks is high risk, without is medium)
   6. Write unit tests covering all security mode x risk level combinations (9 total: 3 modes x 3 risk levels), plus `require_explicit` phrase validation
@@ -44,7 +44,7 @@ Implement the write/action tools that allow Neo to make changes across the NeoKa
        - Determine action behavior based on security tier
        - If `confirm`: create log entry with status `pending_confirmation`, return confirmation prompt instead of executing
        - If `auto_execute`: create log entry, execute handler, update log with result
-       - If `require_explicit`: return message explaining the action requires explicit confirmation
+       - If `require_explicit`: generate the expected phrase (e.g., `DELETE <targetName>`) from the action context, create log entry with status `pending_explicit` and store the phrase in `expected_phrase` column, return message with the phrase the user must type
      - `confirmAction(actionId: string): Promise<ToolResult>` -- execute a pending action after user confirms
      - `cancelAction(actionId: string): void` -- cancel a pending action
   3. Implement undo data capture: for each action type, define what data to store in `undo_data` to reverse the action (e.g., for `delete_skill`, store the full skill config so it can be re-created)
@@ -152,7 +152,7 @@ Implement the write/action tools that allow Neo to make changes across the NeoKa
   2. Create `createNeoWriteToolsMcpServer(config)` or extend the existing server function
   3. Define Zod schemas for all write tool parameters
   4. Ensure tool descriptions clearly indicate which operations are reversible
-  5. Wire the complete tools server into `NeoSessionService`
+  5. Wire the complete tools server into the Neo session via `NeoAgentHandle.getSession().setRuntimeMcpServers()` (the handle returned by `provisionNeoAgent()`)
   6. Write integration test verifying all tools are registered
 - **Acceptance criteria**:
   - All read + write tools are registered on the Neo session's MCP server

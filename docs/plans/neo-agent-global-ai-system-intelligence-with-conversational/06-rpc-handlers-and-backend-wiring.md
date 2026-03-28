@@ -26,7 +26,7 @@ Create the RPC endpoints that the frontend uses to communicate with the Neo agen
      - `neo.clear_session` -- clears Neo session and starts fresh. Action log is preserved.
      - `neo.confirm_action` -- accepts `{ actionId: string }`, confirms a pending action via `NeoActionLogger.confirmAction()`
      - `neo.cancel_action` -- accepts `{ actionId: string }`, cancels a pending action
-     - `neo.confirm_explicit` -- accepts `{ actionId: string, phrase: string }`, validates exact phrase match for `require_explicit` actions, then executes
+     - `neo.confirm_explicit` -- accepts `{ actionId: string, phrase: string }`, validates the phrase against the `expected_phrase` stored in the `neo_action_log` row (status must be `pending_explicit`), then executes if match
      - `neo.activity_log` -- accepts `{ limit?: number, offset?: number }`, returns action log entries. Backed by the same `NeoActionLogRepository.getRecent()` as the `get_activity_log` tool.
      - `neo.settings` -- accepts `{ securityMode?: NeoSecurityMode, model?: string }`, updates Neo settings
   4. Register handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` by calling `setupNeoHandlers()` in `setupRPCHandlers()`
@@ -35,7 +35,7 @@ Create the RPC endpoints that the frontend uses to communicate with the Neo agen
   - All RPC handlers work correctly
   - `neo.send` returns immediately (fire-and-forget), does NOT parse content
   - `neo.confirm_action` and `neo.cancel_action` work via dedicated endpoints only
-  - `neo.confirm_explicit` validates exact phrase match
+  - `neo.confirm_explicit` validates phrase against stored `expected_phrase` in `neo_action_log`
   - `neo.clear_session` resets the conversation but preserves action log
   - Unit tests cover all handlers
   - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

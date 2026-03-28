@@ -8,7 +8,7 @@ Implement the singleton Neo session provisioning following the `provisionGlobalS
 
 - **Pattern reuse**: The existing `provisionGlobalSpacesAgent()` in `packages/daemon/src/lib/space/provision-global-agent.ts` is the direct template. Neo follows the same module-level provisioning approach (NOT a service class) — check if session exists, create if not, attach MCP server and system prompt.
 - **Concurrent messages**: A message queue ensures that if a second message arrives while Neo is processing, it waits. The queue is a simple `Promise` chain — each `sendMessage` call chains onto the previous. This matches how AgentSession already serializes turns internally, but the queue prevents callers from overlapping.
-- **Session ID**: Always `'neo:global'`. On `clearSession`, the old session is archived (messages remain in `sdk_messages` with the old session ID) and a new session is created with a fresh UUID-based session ID stored in `GlobalSettings.neo.sessionId`. The `'neo:global'` alias is updated to point to the new session. This ensures message history separation between cleared sessions.
+- **Session ID**: Always the literal string `'neo:global'` — it never changes. On `clearSession`, messages are deleted (`DELETE FROM sdk_messages WHERE session_id = 'neo:global'`) and the session row is reset (updated `created_at`, cleared runtime state). No alias/pointer mechanism is needed. This keeps LiveQuery filters (`WHERE session_id = 'neo:global'`), repository lookups, and provisioning logic simple. Message history is not preserved across clears (the action log is independent and IS preserved).
 - **Tool attachment timing**: MCP tools server is created during provisioning but starts as a placeholder with no tools. Tools are added incrementally in Milestones 3-5 by updating the MCP server definition. The session does NOT need to be recreated when tools change — `setRuntimeMcpServers()` can be called at any time.
 
 ## Tasks
@@ -33,7 +33,7 @@ Implement the singleton Neo session provisioning following the `provisionGlobalS
      - Set runtime system prompt via `setRuntimeSystemPrompt()`
      - Return `NeoAgentHandle` with: `sendMessage(content: string): Promise<void>` (with queue), `getSession(): AgentSession`, `clearSession(): Promise<void>`, `cleanup(): Promise<void>`
   4. Implement message queue in `sendMessage`: chain each call as a Promise to prevent concurrent turns
-  5. Implement `clearSession()`: archive current session, create fresh session, reattach MCP tools and system prompt
+  5. Implement `clearSession()`: delete messages (`DELETE FROM sdk_messages WHERE session_id = 'neo:global'`), reset the session row's runtime state, reattach MCP tools and system prompt. The session ID remains `'neo:global'` — no new session is created.
   6. Create `packages/daemon/src/lib/neo/neo-system-prompt.ts`:
      - Define Neo's identity, role, personality (helpful chief-of-staff)
      - Describe available tool categories and when to use them
@@ -44,13 +44,13 @@ Implement the singleton Neo session provisioning following the `provisionGlobalS
      - Test session creation on first provision
      - Test session restoration on subsequent provision
      - Test message queue serializes concurrent sends
-     - Test clearSession creates a fresh session with separate message history
+     - Test clearSession deletes messages but preserves the same session ID (`'neo:global'`)
      - Test cleanup shuts down gracefully
 - **Acceptance criteria**:
   - Neo session is created with correct `SessionType` and `sessionId`
   - Session persists across daemon restarts (restore from DB)
   - Concurrent `sendMessage` calls are serialized (queue)
-  - `clearSession` creates a new session without losing old message history
+  - `clearSession` deletes messages but keeps the same `'neo:global'` session ID
   - System prompt includes security tier instructions
   - Pattern matches `provisionGlobalSpacesAgent()` structure
   - Unit tests pass with mocked dependencies

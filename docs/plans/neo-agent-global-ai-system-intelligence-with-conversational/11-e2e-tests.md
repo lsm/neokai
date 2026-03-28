@@ -41,6 +41,7 @@ Playwright end-to-end tests that verify the complete Neo user experience through
      - **Action confirmation (balanced mode)**: Ask to delete a room -> confirmation card appears -> click Cancel -> room still exists in room list
      - **Action confirmation (balanced mode)**: Ask to delete a room -> confirmation card appears -> click Confirm -> room is removed
      - **Auto-execute (balanced mode)**: Ask to toggle a skill -> action executes immediately with success indicator
+     - **Require-explicit (balanced mode)**: Ask to delete a room with active tasks -> `require_explicit` card appears with text input and required phrase -> type wrong phrase -> error -> type correct phrase -> room deleted
      - **Activity feed**: Perform several actions -> switch to Activity tab -> verify all actions are logged with correct status
   3. Create `packages/e2e/tests/features/neo-settings.e2e.ts`
   4. Implement settings test scenarios:
