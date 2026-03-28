@@ -227,18 +227,39 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
-			{/* Task stats strip */}
-			<div class="px-3 py-2">
+			<div class="px-3 pt-3 pb-2 space-y-3 border-b border-dark-800">
+				<div class="rounded-2xl border border-dark-700 bg-dark-900/80 px-3 py-3">
+					<div class="flex items-center justify-between gap-3">
+						<div class="min-w-0">
+							<p class="text-[11px] uppercase tracking-[0.2em] text-gray-600">Current Space</p>
+							<p class="mt-1 truncate text-sm font-medium text-gray-100">
+								{space?.name ?? 'Space'}
+							</p>
+						</div>
+						<span class="rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-blue-200">
+							{activeRuns.length > 0 ? 'Live' : 'Ready'}
+						</span>
+					</div>
+					{space?.workspacePath && (
+						<p class="mt-2 truncate font-mono text-[11px] text-gray-500">{space.workspacePath}</p>
+					)}
+				</div>
+
 				{hasTasks ? (
-					<span class="text-xs text-gray-500">
-						{activeCount > 0 && <span class="text-blue-500/80">{activeCount} active</span>}
-						{activeCount > 0 && reviewCount > 0 && <span class="text-gray-600"> · </span>}
-						{reviewCount > 0 && <span class="text-purple-500/80">{reviewCount} review</span>}
-						{(activeCount > 0 || reviewCount > 0) && doneCount > 0 && (
-							<span class="text-gray-600"> · </span>
-						)}
-						{doneCount > 0 && <span>{doneCount} done</span>}
-					</span>
+					<div class="grid grid-cols-3 gap-2">
+						<div class="rounded-xl border border-dark-700 bg-dark-900/60 px-2.5 py-2">
+							<p class="text-[11px] uppercase tracking-[0.16em] text-gray-600">Active</p>
+							<p class="mt-1 text-sm text-blue-300">{activeCount} active</p>
+						</div>
+						<div class="rounded-xl border border-dark-700 bg-dark-900/60 px-2.5 py-2">
+							<p class="text-[11px] uppercase tracking-[0.16em] text-gray-600">Review</p>
+							<p class="mt-1 text-sm text-purple-300">{reviewCount} review</p>
+						</div>
+						<div class="rounded-xl border border-dark-700 bg-dark-900/60 px-2.5 py-2">
+							<p class="text-[11px] uppercase tracking-[0.16em] text-gray-600">Done</p>
+							<p class="mt-1 text-sm text-gray-300">{doneCount} done</p>
+						</div>
+					</div>
 				) : (
 					<span class="text-xs text-gray-600">No tasks</span>
 				)}
@@ -250,8 +271,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 				data-testid="space-detail-dashboard"
 				data-active={isDashboardSelected ? 'true' : 'false'}
 				class={cn(
-					'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors',
-					isDashboardSelected ? 'bg-dark-700' : 'hover:bg-dark-800'
+					'mx-3 mt-3 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
+					isDashboardSelected
+						? 'bg-dark-700 border-dark-600'
+						: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
 				)}
 			>
 				<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-blue-900/40 rounded">
@@ -277,8 +300,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 				data-testid="space-detail-agent"
 				data-active={isSpaceAgentSelected ? 'true' : 'false'}
 				class={cn(
-					'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors',
-					isSpaceAgentSelected ? 'bg-dark-700' : 'hover:bg-dark-800'
+					'mx-3 mt-2 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
+					isSpaceAgentSelected
+						? 'bg-dark-700 border-dark-600'
+						: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
 				)}
 			>
 				<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-purple-900/40 rounded">
@@ -300,7 +325,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 			</button>
 
 			{/* Visual divider after pinned items */}
-			<div class="border-t border-dark-700 mx-3 my-1" />
+			<div class="border-t border-dark-700 mx-3 my-3" />
 
 			{/* Scrollable sections */}
 			<div class="flex-1 overflow-y-auto">

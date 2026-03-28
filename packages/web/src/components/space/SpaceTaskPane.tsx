@@ -6,6 +6,7 @@
  * Displayed as the full content area (replacing the tab view) when a task is selected.
  */
 
+import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceSession } from '../../lib/router';
@@ -52,12 +53,58 @@ const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
 	urgent: 'Urgent',
 };
 
-const PRIORITY_CLASSES: Record<SpaceTaskPriority, string> = {
-	low: 'text-gray-500',
-	normal: 'text-gray-400',
-	high: 'text-orange-400',
-	urgent: 'text-red-400',
-};
+function SectionCard({
+	title,
+	children,
+	tone = 'default',
+}: {
+	title: string;
+	children: ComponentChildren;
+	tone?: 'default' | 'error' | 'warning';
+}) {
+	const toneClasses =
+		tone === 'error'
+			? 'border-red-800/40 bg-red-950/20'
+			: tone === 'warning'
+				? 'border-yellow-800/40 bg-yellow-950/10'
+				: 'border-dark-700 bg-dark-900/60';
+	return (
+		<section class={cn('rounded-2xl border px-4 py-4', toneClasses)}>
+			<h3
+				class={cn(
+					'text-xs font-semibold uppercase tracking-wider mb-2',
+					tone === 'error' ? 'text-red-400' : tone === 'warning' ? 'text-yellow-300' : 'text-gray-500'
+				)}
+			>
+				{title}
+			</h3>
+			{children}
+		</section>
+	);
+}
+
+function MetaCard({
+	label,
+	value,
+	helper,
+	accent,
+}: {
+	label: string;
+	value: string;
+	helper?: string;
+	accent: string;
+}) {
+	return (
+		<div class="rounded-xl border border-dark-700 bg-dark-900/80 px-3 py-3">
+			<div class="flex items-center justify-between gap-3">
+				<p class="text-[11px] uppercase tracking-[0.18em] text-gray-600">{label}</p>
+				<span class={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', accent)} />
+			</div>
+			<p class="mt-2 text-sm font-medium text-gray-100">{value}</p>
+			{helper && <p class="mt-1 text-xs text-gray-500">{helper}</p>}
+		</div>
+	);
+}
 
 function StatusBadge({ status }: { status: SpaceTaskStatus }) {
 	return (
@@ -164,107 +211,161 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			: task.activeSession === 'worker'
 				? 'View Worker Session'
 				: 'View Agent Session';
+	const workflowLabel = task.workflowRunId ? 'Workflow Step' : 'Standalone Task';
+	const attentionCopy =
+		task.status === 'needs_attention'
+			? 'This task is blocked on human input.'
+			: task.currentStep || 'Agent activity will surface here as the task advances.';
 
 	return (
-		<div class="flex flex-col h-full overflow-hidden">
+		<div class="flex flex-col h-full overflow-hidden bg-dark-950">
 			{/* Header */}
-			<div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0">
-				{onClose && (
-					<button
-						type="button"
-						onClick={onClose}
-						class="text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
-						aria-label="Back"
-						data-testid="task-back-button"
-					>
-						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M15 19l-7-7 7-7"
-							/>
-						</svg>
-					</button>
-				)}
-				<h2 class="text-sm font-semibold text-gray-100 flex-1 min-w-0 truncate">{task.title}</h2>
-				<StatusBadge status={task.status} />
-				{agentSessionId && spaceId && (
-					<button
-						type="button"
-						onClick={() => navigateToSpaceSession(spaceId, agentSessionId)}
-						class="flex-shrink-0 px-3 py-1 text-xs font-medium bg-dark-700 hover:bg-dark-600
-							text-gray-300 rounded border border-dark-600 transition-colors"
-						data-testid="view-agent-session-btn"
-					>
-						{agentSessionLabel}
-					</button>
-				)}
-			</div>
-
-			{/* Body */}
-			<div class="flex-1 overflow-y-auto">
-				<div class="max-w-3xl mx-auto px-4 py-4 space-y-4">
-					{/* Priority row */}
-					<div class="flex items-center gap-3 flex-wrap">
-						<span class={cn('text-xs font-medium', PRIORITY_CLASSES[task.priority])}>
-							{PRIORITY_LABELS[task.priority]} priority
-						</span>
-						{task.taskType && <span class="text-xs text-gray-600 capitalize">{task.taskType}</span>}
-					</div>
-
-					{/* Workflow step indicator */}
-					{task.workflowRunId && (
-						<div class="flex items-center gap-2 text-xs text-gray-500">
-							<svg
-								class="w-3.5 h-3.5 flex-shrink-0"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
+			<div class="border-b border-dark-800 bg-dark-900/85 px-4 py-4 flex-shrink-0">
+				<div class="flex items-start gap-3">
+					{onClose && (
+						<button
+							type="button"
+							onClick={onClose}
+							class="mt-1 text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
+							aria-label="Back"
+							data-testid="task-back-button"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
 									stroke-linecap="round"
 									stroke-linejoin="round"
 									stroke-width={2}
-									d="M4 6h16M4 10h16M4 14h16M4 18h16"
+									d="M15 19l-7-7 7-7"
 								/>
 							</svg>
-							<span>
-								Workflow Step
-								{task.workflowNodeId && (
-									<span class="ml-1 font-mono text-gray-600">
-										{task.workflowNodeId.slice(0, 8)}
-									</span>
-								)}
+						</button>
+					)}
+					<div class="min-w-0 flex-1">
+						<div class="flex flex-wrap items-center gap-2">
+							<span class="rounded-full border border-dark-700 bg-dark-950 px-2.5 py-1 text-[11px] uppercase tracking-[0.2em] text-gray-500">
+								{workflowLabel}
 							</span>
+							<StatusBadge status={task.status} />
 						</div>
+						<h2 class="mt-3 text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
+						<p class="mt-1 text-sm text-gray-500">{attentionCopy}</p>
+					</div>
+					{agentSessionId && spaceId && (
+						<button
+							type="button"
+							onClick={() => navigateToSpaceSession(spaceId, agentSessionId)}
+							class="flex-shrink-0 px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700
+								text-gray-300 rounded-lg border border-dark-600 transition-colors"
+							data-testid="view-agent-session-btn"
+						>
+							{agentSessionLabel}
+						</button>
+					)}
+				</div>
+			</div>
+
+			{/* Body */}
+			<div class="flex-1 overflow-y-auto">
+				<div class="max-w-5xl mx-auto px-4 py-5 space-y-4">
+					<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+						<MetaCard
+							label="Priority"
+							value={`${PRIORITY_LABELS[task.priority]} priority`}
+							helper={task.taskType ? `${task.taskType} task` : 'Execution priority'}
+							accent={
+								task.priority === 'urgent'
+									? 'bg-red-400'
+									: task.priority === 'high'
+										? 'bg-orange-400'
+										: task.priority === 'low'
+											? 'bg-gray-500'
+											: 'bg-blue-400'
+							}
+						/>
+						<MetaCard
+							label="Status"
+							value={STATUS_LABELS[task.status]}
+							helper={
+								task.status === 'needs_attention'
+									? 'Waiting on human input'
+									: task.status === 'review'
+										? 'Ready for review'
+										: 'Current execution state'
+							}
+							accent={
+								task.status === 'completed'
+									? 'bg-green-400'
+									: task.status === 'needs_attention' || task.status === 'review'
+										? 'bg-yellow-400'
+										: task.status === 'in_progress'
+											? 'bg-blue-400'
+											: 'bg-gray-500'
+							}
+						/>
+						<MetaCard
+							label="Session"
+							value={task.activeSession ? `${task.activeSession} agent` : 'Shared agent thread'}
+							helper={agentSessionId ? 'Deep-dive available in agent session' : 'No linked agent session'}
+							accent={agentSessionId ? 'bg-violet-400' : 'bg-gray-500'}
+						/>
+						<MetaCard
+							label="Source"
+							value={task.workflowRunId ? 'Workflow-generated' : 'Standalone task'}
+							helper={
+								task.workflowNodeId ? `Node ${task.workflowNodeId.slice(0, 8)}` : 'Manual task scope'
+							}
+							accent={task.workflowRunId ? 'bg-cyan-400' : 'bg-emerald-400'}
+						/>
+					</div>
+
+					{/* Workflow step indicator */}
+					{task.workflowRunId && (
+						<SectionCard title="Workflow Step">
+							<div class="flex items-center gap-2 text-xs text-gray-400">
+								<svg
+									class="w-3.5 h-3.5 flex-shrink-0"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M4 6h16M4 10h16M4 14h16M4 18h16"
+									/>
+								</svg>
+								<span>
+									Workflow Step
+									{task.workflowNodeId && (
+										<span class="ml-1 font-mono text-gray-500">
+											{task.workflowNodeId.slice(0, 8)}
+										</span>
+									)}
+								</span>
+							</div>
+						</SectionCard>
 					)}
 
 					{/* Description */}
 					{task.description && (
-						<div>
-							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-								Description
-							</h3>
+						<SectionCard title="Description">
 							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
 								{task.description}
 							</p>
-						</div>
+						</SectionCard>
 					)}
 
 					{/* Current step */}
 					{task.currentStep && (
-						<div>
-							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-								Current Step
-							</h3>
+						<SectionCard title="Current Step" tone={task.status === 'needs_attention' ? 'warning' : 'default'}>
 							<p class="text-xs text-gray-400">{task.currentStep}</p>
-						</div>
+						</SectionCard>
 					)}
 
 					{/* Progress */}
 					{task.progress != null && task.progress > 0 && (
-						<div>
+						<SectionCard title="Progress">
 							<div class="flex items-center justify-between mb-1">
 								<span class="text-xs text-gray-500">Progress</span>
 								<span class="text-xs text-gray-500">{task.progress}%</span>
@@ -275,41 +376,37 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									style={{ width: `${task.progress}%` }}
 								/>
 							</div>
-						</div>
+						</SectionCard>
 					)}
 
 					{/* Result */}
 					{task.result && (
-						<div>
-							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-								Result
-							</h3>
+						<SectionCard title="Result">
 							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{task.result}</p>
-						</div>
+						</SectionCard>
 					)}
 
 					{/* Error */}
 					{task.error && (
-						<div>
-							<h3 class="text-xs font-semibold text-red-500 uppercase tracking-wider mb-1.5">
-								Error
-							</h3>
+						<SectionCard title="Error" tone="error">
 							<p class="text-sm text-red-400 leading-relaxed whitespace-pre-wrap">{task.error}</p>
-						</div>
+						</SectionCard>
 					)}
 
 					{/* PR link */}
 					{task.prUrl && (
-						<div class="flex items-center gap-2">
-							<a
-								href={task.prUrl}
-								target="_blank"
-								rel="noopener noreferrer"
-								class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-							>
-								{task.prNumber ? `PR #${task.prNumber}` : 'Pull Request'}
-							</a>
-						</div>
+						<SectionCard title="Pull Request">
+							<div class="flex items-center gap-2">
+								<a
+									href={task.prUrl}
+									target="_blank"
+									rel="noopener noreferrer"
+									class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+								>
+									{task.prNumber ? `PR #${task.prNumber}` : 'Pull Request'}
+								</a>
+							</div>
+						</SectionCard>
 					)}
 
 					{/* Human input area */}
