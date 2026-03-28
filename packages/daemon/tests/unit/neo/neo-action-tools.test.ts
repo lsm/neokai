@@ -24,7 +24,21 @@
  * - cancel_workflow_run: happy path, already-cancelled, completed error, unavailable guard
  * - approve_gate: happy path, idempotent, rejection override, terminal-run error
  * - reject_gate: happy path, idempotent, reason propagation, terminal-run error
- * - MCP server: all 18 tools are registered
+ * - add_mcp_server: happy path, manager unavailable, error propagation, confirmation paths
+ * - update_mcp_server: field patching, no-op guard, manager unavailable, sensitive env var rejection
+ * - delete_mcp_server: happy path, not found error, manager unavailable
+ * - toggle_mcp_server: enable/disable, not found, manager unavailable
+ * - add_skill: happy path, manager unavailable, error propagation
+ * - update_skill: field patching, no-op guard, not found, manager unavailable
+ * - delete_skill: happy path, built-in guard, not found, manager unavailable
+ * - toggle_skill: enable/disable, manager unavailable
+ * - update_app_settings: field updates, no-op guard, manager unavailable
+ * - send_message_to_room: happy path, no active session, room not found, manager unavailable, empty message
+ * - send_message_to_task: happy path, task not found, no active session, manager unavailable, empty message
+ * - stop_session: happy path, wrong status, runtime unavailable, task not found
+ * - pause_schedule: happy path, non-recurring goal, goal not found, already paused (idempotent)
+ * - resume_schedule: happy path, no schedule, non-recurring goal, already active (idempotent)
+ * - MCP server: all 32 tools are registered
  */
 
 import { describe, expect, it, beforeEach } from 'bun:test';
@@ -43,9 +57,20 @@ import {
 	type NeoActionGateDataRepository,
 	type NeoWorkflowRun,
 	type NeoSpaceTask,
+	type NeoMcpManager,
+	type NeoSkillsManager,
+	type NeoSettingsManager,
+	type NeoSessionManager,
 } from '../../../src/lib/neo/tools/neo-action-tools';
 import { PendingActionStore } from '../../../src/lib/neo/security-tier';
-import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
+import type {
+	Room,
+	RoomGoal,
+	NeoTask,
+	AppMcpServer,
+	AppSkill,
+	GlobalSettings,
+} from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -159,10 +184,10 @@ function makeGoalManager(goals: RoomGoal[] = []): NeoActionGoalManager {
 			store.set(id, updated);
 			return updated;
 		},
-		updateGoalStatus: async (id, status) => {
+		updateGoalStatus: async (id, status, updates) => {
 			const goal = store.get(id);
 			if (!goal) throw new Error(`Goal not found: ${id}`);
-			const updated = { ...goal, status, updatedAt: NOW + 1 };
+			const updated = { ...goal, status, ...updates, updatedAt: NOW + 1 };
 			store.set(id, updated);
 			return updated;
 		},
@@ -201,10 +226,11 @@ function makeTaskManager(tasks: NeoTask[] = []): NeoActionTaskManager {
 	};
 }
 
-function makeRuntimeService(resumeResult = true): NeoActionRuntimeService {
+function makeRuntimeService(resumeResult = true, interruptResult = true): NeoActionRuntimeService {
 	return {
 		getRuntime: (_roomId) => ({
 			resumeWorkerFromHuman: async (_taskId, _message, _opts) => resumeResult,
+			interruptTaskSession: async (_taskId) => ({ success: interruptResult }),
 		}),
 	};
 }
@@ -218,10 +244,6 @@ function makeManagerFactory(
 		getTaskManager: (roomId) => taskManagers.get(roomId) ?? makeTaskManager(),
 	};
 }
-
-// ---------------------------------------------------------------------------
-// Config builder
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Space/Workflow mock factories
@@ -248,6 +270,58 @@ function makeWorkflowRun(overrides: Partial<NeoWorkflowRun> = {}): NeoWorkflowRu
 		spaceId: 'space-1',
 		status: 'in_progress',
 		failureReason: null,
+		...overrides,
+	};
+}
+
+function makeMcpManager(servers: AppMcpServer[] = []): NeoMcpManager {
+	const store = new Map<string, AppMcpServer>(servers.map((s) => [s.id, s]));
+	return {
+		createMcpServer: (params) => {
+			const server: AppMcpServer = {
+				id: `mcp-${Date.now()}`,
+				name: params.name,
+				sourceType: params.sourceType,
+				description: params.description,
+				command: params.command,
+				args: params.args,
+				env: params.env,
+				url: params.url,
+				headers: params.headers,
+				enabled: params.enabled ?? false,
+			};
+			store.set(server.id, server);
+			return server;
+		},
+		updateMcpServer: (id, updates) => {
+			const s = store.get(id);
+			if (!s) return null;
+			const updated = { ...s, ...updates };
+			store.set(id, updated);
+			return updated;
+		},
+		deleteMcpServer: (id) => {
+			if (!store.has(id)) return false;
+			store.delete(id);
+			return true;
+		},
+		getMcpServer: (id) => store.get(id) ?? null,
+		getMcpServerByName: (name) => Array.from(store.values()).find((s) => s.name === name) ?? null,
+	};
+}
+
+function makeAppSkill(overrides: Partial<AppSkill> = {}): AppSkill {
+	return {
+		id: 'skill-1',
+		name: 'test-skill',
+		displayName: 'Test Skill',
+		description: 'A test skill',
+		sourceType: 'plugin',
+		config: { type: 'plugin', pluginPath: '/path/to/plugin' },
+		enabled: false,
+		builtIn: false,
+		validationStatus: 'pending',
+		createdAt: NOW,
 		...overrides,
 	};
 }
@@ -316,6 +390,81 @@ function makeGateDataRepo(): NeoActionGateDataRepository & {
 	};
 }
 
+function makeSkillsManager(skills: AppSkill[] = []): NeoSkillsManager {
+	const store = new Map<string, AppSkill>(skills.map((s) => [s.id, s]));
+	return {
+		addSkill: (params) => {
+			const skill: AppSkill = {
+				id: `skill-${Date.now()}`,
+				name: params.name,
+				displayName: params.displayName,
+				description: params.description,
+				sourceType: params.sourceType,
+				config: params.config,
+				enabled: params.enabled ?? false,
+				builtIn: false,
+				validationStatus: params.validationStatus ?? 'pending',
+				createdAt: NOW,
+			};
+			store.set(skill.id, skill);
+			return skill;
+		},
+		updateSkill: (id, params) => {
+			const s = store.get(id);
+			if (!s) throw new Error(`Skill not found: ${id}`);
+			const updated = { ...s, ...params };
+			store.set(id, updated);
+			return updated;
+		},
+		setSkillEnabled: (id, enabled) => {
+			const s = store.get(id);
+			if (!s) throw new Error(`Skill not found: ${id}`);
+			const updated = { ...s, enabled };
+			store.set(id, updated);
+			return updated;
+		},
+		removeSkill: (id) => {
+			const s = store.get(id);
+			if (!s || s.builtIn) return false;
+			store.delete(id);
+			return true;
+		},
+		getSkill: (id) => store.get(id) ?? null,
+	};
+}
+
+function makeSettingsManager(initial: Partial<GlobalSettings> = {}): NeoSettingsManager {
+	let settings: GlobalSettings = {
+		settingSources: ['user', 'project', 'local'],
+		permissionMode: 'default',
+		model: 'sonnet',
+		disabledMcpServers: [],
+		...initial,
+	} as GlobalSettings;
+	return {
+		getGlobalSettings: () => settings,
+		updateGlobalSettings: (updates) => {
+			settings = { ...settings, ...updates };
+			return settings;
+		},
+	};
+}
+
+function makeSessionManager(
+	roomSessions: Map<string, string> = new Map(),
+	taskSessions: Map<string, string> = new Map()
+): NeoSessionManager {
+	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+	return {
+		injectMessage: async (sessionId, message) => {
+			injectedMessages.push({ sessionId, message });
+		},
+		getActiveSessionForRoom: (roomId) => roomSessions.get(roomId) ?? null,
+		getActiveSessionForTask: (taskId) => taskSessions.get(taskId) ?? null,
+		_injectedMessages: injectedMessages,
+	} as NeoSessionManager & { _injectedMessages: typeof injectedMessages };
+}
+
 function makeConfig(
 	opts: {
 		rooms?: Room[];
@@ -342,6 +491,10 @@ function makeConfig(
 			gateId: string,
 			data: Record<string, unknown>
 		) => void | Promise<void>;
+		mcpManager?: NeoMcpManager;
+		skillsManager?: NeoSkillsManager;
+		settingsManager?: NeoSettingsManager;
+		sessionManager?: NeoSessionManager;
 	} = {}
 ): NeoActionToolsConfig {
 	const room = makeRoom();
@@ -375,6 +528,10 @@ function makeConfig(
 		onGateChanged: opts.onGateChanged,
 		onWorkflowRunUpdated: opts.onWorkflowRunUpdated,
 		onGateDataUpdated: opts.onGateDataUpdated,
+		mcpManager: opts.mcpManager,
+		skillsManager: opts.skillsManager,
+		settingsManager: opts.settingsManager,
+		sessionManager: opts.sessionManager,
 	};
 }
 
@@ -1125,6 +1282,92 @@ describe('create_space', () => {
 });
 
 // ---------------------------------------------------------------------------
+// add_mcp_server
+// ---------------------------------------------------------------------------
+
+describe('add_mcp_server', () => {
+	it('creates a stdio MCP server entry', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { add_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await add_mcp_server({
+				name: 'my-mcp',
+				source_type: 'stdio',
+				command: 'node',
+				enabled: false,
+			})
+		);
+		expect(result.success).toBe(true);
+		expect(result.server.name).toBe('my-mcp');
+		expect(result.server.sourceType).toBe('stdio');
+	});
+
+	it('returns error when mcpManager not available', async () => {
+		const config = makeConfig();
+		const { add_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await add_mcp_server({ name: 'x', source_type: 'stdio' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('MCP manager not available');
+	});
+
+	it('propagates manager errors', async () => {
+		const badManager: NeoMcpManager = {
+			createMcpServer: () => {
+				throw new Error('duplicate name');
+			},
+			updateMcpServer: () => null,
+			deleteMcpServer: () => false,
+			getMcpServer: () => null,
+			getMcpServerByName: () => null,
+		};
+		const config = makeConfig({ mcpManager: badManager });
+		const { add_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await add_mcp_server({ name: 'x', source_type: 'stdio' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('duplicate name');
+	});
+
+	it('returns confirmationRequired in conservative mode', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager(), securityMode: 'conservative' });
+		const { add_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await add_mcp_server({ name: 'x', source_type: 'stdio' }));
+		expect(result.confirmationRequired).toBe(true);
+		expect(result.riskLevel).toBe('medium');
+	});
+
+	it('rejects sensitive env var names before security check', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { add_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await add_mcp_server({
+				name: 'x',
+				source_type: 'stdio',
+				env: { ANTHROPIC_API_KEY: 'sk-secret' },
+			})
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('ANTHROPIC_API_KEY');
+		expect(result.error).toContain('Refusing to store sensitive env var');
+		// Confirm the pending store is empty — validation ran before security check
+		expect(config.pendingStore.size).toBe(0);
+	});
+
+	it('allows non-sensitive env vars', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { add_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await add_mcp_server({
+				name: 'x',
+				source_type: 'stdio',
+				command: 'node',
+				env: { MY_SETTING: 'value' },
+			})
+		);
+		expect(result.success).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // update_space
 // ---------------------------------------------------------------------------
 
@@ -1165,6 +1408,69 @@ describe('update_space', () => {
 		const { update_space } = createNeoActionToolHandlers(config);
 		const result = parseResult(await update_space({ space_id: 'space-1', name: 'New Name' }));
 		expect(result.success).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// update_mcp_server
+// ---------------------------------------------------------------------------
+
+describe('update_mcp_server', () => {
+	it('updates server fields', async () => {
+		const existing: AppMcpServer = {
+			id: 'mcp-1',
+			name: 'old-name',
+			sourceType: 'stdio',
+			command: 'node',
+			enabled: false,
+		};
+		const config = makeConfig({ mcpManager: makeMcpManager([existing]) });
+		const { update_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_mcp_server({ server_id: 'mcp-1', name: 'new-name' }));
+		expect(result.success).toBe(true);
+		expect(result.server.name).toBe('new-name');
+	});
+
+	it('returns error when server not found', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { update_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_mcp_server({ server_id: 'missing', name: 'x' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('MCP server not found');
+	});
+
+	it('returns error when no update fields provided', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { update_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_mcp_server({ server_id: 'mcp-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('No update fields provided');
+	});
+
+	it('returns error when mcpManager not available', async () => {
+		const config = makeConfig();
+		const { update_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_mcp_server({ server_id: 'x', name: 'y' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('MCP manager not available');
+	});
+
+	it('rejects sensitive env var names before security check', async () => {
+		const existing: AppMcpServer = {
+			id: 'mcp-1',
+			name: 'x',
+			sourceType: 'stdio',
+			enabled: false,
+		};
+		const config = makeConfig({ mcpManager: makeMcpManager([existing]) });
+		const { update_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await update_mcp_server({ server_id: 'mcp-1', env: { ANTHROPIC_API_KEY: 'sk-secret' } })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('ANTHROPIC_API_KEY');
+		expect(result.error).toContain('Refusing to store sensitive env var');
+		expect(config.pendingStore.size).toBe(0);
 	});
 });
 
@@ -1404,6 +1710,168 @@ describe('cancel_workflow_run', () => {
 		expect(updatedSpaceId).toBe('space-1');
 		expect(updatedRunId).toBe('run-1');
 		expect(updatedStatus).toBe('cancelled');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// delete_mcp_server
+// ---------------------------------------------------------------------------
+
+describe('delete_mcp_server', () => {
+	it('deletes an existing server', async () => {
+		const existing: AppMcpServer = { id: 'mcp-1', name: 'x', sourceType: 'stdio', enabled: false };
+		const config = makeConfig({ mcpManager: makeMcpManager([existing]) });
+		const { delete_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_mcp_server({ server_id: 'mcp-1' }));
+		expect(result.success).toBe(true);
+		expect(result.serverId).toBe('mcp-1');
+	});
+
+	it('returns error when server not found', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { delete_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_mcp_server({ server_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('MCP server not found');
+	});
+
+	it('returns error when mcpManager not available', async () => {
+		const config = makeConfig();
+		const { delete_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_mcp_server({ server_id: 'x' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('MCP manager not available');
+	});
+
+	it('returns confirmationRequired in balanced mode (medium risk)', async () => {
+		const existing: AppMcpServer = { id: 'mcp-1', name: 'x', sourceType: 'stdio', enabled: false };
+		const config = makeConfig({
+			mcpManager: makeMcpManager([existing]),
+			securityMode: 'balanced',
+		});
+		const { delete_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_mcp_server({ server_id: 'mcp-1' }));
+		expect(result.confirmationRequired).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// toggle_mcp_server
+// ---------------------------------------------------------------------------
+
+describe('toggle_mcp_server', () => {
+	it('enables a server', async () => {
+		const existing: AppMcpServer = { id: 'mcp-1', name: 'x', sourceType: 'stdio', enabled: false };
+		const config = makeConfig({ mcpManager: makeMcpManager([existing]) });
+		const { toggle_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_mcp_server({ server_id: 'mcp-1', enabled: true }));
+		expect(result.success).toBe(true);
+		expect(result.server.enabled).toBe(true);
+	});
+
+	it('disables a server', async () => {
+		const existing: AppMcpServer = { id: 'mcp-1', name: 'x', sourceType: 'stdio', enabled: true };
+		const config = makeConfig({ mcpManager: makeMcpManager([existing]) });
+		const { toggle_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_mcp_server({ server_id: 'mcp-1', enabled: false }));
+		expect(result.success).toBe(true);
+		expect(result.server.enabled).toBe(false);
+	});
+
+	it('returns error when server not found', async () => {
+		const config = makeConfig({ mcpManager: makeMcpManager() });
+		const { toggle_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_mcp_server({ server_id: 'missing', enabled: true }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('MCP server not found');
+	});
+
+	it('returns error when mcpManager not available', async () => {
+		const config = makeConfig();
+		const { toggle_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_mcp_server({ server_id: 'x', enabled: true }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('MCP manager not available');
+	});
+
+	it('auto-executes in balanced mode (low risk)', async () => {
+		const existing: AppMcpServer = { id: 'mcp-1', name: 'x', sourceType: 'stdio', enabled: false };
+		const config = makeConfig({
+			mcpManager: makeMcpManager([existing]),
+			securityMode: 'balanced',
+		});
+		const { toggle_mcp_server } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_mcp_server({ server_id: 'mcp-1', enabled: true }));
+		expect(result.success).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// add_skill
+// ---------------------------------------------------------------------------
+
+describe('add_skill', () => {
+	it('creates a plugin skill', async () => {
+		const config = makeConfig({ skillsManager: makeSkillsManager() });
+		const { add_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await add_skill({
+				name: 'my-skill',
+				display_name: 'My Skill',
+				description: 'desc',
+				source_type: 'plugin',
+				config: { type: 'plugin', pluginPath: '/path/to/plugin' },
+				enabled: false,
+			})
+		);
+		expect(result.success).toBe(true);
+		expect(result.skill.name).toBe('my-skill');
+		expect(result.skill.sourceType).toBe('plugin');
+	});
+
+	it('returns error when skillsManager not available', async () => {
+		const config = makeConfig();
+		const { add_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await add_skill({
+				name: 'x',
+				display_name: 'X',
+				description: 'x',
+				source_type: 'plugin',
+				config: { type: 'plugin', pluginPath: '/x' },
+			})
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Skills manager not available');
+	});
+
+	it('propagates manager errors', async () => {
+		const badManager: NeoSkillsManager = {
+			addSkill: () => {
+				throw new Error('duplicate skill name');
+			},
+			updateSkill: () => {
+				throw new Error('not found');
+			},
+			setSkillEnabled: () => {
+				throw new Error('not found');
+			},
+			removeSkill: () => false,
+			getSkill: () => null,
+		};
+		const config = makeConfig({ skillsManager: badManager });
+		const { add_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await add_skill({
+				name: 'x',
+				display_name: 'X',
+				description: 'x',
+				source_type: 'plugin',
+				config: { type: 'plugin', pluginPath: '/x' },
+			})
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('duplicate skill name');
 	});
 });
 
@@ -1718,6 +2186,543 @@ describe('reject_gate', () => {
 });
 
 // ---------------------------------------------------------------------------
+// update_skill
+// ---------------------------------------------------------------------------
+
+describe('update_skill', () => {
+	it('updates skill display name', async () => {
+		const skill = makeAppSkill({ id: 'skill-1' });
+		const config = makeConfig({ skillsManager: makeSkillsManager([skill]) });
+		const { update_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await update_skill({ skill_id: 'skill-1', display_name: 'New Name' })
+		);
+		expect(result.success).toBe(true);
+		expect(result.skill.displayName).toBe('New Name');
+	});
+
+	it('returns error when skill not found', async () => {
+		const config = makeConfig({ skillsManager: makeSkillsManager() });
+		const { update_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_skill({ skill_id: 'missing', display_name: 'X' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Skill not found');
+	});
+
+	it('returns error when no update fields provided', async () => {
+		const config = makeConfig({ skillsManager: makeSkillsManager() });
+		const { update_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_skill({ skill_id: 'skill-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('No update fields provided');
+	});
+
+	it('returns error when skillsManager not available', async () => {
+		const config = makeConfig();
+		const { update_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_skill({ skill_id: 'x', display_name: 'Y' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Skills manager not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// delete_skill
+// ---------------------------------------------------------------------------
+
+describe('delete_skill', () => {
+	it('deletes a non-built-in skill', async () => {
+		const skill = makeAppSkill({ id: 'skill-1' });
+		const config = makeConfig({ skillsManager: makeSkillsManager([skill]) });
+		const { delete_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_skill({ skill_id: 'skill-1' }));
+		expect(result.success).toBe(true);
+		expect(result.skillId).toBe('skill-1');
+	});
+
+	it('returns error for built-in skills', async () => {
+		const skill = makeAppSkill({ id: 'skill-1', builtIn: true });
+		const config = makeConfig({ skillsManager: makeSkillsManager([skill]) });
+		const { delete_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_skill({ skill_id: 'skill-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Cannot delete built-in skill');
+	});
+
+	it('returns error when skill not found', async () => {
+		const config = makeConfig({ skillsManager: makeSkillsManager() });
+		const { delete_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_skill({ skill_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Skill not found');
+	});
+
+	it('returns error when skillsManager not available', async () => {
+		const config = makeConfig();
+		const { delete_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_skill({ skill_id: 'x' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Skills manager not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// toggle_skill
+// ---------------------------------------------------------------------------
+
+describe('toggle_skill', () => {
+	it('enables a skill', async () => {
+		const skill = makeAppSkill({ id: 'skill-1', enabled: false });
+		const config = makeConfig({ skillsManager: makeSkillsManager([skill]) });
+		const { toggle_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_skill({ skill_id: 'skill-1', enabled: true }));
+		expect(result.success).toBe(true);
+		expect(result.skill.enabled).toBe(true);
+	});
+
+	it('disables a skill', async () => {
+		const skill = makeAppSkill({ id: 'skill-1', enabled: true });
+		const config = makeConfig({ skillsManager: makeSkillsManager([skill]) });
+		const { toggle_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_skill({ skill_id: 'skill-1', enabled: false }));
+		expect(result.success).toBe(true);
+		expect(result.skill.enabled).toBe(false);
+	});
+
+	it('returns error when skill not found (via manager throw)', async () => {
+		const config = makeConfig({ skillsManager: makeSkillsManager() });
+		const { toggle_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_skill({ skill_id: 'missing', enabled: true }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Skill not found');
+	});
+
+	it('returns error when skillsManager not available', async () => {
+		const config = makeConfig();
+		const { toggle_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_skill({ skill_id: 'x', enabled: true }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Skills manager not available');
+	});
+
+	it('auto-executes in balanced mode (low risk)', async () => {
+		const skill = makeAppSkill({ id: 'skill-1' });
+		const config = makeConfig({
+			skillsManager: makeSkillsManager([skill]),
+			securityMode: 'balanced',
+		});
+		const { toggle_skill } = createNeoActionToolHandlers(config);
+		const result = parseResult(await toggle_skill({ skill_id: 'skill-1', enabled: true }));
+		expect(result.success).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// update_app_settings
+// ---------------------------------------------------------------------------
+
+describe('update_app_settings', () => {
+	it('updates model', async () => {
+		const config = makeConfig({ settingsManager: makeSettingsManager() });
+		const { update_app_settings } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_app_settings({ model: 'opus' }));
+		expect(result.success).toBe(true);
+		expect(result.settings.model).toBe('opus');
+	});
+
+	it('updates autoScroll and maxConcurrentWorkers', async () => {
+		const config = makeConfig({ settingsManager: makeSettingsManager() });
+		const { update_app_settings } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await update_app_settings({ auto_scroll: false, max_concurrent_workers: 5 })
+		);
+		expect(result.success).toBe(true);
+		expect(result.settings.autoScroll).toBe(false);
+		expect(result.settings.maxConcurrentWorkers).toBe(5);
+	});
+
+	it('returns error when no fields provided', async () => {
+		const config = makeConfig({ settingsManager: makeSettingsManager() });
+		const { update_app_settings } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_app_settings({}));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('No update fields provided');
+	});
+
+	it('returns error when settingsManager not available', async () => {
+		const config = makeConfig();
+		const { update_app_settings } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_app_settings({ model: 'opus' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Settings manager not available');
+	});
+
+	it('auto-executes in balanced mode (low risk)', async () => {
+		const config = makeConfig({
+			settingsManager: makeSettingsManager(),
+			securityMode: 'balanced',
+		});
+		const { update_app_settings } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_app_settings({ model: 'haiku' }));
+		expect(result.success).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// send_message_to_room
+// ---------------------------------------------------------------------------
+
+describe('send_message_to_room', () => {
+	it('injects message into the active room session', async () => {
+		const roomSessions = new Map([['room-1', 'session-abc']]);
+		const sessionMgr = makeSessionManager(roomSessions);
+		const config = makeConfig({ sessionManager: sessionMgr });
+		const { send_message_to_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await send_message_to_room({ room_id: 'room-1', message: 'Hello agent!' })
+		);
+		expect(result.success).toBe(true);
+		expect(result.sessionId).toBe('session-abc');
+	});
+
+	it('returns error when room not found', async () => {
+		const config = makeConfig({ sessionManager: makeSessionManager() });
+		const { send_message_to_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await send_message_to_room({ room_id: 'missing', message: 'Hi' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Room not found');
+	});
+
+	it('returns error when no active session for room', async () => {
+		const config = makeConfig({ sessionManager: makeSessionManager() });
+		const { send_message_to_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await send_message_to_room({ room_id: 'room-1', message: 'Hi' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('No active session found for room');
+	});
+
+	it('returns error when sessionManager not available', async () => {
+		const config = makeConfig();
+		const { send_message_to_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await send_message_to_room({ room_id: 'room-1', message: 'Hi' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Session manager not available');
+	});
+
+	it('returns confirmationRequired in balanced mode (medium risk)', async () => {
+		const roomSessions = new Map([['room-1', 'session-abc']]);
+		const config = makeConfig({
+			sessionManager: makeSessionManager(roomSessions),
+			securityMode: 'balanced',
+		});
+		const { send_message_to_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await send_message_to_room({ room_id: 'room-1', message: 'Hi' }));
+		expect(result.confirmationRequired).toBe(true);
+		expect(result.riskLevel).toBe('medium');
+	});
+
+	it('returns error when message is empty', async () => {
+		const roomSessions = new Map([['room-1', 'session-abc']]);
+		const config = makeConfig({ sessionManager: makeSessionManager(roomSessions) });
+		const { send_message_to_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await send_message_to_room({ room_id: 'room-1', message: '   ' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Message must not be empty');
+		expect(config.pendingStore.size).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// send_message_to_task
+// ---------------------------------------------------------------------------
+
+describe('send_message_to_task', () => {
+	it('injects message into the active task session', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1' });
+		const taskSessions = new Map([['task-1', 'session-xyz']]);
+		const sessionMgr = makeSessionManager(new Map(), taskSessions);
+		const config = makeConfig({ tasks: [task], sessionManager: sessionMgr });
+		const { send_message_to_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await send_message_to_task({ room_id: 'room-1', task_id: 'task-1', message: 'Fix this' })
+		);
+		expect(result.success).toBe(true);
+		expect(result.sessionId).toBe('session-xyz');
+	});
+
+	it('returns error when room not found', async () => {
+		const config = makeConfig({ sessionManager: makeSessionManager() });
+		const { send_message_to_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await send_message_to_task({ room_id: 'missing', task_id: 'task-1', message: 'Hi' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Room not found');
+	});
+
+	it('returns error when task not found', async () => {
+		const config = makeConfig({ tasks: [], sessionManager: makeSessionManager() });
+		const { send_message_to_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await send_message_to_task({ room_id: 'room-1', task_id: 'missing', message: 'Hi' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Task not found');
+	});
+
+	it('returns error when no active session for task', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1' });
+		const config = makeConfig({ tasks: [task], sessionManager: makeSessionManager() });
+		const { send_message_to_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await send_message_to_task({ room_id: 'room-1', task_id: 'task-1', message: 'Hi' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('No active session found for task');
+	});
+
+	it('returns error when sessionManager not available', async () => {
+		const config = makeConfig();
+		const { send_message_to_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await send_message_to_task({ room_id: 'room-1', task_id: 'task-1', message: 'Hi' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Session manager not available');
+	});
+
+	it('returns error when message is empty', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1' });
+		const taskSessions = new Map([['task-1', 'session-xyz']]);
+		const config = makeConfig({
+			tasks: [task],
+			sessionManager: makeSessionManager(new Map(), taskSessions),
+		});
+		const { send_message_to_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await send_message_to_task({ room_id: 'room-1', task_id: 'task-1', message: '' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Message must not be empty');
+		expect(config.pendingStore.size).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// stop_session
+// ---------------------------------------------------------------------------
+
+describe('stop_session', () => {
+	it('interrupts an in_progress task session', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'in_progress' });
+		const config = makeConfig({
+			tasks: [task],
+			runtimeService: makeRuntimeService(true, true),
+		});
+		const { stop_session } = createNeoActionToolHandlers(config);
+		const result = parseResult(await stop_session({ room_id: 'room-1', task_id: 'task-1' }));
+		expect(result.success).toBe(true);
+		expect(result.message).toContain('interrupted');
+	});
+
+	it('interrupts a review task session', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'review' });
+		const config = makeConfig({
+			tasks: [task],
+			runtimeService: makeRuntimeService(true, true),
+		});
+		const { stop_session } = createNeoActionToolHandlers(config);
+		const result = parseResult(await stop_session({ room_id: 'room-1', task_id: 'task-1' }));
+		expect(result.success).toBe(true);
+	});
+
+	it('returns error when task is not in_progress or review', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'pending' });
+		const config = makeConfig({
+			tasks: [task],
+			runtimeService: makeRuntimeService(true, true),
+		});
+		const { stop_session } = createNeoActionToolHandlers(config);
+		const result = parseResult(await stop_session({ room_id: 'room-1', task_id: 'task-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('cannot be interrupted');
+	});
+
+	it('returns error when room not found', async () => {
+		const config = makeConfig({ runtimeService: makeRuntimeService() });
+		const { stop_session } = createNeoActionToolHandlers(config);
+		const result = parseResult(await stop_session({ room_id: 'missing', task_id: 'task-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Room not found');
+	});
+
+	it('returns error when task not found', async () => {
+		const config = makeConfig({ tasks: [], runtimeService: makeRuntimeService() });
+		const { stop_session } = createNeoActionToolHandlers(config);
+		const result = parseResult(await stop_session({ room_id: 'room-1', task_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Task not found');
+	});
+
+	it('returns error when runtimeService not available', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'in_progress' });
+		const config = makeConfig({ tasks: [task] });
+		const { stop_session } = createNeoActionToolHandlers(config);
+		const result = parseResult(await stop_session({ room_id: 'room-1', task_id: 'task-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Runtime service not available');
+	});
+
+	it('returns error when interrupt fails', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'in_progress' });
+		const config = makeConfig({
+			tasks: [task],
+			runtimeService: makeRuntimeService(true, false),
+		});
+		const { stop_session } = createNeoActionToolHandlers(config);
+		const result = parseResult(await stop_session({ room_id: 'room-1', task_id: 'task-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Failed to interrupt session');
+	});
+
+	it('returns confirmationRequired in balanced mode (medium risk)', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'in_progress' });
+		const config = makeConfig({
+			tasks: [task],
+			runtimeService: makeRuntimeService(),
+			securityMode: 'balanced',
+		});
+		const { stop_session } = createNeoActionToolHandlers(config);
+		const result = parseResult(await stop_session({ room_id: 'room-1', task_id: 'task-1' }));
+		expect(result.confirmationRequired).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// pause_schedule
+// ---------------------------------------------------------------------------
+
+describe('pause_schedule', () => {
+	it('pauses a recurring mission', async () => {
+		const goal = makeGoal({ id: 'goal-1', roomId: 'room-1', missionType: 'recurring' });
+		const config = makeConfig({ goals: [goal] });
+		const { pause_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await pause_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(true);
+		expect(result.goal.schedulePaused).toBe(true);
+	});
+
+	it('returns error for non-recurring goals', async () => {
+		const goal = makeGoal({ id: 'goal-1', roomId: 'room-1', missionType: 'one_shot' });
+		const config = makeConfig({ goals: [goal] });
+		const { pause_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await pause_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not a recurring mission');
+	});
+
+	it('returns error when goal not found', async () => {
+		const config = makeConfig({ goals: [] });
+		const { pause_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await pause_schedule({ room_id: 'room-1', goal_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Goal not found');
+	});
+
+	it('returns error when room not found', async () => {
+		const config = makeConfig();
+		const { pause_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await pause_schedule({ room_id: 'missing', goal_id: 'goal-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Room not found');
+	});
+
+	it('auto-executes in balanced mode (low risk)', async () => {
+		const goal = makeGoal({ id: 'goal-1', roomId: 'room-1', missionType: 'recurring' });
+		const config = makeConfig({ goals: [goal], securityMode: 'balanced' });
+		const { pause_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await pause_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(true);
+	});
+
+	it('returns success with alreadyPaused flag when already paused', async () => {
+		const goal = makeGoal({
+			id: 'goal-1',
+			roomId: 'room-1',
+			missionType: 'recurring',
+			schedulePaused: true,
+		});
+		const config = makeConfig({ goals: [goal] });
+		const { pause_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await pause_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(true);
+		expect(result.alreadyPaused).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resume_schedule
+// ---------------------------------------------------------------------------
+
+describe('resume_schedule', () => {
+	it('resumes a paused recurring mission', async () => {
+		const goal = makeGoal({
+			id: 'goal-1',
+			roomId: 'room-1',
+			missionType: 'recurring',
+			schedulePaused: true,
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+		const config = makeConfig({ goals: [goal] });
+		const { resume_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await resume_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(true);
+		expect(result.goal.schedulePaused).toBe(false);
+	});
+
+	it('returns error when goal has no schedule', async () => {
+		const goal = makeGoal({ id: 'goal-1', roomId: 'room-1', missionType: 'recurring' });
+		const config = makeConfig({ goals: [goal] });
+		const { resume_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await resume_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('no schedule set');
+	});
+
+	it('returns error for non-recurring goals', async () => {
+		const goal = makeGoal({ id: 'goal-1', roomId: 'room-1', missionType: 'one_shot' });
+		const config = makeConfig({ goals: [goal] });
+		const { resume_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await resume_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not a recurring mission');
+	});
+
+	it('returns error when goal not found', async () => {
+		const config = makeConfig({ goals: [] });
+		const { resume_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await resume_schedule({ room_id: 'room-1', goal_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Goal not found');
+	});
+
+	it('returns success with alreadyResumed flag when already active', async () => {
+		const goal = makeGoal({
+			id: 'goal-1',
+			roomId: 'room-1',
+			missionType: 'recurring',
+			schedulePaused: false,
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+		const config = makeConfig({ goals: [goal] });
+		const { resume_schedule } = createNeoActionToolHandlers(config);
+		const result = parseResult(await resume_schedule({ room_id: 'room-1', goal_id: 'goal-1' }));
+		expect(result.success).toBe(true);
+		expect(result.alreadyResumed).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // MCP server — tool registration
 // ---------------------------------------------------------------------------
 
@@ -1804,7 +2809,63 @@ describe('createNeoActionMcpServer', () => {
 		expect(server.instance._registeredTools).toHaveProperty('reject_gate');
 	});
 
-	it('registers exactly 18 tools', () => {
-		expect(Object.keys(server.instance._registeredTools)).toHaveLength(18);
+	it('registers add_mcp_server tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('add_mcp_server');
+	});
+
+	it('registers update_mcp_server tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('update_mcp_server');
+	});
+
+	it('registers delete_mcp_server tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('delete_mcp_server');
+	});
+
+	it('registers toggle_mcp_server tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('toggle_mcp_server');
+	});
+
+	it('registers add_skill tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('add_skill');
+	});
+
+	it('registers update_skill tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('update_skill');
+	});
+
+	it('registers delete_skill tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('delete_skill');
+	});
+
+	it('registers toggle_skill tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('toggle_skill');
+	});
+
+	it('registers update_app_settings tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('update_app_settings');
+	});
+
+	it('registers send_message_to_room tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('send_message_to_room');
+	});
+
+	it('registers send_message_to_task tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('send_message_to_task');
+	});
+
+	it('registers stop_session tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('stop_session');
+	});
+
+	it('registers pause_schedule tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('pause_schedule');
+	});
+
+	it('registers resume_schedule tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('resume_schedule');
+	});
+
+	it('registers exactly 32 tools', () => {
+		expect(Object.keys(server.instance._registeredTools)).toHaveLength(32);
 	});
 });
