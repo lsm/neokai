@@ -145,6 +145,7 @@ jobs:
           - rewind
           - cross-provider-1
           - cross-provider-2
+          - cross-provider-3
           # Room tests temporarily disabled during refactoring
           # - room-1
           # - room-multi-agent
@@ -322,6 +323,10 @@ jobs:
             test_path: tests/online/cross-provider/cross-provider-model-switch.test.ts
             mock_sdk: false
             default_provider: minimax
+          - module: cross-provider-3
+            test_path: tests/online/cross-provider/glm-to-anthropic-resume.test.ts
+            mock_sdk: false
+            default_provider: glm
 
     steps:
       - uses: actions/checkout@v4
