@@ -15,7 +15,8 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { GlobalSettings, AuthStatus, Room, RoomGoal } from '@neokai/shared';
+import type { GlobalSettings, AuthStatus, Room, RoomGoal, TaskSummary } from '@neokai/shared';
+import { isWorkerSessionId } from '../../room/session-utils';
 
 // ---------------------------------------------------------------------------
 // Minimal interfaces — only the surface used by these tools
@@ -27,8 +28,8 @@ export interface NeoQueryRoomManager {
 	getRoomOverview(roomId: string): {
 		room: Room;
 		sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
-		activeTasks: unknown[];
-		allTasks?: unknown[];
+		activeTasks: TaskSummary[];
+		allTasks?: TaskSummary[];
 	} | null;
 }
 
@@ -121,13 +122,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 					id: room.id,
 					name: room.name,
 					status: room.status,
-					sessionCount: room.sessionIds.filter(
-						(id) =>
-							!id.startsWith('room:chat:') &&
-							!id.startsWith('room:self:') &&
-							!id.startsWith('room:craft:') &&
-							!id.startsWith('room:lead:')
-					).length,
+					sessionCount: room.sessionIds.filter(isWorkerSessionId).length,
 					goalCount: goals.length,
 					activeGoalCount: goals.filter((g) => g.status === 'active' || g.status === 'needs_human')
 						.length,
@@ -153,13 +148,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			const activeGoals = goals.filter((g) => g.status === 'active' || g.status === 'needs_human');
 
 			// Worker sessions (exclude internal room:* management sessions)
-			const workerSessionIds = room.sessionIds.filter(
-				(id) =>
-					!id.startsWith('room:chat:') &&
-					!id.startsWith('room:self:') &&
-					!id.startsWith('room:craft:') &&
-					!id.startsWith('room:lead:')
-			);
+			const workerSessionIds = room.sessionIds.filter(isWorkerSessionId);
 
 			const activeSessions = sessionManager
 				.listSessions({ status: 'active' })

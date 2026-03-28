@@ -16,6 +16,7 @@ import { RoomRepository } from '../../../storage/repositories/room-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import { isWorkerSessionId } from '../session-utils';
 import type {
 	Room,
 	CreateRoomParams,
@@ -152,38 +153,30 @@ export class RoomManager {
 
 		// Build session summaries from actual session data
 		// Filter out room-specific sessions (chat, craft, lead) and archived (deleted) sessions
-		const sessions = room.sessionIds
-			.filter(
-				(id) =>
-					!id.startsWith('room:chat:') &&
-					!id.startsWith('room:self:') &&
-					!id.startsWith('room:craft:') &&
-					!id.startsWith('room:lead:')
-			)
-			.flatMap((id) => {
-				const session = this.sessionRepo.getSession(id);
-				if (!session) {
-					return [
-						{
-							id,
-							title: `Session ${id.slice(0, 8)}`,
-							status: 'ended' as const,
-							lastActiveAt: 0,
-						},
-					];
-				}
-				if (session.status === 'archived') {
-					return [];
-				}
+		const sessions = room.sessionIds.filter(isWorkerSessionId).flatMap((id) => {
+			const session = this.sessionRepo.getSession(id);
+			if (!session) {
 				return [
 					{
-						id: session.id,
-						title: session.title,
-						status: session.status,
-						lastActiveAt: new Date(session.lastActiveAt).getTime(),
+						id,
+						title: `Session ${id.slice(0, 8)}`,
+						status: 'ended' as const,
+						lastActiveAt: 0,
 					},
 				];
-			});
+			}
+			if (session.status === 'archived') {
+				return [];
+			}
+			return [
+				{
+					id: session.id,
+					title: session.title,
+					status: session.status,
+					lastActiveAt: new Date(session.lastActiveAt).getTime(),
+				},
+			];
+		});
 
 		return {
 			room,
