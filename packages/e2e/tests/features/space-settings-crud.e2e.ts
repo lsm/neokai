@@ -22,18 +22,20 @@ async function createSpaceViaRpc(
 	workspacePath: string,
 	name: string
 ): Promise<string> {
-	const spaceId = await page.evaluate(
+	const id = await page.evaluate(
 		async ({ workspacePath, name }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
-			const result = (await hub.request('space.create', { workspacePath, name })) as {
-				space: { id: string };
+			// space.create returns the Space object directly (not wrapped in { space: ... })
+			const space = (await hub.request('space.create', { workspacePath, name })) as {
+				id: string;
 			};
-			return result.space.id;
+			return space.id;
 		},
 		{ workspacePath, name }
 	);
-	return spaceId;
+	if (!id) throw new Error('space.create returned no id');
+	return id;
 }
 
 async function deleteSpaceViaRpc(
@@ -113,7 +115,6 @@ test.describe('Space Settings CRUD', () => {
 		const nameInput = page.locator('input[type="text"]').first();
 		await nameInput.fill(newName);
 
-		// Accept the browser confirm dialog that may appear (archive/delete), and just save
 		await page.getByRole('button', { name: 'Save Changes' }).click();
 
 		// Toast notification of success
@@ -151,10 +152,6 @@ test.describe('Space Settings CRUD', () => {
 
 		// Should redirect to /spaces
 		await page.waitForURL('/spaces', { timeout: 10000 });
-		await expect(page).toHaveURL('/spaces');
-
-		// Space is now archived — no need for RPC cleanup in afterEach since it's not deleted
-		// Re-delete via RPC in afterEach still handles it
 	});
 
 	test('Delete space shows confirm dialog and redirects to spaces list', async ({ page }) => {
@@ -165,7 +162,6 @@ test.describe('Space Settings CRUD', () => {
 
 		// Should redirect to /spaces
 		await page.waitForURL('/spaces', { timeout: 10000 });
-		await expect(page).toHaveURL('/spaces');
 
 		// Space is already deleted — don't double-delete in afterEach
 		spaceId = '';
