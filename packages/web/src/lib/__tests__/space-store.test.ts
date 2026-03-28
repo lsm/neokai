@@ -134,8 +134,8 @@ function makeMockHub() {
 			// Daemon returns SpaceTask directly (not wrapped)
 			if (method === 'spaceTask.create') return makeTask('new-task');
 			if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
-			// spaceWorkflowRun.create is a stub — would return SpaceWorkflowRun directly
-			if (method === 'spaceWorkflowRun.create') return makeRun('new-run');
+			// spaceWorkflowRun.start returns wrapped { run: SpaceWorkflowRun }
+			if (method === 'spaceWorkflowRun.start') return { run: makeRun('new-run') };
 			// spaceAgent handlers return wrapped { agent }
 			if (method === 'spaceAgent.create') return { agent: makeAgent('new-agent') };
 			if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
@@ -803,15 +803,24 @@ describe('SpaceStore — CRUD methods', () => {
 		expect(task.status).toBe('in_progress');
 	});
 
-	it('startWorkflowRun calls spaceWorkflowRun.create RPC', async () => {
+	it('startWorkflowRun calls spaceWorkflowRun.start RPC', async () => {
 		await spaceStore.selectSpace('space-1');
 		await spaceStore.startWorkflowRun({ workflowId: 'wf-1', title: 'Run 1' });
 
-		expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflowRun.create', {
+		expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflowRun.start', {
 			spaceId: 'space-1',
 			workflowId: 'wf-1',
 			title: 'Run 1',
 		});
+	});
+
+	it('startWorkflowRun throws when server returns no run data', async () => {
+		await spaceStore.selectSpace('space-1');
+		mockHub.request.mockResolvedValueOnce({ run: null } as unknown as { run: SpaceWorkflowRun });
+
+		await expect(
+			spaceStore.startWorkflowRun({ workflowId: 'wf-1', title: 'Run 1' })
+		).rejects.toThrow('Server returned no run data');
 	});
 
 	it('createAgent calls spaceAgent.create RPC', async () => {

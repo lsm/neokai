@@ -17,7 +17,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { spaceStore } from '../lib/space-store';
 import { currentSpaceTaskIdSignal } from '../lib/signals';
-import { navigateToSpace } from '../lib/router';
+import { navigateToSpace, navigateToSpaceTask } from '../lib/router';
 import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
 import { SpaceAgentList } from '../components/space/SpaceAgentList';
@@ -26,6 +26,8 @@ import { WorkflowEditor } from '../components/space/WorkflowEditor';
 import { VisualWorkflowEditor } from '../components/space/visual-editor/VisualWorkflowEditor';
 import { WorkflowCanvas } from '../components/space/WorkflowCanvas';
 import { SpaceSettings } from '../components/space/SpaceSettings';
+import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
+import { WorkflowRunStartDialog } from '../components/space/WorkflowRunStartDialog';
 import { cn } from '../lib/utils';
 
 interface SpaceIslandProps {
@@ -62,6 +64,8 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
 	const [editorMode, setEditorMode] = useState<EditorMode>(readStoredEditorMode);
+	const [createTaskOpen, setCreateTaskOpen] = useState(false);
+	const [startWorkflowOpen, setStartWorkflowOpen] = useState(false);
 	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
 
@@ -270,11 +274,20 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 										class={cn('flex flex-col h-full overflow-y-auto', showCanvas && 'md:hidden')}
 										data-testid="dashboard-fallback"
 									>
-										<SpaceDashboard spaceId={spaceId} />
+										<SpaceDashboard
+											spaceId={spaceId}
+											onCreateTask={() => setCreateTaskOpen(true)}
+											onStartWorkflow={() => setStartWorkflowOpen(true)}
+											onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+										/>
 									</div>
 								</>
 							)}
-							{activeTab === 'agents' && <SpaceAgentList />}
+							{activeTab === 'agents' && (
+								<div class="p-6 h-full overflow-y-auto">
+									<SpaceAgentList />
+								</div>
+							)}
 							{activeTab === 'workflows' && space && (
 								<WorkflowList
 									spaceId={spaceId}
@@ -296,6 +309,17 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 					<SpaceTaskPane taskId={activeTaskId} onClose={handleTaskPaneClose} />
 				</div>
 			)}
+
+			{/* Quick action dialogs */}
+			<SpaceCreateTaskDialog isOpen={createTaskOpen} onClose={() => setCreateTaskOpen(false)} />
+			{/* onStarted is intentionally omitted: spaceStore subscribes to
+				space.workflowRun.created events and updates activeRuns reactively,
+				so the canvas re-renders automatically without an explicit callback. */}
+			<WorkflowRunStartDialog
+				isOpen={startWorkflowOpen}
+				onClose={() => setStartWorkflowOpen(false)}
+				onSwitchToWorkflows={() => setActiveTab('workflows')}
+			/>
 		</div>
 	);
 }

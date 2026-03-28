@@ -142,9 +142,10 @@ test.describe('Space Creation UX', () => {
 
 		// Tabbed dashboard should be visible with Dashboard tab active
 		await expect(page.locator('text=Dashboard')).toBeVisible({ timeout: 5000 });
-		await expect(page.locator('text=Quick Actions')).toBeVisible({ timeout: 5000 });
-		await expect(page.locator('text=Start Workflow Run')).toBeVisible({ timeout: 3000 });
-		await expect(page.locator('text=Create Task')).toBeVisible({ timeout: 3000 });
+
+		// On desktop, the workflow canvas panel replaces the dashboard quick actions
+		// Workflows load async after space creation; wait for the canvas SVG to appear
+		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 15000 });
 	});
 
 	test('dialog can be closed with Cancel button', async ({ page }) => {
