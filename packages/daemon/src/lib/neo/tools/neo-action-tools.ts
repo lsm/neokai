@@ -66,6 +66,8 @@ export interface NeoActionRoomManager {
 	}): Room;
 	deleteRoom(id: string): boolean;
 	getRoom(id: string): Room | null;
+	/** Count of worker sessions currently assigned to a room */
+	getActiveSessionCount?(roomId: string): number;
 	updateRoom(
 		id: string,
 		params: {
@@ -161,6 +163,13 @@ export interface NeoActionToolsConfig {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Approval message sent to the worker agent when a task is approved.
+ * The worker is expected to merge the PR as its final step.
+ */
+const APPROVE_TASK_MESSAGE =
+	'Human has approved the PR. Merge it now by running `gh pr merge` (do NOT use --delete-branch). After the merge completes, your work is done.';
+
 interface ToolResult {
 	content: Array<{ type: 'text'; text: string }>;
 }
@@ -246,7 +255,13 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 		},
 
 		async delete_room(args: { room_id: string }): Promise<ToolResult> {
-			return withSecurityCheck('delete_room', args as Record<string, unknown>, config, async () => {
+			// If the room has active sessions, escalate to high risk.
+			// ActionClassification maps `delete_room` (medium) and
+			// `delete_room_with_active_tasks` (high) separately — pick the right key.
+			const activeSessions = roomManager.getActiveSessionCount?.(args.room_id) ?? 0;
+			const toolName = activeSessions > 0 ? 'delete_room_with_active_tasks' : 'delete_room';
+
+			return withSecurityCheck(toolName, args as Record<string, unknown>, config, async () => {
 				const room = roomManager.getRoom(args.room_id);
 				if (!room) {
 					return errorResult(`Room not found: ${args.room_id}`);
@@ -267,6 +282,17 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			default_model?: string;
 			allowed_models?: string[];
 		}): Promise<ToolResult> {
+			// Guard: require at least one field beyond room_id
+			const hasUpdates =
+				args.name !== undefined ||
+				args.description !== undefined ||
+				args.instructions !== undefined ||
+				args.default_model !== undefined ||
+				args.allowed_models !== undefined;
+			if (!hasUpdates) {
+				return errorResult('No update fields provided');
+			}
+
 			return withSecurityCheck(
 				'update_room_settings',
 				args as Record<string, unknown>,
@@ -512,15 +538,15 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					if (!task) {
 						return errorResult(`Task not found: ${args.task_id}`);
 					}
+					// Explicit pre-check: gives a clear error before we hit resumeWorkerFromHuman,
+					// which would return false with a less specific "no group found" message.
 					if (task.status !== 'review') {
 						return errorResult(`Task is not in review status (current: ${task.status})`);
 					}
 
-					const resumed = await runtime.resumeWorkerFromHuman(
-						args.task_id,
-						'Human has approved the PR. Merge it now by running `gh pr merge` (do NOT use --delete-branch). After the merge completes, your work is done.',
-						{ approved: true }
-					);
+					const resumed = await runtime.resumeWorkerFromHuman(args.task_id, APPROVE_TASK_MESSAGE, {
+						approved: true,
+					});
 
 					if (!resumed) {
 						return errorResult(
@@ -538,6 +564,12 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			task_id: string;
 			feedback: string;
 		}): Promise<ToolResult> {
+			// Validate feedback before the security check to avoid storing a pending action
+			// with empty feedback that would produce a useless rejection message.
+			if (!args.feedback?.trim()) {
+				return errorResult('Feedback is required for task rejection');
+			}
+
 			return withSecurityCheck('reject_task', args as Record<string, unknown>, config, async () => {
 				const room = roomManager.getRoom(args.room_id);
 				if (!room) {
@@ -558,6 +590,8 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				if (!task) {
 					return errorResult(`Task not found: ${args.task_id}`);
 				}
+				// Explicit pre-check: gives a clear error before we hit resumeWorkerFromHuman,
+				// which would return false with a less specific "no group found" message.
 				if (task.status !== 'review') {
 					return errorResult(`Task is not in review status (current: ${task.status})`);
 				}
@@ -724,6 +758,9 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 			{
 				room_id: z.string().describe('ID of the room containing the task'),
 				task_id: z.string().describe('ID of the task'),
+				// `rate_limited` and `usage_limited` are intentionally excluded: those
+				// statuses are set by the runtime in response to API errors and cannot
+				// be meaningfully set by a human or agent action.
 				status: z
 					.enum([
 						'draft',

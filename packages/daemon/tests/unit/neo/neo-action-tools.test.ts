@@ -94,7 +94,10 @@ function makeTask(overrides: Partial<NeoTask> = {}): NeoTask {
 // Mock factories
 // ---------------------------------------------------------------------------
 
-function makeRoomManager(rooms: Room[] = []): NeoActionRoomManager {
+function makeRoomManager(
+	rooms: Room[] = [],
+	activeSessionCounts: Map<string, number> = new Map()
+): NeoActionRoomManager {
 	const store = new Map<string, Room>(rooms.map((r) => [r.id, r]));
 	return {
 		createRoom: (params) => {
@@ -123,6 +126,7 @@ function makeRoomManager(rooms: Room[] = []): NeoActionRoomManager {
 			store.set(id, updated);
 			return updated;
 		},
+		getActiveSessionCount: (id) => activeSessionCounts.get(id) ?? 0,
 	};
 }
 
@@ -214,6 +218,8 @@ function makeConfig(
 		securityMode?: 'conservative' | 'balanced' | 'autonomous';
 		runtimeService?: NeoActionRuntimeService;
 		workspaceRoot?: string;
+		/** Simulate active session counts per room ID for delete_room escalation tests */
+		activeSessionCounts?: Map<string, number>;
 	} = {}
 ): NeoActionToolsConfig {
 	const room = makeRoom();
@@ -234,7 +240,7 @@ function makeConfig(
 	}
 
 	return {
-		roomManager: makeRoomManager(rooms),
+		roomManager: makeRoomManager(rooms, opts.activeSessionCounts),
 		managerFactory: makeManagerFactory(goalManagers, taskManagers),
 		runtimeService: opts.runtimeService,
 		pendingStore: new PendingActionStore(),
@@ -288,6 +294,16 @@ describe('create_room', () => {
 		expect(result.room.allowedPaths[0].path).toBe('/home/user/ws');
 	});
 
+	it('workspace_path takes precedence over workspaceRoot', async () => {
+		const config = makeConfig({ workspaceRoot: '/default/ws' });
+		const { create_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await create_room({ name: 'Custom WS Room', workspace_path: '/custom/path' })
+		);
+		expect(result.success).toBe(true);
+		expect(result.room.allowedPaths[0].path).toBe('/custom/path');
+	});
+
 	it('stores pending action so it can be confirmed later', async () => {
 		const config = makeConfig({ securityMode: 'conservative' });
 		const { create_room } = createNeoActionToolHandlers(config);
@@ -328,6 +344,35 @@ describe('delete_room', () => {
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('Room not found');
 	});
+
+	it('escalates to high risk (delete_room_with_active_tasks) when room has active sessions', async () => {
+		const room = makeRoom({ id: 'busy-room' });
+		// balanced: delete_room (medium) would require confirmation, but active sessions
+		// escalate to delete_room_with_active_tasks (high) which also requires confirmation in balanced
+		const config = makeConfig({
+			rooms: [room],
+			securityMode: 'balanced',
+			activeSessionCounts: new Map([['busy-room', 2]]),
+		});
+		const { delete_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_room({ room_id: 'busy-room' }));
+		expect(result.confirmationRequired).toBe(true);
+		expect(result.riskLevel).toBe('high');
+	});
+
+	it('does NOT escalate when room has no active sessions', async () => {
+		// In autonomous mode, delete_room (medium) with 0 active sessions should still execute
+		const room = makeRoom({ id: 'quiet-room' });
+		const config = makeConfig({
+			rooms: [room],
+			securityMode: 'autonomous',
+			activeSessionCounts: new Map([['quiet-room', 0]]),
+		});
+		const { delete_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_room({ room_id: 'quiet-room' }));
+		expect(result.success).toBe(true);
+		expect(result.roomId).toBe('quiet-room');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -364,6 +409,16 @@ describe('update_room_settings', () => {
 		const { update_room_settings } = createNeoActionToolHandlers(config);
 		const result = parseResult(await update_room_settings({ room_id: 'room-1', name: 'X' }));
 		expect(result.confirmationRequired).toBe(true);
+	});
+
+	it('returns error when no update fields provided (no-op guard)', async () => {
+		const room = makeRoom();
+		const config = makeConfig({ rooms: [room] });
+		const { update_room_settings } = createNeoActionToolHandlers(config);
+		// Only room_id provided, no update fields
+		const result = parseResult(await update_room_settings({ room_id: 'room-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('No update fields provided');
 	});
 });
 
@@ -838,6 +893,51 @@ describe('reject_task', () => {
 		);
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('Task not found');
+	});
+
+	it('returns error for non-existent room', async () => {
+		const config = makeConfig({ runtimeService: makeRuntimeService(true) });
+		const { reject_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await reject_task({ room_id: 'missing', task_id: 'task-1', feedback: 'Feedback' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Room not found');
+	});
+
+	it('returns error for empty feedback', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'review' });
+		const config = makeConfig({ tasks: [task], runtimeService: makeRuntimeService(true) });
+		const { reject_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await reject_task({ room_id: 'room-1', task_id: 'task-1', feedback: '' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Feedback is required');
+	});
+
+	it('returns error for whitespace-only feedback', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'review' });
+		const config = makeConfig({ tasks: [task], runtimeService: makeRuntimeService(true) });
+		const { reject_task } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await reject_task({ room_id: 'room-1', task_id: 'task-1', feedback: '   ' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Feedback is required');
+	});
+
+	it('empty feedback error fires before security check (no pending action stored)', async () => {
+		const task = makeTask({ id: 'task-1', roomId: 'room-1', status: 'review' });
+		const config = makeConfig({
+			tasks: [task],
+			runtimeService: makeRuntimeService(true),
+			securityMode: 'conservative',
+		});
+		const { reject_task } = createNeoActionToolHandlers(config);
+		await reject_task({ room_id: 'room-1', task_id: 'task-1', feedback: '' });
+		// Nothing should have been stored in the pending store
+		expect(config.pendingStore.size).toBe(0);
 	});
 });
 
