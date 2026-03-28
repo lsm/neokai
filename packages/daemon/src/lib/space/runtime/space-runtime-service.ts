@@ -150,15 +150,20 @@ export class SpaceRuntimeService {
 		const { sessionManager } = this.config;
 		if (!sessionManager) return;
 
-		void this.config.spaceManager.listSpaces().then((spaces) => {
-			return Promise.all(
-				spaces.map((space) =>
-					this.setupSpaceAgentSession(space).catch((err) => {
-						log.error(`Failed to provision space chat session for space ${space.id}:`, err);
-					})
-				)
-			);
-		});
+		void this.config.spaceManager
+			.listSpaces()
+			.then((spaces) => {
+				return Promise.all(
+					spaces.map((space) =>
+						this.setupSpaceAgentSession(space).catch((err) => {
+							log.error(`Failed to provision space chat session for space ${space.id}:`, err);
+						})
+					)
+				);
+			})
+			.catch((err) => {
+				log.error('Failed to list spaces for session provisioning:', err);
+			});
 	}
 
 	/**

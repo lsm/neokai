@@ -23,6 +23,7 @@ import type { SpaceTaskRepository } from '../../../src/storage/repositories/spac
 import type { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { SessionManager } from '../../../src/lib/session-manager';
+import type { SpaceRuntimeService } from '../../../src/lib/space/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -154,6 +155,12 @@ function createMockSessionManager(): SessionManager {
 	} as unknown as SessionManager;
 }
 
+function createMockSpaceRuntimeService(): SpaceRuntimeService {
+	return {
+		setupSpaceAgentSession: mock(async () => {}),
+	} as unknown as SpaceRuntimeService;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('space-handlers', () => {
@@ -164,7 +171,11 @@ describe('space-handlers', () => {
 	let taskRepo: SpaceTaskRepository;
 	let runRepo: SpaceWorkflowRunRepository;
 
-	function setup(space: Space | null = mockSpace, sessionManager?: SessionManager) {
+	function setup(
+		space: Space | null = mockSpace,
+		sessionManager?: SessionManager,
+		spaceRuntimeService?: SpaceRuntimeService
+	) {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
@@ -180,7 +191,8 @@ describe('space-handlers', () => {
 			daemonHub,
 			createMockSpaceAgentManager(),
 			createMockSpaceWorkflowManager(),
-			sessionManager
+			sessionManager,
+			spaceRuntimeService
 		);
 	}
 
@@ -311,6 +323,28 @@ describe('space-handlers', () => {
 
 			// No sessionManager means no session creation — just verify the space was created
 			expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
+		});
+
+		it('calls spaceManager.addSession to register the session on the space', async () => {
+			const sessionManager = createMockSessionManager();
+			setup(mockSpace, sessionManager);
+
+			await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
+
+			expect(spaceManager.addSession).toHaveBeenCalledWith(
+				mockSpace.id,
+				`space:chat:${mockSpace.id}`
+			);
+		});
+
+		it('calls setupSpaceAgentSession when spaceRuntimeService is provided', async () => {
+			const sessionManager = createMockSessionManager();
+			const runtimeService = createMockSpaceRuntimeService();
+			setup(mockSpace, sessionManager, runtimeService);
+
+			await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
+
+			expect(runtimeService.setupSpaceAgentSession).toHaveBeenCalledWith(mockSpace);
 		});
 
 		it('still creates space and emits event even if session creation fails', async () => {

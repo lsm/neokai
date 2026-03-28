@@ -27,6 +27,7 @@ import type { SpaceWorkflowManager } from '../space/managers/space-workflow-mana
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type { SessionManager } from '../session-manager';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { seedPresetAgents } from '../space/agents/seed-agents';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
@@ -49,7 +50,8 @@ export function setupSpaceHandlers(
 	daemonHub: DaemonHub,
 	spaceAgentManager: SpaceAgentManager,
 	spaceWorkflowManager: SpaceWorkflowManager,
-	sessionManager?: SessionManager
+	sessionManager?: SessionManager,
+	spaceRuntimeService?: SpaceRuntimeService
 ): void {
 	// ─── space.create ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.create', async (data) => {
@@ -110,6 +112,16 @@ export function setupSpaceHandlers(
 					spaceId: space.id,
 					createdBy: 'neo',
 				});
+				// Register the session on the space so it appears in space.sessionIds.
+				// Mirrors roomManager.assignSession() in room-handlers.ts.
+				await spaceManager.addSession(space.id, spaceChatSessionId);
+				// Attach MCP tools and system prompt directly (session is in DB now).
+				// This avoids relying on the space.created event which fires asynchronously.
+				if (spaceRuntimeService) {
+					await spaceRuntimeService.setupSpaceAgentSession(space).catch((err) => {
+						log.warn(`Failed to provision space chat session for space ${space.id}:`, err);
+					});
+				}
 			} catch (error) {
 				log.warn(`Failed to create space chat session for space ${space.id}:`, error);
 			}

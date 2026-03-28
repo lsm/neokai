@@ -274,6 +274,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 66: Add 'neo' to sessions type CHECK constraint and create neo_activity_log table.
 	// Neo is a global AI agent with its own session type and activity log for auditing.
 	runMigration66(db);
+
+	// Migration 67: Add 'space_chat' to sessions type CHECK constraint.
+	runMigration67(db);
 }
 
 /**
@@ -4375,4 +4378,75 @@ export function runMigration66(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`
 	);
+}
+
+/**
+ * Migration 67: Add 'space_chat' to sessions type CHECK constraint.
+ *
+ * Uses the same probe-insert + table-recreate pattern as Migration 31.
+ * Attempts to insert a row with type='space_chat'; if the constraint rejects it,
+ * recreates the sessions table with the expanded CHECK list (including 'neo' from M66).
+ */
+function runMigration67(db: BunDatabase): void {
+	if (!tableExists(db, 'sessions')) return;
+
+	try {
+		const testId = '__migration_test_space_chat_type__';
+		db.prepare(
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
+			testId,
+			'Test',
+			'/tmp',
+			new Date().toISOString(),
+			new Date().toISOString(),
+			'active',
+			'{}',
+			'{}',
+			0,
+			'space_chat'
+		);
+		db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
+	} catch {
+		db.exec('PRAGMA foreign_keys = OFF');
+		try {
+			db.exec(`
+				CREATE TABLE sessions_new (
+					id TEXT PRIMARY KEY,
+					title TEXT NOT NULL,
+					workspace_path TEXT NOT NULL,
+					created_at TEXT NOT NULL,
+					last_active_at TEXT NOT NULL,
+					status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+					config TEXT NOT NULL,
+					metadata TEXT NOT NULL,
+					is_worktree INTEGER DEFAULT 0,
+					worktree_path TEXT,
+					main_repo_path TEXT,
+					worktree_branch TEXT,
+					git_branch TEXT,
+					sdk_session_id TEXT,
+					available_commands TEXT,
+					processing_state TEXT,
+					archived_at TEXT,
+					parent_id TEXT,
+					type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'neo', 'space_chat')),
+					session_context TEXT
+				)
+			`);
+			db.exec(`
+				INSERT INTO sessions_new
+				SELECT id, title, workspace_path, created_at, last_active_at,
+					status, config, metadata, is_worktree, worktree_path, main_repo_path,
+					worktree_branch, git_branch, sdk_session_id, available_commands,
+					processing_state, archived_at, parent_id, type, session_context
+				FROM sessions
+			`);
+			db.exec(`DROP TABLE sessions`);
+			db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+		} finally {
+			db.exec('PRAGMA foreign_keys = ON');
+		}
+	}
 }

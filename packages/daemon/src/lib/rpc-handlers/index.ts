@@ -330,17 +330,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	};
 	const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
 
-	setupSpaceHandlers(
-		deps.messageHub,
-		deps.spaceManager,
-		spaceTaskRepo,
-		spaceWorkflowRunRepo,
-		deps.daemonHub,
-		deps.spaceAgentManager,
-		spaceWorkflowManager,
-		deps.sessionManager
-	);
-
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);
 	};
@@ -379,6 +368,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		sessionManager: deps.sessionManager,
 		daemonHub: deps.daemonHub,
 	});
+
+	// Register Space RPC handlers now that spaceRuntimeService exists.
+	// spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()
+	// directly after session creation, avoiding reliance on the daemonHub event.
+	setupSpaceHandlers(
+		deps.messageHub,
+		deps.spaceManager,
+		spaceTaskRepo,
+		spaceWorkflowRunRepo,
+		deps.daemonHub,
+		deps.spaceAgentManager,
+		spaceWorkflowManager,
+		deps.sessionManager,
+		spaceRuntimeService
+	);
 
 	// Space Worktree Manager — one worktree per task, shared by all node agents.
 	const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
