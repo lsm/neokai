@@ -21,7 +21,15 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { autoCompleteStuckAgents } from '../../../src/lib/space/runtime/agent-liveness.ts';
-import { AGENT_REPORT_DONE_TIMEOUT_MS } from '../../../src/lib/space/runtime/constants.ts';
+import {
+	AGENT_REPORT_DONE_TIMEOUT_MS,
+	resolveNodeTimeout,
+	CODER_NODE_TIMEOUT_MS,
+	REVIEWER_NODE_TIMEOUT_MS,
+	QA_NODE_TIMEOUT_MS,
+	PLANNER_NODE_TIMEOUT_MS,
+	DEFAULT_NODE_TIMEOUT_MS,
+} from '../../../src/lib/space/runtime/constants.ts';
 import type { AutoCompletedAgent } from '../../../src/lib/space/runtime/agent-liveness.ts';
 import type { SpaceTask } from '@neokai/shared';
 import type { SpaceNotificationEvent } from '../../../src/lib/space/runtime/notification-sink.ts';
@@ -443,5 +451,94 @@ describe('autoCompleteStuckAgents', () => {
 
 	test('AGENT_REPORT_DONE_TIMEOUT_MS is 10 minutes', () => {
 		expect(AGENT_REPORT_DONE_TIMEOUT_MS).toBe(10 * 60 * 1000);
+	});
+
+	test('per-task timeout via getTimeoutMs overrides default timeoutMs', async () => {
+		const shortCustomTimeout = 500; // 0.5 s
+		const longCustomTimeout = 60 * 60 * 1000; // 1 hour (task should NOT be auto-completed)
+
+		// task-short: started 1 second ago — exceeds short custom timeout
+		seedTask(db, 'task-short', spaceId, {
+			status: 'in_progress',
+			taskAgentSessionId: 'session-short',
+			startedAt: Date.now() - 1000,
+		});
+		// task-long: started 1 second ago — within 1-hour custom timeout
+		seedTask(db, 'task-long', spaceId, {
+			status: 'in_progress',
+			taskAgentSessionId: 'session-long',
+			startedAt: Date.now() - 1000,
+		});
+
+		const tasks = ['task-short', 'task-long'].map((id) => taskRepo.getTask(id)!);
+		const tam = makeMockTAM(new Set(['task-short', 'task-long']));
+		const spy = makeNotifySpy();
+
+		// Resolver: short task gets 500ms timeout, long task gets 1h timeout
+		const getTimeoutMs = (task: SpaceTask): number =>
+			task.id === 'task-short' ? shortCustomTimeout : longCustomTimeout;
+
+		const result = await autoCompleteStuckAgents(
+			tasks,
+			spaceId,
+			taskRepo,
+			tam,
+			spy.notify,
+			AGENT_REPORT_DONE_TIMEOUT_MS, // default (ignored when getTimeoutMs is provided)
+			getTimeoutMs
+		);
+
+		// Only task-short should be auto-completed
+		expect(result).toHaveLength(1);
+		expect(result[0].taskId).toBe('task-short');
+		expect(taskRepo.getTask('task-short')!.status).toBe('completed');
+		expect(taskRepo.getTask('task-long')!.status).toBe('in_progress');
+		expect(spy.events).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resolveNodeTimeout tests
+// ---------------------------------------------------------------------------
+
+describe('resolveNodeTimeout', () => {
+	test('coder role returns CODER_NODE_TIMEOUT_MS (30 minutes)', () => {
+		expect(resolveNodeTimeout('coder')).toBe(CODER_NODE_TIMEOUT_MS);
+		expect(resolveNodeTimeout('Coder')).toBe(CODER_NODE_TIMEOUT_MS);
+		expect(resolveNodeTimeout('CODER')).toBe(CODER_NODE_TIMEOUT_MS);
+	});
+
+	test('general role returns CODER_NODE_TIMEOUT_MS (same as coder)', () => {
+		expect(resolveNodeTimeout('general')).toBe(CODER_NODE_TIMEOUT_MS);
+		expect(resolveNodeTimeout('General')).toBe(CODER_NODE_TIMEOUT_MS);
+	});
+
+	test('reviewer role returns REVIEWER_NODE_TIMEOUT_MS (15 minutes)', () => {
+		expect(resolveNodeTimeout('reviewer')).toBe(REVIEWER_NODE_TIMEOUT_MS);
+		expect(resolveNodeTimeout('Reviewer')).toBe(REVIEWER_NODE_TIMEOUT_MS);
+	});
+
+	test('qa role returns QA_NODE_TIMEOUT_MS (15 minutes)', () => {
+		expect(resolveNodeTimeout('qa')).toBe(QA_NODE_TIMEOUT_MS);
+		expect(resolveNodeTimeout('QA')).toBe(QA_NODE_TIMEOUT_MS);
+	});
+
+	test('planner role returns PLANNER_NODE_TIMEOUT_MS (20 minutes)', () => {
+		expect(resolveNodeTimeout('planner')).toBe(PLANNER_NODE_TIMEOUT_MS);
+		expect(resolveNodeTimeout('Planner')).toBe(PLANNER_NODE_TIMEOUT_MS);
+	});
+
+	test('unknown role returns DEFAULT_NODE_TIMEOUT_MS (30 minutes)', () => {
+		expect(resolveNodeTimeout('designer')).toBe(DEFAULT_NODE_TIMEOUT_MS);
+		expect(resolveNodeTimeout('')).toBe(DEFAULT_NODE_TIMEOUT_MS);
+		expect(resolveNodeTimeout('custom-agent')).toBe(DEFAULT_NODE_TIMEOUT_MS);
+	});
+
+	test('timeout constants have correct minute values', () => {
+		expect(CODER_NODE_TIMEOUT_MS).toBe(30 * 60 * 1000);
+		expect(REVIEWER_NODE_TIMEOUT_MS).toBe(15 * 60 * 1000);
+		expect(QA_NODE_TIMEOUT_MS).toBe(15 * 60 * 1000);
+		expect(PLANNER_NODE_TIMEOUT_MS).toBe(20 * 60 * 1000);
+		expect(DEFAULT_NODE_TIMEOUT_MS).toBe(30 * 60 * 1000);
 	});
 });

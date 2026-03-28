@@ -41,8 +41,9 @@ import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
-import { autoCompleteStuckAgents } from './agent-liveness';
+import { autoCompleteStuckAgents, resolveNodeTimeout } from './agent-liveness';
 import { CompletionDetector } from './completion-detector';
+import { MAX_TASK_AGENT_CRASH_RETRIES } from './constants';
 
 const log = new Logger('space-runtime');
 
@@ -173,6 +174,21 @@ export class SpaceRuntime {
 	 * learn about outstanding issues. No DB persistence for dedup state is required.
 	 */
 	private notifiedTaskSet = new Set<string>();
+
+	/**
+	 * In-memory crash counter per task ID.
+	 *
+	 * Tracks how many times a task's agent session has been detected as dead.
+	 * When the count reaches MAX_TASK_AGENT_CRASH_RETRIES, the task is escalated
+	 * to `needs_attention` so a human can investigate. Below the limit, the task
+	 * is reset to `pending` for re-spawn to tolerate transient startup failures.
+	 *
+	 * Reset contract: this map is in-memory only and starts empty on every daemon
+	 * restart. On restart, if a task is still `in_progress` with a dead session,
+	 * the crash counter begins from 0 again — giving the task a fresh set of
+	 * retries before escalation.
+	 */
+	private taskCrashCounts = new Map<string, number>();
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
@@ -700,7 +716,7 @@ export class SpaceRuntime {
 			const tam = this.config.taskAgentManager;
 
 			// Step 1: Check tasks that already have a Task Agent session (in_progress).
-			// Full loop always completes so that dead-agent resets are applied to ALL
+			// Full loop always completes so that crashed-agent handling is applied to ALL
 			// tasks before deciding whether to skip.
 			//
 			// NOTE: we intentionally do NOT return early when alive agents are found.
@@ -714,15 +730,42 @@ export class SpaceRuntime {
 					continue; // still check remaining tasks for dead agents
 				}
 
-				// Task Agent session is gone — reset for re-spawn on next tick
-				log.warn(
-					`SpaceRuntime: task agent for task ${task.id} is gone ` +
-						`(session ${task.taskAgentSessionId}), resetting to pending for re-spawn`
-				);
-				this.config.taskRepo.updateTask(task.id, {
-					taskAgentSessionId: null,
-					status: 'pending',
-				});
+				// Task Agent session is dead. Apply crash-retry logic:
+				//   - Below MAX_TASK_AGENT_CRASH_RETRIES: reset to pending for re-spawn
+				//     (tolerates transient startup failures, e.g. dev-proxy timing in CI).
+				//   - At or above limit: escalate to needs_attention so a human can
+				//     investigate before further retries are attempted.
+				const crashCount = (this.taskCrashCounts.get(task.id) ?? 0) + 1;
+				this.taskCrashCounts.set(task.id, crashCount);
+
+				if (crashCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
+					log.warn(
+						`SpaceRuntime: task agent for task ${task.id} crashed ` +
+							`(session ${task.taskAgentSessionId}); resetting to pending for re-spawn ` +
+							`(crash ${crashCount}/${MAX_TASK_AGENT_CRASH_RETRIES})`
+					);
+					this.config.taskRepo.updateTask(task.id, {
+						taskAgentSessionId: null,
+						status: 'pending',
+					});
+				} else {
+					log.warn(
+						`SpaceRuntime: task agent for task ${task.id} crashed ` +
+							`(session ${task.taskAgentSessionId}); marking needs_attention ` +
+							`after ${crashCount} crashes (limit: ${MAX_TASK_AGENT_CRASH_RETRIES})`
+					);
+					this.config.taskRepo.updateTask(task.id, {
+						taskAgentSessionId: null,
+						status: 'needs_attention',
+						error: `Agent session crashed ${crashCount} times consecutively`,
+					});
+					await this.safeNotify({
+						kind: 'agent_crash',
+						spaceId: meta.spaceId,
+						taskId: task.id,
+						timestamp: new Date().toISOString(),
+					});
+				}
 			}
 
 			// Step 1.5: Auto-complete stuck agents — alive but never called report_done.
@@ -734,7 +777,9 @@ export class SpaceRuntime {
 				meta.spaceId,
 				this.config.taskRepo,
 				tam,
-				this.safeNotify.bind(this)
+				this.safeNotify.bind(this),
+				undefined,
+				(task) => resolveNodeTimeout(task.agentName ?? 'general')
 			);
 			if (autoCompleted.length > 0) {
 				log.warn(

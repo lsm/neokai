@@ -21,6 +21,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SpaceNotificationEvent } from './notification-sink';
 import { AGENT_REPORT_DONE_TIMEOUT_MS } from './constants';
+export { resolveNodeTimeout } from './constants';
 import { Logger } from '../../logger';
 
 const log = new Logger('agent-liveness');
@@ -45,7 +46,7 @@ export interface AutoCompletedAgent {
 
 /**
  * Scans `stepTasks` for alive agents that have not called `report_done` within
- * `timeoutMs` milliseconds and auto-completes them.
+ * their configured timeout and auto-completes them.
  *
  * For each stuck agent found:
  *   - Sets task status to `'completed'` with a system-generated result.
@@ -56,7 +57,11 @@ export interface AutoCompletedAgent {
  * @param taskRepo       Repository for persisting task status updates.
  * @param tam            Task Agent Manager for liveness checks.
  * @param notify         Notification callback (should be the `safeNotify` wrapper).
- * @param timeoutMs      Timeout in milliseconds (default: AGENT_REPORT_DONE_TIMEOUT_MS).
+ * @param timeoutMs      Default timeout in milliseconds (default: AGENT_REPORT_DONE_TIMEOUT_MS).
+ *                       Used when `getTimeoutMs` is not provided or returns undefined.
+ * @param getTimeoutMs   Optional per-task timeout resolver. When provided, this takes
+ *                       precedence over `timeoutMs` for each individual task. Useful for
+ *                       per-role timeouts (e.g. coder: 30min, reviewer: 15min).
  * @returns              List of tasks that were auto-completed.
  */
 export async function autoCompleteStuckAgents(
@@ -65,7 +70,8 @@ export async function autoCompleteStuckAgents(
 	taskRepo: SpaceTaskRepository,
 	tam: TaskAgentManager,
 	notify: (event: SpaceNotificationEvent) => Promise<void>,
-	timeoutMs: number = AGENT_REPORT_DONE_TIMEOUT_MS
+	timeoutMs: number = AGENT_REPORT_DONE_TIMEOUT_MS,
+	getTimeoutMs?: (task: SpaceTask) => number
 ): Promise<AutoCompletedAgent[]> {
 	const now = Date.now();
 	const autoCompleted: AutoCompletedAgent[] = [];
@@ -85,7 +91,10 @@ export async function autoCompleteStuckAgents(
 		const referenceTime = task.startedAt ?? task.createdAt;
 		const elapsedMs = now - referenceTime;
 
-		if (elapsedMs <= timeoutMs) {
+		// Per-task timeout takes precedence over the shared default.
+		const effectiveTimeout = getTimeoutMs ? getTimeoutMs(task) : timeoutMs;
+
+		if (elapsedMs <= effectiveTimeout) {
 			continue;
 		}
 
@@ -96,7 +105,7 @@ export async function autoCompleteStuckAgents(
 		// guard again. Contrast with task_timeout, which is a warning-only notification
 		// that does not change task status and thus requires dedup to avoid re-emitting
 		// on every subsequent tick while the task remains in_progress.
-		const timeoutMinutes = Math.round(timeoutMs / 60_000);
+		const timeoutMinutes = Math.round(effectiveTimeout / 60_000);
 		const result = `Auto-completed: agent did not call report_done within ${timeoutMinutes} minutes`;
 
 		log.warn(

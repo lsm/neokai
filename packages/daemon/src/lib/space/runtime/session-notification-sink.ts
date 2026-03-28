@@ -111,6 +111,8 @@ export function formatEventMessage(
 			return formatWorkflowRunCompleted(event, autonomyLevel);
 		case 'agent_auto_completed':
 			return formatAgentAutoCompleted(event, autonomyLevel);
+		case 'agent_crash':
+			return formatAgentCrash(event, autonomyLevel);
 	}
 }
 
@@ -236,6 +238,30 @@ function formatAgentAutoCompleted(
 		timestamp: event.timestamp,
 		autonomyLevel,
 	});
+}
+
+function formatAgentCrash(
+	event: {
+		kind: 'agent_crash';
+		spaceId: string;
+		taskId: string;
+		timestamp: string;
+	},
+	autonomyLevel: AutonomyLevel
+): string {
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} encountered an agent crash. ` +
+		`The task has been marked as needs_attention. ` +
+		`Please investigate and retry the task when ready.`;
+	const payload = {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		failureReason: 'agentCrash',
+		timestamp: event.timestamp,
+		autonomyLevel,
+	};
+	return buildMessage(event.kind, humanReadable, payload);
 }
 
 function buildMessage(

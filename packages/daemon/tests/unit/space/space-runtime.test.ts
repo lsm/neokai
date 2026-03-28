@@ -859,39 +859,53 @@ describe('SpaceRuntime', () => {
 			expect(spawnCount).toBe(1); // still only spawned once
 		});
 
-		test('detects crashed Task Agent and resets task to pending for re-spawn', async () => {
+		test('crashed Task Agent resets to pending on first crash (retry) then needs_attention after max retries', async () => {
+			// M9.4 crash-retry: transient crashes reset to pending (up to MAX_TASK_AGENT_CRASH_RETRIES=2).
+			// Only after the limit is exhausted does the task escalate to needs_attention.
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
 			]);
 
-			let callCount = 0;
+			let spawnCount = 0;
 			const tam = makeMockTaskAgentManager({
-				isTaskAgentAlive: () => false, // agent always reports as dead
+				isTaskAgentAlive: () => false, // agent always reports as dead (crashed)
 				spawnTaskAgent: async (task: unknown) => {
 					const t = task as { id: string };
-					callCount++;
-					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}:v${callCount}` });
-					return `session:${t.id}:v${callCount}`;
+					spawnCount++;
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}:v${spawnCount}` });
+					return `session:${t.id}:v${spawnCount}`;
 				},
 			});
 			const rt = buildRuntimeWithMockTAM(tam);
 
 			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Manually set taskAgentSessionId to simulate a previously spawned (now dead) agent
+			// Manually set taskAgentSessionId to simulate a previously spawned (now crashed) agent
 			taskRepo.updateTask(tasks[0].id, {
 				taskAgentSessionId: 'session:dead',
 				status: 'in_progress',
 			});
 
-			// Tick: detect dead agent → reset to pending → spawn new agent
+			// Tick 1: crash 1 (count=1 ≤ MAX=2) → reset to pending; runtime re-spawns in same tick
 			await rt.executeTick();
+			let updated = taskRepo.getTask(tasks[0].id)!;
+			expect(updated.status).toBe('in_progress'); // re-spawned after first crash
+			expect(spawnCount).toBe(1);
 
-			// Task should be in_progress with a fresh session
-			const updated = taskRepo.getTask(tasks[0].id)!;
-			expect(updated.status).toBe('in_progress');
-			expect(updated.taskAgentSessionId).toBe(`session:${tasks[0].id}:v1`);
-			expect(callCount).toBe(1); // spawned once for recovery
+			// Tick 2: crash 2 (count=2 ≤ MAX=2) → reset to pending; runtime re-spawns in same tick
+			await rt.executeTick();
+			updated = taskRepo.getTask(tasks[0].id)!;
+			expect(updated.status).toBe('in_progress'); // re-spawned after second crash
+			expect(spawnCount).toBe(2);
+
+			// Tick 3: crash 3 (count=3 > MAX=2) → needs_attention, no further re-spawn
+			await rt.executeTick();
+			updated = taskRepo.getTask(tasks[0].id)!;
+			expect(updated.status).toBe('needs_attention');
+			expect(updated.taskAgentSessionId == null).toBe(true);
+			expect(updated.error).toContain('3 times');
+			// Only 2 re-spawns happened (crashes 1 and 2 got retries; crash 3 escalated)
+			expect(spawnCount).toBe(2);
 		});
 
 		test('concurrency guard: isSpawning() prevents duplicate spawns during concurrent ticks', async () => {
@@ -1003,11 +1017,9 @@ describe('SpaceRuntime', () => {
 			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('pending');
 		});
 
-		test('liveness loop resets dead-agent tasks and immediately re-spawns them in the same tick', async () => {
-			// Two tasks for the same step: task A alive, task B dead.
-			// Step 1 resets task B to pending; Step 2 re-spawns it in the same tick.
-			// The `anyAgentAlive` early return was removed so that dead siblings in
-			// multi-agent steps always get re-spawned without waiting for the next tick.
+		test('liveness loop resets crashed task to pending (1st crash) and leaves alive sibling untouched', async () => {
+			// M9.4 crash-retry: Two tasks in same step — task A alive, task B crashed (1st crash).
+			// Task B resets to pending for retry; task A (alive) remains untouched.
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
 			]);
@@ -1029,8 +1041,6 @@ describe('SpaceRuntime', () => {
 				status: 'in_progress',
 			});
 
-			// Simulate: task B has a dead agent session; we override its id to match mock
-			// Use DB update + a custom tam that keys liveness by taskId
 			const taskBId = taskB.id;
 			taskRepo.updateTask(taskBId, { taskAgentSessionId: 'session:dead-b' });
 
@@ -1050,16 +1060,55 @@ describe('SpaceRuntime', () => {
 
 			await rt2.executeTick();
 
-			// Dead task B: reset in Step 1 then immediately re-spawned in Step 2 of the
-			// same tick (fresh DB read picks it up as pending with no session).
+			// Crashed task B: first crash → reset to pending, then immediately re-spawned in
+			// the same tick's spawn step → in_progress with a new session. Not needs_attention.
 			const updatedB = taskRepo.getTask(taskBId)!;
 			expect(updatedB.status).toBe('in_progress');
-			expect(updatedB.taskAgentSessionId).toBe(`session:${taskBId}`); // new session from re-spawn
+			expect(updatedB.taskAgentSessionId).not.toBeNull(); // new session from re-spawn
 
 			// Alive task A should be untouched
 			const updatedA = taskRepo.getTask(aliveId)!;
 			expect(updatedA.status).toBe('in_progress');
 			expect(updatedA.taskAgentSessionId).toBe('session:alive-a');
+		});
+
+		test('liveness loop marks crashed task needs_attention after max retries exhausted', async () => {
+			// After MAX_TASK_AGENT_CRASH_RETRIES=2 retries, the 3rd crash escalates to needs_attention.
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			let spawnCount = 0;
+			const aliveIds = new Set<string>();
+			const tam = makeMockTaskAgentManager({
+				isTaskAgentAlive: (taskId: string) => aliveIds.has(taskId),
+				spawnTaskAgent: async (task: unknown) => {
+					const t = task as { id: string };
+					spawnCount++;
+					const sessionId = `session:${t.id}:v${spawnCount}`;
+					taskRepo.updateTask(t.id, { taskAgentSessionId: sessionId });
+					// Keep alive until next tick check
+					return sessionId;
+				},
+			});
+			const rt = buildRuntimeWithMockTAM(tam);
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Pre-load with a dead session to trigger crash detection from tick 1
+			taskRepo.updateTask(tasks[0].id, {
+				taskAgentSessionId: 'session:dead-initial',
+				status: 'in_progress',
+			});
+
+			// 3 ticks: crash 1 → pending+respawn, crash 2 → pending+respawn, crash 3 → needs_attention
+			await rt.executeTick();
+			await rt.executeTick();
+			await rt.executeTick();
+
+			const updated = taskRepo.getTask(tasks[0].id)!;
+			expect(updated.status).toBe('needs_attention');
+			expect(updated.taskAgentSessionId == null).toBe(true);
+			expect(updated.error).toContain('3 times');
 		});
 	});
 

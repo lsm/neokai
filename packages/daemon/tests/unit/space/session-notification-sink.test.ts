@@ -455,6 +455,95 @@ describe('SessionNotificationSink', () => {
 });
 
 // ---------------------------------------------------------------------------
+// agent_crash event (M9.4)
+// ---------------------------------------------------------------------------
+
+describe('formatEventMessage — agent_crash', () => {
+	const TIMESTAMP = '2025-01-15T12:00:00.000Z';
+
+	it('formats agent_crash with [TASK_EVENT] prefix', () => {
+		const event: SpaceNotificationEvent = {
+			kind: 'agent_crash',
+			spaceId: 'space-crash',
+			taskId: 'task-crashed',
+			timestamp: TIMESTAMP,
+		};
+
+		const msg = formatEventMessage(event, 'supervised');
+		expect(msg).toContain('[TASK_EVENT] agent_crash');
+	});
+
+	it('includes task ID and space ID in human-readable summary', () => {
+		const event: SpaceNotificationEvent = {
+			kind: 'agent_crash',
+			spaceId: 'space-crash',
+			taskId: 'task-crashed',
+			timestamp: TIMESTAMP,
+		};
+
+		const msg = formatEventMessage(event, 'supervised');
+		expect(msg).toContain('task-crashed');
+		expect(msg).toContain('space-crash');
+		expect(msg).toContain('needs_attention');
+	});
+
+	it('includes failureReason: agentCrash in JSON payload', () => {
+		const event: SpaceNotificationEvent = {
+			kind: 'agent_crash',
+			spaceId: 'space-crash',
+			taskId: 'task-crashed',
+			timestamp: TIMESTAMP,
+		};
+
+		const msg = formatEventMessage(event, 'supervised');
+		const json = extractJson(msg);
+		expect(json['kind']).toBe('agent_crash');
+		expect(json['failureReason']).toBe('agentCrash');
+		expect(json['taskId']).toBe('task-crashed');
+		expect(json['spaceId']).toBe('space-crash');
+		expect(json['autonomyLevel']).toBe('supervised');
+	});
+
+	it('includes autonomy level in JSON payload', () => {
+		const event: SpaceNotificationEvent = {
+			kind: 'agent_crash',
+			spaceId: 'space-crash',
+			taskId: 'task-crashed',
+			timestamp: TIMESTAMP,
+		};
+
+		const msgSupervised = formatEventMessage(event, 'supervised');
+		const msgSemiAuto = formatEventMessage(event, 'semi_autonomous');
+
+		expect(extractJson(msgSupervised)['autonomyLevel']).toBe('supervised');
+		expect(extractJson(msgSemiAuto)['autonomyLevel']).toBe('semi_autonomous');
+	});
+
+	it('SessionNotificationSink.notify() injects agent_crash message into session', async () => {
+		const factory = makeMockSessionFactory();
+		const sink = new SessionNotificationSink({
+			sessionFactory: factory,
+			sessionId: 'session:spaces:global',
+			autonomyLevel: 'supervised',
+		});
+
+		await sink.notify({
+			kind: 'agent_crash',
+			spaceId: 'space-crash',
+			taskId: 'task-crashed',
+			timestamp: TIMESTAMP,
+		});
+
+		expect(factory.calls).toHaveLength(1);
+		const [call] = factory.calls;
+		expect(call.sessionId).toBe('session:spaces:global');
+		expect(call.message).toContain('[TASK_EVENT] agent_crash');
+		expect(call.message).toContain('agentCrash');
+		expect(call.opts?.deliveryMode).toBe('defer');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Test utility: extract the first JSON block from a message
 // ---------------------------------------------------------------------------
 

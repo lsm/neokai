@@ -8,6 +8,9 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import { Logger } from '../../lib/logger';
+
+const log = new Logger('gate-data-repository');
 
 /** A single gate data record as returned by the repository. */
 export interface GateDataRecord {
@@ -22,24 +25,32 @@ export class GateDataRepository {
 
 	/**
 	 * Get gate data for a specific `(run_id, gate_id)` pair.
-	 * Returns null when no data has been written for this gate in this run.
+	 * Returns null when no data has been written for this gate in this run,
+	 * OR when the stored JSON is corrupted (so the caller can fall back to the
+	 * gate's default data — e.g. `{ approved: false, waiting: true }` for
+	 * human-approval gates — rather than operating on an empty object).
 	 */
 	get(runId: string, gateId: string): GateDataRecord | null {
 		const row = this.db
 			.prepare('SELECT * FROM gate_data WHERE run_id = ? AND gate_id = ?')
 			.get(runId, gateId) as Record<string, unknown> | undefined;
 		if (!row) return null;
-		return this.rowToRecord(row);
+		return this.rowToRecord(row, /* returnNullOnCorruption */ true);
 	}
 
 	/**
 	 * Get all gate data records for a workflow run.
+	 * Corrupted records are included with `data: {}` so callers can still
+	 * inspect all gate IDs; use `get()` for evaluation (which returns null on
+	 * corruption so the caller falls back to the gate's default data).
 	 */
 	listByRun(runId: string): GateDataRecord[] {
 		const rows = this.db
 			.prepare('SELECT * FROM gate_data WHERE run_id = ? ORDER BY gate_id')
 			.all(runId) as Record<string, unknown>[];
-		return rows.map((r) => this.rowToRecord(r));
+		return rows
+			.map((r) => this.rowToRecord(r, false))
+			.filter((r): r is GateDataRecord => r !== null);
 	}
 
 	/**
@@ -119,12 +130,37 @@ export class GateDataRepository {
 		return this.set(runId, gateId, defaultData);
 	}
 
-	private rowToRecord(row: Record<string, unknown>): GateDataRecord {
-		return {
-			runId: row.run_id as string,
-			gateId: row.gate_id as string,
-			data: JSON.parse(row.data as string) as Record<string, unknown>,
-			updatedAt: row.updated_at as number,
-		};
+	/**
+	 * @param row                   Raw SQLite row.
+	 * @param returnNullOnCorruption When true, returns null if JSON is corrupted so
+	 *                              the caller can fall back to the gate's default data
+	 *                              (e.g. `{ approved: false, waiting: true }` for
+	 *                              human-approval gates).  When false, returns the record
+	 *                              with `data: {}` so the caller can still inspect the
+	 *                              gate ID even when the payload is unreadable.
+	 */
+	private rowToRecord(
+		row: Record<string, unknown>,
+		returnNullOnCorruption: boolean
+	): GateDataRecord | null {
+		const runId = row.run_id as string;
+		const gateId = row.gate_id as string;
+		const raw = row.data as string;
+		try {
+			const data = JSON.parse(raw) as Record<string, unknown>;
+			return { runId, gateId, data, updatedAt: row.updated_at as number };
+		} catch (err) {
+			log.error(
+				`GateDataRepository: corrupted gate data for run=${runId} gate=${gateId} — ` +
+					`JSON.parse failed (${err instanceof Error ? err.message : String(err)}). ` +
+					(returnNullOnCorruption
+						? 'Returning null so caller falls back to gate default data.'
+						: 'Returning {} for inspection.')
+			);
+			if (returnNullOnCorruption) {
+				return null;
+			}
+			return { runId, gateId, data: {}, updatedAt: row.updated_at as number };
+		}
 	}
 }

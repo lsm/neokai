@@ -209,3 +209,90 @@ describe('GateDataRepository — persistence', () => {
 		expect(record!.data).toEqual({ persistent: true, value: 42 });
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Gate data corruption recovery (M9.4)
+// ---------------------------------------------------------------------------
+
+describe('GateDataRepository — corruption recovery', () => {
+	test('get() returns null when stored JSON is corrupted (so caller falls back to gate defaults)', () => {
+		// Directly insert corrupted JSON bypassing the repository write path
+		const now = Date.now();
+		db.prepare(`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`).run(
+			RUN_ID,
+			'gate-corrupted',
+			'NOT_VALID_JSON{{{',
+			now
+		);
+
+		// get() returns null on corruption so the caller (evaluateGateById) can fall
+		// back to the gate's default data (e.g. { approved: false, waiting: true })
+		const record = repo.get(RUN_ID, 'gate-corrupted');
+		expect(record).toBeNull();
+	});
+
+	test('listByRun() returns {} for each corrupted gate and valid data for healthy ones', () => {
+		const now = Date.now();
+		// Corrupted gate
+		db.prepare(`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`).run(
+			RUN_ID,
+			'gate-bad',
+			'[[invalid',
+			now
+		);
+		// Healthy gate
+		repo.set(RUN_ID, GATE_ID_A, { approved: true });
+
+		const records = repo.listByRun(RUN_ID);
+		const badRecord = records.find((r) => r.gateId === 'gate-bad');
+		const goodRecord = records.find((r) => r.gateId === GATE_ID_A);
+
+		// listByRun returns {} for corrupted records (for inspection purposes)
+		expect(badRecord).not.toBeUndefined();
+		expect(badRecord!.data).toEqual({});
+
+		expect(goodRecord).not.toBeUndefined();
+		expect(goodRecord!.data).toEqual({ approved: true }); // healthy data intact
+	});
+
+	test('get() returning null causes evaluateGateById to fall back to gate defaults (waiting: true)', () => {
+		// Human-approval gate default data includes { approved: false, waiting: true }
+		// When corruption occurs, get() returns null and the caller uses gateDef.data.
+		// Simulate the fallback: gateDef.data is the source of truth when get() returns null.
+		const now = Date.now();
+		db.prepare(`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`).run(
+			RUN_ID,
+			'gate-human-approval',
+			'CORRUPT_DATA',
+			now
+		);
+
+		// get() returns null — caller falls back to gateDef.data
+		const record = repo.get(RUN_ID, 'gate-human-approval');
+		expect(record).toBeNull();
+
+		// Simulate what evaluateGateById does: record?.data ?? gateDef.data
+		const gateDef = { approved: false, waiting: true };
+		const runtimeData = record?.data ?? gateDef;
+		// Gate stays closed (approved: false) AND waiting: true is preserved
+		expect(runtimeData['approved']).toBe(false);
+		expect(runtimeData['waiting']).toBe(true);
+	});
+
+	test('set() after corrupted read writes valid JSON', () => {
+		// Even if a record was corrupted, a subsequent set() should write valid data
+		const now = Date.now();
+		db.prepare(`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`).run(
+			RUN_ID,
+			'gate-recoverable',
+			'BAD_JSON',
+			now
+		);
+
+		// set() overwrites corrupted data with valid JSON
+		repo.set(RUN_ID, 'gate-recoverable', { approved: true });
+
+		const record = repo.get(RUN_ID, 'gate-recoverable');
+		expect(record!.data).toEqual({ approved: true });
+	});
+});

@@ -70,6 +70,23 @@ export interface AgentAutoCompletedEvent {
 	timestamp: string;
 }
 
+/**
+ * A Task Agent session crashed unexpectedly.
+ *
+ * Emitted when `isTaskAgentAlive()` returns `false` for an in-progress task
+ * that had a live Task Agent session. The task is transitioned to
+ * `needs_attention` so a human can investigate and retry.
+ */
+export interface AgentCrashEvent {
+	kind: 'agent_crash';
+	/** Space the task belongs to. */
+	spaceId: string;
+	/** Task whose agent session crashed. */
+	taskId: string;
+	/** ISO-8601 timestamp when the crash was detected. */
+	timestamp: string;
+}
+
 /** A workflow run has reached a terminal state (completed, cancelled, or needs_attention). */
 export interface WorkflowRunCompletedEvent {
 	kind: 'workflow_run_completed';
@@ -118,7 +135,8 @@ export type SpaceNotificationEvent =
 	| WorkflowRunNeedsAttentionEvent
 	| TaskTimeoutEvent
 	| WorkflowRunCompletedEvent
-	| AgentAutoCompletedEvent;
+	| AgentAutoCompletedEvent
+	| AgentCrashEvent;
 
 // ---------------------------------------------------------------------------
 // NotificationSink interface
