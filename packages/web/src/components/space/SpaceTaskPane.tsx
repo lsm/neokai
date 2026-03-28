@@ -154,7 +154,7 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 	}
 
 	return (
-		<div class="flex flex-col h-full overflow-y-auto">
+		<div class="flex flex-col h-full overflow-y-auto" data-testid="space-task-pane">
 			{/* Header */}
 			<div class="flex items-start justify-between px-4 py-3 border-b border-dark-700">
 				<h2 class="text-sm font-semibold text-gray-100 flex-1 mr-2 leading-snug">{task.title}</h2>
