@@ -38,6 +38,8 @@ export interface CreateSessionParams {
 	sessionId?: string; // Optional custom session ID (for room chat/self sessions)
 	roomId?: string; // Optional room ID to assign session to
 	lobbyId?: string; // Optional lobby ID to assign session to
+	/** Optional Space ID for space_chat sessions (space:chat:${spaceId}) */
+	spaceId?: string;
 	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
 	// Session types:
 	// - 'worker': Standard coding session with Claude Code system prompt
@@ -47,6 +49,7 @@ export interface CreateSessionParams {
 	// - 'leader': Leader agent session (Room Runtime)
 	// - 'general': General agent session (Room Runtime)
 	// - 'lobby': Instance-level agent session
+	// - 'space_chat': Per-space coordinator session (space:chat:${spaceId})
 	sessionType?:
 		| 'room_chat'
 		| 'planner'
@@ -55,7 +58,8 @@ export interface CreateSessionParams {
 		| 'general'
 		| 'worker'
 		| 'lobby'
-		| 'spaces_global';
+		| 'spaces_global'
+		| 'space_chat';
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;
@@ -225,12 +229,13 @@ export class SessionLifecycle {
 			// Worktree set during creation (if enabled)
 			worktree: worktreeMetadata,
 			gitBranch: currentBranch ?? undefined,
-			// Context for room/lobby sessions (includes links between chat and self sessions)
+			// Context for room/lobby/space sessions (includes links between chat and self sessions)
 			context:
-				params.roomId || params.lobbyId
+				params.roomId || params.lobbyId || params.spaceId
 					? {
 							...(params.roomId && { roomId: params.roomId }),
 							...(params.lobbyId && { lobbyId: params.lobbyId }),
+							...(params.spaceId && { spaceId: params.spaceId }),
 						}
 					: undefined,
 		};

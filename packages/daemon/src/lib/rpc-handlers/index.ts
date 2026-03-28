@@ -337,7 +337,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowRunRepo,
 		deps.daemonHub,
 		deps.spaceAgentManager,
-		spaceWorkflowManager
+		spaceWorkflowManager,
+		deps.sessionManager
 	);
 
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
@@ -365,6 +366,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Not started yet: TaskAgentManager is created next and injected before start().
 	// gateDataRepo is injected so notifyGateDataChanged() can trigger lazy node activation
 	// after gate data is written externally (e.g. approveGate RPC, writeGateData RPC).
+	// sessionManager and daemonHub are injected so space:chat:${spaceId} sessions are
+	// provisioned with MCP tools and system prompts on startup and on space.created.
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		spaceManager: deps.spaceManager,
@@ -373,6 +376,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
 		gateDataRepo,
+		sessionManager: deps.sessionManager,
+		daemonHub: deps.daemonHub,
 	});
 
 	// Space Worktree Manager — one worktree per task, shared by all node agents.

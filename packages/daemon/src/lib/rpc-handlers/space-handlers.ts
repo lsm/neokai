@@ -26,6 +26,7 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { SessionManager } from '../session-manager';
 import { seedPresetAgents } from '../space/agents/seed-agents';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
@@ -47,7 +48,8 @@ export function setupSpaceHandlers(
 	workflowRunRepo: SpaceWorkflowRunRepository,
 	daemonHub: DaemonHub,
 	spaceAgentManager: SpaceAgentManager,
-	spaceWorkflowManager: SpaceWorkflowManager
+	spaceWorkflowManager: SpaceWorkflowManager,
+	sessionManager?: SessionManager
 ): void {
 	// ─── space.create ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.create', async (data) => {
@@ -89,6 +91,28 @@ export function setupSpaceHandlers(
 			);
 		} catch (err) {
 			log.warn('Failed to seed built-in workflows for space', space.id, err);
+		}
+
+		// Create the space's user-facing chat session.
+		// Session ID format: space:chat:${spaceId}
+		// Mirrors the room:chat:${roomId} pattern from room-handlers.ts.
+		if (sessionManager) {
+			const spaceChatSessionId = `space:chat:${space.id}`;
+			try {
+				await sessionManager.createSession({
+					sessionId: spaceChatSessionId,
+					title: space.name,
+					workspacePath: space.workspacePath,
+					config: {
+						model: space.defaultModel,
+					},
+					sessionType: 'space_chat',
+					spaceId: space.id,
+					createdBy: 'neo',
+				});
+			} catch (error) {
+				log.warn(`Failed to create space chat session for space ${space.id}:`, error);
+			}
 		}
 
 		daemonHub
