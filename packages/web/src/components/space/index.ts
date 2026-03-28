@@ -9,7 +9,6 @@ export { SpaceCreateDialog } from './SpaceCreateDialog';
 export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 export { SpaceStartWorkflowDialog } from './SpaceStartWorkflowDialog';
 export { SpaceDashboard } from './SpaceDashboard';
-export { SpaceNavPanel } from './SpaceNavPanel';
 export { SpaceSettings } from './SpaceSettings';
 export { SpaceTaskPane } from './SpaceTaskPane';
 export { WorkflowEditor, filterAgents, initFromWorkflow } from './WorkflowEditor';

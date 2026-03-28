@@ -283,7 +283,11 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 									</div>
 								</>
 							)}
-							{activeTab === 'agents' && <SpaceAgentList />}
+							{activeTab === 'agents' && (
+								<div class="p-6 h-full overflow-y-auto">
+									<SpaceAgentList />
+								</div>
+							)}
 							{activeTab === 'workflows' && space && (
 								<WorkflowList
 									spaceId={spaceId}
