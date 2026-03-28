@@ -902,28 +902,31 @@ describe('GoalManager.patchGoal — schedule nextRunAt auto-computation', () => 
 	});
 
 	it('auto-computes nextRunAt when updating schedule on a recurring mission', async () => {
+		// Use hour-specific cron expressions to guarantee distinct nextRunAt values.
+		// "0 2 * * *" fires at 02:00 and "0 3 * * *" fires at 03:00 — they can never
+		// produce the same timestamp regardless of when the test runs, unlike @daily vs
+		// @weekly which both resolve to midnight and collide on Saturdays.
 		const goal = await goalManager.createGoal({
 			title: 'Recurring',
 			missionType: 'recurring',
-			schedule: { expression: '@daily', timezone: 'UTC' },
+			schedule: { expression: '0 2 * * *', timezone: 'UTC' },
 		});
 		expect(goal.nextRunAt).toBeDefined();
 		const originalNextRunAt = goal.nextRunAt!;
 
-		// Patch the schedule to @weekly — guaranteed different nextRunAt than @daily
-		// (they can coincide at midnight for @hourly or @daily).
+		// Patch to 03:00 daily — guaranteed different nextRunAt than 02:00 daily
 		const before = Math.floor(Date.now() / 1000);
 		const patched = await goalManager.patchGoal(goal.id, {
-			schedule: { expression: '@weekly', timezone: 'UTC' },
+			schedule: { expression: '0 3 * * *', timezone: 'UTC' },
 		});
-		const after = Math.floor(Date.now() / 1000) + 7 * 24 * 3600 + 100; // @weekly = up to 7 days
+		const after = Math.floor(Date.now() / 1000) + 24 * 3600 + 100; // fires within 24 h
 
-		expect(patched.schedule?.expression).toBe('@weekly');
+		expect(patched.schedule?.expression).toBe('0 3 * * *');
 		expect(patched.nextRunAt).toBeDefined();
 		expect(patched.nextRunAt!).toBeGreaterThan(before);
-		// @weekly fires within the next week
+		// Next 03:00 UTC fires within the next 24 hours
 		expect(patched.nextRunAt!).toBeLessThanOrEqual(after);
-		// nextRunAt should change when the cron expression changes
+		// nextRunAt must change because the fire time moved from 02:00 to 03:00
 		expect(patched.nextRunAt!).not.toBe(originalNextRunAt);
 	});
 
