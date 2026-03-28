@@ -25,6 +25,8 @@ let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockWorkflows: ReturnType<typeof signal<Array<{ id: string; name: string }>>>;
+let mockAgents: ReturnType<typeof signal<Array<{ id: string; name: string }>>>;
 let mockActiveRuns: ReturnType<typeof computed<SpaceWorkflowRun[]>>;
 let mockActiveTasks: ReturnType<typeof computed<SpaceTask[]>>;
 
@@ -35,6 +37,8 @@ vi.mock('../../../lib/space-store', () => ({
 			loading: mockLoading,
 			tasks: mockTasks,
 			workflowRuns: mockWorkflowRuns,
+			workflows: mockWorkflows,
+			agents: mockAgents,
 			activeRuns: mockActiveRuns,
 			activeTasks: mockActiveTasks,
 		};
@@ -46,6 +50,8 @@ mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockWorkflows = signal([]);
+mockAgents = signal([]);
 mockActiveRuns = computed(() =>
 	mockWorkflowRuns.value.filter((r) => r.status === 'pending' || r.status === 'in_progress')
 );
@@ -102,6 +108,8 @@ describe('SpaceDashboard', () => {
 		mockLoading.value = false;
 		mockTasks.value = [];
 		mockWorkflowRuns.value = [];
+		mockWorkflows.value = [];
+		mockAgents.value = [];
 	});
 
 	afterEach(() => {
@@ -137,25 +145,27 @@ describe('SpaceDashboard', () => {
 		expect(getByText('A cool project description')).toBeTruthy();
 	});
 
-	it('does not show active banner when no active runs or tasks', () => {
+	it('shows ready badge when there is no active work', () => {
 		mockSpace.value = makeSpace();
-		const { container } = render(<SpaceDashboard spaceId="space-1" />);
-		// No blue animated dot
-		expect(container.querySelector('.bg-blue-400')).toBeNull();
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByText('Ready')).toBeTruthy();
 	});
 
-	it('shows active runs in banner', () => {
+	it('shows active runs in dashboard stats', () => {
 		mockSpace.value = makeSpace();
 		mockWorkflowRuns.value = [makeRun('r1', 'in_progress')];
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText(/1 active run/)).toBeTruthy();
+		expect(getByText('Live Space')).toBeTruthy();
+		expect(getByText('Workflow Runs')).toBeTruthy();
+		expect(getByText('Runs are actively executing')).toBeTruthy();
 	});
 
-	it('shows active tasks count in banner', () => {
+	it('shows active tasks count in dashboard stats', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'in_progress'), makeTask('t2', 'in_progress')];
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText(/2 tasks in progress/)).toBeTruthy();
+		expect(getByText('Active Tasks')).toBeTruthy();
+		expect(getByText('Agents are currently working')).toBeTruthy();
 	});
 
 	it('renders quick action cards', () => {
@@ -183,18 +193,19 @@ describe('SpaceDashboard', () => {
 		expect(onCreateTask).toHaveBeenCalled();
 	});
 
-	it('shows recent activity section when runs exist', () => {
+	it('shows workflow pulse section when runs exist', () => {
 		mockSpace.value = makeSpace();
 		mockWorkflowRuns.value = [makeRun('r1', 'completed')];
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('Recent Activity')).toBeTruthy();
+		expect(getByText('Workflow Pulse')).toBeTruthy();
 		expect(getByText('Run r1')).toBeTruthy();
 	});
 
-	it('shows recent tasks in activity section', () => {
+	it('shows focus queue section for tasks', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'completed')];
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByText('Focus Queue')).toBeTruthy();
 		expect(getByText('Task t1')).toBeTruthy();
 	});
 
