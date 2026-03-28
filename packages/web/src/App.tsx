@@ -1,5 +1,6 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
+import { neoStore } from './lib/neo-store.ts';
 import { NavRail } from './islands/NavRail.tsx';
 import { BottomTabBar } from './islands/BottomTabBar.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
@@ -46,6 +47,18 @@ import {
 } from './lib/router.ts';
 
 export function App() {
+	useEffect(() => {
+		// Global Cmd+J / Ctrl+J shortcut to toggle the Neo panel
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
+				e.preventDefault();
+				neoStore.togglePanel();
+			}
+		};
+		window.addEventListener('keydown', handleKeyDown);
+		return () => window.removeEventListener('keydown', handleKeyDown);
+	}, []);
+
 	useEffect(() => {
 		// STEP 1: Initialize URL-based router BEFORE any state management
 		// This ensures we read the session ID from URL on page load
