@@ -59,6 +59,21 @@ export function resolveNodeTimeout(role: string): number {
 // ---------------------------------------------------------------------------
 
 /**
+ * Maximum number of crash-and-retry cycles allowed for a single task agent
+ * before the task is escalated to `needs_attention`.
+ *
+ * When an agent session is detected as dead:
+ *   - If the task has crashed fewer than MAX_TASK_AGENT_CRASH_RETRIES times,
+ *     it is reset to `pending` for re-spawn (transient failure recovery).
+ *   - Once the limit is reached, the task transitions to `needs_attention` so
+ *     a human can investigate before any further retries are attempted.
+ *
+ * This prevents silent infinite crash loops while still tolerating the
+ * transient startup failures common in CI and cold-start environments.
+ */
+export const MAX_TASK_AGENT_CRASH_RETRIES = 2;
+
+/**
  * Maximum number of retry attempts for transient network errors
  * (e.g. `gh` CLI commands that fail with a network error).
  *
