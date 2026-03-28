@@ -23,7 +23,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
-import type { SpaceTask, SpaceAgent, SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
+import type {
+	SpaceTask,
+	SpaceAgent,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+	SpaceTaskActivityMember,
+} from '@neokai/shared';
 
 const { mockNavigateToSpaceSession } = vi.hoisted(() => ({
 	mockNavigateToSpaceSession: vi.fn(),
@@ -41,7 +47,10 @@ let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockTasksByRun: ReturnType<typeof computed<Map<string, SpaceTask[]>>>;
+let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockSubscribeTaskActivity = vi.fn().mockResolvedValue(undefined);
+const mockUnsubscribeTaskActivity = vi.fn();
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -51,6 +60,9 @@ vi.mock('../../../lib/space-store', () => ({
 			workflows: mockWorkflows,
 			workflowRuns: mockWorkflowRuns,
 			tasksByRun: mockTasksByRun,
+			taskActivity: mockTaskActivity,
+			subscribeTaskActivity: mockSubscribeTaskActivity,
+			unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
 			updateTask: mockUpdateTask,
 		};
 	},
@@ -81,6 +93,7 @@ mockTasks = signal<SpaceTask[]>([]);
 mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
 mockTasksByRun = computed(() => {
 	const grouped = new Map<string, SpaceTask[]>();
 	for (const task of mockTasks.value) {
@@ -162,7 +175,10 @@ describe('SpaceTaskPane', () => {
 		mockAgents.value = [];
 		mockWorkflows.value = [];
 		mockWorkflowRuns.value = [];
+		mockTaskActivity.value = new Map();
 		mockUpdateTask.mockClear();
+		mockSubscribeTaskActivity.mockClear();
+		mockUnsubscribeTaskActivity.mockClear();
 		mockNavigateToSpaceSession.mockClear();
 		mockNavigateToSpaceAgent.mockClear();
 	});
@@ -186,6 +202,41 @@ describe('SpaceTaskPane', () => {
 		mockTasks.value = [makeTask({ title: 'My Awesome Task' })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('My Awesome Task')).toBeTruthy();
+	});
+
+	it('subscribes to live task activity and renders agent roster rows', () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					{
+						id: 'session-abc',
+						sessionId: 'session-abc',
+						kind: 'task_agent',
+						label: 'Task Agent',
+						role: 'task-agent',
+						state: 'active',
+						processingStatus: 'processing',
+						processingPhase: 'thinking',
+						messageCount: 3,
+						taskId: 'task-1',
+						taskTitle: 'Fix the bug',
+						taskStatus: 'in_progress',
+						currentStep: 'Reviewing the latest direction',
+						updatedAt: Date.now(),
+					},
+				],
+			],
+		]);
+
+		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(mockSubscribeTaskActivity).toHaveBeenCalledWith('task-1');
+		expect(getByText('Agent Activity')).toBeTruthy();
+		expect(getAllByText('Task Agent').length).toBeGreaterThan(0);
+		expect(getByText('Reviewing the latest direction')).toBeTruthy();
+		expect(getByText('Messages')).toBeTruthy();
+		expect(getByText('3')).toBeTruthy();
 	});
 
 	it('renders status badge', () => {
@@ -389,7 +440,10 @@ describe('SpaceTaskPane — HumanInputArea submit behavior', () => {
 		cleanup();
 		mockTasks.value = [];
 		mockAgents.value = [];
+		mockTaskActivity.value = new Map();
 		mockUpdateTask.mockClear();
+		mockSubscribeTaskActivity.mockClear();
+		mockUnsubscribeTaskActivity.mockClear();
 		mockNavigateToSpaceSession.mockClear();
 		mockNavigateToSpaceAgent.mockClear();
 	});

@@ -136,6 +136,19 @@ export type SpaceTaskStatus =
 export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 /**
+ * Runtime activity state for a live task-agent member.
+ * This is more user-facing than raw session processing states.
+ */
+export type SpaceTaskActivityState =
+	| 'active'
+	| 'queued'
+	| 'idle'
+	| 'waiting_for_input'
+	| 'completed'
+	| 'failed'
+	| 'interrupted';
+
+/**
  * Space task type — determines default execution approach
  */
 export type SpaceTaskType = 'planning' | 'coding' | 'research' | 'design' | 'review';
@@ -224,6 +237,51 @@ export interface SpaceTask {
 	completedAt?: number;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
+}
+
+/**
+ * One live participant in a task's execution.
+ * This can be the orchestration Task Agent or a spawned node agent sub-session.
+ */
+export interface SpaceTaskActivityMember {
+	/** Stable ID for rendering — usually the session ID */
+	id: string;
+	/** Session backing this activity row */
+	sessionId: string;
+	/** Whether this row represents the orchestration task agent or a node agent */
+	kind: 'task_agent' | 'node_agent';
+	/** Human-readable label for the activity row */
+	label: string;
+	/** Role or slot name (e.g. task-agent, reviewer, strict-reviewer) */
+	role: string;
+	/** Derived user-facing activity state */
+	state: SpaceTaskActivityState;
+	/** Raw session processing status when the session is live in memory */
+	processingStatus?: 'idle' | 'queued' | 'processing' | 'waiting_for_input' | 'interrupted' | null;
+	/** Raw processing phase when the session is actively processing */
+	processingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
+	/** Number of persisted SDK messages seen in the backing session */
+	messageCount: number;
+	/** Linked SpaceTask when this member corresponds to a persisted step task */
+	taskId?: string | null;
+	/** Human-readable task title associated with this member */
+	taskTitle?: string | null;
+	/** Status of the linked SpaceTask, if any */
+	taskStatus?: SpaceTaskStatus | null;
+	/** Workflow node ID for step tasks */
+	workflowNodeId?: string | null;
+	/** Human-readable workflow node / agent slot name */
+	agentName?: string | null;
+	/** Latest current-step string associated with the member */
+	currentStep?: string | null;
+	/** Latest error associated with the member */
+	error?: string | null;
+	/** Latest completion summary associated with the member */
+	completionSummary?: string | null;
+	/** Last update timestamp from the linked SpaceTask or backing session metadata */
+	updatedAt?: number | null;
+	/** Timestamp of the last persisted SDK message for this session */
+	lastMessageAt?: number | null;
 }
 
 /**

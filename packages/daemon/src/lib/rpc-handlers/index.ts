@@ -338,7 +338,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
-	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
+	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 
@@ -378,7 +378,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	deps.neoAgentManager.setToolsConfig(neoToolsConfig, deps.appMcpManager);
 
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
-		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);
+		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
 	};
 
 	setupSpaceTaskHandlers(
@@ -411,6 +411,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowManager,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
+		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
 		sessionManager: deps.sessionManager,
 		daemonHub: deps.daemonHub,
@@ -441,6 +442,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		// Use reactiveDb.db so Task Agent session writes invalidate LiveQuery tables.
 		db: deps.reactiveDb.db,
 		sessionManager: deps.sessionManager,
+		reactiveDb: deps.reactiveDb,
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
 		spaceWorkflowManager,
@@ -591,7 +593,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space workflow run handlers — reuse the same factory pattern as spaceTask handlers
 	const spaceWorkflowRunTaskManagerFactory: SpaceWorkflowRunTaskManagerFactory = (spaceId) => {
-		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);
+		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
 	};
 	setupSpaceWorkflowRunHandlers(
 		deps.messageHub,

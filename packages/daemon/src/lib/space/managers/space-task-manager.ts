@@ -9,6 +9,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	SpaceTask,
 	SpaceTaskStatus,
@@ -45,9 +46,10 @@ export class SpaceTaskManager {
 
 	constructor(
 		private db: BunDatabase,
-		private spaceId: string
+		private spaceId: string,
+		private reactiveDb?: ReactiveDatabase
 	) {
-		this.taskRepo = new SpaceTaskRepository(db);
+		this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
 	}
 
 	/**
