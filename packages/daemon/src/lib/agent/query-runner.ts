@@ -341,14 +341,22 @@ export class QueryRunner {
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
 
-			// Log startup timeout or conversation-not-found for diagnostics, but do NOT
-			// clear sdkSessionId — the session file is still valid and resume should work
-			// on the next attempt. Clearing it would lose conversation history permanently.
-			if ((isStartupTimeout || isConversationNotFound) && session.sdkSessionId) {
+			// Startup timeout is transient — keep sdkSessionId so resume works on retry.
+			// "No conversation found" is permanent — clear sdkSessionId so the next
+			// attempt starts fresh instead of looping on a dead conversation.
+			if (isStartupTimeout && session.sdkSessionId) {
 				logger.error(
-					`Startup issue with sdkSessionId (${session.sdkSessionId}): ${isStartupTimeout ? 'timeout' : 'conversation not found'}. ` +
-						'Keeping sdkSessionId for resume on next attempt.'
+					`Startup timeout with sdkSessionId (${session.sdkSessionId}). ` +
+						'Keeping sdkSessionId for resume on retry.'
 				);
+			}
+			if (isConversationNotFound && session.sdkSessionId) {
+				logger.error(
+					`No conversation found for sdkSessionId (${session.sdkSessionId}). ` +
+						'Clearing sdkSessionId — next attempt will start fresh.'
+				);
+				session.sdkSessionId = undefined;
+				this.ctx.db.updateSession(session.id, { sdkSessionId: undefined });
 			}
 
 			// Auto-retry once on startup timeout — the user shouldn't have to resend.
@@ -357,6 +365,9 @@ export class QueryRunner {
 			// Skip messageQueue.clear() so the user's pending message is preserved for the retry.
 			if (isStartupTimeout && !isRetry && !this.ctx.isCleaningUp()) {
 				logger.warn('Auto-retrying query after startup timeout (1 retry).');
+				await this.displayErrorAsAssistantMessage(
+					'Session startup timed out. Retrying automatically...'
+				);
 				await stateManager.setIdle();
 				return this.runQuery(queryGeneration, true);
 			}
