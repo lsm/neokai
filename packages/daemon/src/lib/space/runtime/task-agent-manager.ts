@@ -1101,9 +1101,19 @@ export class TaskAgentManager {
 		// Also self-unsubscribes both listeners to prevent multiple invocations.
 		const unsubscribeError = this.config.daemonHub.on(
 			'session.error',
-			(_event) => {
+			(event) => {
 				if (fired) return; // Already handled by completion path
 				fired = true;
+
+				// Push an explicit failure event back to the Task Agent so orchestration
+				// stays event-driven (no polling loop required to discover crashes).
+				void this.handleSubSessionError(subSessionId, event.error).catch((err) => {
+					log.warn(
+						`TaskAgentManager: failed to handle sub-session error for ${subSessionId}:`,
+						err
+					);
+				});
+
 				// Tear down both listeners now that the error terminal state is handled.
 				const unsub = this.sessionListeners.get(subSessionId);
 				if (unsub) {
@@ -1174,7 +1184,7 @@ export class TaskAgentManager {
 					: '';
 				await this.injectMessageIntoSession(
 					taskAgentSession,
-					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_node_status to verify completion status.`,
+					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nUse this event to decide next actions (spawn newly pending agents, handle gates, or finalize).`,
 					'defer'
 				);
 			} catch (err) {
@@ -1184,6 +1194,60 @@ export class TaskAgentManager {
 				);
 			}
 		}
+	}
+
+	/**
+	 * Handle a sub-session error event and notify the parent Task Agent.
+	 *
+	 * This enables event-driven orchestration: Task Agent can react to failures
+	 * without continuously polling check_node_status.
+	 */
+	private async handleSubSessionError(subSessionId: string, error: string): Promise<void> {
+		const parentTaskId = this.findParentTaskIdForSubSession(subSessionId);
+		if (!parentTaskId) return;
+
+		const workflowRunId = this.getWorkflowRunId(parentTaskId);
+		let failedStepTask: SpaceTask | null = null;
+
+		if (workflowRunId) {
+			const runTasks = this.config.taskRepo.listByWorkflowRun(workflowRunId);
+			for (let i = runTasks.length - 1; i >= 0; i--) {
+				const candidate = runTasks[i];
+				if (candidate.taskAgentSessionId === subSessionId) {
+					failedStepTask = candidate;
+					break;
+				}
+			}
+		}
+
+		if (failedStepTask) {
+			const spaceId = this.getSpaceIdForTask(parentTaskId);
+			if (spaceId) {
+				try {
+					const taskManager = new SpaceTaskManager(
+						this.config.db.getDatabase(),
+						spaceId,
+						this.config.reactiveDb
+					);
+					await taskManager.setTaskStatus(failedStepTask.id, 'needs_attention', { error });
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager: failed to mark step task ${failedStepTask.id} as needs_attention after session.error:`,
+						err
+					);
+				}
+			}
+		}
+
+		const taskAgentSession = this.taskAgentSessions.get(parentTaskId);
+		if (!taskAgentSession) return;
+
+		const stepId = failedStepTask?.workflowNodeId ?? 'unknown-step';
+		await this.injectMessageIntoSession(
+			taskAgentSession,
+			`[STEP_FAILED] Step "${stepId}" sub-session (${subSessionId}) reported an error: ${error}\nDecide whether to retry, request human input, or report_result.`,
+			'defer'
+		);
 	}
 
 	// -------------------------------------------------------------------------
@@ -1393,7 +1457,8 @@ export class TaskAgentManager {
 		// For standalone tasks (no workflowRunId): ask the agent to check status and continue.
 		const reorientMessage = task.workflowRunId
 			? 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
-				'Please use `check_node_status` to determine the current state of your workflow and continue from where you left off.'
+				'Please review pending tasks and recent [STEP_*] event messages, then continue orchestration in event-driven mode. ' +
+				'Use `check_node_status` only for specific reconciliation checks.'
 			: 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
 				'Please check the current task status and continue from where you left off.';
 		await this.injectMessageIntoSession(agentSession, reorientMessage);
@@ -1561,6 +1626,18 @@ export class TaskAgentManager {
 		return task?.workflowRunId ?? null;
 	}
 
+	/**
+	 * Resolve the parent task ID that owns a given sub-session ID.
+	 */
+	private findParentTaskIdForSubSession(subSessionId: string): string | null {
+		for (const [taskId, stepMap] of this.subSessions) {
+			if (stepMap.has(subSessionId)) {
+				return taskId;
+			}
+		}
+		return null;
+	}
+
 	/** Returns the space ID for a task by reading it from the task repository. */
 	private getSpaceIdForTask(taskId: string): string | null {
 		return this.config.taskRepo.getTask(taskId)?.spaceId ?? null;
@@ -1571,12 +1648,8 @@ export class TaskAgentManager {
 	 * Used when emitting events from the error handler where only subSessionId is available.
 	 */
 	private getSpaceIdForSubSession(subSessionId: string): string | null {
-		for (const [taskId, stepMap] of this.subSessions) {
-			if (stepMap.has(subSessionId)) {
-				return this.getSpaceIdForTask(taskId);
-			}
-		}
-		return null;
+		const taskId = this.findParentTaskIdForSubSession(subSessionId);
+		return taskId ? this.getSpaceIdForTask(taskId) : null;
 	}
 
 	/**
