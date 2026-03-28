@@ -1,7 +1,7 @@
 {
 	"mocks": [
 		{
-			"comment": "Task Agent lifecycle — follow-up after report_result tool execution. 'toolu_report_lifecycle_001' appears only in the follow-up call (as tool_use_id inside a tool_result block) — not in the initial probe call. ORDERING: must appear before the probe_task_agent_report_complete_001 mock.",
+			"comment": "Task Agent lifecycle \u2014 follow-up after report_result tool execution. 'toolu_report_lifecycle_001' appears only in the follow-up call (as tool_use_id inside a tool_result block) \u2014 not in the initial probe call. ORDERING: must appear before the probe_task_agent_report_complete_001 mock.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -43,7 +43,7 @@
 			}
 		},
 		{
-			"comment": "Task Agent lifecycle — report_result probe. Returns the full MCP tool name 'mcp__task-agent__report_result' with stop_reason 'tool_use' so the SDK dispatches the tool. This updates the task status to 'completed' and emits space.task.completed. bodyFragment substring matches 'probe_task_agent_report_complete_001' in the user message injected by the test.",
+			"comment": "Task Agent lifecycle \u2014 report_result probe. Returns the full MCP tool name 'mcp__task-agent__report_result' with stop_reason 'tool_use' so the SDK dispatches the tool. This updates the task status to 'completed' and emits space.task.completed. bodyFragment substring matches 'probe_task_agent_report_complete_001' in the user message injected by the test.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -94,7 +94,7 @@
 			}
 		},
 		{
-			"comment": "Task Agent lifecycle — spawn_node_agent probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'spawn_node_agent' (registered as 'mcp__task-agent__spawn_node_agent'). Tool dispatch with a non-matching name causes the SDK to loop indefinitely. The text mentions spawn_node_agent and step-code-lifecycle-001 so tests can assert on text content.",
+			"comment": "Task Agent lifecycle \u2014 spawn_node_agent probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'spawn_node_agent' (registered as 'mcp__task-agent__spawn_node_agent'). Tool dispatch with a non-matching name causes the SDK to loop indefinitely. The text mentions spawn_node_agent and step-code-lifecycle-001 so tests can assert on text content.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -136,7 +136,7 @@
 			}
 		},
 		{
-			"comment": "Task Agent lifecycle — check_node_status probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'check_node_status'. The text mentions check_node_status and step-code-lifecycle-001 so tests can assert on text content.",
+			"comment": "Task Agent lifecycle \u2014 check_node_status probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'check_node_status'. The text mentions check_node_status and step-code-lifecycle-001 so tests can assert on text content.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -178,7 +178,7 @@
 			}
 		},
 		{
-			"comment": "Task Agent lifecycle — advance_workflow probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'advance_workflow'. The text mentions advance_workflow so tests can assert on text content.",
+			"comment": "Task Agent lifecycle \u2014 advance_workflow probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'advance_workflow'. The text mentions advance_workflow so tests can assert on text content.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -220,7 +220,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - follow-up after get_task_detail tool execution. bodyFragment as a string performs substring matching on the serialized request body. 'toolu_get_detail_probe_001' only appears in the follow-up call (as the tool_use_id inside a tool_result block) — not in the initial probe call — so this mock fires exclusively for follow-ups. ORDERING: must appear before the probe_semi_autonomous_get_detail mock.",
+			"comment": "Space agent - follow-up after get_task_detail tool execution. bodyFragment as a string performs substring matching on the serialized request body. 'toolu_get_detail_probe_001' only appears in the follow-up call (as the tool_use_id inside a tool_result block) \u2014 not in the initial probe call \u2014 so this mock fires exclusively for follow-ups. ORDERING: must appear before the probe_semi_autonomous_get_detail mock.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -262,7 +262,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - follow-up after retry_task tool execution. bodyFragment as a string performs substring matching on the serialized request body. 'toolu_retry_probe_001' only appears in the follow-up call (as the tool_use_id inside a tool_result block) — not in the initial probe call — so this mock fires exclusively for follow-ups. ORDERING: must appear before the probe_semi_autonomous_retry mock.",
+			"comment": "Space agent - follow-up after retry_task tool execution. bodyFragment as a string performs substring matching on the serialized request body. 'toolu_retry_probe_001' only appears in the follow-up call (as the tool_use_id inside a tool_result block) \u2014 not in the initial probe call \u2014 so this mock fires exclusively for follow-ups. ORDERING: must appear before the probe_semi_autonomous_retry mock.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -304,7 +304,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - supervised mode: escalate to human (probe phrase embedded in TASK_EVENT reason). Uses bodyFragment substring matching — .JsonContains was found to match ALL requests that have a 'messages' key, not just those containing the specified value.",
+			"comment": "Space agent - supervised mode: escalate to human (probe phrase embedded in TASK_EVENT reason). Uses bodyFragment substring matching \u2014 .JsonContains was found to match ALL requests that have a 'messages' key, not just those containing the specified value.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -346,7 +346,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: returns get_task_detail tool_use in content. Uses stop_reason end_turn so the SDK does NOT dispatch the tool — avoiding MCP name resolution issues (registered as mcp__global-spaces-tools__get_task_detail, mock uses short name). The tool_use block is still recorded in the assistant message content and verified by the test.",
+			"comment": "Space agent - semi_autonomous: returns get_task_detail tool_use in content. Uses stop_reason end_turn so the SDK does NOT dispatch the tool \u2014 avoiding MCP name resolution issues (registered as mcp__global-spaces-tools__get_task_detail, mock uses short name). The tool_use block is still recorded in the assistant message content and verified by the test.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -396,7 +396,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: returns retry_task tool_use in content. Uses stop_reason end_turn so the SDK does NOT dispatch the tool — avoiding MCP name resolution issues (registered as mcp__global-spaces-tools__retry_task, mock uses short name). The tool_use block is still recorded in the assistant message content and verified by the test.",
+			"comment": "Space agent - semi_autonomous: returns retry_task tool_use in content. Uses stop_reason end_turn so the SDK does NOT dispatch the tool \u2014 avoiding MCP name resolution issues (registered as mcp__global-spaces-tools__retry_task, mock uses short name). The tool_use block is still recorded in the assistant message content and verified by the test.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -446,7 +446,7 @@
 			}
 		},
 		{
-			"comment": "Planner WebSearch follow-up — matches the WebSearch tool_use ID from the probe mock. The tool_use_id 'toolu_websearch_planner_001' only appears AFTER the probe mock fires (as tool_use_id in a tool_result block). Returns end_turn so the planner can settle. ORDERING: must be BEFORE the probe mock so that subsequent calls (which contain both the probe fragment and the tool_use_id) match the follow-up, not the probe again.",
+			"comment": "Planner WebSearch follow-up \u2014 matches the WebSearch tool_use ID from the probe mock. The tool_use_id 'toolu_websearch_planner_001' only appears AFTER the probe mock fires (as tool_use_id in a tool_result block). Returns end_turn so the planner can settle. ORDERING: must be BEFORE the probe mock so that subsequent calls (which contain both the probe fragment and the tool_use_id) match the follow-up, not the probe again.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -488,7 +488,7 @@
 			}
 		},
 		{
-			"comment": "Planner WebSearch probe — initial call. Matches the unique fragment embedded in the goal description. Returns a WebSearch tool_use block so the test can assert the planner has WebSearch capability. ORDERING: must appear AFTER the follow-up mock (which has a more specific match) and BEFORE the .JsonContains context mocks which match all requests with a 'messages' key.",
+			"comment": "Planner WebSearch probe \u2014 initial call. Matches the unique fragment embedded in the goal description. Returns a WebSearch tool_use block so the test can assert the planner has WebSearch capability. ORDERING: must appear AFTER the follow-up mock (which has a more specific match) and BEFORE the .JsonContains context mocks which match all requests with a 'messages' key.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -521,6 +521,327 @@
 							"name": "WebSearch",
 							"input": {
 								"query": "most popular JavaScript framework 2025"
+							}
+						}
+					],
+					"model": "claude-sonnet-4-5-20250929",
+					"stop_reason": "tool_use",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 500,
+						"output_tokens": 80,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Planner 3-phase \u2014 end-turn after plan-writer result. Matches tool_use_id 'toolu_3p_plan_writer_001' which only appears in the planner's request body AFTER the plan-writer Task tool has been dispatched and the tool_result returned. Proves the SDK correctly included the plan-writer tool_result in the planner's follow-up request. Returns end_turn so the planner session completes cleanly. ORDERING: must be BEFORE toolu_3p_fact_checker_001 and the initial probe mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "toolu_3p_plan_writer_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (planner-3phase end-turn after plan-writer)"
+					}
+				],
+				"body": {
+					"id": "msg_planner_3p_end_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED 3P] All 3 pipeline stages complete. The plan has been created and submitted for review."
+						}
+					],
+					"model": "claude-sonnet-4-5-20250929",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 800,
+						"output_tokens": 30,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Planner 3-phase \u2014 Stage 3: spawn plan-writer after fact-checker result. Matches tool_use_id 'toolu_3p_fact_checker_001' which only appears in the planner's request body AFTER the planner-fact-checker Task tool_result is returned. Proves the SDK correctly included the fact-checker tool_result in the planner's follow-up request. The plan-writer prompt embeds both PLNR_EXPL_3P_2025_SENTINEL and PLNR_FACT_3P_2025_SENTINEL in its hardcoded mock response (see test comment on sentinel assertions). ORDERING: must be BEFORE toolu_3p_explorer_001 and the initial probe mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "toolu_3p_fact_checker_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (planner-3phase stage3 plan-writer)"
+					}
+				],
+				"body": {
+					"id": "msg_planner_3p_stage3_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED 3P] Stages 1 and 2 complete. Spawning plan-writer with accumulated context."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_3p_plan_writer_001",
+							"name": "Task",
+							"input": {
+								"subagent_type": "plan-writer",
+								"prompt": "Goal: 3-phase pipeline test\n\nDescription: Probe: planner-3phase-ctx-probe-2025-v1. Implement a 3-phase test plan.\n\n## Explorer Findings\n\n---EXPLORER_FINDINGS---\nPLNR_EXPL_3P_2025_SENTINEL\n## Relevant Files\nsrc/test.ts - mock test file\n---END_EXPLORER_FINDINGS---\n\n## Fact-Check Results\n\n---FACT_CHECK_RESULT---\nPLNR_FACT_3P_2025_SENTINEL\n## Validated Assumptions\nAll TypeScript patterns are current.\n---END_FACT_CHECK_RESULT---"
+							}
+						}
+					],
+					"model": "claude-sonnet-4-5-20250929",
+					"stop_reason": "tool_use",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 700,
+						"output_tokens": 80,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Planner 3-phase \u2014 Stage 2: spawn planner-fact-checker after explorer result. Matches tool_use_id 'toolu_3p_explorer_001' which only appears in the planner's request body AFTER the planner-explorer Task tool_result is returned. Proves the SDK correctly included the explorer tool_result in the planner's follow-up request. The fact-checker prompt embeds PLNR_EXPL_3P_2025_SENTINEL in its hardcoded mock response (see test comment on sentinel assertions). ORDERING: must be BEFORE the initial probe mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "toolu_3p_explorer_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (planner-3phase stage2 fact-checker)"
+					}
+				],
+				"body": {
+					"id": "msg_planner_3p_stage2_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED 3P] Stage 1 complete. Spawning planner-fact-checker with explorer findings."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_3p_fact_checker_001",
+							"name": "Task",
+							"input": {
+								"subagent_type": "planner-fact-checker",
+								"prompt": "Goal: 3-phase pipeline test\n\nDescription: Probe: planner-3phase-ctx-probe-2025-v1. Implement a 3-phase test plan.\n\n## Explorer Findings\n\n---EXPLORER_FINDINGS---\nPLNR_EXPL_3P_2025_SENTINEL\n## Relevant Files\nsrc/test.ts - mock test file\n---END_EXPLORER_FINDINGS---"
+							}
+						}
+					],
+					"model": "claude-sonnet-4-5-20250929",
+					"stop_reason": "tool_use",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 600,
+						"output_tokens": 80,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Planner 3-phase \u2014 plan-writer sub-agent response. Matches the plan-writer's unique system prompt ('Plan Writer Agent spawned by the Planner'). Returns ---PLAN_RESULT--- block. ORDERING: must come before the initial probe mock to prevent probe from matching plan-writer calls (the goal description with the probe fragment is passed as Task prompt).",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "Plan Writer Agent spawned by the Planner"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (planner-3phase plan-writer sub-agent)"
+					}
+				],
+				"body": {
+					"id": "msg_3p_plan_writer_sub_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "---PLAN_RESULT---\nPLNR_PLAN_3P_2025_SENTINEL\npr_number: 1\nbranch: plan/planner-3phase-ctx-probe-2025-v1\nplan_files: docs/plans/planner-3phase-ctx-probe-2025-v1.md\nstructure: single\n---END_PLAN_RESULT---"
+						}
+					],
+					"model": "claude-sonnet-4-5-20250929",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 500,
+						"output_tokens": 60,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Planner 3-phase \u2014 planner-fact-checker sub-agent response. Matches the fact-checker's unique system prompt ('Fact-Checker sub-agent'). Returns ---FACT_CHECK_RESULT--- block. ORDERING: must come before the initial probe mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "Fact-Checker sub-agent"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (planner-3phase fact-checker sub-agent)"
+					}
+				],
+				"body": {
+					"id": "msg_3p_fact_checker_sub_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "---FACT_CHECK_RESULT---\nPLNR_FACT_3P_2025_SENTINEL\n## Validated Assumptions\nAll TypeScript patterns are current and valid.\n## Flagged Issues\nNone found.\n## Recommended Versions/Patterns\nTypeScript 5.x with strict mode recommended.\n## Corrections to Explorer Findings\nNo corrections needed.\n---END_FACT_CHECK_RESULT---"
+						}
+					],
+					"model": "claude-sonnet-4-5-20250929",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 400,
+						"output_tokens": 60,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Planner 3-phase \u2014 planner-explorer sub-agent response. Matches the explorer's unique system prompt ('Codebase Explorer sub-agent'). Returns ---EXPLORER_FINDINGS--- block. ORDERING: must come before the initial probe mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "Codebase Explorer sub-agent"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (planner-3phase explorer sub-agent)"
+					}
+				],
+				"body": {
+					"id": "msg_3p_explorer_sub_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "---EXPLORER_FINDINGS---\nPLNR_EXPL_3P_2025_SENTINEL\n## Relevant Files\nsrc/test.ts - mock test file\n## Patterns Found\nStandard TypeScript module patterns\n## Dependencies\nNone relevant to this goal\n## Estimated Complexity\nLow - single file change\n## Key Concerns\nNone identified\n---END_EXPLORER_FINDINGS---"
+						}
+					],
+					"model": "claude-sonnet-4-5-20250929",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 400,
+						"output_tokens": 70,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Planner 3-phase \u2014 Stage 1 initial probe. Matches unique probe 'planner-3phase-ctx-probe-2025-v1' embedded in the goal description. Returns Task(planner-explorer, id: toolu_3p_explorer_001) to kick off Stage 1. ORDERING: must come AFTER the toolu_3p_* follow-up mocks and after sub-agent mocks so they take priority; the probe fragment persists in conversation history after the initial call, so later mocks must be more specific to prevent re-triggering Stage 1.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "planner-3phase-ctx-probe-2025-v1"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (planner-3phase stage1 explorer)"
+					}
+				],
+				"body": {
+					"id": "msg_planner_3p_stage1_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED 3P] Starting 3-phase pipeline. Spawning planner-explorer for Stage 1."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_3p_explorer_001",
+							"name": "Task",
+							"input": {
+								"subagent_type": "planner-explorer",
+								"prompt": "Goal: 3-phase pipeline test\n\nDescription: Probe: planner-3phase-ctx-probe-2025-v1. Implement a 3-phase test plan.\n\nPlease explore the codebase to understand what needs to be implemented."
 							}
 						}
 					],
@@ -714,7 +1035,7 @@
 			}
 		},
 		{
-			"comment": "CATCH-ALL for beta messages — must be last. All probe-specific and follow-up mocks must precede this entry.",
+			"comment": "CATCH-ALL for beta messages \u2014 must be last. All probe-specific and follow-up mocks must precede this entry.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST"
