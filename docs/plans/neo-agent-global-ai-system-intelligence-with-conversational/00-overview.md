@@ -39,7 +39,7 @@ The Neo agent reuses existing patterns:
 
 5. **Neo Tool Registry (Meta Operations)** -- `undo_last_action` with action reversal logic and explicit reversibility matrix. Action log querying for activity feed.
 
-6. **Neo RPC Handlers and Backend Wiring** -- RPC endpoints: `neo.send` (fire-and-forget), `neo.history`, `neo.clear_session`, `neo.confirm_action`, `neo.cancel_action`. LiveQuery for real-time message streaming (`neo.messages` with row mapper from `sdk_messages`). Wire Neo session into `DaemonAppContext` and app startup.
+6. **Neo RPC Handlers and Backend Wiring** -- RPC endpoints: `neo.send` (fire-and-forget), `neo.history`, `neo.clear_session`, `neo.confirm_action`, `neo.cancel_action`, `neo.confirm_explicit`. LiveQuery for real-time message streaming (`neo.messages` with row mapper from `sdk_messages`). Wire Neo session into `DaemonAppContext` and app startup.
 
 7. **Frontend: NavRail Input and Neo Panel** -- Persistent chat input in NavRail, slide-out Neo panel with chat history, message rendering (text, structured data, action confirmations), Activity Feed tab, keyboard shortcut (Cmd+K), localStorage persistence.
 

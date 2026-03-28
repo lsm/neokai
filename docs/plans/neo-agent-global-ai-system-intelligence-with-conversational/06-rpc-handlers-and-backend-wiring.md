@@ -49,7 +49,7 @@ Create the RPC endpoints that the frontend uses to communicate with the Neo agen
   1. Add named queries to `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`:
      - `neo.messages` -- query `sdk_messages WHERE session_id = 'neo:global'` ordered by timestamp
      - `neo.activity` -- query `neo_action_log` ordered by `created_at` DESC
-     - `neo.pending_actions` -- query `neo_action_log WHERE status = 'pending_confirmation'`
+     - `neo.pending_actions` -- query `neo_action_log WHERE status IN ('pending_confirmation', 'pending_explicit')`
   2. Define row mapper for `neo.messages` that converts `sdk_messages` rows to `NeoMessage` frontend type:
      - Map `id`, `role` (from SDK message role), `content` (from message content), `createdAt`
      - Extract `toolCalls` from SDK message tool_use blocks (if present)

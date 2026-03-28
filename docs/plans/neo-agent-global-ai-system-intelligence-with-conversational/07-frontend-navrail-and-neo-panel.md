@@ -24,6 +24,7 @@ Build the primary Neo UI: a persistent input bar in the NavRail and a slide-out 
      - `sendMessage(content: string): Promise<void>` -- calls `neo.send` RPC
      - `loadHistory(): Promise<void>` -- calls `neo.history` RPC
      - `confirmAction(actionId: string): Promise<void>` -- calls `neo.confirm_action`
+     - `confirmExplicit(actionId: string, phrase: string): Promise<void>` -- calls `neo.confirm_explicit` for `require_explicit` tier actions
      - `cancelAction(actionId: string): Promise<void>` -- calls `neo.cancel_action`
      - `clearSession(): Promise<void>` -- calls `neo.clear_session`
      - `loadActivityLog(): Promise<void>` -- calls `neo.activity_log`

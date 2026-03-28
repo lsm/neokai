@@ -82,7 +82,7 @@ Define all Neo-related shared types, extend existing types with Neo support, cre
      - `updateStatus(id: string, status: NeoActionStatus, output?: string): void`
      - `getById(id: string): NeoActionLog | null`
      - `getRecent(limit?: number, offset?: number): NeoActionLog[]` -- ordered by `created_at` DESC
-     - `getPendingConfirmations(): NeoActionLog[]` -- status = 'pending_confirmation'
+     - `getPendingActions(): NeoActionLog[]` -- `status IN ('pending_confirmation', 'pending_explicit')` (covers both confirmation tiers)
      - `getLastAction(): NeoActionLog | null` -- most recent completed action (for undo)
      - `markUndone(id: string): void`
   3. Add row mapper to convert snake_case DB rows to camelCase `NeoActionLog` objects

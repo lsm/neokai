@@ -65,11 +65,11 @@ Edge-case, integration, and online test coverage that extends the per-milestone 
 - **Agent type**: coder
 - **Depends on**: Task 2.1, Task 1.4
 - **Subtasks**:
-  1. Create `packages/daemon/tests/unit/neo/neo-session-service.test.ts`:
-     - Test first-time initialization creates a new session
-     - Test subsequent initialization restores the existing session
-     - Test `clearSession` creates a fresh session with new ID
-     - Test `sendMessage` queues to the session
+  1. Create `packages/daemon/tests/unit/neo/provision-neo-agent.test.ts` (extends happy-path tests from Task 2.1 with edge cases):
+     - Test first-time provisioning creates a new session with ID `'neo:global'`
+     - Test subsequent provisioning restores the existing session
+     - Test `clearSession` deletes messages but preserves `'neo:global'` session ID
+     - Test `sendMessage` queues to the session (concurrent sends are serialized)
      - Test `getHistory` returns messages in order
   2. Create `packages/daemon/tests/unit/neo/origin-metadata.test.ts`:
      - Test that messages sent by Neo have `origin: 'neo'`
