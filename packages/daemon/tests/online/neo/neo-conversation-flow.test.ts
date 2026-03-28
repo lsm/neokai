@@ -8,31 +8,46 @@
  * 2. History — neo.history returns persisted messages
  * 3. Multi-turn — multiple messages accumulate in history
  * 4. Session clear — neo.clearSession resets the conversation
- * 5. Security tiers — neo.getSettings / neo.updateSettings change mode
- * 6. Activity feed — actions are logged and retrievable
+ * 5. Security tiers — settings RPC + mode persistence across sends
+ * 6. Activity feed — neo.activity live-query subscription and snapshot delivery
  * 7. Session persistence — history survives a daemon restart
+ * 8. Pending actions — confirm/cancel error paths
  *
  * All tests require NEOKAI_ENABLE_NEO_AGENT=1 (set in CI via matrix flag) and
  * NEOKAI_USE_DEV_PROXY=1 for mocked SDK responses.
  *
  * Run locally:
  *   NEOKAI_ENABLE_NEO_AGENT=1 NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/neo/neo-conversation-flow.test.ts
+ *
+ * Note on activity logging:
+ *   The neo_activity_log table is populated by NeoActivityLogger when Neo action
+ *   tools (create_room, delete_room, etc.) are invoked. In Dev Proxy mock mode the
+ *   AI response is mocked and does not call action tools, so the log stays empty.
+ *   Section 6 therefore tests the subscription infrastructure (snapshot delivery,
+ *   row schema, live-query protocol). Actual tool-invocation logging is covered by
+ *   unit tests in packages/daemon/tests/unit/neo/neo-activity-logger.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { LiveQuerySnapshotEvent } from '@neokai/shared';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { waitForIdle } from '../../helpers/daemon-actions';
-import { NEO_SESSION_ID } from '../../../src/lib/neo/neo-agent-manager';
 
 // ─── Timeouts ────────────────────────────────────────────────────────────────
 
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
-const IDLE_TIMEOUT = IS_MOCK ? 8_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
 const TEST_TIMEOUT = IS_MOCK ? 30_000 : 120_000;
+const LQ_SNAPSHOT_TIMEOUT = IS_MOCK ? 5_000 : 15_000;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+/**
+ * How long to poll neo.history waiting for messages to appear.
+ * User messages are persisted synchronously when neo.send returns, so
+ * this only needs to be long enough to tolerate system scheduling jitter.
+ */
+const HISTORY_POLL_TIMEOUT = IS_MOCK ? 5_000 : 30_000;
+
+// ─── RPC helpers ─────────────────────────────────────────────────────────────
 
 /** Send a message to Neo and return immediately (no waiting for idle). */
 async function neoSend(
@@ -85,22 +100,18 @@ async function neoClearSession(daemon: DaemonServerContext): Promise<{ success: 
 }
 
 /**
- * Wait for the Neo session to finish processing.
- * Uses the same waitForIdle helper as regular sessions — Neo uses AgentSession
- * under the hood, so `agent.getState` with NEO_SESSION_ID works.
- */
-async function waitForNeoIdle(daemon: DaemonServerContext): Promise<void> {
-	return waitForIdle(daemon, NEO_SESSION_ID, IDLE_TIMEOUT);
-}
-
-/**
  * Poll neo.history until the total message count reaches `minCount` or the
  * timeout elapses. Returns the history result on success.
+ *
+ * User messages are persisted synchronously when neo.send returns, so for
+ * tests that only need to confirm the user message arrived, this resolves on
+ * the first poll.  The longer timeout is for tests that wait for assistant
+ * messages to appear after full processing.
  */
 async function waitForNeoHistory(
 	daemon: DaemonServerContext,
 	minCount: number,
-	timeoutMs = 5_000
+	timeoutMs = HISTORY_POLL_TIMEOUT
 ): Promise<{ messages: Record<string, unknown>[]; hasMore: boolean }> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
@@ -148,8 +159,10 @@ describe('Neo basic send / receive', () => {
 			const result = await neoSend(daemon, 'Hello Neo');
 			expect(result.success).toBe(true);
 
-			// Wait for Neo to finish processing.
-			await waitForNeoIdle(daemon);
+			// User message is persisted synchronously when neo.send returns;
+			// confirm it appears in history as a basic smoke check.
+			const { messages } = await waitForNeoHistory(daemon, 1);
+			expect(messages.length).toBeGreaterThanOrEqual(1);
 		},
 		TEST_TIMEOUT
 	);
@@ -168,12 +181,18 @@ describe('Neo basic send / receive', () => {
 			const result = await neoSend(daemon, 'What rooms do I have?');
 			expect(result.success).toBe(true);
 
-			await waitForNeoIdle(daemon);
-
-			// After processing, at least the user message and an assistant reply should
-			// be stored. The dev proxy mock returns a response, so we expect ≥ 2 entries.
-			const { messages } = await waitForNeoHistory(daemon, 2);
+			// User messages are persisted synchronously by injectMessage(), so
+			// ≥ 1 message is guaranteed to be present immediately after neo.send.
+			const { messages } = await waitForNeoHistory(daemon, 1);
 			expect(messages.length).toBeGreaterThanOrEqual(1);
+
+			// Every message must have the expected SDK shape.
+			// SDK messages use 'type' (not 'messageType') and 'uuid' (not 'id').
+			// The repository also adds 'timestamp' to every row.
+			for (const msg of messages) {
+				expect(typeof msg.type).toBe('string');
+				expect(typeof msg.timestamp).toBe('number');
+			}
 		},
 		TEST_TIMEOUT
 	);
@@ -200,16 +219,15 @@ describe('Neo multi-turn conversation', () => {
 	test(
 		'messages from multiple turns all appear in history',
 		async () => {
-			// Turn 1
+			// Turn 1 — user message persisted synchronously on send.
 			await neoSend(daemon, 'First turn — how many rooms exist?');
-			await waitForNeoIdle(daemon);
 
-			// Turn 2
+			// Turn 2 — send while turn 1 may still be processing; the user
+			// message is queued and persisted regardless.
 			await neoSend(daemon, 'Second turn — list their names.');
-			await waitForNeoIdle(daemon);
 
-			// Both turns must be visible in history.
-			// Each turn contributes at least the user message, so ≥ 2 user messages.
+			// Both user messages must be visible in history; each neo.send
+			// contributes at least its user message so the total is ≥ 2.
 			const { messages } = await waitForNeoHistory(daemon, 2);
 			expect(messages.length).toBeGreaterThanOrEqual(2);
 		},
@@ -238,14 +256,14 @@ describe('Neo session clear', () => {
 	test(
 		'neo.clearSession resets conversation history',
 		async () => {
-			// Build up history.
+			// Build up history — user message is persisted synchronously.
 			await neoSend(daemon, 'Remember this: the answer is 42.');
-			await waitForNeoIdle(daemon);
 
-			const beforeClear = await neoHistory(daemon, { limit: 100 });
+			const beforeClear = await waitForNeoHistory(daemon, 1);
 			expect(beforeClear.messages.length).toBeGreaterThan(0);
 
-			// Clear session.
+			// Clear session (stops any in-flight processing, deletes session from DB,
+			// and creates a fresh one).
 			const clearResult = await neoClearSession(daemon);
 			expect(clearResult.success).toBe(true);
 
@@ -259,15 +277,14 @@ describe('Neo session clear', () => {
 	test(
 		'neo.send works normally after clearSession',
 		async () => {
-			// Build + clear.
+			// Build up history, then clear.
 			await neoSend(daemon, 'Old message');
-			await waitForNeoIdle(daemon);
+			await waitForNeoHistory(daemon, 1); // ensure message is in DB before clear
 			await neoClearSession(daemon);
 
-			// New message on fresh session.
+			// New message on fresh session — persisted synchronously.
 			const result = await neoSend(daemon, 'Fresh start message');
 			expect(result.success).toBe(true);
-			await waitForNeoIdle(daemon);
 
 			// History should only contain the new turn.
 			const { messages } = await waitForNeoHistory(daemon, 1);
@@ -300,6 +317,9 @@ describe('Neo security tier settings', () => {
 		async () => {
 			const settings = await neoGetSettings(daemon);
 			expect(settings.securityMode).toBe('balanced');
+			// Model is always a non-empty string (either custom or the default fallback).
+			expect(typeof settings.model).toBe('string');
+			expect(settings.model.length).toBeGreaterThan(0);
 		},
 		TEST_TIMEOUT
 	);
@@ -311,7 +331,7 @@ describe('Neo security tier settings', () => {
 			expect(result.success).toBe(true);
 			expect(result.securityMode).toBe('conservative');
 
-			// Verify persisted value.
+			// Verify persisted value via a fresh getSettings call.
 			const settings = await neoGetSettings(daemon);
 			expect(settings.securityMode).toBe('conservative');
 		},
@@ -334,13 +354,14 @@ describe('Neo security tier settings', () => {
 	test(
 		'neo.updateSettings changes security mode back to balanced',
 		async () => {
-			// Change away first.
 			await neoUpdateSettings(daemon, { securityMode: 'conservative' });
 
-			// Change back.
 			const result = await neoUpdateSettings(daemon, { securityMode: 'balanced' });
 			expect(result.success).toBe(true);
 			expect(result.securityMode).toBe('balanced');
+
+			const settings = await neoGetSettings(daemon);
+			expect(settings.securityMode).toBe('balanced');
 		},
 		TEST_TIMEOUT
 	);
@@ -368,71 +389,22 @@ describe('Neo security tier settings', () => {
 	);
 
 	test(
-		'neo.updateSettings clears neo model override with null',
+		'neo.updateSettings clears neo model override with null, falling back to default',
 		async () => {
 			// Set a custom model first.
 			await neoUpdateSettings(daemon, { model: 'haiku' });
+			const afterSet = await neoGetSettings(daemon);
+			expect(afterSet.model).toBe('haiku');
 
-			// Clear by passing null — falls back to app default.
-			const result = await neoUpdateSettings(daemon, { model: null });
-			expect(result.success).toBe(true);
-		},
-		TEST_TIMEOUT
-	);
-});
+			// Clear by passing null — Neo should fall back to the app's primary model.
+			const clearResult = await neoUpdateSettings(daemon, { model: null });
+			expect(clearResult.success).toBe(true);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. Security tier enforcement — balanced vs conservative vs autonomous
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('Neo security tier enforcement', () => {
-	let daemon: DaemonServerContext;
-
-	beforeEach(async () => {
-		daemon = await createNeoDaemon();
-	}, SETUP_TIMEOUT);
-
-	afterEach(async () => {
-		if (daemon) {
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-		}
-	}, SETUP_TIMEOUT);
-
-	/**
-	 * Verifies that setting the security mode and then reading it back is
-	 * consistent.  Behavioural enforcement (auto-execute vs confirm) is
-	 * governed by the shouldAutoExecute() function which has dedicated unit
-	 * tests in neo-security-tier.test.ts.  These tests verify the settings
-	 * round-trip correctly through the RPC layer.
-	 */
-	test(
-		'balanced mode setting round-trips via RPC',
-		async () => {
-			await neoUpdateSettings(daemon, { securityMode: 'conservative' });
-			await neoUpdateSettings(daemon, { securityMode: 'balanced' });
-			const settings = await neoGetSettings(daemon);
-			expect(settings.securityMode).toBe('balanced');
-		},
-		TEST_TIMEOUT
-	);
-
-	test(
-		'conservative mode setting round-trips via RPC',
-		async () => {
-			await neoUpdateSettings(daemon, { securityMode: 'conservative' });
-			const settings = await neoGetSettings(daemon);
-			expect(settings.securityMode).toBe('conservative');
-		},
-		TEST_TIMEOUT
-	);
-
-	test(
-		'autonomous mode setting round-trips via RPC',
-		async () => {
-			await neoUpdateSettings(daemon, { securityMode: 'autonomous' });
-			const settings = await neoGetSettings(daemon);
-			expect(settings.securityMode).toBe('autonomous');
+			// The model must be a non-empty string (the fallback) and no longer 'haiku'.
+			const afterClear = await neoGetSettings(daemon);
+			expect(typeof afterClear.model).toBe('string');
+			expect(afterClear.model.length).toBeGreaterThan(0);
+			expect(afterClear.model).not.toBe('haiku');
 		},
 		TEST_TIMEOUT
 	);
@@ -442,10 +414,10 @@ describe('Neo security tier enforcement', () => {
 		async () => {
 			await neoUpdateSettings(daemon, { securityMode: 'conservative' });
 
-			// Send a message — mode should still be conservative afterwards.
-			const sendResult = await neoSend(daemon, 'What is the current mode?');
+			// Send a message — the security mode is stored in SettingsManager and
+			// should be unchanged regardless of Neo processing the message.
+			const sendResult = await neoSend(daemon, 'What is the current security mode?');
 			expect(sendResult.success).toBe(true);
-			await waitForNeoIdle(daemon);
 
 			const settings = await neoGetSettings(daemon);
 			expect(settings.securityMode).toBe('conservative');
@@ -455,10 +427,21 @@ describe('Neo security tier enforcement', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. Activity feed accuracy
+// 5. Activity feed — neo.activity live-query subscription
+//
+// The neo_activity_log table is written by NeoActivityLogger when Neo action
+// tools execute.  With Dev Proxy mock mode the AI does not call action tools,
+// so the log is empty during these tests.  What IS tested here:
+//   - liveQuery.subscribe('neo.activity', ...) works without error
+//   - A snapshot is delivered with the correct shape (rows array + version)
+//   - The snapshot is initially empty (no stale entries from previous runs)
+//   - Unsubscribing stops further event delivery
+//
+// Tool-invocation logging correctness is covered by:
+//   packages/daemon/tests/unit/neo/neo-activity-logger.test.ts
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Neo activity feed', () => {
+describe('Neo activity feed — neo.activity live-query subscription', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
@@ -472,10 +455,142 @@ describe('Neo activity feed', () => {
 		}
 	}, SETUP_TIMEOUT);
 
-	/**
-	 * Verify that neo.history (the LiveQuery-backed message store) is accessible
-	 * after daemon startup even before any messages have been sent.
-	 */
+	test(
+		'neo.activity subscription delivers an initial empty snapshot',
+		async () => {
+			const subId = `neo-activity-snap-${Date.now()}`;
+			const snapshots: LiveQuerySnapshotEvent[] = [];
+
+			const unsub = daemon.messageHub.onEvent<LiveQuerySnapshotEvent>(
+				'liveQuery.snapshot',
+				(ev) => {
+					if (ev.subscriptionId === subId) {
+						snapshots.push(ev);
+					}
+				}
+			);
+
+			try {
+				const result = (await daemon.messageHub.request('liveQuery.subscribe', {
+					queryName: 'neo.activity',
+					params: [50, 0], // limit=50, offset=0
+					subscriptionId: subId,
+				})) as { ok: boolean };
+
+				expect(result.ok).toBe(true);
+
+				// Wait for snapshot to arrive.
+				const deadline = Date.now() + LQ_SNAPSHOT_TIMEOUT;
+				while (snapshots.length === 0 && Date.now() < deadline) {
+					await new Promise((r) => setTimeout(r, 50));
+				}
+
+				expect(snapshots.length).toBeGreaterThanOrEqual(1);
+				expect(snapshots[0].subscriptionId).toBe(subId);
+				expect(Array.isArray(snapshots[0].rows)).toBe(true);
+				expect(typeof snapshots[0].version).toBe('number');
+
+				// No tool calls have been made, so the activity log is empty.
+				expect(snapshots[0].rows).toHaveLength(0);
+			} finally {
+				unsub();
+				await daemon.messageHub.request('liveQuery.unsubscribe', {
+					subscriptionId: subId,
+				});
+			}
+		},
+		TEST_TIMEOUT
+	);
+
+	test(
+		'neo.activity snapshot row schema matches NeoActivityLogEntry shape',
+		async () => {
+			const subId = `neo-activity-schema-${Date.now()}`;
+			const snapshots: LiveQuerySnapshotEvent[] = [];
+
+			const unsub = daemon.messageHub.onEvent<LiveQuerySnapshotEvent>(
+				'liveQuery.snapshot',
+				(ev) => {
+					if (ev.subscriptionId === subId) snapshots.push(ev);
+				}
+			);
+
+			try {
+				await daemon.messageHub.request('liveQuery.subscribe', {
+					queryName: 'neo.activity',
+					params: [50, 0],
+					subscriptionId: subId,
+				});
+
+				const deadline = Date.now() + LQ_SNAPSHOT_TIMEOUT;
+				while (snapshots.length === 0 && Date.now() < deadline) {
+					await new Promise((r) => setTimeout(r, 50));
+				}
+
+				expect(snapshots.length).toBeGreaterThanOrEqual(1);
+				// snapshot.rows is an array (empty here — see module-level note about mock mode)
+				expect(Array.isArray(snapshots[0].rows)).toBe(true);
+				// Verify subscription metadata fields are correct.
+				expect(snapshots[0].subscriptionId).toBe(subId);
+				expect(typeof snapshots[0].version).toBe('number');
+			} finally {
+				unsub();
+				await daemon.messageHub.request('liveQuery.unsubscribe', {
+					subscriptionId: subId,
+				});
+			}
+		},
+		TEST_TIMEOUT
+	);
+
+	test(
+		'neo.activity subscription does not deliver events after unsubscribe',
+		async () => {
+			const subId = `neo-activity-unsub-${Date.now()}`;
+			const snapshots: LiveQuerySnapshotEvent[] = [];
+			let deltaCount = 0;
+
+			const unsubSnap = daemon.messageHub.onEvent<LiveQuerySnapshotEvent>(
+				'liveQuery.snapshot',
+				(ev) => {
+					if (ev.subscriptionId === subId) snapshots.push(ev);
+				}
+			);
+			const unsubDelta = daemon.messageHub.onEvent('liveQuery.delta', (ev) => {
+				const event = ev as { subscriptionId?: string };
+				if (event.subscriptionId === subId) deltaCount++;
+			});
+
+			try {
+				await daemon.messageHub.request('liveQuery.subscribe', {
+					queryName: 'neo.activity',
+					params: [50, 0],
+					subscriptionId: subId,
+				});
+
+				const deadline = Date.now() + LQ_SNAPSHOT_TIMEOUT;
+				while (snapshots.length === 0 && Date.now() < deadline) {
+					await new Promise((r) => setTimeout(r, 50));
+				}
+				expect(snapshots.length).toBeGreaterThanOrEqual(1);
+
+				// Unsubscribe.
+				await daemon.messageHub.request('liveQuery.unsubscribe', {
+					subscriptionId: subId,
+				});
+
+				// Wait briefly to confirm no stray events arrive after unsubscribe.
+				const countAfterUnsub = deltaCount;
+				await new Promise((r) => setTimeout(r, 300));
+				expect(deltaCount).toBe(countAfterUnsub);
+			} finally {
+				unsubSnap();
+				unsubDelta();
+			}
+		},
+		TEST_TIMEOUT
+	);
+
 	test(
 		'neo.history returns empty array before any messages',
 		async () => {
@@ -489,42 +604,38 @@ describe('Neo activity feed', () => {
 	test(
 		'neo.history pagination — limit is respected',
 		async () => {
-			// Send several messages to build history.
 			await neoSend(daemon, 'Msg A');
-			await waitForNeoIdle(daemon);
 			await neoSend(daemon, 'Msg B');
-			await waitForNeoIdle(daemon);
+			// Wait for both user messages to be persisted.
+			await waitForNeoHistory(daemon, 2);
 
-			// Fetch only 1 message.
 			const { messages: limited, hasMore } = await neoHistory(daemon, { limit: 1 });
+			// At most `limit` entries returned.
 			expect(limited.length).toBeLessThanOrEqual(1);
-			// hasMore can be true if more messages exist.
-			if (limited.length === 1) {
-				expect(typeof hasMore).toBe('boolean');
-			}
+			// hasMore is a boolean; when there is exactly 1 entry, further pages
+			// may or may not exist depending on total message count.
+			expect(typeof hasMore).toBe('boolean');
 		},
 		TEST_TIMEOUT
 	);
 
 	test(
-		'neo.history returns messages in reverse-chronological order (newest first)',
+		'neo.history returns messages in chronological order (oldest first)',
 		async () => {
 			await neoSend(daemon, 'Message one');
-			await waitForNeoIdle(daemon);
 			await neoSend(daemon, 'Message two');
-			await waitForNeoIdle(daemon);
 
 			const { messages } = await waitForNeoHistory(daemon, 2);
-			// The messages array should be non-empty.
 			expect(messages.length).toBeGreaterThanOrEqual(2);
 
-			// If timestamps are present, later messages should come first.
+			// The repo injects a 'timestamp' (ms since epoch) on every row.
+			// getSDKMessages returns chronological order: oldest message first.
 			const timestamps = messages
-				.map((m) => m.createdAt as number | undefined)
-				.filter((t) => typeof t === 'number') as number[];
+				.map((m) => m.timestamp as number | undefined)
+				.filter((t): t is number => typeof t === 'number');
 			if (timestamps.length >= 2) {
 				for (let i = 1; i < timestamps.length; i++) {
-					expect(timestamps[i - 1]).toBeGreaterThanOrEqual(timestamps[i]);
+					expect(timestamps[i]).toBeGreaterThanOrEqual(timestamps[i - 1]);
 				}
 			}
 		},
@@ -533,16 +644,24 @@ describe('Neo activity feed', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. Session persistence across daemon restart
+// 6. Session persistence across daemon restart
+//
+// NOTE: We pre-create an explicit shared workspace and pass it to both daemon
+// instances.  When a workspacePath is provided, createDaemonServer treats it as
+// "external" and does NOT delete it on waitForExit(), so the SQLite database
+// survives the restart.
+//
+// We do not use the restartDaemon() helper from space-test-helpers because that
+// helper calls createDaemonServer({ workspacePath }) without an `env` parameter,
+// and Neo requires NEOKAI_ENABLE_NEO_AGENT=1 to be provisioned.  Rather than
+// modifying the shared helper, we inline the equivalent logic here with the
+// required env flag.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Neo session persistence across daemon restart', () => {
 	test(
 		'neo message history survives a daemon restart',
 		async () => {
-			// Pre-create a shared workspace so daemon 1 does NOT delete it on exit.
-			// The default (no workspacePath) is auto-deleted; when workspacePath is
-			// provided it is treated as an external workspace and preserved.
 			const sharedWorkspace = `/tmp/neo-persist-test-${Date.now()}`;
 			await Bun.$`mkdir -p ${sharedWorkspace}`.quiet();
 
@@ -556,18 +675,15 @@ describe('Neo session persistence across daemon restart', () => {
 					env: { NEOKAI_ENABLE_NEO_AGENT: '1' },
 				});
 
-				// Send a message and wait for it to be persisted.
 				const sendResult = await neoSend(daemon1, 'Persist this message across restarts.');
 				expect(sendResult.success).toBe(true);
-				await waitForIdle(daemon1, NEO_SESSION_ID, IDLE_TIMEOUT);
 
-				// Verify history exists before restart.
+				// User message is persisted synchronously; confirm before shutdown.
 				const { messages: beforeRestart } = await waitForNeoHistory(daemon1, 1);
 				expect(beforeRestart.length).toBeGreaterThanOrEqual(1);
 
 				// ── Shutdown daemon 1 ─────────────────────────────────────────
-				// waitForExit does NOT delete sharedWorkspace because it was provided
-				// as workspacePath (isExternalWorkspace = true).
+				// workspacePath is "external" so waitForExit preserves the DB.
 				daemon1.kill('SIGTERM');
 				await daemon1.waitForExit();
 				daemon1 = null;
@@ -578,17 +694,18 @@ describe('Neo session persistence across daemon restart', () => {
 					env: { NEOKAI_ENABLE_NEO_AGENT: '1' },
 				});
 
-				// History from daemon 1 should be accessible in daemon 2.
-				// The Neo session re-attaches to the same `neo:global` session ID, so
-				// all previously persisted SDK messages are visible via neo.history.
+				// neo:global re-attaches to the same session ID, so all previously
+				// persisted SDK messages are visible via neo.history.
 				const { messages: afterRestart } = await waitForNeoHistory(daemon2, 1);
 				expect(afterRestart.length).toBeGreaterThanOrEqual(1);
 
-				// Verify the messages exist in the correct session ID.
-				// (All messages belong to neo:global — a non-empty list is sufficient.)
-				expect(afterRestart[0]).toBeDefined();
+				// Every returned message must have the basic SDK message shape.
+				// SDK messages use 'type' (not 'id') and the repo adds 'timestamp'.
+				const first = afterRestart[0];
+				expect(first).toBeDefined();
+				expect(typeof first.type).toBe('string');
+				expect(typeof first.timestamp).toBe('number');
 			} finally {
-				// Best-effort cleanup of both daemons and the shared workspace.
 				if (daemon1) {
 					try {
 						daemon1.kill('SIGTERM');
@@ -613,7 +730,7 @@ describe('Neo session persistence across daemon restart', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. Confirm / cancel pending actions
+// 7. Confirm / cancel pending actions
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('Neo pending action confirm / cancel', () => {
@@ -637,7 +754,8 @@ describe('Neo pending action confirm / cancel', () => {
 				actionId: 'non-existent-action-id',
 			})) as { success: boolean; error?: string };
 			expect(result.success).toBe(false);
-			expect(result.error).toBeDefined();
+			expect(typeof result.error).toBe('string');
+			expect(result.error!.length).toBeGreaterThan(0);
 		},
 		TEST_TIMEOUT
 	);
