@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { getNextRunAt } from '../../../src/lib/room/runtime/cron-utils';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
