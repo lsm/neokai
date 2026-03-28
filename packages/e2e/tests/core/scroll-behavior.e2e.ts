@@ -43,7 +43,7 @@ test.describe('Auto-Scroll Toggle', () => {
 
 		// Send a message to enable the auto-scroll toggle
 		await messageInput.fill('Hello');
-		await page.locator('button[aria-label="Send message"]').click();
+		await page.locator('button[aria-label="Send message"]').first().click();
 
 		// Wait for response to start
 		await page.waitForTimeout(2000);

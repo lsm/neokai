@@ -274,7 +274,7 @@ test.describe('no loading flash when user sends a message (regression)', () => {
 		await expect(page.locator('text=Pre-existing message beta')).toBeVisible({ timeout: 10000 });
 
 		// Type a message in the human input area (no data-testid on <textarea> in prod)
-		const textarea = page.locator('textarea');
+		const textarea = page.locator('textarea').first();
 		await textarea.fill('Hello, please continue working');
 
 		// Pre-existing messages must still be visible while typing (no wipe on input)

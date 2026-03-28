@@ -67,7 +67,7 @@ export async function createSessionWithMessage(page: Page): Promise<string> {
 	const sessionId = await createSessionViaUI(page);
 
 	// Send a simple message
-	const textarea = page.locator('textarea[placeholder*="Ask"]');
+	const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 	await textarea.fill('Hello, say "test message acknowledged"');
 	await page.keyboard.press('Meta+Enter');
 

@@ -32,7 +32,7 @@ test.describe('Smoke: Message Send', () => {
 		await expect(messageInput).toBeVisible({ timeout: 15000 });
 
 		await messageInput.fill('Hello');
-		await page.locator('button[aria-label="Send message"]').click();
+		await page.locator('button[aria-label="Send message"]').first().click();
 
 		// Verify message appears in UI
 		await expect(page.getByText('Hello').first()).toBeVisible();

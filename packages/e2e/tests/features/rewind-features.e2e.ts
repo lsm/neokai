@@ -26,9 +26,8 @@ const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
  * exits before responding, waits for the send button to reappear (agent idle).
  */
 async function sendMessage(page: Page, messageText: string): Promise<void> {
-	const messageInput = 'textarea[placeholder*="Ask"]';
-	await page.fill(messageInput, messageText);
-	await page.click('button[aria-label*="Send message"]');
+	await page.locator('textarea[placeholder*="Ask"]').first().fill(messageText);
+	await page.locator('button[aria-label*="Send message"]').first().click();
 
 	// Race between: full response completes OR send button returns (SDK crash recovery)
 	await Promise.race([

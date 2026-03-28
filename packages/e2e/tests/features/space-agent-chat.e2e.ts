@@ -18,6 +18,25 @@ async function createSpaceViaRpc(
 	workspacePath: string,
 	name: string
 ): Promise<string> {
+	// Pre-creation cleanup: delete any existing space at this path (including archived)
+	try {
+		await page.evaluate(async (path) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) return;
+			const spaces = (await hub.request('space.list', { includeArchived: true })) as Array<{
+				id: string;
+				workspacePath: string;
+			}>;
+			for (const space of spaces) {
+				if (space.workspacePath === path) {
+					await hub.request('space.delete', { id: space.id });
+				}
+			}
+		}, workspacePath);
+	} catch {
+		// Best-effort cleanup
+	}
+
 	const id = await page.evaluate(
 		async ({ workspacePath, name }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;

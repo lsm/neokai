@@ -50,7 +50,7 @@ test.describe('Error Scenarios', () => {
 		await expect(messageInput).toBeDisabled({ timeout: 5000 });
 
 		// Send button should also be disabled
-		const sendButton = page.locator('button[aria-label="Send message"]');
+		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await expect(sendButton).toBeDisabled();
 
 		// Restore network
