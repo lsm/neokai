@@ -67,6 +67,7 @@ export interface NeoActivityEntry {
 export interface PendingConfirmation {
 	actionId: string;
 	description: string;
+	riskLevel?: 'low' | 'medium' | 'high';
 }
 
 export type NeoActiveTab = 'chat' | 'activity';
