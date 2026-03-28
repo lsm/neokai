@@ -81,8 +81,39 @@ export class SpaceWorktreeManager {
 		const worktreePath = join(worktreesDir, slug);
 		const branchName = `space/${slug}`;
 
-		// If a stale branch with the same name exists (from a previous crashed run),
-		// delete it so we can recreate it cleanly.
+		// --- Stale cleanup: remove directory first, then free the branch ---
+		// Order matters: git worktree prune only removes entries whose directories
+		// are gone, so we must remove the directory BEFORE pruning + branch deletion.
+
+		// Step 1: remove the stale worktree directory (if present).
+		if (existsSync(worktreePath)) {
+			this.logger.warn(
+				`Stale worktree directory detected at ${worktreePath} — removing before recreating`
+			);
+			try {
+				// Prefer `git worktree remove --force` so git deregisters the worktree
+				// atomically; fall back to plain rmSync if that fails.
+				execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
+					cwd: space.workspacePath,
+					timeout: 30_000,
+				});
+			} catch {
+				rmSync(worktreePath, { recursive: true, force: true });
+			}
+		}
+
+		// Step 2: prune git's internal worktree state (now that the directory is gone
+		// the stale entry will be removed, freeing the branch reference).
+		try {
+			execFileSync('git', ['worktree', 'prune'], {
+				cwd: space.workspacePath,
+				timeout: 30_000,
+			});
+		} catch {
+			// Non-fatal
+		}
+
+		// Step 3: delete the stale branch so `git worktree add -b` can create it fresh.
 		try {
 			const branches = execFileSync('git', ['branch', '--list', branchName], {
 				cwd: space.workspacePath,
@@ -91,48 +122,16 @@ export class SpaceWorktreeManager {
 			});
 			if (branches.trim().length > 0) {
 				this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
-				try {
-					execFileSync('git', ['branch', '-D', branchName], {
-						cwd: space.workspacePath,
-						timeout: 30_000,
-					});
-				} catch {
-					// Branch may be in use by a worktree from a stale git reference.
-					// Prune stale worktree entries (those whose paths no longer exist),
-					// then retry the deletion.
-					try {
-						execFileSync('git', ['worktree', 'prune'], {
-							cwd: space.workspacePath,
-							timeout: 30_000,
-						});
-						execFileSync('git', ['branch', '-D', branchName], {
-							cwd: space.workspacePath,
-							timeout: 30_000,
-						});
-					} catch (retryErr) {
-						// Still failed — branch is in use by an active worktree from another
-						// context (e.g., a concurrent agent run). Log and continue; the
-						// worktree add below will fail and throw a clear error.
-						this.logger.warn(
-							`Failed to delete stale branch ${branchName} after worktree prune: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`
-						);
-					}
-				}
+				execFileSync('git', ['branch', '-D', branchName], {
+					cwd: space.workspacePath,
+					timeout: 30_000,
+				});
 			}
 		} catch (err) {
-			// Non-fatal: branch check failure should not block worktree creation
+			// Non-fatal: if branch deletion fails the worktree add will fail with a clear error.
 			this.logger.warn(
-				`Failed to check stale branch ${branchName}: ${err instanceof Error ? err.message : String(err)}`
+				`Failed to clean up stale branch ${branchName}: ${err instanceof Error ? err.message : String(err)}`
 			);
-		}
-
-		// If a stale directory exists at the worktree path (from a previous crashed run),
-		// remove it so git worktree add can proceed cleanly.
-		if (existsSync(worktreePath)) {
-			this.logger.warn(
-				`Stale directory detected at ${worktreePath} — removing before recreating worktree`
-			);
-			rmSync(worktreePath, { recursive: true, force: true });
 		}
 
 		try {
@@ -151,6 +150,14 @@ export class SpaceWorktreeManager {
 				{
 					maxRetries: MAX_NETWORK_RETRIES,
 					delaysMs: NETWORK_RETRY_DELAYS_MS,
+					// Do not retry permanent git errors ("already exists", "fatal:", etc.)
+					// — only transient failures like timeouts or network blips benefit from retry.
+					isRetryable: (err: unknown) => {
+						const msg = err instanceof Error ? err.message : String(err);
+						if (msg.includes('already exists')) return false;
+						if (msg.toLowerCase().includes('fatal:')) return false;
+						return true;
+					},
 					onRetry: (attempt, err) => {
 						this.logger.warn(
 							`git worktree add failed (attempt ${attempt}), retrying: ` +
