@@ -17,7 +17,14 @@
  * - set_task_status: status transition
  * - approve_task: happy path, task not in review error, runtime unavailable
  * - reject_task: happy path, task not in review error, runtime unavailable
- * - MCP server: all 11 tools are registered
+ * - create_space: auto-execute and confirmation paths, unavailable guard
+ * - update_space: auto-execute and no-op guard
+ * - delete_space: auto-execute and confirmation paths
+ * - start_workflow_run: auto-execute and confirmation paths
+ * - cancel_workflow_run: happy path, already-cancelled, completed error, unavailable guard
+ * - approve_gate: happy path, idempotent, rejection override, terminal-run error
+ * - reject_gate: happy path, idempotent, reason propagation, terminal-run error
+ * - MCP server: all 18 tools are registered
  */
 
 import { describe, expect, it, beforeEach } from 'bun:test';
@@ -30,6 +37,12 @@ import {
 	type NeoActionTaskManager,
 	type NeoActionRuntimeService,
 	type NeoActionManagerFactory,
+	type NeoActionSpaceHandlers,
+	type NeoActionWorkflowRunRepository,
+	type NeoActionSpaceTaskManagerFactory,
+	type NeoActionGateDataRepository,
+	type NeoWorkflowRun,
+	type NeoSpaceTask,
 } from '../../../src/lib/neo/tools/neo-action-tools';
 import { PendingActionStore } from '../../../src/lib/neo/security-tier';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
@@ -210,6 +223,99 @@ function makeManagerFactory(
 // Config builder
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Space/Workflow mock factories
+// ---------------------------------------------------------------------------
+
+type SpaceToolResult = { content: Array<{ type: 'text'; text: string }> };
+
+function makeSpaceHandlers(override: Partial<NeoActionSpaceHandlers> = {}): NeoActionSpaceHandlers {
+	const defaultResult = (): Promise<SpaceToolResult> =>
+		Promise.resolve({
+			content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
+		});
+	return {
+		create_space: override.create_space ?? ((_args) => defaultResult()),
+		update_space: override.update_space ?? ((_args) => defaultResult()),
+		delete_space: override.delete_space ?? ((_args) => defaultResult()),
+		start_workflow_run: override.start_workflow_run ?? ((_args) => defaultResult()),
+	};
+}
+
+function makeWorkflowRun(overrides: Partial<NeoWorkflowRun> = {}): NeoWorkflowRun {
+	return {
+		id: 'run-1',
+		spaceId: 'space-1',
+		status: 'in_progress',
+		failureReason: null,
+		...overrides,
+	};
+}
+
+function makeWorkflowRunRepo(
+	runs: NeoWorkflowRun[] = []
+): NeoActionWorkflowRunRepository & { _runs: Map<string, NeoWorkflowRun> } {
+	const store = new Map<string, NeoWorkflowRun>(runs.map((r) => [r.id, r]));
+	return {
+		_runs: store,
+		getRun: (id) => store.get(id) ?? null,
+		transitionStatus: (id, to) => {
+			const run = store.get(id);
+			if (!run) throw new Error(`Run not found: ${id}`);
+			const updated = { ...run, status: to };
+			store.set(id, updated);
+			return updated;
+		},
+		updateRun: (id, params) => {
+			const run = store.get(id);
+			if (!run) return null;
+			const updated = { ...run, ...params };
+			store.set(id, updated);
+			return updated;
+		},
+	};
+}
+
+function makeSpaceTask(overrides: Partial<NeoSpaceTask> = {}): NeoSpaceTask {
+	return { id: 'stask-1', status: 'pending', ...overrides };
+}
+
+function makeSpaceTaskManagerFactory(
+	tasks: NeoSpaceTask[] = []
+): NeoActionSpaceTaskManagerFactory & { _cancelledIds: string[] } {
+	const cancelledIds: string[] = [];
+	return {
+		_cancelledIds: cancelledIds,
+		getTaskManager: (_spaceId) => ({
+			listTasksByWorkflowRun: async (_runId) => tasks,
+			cancelTask: async (taskId) => {
+				cancelledIds.push(taskId);
+			},
+		}),
+	};
+}
+
+function makeGateDataRepo(): NeoActionGateDataRepository & {
+	_store: Map<string, Record<string, unknown>>;
+} {
+	const store = new Map<string, Record<string, unknown>>();
+	return {
+		_store: store,
+		get: (runId, gateId) => {
+			const key = `${runId}:${gateId}`;
+			const data = store.get(key);
+			return data ? { data } : null;
+		},
+		merge: (runId, gateId, partial) => {
+			const key = `${runId}:${gateId}`;
+			const existing = store.get(key) ?? {};
+			const merged = { ...existing, ...partial };
+			store.set(key, merged);
+			return { data: merged };
+		},
+	};
+}
+
 function makeConfig(
 	opts: {
 		rooms?: Room[];
@@ -220,6 +326,11 @@ function makeConfig(
 		workspaceRoot?: string;
 		/** Simulate active session counts per room ID for delete_room escalation tests */
 		activeSessionCounts?: Map<string, number>;
+		spaceHandlers?: NeoActionSpaceHandlers;
+		workflowRunRepo?: NeoActionWorkflowRunRepository;
+		spaceTaskManagerFactory?: NeoActionSpaceTaskManagerFactory;
+		gateDataRepo?: NeoActionGateDataRepository;
+		onGateChanged?: (runId: string, gateId: string) => Promise<void> | void;
 	} = {}
 ): NeoActionToolsConfig {
 	const room = makeRoom();
@@ -246,6 +357,11 @@ function makeConfig(
 		pendingStore: new PendingActionStore(),
 		workspaceRoot: opts.workspaceRoot,
 		getSecurityMode: () => opts.securityMode ?? 'autonomous',
+		spaceHandlers: opts.spaceHandlers,
+		workflowRunRepo: opts.workflowRunRepo,
+		spaceTaskManagerFactory: opts.spaceTaskManagerFactory,
+		gateDataRepo: opts.gateDataRepo,
+		onGateChanged: opts.onGateChanged,
 	};
 }
 
@@ -942,6 +1058,525 @@ describe('reject_task', () => {
 });
 
 // ---------------------------------------------------------------------------
+// create_space
+// ---------------------------------------------------------------------------
+
+describe('create_space', () => {
+	it('delegates to spaceHandlers in autonomous mode', async () => {
+		let called = false;
+		const handlers = makeSpaceHandlers({
+			create_space: async (args) => {
+				called = true;
+				return {
+					content: [{ type: 'text', text: JSON.stringify({ success: true, name: args.name }) }],
+				};
+			},
+		});
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'autonomous' });
+		const { create_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(await create_space({ name: 'My Space', workspace_path: '/ws' }));
+		expect(called).toBe(true);
+		expect(result.success).toBe(true);
+		expect(result.name).toBe('My Space');
+	});
+
+	it('returns confirmation in balanced mode (low risk — auto-executes)', async () => {
+		// create_space is low risk, so balanced mode auto-executes it too
+		const handlers = makeSpaceHandlers();
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'balanced' });
+		const { create_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await create_space({ name: 'Test Space', workspace_path: '/workspace' })
+		);
+		expect(result.success).toBe(true);
+	});
+
+	it('requires confirmation in conservative mode', async () => {
+		const handlers = makeSpaceHandlers();
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'conservative' });
+		const { create_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await create_space({ name: 'Test Space', workspace_path: '/workspace' })
+		);
+		expect(result.confirmationRequired).toBe(true);
+		expect(result.pendingActionId).toBeTruthy();
+	});
+
+	it('returns error when spaceHandlers not configured', async () => {
+		const config = makeConfig({ securityMode: 'autonomous' });
+		const { create_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(await create_space({ name: 'Test', workspace_path: '/ws' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// update_space
+// ---------------------------------------------------------------------------
+
+describe('update_space', () => {
+	it('delegates to spaceHandlers in autonomous mode', async () => {
+		let calledWith: unknown;
+		const handlers = makeSpaceHandlers({
+			update_space: async (args) => {
+				calledWith = args;
+				return { content: [{ type: 'text', text: JSON.stringify({ success: true }) }] };
+			},
+		});
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'autonomous' });
+		const { update_space } = createNeoActionToolHandlers(config);
+		await update_space({ space_id: 'space-1', name: 'New Name' });
+		expect((calledWith as Record<string, unknown>).name).toBe('New Name');
+	});
+
+	it('returns error when no update fields provided', async () => {
+		const config = makeConfig({ spaceHandlers: makeSpaceHandlers(), securityMode: 'autonomous' });
+		const { update_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_space({ space_id: 'space-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('No update fields');
+	});
+
+	it('returns error when spaceHandlers not configured', async () => {
+		const config = makeConfig({ securityMode: 'autonomous' });
+		const { update_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_space({ space_id: 'space-1', name: 'x' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not available');
+	});
+
+	it('auto-executes in balanced mode (low risk)', async () => {
+		const handlers = makeSpaceHandlers();
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'balanced' });
+		const { update_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(await update_space({ space_id: 'space-1', name: 'New Name' }));
+		expect(result.success).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// delete_space
+// ---------------------------------------------------------------------------
+
+describe('delete_space', () => {
+	it('delegates to spaceHandlers in autonomous mode', async () => {
+		let calledId = '';
+		const handlers = makeSpaceHandlers({
+			delete_space: async (args) => {
+				calledId = args.space_id;
+				return {
+					content: [{ type: 'text', text: JSON.stringify({ success: true, deleted: true }) }],
+				};
+			},
+		});
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'autonomous' });
+		const { delete_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_space({ space_id: 'space-42' }));
+		expect(calledId).toBe('space-42');
+		expect(result.success).toBe(true);
+		expect(result.deleted).toBe(true);
+	});
+
+	it('requires confirmation in balanced mode (medium risk)', async () => {
+		const handlers = makeSpaceHandlers();
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'balanced' });
+		const { delete_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_space({ space_id: 'space-1' }));
+		expect(result.confirmationRequired).toBe(true);
+		expect(result.riskLevel).toBe('medium');
+	});
+
+	it('returns error when spaceHandlers not configured', async () => {
+		const config = makeConfig({ securityMode: 'autonomous' });
+		const { delete_space } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_space({ space_id: 'space-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// start_workflow_run
+// ---------------------------------------------------------------------------
+
+describe('start_workflow_run', () => {
+	it('delegates to spaceHandlers in autonomous mode', async () => {
+		let calledArgs: unknown;
+		const handlers = makeSpaceHandlers({
+			start_workflow_run: async (args) => {
+				calledArgs = args;
+				return {
+					content: [
+						{ type: 'text', text: JSON.stringify({ success: true, run: { id: 'run-1' } }) },
+					],
+				};
+			},
+		});
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'autonomous' });
+		const { start_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await start_workflow_run({ workflow_id: 'wf-1', title: 'Test Run', space_id: 'space-1' })
+		);
+		expect((calledArgs as Record<string, unknown>).workflow_id).toBe('wf-1');
+		expect(result.run.id).toBe('run-1');
+	});
+
+	it('auto-executes in balanced mode (low risk)', async () => {
+		const handlers = makeSpaceHandlers();
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'balanced' });
+		const { start_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await start_workflow_run({ workflow_id: 'wf-1', title: 'Test Run' })
+		);
+		expect(result.success).toBe(true);
+	});
+
+	it('requires confirmation in conservative mode', async () => {
+		const handlers = makeSpaceHandlers();
+		const config = makeConfig({ spaceHandlers: handlers, securityMode: 'conservative' });
+		const { start_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await start_workflow_run({ workflow_id: 'wf-1', title: 'Test Run' })
+		);
+		expect(result.confirmationRequired).toBe(true);
+	});
+
+	it('returns error when spaceHandlers not configured', async () => {
+		const config = makeConfig({ securityMode: 'autonomous' });
+		const { start_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(await start_workflow_run({ workflow_id: 'wf-1', title: 'x' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// cancel_workflow_run
+// ---------------------------------------------------------------------------
+
+describe('cancel_workflow_run', () => {
+	it('cancels active tasks and transitions run to cancelled', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const runRepo = makeWorkflowRunRepo([run]);
+		const tasks = [
+			makeSpaceTask({ id: 'st-1', status: 'pending' }),
+			makeSpaceTask({ id: 'st-2', status: 'in_progress' }),
+			makeSpaceTask({ id: 'st-3', status: 'completed' }),
+		];
+		const taskFactory = makeSpaceTaskManagerFactory(tasks);
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			spaceTaskManagerFactory: taskFactory,
+		});
+		const { cancel_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(await cancel_workflow_run({ run_id: 'run-1' }));
+		expect(result.success).toBe(true);
+		expect(result.runId).toBe('run-1');
+		// pending and in_progress should be cancelled; completed is skipped
+		expect(taskFactory._cancelledIds).toContain('st-1');
+		expect(taskFactory._cancelledIds).toContain('st-2');
+		expect(taskFactory._cancelledIds).not.toContain('st-3');
+		expect(runRepo._runs.get('run-1')?.status).toBe('cancelled');
+	});
+
+	it('returns success with alreadyCancelled when run is already cancelled', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'cancelled' });
+		const runRepo = makeWorkflowRunRepo([run]);
+		const taskFactory = makeSpaceTaskManagerFactory();
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			spaceTaskManagerFactory: taskFactory,
+		});
+		const { cancel_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(await cancel_workflow_run({ run_id: 'run-1' }));
+		expect(result.success).toBe(true);
+		expect(result.alreadyCancelled).toBe(true);
+	});
+
+	it('returns error when run is completed', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'completed' });
+		const runRepo = makeWorkflowRunRepo([run]);
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			spaceTaskManagerFactory: makeSpaceTaskManagerFactory(),
+		});
+		const { cancel_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(await cancel_workflow_run({ run_id: 'run-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Cannot cancel a completed');
+	});
+
+	it('returns error when run not found', async () => {
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo(),
+			spaceTaskManagerFactory: makeSpaceTaskManagerFactory(),
+		});
+		const { cancel_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(await cancel_workflow_run({ run_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not found');
+	});
+
+	it('requires confirmation in balanced mode (medium risk)', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const config = makeConfig({
+			securityMode: 'balanced',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			spaceTaskManagerFactory: makeSpaceTaskManagerFactory(),
+		});
+		const { cancel_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(await cancel_workflow_run({ run_id: 'run-1' }));
+		expect(result.confirmationRequired).toBe(true);
+		expect(result.riskLevel).toBe('medium');
+	});
+
+	it('returns error when workflowRunRepo not configured', async () => {
+		const config = makeConfig({ securityMode: 'autonomous' });
+		const { cancel_workflow_run } = createNeoActionToolHandlers(config);
+		const result = parseResult(await cancel_workflow_run({ run_id: 'run-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// approve_gate
+// ---------------------------------------------------------------------------
+
+describe('approve_gate', () => {
+	it('writes approved gate data', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const runRepo = makeWorkflowRunRepo([run]);
+		const gateRepo = makeGateDataRepo();
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			gateDataRepo: gateRepo,
+		});
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+		expect(result.success).toBe(true);
+		expect(result.gateData.approved).toBe(true);
+		expect(result.gateData.approvedAt).toBeDefined();
+	});
+
+	it('calls onGateChanged after approval', async () => {
+		let notifiedRun = '';
+		let notifiedGate = '';
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: makeGateDataRepo(),
+			onGateChanged: (runId, gateId) => {
+				notifiedRun = runId;
+				notifiedGate = gateId;
+			},
+		});
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' });
+		expect(notifiedRun).toBe('run-1');
+		expect(notifiedGate).toBe('gate-1');
+	});
+
+	it('transitions rejected run back to in_progress', async () => {
+		const run = makeWorkflowRun({
+			id: 'run-1',
+			status: 'needs_attention',
+			failureReason: 'humanRejected',
+		});
+		const runRepo = makeWorkflowRunRepo([run]);
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			gateDataRepo: makeGateDataRepo(),
+		});
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' });
+		expect(runRepo._runs.get('run-1')?.status).toBe('in_progress');
+		expect(runRepo._runs.get('run-1')?.failureReason).toBeNull();
+	});
+
+	it('is idempotent when already approved', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const gateRepo = makeGateDataRepo();
+		// Pre-populate approved state
+		gateRepo.merge('run-1', 'gate-1', { approved: true, approvedAt: 123 });
+		let delegateCalls = 0;
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: gateRepo,
+			onGateChanged: () => {
+				delegateCalls++;
+			},
+		});
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+		expect(result.success).toBe(true);
+		// onGateChanged should NOT be called for an idempotent approval
+		expect(delegateCalls).toBe(0);
+	});
+
+	it('returns error for terminal run status', async () => {
+		for (const status of ['completed', 'cancelled', 'pending']) {
+			const run = makeWorkflowRun({ id: 'run-1', status });
+			const config = makeConfig({
+				securityMode: 'autonomous',
+				workflowRunRepo: makeWorkflowRunRepo([run]),
+				gateDataRepo: makeGateDataRepo(),
+			});
+			const { approve_gate } = createNeoActionToolHandlers(config);
+			const result = parseResult(await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain(status);
+		}
+	});
+
+	it('returns error when run not found', async () => {
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo(),
+			gateDataRepo: makeGateDataRepo(),
+		});
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await approve_gate({ run_id: 'missing', gate_id: 'gate-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not found');
+	});
+
+	it('requires confirmation in balanced mode (medium risk)', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const config = makeConfig({
+			securityMode: 'balanced',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: makeGateDataRepo(),
+		});
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+		expect(result.confirmationRequired).toBe(true);
+		expect(result.riskLevel).toBe('medium');
+	});
+
+	it('returns error when dependencies not configured', async () => {
+		const config = makeConfig({ securityMode: 'autonomous' });
+		const { approve_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await approve_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// reject_gate
+// ---------------------------------------------------------------------------
+
+describe('reject_gate', () => {
+	it('writes rejected gate data and transitions run to needs_attention', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const runRepo = makeWorkflowRunRepo([run]);
+		const gateRepo = makeGateDataRepo();
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			gateDataRepo: gateRepo,
+		});
+		const { reject_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(
+			await reject_gate({ run_id: 'run-1', gate_id: 'gate-1', reason: 'Not ready' })
+		);
+		expect(result.success).toBe(true);
+		expect(result.gateData.approved).toBe(false);
+		expect(result.gateData.reason).toBe('Not ready');
+		expect(runRepo._runs.get('run-1')?.status).toBe('needs_attention');
+		expect(runRepo._runs.get('run-1')?.failureReason).toBe('humanRejected');
+	});
+
+	it('is idempotent when already rejected', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'needs_attention' });
+		const gateRepo = makeGateDataRepo();
+		gateRepo.merge('run-1', 'gate-1', { approved: false, rejectedAt: 123 });
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: gateRepo,
+		});
+		const { reject_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await reject_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+		expect(result.success).toBe(true);
+		expect(result.gateData.approved).toBe(false);
+	});
+
+	it('does not call transitionStatus when run is already needs_attention', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'needs_attention' });
+		const runRepo = makeWorkflowRunRepo([run]);
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: runRepo,
+			gateDataRepo: makeGateDataRepo(),
+		});
+		const { reject_gate } = createNeoActionToolHandlers(config);
+		await reject_gate({ run_id: 'run-1', gate_id: 'gate-1' });
+		// Status remains needs_attention (not changed by the handler)
+		expect(runRepo._runs.get('run-1')?.status).toBe('needs_attention');
+		expect(runRepo._runs.get('run-1')?.failureReason).toBe('humanRejected');
+	});
+
+	it('stores null reason when not provided', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const gateRepo = makeGateDataRepo();
+		const config = makeConfig({
+			securityMode: 'autonomous',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: gateRepo,
+		});
+		const { reject_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await reject_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+		expect(result.gateData.reason).toBeNull();
+	});
+
+	it('returns error for terminal run status', async () => {
+		for (const status of ['completed', 'cancelled', 'pending']) {
+			const run = makeWorkflowRun({ id: 'run-1', status });
+			const config = makeConfig({
+				securityMode: 'autonomous',
+				workflowRunRepo: makeWorkflowRunRepo([run]),
+				gateDataRepo: makeGateDataRepo(),
+			});
+			const { reject_gate } = createNeoActionToolHandlers(config);
+			const result = parseResult(await reject_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain(status);
+		}
+	});
+
+	it('requires confirmation in balanced mode (medium risk)', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
+		const config = makeConfig({
+			securityMode: 'balanced',
+			workflowRunRepo: makeWorkflowRunRepo([run]),
+			gateDataRepo: makeGateDataRepo(),
+		});
+		const { reject_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await reject_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+		expect(result.confirmationRequired).toBe(true);
+	});
+
+	it('returns error when dependencies not configured', async () => {
+		const config = makeConfig({ securityMode: 'autonomous' });
+		const { reject_gate } = createNeoActionToolHandlers(config);
+		const result = parseResult(await reject_gate({ run_id: 'run-1', gate_id: 'gate-1' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // MCP server — tool registration
 // ---------------------------------------------------------------------------
 
@@ -1000,7 +1635,35 @@ describe('createNeoActionMcpServer', () => {
 		expect(server.instance._registeredTools).toHaveProperty('reject_task');
 	});
 
-	it('registers exactly 11 tools', () => {
-		expect(Object.keys(server.instance._registeredTools)).toHaveLength(11);
+	it('registers create_space tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('create_space');
+	});
+
+	it('registers update_space tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('update_space');
+	});
+
+	it('registers delete_space tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('delete_space');
+	});
+
+	it('registers start_workflow_run tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('start_workflow_run');
+	});
+
+	it('registers cancel_workflow_run tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('cancel_workflow_run');
+	});
+
+	it('registers approve_gate tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('approve_gate');
+	});
+
+	it('registers reject_gate tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('reject_gate');
+	});
+
+	it('registers exactly 18 tools', () => {
+		expect(Object.keys(server.instance._registeredTools)).toHaveLength(18);
 	});
 });
