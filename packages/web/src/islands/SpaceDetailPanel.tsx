@@ -27,6 +27,7 @@ const taskStatusColors: Record<string, string> = {
 	needs_attention: 'bg-orange-500',
 	completed: 'bg-green-500',
 	cancelled: 'bg-gray-600',
+	archived: 'bg-gray-600',
 	rate_limited: 'bg-orange-500',
 	usage_limited: 'bg-orange-600',
 };
@@ -66,11 +67,26 @@ interface SpaceDetailPanelProps {
 
 export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps) {
 	// Read signal values directly for Preact Signals auto-tracking
+	const isLoading = spaceStore.loading.value;
+	const loadedSpaceId = spaceStore.spaceId.value;
 	const tasks = spaceStore.tasks.value;
 	const activeRuns = spaceStore.activeRuns.value;
 	const tasksByRun = spaceStore.tasksByRun.value;
 	const standaloneTasks = spaceStore.standaloneTasks.value;
 	const space = spaceStore.space.value;
+
+	// Show a loading state when the store hasn't loaded data for this space yet.
+	// spaceStore.selectSpace() is called by SpaceIsland; the ContextPanel may render
+	// before that call completes (e.g. on cold navigation before SpaceIsland mounts).
+	const isReady = !isLoading && loadedSpaceId === spaceId;
+
+	if (!isReady) {
+		return (
+			<div class="flex-1 flex items-center justify-center p-6">
+				<span class="text-xs text-gray-600">Loading…</span>
+			</div>
+		);
+	}
 
 	const [expandedRuns, setExpandedRuns] = useState<Set<string>>(() => new Set());
 	const [orphanTab, setOrphanTab] = useState<OrphanTab>('active');

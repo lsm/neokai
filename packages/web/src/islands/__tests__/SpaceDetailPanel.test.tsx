@@ -29,6 +29,8 @@ const { mockNavigateToSpace, mockNavigateToSpaceSession, mockNavigateToSpaceTask
 let mockTasksSignal!: Signal<SpaceTask[]>;
 let mockWorkflowRunsSignal!: Signal<SpaceWorkflowRun[]>;
 let mockSpaceSignal!: Signal<Space | null>;
+let mockLoadingSignal!: Signal<boolean>;
+let mockSpaceIdSignal!: Signal<string | null>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 
@@ -40,6 +42,9 @@ function initSignals() {
 	mockTasksSignal = signal([]);
 	mockWorkflowRunsSignal = signal([]);
 	mockSpaceSignal = signal(null);
+	// By default simulate loaded state: not loading, spaceId matches
+	mockLoadingSignal = signal(false);
+	mockSpaceIdSignal = signal('space-1');
 	mockCurrentSpaceSessionIdSignal = signal(null);
 	mockCurrentSpaceTaskIdSignal = signal(null);
 
@@ -69,6 +74,8 @@ vi.mock('../../lib/space-store.ts', () => ({
 			tasks: mockTasksSignal,
 			workflowRuns: mockWorkflowRunsSignal,
 			space: mockSpaceSignal,
+			loading: mockLoadingSignal,
+			spaceId: mockSpaceIdSignal,
 			activeRuns: mockActiveRuns,
 			tasksByRun: mockTasksByRun,
 			standaloneTasks: mockStandaloneTasks,
@@ -163,6 +170,30 @@ describe('SpaceDetailPanel', () => {
 
 	afterEach(() => {
 		cleanup();
+	});
+
+	// -- Loading guard --
+
+	it('shows loading state when spaceStore is loading', () => {
+		mockLoadingSignal.value = true;
+		render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(screen.getByText('Loading…')).toBeTruthy();
+		expect(screen.queryByText('Dashboard')).toBeNull();
+	});
+
+	it('shows loading state when store spaceId does not match prop', () => {
+		mockLoadingSignal.value = false;
+		mockSpaceIdSignal.value = 'other-space';
+		render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(screen.getByText('Loading…')).toBeTruthy();
+	});
+
+	it('renders panel content when store is loaded for this space', () => {
+		mockLoadingSignal.value = false;
+		mockSpaceIdSignal.value = 'space-1';
+		render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(screen.queryByText('Loading…')).toBeNull();
+		expect(screen.getByText('Dashboard')).toBeTruthy();
 	});
 
 	// -- Stats strip --
