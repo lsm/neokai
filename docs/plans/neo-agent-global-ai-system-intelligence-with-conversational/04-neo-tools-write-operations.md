@@ -18,11 +18,12 @@ Implement the write/action tools that allow Neo to make changes across the NeoKa
      - **Medium risk**: `delete_space`, `delete_room` (without active tasks), `cancel_workflow_run`, `send_message_to_room`, `send_message_to_task`, `approve_gate`, `reject_gate`, `add_mcp_server`, `update_mcp_server`, `delete_mcp_server`, `add_skill`, `update_skill`, `delete_skill`
      - **High risk**: `delete_room` (with active tasks), bulk operations, `stop_session`
   3. Implement `determineActionBehavior(toolName: string, riskLevel: NeoActionRiskLevel, securityMode: NeoSecurityMode): 'auto_execute' | 'confirm' | 'require_explicit'`:
-     - Conservative: confirm everything
+     - Conservative: confirm everything (all actions require confirmation)
      - Balanced: auto-execute low, confirm medium, require-explicit high
      - Autonomous: auto-execute everything
-  4. Implement `assessRisk(toolName: string, toolInput: Record<string, unknown>): NeoActionRiskLevel` -- context-aware risk assessment (e.g., deleting a room with active tasks is high risk, without is medium)
-  5. Write unit tests covering all security mode x risk level combinations
+  4. **Define `require_explicit` behavior clearly**: Unlike `confirm` (which shows a one-click Confirm/Cancel card), `require_explicit` requires the user to type a confirmation phrase that includes the target name. Example: to delete room "my-project" with active tasks, Neo responds with "This is an irreversible action. To proceed, type: DELETE my-project". The RPC handler validates the exact phrase match. This prevents accidental confirmation of high-risk operations.
+  5. Implement `assessRisk(toolName: string, toolInput: Record<string, unknown>): NeoActionRiskLevel` -- context-aware risk assessment (e.g., deleting a room with active tasks is high risk, without is medium)
+  6. Write unit tests covering all security mode x risk level combinations (9 total: 3 modes x 3 risk levels), plus `require_explicit` phrase validation
 - **Acceptance criteria**:
   - Risk assessment correctly classifies all tools
   - Context-aware risk elevation works (e.g., room with active tasks)
@@ -122,7 +123,7 @@ Implement the write/action tools that allow Neo to make changes across the NeoKa
      - `update_skill(skillId, config)` -- update skill configuration
      - `delete_skill(skillId)` -- remove a skill
      - `toggle_skill(skillId, enabled)` -- enable/disable a skill
-     - `update_app_settings(updates)` -- update global settings
+     - `update_app_settings(updates)` -- update global settings. **Allowlist enforcement**: Only the following fields can be updated via Neo: `neo` (Neo settings), `theme`, `defaultModel`, `defaultProvider`. Security-sensitive fields (`apiKeys`, `oauthTokens`, provider credentials) are rejected by the tool handler. The allowlist is defined and enforced in the tool handler itself (not in SettingsManager).
   3. Create `packages/daemon/src/lib/neo/tools/neo-message-tools.ts`
   4. Implement message handlers:
      - `send_message_to_room(roomId, content)` -- send a message to a room's chat session with `origin: 'neo'`

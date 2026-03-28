@@ -2,7 +2,13 @@
 
 ## Goal
 
-Create the RPC endpoints that the frontend uses to communicate with the Neo agent, set up LiveQuery for real-time message streaming, and wire origin metadata propagation into the message system.
+Create the RPC endpoints that the frontend uses to communicate with the Neo agent, and set up LiveQuery for real-time message streaming. Origin metadata propagation was moved to Milestone 1 (Task 1.4) since write tools in Milestone 4 depend on it.
+
+## Design Notes
+
+- **`neo.send` is fire-and-forget**: It accepts a message, queues it to the Neo session, and returns an acknowledgement immediately. The frontend subscribes to `neo.messages` LiveQuery for response streaming. This avoids long-polling RPC calls.
+- **No chat-text confirmation**: Confirmations are handled exclusively via `neo.confirm_action` / `neo.cancel_action` RPC endpoints triggered by UI buttons. The `neo.send` handler does NOT inspect message content for "yes"/"no" text — this would be fragile (e.g., "can you confirm what rooms I have?" would false-positive) and conflicts with the dedicated RPC endpoints. For `require_explicit` confirmations, the frontend sends the typed phrase via `neo.confirm_explicit` which validates the exact match.
+- **Row mappers**: Neo messages are stored in `sdk_messages` (same table as all sessions). The `neo.messages` LiveQuery needs a row mapper that projects `sdk_messages` rows (filtered by `session_id = 'neo:global'`) into `NeoMessage` frontend types.
 
 ## Tasks
 
@@ -13,22 +19,24 @@ Create the RPC endpoints that the frontend uses to communicate with the Neo agen
 - **Depends on**: Task 2.2, Task 4.6, Task 5.2
 - **Subtasks**:
   1. Create `packages/daemon/src/lib/rpc-handlers/neo-handlers.ts`
-  2. Implement `setupNeoHandlers(hub, neoSessionService, actionLogger)` following the existing handler registration pattern
+  2. Implement `setupNeoHandlers(hub, neoAgentHandle, actionLogger)` following the existing handler registration pattern
   3. Register RPC handlers:
-     - `neo.send` -- accepts `{ content: string }`, sends message to Neo session, returns acknowledgement. If there are pending confirmations, check if content matches "yes"/"confirm"/"no"/"cancel" and handle accordingly.
+     - `neo.send` -- accepts `{ content: string }`, calls `neoAgentHandle.sendMessage(content)`, returns `{ ok: true }` immediately (fire-and-forget). Does NOT parse content for confirmation keywords.
      - `neo.history` -- accepts `{ limit?: number, offset?: number }`, returns message history
-     - `neo.clear_session` -- clears Neo session and starts fresh
-     - `neo.confirm_action` -- accepts `{ actionId: string }`, confirms a pending action
+     - `neo.clear_session` -- clears Neo session and starts fresh. Action log is preserved.
+     - `neo.confirm_action` -- accepts `{ actionId: string }`, confirms a pending action via `NeoActionLogger.confirmAction()`
      - `neo.cancel_action` -- accepts `{ actionId: string }`, cancels a pending action
-     - `neo.activity_log` -- accepts `{ limit?: number, offset?: number }`, returns action log entries
+     - `neo.confirm_explicit` -- accepts `{ actionId: string, phrase: string }`, validates exact phrase match for `require_explicit` actions, then executes
+     - `neo.activity_log` -- accepts `{ limit?: number, offset?: number }`, returns action log entries. Backed by the same `NeoActionLogRepository.getRecent()` as the `get_activity_log` tool.
      - `neo.settings` -- accepts `{ securityMode?: NeoSecurityMode, model?: string }`, updates Neo settings
   4. Register handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` by calling `setupNeoHandlers()` in `setupRPCHandlers()`
   5. Write unit tests in `packages/daemon/tests/unit/rpc-handlers/neo-handlers.test.ts`
 - **Acceptance criteria**:
   - All RPC handlers work correctly
-  - `neo.send` properly queues messages and handles confirmation responses
-  - `neo.history` returns paginated results
-  - `neo.clear_session` resets the Neo session
+  - `neo.send` returns immediately (fire-and-forget), does NOT parse content
+  - `neo.confirm_action` and `neo.cancel_action` work via dedicated endpoints only
+  - `neo.confirm_explicit` validates exact phrase match
+  - `neo.clear_session` resets the conversation but preserves action log
   - Unit tests cover all handlers
   - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -39,35 +47,19 @@ Create the RPC endpoints that the frontend uses to communicate with the Neo agen
 - **Depends on**: Task 6.1
 - **Subtasks**:
   1. Add named queries to `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`:
-     - `neo.messages` -- query Neo session messages ordered by timestamp
+     - `neo.messages` -- query `sdk_messages WHERE session_id = 'neo:global'` ordered by timestamp
      - `neo.activity` -- query `neo_action_log` ordered by `created_at` DESC
-     - `neo.pending_actions` -- query pending confirmation actions
-  2. Define row mappers for each query
-  3. Ensure the reactive database detects changes to Neo message tables and `neo_action_log`
-  4. Write unit tests for the named queries
+     - `neo.pending_actions` -- query `neo_action_log WHERE status = 'pending_confirmation'`
+  2. Define row mapper for `neo.messages` that converts `sdk_messages` rows to `NeoMessage` frontend type:
+     - Map `id`, `role` (from SDK message role), `content` (from message content), `createdAt`
+     - Extract `toolCalls` from SDK message tool_use blocks (if present)
+     - Handle the `sdk_messages` row format (which may use JSON columns for content/tool calls)
+  3. Define row mappers for `neo.activity` and `neo.pending_actions` (snake_case to camelCase `NeoActionLog`)
+  4. Ensure the reactive database detects changes to `sdk_messages` (for Neo's session ID) and `neo_action_log`
+  5. Write unit tests for the named queries and row mappers
 - **Acceptance criteria**:
   - Frontend can subscribe to `neo.messages` and receive real-time message updates
+  - Row mapper correctly transforms `sdk_messages` rows into `NeoMessage` objects
   - Frontend can subscribe to `neo.activity` and receive action log updates
   - `neo.pending_actions` returns only pending confirmation entries
-  - Row mappers correctly transform DB rows to frontend types
-  - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
-### Task 6.3: Origin Metadata Propagation
-
-- **Description**: Add `origin` field support to the message system so messages sent by Neo are properly attributed.
-- **Agent type**: coder
-- **Depends on**: Task 1.1
-- **Subtasks**:
-  1. Add optional `origin?: MessageOrigin` field to the message content type in `packages/shared/src/types.ts` (verify the exact type to extend -- likely `MessageContent` or the message metadata)
-  2. Update `MessagePersistence` in `packages/daemon/src/lib/session/message-persistence.ts` to persist and retrieve the origin field
-  3. Update the message sending flow to accept and propagate origin:
-     - `SessionManager.sendMessage()` accepts optional `origin` parameter
-     - Origin is stored in message metadata
-  4. When Neo sends a message to a room/task via tools, the tool handler passes `origin: 'neo'`
-  5. Write unit tests verifying origin propagation through the message pipeline
-- **Acceptance criteria**:
-  - Messages sent by Neo have `origin: 'neo'` in their metadata
-  - Messages sent by humans default to `origin: 'human'`
-  - Origin field persists through DB storage and retrieval
-  - Existing message flows are not broken (origin is optional)
   - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

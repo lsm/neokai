@@ -15,10 +15,11 @@ Build the action confirmation workflow UI and Neo-specific settings in the globa
   1. Create `packages/web/src/components/neo/NeoActionCard.tsx`:
      - Card component for pending action confirmations
      - Shows: action description, target (room/space/skill name), risk level badge
-     - Two buttons: "Confirm" (green) and "Cancel" (red/grey)
+     - For `confirm` tier: Two buttons: "Confirm" (green) and "Cancel" (red/grey)
      - Clicking Confirm calls `neoStore.confirmAction(actionId)`
      - Clicking Cancel calls `neoStore.cancelAction(actionId)`
-     - Also accept text input "yes"/"confirm" or "no"/"cancel" from the chat input
+     - For `require_explicit` tier: Shows a text input with the required confirmation phrase (e.g., "Type DELETE my-project to confirm"). Submit validates the phrase via `neo.confirm_explicit` RPC.
+     - No chat-text confirmation parsing — confirmations use dedicated UI buttons/inputs only
   2. Create `packages/web/src/components/neo/NeoActionResult.tsx`:
      - Inline indicator for auto-executed actions: subtle checkmark with description
      - Inline indicator for failed actions: error icon with message and "Retry" button

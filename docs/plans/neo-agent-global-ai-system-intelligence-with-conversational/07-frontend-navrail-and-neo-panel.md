@@ -56,10 +56,11 @@ Build the primary Neo UI: a persistent input bar in the NavRail and a slide-out 
   3. Register the Cmd+K global keyboard shortcut:
      - Create hook or utility in `packages/web/src/hooks/useNeoShortcut.ts`
      - Register on app mount, clean up on unmount
-     - Prevent conflict with browser's default Cmd+K (address bar focus)
-  4. Write unit tests for the input component
+     - Prevent conflict with browser's default Cmd+K (address bar focus). Note: Firefox does not allow overriding Cmd+K — document this limitation.
+  4. Mobile handling: NavRail is `hidden md:relative` so NeoInputBar follows the same responsive pattern — hidden on mobile. A mobile-specific entry point is out of scope for this plan.
+  5. Write unit tests for the input component
 - **Acceptance criteria**:
-  - Input bar is visible in the NavRail on desktop layouts
+  - Input bar is visible in the NavRail on desktop layouts (hidden on mobile, matching NavRail behavior)
   - Typing and pressing Enter sends a message and opens the Neo panel
   - Cmd+K focuses the Neo input from anywhere in the app
   - Loading state is visible while Neo processes

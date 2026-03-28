@@ -2,13 +2,13 @@
 
 ## Goal
 
-Comprehensive test coverage for all Neo backend functionality: tool handlers, security logic, action logging, undo, session persistence, and full conversation flows.
+Edge-case, integration, and online test coverage that extends the per-milestone happy-path tests. **Test boundary**: Milestones 2-5 each include unit tests covering happy paths and basic error cases for their specific code. Milestone 10 adds: combinatorial edge cases (security mode x risk level matrix), cross-component integration tests, coverage threshold enforcement, and full conversation flow online tests using the dev proxy.
 
 ## Tasks
 
 ### Task 10.1: Tool Handler Unit Test Suite
 
-- **Description**: Comprehensive unit tests for all Neo tool handlers (read-only, write, and meta tools), ensuring correct behavior, error handling, and edge cases.
+- **Description**: Edge-case and integration unit tests that extend the per-milestone happy-path coverage. Milestones 3-5 cover basic happy paths and simple error cases. This task adds: edge cases (empty lists, very long inputs, special characters), cross-tool interactions, and coverage threshold enforcement.
 - **Agent type**: coder
 - **Depends on**: Task 5.2
 - **Subtasks**:
@@ -34,7 +34,7 @@ Comprehensive test coverage for all Neo backend functionality: tool handlers, se
 
 ### Task 10.2: Security Tier and Action Logging Tests
 
-- **Description**: Thorough tests for the security tier engine and action logging middleware.
+- **Description**: Combinatorial and lifecycle tests for the security tier engine and action logging middleware. Extends per-milestone happy-path tests with the full 9-combination matrix (3 modes x 3 risk levels) and full action lifecycle coverage.
 - **Agent type**: coder
 - **Depends on**: Task 4.1, Task 4.2
 - **Subtasks**:
@@ -63,7 +63,7 @@ Comprehensive test coverage for all Neo backend functionality: tool handlers, se
 
 - **Description**: Tests for Neo session persistence across restarts and origin metadata propagation.
 - **Agent type**: coder
-- **Depends on**: Task 2.1, Task 6.3
+- **Depends on**: Task 2.1, Task 1.4
 - **Subtasks**:
   1. Create `packages/daemon/tests/unit/neo/neo-session-service.test.ts`:
      - Test first-time initialization creates a new session

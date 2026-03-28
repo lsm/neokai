@@ -1,60 +1,75 @@
-# Milestone 2: Neo Session Manager
+# Milestone 2: Neo Session Provisioning
 
 ## Goal
 
-Implement the singleton Neo session lifecycle: create, persist, restore, and integrate the persistent Neo agent session with the daemon application context.
+Implement the singleton Neo session provisioning following the `provisionGlobalSpacesAgent()` pattern: a module-level function that creates/restores a persistent Neo session, attaches MCP tools, and integrates with `DaemonAppContext`.
+
+## Design Notes
+
+- **Pattern reuse**: The existing `provisionGlobalSpacesAgent()` in `packages/daemon/src/lib/space/provision-global-agent.ts` is the direct template. Neo follows the same module-level provisioning approach (NOT a service class) — check if session exists, create if not, attach MCP server and system prompt.
+- **Concurrent messages**: A message queue ensures that if a second message arrives while Neo is processing, it waits. The queue is a simple `Promise` chain — each `sendMessage` call chains onto the previous. This matches how AgentSession already serializes turns internally, but the queue prevents callers from overlapping.
+- **Session ID**: Always `'neo:global'`. On `clearSession`, the old session is archived (messages remain in `sdk_messages` with the old session ID) and a new session is created with a fresh UUID-based session ID stored in `GlobalSettings.neo.sessionId`. The `'neo:global'` alias is updated to point to the new session. This ensures message history separation between cleared sessions.
+- **Tool attachment timing**: MCP tools server is created during provisioning but starts as a placeholder with no tools. Tools are added incrementally in Milestones 3-5 by updating the MCP server definition. The session does NOT need to be recreated when tools change — `setRuntimeMcpServers()` can be called at any time.
 
 ## Tasks
 
-### Task 2.1: Neo Session Service
+### Task 2.1: Neo Session Provisioning Function
 
-- **Description**: Create `NeoSessionService` that manages the singleton Neo agent session. It handles creation on first use, restoration on app restart, and provides the session interface for sending/receiving messages.
+- **Description**: Create `provisionNeoAgent()` function following the `provisionGlobalSpacesAgent()` pattern. This is a module-level function (not a class) that creates or restores the singleton Neo session.
 - **Agent type**: coder
-- **Depends on**: Task 1.1, Task 1.2, Task 1.3
+- **Depends on**: Task 1.1, Task 1.2, Task 1.3, Task 1.4
 - **Subtasks**:
-  1. Create `packages/daemon/src/lib/neo/neo-session-service.ts`
-  2. Implement `NeoSessionService` class:
-     - Constructor takes `Database`, `SessionManager`, `SettingsManager`, `DaemonHub`, `MessageHub`, config (workspace path)
-     - `initialize(): Promise<void>` -- check if a Neo session exists in DB (by looking for session with type 'neo'), restore it or create a new one
-     - `getOrCreateSession(): Promise<AgentSession>` -- lazy initialization, creates `AgentSession` with `sessionId: 'neo:global'`, `type: 'neo'`
-     - `getSession(): AgentSession | null` -- returns current session if initialized
-     - `sendMessage(content: string): Promise<void>` -- queue a user message to the Neo session
-     - `getHistory(): NeoMessage[]` -- retrieve message history from DB
-     - `clearSession(): Promise<void>` -- end current session, create a fresh one
-     - `cleanup(): Promise<void>` -- graceful shutdown
-  3. Build Neo system prompt in `packages/daemon/src/lib/neo/neo-system-prompt.ts`:
+  1. Create `packages/daemon/src/lib/neo/provision-neo-agent.ts`
+  2. Define `ProvisionNeoAgentDeps` interface (following `ProvisionGlobalSpacesAgentDeps` pattern):
+     - `sessionManager: SessionManager`
+     - `settingsManager: SettingsManager`
+     - `db: BunDatabase`
+     - `daemonHub?: DaemonHub`
+     - `appMcpManager?: AppMcpLifecycleManager`
+  3. Implement `provisionNeoAgent(deps: ProvisionNeoAgentDeps): Promise<NeoAgentHandle>`:
+     - Check if Neo session exists in DB (by session type `'neo'`)
+     - If not, create via `sessionManager.createSession({ sessionId: 'neo:global', sessionType: 'neo', title: 'Neo Agent', createdBy: 'neo' })`
+     - Attach MCP tools server placeholder (empty — tools added in Milestones 3-5)
+     - Set runtime system prompt via `setRuntimeSystemPrompt()`
+     - Return `NeoAgentHandle` with: `sendMessage(content: string): Promise<void>` (with queue), `getSession(): AgentSession`, `clearSession(): Promise<void>`, `cleanup(): Promise<void>`
+  4. Implement message queue in `sendMessage`: chain each call as a Promise to prevent concurrent turns
+  5. Implement `clearSession()`: archive current session, create fresh session, reattach MCP tools and system prompt
+  6. Create `packages/daemon/src/lib/neo/neo-system-prompt.ts`:
      - Define Neo's identity, role, personality (helpful chief-of-staff)
      - Describe available tool categories and when to use them
      - Include security tier behavior instructions (parameterized by current security mode)
      - Include instructions about action logging and undo support
-  4. Create `packages/daemon/src/lib/neo/index.ts` barrel export
-  5. Write unit tests in `packages/daemon/tests/unit/neo/neo-session-service.test.ts`:
-     - Test session creation on first initialize
-     - Test session restoration on subsequent initialize
-     - Test sendMessage queues to the session
-     - Test clearSession creates a fresh session
+  7. Create `packages/daemon/src/lib/neo/index.ts` barrel export
+  8. Write unit tests in `packages/daemon/tests/unit/neo/provision-neo-agent.test.ts`:
+     - Test session creation on first provision
+     - Test session restoration on subsequent provision
+     - Test message queue serializes concurrent sends
+     - Test clearSession creates a fresh session with separate message history
      - Test cleanup shuts down gracefully
 - **Acceptance criteria**:
   - Neo session is created with correct `SessionType` and `sessionId`
-  - Session persists across service restarts (restore from DB)
+  - Session persists across daemon restarts (restore from DB)
+  - Concurrent `sendMessage` calls are serialized (queue)
+  - `clearSession` creates a new session without losing old message history
   - System prompt includes security tier instructions
+  - Pattern matches `provisionGlobalSpacesAgent()` structure
   - Unit tests pass with mocked dependencies
   - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ### Task 2.2: Integrate Neo Session into DaemonAppContext
 
-- **Description**: Wire `NeoSessionService` into the daemon application startup and expose it on `DaemonAppContext`.
+- **Description**: Wire `provisionNeoAgent()` into the daemon application startup and expose the handle on `DaemonAppContext`.
 - **Agent type**: coder
 - **Depends on**: Task 2.1
 - **Subtasks**:
-  1. Add `neoSessionService: NeoSessionService` to `DaemonAppContext` interface in `packages/daemon/src/app.ts`
-  2. Instantiate `NeoSessionService` in `createDaemonApp()` after `SessionManager` and `SettingsManager` are created
-  3. Call `neoSessionService.initialize()` during app startup (after DB migrations, before server start)
-  4. Add `neoSessionService.cleanup()` to the app cleanup handler
-  5. Ensure the Neo session's MCP tools server is attached during initialization (placeholder -- tools will be added in Milestones 3-5)
-  6. Write a focused integration test that verifies `NeoSessionService` is accessible from `DaemonAppContext`
+  1. Add `neoAgent: NeoAgentHandle` to `DaemonAppContext` interface in `packages/daemon/src/app.ts`
+  2. Call `provisionNeoAgent(deps)` in `createDaemonApp()` after `SessionManager` and `SettingsManager` are created (similar to where `provisionGlobalSpacesAgent` is called)
+  3. Store the returned `NeoAgentHandle` on the app context
+  4. Add `neoAgent.cleanup()` to the app cleanup handler
+  5. Ensure the MCP tools server placeholder is attached during provisioning (tools will be populated in Milestones 3-5)
+  6. Write a focused integration test that verifies `neoAgent` is accessible from `DaemonAppContext`
 - **Acceptance criteria**:
-  - `DaemonAppContext` exposes `neoSessionService`
+  - `DaemonAppContext` exposes `neoAgent: NeoAgentHandle`
   - Neo session initializes during app startup without errors
   - Cleanup properly shuts down the Neo session
   - No regressions in existing app startup flow
