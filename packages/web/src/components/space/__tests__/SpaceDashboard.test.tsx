@@ -156,8 +156,8 @@ describe('SpaceDashboard', () => {
 		mockWorkflowRuns.value = [makeRun('r1', 'in_progress')];
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
 		expect(getByText('Live Space')).toBeTruthy();
-		expect(getByText('Workflow Runs')).toBeTruthy();
-		expect(getByText('Runs are actively executing')).toBeTruthy();
+		expect(getByText('Live Flows')).toBeTruthy();
+		expect(getByText('Tasks are actively moving through workflows')).toBeTruthy();
 	});
 
 	it('shows active tasks count in dashboard stats', () => {

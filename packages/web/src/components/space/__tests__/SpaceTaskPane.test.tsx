@@ -8,7 +8,7 @@
  * - Task title rendered
  * - Status badge rendered
  * - Priority indicator rendered
- * - Workflow step indicator shown when workflowRunId present
+ * - Workflow context shown when workflowRunId present
  * - Description rendered
  * - Current step rendered
  * - Progress bar rendered
@@ -22,8 +22,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import type { SpaceTask, SpaceAgent } from '@neokai/shared';
+import { signal, computed } from '@preact/signals';
+import type { SpaceTask, SpaceAgent, SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
 
 const { mockNavigateToSpaceSession } = vi.hoisted(() => ({
 	mockNavigateToSpaceSession: vi.fn(),
@@ -34,6 +34,9 @@ vi.mock('../../../lib/router', () => ({
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
+let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
+let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockTasksByRun: ReturnType<typeof computed<Map<string, SpaceTask[]>>>;
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../lib/space-store', () => ({
@@ -41,9 +44,28 @@ vi.mock('../../../lib/space-store', () => ({
 		return {
 			tasks: mockTasks,
 			agents: mockAgents,
+			workflows: mockWorkflows,
+			workflowRuns: mockWorkflowRuns,
+			tasksByRun: mockTasksByRun,
 			updateTask: mockUpdateTask,
 		};
 	},
+}));
+
+vi.mock('../WorkflowCanvas', () => ({
+	WorkflowCanvas: (props: {
+		workflowId: string;
+		runId?: string | null;
+		spaceId: string;
+		class?: string;
+	}) => (
+		<div
+			data-testid="workflow-canvas"
+			data-workflow-id={props.workflowId}
+			data-run-id={props.runId ?? ''}
+			data-space-id={props.spaceId}
+		/>
+	),
 }));
 
 vi.mock('../../../lib/utils', () => ({
@@ -53,6 +75,17 @@ vi.mock('../../../lib/utils', () => ({
 // Initialize signals
 mockTasks = signal<SpaceTask[]>([]);
 mockAgents = signal<SpaceAgent[]>([]);
+mockWorkflows = signal<SpaceWorkflow[]>([]);
+mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockTasksByRun = computed(() => {
+	const grouped = new Map<string, SpaceTask[]>();
+	for (const task of mockTasks.value) {
+		if (!task.workflowRunId) continue;
+		const existing = grouped.get(task.workflowRunId) ?? [];
+		grouped.set(task.workflowRunId, [...existing, task]);
+	}
+	return grouped;
+});
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
 
@@ -84,11 +117,47 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 	};
 }
 
+function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
+	return {
+		id: 'wf-1',
+		spaceId: 'space-1',
+		name: 'Coding Workflow',
+		description: 'Workflow description',
+		nodes: [
+			{ id: 'step-abc123', name: 'Plan', agentId: 'agent-1' },
+			{ id: 'step-def456', name: 'Code', agentId: 'agent-1' },
+		],
+		startNodeId: 'step-abc123',
+		rules: [],
+		tags: [],
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
+function makeWorkflowRun(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkflowRun {
+	return {
+		id: 'run-1',
+		spaceId: 'space-1',
+		workflowId: 'wf-1',
+		title: 'Fix auth flow',
+		status: 'in_progress',
+		iterationCount: 1,
+		maxIterations: 10,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
 describe('SpaceTaskPane', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
 		mockAgents.value = [];
+		mockWorkflows.value = [];
+		mockWorkflowRuns.value = [];
 		mockUpdateTask.mockClear();
 		mockNavigateToSpaceSession.mockClear();
 	});
@@ -126,18 +195,33 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('High priority')).toBeTruthy();
 	});
 
-	it('shows workflow step indicator when workflowRunId is present', () => {
-		mockTasks.value = [makeTask({ workflowRunId: 'run-1', workflowNodeId: 'step-abc123' })];
-		const { getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getAllByText(/Workflow Step/).length).toBeGreaterThan(0);
-		// Should show truncated step ID
-		expect(getAllByText(/step-ab/).length).toBeGreaterThan(0);
+	it('shows workflow context and canvas when workflowRunId is present', () => {
+		mockWorkflows.value = [makeWorkflow()];
+		mockWorkflowRuns.value = [makeWorkflowRun()];
+		mockTasks.value = [
+			makeTask({ workflowRunId: 'run-1', workflowNodeId: 'step-abc123' }),
+			makeTask({
+				id: 'task-2',
+				title: 'Sibling Task',
+				workflowRunId: 'run-1',
+				workflowNodeId: 'step-def456',
+				status: 'review',
+			}),
+		];
+		const { getByText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Workflow Context')).toBeTruthy();
+		expect(getByText('Coding Workflow')).toBeTruthy();
+		expect(getByText('Fix auth flow')).toBeTruthy();
+		expect(getByText('Plan')).toBeTruthy();
+		expect(getByText('Workflow Tasks')).toBeTruthy();
+		expect(getByText('Sibling Task')).toBeTruthy();
+		expect(getByTestId('workflow-canvas')).toBeTruthy();
 	});
 
-	it('does NOT show workflow step indicator without workflowRunId', () => {
+	it('does NOT show workflow context without workflowRunId', () => {
 		mockTasks.value = [makeTask()];
 		const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(queryByText(/Workflow Step/)).toBeNull();
+		expect(queryByText(/Workflow Context/)).toBeNull();
 	});
 
 	it('renders description', () => {
@@ -229,10 +313,10 @@ describe('SpaceTaskPane', () => {
 		expect(container.querySelector('[data-testid="view-agent-session-btn"]')).toBeNull();
 	});
 
-	it('hides "View Agent Session" button when spaceId is not provided', () => {
+	it('shows "View Agent Session" button when task provides its own spaceId', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
-		const { container } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(container.querySelector('[data-testid="view-agent-session-btn"]')).toBeNull();
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByTestId('view-agent-session-btn')).toBeTruthy();
 	});
 
 	it('shows "View Worker Session" when activeSession is "worker"', () => {

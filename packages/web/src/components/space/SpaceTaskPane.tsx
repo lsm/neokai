@@ -12,6 +12,7 @@ import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceSession } from '../../lib/router';
 import { cn } from '../../lib/utils';
 import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import { WorkflowCanvas } from './WorkflowCanvas';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -44,6 +45,19 @@ const STATUS_CLASSES: Record<SpaceTaskStatus, string> = {
 	archived: 'bg-gray-900 text-gray-600 border-gray-800',
 	rate_limited: 'bg-orange-900/30 text-orange-300 border-orange-700/50',
 	usage_limited: 'bg-orange-900/30 text-orange-400 border-orange-700/50',
+};
+
+const STATUS_DOT_CLASSES: Record<SpaceTaskStatus, string> = {
+	draft: 'bg-gray-500',
+	pending: 'bg-gray-400',
+	in_progress: 'bg-blue-400',
+	review: 'bg-purple-400',
+	completed: 'bg-green-400',
+	needs_attention: 'bg-yellow-400',
+	cancelled: 'bg-gray-600',
+	archived: 'bg-gray-700',
+	rate_limited: 'bg-orange-400',
+	usage_limited: 'bg-orange-500',
 };
 
 const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
@@ -185,6 +199,9 @@ function HumanInputArea({ task }: HumanInputAreaProps) {
 
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
+	const workflowRuns = spaceStore.workflowRuns.value;
+	const workflows = spaceStore.workflows.value;
+	const tasksByRun = spaceStore.tasksByRun.value;
 
 	if (!taskId) {
 		return (
@@ -205,6 +222,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	}
 
 	const agentSessionId = task.taskAgentSessionId;
+	const runtimeSpaceId = spaceId ?? task.spaceId;
 	const agentSessionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
@@ -216,6 +234,24 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		task.status === 'needs_attention'
 			? 'This task is blocked on human input.'
 			: task.currentStep || 'Agent activity will surface here as the task advances.';
+	const workflowRun = task.workflowRunId
+		? (workflowRuns.find((run) => run.id === task.workflowRunId) ?? null)
+		: null;
+	const workflow =
+		(workflowRun
+			? workflows.find((item) => item.id === workflowRun.workflowId)
+			: undefined) ??
+		(task.workflowNodeId
+			? workflows.find((item) => item.nodes.some((node) => node.id === task.workflowNodeId))
+			: undefined) ??
+		null;
+	const workflowNode = task.workflowNodeId
+		? (workflow?.nodes.find((node) => node.id === task.workflowNodeId) ?? null)
+		: null;
+	const relatedWorkflowTasks = task.workflowRunId
+		? [...(tasksByRun.get(task.workflowRunId) ?? [])].sort((a, b) => b.updatedAt - a.updatedAt)
+		: [];
+	const workflowCanvasId = workflow?.id ?? null;
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-950">
@@ -250,10 +286,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						<h2 class="mt-3 text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
 						<p class="mt-1 text-sm text-gray-500">{attentionCopy}</p>
 					</div>
-					{agentSessionId && spaceId && (
+					{agentSessionId && runtimeSpaceId && (
 						<button
 							type="button"
-							onClick={() => navigateToSpaceSession(spaceId, agentSessionId)}
+							onClick={() => navigateToSpaceSession(runtimeSpaceId, agentSessionId)}
 							class="flex-shrink-0 px-3 py-1.5 text-xs font-medium bg-dark-800 hover:bg-dark-700
 								text-gray-300 rounded-lg border border-dark-600 transition-colors"
 							data-testid="view-agent-session-btn"
@@ -318,32 +354,109 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						/>
 					</div>
 
-					{/* Workflow step indicator */}
+					{/* Workflow context */}
 					{task.workflowRunId && (
-						<SectionCard title="Workflow Step">
-							<div class="flex items-center gap-2 text-xs text-gray-400">
-								<svg
-									class="w-3.5 h-3.5 flex-shrink-0"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M4 6h16M4 10h16M4 14h16M4 18h16"
-									/>
-								</svg>
-								<span>
-									Workflow Step
-									{task.workflowNodeId && (
-										<span class="ml-1 font-mono text-gray-500">
-											{task.workflowNodeId.slice(0, 8)}
-										</span>
-									)}
-								</span>
+						<SectionCard title="Workflow Context">
+							<div class="grid gap-3 md:grid-cols-3">
+								<MetaCard
+									label="Workflow"
+									value={workflow?.name ?? 'Workflow unavailable'}
+									helper={
+										workflow
+											? `${workflow.nodes.length} node${workflow.nodes.length === 1 ? '' : 's'} in this flow`
+											: 'Task was created by a workflow run'
+									}
+									accent="bg-cyan-400"
+								/>
+								<MetaCard
+									label="Run"
+									value={workflowRun?.title ?? 'Run unavailable'}
+									helper={
+										workflowRun
+											? `${workflowRun.status.replace('_', ' ')} · ${workflowRun.iterationCount}/${workflowRun.maxIterations} loops`
+											: 'Run data is no longer available'
+									}
+									accent="bg-blue-400"
+								/>
+								<MetaCard
+									label="Current Node"
+									value={workflowNode?.name ?? 'Workflow step'}
+									helper={
+										task.workflowNodeId
+											? `Node ${task.workflowNodeId.slice(0, 8)}`
+											: 'No node identifier attached to this task'
+									}
+									accent="bg-violet-400"
+								/>
 							</div>
+
+							{workflowCanvasId && (
+								<div class="mt-4 rounded-2xl border border-dark-700 overflow-hidden" data-testid="task-workflow-canvas">
+									<div class="border-b border-dark-700 bg-dark-900/80 px-4 py-3">
+										<p class="text-[11px] uppercase tracking-[0.18em] text-gray-500">
+											{workflowRun ? 'Live workflow view' : 'Workflow map'}
+										</p>
+										<p class="mt-1 text-sm text-gray-300">
+											{workflowRun
+												? 'This task sits inside a running workflow. The canvas shows the surrounding execution path.'
+												: 'This task came from a workflow. The canvas shows the underlying structure.'}
+										</p>
+									</div>
+									<WorkflowCanvas
+										workflowId={workflowCanvasId}
+										runId={workflowRun?.id ?? null}
+										spaceId={runtimeSpaceId}
+										class="h-[24rem] min-h-[22rem]"
+									/>
+								</div>
+							)}
+
+							{relatedWorkflowTasks.length > 0 && (
+								<div class="mt-4">
+									<div class="flex items-center justify-between gap-3">
+										<h4 class="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+											Workflow Tasks
+										</h4>
+										<span class="text-xs text-gray-600">
+											{relatedWorkflowTasks.length} task
+											{relatedWorkflowTasks.length === 1 ? '' : 's'} in this run
+										</span>
+									</div>
+								<div class="mt-2 space-y-2">
+										{relatedWorkflowTasks.map((relatedTask) => (
+											<div
+												key={relatedTask.id}
+												class="flex items-center gap-3 rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-2.5"
+											>
+												<span
+													class={cn(
+														'h-2.5 w-2.5 rounded-full flex-shrink-0',
+														relatedTask.id === task.id
+															? 'bg-blue-400'
+															: STATUS_DOT_CLASSES[relatedTask.status]
+													)}
+												/>
+												<div class="min-w-0 flex-1">
+													<p class="truncate text-sm text-gray-200">{relatedTask.title}</p>
+													<p class="mt-0.5 text-xs text-gray-500">
+														{relatedTask.workflowNodeId
+															? `Node ${relatedTask.workflowNodeId.slice(0, 8)}`
+															: 'Workflow-generated task'}
+													</p>
+												</div>
+												<div class="flex items-center gap-2">
+													{relatedTask.id === task.id && (
+														<span class="rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[11px] uppercase tracking-[0.16em] text-blue-200">
+															Current
+														</span>
+													)}
+													<StatusBadge status={relatedTask.status} />
+												</div>
+											</div>
+										))}
+									</div>
+								</div>
+							)}
 						</SectionCard>
 					)}
 

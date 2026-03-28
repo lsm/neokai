@@ -296,9 +296,13 @@ export function SpaceDashboard({
 							compact={compact}
 						/>
 						<StatCard
-							label="Workflow Runs"
+							label="Live Flows"
 							value={String(activeRuns.length)}
-							helper={activeRuns.length === 0 ? 'No live orchestration right now' : 'Runs are actively executing'}
+							helper={
+								activeRuns.length === 0
+									? 'No task-driven workflow execution right now'
+									: 'Tasks are actively moving through workflows'
+							}
 							accentClass="bg-violet-400"
 							compact={compact}
 						/>
