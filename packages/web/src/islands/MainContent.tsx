@@ -24,6 +24,7 @@ import { SkillsRegistry } from '../components/settings/SkillsRegistry.tsx';
 import { FallbackModelsSettings } from '../components/settings/FallbackModelsSettings.tsx';
 import { UsageAnalytics } from '../components/settings/UsageAnalytics.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
+import { NeoSettings } from '../components/settings/NeoSettings.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { Inbox } from '../components/inbox/Inbox.tsx';
 
@@ -121,6 +122,7 @@ export default function MainContent() {
 						{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
 						{settingsSection === 'skills' && <SkillsRegistry />}
 						{settingsSection === 'fallback-models' && <FallbackModelsSettings />}
+						{settingsSection === 'neo' && <NeoSettings />}
 						{settingsSection === 'usage' && <UsageAnalytics />}
 						{settingsSection === 'about' && <AboutSection />}
 					</div>
