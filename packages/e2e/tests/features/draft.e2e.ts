@@ -25,7 +25,7 @@ test.describe('Draft Persistence', () => {
 
 		// Type draft text
 		const draftText = 'This is a draft message';
-		await page.fill('textarea[placeholder*="Ask"]', draftText);
+		await page.locator('textarea[placeholder*="Ask"]').first().fill(draftText);
 
 		// Wait for debounced save (250ms + buffer)
 		await page.waitForTimeout(500);
@@ -55,7 +55,7 @@ test.describe('Draft Persistence', () => {
 
 		// Type and send message
 		const messageText = 'Test message for draft clearing';
-		await page.fill('textarea[placeholder*="Ask"]', messageText);
+		await page.locator('textarea[placeholder*="Ask"]').first().fill(messageText);
 		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Wait for message to be sent
@@ -91,7 +91,7 @@ test.describe('Draft Persistence', () => {
 
 		// Type and send message
 		const messageText = 'Message that should not reappear';
-		await page.fill('textarea[placeholder*="Ask"]', messageText);
+		await page.locator('textarea[placeholder*="Ask"]').first().fill(messageText);
 		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Wait for message to be sent
@@ -125,13 +125,13 @@ test.describe('Draft Persistence', () => {
 
 		// Type draft text
 		const draftText = 'Draft to be deleted';
-		await page.fill('textarea[placeholder*="Ask"]', draftText);
+		await page.locator('textarea[placeholder*="Ask"]').first().fill(draftText);
 
 		// Wait for debounced save
 		await page.waitForTimeout(500);
 
 		// Clear the textarea
-		await page.fill('textarea[placeholder*="Ask"]', '');
+		await page.locator('textarea[placeholder*="Ask"]').first().fill('');
 
 		// Wait for immediate save of empty draft
 		await page.waitForTimeout(200);
@@ -202,7 +202,7 @@ test.describe('Draft Persistence', () => {
 
 		// Type draft in first session
 		const draft1 = 'Draft for session 1';
-		await page.fill('textarea[placeholder*="Ask"]', draft1);
+		await page.locator('textarea[placeholder*="Ask"]').first().fill(draft1);
 		await page.waitForTimeout(500);
 
 		// Create second session
@@ -210,7 +210,7 @@ test.describe('Draft Persistence', () => {
 
 		// Type draft in second session
 		const draft2 = 'Draft for session 2';
-		await page.fill('textarea[placeholder*="Ask"]', draft2);
+		await page.locator('textarea[placeholder*="Ask"]').first().fill(draft2);
 		await page.waitForTimeout(500);
 
 		// Go back to first session
