@@ -113,25 +113,39 @@ describe('space:chat session provisioning', () => {
 	test(
 		'space:chat session persists and is retrievable after daemon restart',
 		async () => {
-			const space = await createSpace(daemon);
-			const spaceChatSessionId = `space:chat:${space.id}`;
+			// Use an externally-owned workspace so waitForExit() does NOT delete the DB.
+			// Mirrors the pattern in space-edge-cases.test.ts restart tests.
+			const restartWorkspace = `/tmp/neokai-space-chat-restart-${Date.now()}`;
+			await Bun.$`mkdir -p ${restartWorkspace}`.quiet();
 
-			// Verify session exists before restart
-			const beforeRestart = (await daemon.messageHub.request('session.get', {
-				sessionId: spaceChatSessionId,
-			})) as { session: Record<string, unknown> };
-			expect(beforeRestart.session.id).toBe(spaceChatSessionId);
+			try {
+				// Replace the default daemon with one that owns an external workspace.
+				daemon.kill('SIGTERM');
+				await daemon.waitForExit();
+				daemon = await createDaemonServer({ workspacePath: restartWorkspace });
 
-			// Restart daemon reusing the same workspace/DB
-			daemon = await restartDaemon(daemon);
+				const space = await createSpace(daemon);
+				const spaceChatSessionId = `space:chat:${space.id}`;
 
-			// Session must still be retrievable — provisionExistingSpaces re-attaches runtime config
-			const afterRestart = (await daemon.messageHub.request('session.get', {
-				sessionId: spaceChatSessionId,
-			})) as { session: Record<string, unknown> };
-			expect(afterRestart.session).toBeDefined();
-			expect(afterRestart.session.id).toBe(spaceChatSessionId);
-			expect(afterRestart.session.type).toBe('space_chat');
+				// Verify session exists before restart
+				const beforeRestart = (await daemon.messageHub.request('session.get', {
+					sessionId: spaceChatSessionId,
+				})) as { session: Record<string, unknown> };
+				expect(beforeRestart.session.id).toBe(spaceChatSessionId);
+
+				// Restart daemon — workspace is preserved, DB persists
+				daemon = await restartDaemon(daemon);
+
+				// Session must still be retrievable after restart
+				const afterRestart = (await daemon.messageHub.request('session.get', {
+					sessionId: spaceChatSessionId,
+				})) as { session: Record<string, unknown> };
+				expect(afterRestart.session).toBeDefined();
+				expect(afterRestart.session.id).toBe(spaceChatSessionId);
+				expect(afterRestart.session.type).toBe('space_chat');
+			} finally {
+				await Bun.$`rm -rf ${restartWorkspace}`.quiet();
+			}
 		},
 		TEST_TIMEOUT
 	);
