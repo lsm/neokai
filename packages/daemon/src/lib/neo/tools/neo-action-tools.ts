@@ -1,9 +1,10 @@
 /**
  * Neo Action Tools - MCP tools for write operations
  *
- * Implements room, goal, and task write operations with security-tier enforcement.
- * Each tool checks whether the current security mode requires confirmation before
- * execution and either runs immediately or returns a `confirmationRequired` payload.
+ * Implements room, goal, task, space, and workflow write operations with
+ * security-tier enforcement.  Each tool checks whether the current security
+ * mode requires confirmation before execution and either runs immediately or
+ * returns a `confirmationRequired` payload.
  *
  * Pattern: two-layer design (testable handlers + MCP server wrapper)
  *   createNeoActionToolHandlers(config) → plain handler functions
@@ -27,6 +28,17 @@
  *   - set_task_status
  *   - approve_task
  *   - reject_task
+ *
+ *   Space operations (delegated to GlobalSpaces handler layer)
+ *   - create_space
+ *   - update_space
+ *   - delete_space
+ *
+ *   Workflow operations
+ *   - start_workflow_run  (delegated to GlobalSpaces handler layer)
+ *   - cancel_workflow_run
+ *   - approve_gate
+ *   - reject_gate
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -42,6 +54,7 @@ import type {
 	MissionType,
 	AutonomyLevel,
 	WorkspacePath,
+	SpaceAutonomyLevel,
 } from '@neokai/shared';
 import {
 	ActionClassification,
@@ -148,6 +161,99 @@ export interface NeoActionManagerFactory {
 	getTaskManager(roomId: string): NeoActionTaskManager;
 }
 
+// ---------------------------------------------------------------------------
+// Space / Workflow interfaces (delegated to global-spaces handler layer)
+// ---------------------------------------------------------------------------
+
+/** Minimal ToolResult shape shared with global-spaces handlers. */
+interface SharedToolResult {
+	content: Array<{ type: 'text'; text: string }>;
+}
+
+/**
+ * Handlers from the GlobalSpaces layer that Neo delegates space/workflow
+ * operations to.  Neo wraps each call with a security-tier check before
+ * delegating.
+ *
+ * Pass `createGlobalSpacesToolHandlers(config, state)` as this value when
+ * wiring up the real daemon.  Use a mock object in unit tests.
+ */
+export interface NeoActionSpaceHandlers {
+	create_space(args: {
+		name: string;
+		workspace_path: string;
+		description?: string;
+		instructions?: string;
+		autonomy_level?: SpaceAutonomyLevel;
+	}): Promise<SharedToolResult>;
+
+	update_space(args: {
+		space_id: string;
+		name?: string;
+		description?: string;
+		instructions?: string;
+		background_context?: string;
+		default_model?: string;
+		autonomy_level?: SpaceAutonomyLevel;
+	}): Promise<SharedToolResult>;
+
+	delete_space(args: { space_id: string }): Promise<SharedToolResult>;
+
+	start_workflow_run(args: {
+		space_id?: string;
+		workflow_id: string;
+		title: string;
+		description?: string;
+		goal_id?: string;
+	}): Promise<SharedToolResult>;
+}
+
+/** Minimal workflow-run record needed by cancel/gate handlers. */
+export interface NeoWorkflowRun {
+	id: string;
+	spaceId: string;
+	status: string;
+	failureReason?: string | null;
+}
+
+/** Repository for reading and transitioning workflow run state. */
+export interface NeoActionWorkflowRunRepository {
+	getRun(id: string): NeoWorkflowRun | null;
+	transitionStatus(id: string, to: string): NeoWorkflowRun;
+	updateRun(id: string, params: { failureReason?: string | null }): NeoWorkflowRun | null;
+}
+
+/** Minimal space task record for cancellation. */
+export interface NeoSpaceTask {
+	id: string;
+	status: string;
+}
+
+/** Manager for space tasks within a single workflow run. */
+export interface NeoActionSpaceTaskManager {
+	listTasksByWorkflowRun(runId: string): Promise<NeoSpaceTask[]>;
+	cancelTask(taskId: string): Promise<unknown>;
+}
+
+/** Factory that creates a SpaceTaskManager scoped to a space. */
+export interface NeoActionSpaceTaskManagerFactory {
+	getTaskManager(spaceId: string): NeoActionSpaceTaskManager;
+}
+
+/** Gate data record returned by the repository. */
+export interface NeoGateDataRecord {
+	data: Record<string, unknown>;
+}
+
+/** Repository for reading and writing gate approval data. */
+export interface NeoActionGateDataRepository {
+	get(runId: string, gateId: string): NeoGateDataRecord | null;
+	merge(runId: string, gateId: string, partial: Record<string, unknown>): NeoGateDataRecord;
+}
+
+/** Optional callback to notify the runtime that gate data changed. */
+export type NeoGateChangedNotifier = (runId: string, gateId: string) => Promise<void> | void;
+
 export interface NeoActionToolsConfig {
 	roomManager: NeoActionRoomManager;
 	managerFactory: NeoActionManagerFactory;
@@ -157,6 +263,44 @@ export interface NeoActionToolsConfig {
 	workspaceRoot?: string;
 	/** Returns the current security mode (looked up at call time) */
 	getSecurityMode(): NeoSecurityMode;
+
+	// ── Space / Workflow dependencies ──────────────────────────────────────
+	/** Pre-constructed GlobalSpaces handlers — Neo delegates CRUD and run ops to these. */
+	spaceHandlers?: NeoActionSpaceHandlers;
+	/** Repository for reading and transitioning workflow-run state. */
+	workflowRunRepo?: NeoActionWorkflowRunRepository;
+	/** Factory for per-space task managers (used by cancel_workflow_run). */
+	spaceTaskManagerFactory?: NeoActionSpaceTaskManagerFactory;
+	/** Repository for gate approval data. */
+	gateDataRepo?: NeoActionGateDataRepository;
+	/**
+	 * Optional callback invoked after gate data is written.
+	 * When provided, triggers channel re-evaluation so downstream nodes
+	 * activate if the gate is now open (mirrors fireGateChanged in the RPC layer).
+	 */
+	onGateChanged?: NeoGateChangedNotifier;
+	/**
+	 * Optional callback invoked after a workflow run's status changes.
+	 * Mirrors the `space.workflowRun.updated` event emitted by the RPC layer
+	 * so that the frontend LiveQuery subscriptions receive the update.
+	 * Called by cancel_workflow_run, approve_gate, and reject_gate.
+	 */
+	onWorkflowRunUpdated?: (
+		spaceId: string,
+		runId: string,
+		run: NeoWorkflowRun
+	) => void | Promise<void>;
+	/**
+	 * Optional callback invoked after gate data is written.
+	 * Mirrors the `space.gateData.updated` event emitted by the RPC layer.
+	 * Called by approve_gate and reject_gate.
+	 */
+	onGateDataUpdated?: (
+		spaceId: string,
+		runId: string,
+		gateId: string,
+		data: Record<string, unknown>
+	) => void | Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +367,19 @@ async function withSecurityCheck(
 // ---------------------------------------------------------------------------
 
 export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
-	const { roomManager, managerFactory, runtimeService, workspaceRoot } = config;
+	const {
+		roomManager,
+		managerFactory,
+		runtimeService,
+		workspaceRoot,
+		spaceHandlers,
+		workflowRunRepo,
+		spaceTaskManagerFactory,
+		gateDataRepo,
+		onGateChanged,
+		onWorkflowRunUpdated,
+		onGateDataUpdated,
+	} = config;
 
 	return {
 		// ── Room ──────────────────────────────────────────────────────────────
@@ -610,6 +766,236 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				return successResult({ taskId: args.task_id });
 			});
 		},
+
+		// ── Space ─────────────────────────────────────────────────────────────
+
+		async create_space(args: {
+			name: string;
+			workspace_path: string;
+			description?: string;
+			instructions?: string;
+			autonomy_level?: SpaceAutonomyLevel;
+		}): Promise<ToolResult> {
+			return withSecurityCheck('create_space', args as Record<string, unknown>, config, () => {
+				if (!spaceHandlers) {
+					return Promise.resolve(errorResult('Space operations are not available'));
+				}
+				return spaceHandlers.create_space(args);
+			});
+		},
+
+		async update_space(args: {
+			space_id: string;
+			name?: string;
+			description?: string;
+			instructions?: string;
+			background_context?: string;
+			default_model?: string;
+			autonomy_level?: SpaceAutonomyLevel;
+		}): Promise<ToolResult> {
+			// Input validation — stays outside the security check (no backend needed to validate)
+			const hasUpdates =
+				args.name !== undefined ||
+				args.description !== undefined ||
+				args.instructions !== undefined ||
+				args.background_context !== undefined ||
+				args.default_model !== undefined ||
+				args.autonomy_level !== undefined;
+			if (!hasUpdates) {
+				return errorResult('No update fields provided');
+			}
+			return withSecurityCheck('update_space', args as Record<string, unknown>, config, () => {
+				if (!spaceHandlers) {
+					return Promise.resolve(errorResult('Space operations are not available'));
+				}
+				return spaceHandlers.update_space(args);
+			});
+		},
+
+		async delete_space(args: { space_id: string }): Promise<ToolResult> {
+			return withSecurityCheck('delete_space', args as Record<string, unknown>, config, () => {
+				if (!spaceHandlers) {
+					return Promise.resolve(errorResult('Space operations are not available'));
+				}
+				return spaceHandlers.delete_space(args);
+			});
+		},
+
+		// ── Workflow ──────────────────────────────────────────────────────────
+
+		async start_workflow_run(args: {
+			space_id?: string;
+			workflow_id: string;
+			title: string;
+			description?: string;
+			goal_id?: string;
+		}): Promise<ToolResult> {
+			return withSecurityCheck(
+				'start_workflow_run',
+				args as Record<string, unknown>,
+				config,
+				() => {
+					if (!spaceHandlers) {
+						return Promise.resolve(errorResult('Workflow operations are not available'));
+					}
+					return spaceHandlers.start_workflow_run(args);
+				}
+			);
+		},
+
+		async cancel_workflow_run(args: { run_id: string }): Promise<ToolResult> {
+			return withSecurityCheck(
+				'cancel_workflow_run',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					if (!workflowRunRepo || !spaceTaskManagerFactory) {
+						return errorResult('Workflow run operations are not available');
+					}
+
+					const run = workflowRunRepo.getRun(args.run_id);
+					if (!run) {
+						return errorResult(`Workflow run not found: ${args.run_id}`);
+					}
+					if (run.status === 'cancelled') {
+						return successResult({ runId: args.run_id, alreadyCancelled: true });
+					}
+					if (run.status === 'completed') {
+						return errorResult('Cannot cancel a completed workflow run');
+					}
+
+					// Cancel all pending/in_progress tasks for this run (best-effort)
+					const taskManager = spaceTaskManagerFactory.getTaskManager(run.spaceId);
+					const tasks = await taskManager.listTasksByWorkflowRun(run.id);
+					for (const task of tasks) {
+						if (task.status === 'pending' || task.status === 'in_progress') {
+							await taskManager.cancelTask(task.id).catch(() => {
+								/* best-effort — individual task failures do not abort run cancellation */
+							});
+						}
+					}
+
+					const updated = workflowRunRepo.transitionStatus(args.run_id, 'cancelled');
+					await onWorkflowRunUpdated?.(run.spaceId, run.id, updated);
+					return successResult({ runId: args.run_id });
+				}
+			);
+		},
+
+		// ── Gate ──────────────────────────────────────────────────────────────
+
+		async approve_gate(args: {
+			run_id: string;
+			gate_id: string;
+			reason?: string;
+		}): Promise<ToolResult> {
+			return withSecurityCheck(
+				'approve_gate',
+				args as Record<string, unknown>,
+				config,
+				async () => {
+					if (!workflowRunRepo || !gateDataRepo) {
+						return errorResult('Gate operations are not available');
+					}
+
+					const run = workflowRunRepo.getRun(args.run_id);
+					if (!run) {
+						return errorResult(`Workflow run not found: ${args.run_id}`);
+					}
+					if (
+						run.status === 'completed' ||
+						run.status === 'cancelled' ||
+						run.status === 'pending'
+					) {
+						return errorResult(`Cannot approve gate on a ${run.status} workflow run`);
+					}
+
+					// Idempotent: already approved
+					const existing = gateDataRepo.get(args.run_id, args.gate_id);
+					if (existing?.data?.approved === true) {
+						return successResult({
+							runId: args.run_id,
+							gateId: args.gate_id,
+							gateData: existing.data,
+						});
+					}
+
+					const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
+						approved: true,
+						approvedAt: Date.now(),
+					});
+
+					// If previously rejected, transition back to in_progress and clear failure reason
+					let currentRun = run;
+					if (run.status === 'needs_attention' && run.failureReason === 'humanRejected') {
+						currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
+						currentRun =
+							workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
+						await onWorkflowRunUpdated?.(run.spaceId, run.id, currentRun);
+					}
+
+					await onGateDataUpdated?.(run.spaceId, run.id, args.gate_id, gateData.data);
+					await onGateChanged?.(args.run_id, args.gate_id);
+
+					return successResult({
+						runId: args.run_id,
+						gateId: args.gate_id,
+						gateData: gateData.data,
+					});
+				}
+			);
+		},
+
+		async reject_gate(args: {
+			run_id: string;
+			gate_id: string;
+			reason?: string;
+		}): Promise<ToolResult> {
+			return withSecurityCheck('reject_gate', args as Record<string, unknown>, config, async () => {
+				if (!workflowRunRepo || !gateDataRepo) {
+					return errorResult('Gate operations are not available');
+				}
+
+				const run = workflowRunRepo.getRun(args.run_id);
+				if (!run) {
+					return errorResult(`Workflow run not found: ${args.run_id}`);
+				}
+				if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
+					return errorResult(`Cannot reject gate on a ${run.status} workflow run`);
+				}
+
+				// Idempotent: already rejected
+				const existing = gateDataRepo.get(args.run_id, args.gate_id);
+				if (existing?.data?.approved === false) {
+					return successResult({
+						runId: args.run_id,
+						gateId: args.gate_id,
+						gateData: existing.data,
+					});
+				}
+
+				const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
+					approved: false,
+					rejectedAt: Date.now(),
+					reason: args.reason ?? null,
+				});
+
+				if (run.status !== 'needs_attention') {
+					workflowRunRepo.transitionStatus(args.run_id, 'needs_attention');
+				}
+				const updatedRun =
+					workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' }) ?? run;
+
+				await onWorkflowRunUpdated?.(run.spaceId, run.id, updatedRun);
+				await onGateDataUpdated?.(run.spaceId, run.id, args.gate_id, gateData.data);
+
+				return successResult({
+					runId: args.run_id,
+					gateId: args.gate_id,
+					gateData: gateData.data,
+				});
+			});
+		},
 	};
 }
 
@@ -798,6 +1184,104 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				feedback: z.string().describe('Feedback explaining why the task was rejected'),
 			},
 			(args) => handlers.reject_task(args)
+		),
+
+		// ── Space ─────────────────────────────────────────────────────────────
+		tool(
+			'create_space',
+			'Create a new space with a name and workspace path. Low risk — auto-executes in balanced mode.',
+			{
+				name: z.string().describe('Name for the new space'),
+				workspace_path: z.string().describe('Absolute path to the workspace directory'),
+				description: z.string().optional().describe('Description of the space'),
+				instructions: z
+					.string()
+					.optional()
+					.describe('Instructions for agents working in this space'),
+				autonomy_level: z
+					.enum(['supervised', 'semi_autonomous'])
+					.optional()
+					.describe(
+						'Autonomy level: "supervised" (default) waits for human approval on judgment calls; "semi_autonomous" handles simple cases independently'
+					),
+			},
+			(args) => handlers.create_space(args)
+		),
+
+		tool(
+			'update_space',
+			'Update space metadata such as name, description, instructions, or autonomy level. Low risk — auto-executes in balanced mode.',
+			{
+				space_id: z.string().describe('ID of the space to update'),
+				name: z.string().optional().describe('New name'),
+				description: z.string().optional().describe('New description'),
+				instructions: z.string().optional().describe('New instructions for agents'),
+				background_context: z.string().optional().describe('New background context'),
+				default_model: z.string().optional().describe('New default model ID'),
+				autonomy_level: z
+					.enum(['supervised', 'semi_autonomous'])
+					.optional()
+					.describe('New autonomy level'),
+			},
+			(args) => handlers.update_space(args)
+		),
+
+		tool(
+			'delete_space',
+			'Permanently delete a space and all its data. Medium risk — requires confirmation in balanced mode.',
+			{
+				space_id: z.string().describe('ID of the space to delete'),
+			},
+			(args) => handlers.delete_space(args)
+		),
+
+		// ── Workflow ──────────────────────────────────────────────────────────
+		tool(
+			'start_workflow_run',
+			'Begin a workflow run in a space. Low risk — auto-executes in balanced mode.',
+			{
+				space_id: z
+					.string()
+					.optional()
+					.describe('Target space ID (defaults to the active space context)'),
+				workflow_id: z.string().describe('ID of the workflow to run'),
+				title: z.string().describe('Short title for this workflow run'),
+				description: z.string().optional().describe('Description of the work'),
+				goal_id: z.string().optional().describe('Goal/mission ID to associate with this run'),
+			},
+			(args) => handlers.start_workflow_run(args)
+		),
+
+		tool(
+			'cancel_workflow_run',
+			'Cancel an active workflow run and all its pending tasks. Medium risk — requires confirmation in balanced mode.',
+			{
+				run_id: z.string().describe('ID of the workflow run to cancel'),
+			},
+			(args) => handlers.cancel_workflow_run(args)
+		),
+
+		// ── Gate ──────────────────────────────────────────────────────────────
+		tool(
+			'approve_gate',
+			'Approve a human-approval gate in a workflow run, allowing the workflow to proceed. Medium risk — requires confirmation in balanced mode.',
+			{
+				run_id: z.string().describe('ID of the workflow run'),
+				gate_id: z.string().describe('ID of the gate to approve'),
+				reason: z.string().optional().describe('Optional reason for the approval'),
+			},
+			(args) => handlers.approve_gate(args)
+		),
+
+		tool(
+			'reject_gate',
+			'Reject a human-approval gate in a workflow run, halting it for revision. Medium risk — requires confirmation in balanced mode.',
+			{
+				run_id: z.string().describe('ID of the workflow run'),
+				gate_id: z.string().describe('ID of the gate to reject'),
+				reason: z.string().optional().describe('Reason for the rejection'),
+			},
+			(args) => handlers.reject_gate(args)
 		),
 	];
 
