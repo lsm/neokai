@@ -143,6 +143,8 @@ jobs:
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
           - rewind
+          - cross-provider-1
+          - cross-provider-2
           # Room tests temporarily disabled during refactoring
           # - room-1
           # - room-multi-agent
@@ -289,8 +291,13 @@ jobs:
             test_path: tests/online/websocket
             mock_sdk: true
           # Cross-provider model switching tests - requires real MiniMax and GLM credentials
-          - module: cross-provider
-            test_path: tests/online/cross-provider
+          # Split into 2 parallel jobs to reduce overall CI time.
+          - module: cross-provider-1
+            test_path: tests/online/cross-provider/conversation-continuity-after-switch.test.ts
+            mock_sdk: false
+            default_provider: minimax
+          - module: cross-provider-2
+            test_path: tests/online/cross-provider/cross-provider-model-switch.test.ts
             mock_sdk: false
             default_provider: minimax
 
