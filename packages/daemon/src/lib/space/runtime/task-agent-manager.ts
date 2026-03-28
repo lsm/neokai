@@ -203,6 +203,52 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
+	 * Ensure a task has an attached Task Agent session.
+	 *
+	 * For standalone tasks opened directly in the UI, this provides a deterministic
+	 * way to start the orchestration session on demand.
+	 *
+	 * Behavior:
+	 * - If the task already has `taskAgentSessionId`, return the current task.
+	 * - Otherwise spawn a Task Agent session and persist the session ID.
+	 * - If the task was `pending`, promote it to `in_progress` once the session starts.
+	 *
+	 * Returns the latest task snapshot from the repository.
+	 */
+	async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		if (task.taskAgentSessionId) {
+			return task;
+		}
+
+		const space = await this.config.spaceManager.getSpace(task.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${task.spaceId}`);
+		}
+
+		const workflowRun = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
+		const workflow = workflowRun
+			? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
+			: null;
+
+		await this.spawnTaskAgent(task, space, workflow ?? null, workflowRun ?? null);
+
+		if (task.status === 'pending') {
+			this.config.taskRepo.updateTask(taskId, { status: 'in_progress' });
+		}
+
+		const refreshed = this.config.taskRepo.getTask(taskId);
+		if (!refreshed) {
+			throw new Error(`Failed to reload task after starting Task Agent: ${taskId}`);
+		}
+		return refreshed;
+	}
+
+	/**
 	 * Spawn a Task Agent session for a SpaceTask.
 	 *
 	 * Idempotent: if a Task Agent session already exists for this task (or is
