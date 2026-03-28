@@ -11,7 +11,11 @@
  * - get_room_details: found with goals/tasks, not found
  * - get_system_info: auth authenticated, auth not authenticated
  * - get_app_settings: returns safe subset of GlobalSettings
- * - MCP server: all 5 tools are registered
+ * - list_mcp_servers: happy path, empty list
+ * - get_mcp_server_status: found (stdio), found (sse), not found
+ * - list_skills: happy path, empty list
+ * - get_skill_details: found, not found
+ * - MCP server: all 9 tools are registered
  */
 
 import { describe, expect, it, beforeEach } from 'bun:test';
@@ -24,8 +28,10 @@ import {
 	type NeoQuerySessionManager,
 	type NeoQuerySettingsManager,
 	type NeoQueryAuthManager,
+	type NeoQueryMcpServerRepository,
+	type NeoQuerySkillsManager,
 } from '../../../src/lib/neo/tools/neo-query-tools';
-import type { Room, RoomGoal } from '@neokai/shared';
+import type { Room, RoomGoal, AppMcpServer, AppSkill } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -140,6 +146,51 @@ function makeAuthManager(isAuthenticated: boolean, method = 'api_key'): NeoQuery
 	};
 }
 
+function makeMcpServer(overrides: Partial<AppMcpServer> = {}): AppMcpServer {
+	return {
+		id: 'mcp-1',
+		name: 'test-server',
+		sourceType: 'stdio',
+		command: 'npx',
+		args: ['-y', 'some-mcp-package'],
+		env: { SOME_KEY: 'value' },
+		enabled: true,
+		createdAt: NOW - 5_000,
+		updatedAt: NOW,
+		...overrides,
+	};
+}
+
+function makeMcpServerRepository(servers: AppMcpServer[] = []): NeoQueryMcpServerRepository {
+	return {
+		list: () => servers,
+		get: (id) => servers.find((s) => s.id === id) ?? null,
+	};
+}
+
+function makeSkill(overrides: Partial<AppSkill> = {}): AppSkill {
+	return {
+		id: 'skill-1',
+		name: 'test-skill',
+		displayName: 'Test Skill',
+		description: 'A test skill',
+		sourceType: 'builtin',
+		config: { type: 'builtin', commandName: 'test-cmd' },
+		enabled: true,
+		builtIn: false,
+		validationStatus: 'valid',
+		createdAt: NOW - 3_000,
+		...overrides,
+	};
+}
+
+function makeSkillsManager(skills: AppSkill[] = []): NeoQuerySkillsManager {
+	return {
+		listSkills: () => skills,
+		getSkill: (id) => skills.find((s) => s.id === id) ?? null,
+	};
+}
+
 function makeConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToolsConfig {
 	return {
 		roomManager: makeRoomManager(),
@@ -147,6 +198,8 @@ function makeConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToolsConfig {
 		sessionManager: makeSessionManager(),
 		settingsManager: makeSettingsManager(),
 		authManager: makeAuthManager(true),
+		mcpServerRepository: makeMcpServerRepository(),
+		skillsManager: makeSkillsManager(),
 		workspaceRoot: '/workspace',
 		appVersion: '0.1.1',
 		startedAt: NOW - 60_000,
@@ -469,6 +522,293 @@ describe('get_app_settings', () => {
 });
 
 // ---------------------------------------------------------------------------
+// list_mcp_servers
+// ---------------------------------------------------------------------------
+
+describe('list_mcp_servers', () => {
+	it('returns empty array when no servers registered', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_mcp_servers());
+		expect(result).toEqual([]);
+	});
+
+	it('returns all servers with summary fields', async () => {
+		const server = makeMcpServer({ description: 'A test MCP server' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ mcpServerRepository: makeMcpServerRepository([server]) })
+		);
+
+		const result = parseResult(await handlers.list_mcp_servers());
+		expect(result).toHaveLength(1);
+		const s = result[0];
+		expect(s.id).toBe('mcp-1');
+		expect(s.name).toBe('test-server');
+		expect(s.description).toBe('A test MCP server');
+		expect(s.sourceType).toBe('stdio');
+		expect(s.enabled).toBe(true);
+		expect(s.createdAt).toBe(NOW - 5_000);
+	});
+
+	it('returns disabled servers with enabled=false', async () => {
+		const server = makeMcpServer({ enabled: false });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ mcpServerRepository: makeMcpServerRepository([server]) })
+		);
+
+		const result = parseResult(await handlers.list_mcp_servers());
+		expect(result[0].enabled).toBe(false);
+	});
+
+	it('returns null description when not set', async () => {
+		const server = makeMcpServer({ description: undefined });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ mcpServerRepository: makeMcpServerRepository([server]) })
+		);
+
+		const result = parseResult(await handlers.list_mcp_servers());
+		expect(result[0].description).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// get_mcp_server_status
+// ---------------------------------------------------------------------------
+
+describe('get_mcp_server_status', () => {
+	it('returns error when server not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.get_mcp_server_status({ server_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns stdio server details with command and arg list', async () => {
+		const server = makeMcpServer({
+			sourceType: 'stdio',
+			command: 'npx',
+			args: ['-y', 'some-pkg'],
+			env: { API_KEY: 'secret', DEBUG: '1' },
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ mcpServerRepository: makeMcpServerRepository([server]) })
+		);
+
+		const result = parseResult(await handlers.get_mcp_server_status({ server_id: 'mcp-1' }));
+		expect(result.id).toBe('mcp-1');
+		expect(result.name).toBe('test-server');
+		expect(result.enabled).toBe(true);
+		expect(result.transport.sourceType).toBe('stdio');
+		expect(result.transport.command).toBe('npx');
+		expect(result.transport.args).toEqual(['-y', 'some-pkg']);
+		// Env values must NOT be included — only key names
+		expect(result.transport.envKeys).toEqual(expect.arrayContaining(['API_KEY', 'DEBUG']));
+		expect(result.transport.env).toBeUndefined();
+	});
+
+	it('returns sse/http server details with url but not header values', async () => {
+		const server = makeMcpServer({
+			id: 'mcp-2',
+			sourceType: 'sse',
+			command: undefined,
+			args: undefined,
+			env: undefined,
+			url: 'https://example.com/mcp',
+			headers: { Authorization: 'Bearer token123', 'X-Custom': 'val' },
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ mcpServerRepository: makeMcpServerRepository([server]) })
+		);
+
+		const result = parseResult(await handlers.get_mcp_server_status({ server_id: 'mcp-2' }));
+		expect(result.transport.sourceType).toBe('sse');
+		expect(result.transport.url).toBe('https://example.com/mcp');
+		// Header values must NOT be included — only key names
+		expect(result.transport.headerKeys).toEqual(
+			expect.arrayContaining(['Authorization', 'X-Custom'])
+		);
+		expect(result.transport.headers).toBeUndefined();
+	});
+
+	it('returns http server details with url but not header values', async () => {
+		const server = makeMcpServer({
+			id: 'mcp-3',
+			sourceType: 'http',
+			command: undefined,
+			args: undefined,
+			env: undefined,
+			url: 'https://example.com/mcp/http',
+			headers: { 'X-Api-Key': 'secret', 'X-Tenant': 'acme' },
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ mcpServerRepository: makeMcpServerRepository([server]) })
+		);
+
+		const result = parseResult(await handlers.get_mcp_server_status({ server_id: 'mcp-3' }));
+		expect(result.transport.sourceType).toBe('http');
+		expect(result.transport.url).toBe('https://example.com/mcp/http');
+		expect(result.transport.headerKeys).toEqual(expect.arrayContaining(['X-Api-Key', 'X-Tenant']));
+		expect(result.transport.headers).toBeUndefined();
+	});
+
+	it('returns empty envKeys when env is not set', async () => {
+		const server = makeMcpServer({ env: undefined });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ mcpServerRepository: makeMcpServerRepository([server]) })
+		);
+
+		const result = parseResult(await handlers.get_mcp_server_status({ server_id: 'mcp-1' }));
+		expect(result.transport.envKeys).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// list_skills
+// ---------------------------------------------------------------------------
+
+describe('list_skills', () => {
+	it('returns empty array when no skills registered', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.list_skills());
+		expect(result).toEqual([]);
+	});
+
+	it('returns all skills with summary fields', async () => {
+		const skill = makeSkill({ displayName: 'My Skill', description: 'Does stuff' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ skillsManager: makeSkillsManager([skill]) })
+		);
+
+		const result = parseResult(await handlers.list_skills());
+		expect(result).toHaveLength(1);
+		const s = result[0];
+		expect(s.id).toBe('skill-1');
+		expect(s.name).toBe('test-skill');
+		expect(s.displayName).toBe('My Skill');
+		expect(s.description).toBe('Does stuff');
+		expect(s.sourceType).toBe('builtin');
+		expect(s.enabled).toBe(true);
+		expect(s.builtIn).toBe(false);
+		expect(s.validationStatus).toBe('valid');
+	});
+
+	it('list_skills does not include config or createdAt', async () => {
+		const skill = makeSkill();
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ skillsManager: makeSkillsManager([skill]) })
+		);
+
+		const result = parseResult(await handlers.list_skills());
+		expect(result[0].config).toBeUndefined();
+		expect(result[0].createdAt).toBeUndefined();
+	});
+
+	it('returns disabled skills with enabled=false', async () => {
+		const skill = makeSkill({ enabled: false });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ skillsManager: makeSkillsManager([skill]) })
+		);
+
+		const result = parseResult(await handlers.list_skills());
+		expect(result[0].enabled).toBe(false);
+	});
+
+	it('returns skills with various source types', async () => {
+		const plugin = makeSkill({
+			id: 'skill-plugin',
+			name: 'plugin-skill',
+			sourceType: 'plugin',
+			config: { type: 'plugin', pluginPath: '/abs/path/to/plugin' },
+		});
+		const mcp = makeSkill({
+			id: 'skill-mcp',
+			name: 'mcp-skill',
+			sourceType: 'mcp_server',
+			config: { type: 'mcp_server', appMcpServerId: 'some-mcp-id' },
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ skillsManager: makeSkillsManager([plugin, mcp]) })
+		);
+
+		const result = parseResult(await handlers.list_skills());
+		expect(result).toHaveLength(2);
+		expect(result[0].sourceType).toBe('plugin');
+		expect(result[1].sourceType).toBe('mcp_server');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// get_skill_details
+// ---------------------------------------------------------------------------
+
+describe('get_skill_details', () => {
+	it('returns error when skill not found', async () => {
+		const handlers = createNeoQueryToolHandlers(makeConfig());
+		const result = parseResult(await handlers.get_skill_details({ skill_id: 'missing' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('missing');
+	});
+
+	it('returns full skill details including config and createdAt', async () => {
+		const skill = makeSkill({
+			id: 'skill-1',
+			name: 'web-search',
+			displayName: 'Web Search',
+			sourceType: 'mcp_server',
+			config: { type: 'mcp_server', appMcpServerId: 'mcp-uuid' },
+			builtIn: true,
+			validationStatus: 'valid',
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ skillsManager: makeSkillsManager([skill]) })
+		);
+
+		const result = parseResult(await handlers.get_skill_details({ skill_id: 'skill-1' }));
+		expect(result.id).toBe('skill-1');
+		expect(result.name).toBe('web-search');
+		expect(result.displayName).toBe('Web Search');
+		expect(result.sourceType).toBe('mcp_server');
+		expect(result.config).toEqual({ type: 'mcp_server', appMcpServerId: 'mcp-uuid' });
+		expect(result.builtIn).toBe(true);
+		expect(result.validationStatus).toBe('valid');
+		expect(result.createdAt).toBe(NOW - 3_000);
+	});
+
+	it('returns correct validationStatus for invalid skill', async () => {
+		const skill = makeSkill({ validationStatus: 'invalid' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ skillsManager: makeSkillsManager([skill]) })
+		);
+
+		const result = parseResult(await handlers.get_skill_details({ skill_id: 'skill-1' }));
+		expect(result.validationStatus).toBe('invalid');
+	});
+
+	it('returns pending validation status for newly created skill', async () => {
+		const skill = makeSkill({ validationStatus: 'pending' });
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ skillsManager: makeSkillsManager([skill]) })
+		);
+
+		const result = parseResult(await handlers.get_skill_details({ skill_id: 'skill-1' }));
+		expect(result.validationStatus).toBe('pending');
+	});
+
+	it('returns plugin config with pluginPath', async () => {
+		const skill = makeSkill({
+			sourceType: 'plugin',
+			config: { type: 'plugin', pluginPath: '/absolute/path/to/plugin' },
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ skillsManager: makeSkillsManager([skill]) })
+		);
+
+		const result = parseResult(await handlers.get_skill_details({ skill_id: 'skill-1' }));
+		expect(result.config.type).toBe('plugin');
+		expect(result.config.pluginPath).toBe('/absolute/path/to/plugin');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // MCP server — tool registration
 // ---------------------------------------------------------------------------
 
@@ -503,7 +843,23 @@ describe('createNeoQueryMcpServer', () => {
 		expect(server.instance._registeredTools).toHaveProperty('get_app_settings');
 	});
 
-	it('registers exactly 5 tools', () => {
-		expect(Object.keys(server.instance._registeredTools)).toHaveLength(5);
+	it('registers list_mcp_servers tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('list_mcp_servers');
+	});
+
+	it('registers get_mcp_server_status tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('get_mcp_server_status');
+	});
+
+	it('registers list_skills tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('list_skills');
+	});
+
+	it('registers get_skill_details tool', () => {
+		expect(server.instance._registeredTools).toHaveProperty('get_skill_details');
+	});
+
+	it('registers exactly 9 tools', () => {
+		expect(Object.keys(server.instance._registeredTools)).toHaveLength(9);
 	});
 });

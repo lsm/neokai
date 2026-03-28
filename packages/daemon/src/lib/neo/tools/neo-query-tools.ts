@@ -7,6 +7,10 @@
  * - get_room_details
  * - get_system_info
  * - get_app_settings
+ * - list_mcp_servers
+ * - get_mcp_server_status
+ * - list_skills
+ * - get_skill_details
  *
  * Pattern: two-layer design (testable handlers + MCP server wrapper)
  *   createNeoQueryToolHandlers(config) → plain handler functions
@@ -15,7 +19,15 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { GlobalSettings, AuthStatus, Room, RoomGoal, TaskSummary } from '@neokai/shared';
+import type {
+	GlobalSettings,
+	AuthStatus,
+	Room,
+	RoomGoal,
+	TaskSummary,
+	AppMcpServer,
+	AppSkill,
+} from '@neokai/shared';
 import { isWorkerSessionId } from '../../room/session-utils';
 
 // ---------------------------------------------------------------------------
@@ -54,6 +66,16 @@ export interface NeoQueryAuthManager {
 	getAuthStatus(): Promise<AuthStatus>;
 }
 
+export interface NeoQueryMcpServerRepository {
+	list(): AppMcpServer[];
+	get(id: string): AppMcpServer | null;
+}
+
+export interface NeoQuerySkillsManager {
+	listSkills(): AppSkill[];
+	getSkill(id: string): AppSkill | null;
+}
+
 /**
  * All dependencies required by the Neo query tools.
  */
@@ -63,6 +85,8 @@ export interface NeoToolsConfig {
 	sessionManager: NeoQuerySessionManager;
 	settingsManager: NeoQuerySettingsManager;
 	authManager: NeoQueryAuthManager;
+	mcpServerRepository: NeoQueryMcpServerRepository;
+	skillsManager: NeoQuerySkillsManager;
 	/** Absolute path to the workspace root */
 	workspaceRoot: string;
 	/** Human-readable app version string, e.g. "0.1.1" */
@@ -103,6 +127,8 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 		sessionManager,
 		settingsManager,
 		authManager,
+		mcpServerRepository,
+		skillsManager,
 		workspaceRoot,
 		appVersion,
 		startedAt,
@@ -254,6 +280,101 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				disabledMcpServers: settings.disabledMcpServers ?? [],
 			});
 		},
+
+		/**
+		 * List all registered MCP servers with their enabled/disabled status.
+		 */
+		async list_mcp_servers(): Promise<ToolResult> {
+			const servers = mcpServerRepository.list();
+
+			const result = servers.map((s) => ({
+				id: s.id,
+				name: s.name,
+				description: s.description ?? null,
+				sourceType: s.sourceType,
+				enabled: s.enabled,
+				createdAt: s.createdAt ?? null,
+				updatedAt: s.updatedAt ?? null,
+			}));
+
+			return jsonResult(result);
+		},
+
+		/**
+		 * Get details for a specific MCP server by ID.
+		 */
+		async get_mcp_server_status(args: { server_id: string }): Promise<ToolResult> {
+			const server = mcpServerRepository.get(args.server_id);
+			if (!server) {
+				return errorResult(`MCP server not found: ${args.server_id}`);
+			}
+
+			// Build transport-specific config (omit sensitive env values)
+			const transportConfig: Record<string, unknown> = { sourceType: server.sourceType };
+			if (server.sourceType === 'stdio') {
+				transportConfig['command'] = server.command ?? null;
+				transportConfig['args'] = server.args ?? [];
+				// Expose env key names only (not values) to avoid leaking secrets
+				transportConfig['envKeys'] = server.env ? Object.keys(server.env) : [];
+			} else {
+				transportConfig['url'] = server.url ?? null;
+				// Expose header key names only (not values) to avoid leaking secrets
+				transportConfig['headerKeys'] = server.headers ? Object.keys(server.headers) : [];
+			}
+
+			return jsonResult({
+				id: server.id,
+				name: server.name,
+				description: server.description ?? null,
+				enabled: server.enabled,
+				transport: transportConfig,
+				createdAt: server.createdAt ?? null,
+				updatedAt: server.updatedAt ?? null,
+			});
+		},
+
+		/**
+		 * List all skills with type and enabled status.
+		 */
+		async list_skills(): Promise<ToolResult> {
+			const skills = skillsManager.listSkills();
+
+			const result = skills.map((s) => ({
+				id: s.id,
+				name: s.name,
+				displayName: s.displayName,
+				description: s.description,
+				sourceType: s.sourceType,
+				enabled: s.enabled,
+				builtIn: s.builtIn,
+				validationStatus: s.validationStatus,
+			}));
+
+			return jsonResult(result);
+		},
+
+		/**
+		 * Get full details for a specific skill by ID including validation status.
+		 */
+		async get_skill_details(args: { skill_id: string }): Promise<ToolResult> {
+			const skill = skillsManager.getSkill(args.skill_id);
+			if (!skill) {
+				return errorResult(`Skill not found: ${args.skill_id}`);
+			}
+
+			return jsonResult({
+				id: skill.id,
+				name: skill.name,
+				displayName: skill.displayName,
+				description: skill.description,
+				sourceType: skill.sourceType,
+				config: skill.config,
+				enabled: skill.enabled,
+				builtIn: skill.builtIn,
+				validationStatus: skill.validationStatus,
+				createdAt: skill.createdAt,
+			});
+		},
 	};
 }
 
@@ -312,6 +433,38 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 			'Get the current global application settings including model, permission mode, Neo security mode, and other preferences.',
 			{},
 			() => handlers.get_app_settings()
+		),
+
+		tool(
+			'list_mcp_servers',
+			'List all registered application-level MCP servers with their enabled/disabled status, source type, and description.',
+			{},
+			() => handlers.list_mcp_servers()
+		),
+
+		tool(
+			'get_mcp_server_status',
+			'Get details for a specific MCP server by ID: transport type, configuration (command/URL, env key names), and enabled status.',
+			{
+				server_id: z.string().describe('ID of the MCP server to query'),
+			},
+			(args) => handlers.get_mcp_server_status(args)
+		),
+
+		tool(
+			'list_skills',
+			'List all application-level skills with their source type (builtin/plugin/mcp_server), enabled status, and validation status.',
+			{},
+			() => handlers.list_skills()
+		),
+
+		tool(
+			'get_skill_details',
+			'Get full details for a specific skill by ID including its config, validation status, and whether it is built-in.',
+			{
+				skill_id: z.string().describe('ID of the skill to query'),
+			},
+			(args) => handlers.get_skill_details(args)
 		),
 	];
 
