@@ -19,7 +19,11 @@ import type { McpServerConfig } from '@neokai/shared';
 import type { AgentSession } from '../agent/agent-session';
 import { Logger } from '../logger';
 import { buildNeoSystemPrompt, type NeoSecurityMode } from './neo-system-prompt';
-import { createNeoQueryMcpServer, type NeoToolsConfig } from './tools/neo-query-tools';
+import {
+	createNeoToolsMcpServers,
+	type NeoToolsConfig,
+	type NeoActionToolsConfig,
+} from './tools/neo-tools-server';
 
 export const NEO_SESSION_ID = 'neo:global';
 const NEO_SESSION_TITLE = 'Neo';
@@ -52,6 +56,7 @@ export class NeoAgentManager {
 	private readonly logger = new Logger('NeoAgentManager');
 	private session: AgentSession | null = null;
 	private toolsConfig: NeoToolsConfig | null = null;
+	private actionToolsConfig: NeoActionToolsConfig | null = null;
 	private appMcpManager: NeoAppMcpManager | null = null;
 
 	constructor(
@@ -136,6 +141,18 @@ export class NeoAgentManager {
 	setToolsConfig(toolsConfig: NeoToolsConfig, appMcpManager?: NeoAppMcpManager): void {
 		this.toolsConfig = toolsConfig;
 		this.appMcpManager = appMcpManager ?? null;
+	}
+
+	/**
+	 * Wire in the action tools dependencies.
+	 *
+	 * Must be called before `provision()`. When set, `provision()` will create the
+	 * neo-action MCP server and attach it alongside the neo-query server.
+	 *
+	 * @param actionToolsConfig  All dependencies needed by createNeoActionMcpServer().
+	 */
+	setActionToolsConfig(actionToolsConfig: NeoActionToolsConfig): void {
+		this.actionToolsConfig = actionToolsConfig;
 	}
 
 	/**
@@ -317,31 +334,35 @@ export class NeoAgentManager {
 		const model = this.getModel();
 		this.session.setRuntimeModel(model);
 
-		this.attachQueryTools();
+		this.attachTools();
 	}
 
 	/**
-	 * Attach the neo-query MCP server to the current session, merged with any
-	 * globally-enabled registry servers from AppMcpLifecycleManager.
+	 * Attach the neo-query and (when available) neo-action MCP servers to the
+	 * current session, merged with any globally-enabled registry servers from
+	 * AppMcpLifecycleManager.
 	 *
 	 * Mirrors the pattern used in provisionGlobalSpacesAgent():
 	 *   - Registry servers loaded from appMcpManager (if set).
-	 *   - In-process 'neo-query' server always wins on name collision.
+	 *   - In-process servers ('neo-query', 'neo-action') always win on name collision.
 	 *   - No subscription to mcp.registry.changed — registry changes take effect
 	 *     on the next daemon restart (consistent with the global spaces agent).
 	 *
 	 * No-op when toolsConfig has not been set via setToolsConfig().
 	 */
-	private attachQueryTools(): void {
+	private attachTools(): void {
 		if (!this.session || !this.toolsConfig) return;
 
-		const mcpServer = createNeoQueryMcpServer(this.toolsConfig);
+		const inProcessServers = createNeoToolsMcpServers(
+			this.toolsConfig,
+			this.actionToolsConfig ?? undefined
+		);
 		const registryMcpServers = this.appMcpManager?.getEnabledMcpConfigs() ?? {};
 
 		for (const name of Object.keys(registryMcpServers)) {
-			if (name === 'neo-query') {
+			if (name in inProcessServers) {
 				this.logger.warn(
-					`Neo: MCP server name collision on 'neo-query' — ` +
+					`Neo: MCP server name collision on '${name}' — ` +
 						`in-process server takes precedence over registry entry.`
 				);
 			}
@@ -349,7 +370,7 @@ export class NeoAgentManager {
 
 		this.session.setRuntimeMcpServers({
 			...registryMcpServers,
-			'neo-query': mcpServer as unknown as McpServerConfig,
+			...inProcessServers,
 		});
 	}
 }
