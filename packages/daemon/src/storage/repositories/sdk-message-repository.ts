@@ -9,6 +9,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
+import type { MessageOrigin } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../../lib/logger';
 import type { SQLiteValue } from '../types';
@@ -26,7 +27,7 @@ export class SDKMessageRepository {
 	 * FIX: Enhanced with proper error handling and logging
 	 * Returns true on success, false on failure
 	 */
-	saveSDKMessage(sessionId: string, message: SDKMessage): boolean {
+	saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
 		try {
 			const id = generateUUID();
 			const messageType = message.type;
@@ -34,11 +35,19 @@ export class SDKMessageRepository {
 			const timestamp = new Date().toISOString();
 
 			const stmt = this.db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?)`
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, origin)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
 			);
 
-			stmt.run(id, sessionId, messageType, messageSubtype, JSON.stringify(message), timestamp);
+			stmt.run(
+				id,
+				sessionId,
+				messageType,
+				messageSubtype,
+				JSON.stringify(message),
+				timestamp,
+				origin ?? null
+			);
 			return true;
 		} catch (error) {
 			// Log error but don't throw - prevents stream from dying
@@ -72,7 +81,12 @@ export class SDKMessageRepository {
 		limit?: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		return this._getSDKMessagesImpl(sessionId, limit ?? 100, before, since);
 	}
 
@@ -85,10 +99,15 @@ export class SDKMessageRepository {
 		limit: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		// Step 1: Get top-level messages (excluding subagent messages)
 		// Show user messages that were consumed to SDK, plus any that failed to deliver.
-		let query = `SELECT sdk_message, timestamp, send_status FROM sdk_messages
+		let query = `SELECT sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
@@ -113,13 +132,16 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
 
-		// Parse SDK message and inject the timestamp and sendStatus from the database row
+		// Parse SDK message and inject the timestamp, sendStatus, and origin from the database row
 		const messages = rows.map((r) => {
 			const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 			const timestamp = new Date(r.timestamp as string).getTime();
 			const extra: Record<string, unknown> = { timestamp };
 			if (r.send_status === 'failed') {
 				extra.sendStatus = 'failed';
+			}
+			if (r.origin != null) {
+				extra.origin = r.origin as MessageOrigin;
 			}
 			return { ...sdkMessage, ...extra } as SDKMessage & { timestamp: number };
 		});
@@ -145,7 +167,7 @@ export class SDKMessageRepository {
 		});
 
 		// Fetch subagent messages that have parent_tool_use_id matching any of the tool use IDs
-		let subagentMessages: SDKMessage[] = [];
+		let subagentMessages: Array<SDKMessage & { timestamp: number }> = [];
 		if (toolUseIds.size > 0) {
 			const placeholders = Array.from(toolUseIds)
 				.map(() => '?')
@@ -239,7 +261,8 @@ export class SDKMessageRepository {
 	saveUserMessage(
 		sessionId: string,
 		message: SDKMessage,
-		sendStatus: SendStatus = 'consumed'
+		sendStatus: SendStatus = 'consumed',
+		origin?: MessageOrigin
 	): string {
 		const id = generateUUID();
 		const messageType = message.type;
@@ -247,8 +270,8 @@ export class SDKMessageRepository {
 		const timestamp = new Date().toISOString();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -258,7 +281,8 @@ export class SDKMessageRepository {
 			messageSubtype,
 			JSON.stringify(message),
 			timestamp,
-			sendStatus
+			sendStatus,
+			origin ?? null
 		);
 		return id;
 	}

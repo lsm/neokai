@@ -609,6 +609,15 @@ export interface MessageImage {
 
 export type MessageDeliveryMode = 'immediate' | 'defer';
 
+/**
+ * Origin of a message — stored as a DB-level annotation on sdk_messages for frontend display.
+ * This is NOT injected into the SDK message JSON blob; room/space agents do not see it.
+ * - 'human': default for user-sent messages (NULL in DB treated as 'human')
+ * - 'neo': message was injected by the Neo global AI agent
+ * - 'system': message was injected by the daemon system internally
+ */
+export type MessageOrigin = 'human' | 'neo' | 'system';
+
 // Tool types
 export interface Tool {
 	name: string;

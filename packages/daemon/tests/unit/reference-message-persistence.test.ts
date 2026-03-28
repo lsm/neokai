@@ -303,7 +303,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.not.objectContaining({ referenceMetadata: expect.anything() }),
-			'consumed'
+			'consumed',
+			undefined
 		);
 	});
 
@@ -336,7 +337,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.not.objectContaining({ referenceMetadata: expect.anything() }),
-			'consumed'
+			'consumed',
+			undefined
 		);
 	});
 
@@ -388,7 +390,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
 					'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task one' },
 				},
 			}),
-			'consumed'
+			'consumed',
+			undefined
 		);
 	});
 
@@ -430,7 +433,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
 					},
 				},
 			}),
-			'consumed'
+			'consumed',
+			undefined
 		);
 	});
 
@@ -469,7 +473,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-5', type: 'user' }),
-			'consumed'
+			'consumed',
+			undefined
 		);
 	});
 
@@ -528,7 +533,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
 					},
 				},
 			}),
-			'consumed'
+			'consumed',
+			undefined
 		);
 	});
 });

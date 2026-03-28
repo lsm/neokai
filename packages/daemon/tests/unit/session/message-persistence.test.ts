@@ -92,7 +92,8 @@ describe('MessagePersistence', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-1', type: 'user' }),
-			'consumed'
+			'consumed',
+			undefined
 		);
 		expect(messageHubEventSpy).toHaveBeenCalledWith(
 			'state.sdkMessages.delta',
@@ -127,7 +128,8 @@ describe('MessagePersistence', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-2', type: 'user' }),
-			'enqueued'
+			'enqueued',
+			undefined
 		);
 		expect(messageHubEventSpy).not.toHaveBeenCalled();
 		expect(eventBusEmitSpy).toHaveBeenCalledWith(
@@ -153,7 +155,8 @@ describe('MessagePersistence', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-3', type: 'user' }),
-			'deferred'
+			'deferred',
+			undefined
 		);
 		expect(eventBusEmitSpy).not.toHaveBeenCalledWith(
 			'message.persisted',
@@ -174,7 +177,8 @@ describe('MessagePersistence', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-4', type: 'user' }),
-			'consumed'
+			'consumed',
+			undefined
 		);
 		expect(eventBusEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',

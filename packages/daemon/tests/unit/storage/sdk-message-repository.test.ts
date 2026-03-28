@@ -67,7 +67,8 @@ describe('SDKMessageRepository', () => {
 				message_subtype TEXT,
 				sdk_message TEXT NOT NULL,
 				timestamp TEXT NOT NULL,
-				send_status TEXT
+				send_status TEXT,
+				origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system'))
 			);
 			CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
@@ -669,6 +670,75 @@ describe('SDKMessageRepository', () => {
 			const message = repository.getUserMessageByUuid('session-2', uuid);
 
 			expect(message).toBeUndefined();
+		});
+	});
+
+	describe('origin field persistence and retrieval', () => {
+		it('should save and retrieve origin=neo on saveSDKMessage', () => {
+			const message = createAssistantMessage('Neo response');
+
+			repository.saveSDKMessage('session-1', message, 'neo');
+
+			const { messages } = repository.getSDKMessages('session-1');
+			expect(messages.length).toBe(1);
+			expect((messages[0] as { origin?: string }).origin).toBe('neo');
+		});
+
+		it('should save and retrieve origin=system on saveSDKMessage', () => {
+			const message = createAssistantMessage('System message');
+
+			repository.saveSDKMessage('session-1', message, 'system');
+
+			const { messages } = repository.getSDKMessages('session-1');
+			expect(messages.length).toBe(1);
+			expect((messages[0] as { origin?: string }).origin).toBe('system');
+		});
+
+		it('should not inject origin field when origin is NULL (default human)', () => {
+			const message = createUserMessage('Normal human message');
+
+			repository.saveUserMessage('session-1', message, 'consumed');
+
+			const { messages } = repository.getSDKMessages('session-1');
+			expect(messages.length).toBe(1);
+			expect((messages[0] as { origin?: string }).origin).toBeUndefined();
+		});
+
+		it('should save and retrieve origin=neo on saveUserMessage', () => {
+			const message = createUserMessage('Neo-injected user message');
+
+			repository.saveUserMessage('session-1', message, 'consumed', 'neo');
+
+			const { messages } = repository.getSDKMessages('session-1');
+			expect(messages.length).toBe(1);
+			expect((messages[0] as { origin?: string }).origin).toBe('neo');
+		});
+
+		it('should persist origin independently for each message', async () => {
+			repository.saveUserMessage('session-1', createUserMessage('Human msg'), 'consumed');
+			await new Promise((r) => setTimeout(r, 5));
+			repository.saveUserMessage('session-1', createUserMessage('Neo msg'), 'consumed', 'neo');
+			await new Promise((r) => setTimeout(r, 5));
+			repository.saveSDKMessage('session-1', createAssistantMessage('System msg'), 'system');
+
+			const { messages } = repository.getSDKMessages('session-1');
+			expect(messages.length).toBe(3);
+
+			// Human message — no origin field
+			expect((messages[0] as { origin?: string }).origin).toBeUndefined();
+			// Neo message — origin='neo'
+			expect((messages[1] as { origin?: string }).origin).toBe('neo');
+			// System message — origin='system'
+			expect((messages[2] as { origin?: string }).origin).toBe('system');
+		});
+
+		it('should reject invalid origin values at the DB constraint level', () => {
+			expect(() => {
+				db.prepare(
+					`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
+					 VALUES (?, ?, ?, ?, ?, ?)`
+				).run('bad-origin-id', 'session-1', 'user', '{}', new Date().toISOString(), 'invalid');
+			}).toThrow();
 		});
 	});
 

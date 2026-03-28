@@ -277,6 +277,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 67: Add 'space_chat' to sessions type CHECK constraint.
 	runMigration67(db);
+	// Migration 68: Add 'origin' column to sdk_messages for frontend display of message provenance.
+	// NULL (default) is treated as 'human' by the frontend. 'neo' marks Neo-injected messages.
+	runMigration68(db);
 }
 
 /**
@@ -4448,5 +4451,28 @@ function runMigration67(db: BunDatabase): void {
 		} finally {
 			db.exec('PRAGMA foreign_keys = ON');
 		}
+	}
+}
+
+/**
+ * Migration 68: Add 'origin' column to sdk_messages.
+ *
+ * This is an app-level metadata column alongside the opaque sdk_message blob.
+ * It is NOT part of the SDK message format — room/space agents do not see it.
+ * NULL (default) is treated as 'human' by the frontend.
+ * 'neo' marks messages injected by the Neo global AI agent.
+ * 'system' marks messages injected by the daemon system internally.
+ */
+export function runMigration68(db: BunDatabase): void {
+	if (!tableExists(db, 'sdk_messages')) {
+		return;
+	}
+	// Use PRAGMA table_info() to check for the column — consistent with the rest of the codebase
+	const columns = db.prepare(`PRAGMA table_info(sdk_messages)`).all() as Array<{ name: string }>;
+	const hasOrigin = columns.some((col) => col.name === 'origin');
+	if (!hasOrigin) {
+		db.exec(
+			`ALTER TABLE sdk_messages ADD COLUMN origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system'))`
+		);
 	}
 }

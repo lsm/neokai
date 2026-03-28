@@ -11,7 +11,7 @@
  * - EventBus subscriptions for async message processing
  */
 
-import type { Session, MessageHub, MessageDeliveryMode } from '@neokai/shared';
+import type { Session, MessageHub, MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
@@ -295,13 +295,14 @@ export class SessionManager {
 	async injectMessage(
 		sessionId: string,
 		message: string,
-		opts?: { deliveryMode?: MessageDeliveryMode }
+		opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
 	): Promise<void> {
 		await this.messagePersistence.persist({
 			sessionId,
 			messageId: generateUUID(),
 			content: message,
 			deliveryMode: opts?.deliveryMode,
+			origin: opts?.origin,
 		});
 	}
 

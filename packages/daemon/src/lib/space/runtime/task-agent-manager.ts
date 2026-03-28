@@ -45,6 +45,7 @@ import type {
 	SpaceWorkflowRun,
 	MessageHub,
 	McpServerConfig,
+	MessageOrigin,
 } from '@neokai/shared';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { SkillsManager } from '../../skills-manager';
@@ -1231,7 +1232,8 @@ export class TaskAgentManager {
 	private async injectMessageIntoSession(
 		session: AgentSession,
 		message: string,
-		deliveryMode: 'immediate' | 'defer' = 'immediate'
+		deliveryMode: 'immediate' | 'defer' = 'immediate',
+		origin?: MessageOrigin
 	): Promise<void> {
 		const sessionId = session.session.id;
 		const state = session.getProcessingState();
@@ -1264,12 +1266,12 @@ export class TaskAgentManager {
 
 		// defer + busy → persist as deferred for replay after current turn completes
 		if (deliveryMode === 'defer' && isBusy) {
-			this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred');
+			this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
 			return;
 		}
 
 		await session.ensureQueryStarted();
-		this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+		this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
 		await session.messageQueue.enqueueWithId(messageId, message);
 	}
 
