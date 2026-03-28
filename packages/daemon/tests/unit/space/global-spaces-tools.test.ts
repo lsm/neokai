@@ -1100,3 +1100,127 @@ describe('createGlobalSpacesToolHandlers — reassign_task', () => {
 		expect(parsed.task.customAgentId).toBe('agent-via-context');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// list_tasks — search, pagination, compact mode, total
+// ---------------------------------------------------------------------------
+
+describe('createGlobalSpacesToolHandlers — list_tasks search/pagination/compact', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns total count in response', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: ctx.spaceId });
+		await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Task 1',
+			description: 'd1',
+		});
+		await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Task 2',
+			description: 'd2',
+		});
+
+		const result = await handlers.list_tasks({ space_id: ctx.spaceId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.total).toBe(2);
+		expect(parsed.tasks).toHaveLength(2);
+	});
+
+	test('filters tasks by search substring', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: ctx.spaceId });
+		await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Review PR #42',
+			description: 'd',
+		});
+		await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Deploy service',
+			description: 'd',
+		});
+
+		const result = await handlers.list_tasks({ space_id: ctx.spaceId, search: 'Review' });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.total).toBe(1);
+		expect(parsed.tasks).toHaveLength(1);
+		expect(parsed.tasks[0].title).toBe('Review PR #42');
+	});
+
+	test('paginates with limit and offset', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: ctx.spaceId });
+		for (let i = 1; i <= 4; i++) {
+			await handlers.create_standalone_task({
+				space_id: ctx.spaceId,
+				title: `Task ${i}`,
+				description: 'd',
+			});
+		}
+
+		const page1 = JSON.parse(
+			(await handlers.list_tasks({ space_id: ctx.spaceId, limit: 2, offset: 0 })).content[0].text
+		);
+		expect(page1.total).toBe(4);
+		expect(page1.tasks).toHaveLength(2);
+
+		const page2 = JSON.parse(
+			(await handlers.list_tasks({ space_id: ctx.spaceId, limit: 2, offset: 2 })).content[0].text
+		);
+		expect(page2.total).toBe(4);
+		expect(page2.tasks).toHaveLength(2);
+	});
+
+	test('returns compact fields when compact:true', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: ctx.spaceId });
+		await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Compact task',
+			description: 'A very long description that should not appear in compact mode',
+		});
+
+		const result = await handlers.list_tasks({ space_id: ctx.spaceId, compact: true });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.total).toBe(1);
+		const task = parsed.tasks[0] as Record<string, unknown>;
+		expect(task.id).toBeDefined();
+		expect(task.title).toBe('Compact task');
+		expect(task.status).toBeDefined();
+		expect(task.priority).toBeDefined();
+		expect(task.createdAt).toBeDefined();
+		// Large fields excluded
+		expect(task.description).toBeUndefined();
+		expect(task.spaceId).toBeUndefined();
+	});
+
+	test('total reflects post-filter count before pagination', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: ctx.spaceId });
+		for (let i = 1; i <= 4; i++) {
+			const title = i <= 2 ? `Match task ${i}` : `Other task ${i}`;
+			await handlers.create_standalone_task({
+				space_id: ctx.spaceId,
+				title,
+				description: 'd',
+			});
+		}
+
+		const result = await handlers.list_tasks({
+			space_id: ctx.spaceId,
+			search: 'Match',
+			limit: 1,
+			offset: 0,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.total).toBe(2); // 2 match, even though only 1 returned
+		expect(parsed.tasks).toHaveLength(1);
+	});
+});

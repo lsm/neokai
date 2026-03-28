@@ -260,6 +260,10 @@ export function createGlobalSpacesToolHandlers(
 			space_id?: string;
 			status?: SpaceTaskStatus;
 			workflow_run_id?: string;
+			search?: string;
+			limit?: number;
+			offset?: number;
+			compact?: boolean;
 		}): Promise<ToolResult> {
 			const resolved = resolveSpaceId(args?.space_id);
 			if ('error' in resolved) return jsonResult({ success: false, error: resolved.error });
@@ -274,7 +278,30 @@ export function createGlobalSpacesToolHandlers(
 			} else {
 				tasks = taskRepo.listBySpace(resolved.spaceId);
 			}
-			return jsonResult({ success: true, space_id: resolved.spaceId, tasks });
+			if (args?.search) {
+				const q = args.search.toLowerCase();
+				tasks = tasks.filter((t) => t.title.toLowerCase().includes(q));
+			}
+			const total = tasks.length;
+			const limit = args?.limit ?? 50;
+			const offset = args?.offset ?? 0;
+			tasks = tasks.slice(offset, offset + limit);
+			if (args?.compact) {
+				const compactTasks = tasks.map((t) => ({
+					id: t.id,
+					title: t.title,
+					status: t.status,
+					priority: t.priority,
+					createdAt: t.createdAt,
+				}));
+				return jsonResult({
+					success: true,
+					space_id: resolved.spaceId,
+					total,
+					tasks: compactTasks,
+				});
+			}
+			return jsonResult({ success: true, space_id: resolved.spaceId, total, tasks });
 		},
 
 		async suggest_workflow(args: { space_id?: string; description: string }): Promise<ToolResult> {
@@ -595,7 +622,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'list_tasks',
-			'List tasks in a space. Optionally filter by status or workflow run.',
+			'List tasks in a space. Filterable by space, status, and workflow run. Use compact:true and limit/offset to reduce payload size.',
 			{
 				space_id: z
 					.string()
@@ -614,6 +641,28 @@ export function createGlobalSpacesMcpServer(
 					.optional()
 					.describe('Filter by task status'),
 				workflow_run_id: z.string().optional().describe('Filter by workflow run ID'),
+				search: z.string().optional().describe('Substring match on task title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of tasks to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of tasks to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, title, status, priority, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_tasks(args)
 		),

@@ -198,7 +198,10 @@ function MessageBubble({ msg, pendingActionId, isLastAssistant }: MessageBubbleP
 		<div data-testid="neo-assistant-message" class="mb-3">
 			{/* Sparkle avatar */}
 			<div class="flex items-start gap-2">
-				<div class="flex-shrink-0 w-6 h-6 rounded-full bg-violet-600/20 border border-violet-500/30 flex items-center justify-center mt-0.5">
+				<div
+					data-testid="neo-sparkle-avatar"
+					class="flex-shrink-0 w-6 h-6 rounded-full bg-violet-600/20 border border-violet-500/30 flex items-center justify-center mt-0.5"
+				>
 					<svg
 						class="w-3 h-3 text-violet-400"
 						viewBox="0 0 24 24"
