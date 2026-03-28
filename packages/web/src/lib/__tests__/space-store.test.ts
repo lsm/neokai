@@ -814,6 +814,15 @@ describe('SpaceStore — CRUD methods', () => {
 		});
 	});
 
+	it('startWorkflowRun throws when server returns no run data', async () => {
+		await spaceStore.selectSpace('space-1');
+		mockHub.request.mockResolvedValueOnce({ run: null } as unknown as { run: SpaceWorkflowRun });
+
+		await expect(
+			spaceStore.startWorkflowRun({ workflowId: 'wf-1', title: 'Run 1' })
+		).rejects.toThrow('Server returned no run data');
+	});
+
 	it('createAgent calls spaceAgent.create RPC', async () => {
 		await spaceStore.selectSpace('space-1');
 		await spaceStore.createAgent({ name: 'Coder', role: 'coder' });

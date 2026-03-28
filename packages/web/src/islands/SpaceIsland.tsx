@@ -27,7 +27,7 @@ import { VisualWorkflowEditor } from '../components/space/visual-editor/VisualWo
 import { WorkflowCanvas } from '../components/space/WorkflowCanvas';
 import { SpaceSettings } from '../components/space/SpaceSettings';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
-import { SpaceStartWorkflowDialog } from '../components/space/SpaceStartWorkflowDialog';
+import { WorkflowRunStartDialog } from '../components/space/WorkflowRunStartDialog';
 import { cn } from '../lib/utils';
 
 interface SpaceIslandProps {
@@ -312,11 +312,13 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 
 			{/* Quick action dialogs */}
 			<SpaceCreateTaskDialog isOpen={createTaskOpen} onClose={() => setCreateTaskOpen(false)} />
-			<SpaceStartWorkflowDialog
+			{/* onStarted is intentionally omitted: spaceStore subscribes to
+				space.workflowRun.created events and updates activeRuns reactively,
+				so the canvas re-renders automatically without an explicit callback. */}
+			<WorkflowRunStartDialog
 				isOpen={startWorkflowOpen}
-				spaceId={spaceId}
-				workflows={workflows}
 				onClose={() => setStartWorkflowOpen(false)}
+				onSwitchToWorkflows={() => setActiveTab('workflows')}
 			/>
 		</div>
 	);

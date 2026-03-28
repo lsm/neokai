@@ -852,6 +852,7 @@ class SpaceStore {
 			...params,
 			spaceId,
 		});
+		if (!run) throw new Error('Server returned no run data');
 		return run;
 	}
 
