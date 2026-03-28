@@ -18,6 +18,7 @@
 import type { McpServerConfig } from '@neokai/shared';
 import type { AgentSession } from '../agent/agent-session';
 import { Logger } from '../logger';
+import type { NeoActivityLogger } from './activity-logger';
 import { buildNeoSystemPrompt, type NeoSecurityMode } from './neo-system-prompt';
 import {
 	createNeoToolsMcpServers,
@@ -58,6 +59,7 @@ export class NeoAgentManager {
 	private toolsConfig: NeoToolsConfig | null = null;
 	private actionToolsConfig: NeoActionToolsConfig | null = null;
 	private appMcpManager: NeoAppMcpManager | null = null;
+	private activityLogger: NeoActivityLogger | null = null;
 
 	constructor(
 		private readonly sessionManager: NeoSessionManager,
@@ -117,6 +119,10 @@ export class NeoAgentManager {
 
 		// Apply runtime configuration (system prompt, model).
 		this.applyRuntimeConfig();
+
+		// Enforce activity log retention policy on each provision cycle.
+		this.activityLogger?.pruneOldEntries();
+
 		this.logger.info('Neo session provisioned');
 	}
 
@@ -153,6 +159,26 @@ export class NeoAgentManager {
 	 */
 	setActionToolsConfig(actionToolsConfig: NeoActionToolsConfig): void {
 		this.actionToolsConfig = actionToolsConfig;
+		// Propagate activity logger if already set (order-independent wiring).
+		if (this.activityLogger) {
+			this.actionToolsConfig.activityLogger = this.activityLogger;
+		}
+	}
+
+	/**
+	 * Wire in the activity logger.
+	 *
+	 * Must be called before `provision()`. When set, the activity logger is made
+	 * available to the action tools config (for tool-call logging) and its
+	 * `pruneOldEntries()` is called during provision and health-check cycles to
+	 * enforce the 30-day / 10 000-row retention policy.
+	 */
+	setActivityLogger(activityLogger: NeoActivityLogger): void {
+		this.activityLogger = activityLogger;
+		// Propagate to action tools config if already set (order-independent wiring).
+		if (this.actionToolsConfig) {
+			this.actionToolsConfig.activityLogger = activityLogger;
+		}
 	}
 
 	/**

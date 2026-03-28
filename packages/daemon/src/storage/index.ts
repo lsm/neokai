@@ -69,6 +69,7 @@ export { NeoActivityLogRepository } from './repositories/neo-activity-log-reposi
 export type {
 	NeoActivityLogEntry,
 	InsertNeoActivityParams,
+	UpdateNeoActivityParams,
 	ListNeoActivityParams,
 } from './repositories/neo-activity-log-repository';
 

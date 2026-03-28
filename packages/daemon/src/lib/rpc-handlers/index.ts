@@ -81,6 +81,7 @@ import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
+import { NeoActivityLogger } from '../neo/activity-logger';
 import { PendingActionStore } from '../neo/security-tier';
 import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
 import type { NeoActionToolsConfig, NeoWorkflowRun } from '../neo/tools/neo-action-tools';
@@ -568,7 +569,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			},
 		},
 	};
+	// Wire Neo activity logger — records every tool invocation for the Activity Feed.
+	const neoActivityLogger = new NeoActivityLogger(deps.db.neoActivityLog);
+	neoActionToolsConfig.activityLogger = neoActivityLogger;
 	deps.neoAgentManager.setActionToolsConfig(neoActionToolsConfig);
+	deps.neoAgentManager.setActivityLogger(neoActivityLogger);
 
 	// Human ↔ Task Agent message routing handlers (require taskAgentManager)
 	setupSpaceTaskMessageHandlers(deps.messageHub, taskAgentManager, deps.db);
