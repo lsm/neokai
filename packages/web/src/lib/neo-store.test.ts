@@ -3,9 +3,12 @@
  *
  * Verifies:
  * - subscribe() sends liveQuery.subscribe for both neo.messages and neo.activity
+ * - loading cleared after subscribe requests acknowledged (not waiting for snapshot)
+ * - error signal set on subscribe failure, cleared on unsubscribe
  * - LiveQuery snapshot populates messages / activity signals
  * - LiveQuery delta (added/removed/updated) updates signals correctly
  * - WebSocket reconnect re-subscribes both feeds
+ * - Reconnect handler stale-event guard: no re-subscribe after unsubscribe
  * - unsubscribe() calls liveQuery.unsubscribe for both feeds and resets state
  * - Idempotent subscribe/unsubscribe behaviour
  * - Stale-event guard discards events after unsubscribe
@@ -13,7 +16,7 @@
  * - openPanel / closePanel / togglePanel update panelOpen signal
  * - panelOpen state persists in localStorage
  * - sendMessage() calls neo.send RPC
- * - loadHistory() calls neo.history RPC and hydrates messages
+ * - loadHistory() calls neo.history RPC and hydrates messages (skips if subscribed)
  * - clearSession() calls neo.clearSession RPC and resets messages signal
  * - confirmAction() / cancelAction() call RPC and clear pendingConfirmation
  */
@@ -140,11 +143,13 @@ describe('NeoStore', () => {
 		store.subscribed = false;
 		store.cleanups = [];
 		store.activeSubscriptionIds = new Set();
+		store.historyLoaded = false;
 
 		// Reset signals
 		neoStore.messages.value = [];
 		neoStore.activity.value = [];
 		neoStore.loading.value = false;
+		neoStore.error.value = null;
 		neoStore.panelOpen.value = false;
 		neoStore.activeTab.value = 'chat';
 		neoStore.pendingConfirmation.value = null;
@@ -190,7 +195,7 @@ describe('NeoStore', () => {
 			});
 		});
 
-		it('should set loading true while awaiting subscriptions', async () => {
+		it('should set loading true while awaiting subscribe requests', async () => {
 			let resolveHub: (hub: MockHub) => void;
 			const hubPromise = new Promise<MockHub>((resolve) => {
 				resolveHub = resolve;
@@ -204,14 +209,13 @@ describe('NeoStore', () => {
 
 			expect(neoStore.loading.value).toBe(true);
 
-			// Fire snapshot to finish loading
-			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
-				subscriptionId: MESSAGES_SUB_ID,
-				rows: [],
-				version: 1,
-			});
-
 			await subPromise;
+			expect(neoStore.loading.value).toBe(false);
+		});
+
+		it('should clear loading after subscribe requests are acknowledged', async () => {
+			await neoStore.subscribe();
+			// Loading cleared after Promise.all resolves, not waiting for snapshot.
 			expect(neoStore.loading.value).toBe(false);
 		});
 
@@ -222,11 +226,30 @@ describe('NeoStore', () => {
 			expect(mockHub.request).not.toHaveBeenCalled();
 		});
 
-		it('should re-throw and reset subscribed flag on error', async () => {
+		it('should set error signal and re-throw when hub subscription fails', async () => {
 			vi.mocked(mockHub.request).mockRejectedValue(new Error('subscribe failed'));
 
 			await expect(neoStore.subscribe()).rejects.toThrow('subscribe failed');
+			expect(neoStore.error.value).toBe('subscribe failed');
 			expect(neoStore.loading.value).toBe(false);
+		});
+
+		it('should clean up handlers and clear error on recovery after failure', async () => {
+			vi.mocked(mockHub.request).mockRejectedValue(new Error('subscribe failed'));
+			await expect(neoStore.subscribe()).rejects.toThrow('subscribe failed');
+
+			// Subscribe again after failure — fresh handlers, no leak.
+			vi.mocked(mockHub.request).mockResolvedValue({ ok: true });
+			await neoStore.subscribe();
+
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: MESSAGES_SUB_ID,
+				rows: [makeMessage('fresh')],
+				version: 1,
+			});
+
+			expect(neoStore.messages.value).toHaveLength(1);
+			expect(neoStore.messages.value[0].id).toBe('fresh');
 		});
 	});
 
@@ -244,18 +267,6 @@ describe('NeoStore', () => {
 			});
 			expect(neoStore.messages.value).toHaveLength(2);
 			expect(neoStore.messages.value[0].id).toBe('m1');
-		});
-
-		it('should set loading to false after messages snapshot', async () => {
-			await neoStore.subscribe();
-			expect(neoStore.loading.value).toBe(true);
-
-			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
-				subscriptionId: MESSAGES_SUB_ID,
-				rows: [],
-				version: 1,
-			});
-			expect(neoStore.loading.value).toBe(false);
 		});
 
 		it('should populate activity from neo.activity snapshot', async () => {
@@ -470,6 +481,17 @@ describe('NeoStore', () => {
 
 			expect(mockHub.request).not.toHaveBeenCalled();
 		});
+
+		it('should not re-subscribe when reconnect fires after unsubscribe', async () => {
+			await neoStore.subscribe();
+			neoStore.unsubscribe();
+			mockHub.request.mockClear();
+
+			// Reconnect fires after unsubscribe — stale-event guard must block re-subscribe.
+			mockHub.fireConnection('connected');
+
+			expect(mockHub.request).not.toHaveBeenCalled();
+		});
 	});
 
 	// ---------------------------------------------------------------------------
@@ -508,6 +530,15 @@ describe('NeoStore', () => {
 
 			expect(neoStore.messages.value).toHaveLength(0);
 			expect(neoStore.activity.value).toHaveLength(0);
+		});
+
+		it('should clear error signal on unsubscribe after subscribe failure', async () => {
+			vi.mocked(mockHub.request).mockRejectedValue(new Error('fail'));
+			await expect(neoStore.subscribe()).rejects.toThrow();
+			expect(neoStore.error.value).not.toBeNull();
+
+			neoStore.unsubscribe();
+			expect(neoStore.error.value).toBeNull();
 		});
 
 		it('should be idempotent', async () => {
@@ -612,7 +643,7 @@ describe('NeoStore', () => {
 			expect(mockHub.request).toHaveBeenCalledWith('neo.history', { limit: 100 });
 		});
 
-		it('should populate messages when signal is empty', async () => {
+		it('should populate messages when not subscribed', async () => {
 			const msgs = [makeMessage('h1'), makeMessage('h2')];
 			vi.mocked(mockHub.request).mockResolvedValue({ messages: msgs, hasMore: false });
 
@@ -621,17 +652,14 @@ describe('NeoStore', () => {
 			expect(neoStore.messages.value).toHaveLength(2);
 		});
 
-		it('should not overwrite messages already populated by LiveQuery', async () => {
-			neoStore.messages.value = [makeMessage('live1')];
-			vi.mocked(mockHub.request).mockResolvedValue({
-				messages: [makeMessage('h1')],
-				hasMore: false,
-			});
+		it('should skip RPC call when already subscribed (LiveQuery owns state)', async () => {
+			vi.mocked(mockHub.request).mockResolvedValue({ ok: true });
+			await neoStore.subscribe();
+			mockHub.request.mockClear();
 
 			await neoStore.loadHistory();
 
-			expect(neoStore.messages.value).toHaveLength(1);
-			expect(neoStore.messages.value[0].id).toBe('live1');
+			expect(mockHub.request).not.toHaveBeenCalled();
 		});
 
 		it('should silently ignore errors', async () => {

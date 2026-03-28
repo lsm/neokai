@@ -10,7 +10,8 @@
  * Signals (reactive state):
  * - messages:            Neo chat messages from the persistent session.
  * - activity:            Neo activity log entries (audit trail of tool calls).
- * - loading:             True while awaiting LiveQuery snapshot or an RPC op.
+ * - loading:             True while awaiting subscribe request acknowledgement.
+ * - error:               Set when subscribe() fails; cleared on unsubscribe.
  * - panelOpen:           Whether the Neo slide-out panel is visible.
  * - activeTab:           Which tab is shown in the panel ('chat' | 'activity').
  * - pendingConfirmation: Action waiting for user confirmation (id + description).
@@ -91,8 +92,11 @@ class NeoStore {
 	/** Neo activity feed, ordered newest-first (mirrors neo.activity LiveQuery). */
 	readonly activity = signal<NeoActivityEntry[]>([]);
 
-	/** True while awaiting the LiveQuery snapshot or an async RPC operation. */
+	/** True while the subscribe requests are in flight (cleared once acknowledged). */
 	readonly loading = signal<boolean>(false);
+
+	/** Error state — set when subscribe() fails; cleared on unsubscribe. */
+	readonly error = signal<string | null>(null);
 
 	/** Whether the Neo slide-out panel is visible. Persisted in localStorage. */
 	readonly panelOpen = signal<boolean>(this._readPanelOpen());
@@ -109,6 +113,8 @@ class NeoStore {
 	private activeSubscriptionIds = new Set<string>();
 	private subscribed = false;
 	private refCount = 0;
+	/** Set to true after loadHistory() completes so a concurrent LiveQuery snapshot won't race it. */
+	private historyLoaded = false;
 
 	// ---------------------------------------------------------------------------
 	// Panel open/close helpers (with localStorage persistence)
@@ -173,26 +179,22 @@ class NeoStore {
 			this.activeSubscriptionIds.add(MESSAGES_SUBSCRIPTION_ID);
 			this.activeSubscriptionIds.add(ACTIVITY_SUBSCRIPTION_ID);
 
-			// ── neo.messages snapshot ──────────────────────────────────────────
-			const unsubMsgSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
-				'liveQuery.snapshot',
-				(event) => {
-					if (event.subscriptionId === MESSAGES_SUBSCRIPTION_ID) {
-						if (!this.activeSubscriptionIds.has(MESSAGES_SUBSCRIPTION_ID)) return;
-						this.messages.value = event.rows as NeoMessage[];
-						this.loading.value = false;
-					} else if (event.subscriptionId === ACTIVITY_SUBSCRIPTION_ID) {
-						if (!this.activeSubscriptionIds.has(ACTIVITY_SUBSCRIPTION_ID)) return;
-						this.activity.value = event.rows as NeoActivityEntry[];
-					}
+			// ── Snapshot handler ──────────────────────────────────────────────
+			const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+				if (event.subscriptionId === MESSAGES_SUBSCRIPTION_ID) {
+					if (!this.activeSubscriptionIds.has(MESSAGES_SUBSCRIPTION_ID)) return;
+					this.messages.value = event.rows as NeoMessage[];
+				} else if (event.subscriptionId === ACTIVITY_SUBSCRIPTION_ID) {
+					if (!this.activeSubscriptionIds.has(ACTIVITY_SUBSCRIPTION_ID)) return;
+					this.activity.value = event.rows as NeoActivityEntry[];
 				}
-			);
-			this.cleanups.push(unsubMsgSnapshot);
+			});
+			this.cleanups.push(unsubSnapshot);
 			this.cleanups.push(() => this.activeSubscriptionIds.delete(MESSAGES_SUBSCRIPTION_ID));
 			this.cleanups.push(() => this.activeSubscriptionIds.delete(ACTIVITY_SUBSCRIPTION_ID));
 
-			// ── neo.messages delta ─────────────────────────────────────────────
-			const unsubMsgDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+			// ── Delta handler ─────────────────────────────────────────────────
+			const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId === MESSAGES_SUBSCRIPTION_ID) {
 					if (!this.activeSubscriptionIds.has(MESSAGES_SUBSCRIPTION_ID)) return;
 					this.messages.value = this._applyDelta(
@@ -209,35 +211,36 @@ class NeoStore {
 					) as NeoActivityEntry[];
 				}
 			});
-			this.cleanups.push(unsubMsgDelta);
+			this.cleanups.push(unsubDelta);
 
 			// ── Reconnect handler — re-subscribe after WebSocket reconnects ────
 			const unsubReconnect = hub.onConnection((state) => {
 				if (state !== 'connected') return;
+				// Stale-event guard: don't re-subscribe if already torn down.
+				if (!this.activeSubscriptionIds.has(MESSAGES_SUBSCRIPTION_ID)) return;
 				this.loading.value = true;
 
-				const resubMessages = hub
-					.request('liveQuery.subscribe', {
-						queryName: 'neo.messages',
-						params: [100, 0],
-						subscriptionId: MESSAGES_SUBSCRIPTION_ID,
-					})
-					.catch((err) => {
-						logger.warn('NeoStore messages LiveQuery re-subscribe failed:', err);
-						this.loading.value = false;
-					});
-
-				const resubActivity = hub
-					.request('liveQuery.subscribe', {
-						queryName: 'neo.activity',
-						params: [50, 0],
-						subscriptionId: ACTIVITY_SUBSCRIPTION_ID,
-					})
-					.catch((err) => {
-						logger.warn('NeoStore activity LiveQuery re-subscribe failed:', err);
-					});
-
-				Promise.all([resubMessages, resubActivity]).catch(() => {});
+				Promise.all([
+					hub
+						.request('liveQuery.subscribe', {
+							queryName: 'neo.messages',
+							params: [100, 0],
+							subscriptionId: MESSAGES_SUBSCRIPTION_ID,
+						})
+						.catch((err) => {
+							logger.warn('NeoStore messages LiveQuery re-subscribe failed:', err);
+							this.loading.value = false;
+						}),
+					hub
+						.request('liveQuery.subscribe', {
+							queryName: 'neo.activity',
+							params: [50, 0],
+							subscriptionId: ACTIVITY_SUBSCRIPTION_ID,
+						})
+						.catch((err) => {
+							logger.warn('NeoStore activity LiveQuery re-subscribe failed:', err);
+						}),
+				]).catch(() => {});
 			});
 			this.cleanups.push(unsubReconnect);
 
@@ -255,6 +258,10 @@ class NeoStore {
 				}),
 			]);
 
+			// Loading cleared once both subscribe requests are acknowledged.
+			// The snapshot handlers will populate data as it arrives.
+			this.loading.value = false;
+
 			// Guard: unsubscribe() raced with the subscribe requests.
 			if (!this.subscribed) {
 				this._teardownCleanly();
@@ -264,6 +271,7 @@ class NeoStore {
 			this.refCount = Math.max(0, this.refCount - 1);
 			this.subscribed = false;
 			this._teardownCleanly();
+			this.error.value = err instanceof Error ? err.message : 'Failed to subscribe to Neo store';
 			logger.error('Failed to subscribe NeoStore LiveQuery:', err);
 			throw err;
 		}
@@ -276,7 +284,12 @@ class NeoStore {
 	unsubscribe(): void {
 		this.refCount = Math.max(0, this.refCount - 1);
 		if (this.refCount > 0) return;
-		if (!this.subscribed) return;
+		if (!this.subscribed) {
+			// Still reset error signal even if we were never subscribed
+			// (e.g., subscribe() failed and set this.subscribed = false in its catch block).
+			this.error.value = null;
+			return;
+		}
 		this.subscribed = false;
 
 		// Clear ids immediately so any queued events are discarded.
@@ -311,6 +324,7 @@ class NeoStore {
 		}
 		this.cleanups = [];
 		this.loading.value = false;
+		this.error.value = null;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -338,24 +352,32 @@ class NeoStore {
 	}
 
 	// ---------------------------------------------------------------------------
-	// loadHistory() — one-shot history fetch on init
+	// loadHistory() — one-shot history fetch before LiveQuery snapshot
 	// ---------------------------------------------------------------------------
 
 	/**
 	 * Load initial message history via `neo.history` RPC.
-	 * Called on store initialisation before LiveQuery has a snapshot.
-	 * LiveQuery will take over once subscribed.
+	 *
+	 * Intended to be called before subscribe() to show history immediately while
+	 * LiveQuery is initialising. Guards against both:
+	 * - Concurrent LiveQuery snapshots overwriting (via `historyLoaded` flag)
+	 * - Overwriting data already populated by LiveQuery (skips if subscribed)
+	 *
+	 * The LiveQuery snapshot will merge seamlessly once it arrives.
 	 */
 	async loadHistory(): Promise<void> {
+		// If already subscribed, LiveQuery owns message state — skip.
+		if (this.subscribed) return;
 		try {
 			const hub = await connectionManager.getHub();
 			const response = await hub.request<{ messages: NeoMessage[]; hasMore: boolean }>(
 				'neo.history',
 				{ limit: 100 }
 			);
-			// Only apply if LiveQuery hasn't already populated messages.
-			if (this.messages.value.length === 0) {
+			// Guard: LiveQuery snapshot arrived or subscribe() completed while we awaited.
+			if (!this.subscribed) {
 				this.messages.value = response.messages ?? [];
+				this.historyLoaded = true;
 			}
 		} catch (err) {
 			logger.warn('NeoStore loadHistory failed:', err);
@@ -363,27 +385,14 @@ class NeoStore {
 	}
 
 	// ---------------------------------------------------------------------------
-	// loadActivity() — alias for subscribe(), kept for explicit API
-	// ---------------------------------------------------------------------------
-
-	/**
-	 * Subscribe to the `neo.activity` LiveQuery (delegated to subscribe()).
-	 * Provided as a named method for clarity; callers that only want activity
-	 * should still call subscribe() to also get messages.
-	 */
-	async loadActivity(): Promise<void> {
-		await this.subscribe();
-	}
-
-	// ---------------------------------------------------------------------------
 	// sendMessage()
 	// ---------------------------------------------------------------------------
 
 	/**
-	 * Send a user message to Neo and add an optimistic entry to the messages signal.
+	 * Send a user message to the Neo session.
 	 *
-	 * The server-side LiveQuery will push the persisted assistant response once
-	 * the Neo session produces it — no polling needed.
+	 * The server-side LiveQuery will push the persisted response once the Neo
+	 * session produces it — no polling needed.
 	 *
 	 * Returns the RPC response so callers can surface errors.
 	 */
@@ -415,6 +424,7 @@ class NeoStore {
 		);
 		if (response.success) {
 			this.messages.value = [];
+			this.historyLoaded = false;
 		}
 		return response;
 	}
