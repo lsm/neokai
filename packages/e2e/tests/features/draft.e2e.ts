@@ -45,7 +45,7 @@ test.describe('Draft Persistence', () => {
 		await page.waitForTimeout(500);
 
 		// Draft should be restored
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toHaveValue(draftText);
 	});
 
@@ -56,13 +56,13 @@ test.describe('Draft Persistence', () => {
 		// Type and send message
 		const messageText = 'Test message for draft clearing';
 		await page.fill('textarea[placeholder*="Ask"]', messageText);
-		await page.click('button[aria-label*="Send message"]');
+		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Wait for message to be sent
 		await page.waitForSelector(`text=${messageText}`, { timeout: 5000 });
 
 		// Textarea should be empty
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toHaveValue('');
 
 		// Switch to another session
@@ -92,7 +92,7 @@ test.describe('Draft Persistence', () => {
 		// Type and send message
 		const messageText = 'Message that should not reappear';
 		await page.fill('textarea[placeholder*="Ask"]', messageText);
-		await page.click('button[aria-label*="Send message"]');
+		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Wait for message to be sent
 		await page.waitForSelector(`text=${messageText}`, { timeout: 5000 });
@@ -115,7 +115,7 @@ test.describe('Draft Persistence', () => {
 		await page.waitForTimeout(500);
 
 		// Textarea should be empty
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toHaveValue('');
 	});
 
@@ -152,7 +152,7 @@ test.describe('Draft Persistence', () => {
 		await page.waitForTimeout(500);
 
 		// Textarea should remain empty
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toHaveValue('');
 	});
 
@@ -160,11 +160,11 @@ test.describe('Draft Persistence', () => {
 		// Create new session
 		await createSessionViaUI(page);
 
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 
 		// Type quickly and send without waiting for debounce
 		await textarea.fill('Quick message 1');
-		await page.click('button[aria-label*="Send message"]');
+		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Textarea should clear immediately
 		await expect(textarea).toHaveValue('');
@@ -174,7 +174,7 @@ test.describe('Draft Persistence', () => {
 
 		// Type another message quickly
 		await textarea.fill('Quick message 2');
-		await page.click('button[aria-label*="Send message"]');
+		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Textarea should clear again
 		await expect(textarea).toHaveValue('');
@@ -225,7 +225,7 @@ test.describe('Draft Persistence', () => {
 		await page.waitForTimeout(500);
 
 		// Should show first draft
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toHaveValue(draft1);
 
 		// Go back to second session
@@ -255,10 +255,10 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 		// Type and send message
 		const messageText = 'This message should not reappear';
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 
 		await textarea.fill(messageText);
-		await page.click('button[aria-label*="Send message"]');
+		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Textarea should clear immediately
 		await expect(textarea).toHaveValue('', { timeout: 2000 });
@@ -299,10 +299,10 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 		// Type and send message
 		const messageText = 'Message for reload test';
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 
 		await textarea.fill(messageText);
-		await page.click('button[aria-label*="Send message"]');
+		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Wait for message to appear
 		await page.waitForSelector(`text=${messageText}`, { timeout: 10000 });
@@ -326,7 +326,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 		await page.waitForTimeout(500);
 
 		// CRITICAL: Textarea should be empty after reload
-		const textareaAfterReload = page.locator('textarea[placeholder*="Ask"]');
+		const textareaAfterReload = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textareaAfterReload).toHaveValue('');
 
 		// Cleanup
@@ -337,7 +337,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 		// Create new session
 		await createSessionViaUI(page);
 
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 
 		// Get the session ID
 		const sessionButton = page.locator('[data-session-id]').first();
@@ -345,7 +345,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 		// Send message quickly (before 250ms debounce)
 		await textarea.fill('Quick message');
-		await page.click('button[aria-label*="Send message"]');
+		await page.locator('button[aria-label*="Send message"]').first().click();
 
 		// Should clear immediately
 		await expect(textarea).toHaveValue('', { timeout: 2000 });
@@ -365,7 +365,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 		await page.waitForTimeout(500);
 
 		// Should STILL be empty (no race condition)
-		const textareaAfter = page.locator('textarea[placeholder*="Ask"]');
+		const textareaAfter = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textareaAfter).toHaveValue('');
 
 		// Cleanup

@@ -286,7 +286,7 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		await waitForSlashCommandsLoaded(page);
 
 		// Send a simple message to trigger SDK query, which populates SDK commands
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.waitFor({ state: 'visible', timeout: 5000 });
 		await textarea.fill('hello');
 		await page.keyboard.press('Enter');

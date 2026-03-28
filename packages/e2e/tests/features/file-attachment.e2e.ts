@@ -371,11 +371,11 @@ test.describe('File Attachment - Send', () => {
 		await page.waitForTimeout(500);
 
 		// Type a message
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Here is a test image');
 
 		// Send the message
-		const sendButton = page.locator('button[aria-label="Send message"]');
+		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
 		// Wait for the message to appear
@@ -432,7 +432,7 @@ test.describe('File Attachment - Send', () => {
 		await expect(removeButton).toBeVisible({ timeout: 10000 });
 
 		// Type and send message
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Test message with image');
 
 		const sendButton = page.locator('[data-testid="send-button"]');

@@ -49,11 +49,11 @@ test.describe('Reconnection - Basic Message Sync', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// 2. Send a message that will take some time to process
-		const messageInput = page.locator('textarea[placeholder*="Ask"]');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.click();
 		await messageInput.fill('Count from 1 to 5 with 1 second delay between each number');
 
-		const sendButton = page.locator('button[aria-label="Send message"]');
+		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
 		// 3. Wait for agent to start processing
@@ -128,11 +128,11 @@ test.describe('Reconnection - Multiple Cycles', () => {
 		// 1. Create session and send message
 		sessionId = await createSessionViaUI(page);
 
-		const messageInput = page.locator('textarea[placeholder*="Ask"]');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.click();
 		await messageInput.fill('List 3 programming languages');
 
-		const sendButton = page.locator('button[aria-label="Send message"]');
+		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
 		// 2. Wait for initial response
@@ -208,11 +208,11 @@ test.describe('Reconnection - Long Disconnection Period', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// 2. Send message
-		const messageInput = page.locator('textarea[placeholder*="Ask"]');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.click();
 		await messageInput.fill('Say hello');
 
-		const sendButton = page.locator('button[aria-label="Send message"]');
+		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
 		// 3. Wait for processing to start
@@ -273,11 +273,11 @@ test.describe('Reconnection - Message Order', () => {
 		// 1. Create session and send message
 		sessionId = await createSessionViaUI(page);
 
-		const messageInput = page.locator('textarea[placeholder*="Ask"]');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.click();
 		await messageInput.fill('Count: 1, 2, 3');
 
-		const sendButton = page.locator('button[aria-label="Send message"]');
+		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
 		// 2. Wait for some messages
@@ -399,11 +399,11 @@ test.describe('Connection - State Transitions', () => {
 		// Create session and send message
 		sessionId = await createSessionViaUI(page);
 
-		const messageInput = page.locator('textarea[placeholder*="Ask"]');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.click();
 		await messageInput.fill('Test message for reconnection');
 
-		const sendButton = page.locator('button[aria-label="Send message"]');
+		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
 		// Wait for message to appear

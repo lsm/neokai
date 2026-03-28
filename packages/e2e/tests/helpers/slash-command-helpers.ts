@@ -33,7 +33,7 @@ export async function waitForSlashCommandsLoaded(page: Page): Promise<void> {
  * Type in the message input textarea
  */
 export async function typeInMessageInput(page: Page, text: string): Promise<void> {
-	const textarea = page.locator('textarea[placeholder*="Ask"]');
+	const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 	await textarea.waitFor({ state: 'visible', timeout: 5000 });
 	await textarea.fill(text);
 }
@@ -42,7 +42,7 @@ export async function typeInMessageInput(page: Page, text: string): Promise<void
  * Get the message input textarea
  */
 export function getMessageInput(page: Page) {
-	return page.locator('textarea[placeholder*="Ask"]');
+	return page.locator('textarea[placeholder*="Ask"]').first();
 }
 
 /**
