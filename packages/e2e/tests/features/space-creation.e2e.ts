@@ -60,9 +60,10 @@ test.describe('Space Creation UX', () => {
 		await expect(spacesButton).toBeVisible({ timeout: 5000 });
 		await spacesButton.click();
 
-		// ContextPanel should show the Spaces home view with "Home" header and "Create Space" button
-		// The header "Home" button is inside the context panel (not the NavRail icon)
-		await expect(page.locator('.border-b >> text=Home')).toBeVisible({ timeout: 5000 });
+		// ContextPanel should show the Spaces list view with "Spaces" heading and "Create Space" button
+		await expect(page.getByRole('heading', { name: 'Spaces', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
 		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
