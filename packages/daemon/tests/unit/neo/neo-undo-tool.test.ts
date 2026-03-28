@@ -154,7 +154,10 @@ function makeMcpServer(overrides: Partial<AppMcpServer> = {}): AppMcpServer {
 // Mock manager factories
 // ---------------------------------------------------------------------------
 
-function makeRoomManager(rooms: Room[] = []): NeoActionRoomManager {
+function makeRoomManager(
+	rooms: Room[] = [],
+	opts: { activeSessions?: Map<string, number> } = {}
+): NeoActionRoomManager {
 	const store = new Map<string, Room>(rooms.map((r) => [r.id, r]));
 	return {
 		createRoom: (params) => {
@@ -168,6 +171,9 @@ function makeRoomManager(rooms: Room[] = []): NeoActionRoomManager {
 			return true;
 		},
 		getRoom: (id) => store.get(id) ?? null,
+		getActiveSessionCount: opts.activeSessions
+			? (id) => opts.activeSessions!.get(id) ?? 0
+			: undefined,
 		updateRoom: (id, params) => {
 			const room = store.get(id);
 			if (!room) return null;
@@ -354,6 +360,7 @@ function makeConfig(
 	opts: {
 		db?: BunDatabase;
 		rooms?: Room[];
+		activeSessions?: Map<string, number>;
 		goals?: RoomGoal[];
 		tasks?: NeoTask[];
 		skills?: AppSkill[];
@@ -376,7 +383,9 @@ function makeConfig(
 } {
 	const db = opts.db ?? makeDb();
 	const logger = opts.noLogger ? undefined : makeLogger(db);
-	const roomManager = makeRoomManager(opts.rooms ?? [makeRoom()]);
+	const roomManager = makeRoomManager(opts.rooms ?? [makeRoom()], {
+		activeSessions: opts.activeSessions,
+	});
 	const goalManager = makeGoalManager(opts.goals ?? [], opts.goalManagerOpts);
 	const taskManager = makeTaskManager(opts.tasks ?? [], opts.taskManagerOpts);
 	const skillsManager = makeSkillsManager(opts.skills ?? []);
@@ -530,6 +539,27 @@ describe('undo_last_action', () => {
 			const result = parseResult(await handlers.undo_last_action());
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/no longer exists/i);
+		});
+
+		it('returns error when room has active sessions (mirrors delete_room safety check)', async () => {
+			const room = makeRoom({ id: 'busy-room' });
+			const { config, roomManager, logger } = makeConfig({
+				rooms: [room],
+				activeSessions: new Map([['busy-room', 2]]),
+			});
+			logger!.logAction({
+				toolName: 'create_room',
+				input: { name: 'Busy Room' },
+				status: 'success',
+				undoable: true,
+				undoData: { roomId: 'busy-room' },
+			});
+			const handlers = createNeoActionToolHandlers(config);
+			const result = parseResult(await handlers.undo_last_action());
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/active session/i);
+			// Room must NOT be deleted
+			expect(roomManager.getRoom('busy-room')).not.toBeNull();
 		});
 
 		it('returns error when roomId missing from undoData', async () => {

@@ -1703,6 +1703,11 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				if (!roomId) throw new Error('Missing roomId in undo data');
 				const room = roomManager.getRoom(roomId);
 				if (!room) throw new Error(`Room ${roomId} no longer exists — already deleted`);
+				const activeSessions = roomManager.getActiveSessionCount?.(roomId) ?? 0;
+				if (activeSessions > 0)
+					throw new Error(
+						`Cannot undo room creation: room ${roomId} has ${activeSessions} active session(s)`
+					);
 				roomManager.deleteRoom(roomId);
 				return `Deleted room: ${roomId}`;
 			}

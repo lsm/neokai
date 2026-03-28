@@ -41,6 +41,43 @@
  * - MCP server: all 33 tools are registered
  */
 
+import { mock } from 'bun:test';
+
+// Re-declare the SDK mock so it survives Bun's module isolation.
+// Ensures neo-action-tools.ts is cached with a handler-preserving mock,
+// preventing interference with neo-activity-logger.test.ts which relies
+// on _registeredTools[name].handler being defined.
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+	query: mock(async () => ({ interrupt: () => {} })),
+	interrupt: mock(async () => {}),
+	supportedModels: mock(async () => {
+		throw new Error('SDK unavailable');
+	}),
+	createSdkMcpServer: mock((_opts: { name: string; tools: unknown[] }) => {
+		const registeredTools: Record<string, unknown> = {};
+		for (const t of _opts.tools ?? []) {
+			const name = (t as { name: string }).name;
+			const handler = (t as { handler: unknown }).handler;
+			if (name) registeredTools[name] = { handler };
+		}
+		return {
+			type: 'sdk' as const,
+			name: _opts.name,
+			version: '1.0.0',
+			tools: _opts.tools ?? [],
+			instance: {
+				connect() {},
+				disconnect() {},
+				_registeredTools: registeredTools,
+			},
+		};
+	}),
+	tool: mock((_name: string, _desc: string, _schema: unknown, _handler: unknown) => ({
+		name: _name,
+		handler: _handler,
+	})),
+}));
+
 import { describe, expect, it, beforeEach } from 'bun:test';
 import {
 	createNeoActionToolHandlers,
