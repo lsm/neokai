@@ -116,8 +116,8 @@ describe('SpaceTaskPane', () => {
 
 	it('renders status badge', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress' })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('In Progress')).toBeTruthy();
+		const { getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getAllByText('In Progress').length).toBeGreaterThan(0);
 	});
 
 	it('renders priority indicator', () => {
@@ -128,10 +128,10 @@ describe('SpaceTaskPane', () => {
 
 	it('shows workflow step indicator when workflowRunId is present', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', workflowNodeId: 'step-abc123' })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText(/Workflow Step/)).toBeTruthy();
+		const { getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getAllByText(/Workflow Step/).length).toBeGreaterThan(0);
 		// Should show truncated step ID
-		expect(getByText(/step-ab/)).toBeTruthy();
+		expect(getAllByText(/step-ab/).length).toBeGreaterThan(0);
 	});
 
 	it('does NOT show workflow step indicator without workflowRunId', () => {
@@ -148,15 +148,15 @@ describe('SpaceTaskPane', () => {
 
 	it('renders current step when present', () => {
 		mockTasks.value = [makeTask({ currentStep: 'Running linter' })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('Current Step')).toBeTruthy();
-		expect(getByText('Running linter')).toBeTruthy();
+		expect(getAllByText('Running linter').length).toBeGreaterThan(0);
 	});
 
 	it('renders progress bar when progress > 0', () => {
 		mockTasks.value = [makeTask({ progress: 75 })];
-		const { getByText, container } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Progress')).toBeTruthy();
+		const { getByText, getAllByText, container } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getAllByText('Progress').length).toBeGreaterThan(0);
 		expect(getByText('75%')).toBeTruthy();
 		const progressBar = container.querySelector('.bg-blue-500');
 		expect(progressBar).toBeTruthy();

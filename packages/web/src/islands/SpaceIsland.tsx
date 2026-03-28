@@ -261,26 +261,56 @@ export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: Spac
 									{/* Canvas panel — shown on md+ when a workflow or active run exists */}
 									{showCanvas && (
 										<div
-											class="hidden md:flex flex-col h-full overflow-hidden"
+											class="hidden md:grid h-full overflow-hidden md:grid-cols-[minmax(0,1fr)_22rem]"
 											data-testid="canvas-panel"
 										>
-											{/* Active-run banner */}
-											{activeRun && (
-												<div class="flex items-center gap-2 px-4 py-2 border-b border-dark-700 bg-dark-900 flex-shrink-0">
-													<span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
-													<span class="text-xs text-blue-300 truncate">{activeRun.title}</span>
-													<span class="ml-auto text-xs text-gray-600 capitalize flex-shrink-0">
-														{activeRun.status.replace('_', ' ')}
-													</span>
+											<div class="min-w-0 flex flex-col border-r border-dark-800 bg-dark-900/40">
+												<div class="border-b border-dark-800 px-5 py-4">
+													<div class="flex items-center justify-between gap-3">
+														<div class="min-w-0">
+															<p class="text-[11px] uppercase tracking-[0.22em] text-gray-600">
+																Workflow Canvas
+															</p>
+															<p class="mt-1 text-sm text-gray-300">
+																{activeRun ? 'Live orchestration view' : 'Template layout preview'}
+															</p>
+														</div>
+														{activeRun ? (
+															<div class="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-xs text-blue-200">
+																{activeRun.status.replace('_', ' ')}
+															</div>
+														) : (
+															<div class="rounded-full border border-dark-700 bg-dark-900 px-3 py-1 text-xs text-gray-400">
+																Template mode
+															</div>
+														)}
+													</div>
+													{activeRun && (
+														<div class="mt-3 flex items-center gap-2 rounded-xl border border-blue-800/40 bg-blue-900/15 px-3 py-2">
+															<span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
+															<span class="min-w-0 flex-1 truncate text-sm text-blue-200">
+																{activeRun.title}
+															</span>
+														</div>
+													)}
 												</div>
-											)}
-											<WorkflowCanvas
-												key={`${defaultWorkflow.id}:${activeRun?.id ?? 'template'}`}
-												workflowId={defaultWorkflow.id}
-												runId={activeRun?.id ?? null}
-												spaceId={spaceId}
-												class="flex-1 min-h-0"
-											/>
+												<WorkflowCanvas
+													key={`${defaultWorkflow.id}:${activeRun?.id ?? 'template'}`}
+													workflowId={defaultWorkflow.id}
+													runId={activeRun?.id ?? null}
+													spaceId={spaceId}
+													class="flex-1 min-h-0"
+												/>
+											</div>
+											<div class="min-h-0 overflow-y-auto bg-dark-950/70">
+												<SpaceDashboard
+													spaceId={spaceId}
+													compact
+													onCreateTask={() => setCreateTaskOpen(true)}
+													onStartWorkflow={() => setStartWorkflowOpen(true)}
+													onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+												/>
+											</div>
 										</div>
 									)}
 									{/* Fallback: shown on mobile, or when no canvas data */}
