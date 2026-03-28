@@ -1,9 +1,10 @@
 /**
  * SpaceIsland — main content area for the Space view.
  *
- * 2-column layout:
- * - Main (flex-1): tabbed view — Dashboard | Agents | Workflows | Settings
- * - Right (~320px, conditional): SpaceTaskPane when a task is selected
+ * Content priority chain (full-width, each replaces the next):
+ * 1. sessionViewId set → ChatContainer (agent/session chat)
+ * 2. taskViewId set    → SpaceTaskPane (full-width task detail)
+ * 3. default          → tabbed view — Dashboard | Agents | Workflows | Settings
  *
  * Dashboard tab shows WorkflowCanvas:
  *   - Runtime mode when an active workflow run exists (read-only, live status)

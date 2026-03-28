@@ -175,7 +175,11 @@ vi.mock('../../components/space/SpaceDashboard', () => ({
 }));
 vi.mock('../../components/space/SpaceTaskPane', () => ({
 	SpaceTaskPane: (props: { taskId: string | null; spaceId?: string; onClose?: () => void }) => (
-		<div data-testid="space-task-pane-inner" data-task-id={props.taskId ?? ''} />
+		<div
+			data-testid="space-task-pane-inner"
+			data-task-id={props.taskId ?? ''}
+			data-space-id={props.spaceId ?? ''}
+		/>
 	),
 }));
 
@@ -850,6 +854,7 @@ describe('SpaceIsland — content priority chain', () => {
 			const { getByTestId } = render(<SpaceIsland spaceId="space-1" taskViewId="task-xyz" />);
 			const inner = getByTestId('space-task-pane-inner');
 			expect(inner.getAttribute('data-task-id')).toBe('task-xyz');
+			expect(inner.getAttribute('data-space-id')).toBe('space-1');
 		});
 
 		it('does not show SpaceTaskPane when taskViewId is null', () => {

@@ -1,8 +1,9 @@
 /**
  * SpaceTaskPane Component
  *
- * Right column task detail pane for the Space layout.
+ * Full-width task detail view for the Space layout.
  * Shows task details, status, and human input area when needed.
+ * Displayed as the full content area (replacing the tab view) when a task is selected.
  */
 
 import { useState } from 'preact/hooks';
@@ -156,6 +157,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		);
 	}
 
+	const agentSessionId = task.taskAgentSessionId;
 	const agentSessionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
@@ -187,10 +189,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				)}
 				<h2 class="text-sm font-semibold text-gray-100 flex-1 min-w-0 truncate">{task.title}</h2>
 				<StatusBadge status={task.status} />
-				{task.taskAgentSessionId && spaceId && (
+				{agentSessionId && spaceId && (
 					<button
 						type="button"
-						onClick={() => navigateToSpaceSession(spaceId, task.taskAgentSessionId!)}
+						onClick={() => navigateToSpaceSession(spaceId, agentSessionId)}
 						class="flex-shrink-0 px-3 py-1 text-xs font-medium bg-dark-700 hover:bg-dark-600
 							text-gray-300 rounded border border-dark-600 transition-colors"
 						data-testid="view-agent-session-btn"
