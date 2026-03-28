@@ -64,6 +64,7 @@ export type {
  * - 'general': General-purpose agent session (Room Runtime)
  * - 'lobby': Instance-level agent session
  * - 'space_task_agent': Task Agent session that orchestrates a single SpaceTask's workflow
+ * - 'space_chat': Per-space coordinator session (space:chat:${spaceId}) — the human-facing interface for a Space
  */
 export type SessionType =
 	| 'worker'
@@ -75,6 +76,7 @@ export type SessionType =
 	| 'lobby'
 	| 'spaces_global'
 	| 'space_task_agent'
+	| 'space_chat'
 	| 'neo';
 
 /**

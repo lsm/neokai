@@ -10,7 +10,7 @@
  * - setTaskAgentManager(): wires TaskAgentManager into the underlying SpaceRuntime
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, type Mock } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
@@ -26,6 +26,9 @@ import type {
 	NotificationSink,
 	SpaceNotificationEvent,
 } from '../../../src/lib/space/runtime/notification-sink.ts';
+import type { SessionManager } from '../../../src/lib/session-manager.ts';
+import type { AgentSession } from '../../../src/lib/agent/agent-session.ts';
+import type { DaemonHub } from '../../../src/lib/daemon-hub.ts';
 import type { Space } from '@neokai/shared';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
@@ -245,6 +248,152 @@ describe('SpaceRuntimeService', () => {
 			// createOrGetRuntime should still work after restart
 			const runtime = await service.createOrGetRuntime('space-1');
 			expect(runtime).toBeDefined();
+		});
+	});
+
+	// ─── setupSpaceAgentSession ──────────────────────────────────────────────
+
+	describe('setupSpaceAgentSession()', () => {
+		function makeSession() {
+			return {
+				setRuntimeMcpServers: mock(() => {}),
+				setRuntimeSystemPrompt: mock(() => {}),
+			} as unknown as AgentSession;
+		}
+
+		function makeSessionManager(session: AgentSession | null = makeSession()): SessionManager {
+			return {
+				getSessionAsync: mock(async () => session),
+				createSession: mock(async () => 'space:chat:space-1'),
+			} as unknown as SessionManager;
+		}
+
+		function makeWorkflowManager(): SpaceWorkflowManager {
+			return {
+				listWorkflows: mock(() => []),
+			} as unknown as SpaceWorkflowManager;
+		}
+
+		function makeAgentManager(): SpaceAgentManager {
+			return {
+				listBySpaceId: mock(() => []),
+			} as unknown as SpaceAgentManager;
+		}
+
+		function buildConfigWithSession(
+			sessionManager: SessionManager,
+			spaceManager: SpaceManager = createMockSpaceManager()
+		): SpaceRuntimeServiceConfig {
+			return {
+				db: {} as BunDatabase,
+				spaceManager,
+				spaceAgentManager: makeAgentManager(),
+				spaceWorkflowManager: makeWorkflowManager(),
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+			};
+		}
+
+		test('attaches MCP server and system prompt to the space:chat session', async () => {
+			const session = makeSession();
+			const sessionManager = makeSessionManager(session);
+			const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
+
+			await svc.setupSpaceAgentSession(mockSpace);
+
+			expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(`space:chat:${mockSpace.id}`);
+			expect(session.setRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			const [mcpArg] = (session.setRuntimeMcpServers as Mock<typeof session.setRuntimeMcpServers>)
+				.mock.calls[0];
+			expect(mcpArg).toHaveProperty('space-agent-tools');
+
+			expect(session.setRuntimeSystemPrompt).toHaveBeenCalledTimes(1);
+			const [promptArg] = (
+				session.setRuntimeSystemPrompt as Mock<typeof session.setRuntimeSystemPrompt>
+			).mock.calls[0];
+			expect(typeof promptArg).toBe('string');
+			expect(promptArg.length).toBeGreaterThan(0);
+		});
+
+		test('no-op when session does not exist in DB', async () => {
+			const sessionManager = makeSessionManager(null); // session not found
+			const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
+
+			// Should not throw
+			await expect(svc.setupSpaceAgentSession(mockSpace)).resolves.toBeUndefined();
+		});
+
+		test('no-op when sessionManager is not configured', async () => {
+			// buildConfig (no sessionManager)
+			const svc = new SpaceRuntimeService(buildConfig(createMockSpaceManager()));
+
+			// Should not throw and silently skip
+			await expect(svc.setupSpaceAgentSession(mockSpace)).resolves.toBeUndefined();
+		});
+
+		test('start() provisions existing spaces', async () => {
+			const session = makeSession();
+			const sessionManager = makeSessionManager(session);
+			const spaceMgr: SpaceManager = {
+				getSpace: mock(async () => mockSpace),
+				listSpaces: mock(async () => [mockSpace]),
+			} as unknown as SpaceManager;
+			const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager, spaceMgr));
+
+			svc.start();
+			// Allow async provisioning microtasks to run
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+			expect(spaceMgr.listSpaces).toHaveBeenCalled();
+			// getSessionAsync was called for the existing space
+			expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(`space:chat:${mockSpace.id}`);
+
+			svc.stop();
+		});
+
+		test('start() subscribes to space.created events when daemonHub provided', () => {
+			const session = makeSession();
+			const sessionManager = makeSessionManager(session);
+			const daemonHub: DaemonHub = {
+				on: mock(() => () => {}),
+				emit: mock(async () => {}),
+			} as unknown as DaemonHub;
+			const config: SpaceRuntimeServiceConfig = {
+				...buildConfigWithSession(sessionManager),
+				daemonHub,
+			};
+			const svc = new SpaceRuntimeService(config);
+
+			svc.start();
+
+			// DaemonHub.on should have been called with 'space.created'
+			const onCalls = (daemonHub.on as Mock<typeof daemonHub.on>).mock.calls;
+			const spaceCreatedCall = onCalls.find(([event]) => event === 'space.created');
+			expect(spaceCreatedCall).toBeDefined();
+
+			svc.stop();
+		});
+
+		test('stop() unsubscribes from space.created events', () => {
+			const unsubFn = mock(() => {});
+			const session = makeSession();
+			const sessionManager = makeSessionManager(session);
+			const daemonHub: DaemonHub = {
+				on: mock(() => unsubFn as unknown as () => void),
+				emit: mock(async () => {}),
+			} as unknown as DaemonHub;
+			const config: SpaceRuntimeServiceConfig = {
+				...buildConfigWithSession(sessionManager),
+				daemonHub,
+			};
+			const svc = new SpaceRuntimeService(config);
+
+			svc.start();
+			svc.stop();
+
+			expect(unsubFn).toHaveBeenCalledTimes(1);
 		});
 	});
 });

@@ -10,7 +10,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { SpaceTask } from '@neokai/shared';
+import type { McpServerConfig, Space, SpaceTask } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -19,8 +19,13 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
+import type { SessionManager } from '../../session-manager';
+import type { DaemonHub } from '../../daemon-hub';
 import { SpaceRuntime } from './space-runtime';
 import { ChannelRouter } from './channel-router';
+import { SpaceTaskManager } from '../managers/space-task-manager';
+import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
+import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { Logger } from '../../logger';
 
 const log = new Logger('space-runtime-service');
@@ -48,11 +53,27 @@ export interface SpaceRuntimeServiceConfig {
 	 * activation after gate data is written externally (e.g. human approval via RPC).
 	 */
 	gateDataRepo?: GateDataRepository;
+	/**
+	 * Optional SessionManager for provisioning space:chat:${spaceId} sessions.
+	 * When provided, setupSpaceAgentSession() attaches MCP tools and system prompts
+	 * to space chat sessions on startup and on space.created events.
+	 */
+	sessionManager?: SessionManager;
+	/**
+	 * Optional DaemonHub for subscribing to space.created events.
+	 * When provided together with sessionManager, new spaces get their chat sessions
+	 * provisioned automatically.
+	 */
+	daemonHub?: DaemonHub;
 }
 
 export class SpaceRuntimeService {
 	private readonly runtime: SpaceRuntime;
 	private started = false;
+	/** Unsubscribe handles for DaemonHub event subscriptions (daemon-lifetime). */
+	private readonly unsubscribers: Array<() => void> = [];
+	/** Reference to TaskAgentManager, stored when injected via setTaskAgentManager(). */
+	private taskAgentManager: TaskAgentManager | null = null;
 
 	constructor(private readonly config: SpaceRuntimeServiceConfig) {
 		this.runtime = new SpaceRuntime(config);
@@ -68,6 +89,7 @@ export class SpaceRuntimeService {
 	 * Mirrors the setNotificationSink() pattern.
 	 */
 	setTaskAgentManager(manager: TaskAgentManager): void {
+		this.taskAgentManager = manager;
 		this.runtime.setTaskAgentManager(manager);
 	}
 
@@ -76,6 +98,8 @@ export class SpaceRuntimeService {
 		if (this.started) return;
 		this.started = true;
 		this.runtime.start();
+		this.subscribeToSpaceEvents();
+		this.provisionExistingSpaces();
 		log.info('SpaceRuntimeService started');
 	}
 
@@ -84,7 +108,132 @@ export class SpaceRuntimeService {
 		if (!this.started) return;
 		this.started = false;
 		this.runtime.stop();
+		for (const unsub of this.unsubscribers) {
+			unsub();
+		}
+		this.unsubscribers.length = 0;
 		log.info('SpaceRuntimeService stopped');
+	}
+
+	/**
+	 * Subscribe to space.created events so newly created spaces get their chat
+	 * sessions provisioned with MCP tools and system prompt.
+	 *
+	 * Called once during start(). No-op when sessionManager or daemonHub are absent.
+	 */
+	private subscribeToSpaceEvents(): void {
+		const { sessionManager, daemonHub } = this.config;
+		if (!sessionManager || !daemonHub) return;
+
+		const unsubCreated = daemonHub.on(
+			'space.created',
+			(event) => {
+				void this.setupSpaceAgentSession(event.space).catch((err) => {
+					log.error(`Failed to provision space chat session for space ${event.spaceId}:`, err);
+				});
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubCreated);
+	}
+
+	/**
+	 * Provision space:chat:${spaceId} sessions for all existing spaces.
+	 *
+	 * Called during start() to re-attach MCP tools and system prompts to existing
+	 * space chat sessions after a daemon restart. The sessions already exist in DB;
+	 * only the runtime configuration (MCP server, system prompt) needs re-attaching.
+	 *
+	 * No-op when sessionManager is absent.
+	 */
+	private provisionExistingSpaces(): void {
+		const { sessionManager } = this.config;
+		if (!sessionManager) return;
+
+		void this.config.spaceManager
+			.listSpaces()
+			.then((spaces) => {
+				return Promise.all(
+					spaces.map((space) =>
+						this.setupSpaceAgentSession(space).catch((err) => {
+							log.error(`Failed to provision space chat session for space ${space.id}:`, err);
+						})
+					)
+				);
+			})
+			.catch((err) => {
+				log.error('Failed to list spaces for session provisioning:', err);
+			});
+	}
+
+	/**
+	 * Attach MCP tools and system prompt to a space's chat session.
+	 *
+	 * Mirrors RoomRuntimeService.setupRoomAgentSession(). Called:
+	 *   - On startup for all existing spaces (re-attaches after daemon restart)
+	 *   - On space.created event for newly created spaces
+	 *
+	 * No-op when sessionManager is absent.
+	 */
+	async setupSpaceAgentSession(space: Space): Promise<void> {
+		const {
+			sessionManager,
+			db,
+			spaceWorkflowManager,
+			spaceAgentManager,
+			taskRepo,
+			workflowRunRepo,
+		} = this.config;
+		if (!sessionManager) return;
+
+		const spaceChatSessionId = `space:chat:${space.id}`;
+		const session = await sessionManager.getSessionAsync(spaceChatSessionId);
+		if (!session) {
+			log.warn(`Space chat session not found for space ${space.id} (${spaceChatSessionId})`);
+			return;
+		}
+
+		// Build context for the system prompt.
+		const agents = spaceAgentManager.listBySpaceId(space.id);
+		const workflows = spaceWorkflowManager.listWorkflows(space.id);
+
+		const mcpServer = createSpaceAgentMcpServer({
+			spaceId: space.id,
+			runtime: this.runtime,
+			workflowManager: spaceWorkflowManager,
+			taskRepo,
+			workflowRunRepo,
+			taskManager: new SpaceTaskManager(db, space.id),
+			spaceAgentManager,
+			taskAgentManager: this.taskAgentManager,
+		});
+
+		session.setRuntimeMcpServers({
+			'space-agent-tools': mcpServer as unknown as McpServerConfig,
+		});
+
+		session.setRuntimeSystemPrompt(
+			buildSpaceChatSystemPrompt({
+				background: space.backgroundContext,
+				instructions: space.instructions,
+				autonomyLevel: space.autonomyLevel,
+				workflows: workflows.map((w) => ({
+					id: w.id,
+					name: w.name,
+					description: w.description,
+					tags: w.tags ?? [],
+					stepCount: w.nodes?.length ?? 0,
+				})),
+				agents: agents.map((a) => ({
+					id: a.id,
+					name: a.name,
+					role: a.role,
+					description: a.description,
+				})),
+			})
+		);
+
+		log.info(`Space chat session provisioned for space ${space.id}`);
 	}
 
 	/**
