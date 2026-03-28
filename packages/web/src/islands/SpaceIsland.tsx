@@ -305,7 +305,10 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 
 			{/* Right column — task detail pane / chat panel (conditionally shown) */}
 			{activeTaskId && (
-				<div class="hidden md:flex w-80 flex-shrink-0 border-l border-dark-700 overflow-hidden flex-col">
+				<div
+					class="hidden md:flex w-80 flex-shrink-0 border-l border-dark-700 overflow-hidden flex-col"
+					data-testid="space-task-pane"
+				>
 					<SpaceTaskPane taskId={activeTaskId} onClose={handleTaskPaneClose} />
 				</div>
 			)}

@@ -159,10 +159,49 @@ vi.mock('../../components/space/WorkflowCanvas', () => ({
 }));
 
 vi.mock('../../components/space/SpaceDashboard', () => ({
-	SpaceDashboard: () => <div data-testid="space-dashboard" />,
+	SpaceDashboard: (props: {
+		onCreateTask?: () => void;
+		onStartWorkflow?: () => void;
+		onSelectTask?: (id: string) => void;
+	}) => (
+		<div data-testid="space-dashboard">
+			<button data-testid="quick-create-task" onClick={props.onCreateTask}>
+				Create Task
+			</button>
+			<button data-testid="quick-start-workflow" onClick={props.onStartWorkflow}>
+				Start Workflow Run
+			</button>
+		</div>
+	),
 }));
 vi.mock('../../components/space/SpaceTaskPane', () => ({
-	SpaceTaskPane: () => <div data-testid="space-task-pane" />,
+	SpaceTaskPane: () => <div />,
+}));
+
+vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
+	SpaceCreateTaskDialog: (props: { isOpen: boolean; onClose: () => void }) =>
+		props.isOpen ? (
+			<div data-testid="space-create-task-dialog">
+				<button data-testid="close-create-task-dialog" onClick={props.onClose}>
+					Close
+				</button>
+			</div>
+		) : null,
+}));
+
+vi.mock('../../components/space/WorkflowRunStartDialog', () => ({
+	WorkflowRunStartDialog: (props: {
+		isOpen: boolean;
+		onClose: () => void;
+		onSwitchToWorkflows?: () => void;
+	}) =>
+		props.isOpen ? (
+			<div data-testid="workflow-run-start-dialog">
+				<button data-testid="close-workflow-run-dialog" onClick={props.onClose}>
+					Close
+				</button>
+			</div>
+		) : null,
 }));
 vi.mock('../../components/space/SpaceAgentList', () => ({
 	SpaceAgentList: () => <div data-testid="space-agent-list" />,
@@ -195,6 +234,7 @@ vi.mock('../../lib/signals', () => ({
 
 vi.mock('../../lib/router', () => ({
 	navigateToSpace: vi.fn(),
+	navigateToSpaceTask: vi.fn(),
 }));
 
 vi.mock('../../lib/utils', () => ({
@@ -690,6 +730,72 @@ describe('SpaceIsland — canvas integration (dashboard tab)', () => {
 			const { queryByTestId, getByText } = render(<SpaceIsland spaceId="space-1" />);
 			fireEvent.click(getByText('Workflows'));
 			expect(queryByTestId('canvas-panel')).toBeNull();
+		});
+	});
+});
+
+describe('SpaceIsland — quick action buttons and dialogs', () => {
+	beforeEach(() => {
+		// Override the module-level beforeEach: no workflows → showCanvas is false,
+		// so the SpaceDashboard fallback (with quick-action buttons) is in the DOM.
+		mockWorkflows = signal([]);
+	});
+
+	describe('Create Task dialog', () => {
+		it('dialog is closed by default', () => {
+			const { queryByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			expect(queryByTestId('space-create-task-dialog')).toBeNull();
+		});
+
+		it('opens SpaceCreateTaskDialog when Create Task button is clicked', () => {
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByTestId('quick-create-task'));
+			expect(getByTestId('space-create-task-dialog')).toBeTruthy();
+		});
+
+		it('closes SpaceCreateTaskDialog when onClose is called', () => {
+			const { getByTestId, queryByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByTestId('quick-create-task'));
+			expect(getByTestId('space-create-task-dialog')).toBeTruthy();
+			fireEvent.click(getByTestId('close-create-task-dialog'));
+			expect(queryByTestId('space-create-task-dialog')).toBeNull();
+		});
+	});
+
+	describe('Start Workflow Run dialog', () => {
+		it('dialog is closed by default', () => {
+			const { queryByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			expect(queryByTestId('workflow-run-start-dialog')).toBeNull();
+		});
+
+		it('opens WorkflowRunStartDialog when Start Workflow Run button is clicked', () => {
+			const { getByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByTestId('quick-start-workflow'));
+			expect(getByTestId('workflow-run-start-dialog')).toBeTruthy();
+		});
+
+		it('closes WorkflowRunStartDialog when onClose is called', () => {
+			const { getByTestId, queryByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByTestId('quick-start-workflow'));
+			expect(getByTestId('workflow-run-start-dialog')).toBeTruthy();
+			fireEvent.click(getByTestId('close-workflow-run-dialog'));
+			expect(queryByTestId('workflow-run-start-dialog')).toBeNull();
+		});
+	});
+
+	describe('Dialogs are independent', () => {
+		it('opening Create Task does not open Workflow Run dialog', () => {
+			const { getByTestId, queryByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByTestId('quick-create-task'));
+			expect(getByTestId('space-create-task-dialog')).toBeTruthy();
+			expect(queryByTestId('workflow-run-start-dialog')).toBeNull();
+		});
+
+		it('opening Start Workflow Run does not open Create Task dialog', () => {
+			const { getByTestId, queryByTestId } = render(<SpaceIsland spaceId="space-1" />);
+			fireEvent.click(getByTestId('quick-start-workflow'));
+			expect(getByTestId('workflow-run-start-dialog')).toBeTruthy();
+			expect(queryByTestId('space-create-task-dialog')).toBeNull();
 		});
 	});
 });
