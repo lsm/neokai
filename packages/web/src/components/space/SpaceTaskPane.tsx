@@ -217,6 +217,35 @@ function ActivityStateBadge({ state }: { state: SpaceTaskActivityState }) {
 	);
 }
 
+function ConversationBubble({
+	speaker,
+	tone = 'default',
+	children,
+}: {
+	speaker: string;
+	tone?: 'default' | 'agent' | 'warning';
+	children: ComponentChildren;
+}) {
+	const toneClasses =
+		tone === 'agent'
+			? 'border-blue-800/40 bg-blue-950/10'
+			: tone === 'warning'
+				? 'border-yellow-800/40 bg-yellow-950/10'
+				: 'border-dark-700 bg-dark-900/70';
+	const labelClasses =
+		tone === 'agent'
+			? 'text-blue-300'
+			: tone === 'warning'
+				? 'text-yellow-300'
+				: 'text-gray-500';
+	return (
+		<div class={cn('rounded-xl border px-4 py-4', toneClasses)}>
+			<p class={cn('text-[11px] uppercase tracking-[0.18em]', labelClasses)}>{speaker}</p>
+			<div class="mt-2 text-sm leading-relaxed text-gray-200">{children}</div>
+		</div>
+	);
+}
+
 function describeActivityMember(member: SpaceTaskActivityMember): string {
 	if (member.error) return member.error;
 	if (member.state === 'active') {
@@ -455,6 +484,19 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			})
 		: [];
 	const liveTaskAgent = activityRows.find((member) => member.kind === 'task_agent') ?? null;
+	const conversationLabel = liveTaskAgent
+		? liveTaskAgent.label
+		: agentSessionId
+			? 'Task Agent'
+			: 'Space Agent';
+	const latestAgentUpdate =
+		task.error ||
+		task.result ||
+		task.completionSummary ||
+		visibleCurrentStep ||
+		activityRows.find((member) => member.currentStep || member.error || member.completionSummary)?.currentStep ||
+		null;
+	const showAgentActivitySection = activityRows.length > 0 || compactRelatedTasks.length > 0;
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-950">
@@ -492,6 +534,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 						<h2 class="mt-3 text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
+						<p class="mt-1 text-sm text-gray-300">{activityHeadline}</p>
 						<p class="mt-1 text-sm text-gray-500">{attentionCopy}</p>
 					</div>
 					{runtimeSpaceId && (
@@ -515,54 +558,71 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			{/* Body */}
 			<div class="flex-1 overflow-y-auto">
 				<div class="max-w-5xl mx-auto px-4 py-5 space-y-4">
-					<div class="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-						<SectionCard title="What&apos;s Happening" tone={task.status === 'needs_attention' ? 'warning' : 'default'}>
-							<p class="text-base font-medium text-gray-100">{activityHeadline}</p>
-							<p class="mt-2 text-sm leading-relaxed text-gray-400">{activityDetail}</p>
-							<div class="mt-4 flex flex-wrap gap-2">
-								<InfoBadge label={`Assigned: ${assignedAgentLabel}`} />
-								<InfoBadge label={`Thread: ${threadLabel}`} />
-								{task.activeSession && (
-									<InfoBadge
-										label={`Live: ${liveActorLabel}`}
-										className="border-blue-700/50 bg-blue-950/20 text-blue-300"
-									/>
-								)}
-								{task.workflowRunId && workflowRun && (
-									<InfoBadge
-										label={`Run: ${workflowRun.title}`}
-										className="border-cyan-700/50 bg-cyan-950/20 text-cyan-300"
-									/>
-								)}
-							</div>
-						</SectionCard>
+					<SectionCard title="Conversation" tone={task.status === 'needs_attention' ? 'warning' : 'default'}>
+						<div class="space-y-3">
+							{task.inputDraft && (
+								<ConversationBubble speaker="You" tone={humanHandoffPending ? 'warning' : 'default'}>
+									<p class="whitespace-pre-wrap">{task.inputDraft}</p>
+								</ConversationBubble>
+							)}
 
-						<SectionCard title="Task Agent" tone={humanHandoffPending ? 'warning' : 'default'}>
-							<p class="text-sm text-gray-300">
-								{liveTaskAgent || agentSessionId
-									? 'Open the linked task thread to direct the agent, answer follow-up questions, or inspect the latest result.'
-									: 'This task does not have its own live agent thread yet. Use the shared space agent to steer the work and get updates.'}
+							{latestAgentUpdate && (
+								<ConversationBubble
+									speaker={conversationLabel}
+									tone={task.error ? 'warning' : 'agent'}
+								>
+									<p class="whitespace-pre-wrap">{latestAgentUpdate}</p>
+								</ConversationBubble>
+							)}
+
+							{!task.inputDraft && !latestAgentUpdate && (
+								<ConversationBubble speaker={conversationLabel} tone="agent">
+									<p>No conversation history yet. Use the agent thread to start or redirect the work.</p>
+								</ConversationBubble>
+							)}
+						</div>
+
+						<div class="mt-4 flex flex-wrap items-center gap-2">
+							<InfoBadge label={`Assigned: ${assignedAgentLabel}`} />
+							{task.workflowRunId && workflowRun && (
+								<InfoBadge
+									label={`Run: ${workflowRun.title}`}
+									className="border-cyan-700/50 bg-cyan-950/20 text-cyan-300"
+								/>
+							)}
+							{task.activeSession && (
+								<InfoBadge
+									label={`Live: ${liveActorLabel}`}
+									className="border-blue-700/50 bg-blue-950/20 text-blue-300"
+								/>
+							)}
+						</div>
+
+						<div class="mt-4 flex flex-wrap items-center gap-3">
+							{runtimeSpaceId && (
+								<button
+									type="button"
+									onClick={() =>
+										agentSessionId
+											? navigateToSpaceSession(runtimeSpaceId, agentSessionId)
+											: navigateToSpaceAgent(runtimeSpaceId)
+									}
+									class="px-3 py-2 text-sm font-medium bg-dark-800 hover:bg-dark-700 text-gray-200 rounded-lg border border-dark-600 transition-colors"
+								>
+									{agentSessionId ? 'Open Task Agent' : 'Open Space Agent'}
+								</button>
+							)}
+							<p class="text-sm text-gray-500">
+								{agentSessionId
+									? 'Use the task agent thread to steer direction, answer questions, or inspect results.'
+									: 'This task is currently handled through Space Agent.'}
 							</p>
-							<div class="mt-4 grid gap-3">
-								<div class="rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-3">
-									<p class="text-[11px] uppercase tracking-[0.18em] text-gray-500">Current Control Point</p>
-									<p class="mt-2 text-sm text-gray-100">
-										{liveTaskAgent || agentSessionId ? 'Linked task agent' : 'Shared space agent'}
-									</p>
-									<p class="mt-1 text-xs text-gray-500">
-										{task.status === 'needs_attention'
-											? 'Answer the open question here, then continue in the agent thread if more direction is needed.'
-											: humanHandoffPending
-												? 'Your last response is saved below. Open the agent thread if you want to keep driving the task.'
-												: 'Use the agent thread when you want to redirect execution, ask for an update, or inspect results.'}
-									</p>
-								</div>
-							</div>
-						</SectionCard>
-					</div>
+						</div>
+					</SectionCard>
 
-					<SectionCard title="Agent Activity">
-						{activityRows.length > 0 ? (
+					{showAgentActivitySection && (
+						<SectionCard title="Agent Activity">
+							{activityRows.length > 0 ? (
 							<div class="space-y-2">
 								{activityRows.map((member) => (
 									<div
@@ -660,7 +720,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								)}
 							</div>
 						)}
-					</SectionCard>
+						</SectionCard>
+					)}
 
 					{/* Workflow context */}
 					{task.workflowRunId && (
@@ -719,17 +780,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								</div>
 							)}
 
-						</SectionCard>
-					)}
-
-					{task.inputDraft && task.status !== 'needs_attention' && (
-						<SectionCard title="Latest Human Handoff" tone={humanHandoffPending ? 'warning' : 'default'}>
-							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{task.inputDraft}</p>
-							<p class="mt-3 text-xs text-gray-500">
-								{humanHandoffPending
-									? 'Your response has been saved. Continue in the space agent if you want to steer the next step.'
-									: 'Most recent human input saved on this task.'}
-							</p>
 						</SectionCard>
 					)}
 
