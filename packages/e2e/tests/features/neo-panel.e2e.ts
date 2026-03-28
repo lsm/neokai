@@ -51,12 +51,14 @@ test.describe('Neo Panel — Core Interaction', () => {
 	test.use({ viewport: { width: 1280, height: 720 } });
 
 	test.beforeEach(async ({ page }) => {
-		// Clear persisted panel state before the page loads so tests always start with a closed panel.
-		// addInitScript runs before any page script, avoiding the extra reload.
-		await page.addInitScript(() => {
-			localStorage.removeItem('neo:panelOpen');
-		});
+		// Navigate first so localStorage is accessible, then clear the persisted panel state.
+		// Using page.evaluate() (not addInitScript) so that page.reload() calls inside tests
+		// do NOT re-clear localStorage — the persistence test depends on this.
 		await page.goto('/');
+		await waitForWebSocketConnected(page);
+		await page.evaluate(() => localStorage.removeItem('neo:panelOpen'));
+		// Reload so the app initialises with the cleared localStorage value
+		await page.reload();
 		await waitForWebSocketConnected(page);
 	});
 
