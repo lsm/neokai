@@ -2,11 +2,13 @@
  * Neo Conversation Flow E2E Tests (Task 11.2)
  *
  * Tests full conversational flows through the Neo UI:
- * - Query flow: sending a message and receiving a response
+ * - Panel mechanics: open, close, tabs, input
+ * - Query flow: send a message and verify response
  * - Security mode switching via Settings > Neo
  * - Action flow with confirmation UI (conservative mode)
- * - Activity feed: entries listed with timestamps
+ * - Activity feed: entries with timestamps
  * - Clear session: chat history erased
+ * - Undo flow: perform action, undo via chat, verify reversed
  *
  * Setup:
  * - Test rooms and skills are created via RPC in beforeEach (infrastructure pattern).
@@ -110,6 +112,48 @@ async function navigateToNeoSettings(page: Page): Promise<void> {
 }
 
 /**
+ * Navigate to the Skills section in Global Settings.
+ * Assumes the settings panel is already open.
+ */
+async function navigateToSkillsSettings(page: Page): Promise<void> {
+	const skillsNavButton = page.locator('nav button:has-text("Skills")').first();
+	await skillsNavButton.waitFor({ state: 'visible', timeout: 5000 });
+	await skillsNavButton.click();
+	await page
+		.locator('text=Application-level skills are available to any room or session')
+		.first()
+		.waitFor({ state: 'visible', timeout: 5000 });
+}
+
+/**
+ * Locate the skill row in the Skills settings panel.
+ * Walks up from the display name text to find the row div with a Delete button.
+ */
+function getSkillRow(page: Page, displayName: string) {
+	return page
+		.locator(
+			`xpath=//*[normalize-space(text())="${displayName}"]/ancestor::div[.//button[@title="Delete"]][1]`
+		)
+		.first();
+}
+
+/**
+ * Verify a skill's enabled state via Settings > Skills UI.
+ * Navigates to skills settings, checks the toggle, returns to home.
+ * Returns the boolean enabled state.
+ */
+async function getSkillEnabledStateViaUI(page: Page, displayName: string): Promise<boolean> {
+	await openSettingsModal(page);
+	await navigateToSkillsSettings(page);
+	const skillRow = getSkillRow(page, displayName);
+	const toggle = skillRow.locator('[role="switch"]').first();
+	const checked = await toggle.getAttribute('aria-checked', { timeout: 5000 });
+	// Navigate home to close settings before returning
+	await page.getByRole('button', { name: 'Home', exact: true }).click();
+	return checked === 'true';
+}
+
+/**
  * Change the Neo security mode via the Settings > Neo section.
  * Assumes Settings > Neo is already open.
  */
@@ -161,7 +205,7 @@ async function deleteTestSkill(page: Page, skillId: string): Promise<void> {
 	await page.evaluate(async (id) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
-		await hub.request('skill.delete', { id });
+		await hub.request('skill.delete', { id }).catch(() => {});
 	}, skillId);
 }
 
@@ -185,7 +229,7 @@ async function deleteTestRoom(page: Page, roomId: string): Promise<void> {
 	await page.evaluate(async (id) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
-		await hub.request('room.delete', { id });
+		await hub.request('room.delete', { id }).catch(() => {});
 	}, roomId);
 }
 
@@ -202,10 +246,10 @@ async function resetSecurityMode(page: Page): Promise<void> {
 
 /**
  * Check whether the Neo agent is provisioned (not showing an error card).
+ * Must be called with the Neo panel already open so error cards are rendered.
  * Returns true if Neo appears functional.
  */
 async function isNeoAvailable(page: Page): Promise<boolean> {
-	// Send a no-op evaluate to check error state
 	const hasNoCredentials = await page
 		.getByTestId('neo-error-no-credentials')
 		.isVisible()
@@ -248,7 +292,6 @@ test.describe('Neo Panel – UI mechanics', () => {
 	});
 
 	test('opens via Cmd+J keyboard shortcut', async ({ page }) => {
-		// Press Cmd+J (or Ctrl+J) to toggle the panel
 		await page.keyboard.press('Meta+j');
 		await page.getByTestId(NEO_PANEL_TESTID).waitFor({ state: 'visible', timeout: 5000 });
 		await expect(page.getByTestId(NEO_PANEL_TESTID)).toBeVisible();
@@ -317,6 +360,10 @@ test.describe('Neo – Query flow', () => {
 		// Create a test room so Neo can answer "what rooms do I have?"
 		roomId = await createTestRoom(page, roomName);
 		await openNeoPanel(page);
+		// Skip AI-dependent tests if Neo agent is unavailable (no API key in env)
+		if (!(await isNeoAvailable(page))) {
+			test.skip();
+		}
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -326,16 +373,10 @@ test.describe('Neo – Query flow', () => {
 	});
 
 	test('send a message and receive an assistant response', async ({ page }) => {
-		// Skip if Neo agent is not available (no API key)
-		if (!(await isNeoAvailable(page))) {
-			test.skip();
-			return;
-		}
-
 		const message = 'what rooms do I have?';
 		await sendNeoMessage(page, message);
 
-		// User message bubble appears
+		// User message bubble appears immediately
 		await waitForNeoUserMessage(page, message);
 
 		// A response eventually arrives
@@ -346,11 +387,10 @@ test.describe('Neo – Query flow', () => {
 	});
 
 	test('user message appears immediately after sending', async ({ page }) => {
-		// This test verifies optimistic UI — no AI response required.
+		// Verifies optimistic rendering — no AI response required to pass
 		const message = 'ping test message';
 		await sendNeoMessage(page, message);
 		await waitForNeoUserMessage(page, message);
-		// Message bubble renders correctly
 		await expect(
 			page.getByTestId(NEO_USER_MESSAGE_TESTID).filter({ hasText: message }).first()
 		).toBeVisible();
@@ -360,7 +400,7 @@ test.describe('Neo – Query flow', () => {
 		const input = page.getByTestId(NEO_CHAT_INPUT_TESTID);
 		await input.fill('test clear after send');
 		await input.press('Enter');
-		// Input should clear after send
+		// Input should clear as soon as the message is submitted
 		await expect(input).toHaveValue('', { timeout: 3000 });
 	});
 });
@@ -429,7 +469,7 @@ test.describe('Neo Settings – Security mode', () => {
 	test('security mode persists: reload shows saved value', async ({ page }) => {
 		await changeSecurityMode(page, 'conservative');
 
-		// Reload the page and navigate back to Neo settings
+		// Reload and navigate back to Neo settings
 		await page.reload();
 		await waitForWebSocketConnected(page);
 		await openSettingsModal(page);
@@ -455,7 +495,7 @@ test.describe('Neo – Action flow with confirmation (conservative mode)', () =>
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		// Create a skill to enable/disable
+		// Create a skill to enable/disable (starts disabled)
 		skillId = await createTestSkill(page, skillName);
 
 		// Set security mode to conservative so ALL actions require confirmation
@@ -466,35 +506,30 @@ test.describe('Neo – Action flow with confirmation (conservative mode)', () =>
 		});
 
 		await openNeoPanel(page);
+
+		// Skip if Neo agent is unavailable
+		if (!(await isNeoAvailable(page))) {
+			test.skip();
+		}
 	});
 
 	test.afterEach(async ({ page }) => {
-		// Reset security mode
 		await resetSecurityMode(page);
-		// Clean up skill
 		if (skillId) {
-			await deleteTestSkill(page, skillId).catch(() => {});
+			await deleteTestSkill(page, skillId);
 		}
 	});
 
 	test('action in conservative mode shows confirmation card, cancel preserves state', async ({
 		page,
 	}) => {
-		// Skip if Neo agent is not available
-		if (!(await isNeoAvailable(page))) {
-			test.skip();
-			return;
-		}
-
 		const message = `enable the skill named ${skillName}`;
 		await sendNeoMessage(page, message);
 		await waitForNeoUserMessage(page, message);
 
-		// In conservative mode, Neo should present a confirmation card
+		// In conservative mode, Neo presents a confirmation card before acting
 		const confirmationCard = page.getByTestId('neo-confirmation-card');
 		await confirmationCard.waitFor({ state: 'visible', timeout: 90000 });
-
-		// Confirmation card is visible
 		await expect(confirmationCard).toBeVisible();
 
 		// Click Cancel to dismiss without executing
@@ -506,23 +541,15 @@ test.describe('Neo – Action flow with confirmation (conservative mode)', () =>
 		await confirmationCard.waitFor({ state: 'hidden', timeout: 10000 });
 		await expect(confirmationCard).toBeHidden();
 
-		// Skill should still be disabled (we cancelled the action)
-		const skillEnabled = await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return null;
-			const response = await hub.request('skill.get', { id });
-			return (response as { skill: { enabled: boolean } | null }).skill?.enabled ?? null;
-		}, skillId);
-		expect(skillEnabled).toBe(false);
+		// Verify skill remains disabled via the Skills settings UI
+		await closeNeoPanel(page);
+		const enabled = await getSkillEnabledStateViaUI(page, skillName);
+		expect(enabled).toBe(false);
 	});
 
-	test('action in conservative mode can be confirmed and executed', async ({ page }) => {
-		// Skip if Neo agent is not available
-		if (!(await isNeoAvailable(page))) {
-			test.skip();
-			return;
-		}
-
+	test('action in conservative mode can be confirmed and skill becomes enabled', async ({
+		page,
+	}) => {
 		const message = `enable the skill named ${skillName}`;
 		await sendNeoMessage(page, message);
 		await waitForNeoUserMessage(page, message);
@@ -531,7 +558,7 @@ test.describe('Neo – Action flow with confirmation (conservative mode)', () =>
 		const confirmationCard = page.getByTestId('neo-confirmation-card');
 		await confirmationCard.waitFor({ state: 'visible', timeout: 90000 });
 
-		// Click Confirm to execute
+		// Click Confirm to execute the action
 		const confirmButton = page.getByTestId('neo-confirm-button');
 		await confirmButton.waitFor({ state: 'visible', timeout: 5000 });
 		await confirmButton.click();
@@ -539,13 +566,18 @@ test.describe('Neo – Action flow with confirmation (conservative mode)', () =>
 		// Confirmation card disappears after confirmation
 		await confirmationCard.waitFor({ state: 'hidden', timeout: 10000 });
 
-		// A result message should appear
+		// A result message appears from Neo
 		await waitForNeoAssistantResponse(page, { timeout: 30000 });
+
+		// Verify skill is now enabled via the Skills settings UI
+		await closeNeoPanel(page);
+		const enabled = await getSkillEnabledStateViaUI(page, skillName);
+		expect(enabled).toBe(true);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// 5. Activity feed: entries appear after sending messages
+// 5. Activity feed: entries with timestamps
 // ---------------------------------------------------------------------------
 
 test.describe('Neo – Activity feed', () => {
@@ -558,10 +590,11 @@ test.describe('Neo – Activity feed', () => {
 	test('Activity tab shows empty state when no actions have been performed', async ({ page }) => {
 		const activityTab = page.getByTestId('neo-tab-activity');
 		await activityTab.click();
-		// Either the empty state is shown or there are entries from previous runs
-		// (isolated DB per run, so should be empty initially)
-		const activityView = page.getByTestId(NEO_ACTIVITY_VIEW_TESTID);
-		await expect(activityView).toBeVisible();
+
+		// Isolated DB per test run — activity should be empty initially.
+		// The NeoActivityView renders data-testid="neo-activity-empty" when there are no entries.
+		await page.getByTestId('neo-activity-empty').waitFor({ state: 'visible', timeout: 5000 });
+		await expect(page.getByTestId('neo-activity-empty')).toBeVisible();
 	});
 
 	test('Activity tab switches to activity view and back to chat', async ({ page }) => {
@@ -578,8 +611,10 @@ test.describe('Neo – Activity feed', () => {
 		await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).toBeHidden();
 	});
 
-	test('activity entries show after Neo performs an action', async ({ page }) => {
-		// Skip if Neo agent is not available
+	test('activity entries with timestamps appear after Neo performs a tool call', async ({
+		page,
+	}) => {
+		// Skip if Neo agent is unavailable
 		if (!(await isNeoAvailable(page))) {
 			test.skip();
 			return;
@@ -595,13 +630,16 @@ test.describe('Neo – Activity feed', () => {
 		await activityTab.click();
 		await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).toBeVisible();
 
-		// At least one activity entry should be present (Neo used a tool)
-		await page
-			.getByTestId(ACTIVITY_ENTRY_TESTID)
-			.first()
-			.waitFor({ state: 'visible', timeout: 15000 });
+		// At least one activity entry is present (Neo used the list_rooms tool)
+		const firstEntry = page.getByTestId(ACTIVITY_ENTRY_TESTID).first();
+		await firstEntry.waitFor({ state: 'visible', timeout: 15000 });
 		const entryCount = await page.getByTestId(ACTIVITY_ENTRY_TESTID).count();
 		expect(entryCount).toBeGreaterThan(0);
+
+		// Each entry shows a relative timestamp (e.g., "just now", "1m ago")
+		await expect(firstEntry.locator('text=/just now|\\d+[mhd] ago/')).toBeVisible({
+			timeout: 5000,
+		});
 	});
 });
 
@@ -619,7 +657,7 @@ test.describe('Neo Settings – Clear session', () => {
 		await openSettingsModal(page);
 		await navigateToNeoSettings(page);
 
-		// Click "Clear Session" button
+		// Click "Clear Session" button to reveal confirmation dialog
 		const clearButton = page.locator('button:has-text("Clear Session")').first();
 		await clearButton.waitFor({ state: 'visible', timeout: 5000 });
 		await clearButton.click();
@@ -627,32 +665,22 @@ test.describe('Neo Settings – Clear session', () => {
 		// Confirmation prompt appears
 		await expect(page.locator('text=Are you sure?')).toBeVisible({ timeout: 5000 });
 
-		// Click Cancel — confirmation prompt disappears
-		const cancelButton = page
-			.locator('button:has-text("Cancel")')
-			.filter({ hasNot: page.locator('[data-testid="neo-cancel-button"]') })
-			.first();
+		// Click Cancel via its dedicated testid (added to NeoSettings.tsx)
+		const cancelButton = page.getByTestId('neo-settings-cancel-clear');
 		await cancelButton.waitFor({ state: 'visible', timeout: 5000 });
 		await cancelButton.click();
 
+		// Confirmation prompt disappears cleanly
 		await expect(page.locator('text=Are you sure?')).toBeHidden({ timeout: 5000 });
 	});
 
 	test('clear session erases chat history', async ({ page }) => {
-		// First: add a message directly via RPC so there's something to clear
-		await page.evaluate(async () => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			// We use neo.send but the message injection itself doesn't need AI response
-			// to verify the clear-session flow. We just need the user message in the DB.
-			// This is an infrastructure call for test setup.
-			await hub.request('neo.send', { message: 'test message for clear session' }).catch(() => {});
-		});
-
-		// Open Neo panel and verify there's some history (or at least panel opens fine)
+		// First: open Neo panel and send a message through the UI to create history
 		await openNeoPanel(page);
+		await sendNeoMessage(page, 'test message for clear session test');
+		await waitForNeoUserMessage(page, 'test message for clear session test');
 
-		// Now clear session from settings
+		// Navigate to Settings > Neo to clear session
 		await closeNeoPanel(page);
 		await openSettingsModal(page);
 		await navigateToNeoSettings(page);
@@ -661,23 +689,91 @@ test.describe('Neo Settings – Clear session', () => {
 		await clearButton.click();
 		await expect(page.locator('text=Are you sure?')).toBeVisible({ timeout: 5000 });
 
-		// Confirm clear
+		// Confirm the clear
 		const confirmButton = page.locator('button:has-text("Confirm")').first();
 		await confirmButton.waitFor({ state: 'visible', timeout: 5000 });
 		await confirmButton.click();
 
-		// Toast: "Neo session cleared"
+		// Success toast appears
 		await page.locator('text=Neo session cleared').waitFor({ state: 'visible', timeout: 10000 });
 		await expect(page.locator('text=Neo session cleared')).toBeVisible();
 
-		// Open Neo panel — chat should be empty (no message bubbles)
+		// Navigate home and reopen Neo panel — chat should be empty
 		await page.getByRole('button', { name: 'Home', exact: true }).click();
 		await openNeoPanel(page);
 
-		// Empty state is shown or there are no user/assistant messages
+		// No user or assistant message bubbles remain
 		const userMessages = page.getByTestId(NEO_USER_MESSAGE_TESTID);
 		const assistantMessages = page.getByTestId(NEO_ASSISTANT_MESSAGE_TESTID);
 		const totalMessages = (await userMessages.count()) + (await assistantMessages.count());
 		expect(totalMessages).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 7. Undo flow: perform undoable action, undo via Neo chat
+// ---------------------------------------------------------------------------
+
+test.describe('Neo – Undo flow', () => {
+	let skillId: string;
+	const skillName = `E2E Undo Skill ${Date.now()}`;
+
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await waitForWebSocketConnected(page);
+
+		// Create a skill to enable (starts disabled)
+		skillId = await createTestSkill(page, skillName);
+
+		// Use autonomous mode so the enable action executes without confirmation
+		await page.evaluate(async () => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+			await hub.request('neo.updateSettings', { securityMode: 'autonomous' });
+		});
+
+		await openNeoPanel(page);
+
+		// Skip if Neo agent is unavailable
+		if (!(await isNeoAvailable(page))) {
+			test.skip();
+		}
+	});
+
+	test.afterEach(async ({ page }) => {
+		await resetSecurityMode(page);
+		if (skillId) {
+			await deleteTestSkill(page, skillId);
+		}
+	});
+
+	test('undo reverses the last action: enable skill then undo disables it', async ({ page }) => {
+		// ── Step 1: Enable the skill via Neo ──────────────────────────────────
+
+		const enableMessage = `enable the skill named ${skillName}`;
+		await sendNeoMessage(page, enableMessage);
+		await waitForNeoUserMessage(page, enableMessage);
+		// In autonomous mode the action executes immediately without confirmation
+		await waitForNeoAssistantResponse(page, { timeout: 90000 });
+
+		// Verify skill is now enabled via Settings > Skills UI
+		await closeNeoPanel(page);
+		const enabledAfterAction = await getSkillEnabledStateViaUI(page, skillName);
+		expect(enabledAfterAction).toBe(true);
+
+		// ── Step 2: Undo the action via Neo ──────────────────────────────────
+
+		await openNeoPanel(page);
+		const undoMessage = 'undo the last action';
+		await sendNeoMessage(page, undoMessage);
+		await waitForNeoUserMessage(page, undoMessage);
+		// Undo is high-risk in conservative mode but autonomous here → auto-executes
+		await waitForNeoAssistantResponse(page, { timeout: 90000 });
+
+		// ── Step 3: Verify skill is disabled again ────────────────────────────
+
+		await closeNeoPanel(page);
+		const enabledAfterUndo = await getSkillEnabledStateViaUI(page, skillName);
+		expect(enabledAfterUndo).toBe(false);
 	});
 });

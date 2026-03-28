@@ -184,6 +184,7 @@ export function NeoSettings() {
 						</button>
 						<button
 							type="button"
+							data-testid="neo-settings-cancel-clear"
 							onClick={() => setShowClearConfirm(false)}
 							disabled={isClearing}
 							class="px-3 py-1.5 text-xs font-medium rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-300 disabled:opacity-50 transition-colors"
