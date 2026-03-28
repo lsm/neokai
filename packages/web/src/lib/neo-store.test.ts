@@ -492,6 +492,19 @@ describe('NeoStore', () => {
 
 			expect(mockHub.request).not.toHaveBeenCalled();
 		});
+
+		it('should clear loading after reconnect re-subscribe requests complete', async () => {
+			await neoStore.subscribe();
+
+			// Simulate reconnect: loading goes true, then clears once requests settle.
+			mockHub.fireConnection('connected');
+			expect(neoStore.loading.value).toBe(true);
+
+			// Flush all pending microtasks (Promise.all + .catch + .finally chain).
+			await new Promise((r) => setTimeout(r, 0));
+
+			expect(neoStore.loading.value).toBe(false);
+		});
 	});
 
 	// ---------------------------------------------------------------------------

@@ -229,7 +229,6 @@ class NeoStore {
 						})
 						.catch((err) => {
 							logger.warn('NeoStore messages LiveQuery re-subscribe failed:', err);
-							this.loading.value = false;
 						}),
 					hub
 						.request('liveQuery.subscribe', {
@@ -240,7 +239,11 @@ class NeoStore {
 						.catch((err) => {
 							logger.warn('NeoStore activity LiveQuery re-subscribe failed:', err);
 						}),
-				]).catch(() => {});
+				])
+					.catch(() => {})
+					.finally(() => {
+						this.loading.value = false;
+					});
 			});
 			this.cleanups.push(unsubReconnect);
 
