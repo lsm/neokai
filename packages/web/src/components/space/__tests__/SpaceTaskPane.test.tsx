@@ -49,6 +49,8 @@ let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockTasksByRun: ReturnType<typeof computed<Map<string, SpaceTask[]>>>;
 let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockEnsureTaskAgentSession = vi.fn();
+const mockSendTaskMessage = vi.fn().mockResolvedValue(undefined);
 const mockSubscribeTaskActivity = vi.fn().mockResolvedValue(undefined);
 const mockUnsubscribeTaskActivity = vi.fn();
 
@@ -64,6 +66,8 @@ vi.mock('../../../lib/space-store', () => ({
 			subscribeTaskActivity: mockSubscribeTaskActivity,
 			unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
 			updateTask: mockUpdateTask,
+			ensureTaskAgentSession: mockEnsureTaskAgentSession,
+			sendTaskMessage: mockSendTaskMessage,
 		};
 	},
 }));
@@ -81,6 +85,12 @@ vi.mock('../WorkflowCanvas', () => ({
 			data-run-id={props.runId ?? ''}
 			data-space-id={props.spaceId}
 		/>
+	),
+}));
+
+vi.mock('../../room/ReadonlySessionChat', () => ({
+	ReadonlySessionChat: ({ sessionId }: { sessionId: string }) => (
+		<div data-testid="readonly-session-chat" data-session-id={sessionId} />
 	),
 }));
 
@@ -177,6 +187,11 @@ describe('SpaceTaskPane', () => {
 		mockWorkflowRuns.value = [];
 		mockTaskActivity.value = new Map();
 		mockUpdateTask.mockClear();
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
+		);
+		mockSendTaskMessage.mockClear();
 		mockSubscribeTaskActivity.mockClear();
 		mockUnsubscribeTaskActivity.mockClear();
 		mockNavigateToSpaceSession.mockClear();
@@ -429,7 +444,8 @@ describe('SpaceTaskPane', () => {
 			getByText('Shift the dashboard toward tasks and make the next action obvious.')
 		).toBeTruthy();
 		expect(getByText('Your response was sent. Waiting for agent follow-up.')).toBeTruthy();
-		expect(getByText('This task is currently handled through Space Agent.')).toBeTruthy();
+		expect(getByText('Starting a dedicated task thread...')).toBeTruthy();
+		expect(getByText('Task Thread')).toBeTruthy();
 		expect(getByTestId('open-space-agent-btn')).toBeTruthy();
 		expect(
 			getAllByText(
@@ -446,6 +462,11 @@ describe('SpaceTaskPane — HumanInputArea submit behavior', () => {
 		mockAgents.value = [];
 		mockTaskActivity.value = new Map();
 		mockUpdateTask.mockClear();
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
+		);
+		mockSendTaskMessage.mockClear();
 		mockSubscribeTaskActivity.mockClear();
 		mockUnsubscribeTaskActivity.mockClear();
 		mockNavigateToSpaceSession.mockClear();
