@@ -629,6 +629,27 @@ describe('get_mcp_server_status', () => {
 		expect(result.transport.headers).toBeUndefined();
 	});
 
+	it('returns http server details with url but not header values', async () => {
+		const server = makeMcpServer({
+			id: 'mcp-3',
+			sourceType: 'http',
+			command: undefined,
+			args: undefined,
+			env: undefined,
+			url: 'https://example.com/mcp/http',
+			headers: { 'X-Api-Key': 'secret', 'X-Tenant': 'acme' },
+		});
+		const handlers = createNeoQueryToolHandlers(
+			makeConfig({ mcpServerRepository: makeMcpServerRepository([server]) })
+		);
+
+		const result = parseResult(await handlers.get_mcp_server_status({ server_id: 'mcp-3' }));
+		expect(result.transport.sourceType).toBe('http');
+		expect(result.transport.url).toBe('https://example.com/mcp/http');
+		expect(result.transport.headerKeys).toEqual(expect.arrayContaining(['X-Api-Key', 'X-Tenant']));
+		expect(result.transport.headers).toBeUndefined();
+	});
+
 	it('returns empty envKeys when env is not set', async () => {
 		const server = makeMcpServer({ env: undefined });
 		const handlers = createNeoQueryToolHandlers(
