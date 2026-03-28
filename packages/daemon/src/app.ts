@@ -448,6 +448,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	jobProcessor.start();
 	logInfo('[Daemon] Job queue processor started');
 
+	// TODO(neo-task-1.3): Wire NeoAgentManager here.
+	// Instantiate NeoAgentManager(sessionManager, settingsManager), call provision()
+	// at startup, and call cleanup() in the graceful-shutdown block below.
+	// See packages/daemon/src/lib/neo/neo-agent-manager.ts.
+
 	// On startup: clean up orphaned worktrees (directories missing from disk) and run the TTL reaper.
 	// Both are non-blocking — errors are logged but never propagate to block server start.
 	let reaperTimer: ReturnType<typeof setInterval> | null = null;

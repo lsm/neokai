@@ -692,6 +692,18 @@ export class AgentSession
 		};
 	}
 
+	/**
+	 * Apply a runtime model override to in-memory session config only.
+	 * Used by singleton sessions (e.g. Neo) that have a model setting independent
+	 * of the global default. Not persisted to the database.
+	 */
+	setRuntimeModel(model: string): void {
+		this.session.config = {
+			...this.session.config,
+			model,
+		};
+	}
+
 	updateMetadata(updates: Partial<Session>): void {
 		this.sessionConfigHandler.updateMetadata(updates);
 	}
