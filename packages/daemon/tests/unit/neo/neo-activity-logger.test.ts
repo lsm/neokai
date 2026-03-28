@@ -13,6 +13,42 @@
  * - pruneOldEntries(): age-based deletion and row-count cap
  */
 
+import { mock } from 'bun:test';
+
+// Re-declare the SDK mock so it survives Bun's module isolation.
+// Without this, a preceding test file's mock.module() override (e.g. room-agent-tools.test.ts)
+// returns a 'tool()' that discards the handler, causing callTool() to fail.
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+	query: mock(async () => ({ interrupt: () => {} })),
+	interrupt: mock(async () => {}),
+	supportedModels: mock(async () => {
+		throw new Error('SDK unavailable');
+	}),
+	createSdkMcpServer: mock((_opts: { name: string; tools: unknown[] }) => {
+		const registeredTools: Record<string, unknown> = {};
+		for (const t of _opts.tools ?? []) {
+			const name = (t as { name: string }).name;
+			const handler = (t as { handler: unknown }).handler;
+			if (name) registeredTools[name] = { handler };
+		}
+		return {
+			type: 'sdk' as const,
+			name: _opts.name,
+			version: '1.0.0',
+			tools: _opts.tools ?? [],
+			instance: {
+				connect() {},
+				disconnect() {},
+				_registeredTools: registeredTools,
+			},
+		};
+	}),
+	tool: mock((_name: string, _desc: string, _schema: unknown, _handler: unknown) => ({
+		name: _name,
+		handler: _handler,
+	})),
+}));
+
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
