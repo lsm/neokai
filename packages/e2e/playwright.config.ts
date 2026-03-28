@@ -253,6 +253,8 @@ export default defineConfig({
 			// Isolated paths for this test run
 			NEOKAI_WORKSPACE_PATH: e2eWorkspaceDir,
 			DB_PATH: join(e2eDatabaseDir, 'daemon.db'),
+			// Enable Neo agent for E2E tests (bypasses test-mode guard in app.ts)
+			NEOKAI_ENABLE_NEO_AGENT: '1',
 			// Pass random port to CLI when in E2E_PORT mode
 			...(e2ePort ? { NEOKAI_PORT: e2ePort } : {}),
 		},
