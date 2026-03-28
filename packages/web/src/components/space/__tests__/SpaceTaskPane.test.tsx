@@ -15,8 +15,7 @@
  * - Result section rendered
  * - Error section rendered
  * - PR link rendered
- * - Human input area shown for needs_attention status
- * - Human input area NOT shown for other statuses
+ * - Task thread composer behavior and startup hints
  * - Close button calls onClose
  */
 
@@ -247,11 +246,10 @@ describe('SpaceTaskPane', () => {
 
 		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(mockSubscribeTaskActivity).toHaveBeenCalledWith('task-1');
+		expect(getByText('Task Thread')).toBeTruthy();
 		expect(getByText('Agent Activity')).toBeTruthy();
-		expect(getAllByText('Task Agent').length).toBeGreaterThan(0);
-		expect(getAllByText('Reviewing the latest direction').length).toBeGreaterThan(0);
-		expect(getByText('Messages')).toBeTruthy();
-		expect(getByText('3')).toBeTruthy();
+		expect(getByText('Live: Task Agent')).toBeTruthy();
+		expect(getAllByText('Task Agent: Active').length).toBeGreaterThan(0);
 	});
 
 	it('renders status badge', () => {
@@ -284,8 +282,7 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('Coding Workflow')).toBeTruthy();
 		expect(getByText('Fix auth flow')).toBeTruthy();
 		expect(getAllByText('Plan').length).toBeGreaterThan(0);
-		expect(getByText('Agent Activity')).toBeTruthy();
-		expect(getByText('Sibling Task')).toBeTruthy();
+		expect(getByText('Run: Fix auth flow')).toBeTruthy();
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 	});
 
@@ -304,7 +301,7 @@ describe('SpaceTaskPane', () => {
 	it('renders current step when present', () => {
 		mockTasks.value = [makeTask({ currentStep: 'Running linter' })];
 		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Conversation')).toBeTruthy();
+		expect(getByText('Task Thread')).toBeTruthy();
 		expect(getAllByText('Running linter').length).toBeGreaterThan(0);
 	});
 
@@ -332,8 +329,9 @@ describe('SpaceTaskPane', () => {
 
 	it('renders error section when error exists', () => {
 		mockTasks.value = [makeTask({ error: 'Build failed: syntax error' })];
-		const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Error')).toBeTruthy();
+		const { getByText, getAllByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Task Details')).toBeTruthy();
+		expect(queryByText('Error')).toBeNull();
 		expect(getAllByText('Build failed: syntax error').length).toBeGreaterThan(0);
 	});
 
@@ -343,14 +341,15 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('PR #42')).toBeTruthy();
 	});
 
-	it('shows human input area for needs_attention status', () => {
+	it('shows waiting-on-input copy for needs_attention status', () => {
 		mockTasks.value = [makeTask({ status: 'needs_attention' })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Human Input Required')).toBeTruthy();
-		expect(getByText('Submit Response')).toBeTruthy();
+		const { getByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Waiting on your input')).toBeTruthy();
+		expect(queryByText('Human Input Required')).toBeNull();
+		expect(queryByText('Submit Response')).toBeNull();
 	});
 
-	it('does NOT show human input area for non-needs_attention status', () => {
+	it('does NOT show legacy human input area for non-needs_attention status', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress' })];
 		const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(queryByText('Human Input Required')).toBeNull();
@@ -430,32 +429,35 @@ describe('SpaceTaskPane', () => {
 	});
 
 	it('keeps the latest human handoff visible after submission', () => {
+		mockEnsureTaskAgentSession.mockImplementation(async () => {
+			await new Promise(() => {});
+			return makeTask({ status: 'in_progress', taskAgentSessionId: null });
+		});
 		mockTasks.value = [
 			makeTask({
 				status: 'in_progress',
 				inputDraft: 'Shift the dashboard toward tasks and make the next action obvious.',
 			}),
 		];
-		const { getByText, getAllByText, getByTestId } = render(
+		const { getByText, queryByText, getByTestId } = render(
 			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
 		);
-		expect(getByText('Conversation')).toBeTruthy();
+		expect(getByText('Task Thread')).toBeTruthy();
 		expect(
 			getByText('Shift the dashboard toward tasks and make the next action obvious.')
 		).toBeTruthy();
 		expect(getByText('Your response was sent. Waiting for agent follow-up.')).toBeTruthy();
-		expect(getByText('Starting a dedicated task thread...')).toBeTruthy();
-		expect(getByText('Task Thread')).toBeTruthy();
+		expect(getByText('Starting task thread...')).toBeTruthy();
 		expect(getByTestId('open-space-agent-btn')).toBeTruthy();
 		expect(
-			getAllByText(
+			queryByText(
 				'Your response was saved. Open the space agent to continue the conversation while this task resumes.'
-			).length
-		).toBeGreaterThan(0);
+			)
+		).toBeNull();
 	});
 });
 
-describe('SpaceTaskPane — HumanInputArea submit behavior', () => {
+describe('SpaceTaskPane — Task thread composer behavior', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
@@ -477,61 +479,57 @@ describe('SpaceTaskPane — HumanInputArea submit behavior', () => {
 		cleanup();
 	});
 
-	it('calls updateTask with inputDraft first, then status second', async () => {
-		mockTasks.value = [makeTask({ status: 'needs_attention' })];
+	it('sends a task-thread message when a task session exists', async () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
 
-		fireEvent.input(getByPlaceholderText('Type your response or approval...'), {
+		fireEvent.input(
+			getByPlaceholderText('Message the task agent (Enter to send, Shift+Enter for newline)'),
+			{
 			target: { value: 'Looks good to me' },
-		});
-		fireEvent.click(getByText('Submit Response'));
+			}
+		);
+		fireEvent.click(getByText('Send to Task Agent'));
 
-		await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledTimes(2));
-
-		const [firstCall, secondCall] = mockUpdateTask.mock.calls;
-		expect(firstCall).toEqual(['task-1', { inputDraft: 'Looks good to me' }]);
-		expect(secondCall).toEqual(['task-1', { status: 'in_progress' }]);
+		await waitFor(() =>
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me')
+		);
+		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
+		expect(mockUpdateTask).not.toHaveBeenCalled();
 	});
 
-	it('does not attempt status transition if inputDraft persistence fails', async () => {
-		mockUpdateTask.mockRejectedValueOnce(new Error('Server error'));
-		mockTasks.value = [makeTask({ status: 'needs_attention' })];
-		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+	it('kicks off task-thread startup when session is missing', async () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
+		render(<SpaceTaskPane taskId="task-1" />);
 
-		fireEvent.input(getByPlaceholderText('Type your response or approval...'), {
-			target: { value: 'My response' },
-		});
-		fireEvent.click(getByText('Submit Response'));
-
-		await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledTimes(1));
-		// Only the draft call was attempted — status transition was skipped
-		expect(mockUpdateTask.mock.calls[0]).toEqual(['task-1', { inputDraft: 'My response' }]);
+		await waitFor(() => expect(mockEnsureTaskAgentSession).toHaveBeenCalledWith('task-1'));
 	});
 
-	it('shows error message when status transition fails', async () => {
-		mockUpdateTask
-			.mockResolvedValueOnce(undefined) // inputDraft succeeds
-			.mockRejectedValueOnce(new Error('Invalid transition')); // status fails
-		mockTasks.value = [makeTask({ status: 'needs_attention' })];
+	it('shows error message when message send fails', async () => {
+		mockSendTaskMessage.mockRejectedValueOnce(new Error('Invalid transition'));
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
 
-		fireEvent.input(getByPlaceholderText('Type your response or approval...'), {
-			target: { value: 'Approved' },
-		});
-		fireEvent.click(getByText('Submit Response'));
+		fireEvent.input(
+			getByPlaceholderText('Message the task agent (Enter to send, Shift+Enter for newline)'),
+			{
+				target: { value: 'Approved' },
+			}
+		);
+		fireEvent.click(getByText('Send to Task Agent'));
 
 		await waitFor(() => expect(getByText('Invalid transition')).toBeTruthy());
-		// Both calls were made (draft + failed status)
-		expect(mockUpdateTask).toHaveBeenCalledTimes(2);
+		expect(mockSendTaskMessage).toHaveBeenCalledTimes(1);
 	});
 
 	it('does not submit when input text is empty', () => {
-		mockTasks.value = [makeTask({ status: 'needs_attention' })];
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
 
 		// Submit button is disabled when input is empty — click is a no-op
-		fireEvent.click(getByText('Submit Response'));
+		fireEvent.click(getByText('Send to Task Agent'));
 
+		expect(mockSendTaskMessage).not.toHaveBeenCalled();
 		expect(mockUpdateTask).not.toHaveBeenCalled();
 	});
 });
