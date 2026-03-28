@@ -274,4 +274,53 @@ describe('NeoChatView', () => {
 		expect(card).toBeTruthy();
 		expect(card.getAttribute('data-action-id')).toBe('action-123');
 	});
+
+	it('confirmation card only appears on the last assistant message', () => {
+		neoStore.messages.value = [
+			makeAssistantMsg('1', 'First response'),
+			makeAssistantMsg('2', 'Second response'),
+		];
+		neoStore.pendingConfirmation.value = { actionId: 'act-1', description: 'Do something' };
+		const { getAllByTestId, queryAllByTestId } = render(<NeoChatView />);
+		// Two assistant messages but only one confirmation card
+		expect(getAllByTestId('neo-assistant-message')).toHaveLength(2);
+		expect(queryAllByTestId('mock-confirmation-card')).toHaveLength(1);
+	});
+
+	it('preserves input text when send fails', async () => {
+		(neoStore.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: false,
+			errorCode: 'provider_unavailable',
+			error: 'Rate limited',
+		});
+		const { getByTestId } = render(<NeoChatView />);
+		const input = getByTestId('neo-chat-input') as HTMLTextAreaElement;
+		fireEvent.input(input, { target: { value: 'my important message' } });
+		await act(async () => {
+			fireEvent.click(getByTestId('neo-send-button'));
+		});
+		// Input should NOT be cleared on failure
+		expect(input.value).toBe('my important message');
+	});
+
+	it('error card can be dismissed', async () => {
+		(neoStore.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: false,
+			errorCode: 'provider_unavailable',
+			error: 'Rate limited',
+		});
+		const { getByTestId, queryByTestId } = render(<NeoChatView />);
+		const input = getByTestId('neo-chat-input') as HTMLTextAreaElement;
+		fireEvent.input(input, { target: { value: 'hi' } });
+		await act(async () => {
+			fireEvent.click(getByTestId('neo-send-button'));
+		});
+		await waitFor(() => {
+			expect(getByTestId('neo-error-provider-unavailable')).toBeTruthy();
+		});
+		act(() => {
+			fireEvent.click(getByTestId('neo-error-dismiss'));
+		});
+		expect(queryByTestId('neo-error-provider-unavailable')).toBeNull();
+	});
 });

@@ -186,4 +186,47 @@ describe('NeoPanel', () => {
 		const header = getByTestId('neo-panel-header');
 		expect(header.textContent).toContain('Neo');
 	});
+
+	it('Tab key focus trap: focus cycles back to first focusable element from last', () => {
+		neoStore.panelOpen.value = true;
+		const { getByTestId } = render(<NeoPanel />);
+		const panel = getByTestId('neo-panel');
+
+		// Get all focusable elements within the panel
+		const focusable = panel.querySelectorAll<HTMLElement>(
+			'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+		);
+		expect(focusable.length).toBeGreaterThan(0);
+
+		const last = focusable[focusable.length - 1];
+		const first = focusable[0];
+
+		// Focus last element, then press Tab — should wrap to first
+		last.focus();
+		act(() => {
+			fireEvent.keyDown(document, { key: 'Tab', shiftKey: false });
+		});
+		expect(document.activeElement).toBe(first);
+	});
+
+	it('Shift+Tab focus trap: focus cycles back to last focusable element from first', () => {
+		neoStore.panelOpen.value = true;
+		const { getByTestId } = render(<NeoPanel />);
+		const panel = getByTestId('neo-panel');
+
+		const focusable = panel.querySelectorAll<HTMLElement>(
+			'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+		);
+		expect(focusable.length).toBeGreaterThan(0);
+
+		const first = focusable[0];
+		const last = focusable[focusable.length - 1];
+
+		// Focus first element, then press Shift+Tab — should wrap to last
+		first.focus();
+		act(() => {
+			fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+		});
+		expect(document.activeElement).toBe(last);
+	});
 });

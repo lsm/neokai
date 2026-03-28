@@ -23,23 +23,52 @@ type ErrorCode = 'provider_unavailable' | 'no_credentials' | 'model_unavailable'
 
 interface ErrorCardProps {
 	errorCode: ErrorCode;
+	onDismiss: () => void;
 }
 
-function ErrorCard({ errorCode }: ErrorCardProps) {
+function DismissButton({ onDismiss }: { onDismiss: () => void }) {
+	return (
+		<button
+			type="button"
+			onClick={onDismiss}
+			data-testid="neo-error-dismiss"
+			aria-label="Dismiss error"
+			class="ml-auto p-0.5 rounded text-current opacity-60 hover:opacity-100 transition-opacity"
+		>
+			<svg
+				class="w-3 h-3"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth={2}
+				aria-hidden="true"
+			>
+				<path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+			</svg>
+		</button>
+	);
+}
+
+function ErrorCard({ errorCode, onDismiss }: ErrorCardProps) {
 	if (errorCode === 'no_credentials') {
 		return (
 			<div
 				data-testid="neo-error-no-credentials"
 				class="my-2 rounded-xl border border-amber-700/40 bg-amber-950/20 px-3 py-2.5"
 			>
-				<p class="text-sm font-medium text-amber-300">API key not configured</p>
-				<p class="text-xs text-amber-400/80 mt-0.5">
-					Please set up your provider in{' '}
-					<a href="/settings" class="underline hover:text-amber-300 transition-colors">
-						Settings
-					</a>
-					.
-				</p>
+				<div class="flex items-start gap-1">
+					<div class="flex-1 min-w-0">
+						<p class="text-sm font-medium text-amber-300">API key not configured</p>
+						<p class="text-xs text-amber-400/80 mt-0.5">
+							Please set up your provider in{' '}
+							<a href="/settings" class="underline hover:text-amber-300 transition-colors">
+								Settings
+							</a>
+							.
+						</p>
+					</div>
+					<DismissButton onDismiss={onDismiss} />
+				</div>
 			</div>
 		);
 	}
@@ -49,14 +78,19 @@ function ErrorCard({ errorCode }: ErrorCardProps) {
 				data-testid="neo-error-model-unavailable"
 				class="my-2 rounded-xl border border-amber-700/40 bg-amber-950/20 px-3 py-2.5"
 			>
-				<p class="text-sm font-medium text-amber-300">Model unavailable</p>
-				<p class="text-xs text-amber-400/80 mt-0.5">
-					The selected model is not available. Please update Neo&apos;s model in{' '}
-					<a href="/settings" class="underline hover:text-amber-300 transition-colors">
-						Settings
-					</a>
-					.
-				</p>
+				<div class="flex items-start gap-1">
+					<div class="flex-1 min-w-0">
+						<p class="text-sm font-medium text-amber-300">Model unavailable</p>
+						<p class="text-xs text-amber-400/80 mt-0.5">
+							The selected model is not available. Please update Neo&apos;s model in{' '}
+							<a href="/settings" class="underline hover:text-amber-300 transition-colors">
+								Settings
+							</a>
+							.
+						</p>
+					</div>
+					<DismissButton onDismiss={onDismiss} />
+				</div>
 			</div>
 		);
 	}
@@ -66,8 +100,13 @@ function ErrorCard({ errorCode }: ErrorCardProps) {
 			data-testid="neo-error-provider-unavailable"
 			class="my-2 rounded-xl border border-gray-700 bg-gray-800/60 px-3 py-2.5"
 		>
-			<p class="text-sm font-medium text-gray-300">Neo is temporarily unavailable</p>
-			<p class="text-xs text-gray-500 mt-0.5">Please try again.</p>
+			<div class="flex items-start gap-1">
+				<div class="flex-1 min-w-0">
+					<p class="text-sm font-medium text-gray-300">Neo is temporarily unavailable</p>
+					<p class="text-xs text-gray-500 mt-0.5">Please try again.</p>
+				</div>
+				<DismissButton onDismiss={onDismiss} />
+			</div>
 		</div>
 	);
 }
@@ -213,9 +252,11 @@ function StructuredDataCard({ data }: { data: unknown }) {
 interface MessageBubbleProps {
 	msg: NeoMessage;
 	pendingActionId?: string | null;
+	/** Whether this is the last assistant message — only this one renders the confirmation card. */
+	isLastAssistant?: boolean;
 }
 
-function MessageBubble({ msg, pendingActionId }: MessageBubbleProps) {
+function MessageBubble({ msg, pendingActionId, isLastAssistant }: MessageBubbleProps) {
 	const isUser = msg.messageType === 'user';
 	const isResult = msg.messageType === 'result';
 	const isSystem = msg.messageType === 'system';
@@ -225,9 +266,8 @@ function MessageBubble({ msg, pendingActionId }: MessageBubbleProps) {
 
 	const rawText = extractTextContent(msg.content);
 
-	// If this is an assistant message and there's a pending confirmation,
-	// render the confirmation card instead of (or after) text content.
-	const hasPendingConfirmation = !isUser && pendingActionId;
+	// Only the last assistant message should render the confirmation card.
+	const hasPendingConfirmation = !isUser && isLastAssistant && pendingActionId;
 
 	if (isUser) {
 		return (
@@ -267,6 +307,7 @@ function MessageBubble({ msg, pendingActionId }: MessageBubbleProps) {
 						<NeoConfirmationCard
 							actionId={pendingActionId}
 							description={neoStore.pendingConfirmation.value?.description ?? ''}
+							riskLevel={neoStore.pendingConfirmation.value?.riskLevel}
 						/>
 					)}
 				</div>
@@ -320,10 +361,11 @@ export function NeoChatView() {
 	const loading = neoStore.loading.value;
 	const pendingConfirmation = neoStore.pendingConfirmation.value;
 
-	// Auto-scroll to newest message
+	// Auto-scroll to newest message — depend on last message id so updates trigger correctly
+	const lastMessageId = messages[messages.length - 1]?.id;
 	useEffect(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-	}, [messages.length]);
+	}, [lastMessageId]);
 
 	// Focus input when the panel opens
 	useEffect(() => {
@@ -334,13 +376,15 @@ export function NeoChatView() {
 		const text = inputValue.trim();
 		if (!text || sending) return;
 
-		setInputValue('');
 		setSendError(null);
 		setSending(true);
 
 		try {
 			const result = await neoStore.sendMessage(text);
-			if (!result.success) {
+			if (result.success) {
+				// Only clear input on success so the user can retry on failure
+				setInputValue('');
+			} else {
 				setSendError({
 					code: result.errorCode ?? 'provider_unavailable',
 					message: result.error ?? 'Failed to send message',
@@ -394,15 +438,27 @@ export function NeoChatView() {
 				)}
 
 				{/* Messages */}
-				{messages.map((msg) => (
-					<MessageBubble key={msg.id} msg={msg} pendingActionId={pendingConfirmation?.actionId} />
-				))}
+				{(() => {
+					// Find the last assistant message so only it renders the confirmation card
+					const lastAssistantIdx = messages.reduce(
+						(last, m, i) => (m.messageType === 'assistant' ? i : last),
+						-1
+					);
+					return messages.map((msg, i) => (
+						<MessageBubble
+							key={msg.id}
+							msg={msg}
+							pendingActionId={pendingConfirmation?.actionId}
+							isLastAssistant={i === lastAssistantIdx}
+						/>
+					));
+				})()}
 
 				{/* Typing indicator when sending */}
 				{sending && <TypingIndicator />}
 
 				{/* Send error */}
-				{sendError && <ErrorCard errorCode={sendError.code} />}
+				{sendError && <ErrorCard errorCode={sendError.code} onDismiss={() => setSendError(null)} />}
 
 				{/* Scroll anchor */}
 				<div ref={messagesEndRef} />
