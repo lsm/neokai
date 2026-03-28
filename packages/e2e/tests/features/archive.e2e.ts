@@ -185,7 +185,7 @@ test.describe('Session Archive - Archived Session Behavior', () => {
 
 		// The message input should be replaced with an archived label
 		// Check that textarea is not visible or is disabled
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		const isTextareaHidden = (await textarea.count()) === 0 || !(await textarea.isVisible());
 
 		// Should show archived indicator instead of input
@@ -240,7 +240,7 @@ test.describe('Session Archive - Edge Cases', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Send a message
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Unique test message 12345');
 		await page.keyboard.press('Meta+Enter');
 
