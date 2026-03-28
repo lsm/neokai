@@ -74,7 +74,8 @@ export type SessionType =
 	| 'general'
 	| 'lobby'
 	| 'spaces_global'
-	| 'space_task_agent';
+	| 'space_task_agent'
+	| 'neo';
 
 /**
  * Context for room/lobby/space sessions
@@ -86,6 +87,8 @@ export interface SessionContext {
 	spaceId?: string;
 	/** Task ID for Space Task Agent sessions */
 	taskId?: string;
+	/** Neo session ID for the global Neo agent */
+	neoId?: string;
 }
 
 /**

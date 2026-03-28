@@ -270,6 +270,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Worktrees are not removed on task completion; instead they are timestamped and
 	// removed by the reaper after a configurable TTL (default: 7 days).
 	runMigration65(db);
+
+	// Migration 66: Add 'neo' to sessions type CHECK constraint and create neo_activity_log table.
+	// Neo is a global AI agent with its own session type and activity log for auditing.
+	runMigration66(db);
 }
 
 /**
@@ -4264,4 +4268,111 @@ function runMigration65(db: BunDatabase): void {
 		// Column doesn't exist yet — add it
 		db.exec(`ALTER TABLE space_worktrees ADD COLUMN completed_at INTEGER`);
 	}
+}
+
+/**
+ * Migration 66: Add 'neo' to sessions type CHECK constraint and create neo_activity_log table.
+ *
+ * Two changes:
+ * 1. Expands the sessions.type CHECK constraint to include 'neo'.
+ *    Uses the probe-insert + table-recreate pattern (SQLite doesn't support ALTER CHECK).
+ * 2. Creates the neo_activity_log table for auditing Neo agent actions.
+ *    Idempotent via CREATE TABLE IF NOT EXISTS.
+ *
+ * neo_activity_log schema:
+ *   id          - UUID primary key
+ *   tool_name   - name of the Neo tool invoked
+ *   input       - JSON-serialized tool input
+ *   output      - JSON-serialized tool output
+ *   status      - 'success' | 'error' | 'cancelled'
+ *   error       - error message if status='error'
+ *   target_type - type of entity the action targeted (e.g. 'room', 'space', 'skill')
+ *   target_id   - ID of the targeted entity
+ *   undoable    - 1 if the action can be undone, 0 otherwise
+ *   undo_data   - JSON blob needed to reverse the action
+ *   created_at  - ISO 8601 timestamp (default: current UTC time)
+ */
+function runMigration66(db: BunDatabase): void {
+	// --- Part 1: Expand sessions.type CHECK constraint to include 'neo' ---
+	if (tableExists(db, 'sessions')) {
+		try {
+			const testId = '__migration_test_neo_type__';
+			db.prepare(
+				`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				testId,
+				'Test',
+				'/tmp',
+				new Date().toISOString(),
+				new Date().toISOString(),
+				'active',
+				'{}',
+				'{}',
+				0,
+				'neo'
+			);
+			db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
+		} catch {
+			db.exec('PRAGMA foreign_keys = OFF');
+			try {
+				db.exec(`
+					CREATE TABLE sessions_new (
+						id TEXT PRIMARY KEY,
+						title TEXT NOT NULL,
+						workspace_path TEXT NOT NULL,
+						created_at TEXT NOT NULL,
+						last_active_at TEXT NOT NULL,
+						status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+						config TEXT NOT NULL,
+						metadata TEXT NOT NULL,
+						is_worktree INTEGER DEFAULT 0,
+						worktree_path TEXT,
+						main_repo_path TEXT,
+						worktree_branch TEXT,
+						git_branch TEXT,
+						sdk_session_id TEXT,
+						available_commands TEXT,
+						processing_state TEXT,
+						archived_at TEXT,
+						parent_id TEXT,
+						type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'neo')),
+						session_context TEXT
+					)
+				`);
+				db.exec(`
+					INSERT INTO sessions_new
+					SELECT id, title, workspace_path, created_at, last_active_at,
+						status, config, metadata, is_worktree, worktree_path, main_repo_path,
+						worktree_branch, git_branch, sdk_session_id, available_commands,
+						processing_state, archived_at, parent_id, type, session_context
+					FROM sessions
+				`);
+				db.exec(`DROP TABLE sessions`);
+				db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+	}
+
+	// --- Part 2: Create neo_activity_log table ---
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS neo_activity_log (
+			id          TEXT PRIMARY KEY,
+			tool_name   TEXT NOT NULL,
+			input       TEXT,
+			output      TEXT,
+			status      TEXT NOT NULL DEFAULT 'success',
+			error       TEXT,
+			target_type TEXT,
+			target_id   TEXT,
+			undoable    INTEGER DEFAULT 0,
+			undo_data   TEXT,
+			created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`
+	);
 }
