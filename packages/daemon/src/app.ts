@@ -463,6 +463,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			await neoAgentManager.provision();
 			logInfo('[Daemon] Neo agent provisioned');
 		} catch (err) {
+			// Non-fatal: daemon continues without Neo. The Neo session will be null
+			// and the frontend will receive no responses from neo.* RPC calls.
+			// TODO(neo): publish a status channel event so the frontend can surface
+			// a "Neo unavailable" indicator when provisioning fails.
 			logError('[Daemon] Neo agent provisioning failed (non-fatal):', err);
 		}
 	}

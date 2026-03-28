@@ -170,7 +170,9 @@ describe('Neo Daemon Lifecycle', () => {
 
 		const ctx = await createDaemonApp({ config: makeConfig(), verbose: false });
 
-		// Spy on neoAgentManager.cleanup to verify it was called.
+		// Spy is attached here (before ctx.cleanup() runs), so it captures
+		// the single cleanup() call that ctx.cleanup() delegates to.
+		// It does NOT retroactively track any calls made before this line.
 		const cleanupSpy = spyOn(ctx.neoAgentManager, 'cleanup');
 
 		await ctx.cleanup();
