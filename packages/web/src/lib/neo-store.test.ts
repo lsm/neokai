@@ -16,7 +16,6 @@
  * - openPanel / closePanel / togglePanel update panelOpen signal
  * - panelOpen state persists in localStorage
  * - sendMessage() calls neo.send RPC
- * - loadHistory() calls neo.history RPC and hydrates messages (skips if subscribed)
  * - clearSession() calls neo.clearSession RPC and resets messages signal
  * - confirmAction() / cancelAction() call RPC and clear pendingConfirmation
  */
@@ -143,7 +142,6 @@ describe('NeoStore', () => {
 		store.subscribed = false;
 		store.cleanups = [];
 		store.activeSubscriptionIds = new Set();
-		store.historyLoaded = false;
 
 		// Reset signals
 		neoStore.messages.value = [];
@@ -640,45 +638,6 @@ describe('NeoStore', () => {
 			vi.mocked(mockHub.request).mockRejectedValue(new Error('hub error'));
 
 			await expect(neoStore.sendMessage('hi')).rejects.toThrow('hub error');
-		});
-	});
-
-	// ---------------------------------------------------------------------------
-	// loadHistory()
-	// ---------------------------------------------------------------------------
-
-	describe('loadHistory()', () => {
-		it('should call neo.history RPC', async () => {
-			vi.mocked(mockHub.request).mockResolvedValue({ messages: [], hasMore: false });
-
-			await neoStore.loadHistory();
-
-			expect(mockHub.request).toHaveBeenCalledWith('neo.history', { limit: 100 });
-		});
-
-		it('should populate messages when not subscribed', async () => {
-			const msgs = [makeMessage('h1'), makeMessage('h2')];
-			vi.mocked(mockHub.request).mockResolvedValue({ messages: msgs, hasMore: false });
-
-			await neoStore.loadHistory();
-
-			expect(neoStore.messages.value).toHaveLength(2);
-		});
-
-		it('should skip RPC call when already subscribed (LiveQuery owns state)', async () => {
-			vi.mocked(mockHub.request).mockResolvedValue({ ok: true });
-			await neoStore.subscribe();
-			mockHub.request.mockClear();
-
-			await neoStore.loadHistory();
-
-			expect(mockHub.request).not.toHaveBeenCalled();
-		});
-
-		it('should silently ignore errors', async () => {
-			vi.mocked(mockHub.request).mockRejectedValue(new Error('history failed'));
-
-			await expect(neoStore.loadHistory()).resolves.toBeUndefined();
 		});
 	});
 

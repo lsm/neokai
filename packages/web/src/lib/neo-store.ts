@@ -114,8 +114,6 @@ class NeoStore {
 	private activeSubscriptionIds = new Set<string>();
 	private subscribed = false;
 	private refCount = 0;
-	/** Set to true after loadHistory() completes so a concurrent LiveQuery snapshot won't race it. */
-	private historyLoaded = false;
 
 	// ---------------------------------------------------------------------------
 	// Panel open/close helpers (with localStorage persistence)
@@ -356,39 +354,6 @@ class NeoStore {
 	}
 
 	// ---------------------------------------------------------------------------
-	// loadHistory() — one-shot history fetch before LiveQuery snapshot
-	// ---------------------------------------------------------------------------
-
-	/**
-	 * Load initial message history via `neo.history` RPC.
-	 *
-	 * Intended to be called before subscribe() to show history immediately while
-	 * LiveQuery is initialising. Guards against both:
-	 * - Concurrent LiveQuery snapshots overwriting (via `historyLoaded` flag)
-	 * - Overwriting data already populated by LiveQuery (skips if subscribed)
-	 *
-	 * The LiveQuery snapshot will merge seamlessly once it arrives.
-	 */
-	async loadHistory(): Promise<void> {
-		// If already subscribed, LiveQuery owns message state — skip.
-		if (this.subscribed) return;
-		try {
-			const hub = await connectionManager.getHub();
-			const response = await hub.request<{ messages: NeoMessage[]; hasMore: boolean }>(
-				'neo.history',
-				{ limit: 100 }
-			);
-			// Guard: LiveQuery snapshot arrived or subscribe() completed while we awaited.
-			if (!this.subscribed) {
-				this.messages.value = response.messages ?? [];
-				this.historyLoaded = true;
-			}
-		} catch (err) {
-			logger.warn('NeoStore loadHistory failed:', err);
-		}
-	}
-
-	// ---------------------------------------------------------------------------
 	// sendMessage()
 	// ---------------------------------------------------------------------------
 
@@ -428,7 +393,6 @@ class NeoStore {
 		);
 		if (response.success) {
 			this.messages.value = [];
-			this.historyLoaded = false;
 		}
 		return response;
 	}
