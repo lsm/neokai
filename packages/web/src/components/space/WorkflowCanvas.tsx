@@ -178,6 +178,26 @@ function evalConditionStatus(condition: GateCondition, data: Record<string, unkn
 // ============================================================================
 
 /**
+ * Build a map from node name → node UUID.
+ * Channels use node names for from/to, but layout uses UUIDs.
+ */
+function buildNameToIdMap(nodes: WorkflowNode[]): Map<string, string> {
+	const map = new Map<string, string>();
+	for (const node of nodes) {
+		if (node.name) map.set(node.name, node.id);
+	}
+	return map;
+}
+
+/**
+ * Resolve a channel endpoint (name or UUID) to a node UUID.
+ * Falls back to the original value if it's already a UUID.
+ */
+function resolveNodeId(ref: string, nameToId: Map<string, string>): string {
+	return nameToId.get(ref) ?? ref;
+}
+
+/**
  * Compute node positions using a layered DAG layout.
  * Returns a map from node ID → {x, y, width, height}.
  */
@@ -188,16 +208,20 @@ function computeLayout(workflow: SpaceWorkflow): Map<string, NodeLayout> {
 
 	if (nodes.length === 0) return new Map();
 
-	// Build successor map from channels
+	const nameToId = buildNameToIdMap(nodes);
+
+	// Build successor map from channels (resolving names to UUIDs)
 	const successors = new Map<string, Set<string>>();
 	for (const node of nodes) {
 		successors.set(node.id, new Set());
 	}
 	for (const ch of channels) {
+		const fromId = resolveNodeId(ch.from, nameToId);
 		const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
 		for (const t of targets) {
-			if (successors.has(ch.from) && successors.has(t)) {
-				successors.get(ch.from)!.add(t);
+			const toId = resolveNodeId(t, nameToId);
+			if (successors.has(fromId) && successors.has(toId)) {
+				successors.get(fromId)!.add(toId);
 			}
 		}
 	}
@@ -1048,6 +1072,12 @@ export function WorkflowCanvas({
 		};
 	}, [layout]);
 
+	// ---- Name-to-ID map for channel endpoint resolution ----
+	const nameToId = useMemo(() => {
+		if (!workflow) return new Map<string, string>();
+		return buildNameToIdMap(workflow.nodes);
+	}, [workflow]);
+
 	// ---- Rendered channels ----
 	const renderedChannels = useMemo((): RenderedChannel[] => {
 		if (!workflow) return [];
@@ -1057,12 +1087,12 @@ export function WorkflowCanvas({
 				const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
 				return targets.map((to) => ({
 					id: ch.id!,
-					fromId: ch.from,
-					toId: to,
+					fromId: resolveNodeId(ch.from, nameToId),
+					toId: resolveNodeId(to, nameToId),
 					gateId: isRuntimeMode ? ch.gateId : (localGateAssignments.get(ch.id!) ?? ch.gateId),
 				}));
 			});
-	}, [workflow, isRuntimeMode, localGateAssignments]);
+	}, [workflow, isRuntimeMode, localGateAssignments, nameToId]);
 
 	// ---- Gates by ID ----
 	const gatesById = useMemo(() => {
