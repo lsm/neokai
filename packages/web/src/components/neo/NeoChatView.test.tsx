@@ -457,4 +457,62 @@ describe('NeoChatView', () => {
 		expect(getByTestId('neo-user-message')).toBeTruthy();
 		expect(getByText('Hello as a string')).toBeTruthy();
 	});
+
+	it('renders parse-error fallback when assistant message has invalid JSON', () => {
+		neoStore.messages.value = [
+			{
+				...makeAssistantMsg('1', 'ignored'),
+				content: 'not valid json at all',
+			},
+		];
+		const { getByTestId, queryByTestId } = render(<NeoChatView />);
+		expect(getByTestId('neo-assistant-message')).toBeTruthy();
+		expect(getByTestId('neo-message-parse-error')).toBeTruthy();
+		expect(queryByTestId('sdk-message-renderer')).toBeNull();
+	});
+
+	it('renders parse-error fallback when assistant content is a non-assistant SDK type', () => {
+		// A user-type SDK message inadvertently stored for an assistant message row
+		const sdkMsg = {
+			type: 'user',
+			message: { role: 'user', content: [{ type: 'text', text: 'unexpected' }] },
+			parent_tool_use_id: null,
+			session_id: 'sess-1',
+		};
+		neoStore.messages.value = [
+			{
+				...makeAssistantMsg('1', 'ignored'),
+				content: JSON.stringify(sdkMsg),
+			},
+		];
+		const { getByTestId, queryByTestId } = render(<NeoChatView />);
+		expect(getByTestId('neo-assistant-message')).toBeTruthy();
+		expect(getByTestId('neo-message-parse-error')).toBeTruthy();
+		expect(queryByTestId('sdk-message-renderer')).toBeNull();
+	});
+
+	it('renders parse-error fallback when assistant content lacks type field', () => {
+		neoStore.messages.value = [
+			{
+				...makeAssistantMsg('1', 'ignored'),
+				content: JSON.stringify({ foo: 'bar' }),
+			},
+		];
+		const { getByTestId, queryByTestId } = render(<NeoChatView />);
+		expect(getByTestId('neo-assistant-message')).toBeTruthy();
+		expect(getByTestId('neo-message-parse-error')).toBeTruthy();
+		expect(queryByTestId('sdk-message-renderer')).toBeNull();
+	});
+
+	it('renders empty string (not raw JSON) for user message with invalid content', () => {
+		neoStore.messages.value = [
+			{
+				...makeUserMsg('1', 'ignored'),
+				content: 'not-valid-json',
+			},
+		];
+		const { getByTestId } = render(<NeoChatView />);
+		const bubble = getByTestId('neo-user-message');
+		expect(bubble.textContent).toBe('');
+	});
 });

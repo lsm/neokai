@@ -178,9 +178,9 @@ function MessageBubble({ msg, pendingActionId, isLastAssistant }: MessageBubbleP
 	const hasPendingConfirmation = !isUser && isLastAssistant && pendingActionId;
 
 	if (isUser) {
-		// Extract text from the parsed user SDK message for the chat bubble
-		const userText =
-			parsedMsg?.type === 'user' ? extractUserText(parsedMsg as UserSDKMessage) : msg.content;
+		// Extract text from the parsed user SDK message for the chat bubble.
+		// Fall back to empty string (not raw JSON) when the message cannot be parsed.
+		const userText = parsedMsg?.type === 'user' ? extractUserText(parsedMsg as UserSDKMessage) : '';
 		return (
 			<div data-testid="neo-user-message" class="flex justify-end mb-3">
 				<div class="max-w-[85%] bg-blue-600 text-white rounded-[20px] rounded-br-md px-3.5 py-2 text-sm leading-relaxed break-words">
@@ -190,7 +190,10 @@ function MessageBubble({ msg, pendingActionId, isLastAssistant }: MessageBubbleP
 		);
 	}
 
-	// Assistant message — use SDKMessageRenderer for proper SDK message rendering
+	// Assistant message — use SDKMessageRenderer for proper SDK message rendering.
+	// Only pass messages with type 'assistant' to SDKMessageRenderer; show a
+	// fallback for null (parse failure) or unexpected SDK message types.
+	const isAssistantSDKMsg = parsedMsg?.type === 'assistant';
 	return (
 		<div data-testid="neo-assistant-message" class="mb-3">
 			{/* Sparkle avatar */}
@@ -206,7 +209,13 @@ function MessageBubble({ msg, pendingActionId, isLastAssistant }: MessageBubbleP
 					</svg>
 				</div>
 				<div class="flex-1 min-w-0">
-					{parsedMsg && <SDKMessageRenderer message={parsedMsg} />}
+					{isAssistantSDKMsg ? (
+						<SDKMessageRenderer message={parsedMsg} />
+					) : (
+						<div data-testid="neo-message-parse-error" class="text-sm text-gray-500 italic">
+							Unable to display message
+						</div>
+					)}
 					{hasPendingConfirmation && (
 						<NeoConfirmationCard
 							actionId={pendingActionId}
