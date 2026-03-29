@@ -20,7 +20,7 @@
  * provide a stable `key` prop to force remount when switching between workflows.
  */
 
-import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks';
 import type {
 	SpaceWorkflow,
 	WorkflowNode,
@@ -173,6 +173,20 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		return map;
 	}, [nodes]);
 
+	const endpointNodeIdLookup = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const node of nodes) {
+			if (node.step.localId === TASK_AGENT_NODE_ID || node.step.id === TASK_AGENT_NODE_ID) continue;
+			if (node.step.agentId) map.set(node.step.agentId, node.step.localId);
+			if (node.step.name) map.set(node.step.name, node.step.localId);
+			for (const agent of node.step.agents ?? []) {
+				if (agent.name) map.set(agent.name, node.step.localId);
+				if (agent.agentId) map.set(agent.agentId, node.step.localId);
+			}
+		}
+		return map;
+	}, [nodes]);
+
 	// ------------------------------------------------------------------
 	// Derived: ResolvedWorkflowChannel[] for workflow-level channel connections.
 	// Resolves channel from/to agent role names to node localIds so EdgeRenderer
@@ -317,13 +331,44 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			})
 			.filter((entry): entry is { index: number; channel: WorkflowChannel } => !!entry);
 
+		const resolveTargetNodeIds = (channel: WorkflowChannel) => {
+			const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+			return targets
+				.map((target) => endpointNodeIdLookup.get(target) ?? null)
+				.filter((nodeId): nodeId is string => !!nodeId);
+		};
+
+		const forwardLinks = links.filter(({ channel }) => {
+			const fromId = endpointNodeIdLookup.get(channel.from);
+			const targetIds = resolveTargetNodeIds(channel);
+			return fromId === relation.fromStepId && targetIds.includes(relation.toStepId);
+		});
+
+		const reverseLinks = links.filter(({ channel }) => {
+			const fromId = endpointNodeIdLookup.get(channel.from);
+			const targetIds = resolveTargetNodeIds(channel);
+			return fromId === relation.toStepId && targetIds.includes(relation.fromStepId);
+		});
+
+		const visibleLinkCount = forwardLinks.length + reverseLinks.length;
+		const relationIsBidirectional = reverseLinks.length > 0 || relation.direction === 'bidirectional';
+
 		return {
 			relation,
 			fromNode,
 			toNode,
 			links,
+			forwardLinks,
+			reverseLinks,
+			relationIsBidirectional,
+			visibleLinkCount,
+			canConvertToBidirectional: forwardLinks.length > 0 && reverseLinks.length === 0,
+			relationLabel:
+				relationIsBidirectional
+					? `${fromNode?.step.name || 'Unnamed'} ↔ ${toNode?.step.name || 'Unnamed'}`
+					: `${fromNode?.step.name || 'Unnamed'} → ${toNode?.step.name || 'Unnamed'}`,
 		};
-	}, [selectedChannelId, routedSemanticEdges, nodes, channels]);
+	}, [selectedChannelId, routedSemanticEdges, nodes, channels, endpointNodeIdLookup]);
 
 	const nodeChannelLinksByNodeId = useMemo(() => {
 		const linksByNodeId = new Map<string, NodeChannelLink[]>();
@@ -350,6 +395,52 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 		return linksByNodeId;
 	}, [nodes, routedSemanticEdges]);
+
+	useEffect(() => {
+		if (!selectedChannelInfo) return;
+
+		const legacyBidirectionalLinks = selectedChannelInfo.forwardLinks.filter(
+			({ channel }) => channel.direction === 'bidirectional'
+		);
+		if (legacyBidirectionalLinks.length === 0 || selectedChannelInfo.reverseLinks.length > 0) return;
+
+		setChannels((prev) => {
+			const next = [...prev];
+			let changed = false;
+
+			for (const { index, channel } of legacyBidirectionalLinks) {
+				const current = next[index];
+				if (!current || current.direction !== 'bidirectional') continue;
+
+				next[index] = {
+					...current,
+					direction: 'one-way',
+					gate: current.gate ? { ...current.gate } : undefined,
+				};
+
+				const targets = Array.isArray(current.to) ? current.to : [current.to];
+				for (const target of targets) {
+					const reverseExists = next.some(
+						(existing) =>
+							existing.from === target &&
+							(Array.isArray(existing.to) ? existing.to.includes(current.from) : existing.to === current.from)
+					);
+					if (reverseExists) continue;
+
+					next.push({
+						from: target,
+						to: current.from,
+						direction: 'one-way',
+						isCyclic: current.isCyclic,
+						gate: current.gate ? { ...current.gate } : undefined,
+					});
+				}
+				changed = true;
+			}
+
+			return changed ? next : prev;
+		});
+	}, [selectedChannelInfo]);
 
 	// ------------------------------------------------------------------
 	// Node operations
@@ -509,8 +600,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (node.step.agents && node.step.agents.length > 0) {
 			return node.step.agents.map((a) => a.name).filter((name) => name.trim().length > 0);
 		}
-		if (node.step.agentId?.trim()) return [node.step.agentId.trim()];
 		if (node.step.name?.trim()) return [node.step.name.trim()];
+		if (node.step.agentId?.trim()) return [node.step.agentId.trim()];
 		return [];
 	}, []);
 
@@ -523,8 +614,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (node.step.agents && node.step.agents.length === 1) {
 			return node.step.agents[0]?.name?.trim() || null;
 		}
+		if (node.step.name?.trim()) return node.step.name.trim();
 		if (node.step.agentId?.trim()) return node.step.agentId.trim();
-		return node.step.name?.trim() || null;
+		return null;
 	}, []);
 
 	const handleCreateTransition = useCallback(
@@ -577,6 +669,53 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const handleDeleteChannelFromEdgePanel = useCallback((index: number) => {
 		setChannels((prev) => prev.filter((_, i) => i !== index));
 	}, []);
+
+	const handleConvertChannelRelationToBidirectional = useCallback(() => {
+		if (!selectedChannelInfo?.fromNode || !selectedChannelInfo.toNode) return;
+
+		const reverseSourceNames = resolveSourceChannelNames(selectedChannelInfo.toNode);
+		const reverseTargetName = resolveTargetChannelName(selectedChannelInfo.fromNode);
+		if (reverseSourceNames.length === 0 || !reverseTargetName) return;
+
+		const relationFromStepId = selectedChannelInfo.relation.fromStepId;
+		const relationToStepId = selectedChannelInfo.relation.toStepId;
+
+		setChannels((prev) => {
+			const next = [...prev];
+
+			for (const fromName of reverseSourceNames) {
+				const reverseAlreadyExists = next.some((channel) => {
+					const fromId = endpointNodeIdLookup.get(channel.from);
+					const targetValues = Array.isArray(channel.to) ? channel.to : [channel.to];
+					const targetNodeIds = targetValues
+						.map((target) => endpointNodeIdLookup.get(target) ?? null)
+						.filter((nodeId): nodeId is string => !!nodeId);
+
+					return (
+						fromId === relationToStepId &&
+						targetNodeIds.includes(relationFromStepId) &&
+						channel.from === fromName &&
+						targetValues.includes(reverseTargetName)
+					);
+				});
+
+				if (reverseAlreadyExists) continue;
+
+				next.push({
+					from: fromName,
+					to: reverseTargetName,
+					direction: 'one-way',
+				});
+			}
+
+			return next;
+		});
+	}, [
+		selectedChannelInfo,
+		resolveSourceChannelNames,
+		resolveTargetChannelName,
+		endpointNodeIdLookup,
+	]);
 
 	const handleDeleteEdge = useCallback(
 		(edgeId: string) => {
@@ -1067,17 +1206,20 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					</div>
 				)}
 
-					{/* ChannelRelationConfigPanel — edit underlying channel links for a semantic relation */}
-					{selectedChannelInfo && (
-						<ChannelRelationConfigPanel
-							title="Channel Links"
-							description={`${selectedChannelInfo.fromNode?.step.name || 'Unnamed'} → ${selectedChannelInfo.toNode?.step.name || 'Unnamed'} · ${selectedChannelInfo.links.length} editable link${selectedChannelInfo.links.length === 1 ? '' : 's'}`}
-							channels={selectedChannelInfo.links}
-							onChange={handleUpdateChannelFromEdgePanel}
-							onDelete={handleDeleteChannelFromEdgePanel}
-							onClose={() => setSelectedChannelId(null)}
-						/>
-					)}
+				{/* ChannelRelationConfigPanel — edit underlying channel links for a semantic relation */}
+				{selectedChannelInfo && (
+					<ChannelRelationConfigPanel
+						title="Channel Links"
+						description={`${selectedChannelInfo.relationLabel} · ${selectedChannelInfo.visibleLinkCount} editable link${selectedChannelInfo.visibleLinkCount === 1 ? '' : 's'}`}
+						forwardLinks={selectedChannelInfo.forwardLinks}
+						reverseLinks={selectedChannelInfo.reverseLinks}
+						canConvertToBidirectional={selectedChannelInfo.canConvertToBidirectional}
+						onConvertToBidirectional={handleConvertChannelRelationToBidirectional}
+						onChange={handleUpdateChannelFromEdgePanel}
+						onDelete={handleDeleteChannelFromEdgePanel}
+						onClose={() => setSelectedChannelId(null)}
+					/>
+				)}
 			</div>
 
 			{/* ---- Tags and Rules (collapsible) ---- */}

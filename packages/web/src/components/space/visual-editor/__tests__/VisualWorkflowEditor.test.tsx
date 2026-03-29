@@ -963,6 +963,56 @@ describe('VisualWorkflowEditor', () => {
 			expect(getByTestId('channel-relation-config-panel')).toBeTruthy();
 		});
 
+		it('one-way channel relation shows convert button and expands to explicit reverse link', async () => {
+			const workflow = makeWorkflow({
+				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
+			});
+			const { container, getByTestId, getAllByTestId, getByText, queryByText } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow })} />
+			);
+
+			const firstChannelHitbox = container.querySelector(
+				'[data-channel-edge="true"] path[stroke="transparent"]'
+			) as SVGPathElement | null;
+			expect(firstChannelHitbox).toBeTruthy();
+			fireEvent.click(firstChannelHitbox!);
+
+			expect(getByTestId('channel-relation-config-panel')).toBeTruthy();
+			expect(getByText('Plan → Code · 1 editable link')).toBeTruthy();
+			expect(getByTestId('convert-channel-relation-button')).toBeTruthy();
+			expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(1);
+
+			fireEvent.click(getByTestId('convert-channel-relation-button'));
+
+			await waitFor(() => expect(queryByText('Plan ↔ Code · 2 editable links')).toBeTruthy());
+			expect(getByText('Reverse links')).toBeTruthy();
+			expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(2);
+		});
+
+		it('deleting the reverse link downgrades a converted relation back to one-way', async () => {
+			const workflow = makeWorkflow({
+				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
+			});
+			const { container, getByTestId, getAllByTestId, queryByText } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow })} />
+			);
+
+			const firstChannelHitbox = container.querySelector(
+				'[data-channel-edge="true"] path[stroke="transparent"]'
+			) as SVGPathElement | null;
+			expect(firstChannelHitbox).toBeTruthy();
+			fireEvent.click(firstChannelHitbox!);
+			fireEvent.click(getByTestId('convert-channel-relation-button'));
+
+			await waitFor(() => expect(getAllByTestId('delete-channel-button')).toHaveLength(2));
+			fireEvent.click(getAllByTestId('delete-channel-button')[1]);
+
+			await waitFor(() => {
+				expect(queryByText('Plan → Code · 1 editable link')).toBeTruthy();
+				expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(1);
+			});
+		});
+
 		it('node side panel lists channel links that open the channel relation side panel', () => {
 			const { getByTestId, getAllByTestId, getByText, queryAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps()} />

@@ -41,6 +41,7 @@ import {
 	TASK_AGENT_X,
 	computeChannelEdgePoints,
 	buildChannelPathD,
+	buildVisibleChannelPathD,
 } from '../EdgeRenderer';
 import type { EdgeRendererProps } from '../EdgeRenderer';
 import type { NodePosition } from '../types';
@@ -528,6 +529,21 @@ describe('computeChannelEdgePoints', () => {
 		expect(d.startsWith(`M ${pts!.sx} ${pts!.sy}`)).toBe(true);
 		expect(d.endsWith(`${pts!.tx} ${pts!.ty}`)).toBe(true);
 	});
+
+	it('trims the visible bidirectional channel path so arrowheads are not buried in nodes', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'step-1',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+			sourceSide: 'right',
+			targetSide: 'left',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		const d = buildVisibleChannelPathD(channel, pts!);
+		expect(d.startsWith(`M ${pts!.sx} ${pts!.sy}`)).toBe(false);
+		expect(d.endsWith(`${pts!.tx} ${pts!.ty}`)).toBe(false);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -593,7 +609,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(visiblePath).not.toBeNull();
 		const markerStart = visiblePath!.getAttribute('markerStart');
 		const markerEnd = visiblePath!.getAttribute('markerEnd');
-		expect(markerStart).toContain('channel-start');
+		expect(markerStart).toContain('channel-end');
 		expect(markerEnd).toContain('channel-end');
 	});
 
@@ -612,7 +628,19 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(markerEnd).toContain('channel-end');
 	});
 
-	it('channel edges use dashed stroke style', () => {
+	it('one-way ungated channel edges use dashed stroke style', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		expect(visiblePath!.getAttribute('strokeDasharray')).toBe(CHANNEL_EDGE_DASH_ARRAY);
+	});
+
+	it('bidirectional channel edges use solid stroke style', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
 		];
@@ -621,7 +649,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
 		);
 		expect(visiblePath).not.toBeNull();
-		expect(visiblePath!.getAttribute('strokeDasharray')).toBe(CHANNEL_EDGE_DASH_ARRAY);
+		expect(visiblePath!.getAttribute('strokeDasharray')).toBeNull();
 	});
 
 	it('channel edges use teal color (distinct from transition edge colors)', () => {
@@ -658,8 +686,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		const defs = container.querySelector('defs');
 		expect(defs).not.toBeNull();
 		const channelEndMarker = defs!.querySelector('marker[id*="channel-end"]');
-		const channelStartMarker = defs!.querySelector('marker[id*="channel-start"]');
 		expect(channelEndMarker).not.toBeNull();
-		expect(channelStartMarker).not.toBeNull();
+		expect(channelEndMarker?.getAttribute('orient')).toBe('auto-start-reverse');
 	});
 });

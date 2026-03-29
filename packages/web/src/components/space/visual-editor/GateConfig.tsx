@@ -25,6 +25,8 @@ export const CONDITION_LABELS: Record<WorkflowConditionType, string> = {
 	task_result: 'Task Result',
 };
 
+const CONDITION_OPTIONS: WorkflowConditionType[] = ['always', 'human', 'condition', 'task_result'];
+
 // ============================================================================
 // GateConfig Component
 // ============================================================================
@@ -63,14 +65,47 @@ export function GateConfig({
 								expression: type === 'condition' || type === 'task_result' ? '' : undefined,
 							});
 						}}
-						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+						class="sr-only"
+						tabIndex={-1}
+						aria-hidden="true"
 					>
-						{(Object.keys(CONDITION_LABELS) as WorkflowConditionType[]).map((t) => (
+						{CONDITION_OPTIONS.map((t) => (
 							<option key={t} value={t}>
 								{CONDITION_LABELS[t]}
 							</option>
 						))}
 					</select>
+
+					<div class="grid grid-cols-2 gap-1.5" data-testid={testId ? `${testId}-buttons` : undefined}>
+						{CONDITION_OPTIONS.map((type) => {
+							const active = condition.type === type;
+							return (
+								<button
+									key={type}
+									type="button"
+									data-testid={testId ? `${testId}-${type}` : undefined}
+									onClick={() =>
+										onChange({
+											type,
+											expression:
+												type === 'condition' || type === 'task_result'
+													? condition.type === type
+														? condition.expression ?? ''
+														: ''
+													: undefined,
+										})
+									}
+									class={`rounded border px-2 py-1.5 text-left text-xs transition-colors ${
+										active
+											? 'border-blue-500 bg-blue-500/10 text-blue-200'
+											: 'border-dark-600 bg-dark-800 text-gray-400 hover:border-dark-500 hover:text-gray-200'
+									}`}
+								>
+									{CONDITION_LABELS[type]}
+								</button>
+							);
+						})}
+					</div>
 
 					{(condition.type === 'condition' || condition.type === 'task_result') && (
 						<div class="space-y-1">

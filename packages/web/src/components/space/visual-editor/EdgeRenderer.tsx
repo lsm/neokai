@@ -90,6 +90,7 @@ export const CHANNEL_EDGE_COLOR = '#14b8a6'; // teal-500
 
 /** Channel edge stroke dash pattern for ungated channels */
 export const CHANNEL_EDGE_DASH_ARRAY = '6 4';
+const CHANNEL_DOCK_RADIUS = 7;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -267,6 +268,36 @@ function normalizeOrthogonalPoints(points: Point2D[]): Point2D[] {
 	return normalized;
 }
 
+function trimOrthogonalEndpoint(a: Point2D, b: Point2D, distance: number): Point2D {
+	if (a.x === b.x) {
+		return {
+			x: a.x,
+			y: a.y + Math.sign(b.y - a.y) * Math.min(distance, Math.abs(b.y - a.y)),
+		};
+	}
+
+	return {
+		x: a.x + Math.sign(b.x - a.x) * Math.min(distance, Math.abs(b.x - a.x)),
+		y: a.y,
+	};
+}
+
+function trimOrthogonalPathPoints(points: Point2D[], trimStart: number, trimEnd: number): Point2D[] {
+	const normalized = normalizeOrthogonalPoints(points);
+	if (normalized.length < 2) return normalized;
+
+	const trimmed = [...normalized];
+	if (trimStart > 0) {
+		trimmed[0] = trimOrthogonalEndpoint(trimmed[0], trimmed[1], trimStart);
+	}
+	if (trimEnd > 0) {
+		const lastIndex = trimmed.length - 1;
+		trimmed[lastIndex] = trimOrthogonalEndpoint(trimmed[lastIndex], trimmed[lastIndex - 1], trimEnd);
+	}
+
+	return normalizeOrthogonalPoints(trimmed);
+}
+
 function roundedOrthogonalPath(points: Point2D[], cornerRadius = 14): string {
 	const normalized = normalizeOrthogonalPoints(points);
 	if (normalized.length === 0) return '';
@@ -337,6 +368,43 @@ export function buildChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoi
 	}
 
 	return roundedOrthogonalPath([start, startLead, ...midPoints, endLead, end]);
+}
+
+export function buildVisibleChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoints): string {
+	const sourceSide = channel.fromStepId === 'task-agent' ? 'right' : (channel.sourceSide ?? 'bottom');
+	const targetSide = channel.targetSide ?? 'top';
+	const start = { x: pts.sx, y: pts.sy };
+	const end = { x: pts.tx, y: pts.ty };
+	const startLead = movePoint(start, sourceSide, channel.fromStepId === 'task-agent' ? 42 : 28);
+	const endLead = movePoint(end, targetSide, 28);
+
+	let midPoints: Point2D[] = [];
+	const sourceVertical = sourceSide === 'top' || sourceSide === 'bottom';
+	const targetVertical = targetSide === 'top' || targetSide === 'bottom';
+
+	if (sourceVertical && targetVertical) {
+		const midY = (startLead.y + endLead.y) / 2;
+		midPoints = [
+			{ x: startLead.x, y: midY },
+			{ x: endLead.x, y: midY },
+		];
+	} else if (!sourceVertical && !targetVertical) {
+		const midX = (startLead.x + endLead.x) / 2;
+		midPoints = [
+			{ x: midX, y: startLead.y },
+			{ x: midX, y: endLead.y },
+		];
+	} else {
+		midPoints = [{ x: endLead.x, y: startLead.y }];
+	}
+
+	const trimmedPoints = trimOrthogonalPathPoints(
+		[start, startLead, ...midPoints, endLead, end],
+		channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
+		CHANNEL_DOCK_RADIUS
+	);
+
+	return roundedOrthogonalPath(trimmedPoints);
 }
 
 /** Compute the bezier path for a channel edge connecting node ports.
@@ -484,17 +552,6 @@ export function EdgeRenderer({
 						>
 							<path d="M 0 0 L 10 5 L 0 10 z" fill={CHANNEL_EDGE_COLOR} />
 						</marker>
-						<marker
-							id={`${markerPrefix}-channel-start`}
-							viewBox="0 0 10 10"
-							refX="0"
-							refY="5"
-							markerWidth="8"
-							markerHeight="8"
-							orient="auto-start-reverse"
-						>
-							<path d="M 10 0 L 0 5 L 10 10 z" fill={CHANNEL_EDGE_COLOR} />
-						</marker>
 						{/* White markers for selected channel state */}
 						<marker
 							id={`${markerPrefix}-channel-selected`}
@@ -506,17 +563,6 @@ export function EdgeRenderer({
 							orient="auto-start-reverse"
 						>
 							<path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
-						</marker>
-						<marker
-							id={`${markerPrefix}-channel-selected-start`}
-							viewBox="0 0 10 10"
-							refX="0"
-							refY="5"
-							markerWidth="8"
-							markerHeight="8"
-							orient="auto-start-reverse"
-						>
-							<path d="M 10 0 L 0 5 L 10 10 z" fill="white" />
 						</marker>
 					</>
 				)}
@@ -582,23 +628,24 @@ export function EdgeRenderer({
 				if (!pts) return null;
 
 				const d = buildChannelPathD(channel, pts);
+				const visibleD = buildVisibleChannelPathD(channel, pts);
 				const isBidirectional = channel.direction === 'bidirectional';
 				const isGated = !!channel.gateType;
 				const isSelected = channel.id != null && channel.id === selectedChannelId;
 
 				const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
 				const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
-				// Gated channels render as solid lines; ungated as dashed
-				const strokeDasharray = isSelected || isGated ? undefined : CHANNEL_EDGE_DASH_ARRAY;
+				// Bidirectional channels read better as solid relations.
+				// One-way ungated channels keep the dashed styling.
+				const strokeDasharray =
+					isSelected || isGated || isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
 				const strokeOpacity = isSelected ? 1 : 0.85;
 
-				// Use white markers when selected, teal otherwise
+				// Use the same marker geometry on both ends. `auto-start-reverse`
+				// handles the start-end orientation flip for markerStart.
 				const markerEndId = isSelected
 					? `${markerPrefix}-channel-selected`
 					: `${markerPrefix}-channel-end`;
-				const markerStartId = isSelected
-					? `${markerPrefix}-channel-selected-start`
-					: `${markerPrefix}-channel-start`;
 
 				const channelKey = channel.id ?? `${channel.fromStepId}-${channel.toStepId}-${idx}`;
 
@@ -634,14 +681,14 @@ export function EdgeRenderer({
 						/>
 						{/* Visible channel edge path */}
 						<path
-							d={d}
+							d={visibleD}
 							stroke={strokeColor}
 							strokeWidth={strokeWidth}
 							strokeDasharray={strokeDasharray}
 							strokeOpacity={strokeOpacity}
 							fill="none"
 							markerEnd={`url(#${markerEndId})`}
-							markerStart={isBidirectional ? `url(#${markerStartId})` : undefined}
+							markerStart={isBidirectional ? `url(#${markerEndId})` : undefined}
 							data-stroke-color={strokeColor}
 							data-stroke-width={String(strokeWidth)}
 							data-channel-gated={isGated ? 'true' : undefined}
