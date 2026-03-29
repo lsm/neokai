@@ -2,6 +2,7 @@ import { cn } from '../../../lib/utils';
 import type { SpaceTaskThreadEvent, SpaceTaskThreadRenderMode } from './space-task-thread-events';
 import type { UseMessageMapsResult } from '../../../hooks/useMessageMaps';
 import { SDKMessageRenderer } from '../../sdk/SDKMessageRenderer';
+import { borderRadius, messageColors, messageSpacing } from '../../../lib/design-tokens';
 
 interface SpaceTaskThreadEventRowProps {
 	event: SpaceTaskThreadEvent;
@@ -21,6 +22,19 @@ const KIND_STYLES: Record<SpaceTaskThreadEvent['kind'], string> = {
 	rate_limit: 'text-red-300',
 	progress: 'text-blue-300',
 	unknown: 'text-gray-300',
+};
+
+const COMPACT_BUBBLE_STYLES: Record<SpaceTaskThreadEvent['kind'], string> = {
+	thinking: 'bg-amber-900/20 border border-amber-800 text-amber-100',
+	tool: 'bg-blue-900/20 border border-blue-800 text-blue-100',
+	subagent: 'bg-purple-900/20 border border-purple-800 text-purple-100',
+	text: `${messageColors.assistant.background} ${messageColors.assistant.text}`,
+	user: `${messageColors.user.background} ${messageColors.user.text}`,
+	system: 'bg-dark-800/80 border border-dark-700 text-gray-200',
+	result: 'bg-green-900/20 border border-green-800 text-green-100',
+	rate_limit: 'bg-red-900/20 border border-red-800 text-red-100',
+	progress: 'bg-cyan-900/20 border border-cyan-800 text-cyan-100',
+	unknown: `${messageColors.assistant.background} ${messageColors.assistant.text}`,
 };
 
 function formatTimestamp(timestamp: number): string {
@@ -51,6 +65,33 @@ export function SpaceTaskThreadEventRow({
 						taskContext={true}
 					/>
 				</div>
+			</div>
+		);
+	}
+
+	if (mode === 'compact') {
+		return (
+			<div class="py-1.5" data-testid="space-task-event-row">
+				<div class="mb-1 flex items-center gap-2 min-w-0">
+					<span class="text-[10px] uppercase tracking-[0.14em] text-gray-500">{event.label}</span>
+					<span class={cn('text-xs font-medium', KIND_STYLES[event.kind])}>{event.title}</span>
+					<span class="ml-auto flex-shrink-0 text-[10px] text-gray-600">
+						{formatTimestamp(event.createdAt)}
+					</span>
+				</div>
+
+				<div
+					class={cn(
+						'inline-block max-w-[90%] whitespace-normal break-words leading-snug',
+						borderRadius.message.bubble,
+						messageSpacing.assistant.bubble.combined,
+						COMPACT_BUBBLE_STYLES[event.kind]
+					)}
+				>
+					{event.summary}
+				</div>
+
+				{showTaskTitle && <div class="mt-1 text-[11px] text-gray-500">{event.taskTitle}</div>}
 			</div>
 		);
 	}
