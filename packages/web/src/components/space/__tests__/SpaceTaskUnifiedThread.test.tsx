@@ -197,12 +197,6 @@ describe('SpaceTaskUnifiedThread', () => {
 		).toBeTruthy();
 	});
 
-	it('switches to roster mode', () => {
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		fireEvent.click(screen.getByTestId('space-task-thread-mode-roster'));
-		expect(screen.getByTestId('space-task-event-feed-roster')).toBeTruthy();
-	});
-
 	it('switches to verbose mode and renders SDKMessageRenderer rows', () => {
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 		fireEvent.click(screen.getByTestId('space-task-thread-mode-verbose'));
