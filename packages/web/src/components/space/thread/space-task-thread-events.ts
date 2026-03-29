@@ -2,6 +2,7 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	type ContentBlock,
 	isSDKAssistantMessage,
+	isSDKRateLimitEvent,
 	isSDKResultMessage,
 	isSDKSystemMessage,
 	isSDKToolProgressMessage,
@@ -20,6 +21,7 @@ export type SpaceTaskThreadEventKind =
 	| 'user'
 	| 'system'
 	| 'result'
+	| 'rate_limit'
 	| 'progress'
 	| 'unknown';
 
@@ -46,6 +48,10 @@ export interface SpaceTaskThreadEvent {
 	kind: SpaceTaskThreadEventKind;
 	title: string;
 	summary: string;
+	message?: SDKMessage | null;
+	systemSubtype?: string;
+	resultSubtype?: string;
+	isError?: boolean;
 }
 
 function oneLine(value: string, max = 180): string {
@@ -134,6 +140,7 @@ function extractAssistantEvents(
 				kind: 'text',
 				title: 'Response',
 				summary: text,
+				message,
 			});
 		}
 	}
@@ -149,6 +156,7 @@ function extractAssistantEvents(
 			kind: 'text',
 			title: 'Response',
 			summary: 'Assistant updated context',
+			message,
 		});
 	}
 
@@ -202,6 +210,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 				kind: 'unknown',
 				title: 'Raw',
 				summary: oneLine(row.fallbackText ?? ''),
+				message: row.message,
 			});
 			continue;
 		}
@@ -222,6 +231,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 				kind: 'user',
 				title: 'User',
 				summary: extractUserText(row.message) || 'User message',
+				message: row.message,
 			});
 			continue;
 		}
@@ -240,6 +250,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 				kind: 'progress',
 				title: 'Tool Progress',
 				summary: progressSummary,
+				message: row.message,
 			});
 			continue;
 		}
@@ -255,6 +266,32 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 				kind: 'result',
 				title: row.message.subtype === 'success' ? 'Completed' : 'Error',
 				summary: `${row.message.usage.input_tokens}→${row.message.usage.output_tokens} tokens`,
+				message: row.message,
+				resultSubtype: row.message.subtype,
+				isError: row.message.subtype !== 'success',
+			});
+			continue;
+		}
+
+		if (isSDKRateLimitEvent(row.message)) {
+			const rateLimitInfo = row.message.rate_limit_info;
+			const isRejected =
+				rateLimitInfo.status === 'rejected' || rateLimitInfo.overageStatus === 'rejected';
+			const rateLimitType = rateLimitInfo.rateLimitType
+				? rateLimitInfo.rateLimitType.replace(/_/g, ' ')
+				: 'rate limit';
+			events.push({
+				id: `${String(row.id)}-rate-limit`,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: 'rate_limit',
+				title: 'Rate Limit',
+				summary: `${rateLimitType} · ${rateLimitInfo.status}`,
+				message: row.message,
+				isError: isRejected,
 			});
 			continue;
 		}
@@ -281,6 +318,8 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 				kind: 'system',
 				title: 'System',
 				summary,
+				message: row.message,
+				systemSubtype: subtype,
 			});
 			continue;
 		}
@@ -295,6 +334,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 			kind: 'unknown',
 			title: String(row.message.type),
 			summary: oneLine(JSON.stringify(row.message)),
+			message: row.message,
 		});
 	}
 

@@ -84,7 +84,12 @@ export function SpaceTaskUnifiedThread({ taskId }: SpaceTaskUnifiedThreadProps) 
 				{viewMode === 'verbose' ? (
 					<SpaceTaskThreadVerboseFeed parsedRows={parsedRows} taskId={taskId} maps={maps} />
 				) : (
-					<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} mode={viewMode} />
+					<SpaceTaskThreadEventFeed
+						events={threadEvents}
+						taskId={taskId}
+						mode={viewMode}
+						maps={maps}
+					/>
 				)}
 			</div>
 		</div>

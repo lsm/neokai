@@ -1,10 +1,13 @@
 import { cn } from '../../../lib/utils';
 import type { SpaceTaskThreadEvent, SpaceTaskThreadRenderMode } from './space-task-thread-events';
+import type { UseMessageMapsResult } from '../../../hooks/useMessageMaps';
+import { SDKMessageRenderer } from '../../sdk/SDKMessageRenderer';
 
 interface SpaceTaskThreadEventRowProps {
 	event: SpaceTaskThreadEvent;
 	mode: Exclude<SpaceTaskThreadRenderMode, 'verbose'>;
 	showTaskTitle?: boolean;
+	maps: UseMessageMapsResult;
 }
 
 const KIND_STYLES: Record<SpaceTaskThreadEvent['kind'], string> = {
@@ -15,6 +18,7 @@ const KIND_STYLES: Record<SpaceTaskThreadEvent['kind'], string> = {
 	user: 'text-cyan-300',
 	system: 'text-gray-400',
 	result: 'text-emerald-300',
+	rate_limit: 'text-red-300',
 	progress: 'text-blue-300',
 	unknown: 'text-gray-300',
 };
@@ -31,15 +35,29 @@ export function SpaceTaskThreadEventRow({
 	event,
 	mode,
 	showTaskTitle = false,
+	maps,
 }: SpaceTaskThreadEventRowProps) {
+	if (mode === 'compact' && event.kind === 'user' && event.message) {
+		return (
+			<div class="flex justify-end py-1" data-testid="space-task-event-row">
+				<div class="max-w-full">
+					<SDKMessageRenderer
+						message={event.message}
+						sessionId={event.sessionId ?? undefined}
+						toolResultsMap={maps.toolResultsMap}
+						toolInputsMap={maps.toolInputsMap}
+						subagentMessagesMap={maps.subagentMessagesMap}
+						sessionInfo={maps.sessionInfoMap.get((event.message as { uuid?: string }).uuid ?? '')}
+						taskContext={true}
+					/>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div
-			class={cn(
-				'min-w-0',
-				mode === 'compact'
-					? 'rounded-md border border-dark-800 bg-dark-900/40 px-2.5 py-2'
-					: 'px-1 py-1'
-			)}
+			class={cn('min-w-0', mode === 'compact' ? 'px-1 py-1.5' : 'px-1 py-1')}
 			data-testid="space-task-event-row"
 		>
 			<div class="flex items-start gap-2">
