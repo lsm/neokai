@@ -49,7 +49,10 @@ function makeRows() {
 					content: [
 						{ type: 'thinking', thinking: 'Planning implementation details now.' },
 						{ type: 'tool_use', id: 't1', name: 'Glob', input: { pattern: '*.ts' } },
-						{ type: 'text', text: 'I found the relevant files and will patch next.' },
+						{
+							type: 'text',
+							text: 'I found the relevant files and will patch next. This full assistant message should remain visible in compact mode without truncation.',
+						},
 					],
 				},
 			}),
@@ -173,6 +176,13 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(screen.getAllByTestId('space-task-event-row').length).toBeGreaterThanOrEqual(4);
 		expect(screen.getByText('Thinking')).toBeTruthy();
 		expect(screen.getByText('Tool · Glob')).toBeTruthy();
+		expect(screen.getByText('pattern: *.ts')).toBeTruthy();
+		expect(screen.queryByText('Response')).toBeNull();
+		expect(
+			screen.getByText(
+				'I found the relevant files and will patch next. This full assistant message should remain visible in compact mode without truncation.'
+			)
+		).toBeTruthy();
 	});
 
 	it('switches to roster mode', () => {

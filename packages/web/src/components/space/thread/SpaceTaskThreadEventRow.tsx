@@ -27,15 +27,15 @@ const KIND_STYLES: Record<SpaceTaskThreadEvent['kind'], string> = {
 };
 
 const COMPACT_BUBBLE_STYLES: Record<SpaceTaskThreadEvent['kind'], string> = {
-	thinking: 'bg-amber-900/20 border border-amber-800 text-amber-100',
-	tool: 'bg-blue-900/20 border border-blue-800 text-blue-100',
-	subagent: 'bg-purple-900/20 border border-purple-800 text-purple-100',
+	thinking: `${messageColors.assistant.background} border border-amber-700/60 text-gray-100`,
+	tool: `${messageColors.assistant.background} border border-blue-700/60 text-gray-100`,
+	subagent: `${messageColors.assistant.background} border border-purple-700/60 text-gray-100`,
 	text: `${messageColors.assistant.background} ${messageColors.assistant.text}`,
 	user: `${messageColors.user.background} ${messageColors.user.text}`,
-	system: 'bg-dark-800/80 border border-dark-700 text-gray-200',
-	result: 'bg-green-900/20 border border-green-800 text-green-100',
-	rate_limit: 'bg-red-900/20 border border-red-800 text-red-100',
-	progress: 'bg-cyan-900/20 border border-cyan-800 text-cyan-100',
+	system: `${messageColors.assistant.background} border border-dark-700 text-gray-200`,
+	result: `${messageColors.assistant.background} border border-green-700/60 text-gray-100`,
+	rate_limit: `${messageColors.assistant.background} border border-red-700/60 text-gray-100`,
+	progress: `${messageColors.assistant.background} border border-cyan-700/60 text-gray-100`,
 	unknown: `${messageColors.assistant.background} ${messageColors.assistant.text}`,
 };
 
