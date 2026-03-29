@@ -93,6 +93,7 @@ export const CHANNEL_EDGE_COLOR = '#14b8a6'; // teal-500
 /** Channel edge stroke dash pattern for one-way channels */
 export const CHANNEL_EDGE_DASH_ARRAY = '6 4';
 const CHANNEL_DOCK_RADIUS = 7;
+const CHANNEL_MARKER_SIZE = 7;
 const CHANNEL_GATE_BADGE_HEIGHT = 20;
 const CHANNEL_GATE_BADGE_HORIZONTAL_PADDING = 8;
 const CHANNEL_GATE_BADGE_CHAR_WIDTH = 7;
@@ -584,8 +585,8 @@ export function EdgeRenderer({
 							viewBox="0 0 10 10"
 							refX="10"
 							refY="5"
-							markerWidth="8"
-							markerHeight="8"
+							markerWidth={CHANNEL_MARKER_SIZE}
+							markerHeight={CHANNEL_MARKER_SIZE}
 							orient="auto-start-reverse"
 						>
 							<path d="M 0 0 L 10 5 L 0 10 z" fill={CHANNEL_EDGE_COLOR} />
@@ -596,8 +597,8 @@ export function EdgeRenderer({
 							viewBox="0 0 10 10"
 							refX="10"
 							refY="5"
-							markerWidth="8"
-							markerHeight="8"
+							markerWidth={CHANNEL_MARKER_SIZE}
+							markerHeight={CHANNEL_MARKER_SIZE}
 							orient="auto-start-reverse"
 						>
 							<path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
@@ -689,10 +690,11 @@ export function EdgeRenderer({
 					: `${markerPrefix}-channel-end`;
 
 				const channelKey = channel.id ?? `${channel.fromStepId}-${channel.toStepId}-${idx}`;
+				const channelRenderKey = `${channelKey}-${isSelected ? 'selected' : 'idle'}`;
 
 				return (
 					<g
-						key={channelKey}
+						key={channelRenderKey}
 						data-testid={`channel-edge-${channel.fromStepId}-${channel.toStepId}`}
 						data-channel-edge="true"
 						data-channel-direction={channel.direction}

@@ -628,6 +628,25 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(markerEnd).toContain('channel-end');
 	});
 
+	it('selected channel uses the white selected arrowhead marker', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ id: 'plan:review', fromStepId: 'step-1', toStepId: 'step-2', direction: 'bidirectional' },
+		];
+		const { container } = renderEdgesWithChannels({
+			channels,
+			selectedChannelId: 'plan:review',
+		});
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		expect(visiblePath!.getAttribute('stroke')).toBe('white');
+		expect(visiblePath!.getAttribute('markerStart')).toContain('channel-selected');
+		expect(visiblePath!.getAttribute('markerEnd')).toContain('channel-selected');
+		const selectedMarkerPath = container.querySelector('marker[id*="channel-selected"] path');
+		expect(selectedMarkerPath?.getAttribute('fill')).toBe('white');
+	});
+
 	it('one-way ungated channel edges use dashed stroke style', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
