@@ -9,6 +9,7 @@ export interface ChannelEdgeConfigPanelProps {
 	onDelete: (index: number) => void;
 	onClose?: () => void;
 	showHeader?: boolean;
+	showDirectionControls?: boolean;
 }
 
 function gateToCondition(gate: WorkflowChannel['gate']): ConditionDraft {
@@ -32,6 +33,7 @@ export function ChannelEdgeConfigPanel({
 	onDelete,
 	onClose,
 	showHeader = true,
+	showDirectionControls = true,
 }: ChannelEdgeConfigPanelProps) {
 	return (
 		<div
@@ -67,25 +69,55 @@ export function ChannelEdgeConfigPanel({
 				</div>
 			</div>
 
-			<div class="space-y-1">
-				<label class="text-xs text-gray-400 font-medium">Direction</label>
-				<select
-					data-testid="channel-direction-select"
-					value={channel.direction}
-					onChange={(e) =>
-						onChange(index, {
-							...channel,
-							direction: (e.currentTarget as HTMLSelectElement).value as
-								| 'one-way'
-								| 'bidirectional',
-						})
-					}
-					class="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500"
-				>
-					<option value="one-way">One-way</option>
-					<option value="bidirectional">Bidirectional</option>
-				</select>
-			</div>
+			{showDirectionControls && (
+				<div class="space-y-1">
+					<label class="text-xs text-gray-400 font-medium">Direction</label>
+					<select
+						data-testid="channel-direction-select"
+						value={channel.direction}
+						onChange={(e) =>
+							onChange(index, {
+								...channel,
+								direction: (e.currentTarget as HTMLSelectElement).value as
+									| 'one-way'
+									| 'bidirectional',
+							})
+						}
+						class="sr-only"
+						tabIndex={-1}
+						aria-hidden="true"
+					>
+						<option value="one-way">One-way</option>
+						<option value="bidirectional">Bidirectional</option>
+					</select>
+					<div class="grid grid-cols-2 gap-2">
+						<button
+							type="button"
+							data-testid="channel-direction-one-way"
+							onClick={() => onChange(index, { ...channel, direction: 'one-way' })}
+							class={`rounded border px-2 py-1.5 text-xs transition-colors ${
+								channel.direction === 'one-way'
+									? 'border-blue-500 bg-blue-500/10 text-blue-200'
+									: 'border-dark-600 bg-dark-700 text-gray-300 hover:border-dark-500'
+							}`}
+						>
+							One-way
+						</button>
+						<button
+							type="button"
+							data-testid="channel-direction-bidirectional"
+							onClick={() => onChange(index, { ...channel, direction: 'bidirectional' })}
+							class={`rounded border px-2 py-1.5 text-xs transition-colors ${
+								channel.direction === 'bidirectional'
+									? 'border-blue-500 bg-blue-500/10 text-blue-200'
+									: 'border-dark-600 bg-dark-700 text-gray-300 hover:border-dark-500'
+							}`}
+						>
+							Bidirectional
+						</button>
+					</div>
+				</div>
+			)}
 
 			<GateConfig
 				label="Gate condition"
