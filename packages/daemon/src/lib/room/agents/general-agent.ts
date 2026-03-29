@@ -81,8 +81,8 @@ export function buildGeneralSystemPrompt(): string {
 			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
 	);
 
-	// Bypass markers for research/verification tasks
-	sections.push(`\n## Bypassing Git/PR Gates for Research-Only Tasks\n`);
+	// Bypass markers for research/verification/no-op tasks
+	sections.push(`\n## Bypassing Git/PR Gates for Research-Only and No-Op Coding Tasks\n`);
 	sections.push(
 		`For **research-only**, **verification-only**, or **investigation-only** tasks that do NOT modify any files, ` +
 			`you can bypass the git/PR requirements by starting your final output with one of these markers:`
