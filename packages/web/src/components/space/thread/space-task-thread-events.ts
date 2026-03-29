@@ -275,8 +275,10 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 
 		if (isSDKRateLimitEvent(row.message)) {
 			const rateLimitInfo = row.message.rate_limit_info;
-			const isRejected =
-				rateLimitInfo.status === 'rejected' || rateLimitInfo.overageStatus === 'rejected';
+			// Only surface hard-rejected rate-limit states in compact/roster feeds.
+			// `allowed` / `allowed_warning` are informational noise here, even if
+			// overageStatus contains warnings or restrictions.
+			const isRejected = rateLimitInfo.status === 'rejected';
 			const rateLimitType = rateLimitInfo.rateLimitType
 				? rateLimitInfo.rateLimitType.replace(/_/g, ' ')
 				: 'rate limit';

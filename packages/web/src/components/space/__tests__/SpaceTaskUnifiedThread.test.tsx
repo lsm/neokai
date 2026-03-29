@@ -126,7 +126,11 @@ function makeNoiseRows() {
 				type: 'rate_limit_event',
 				uuid: 'rl1',
 				session_id: 'space:space-1:task:task-1',
-				rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour' },
+				rate_limit_info: {
+					status: 'allowed',
+					rateLimitType: 'five_hour',
+					overageStatus: 'rejected',
+				},
 			}),
 			createdAt: 1_710_000_000_200,
 		},
