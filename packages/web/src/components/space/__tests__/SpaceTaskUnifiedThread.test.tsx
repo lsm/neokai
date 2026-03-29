@@ -25,9 +25,21 @@ vi.mock('../../../hooks/useMessageMaps', () => ({
 }));
 
 vi.mock('../../sdk/SDKMessageRenderer', () => ({
-	SDKMessageRenderer: ({ message }: { message: { type: string } }) => (
-		<div data-testid="sdk-message-renderer">{message.type}</div>
-	),
+	SDKMessageRenderer: ({ message }: { message: any }) => {
+		const content = message?.message?.content;
+		if (typeof content === 'string') {
+			return <div data-testid="sdk-message-renderer">{content}</div>;
+		}
+		if (Array.isArray(content)) {
+			const text = content
+				.filter((block: any) => block?.type === 'text' && typeof block?.text === 'string')
+				.map((block: any) => block.text)
+				.join(' ')
+				.trim();
+			return <div data-testid="sdk-message-renderer">{text || message?.type}</div>;
+		}
+		return <div data-testid="sdk-message-renderer">{message?.type}</div>;
+	},
 }));
 
 function makeRows() {

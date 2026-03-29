@@ -166,6 +166,13 @@ function extractAssistantEvents(
 		if (isTextBlock(block)) {
 			const text = normalizeMultiline(block.text);
 			if (!text) continue;
+			const textOnlyMessage = {
+				...message,
+				message: {
+					...message.message,
+					content: [{ type: 'text', text: block.text }],
+				},
+			} as SDKMessage;
 			events.push({
 				id: eventId,
 				label: row.label,
@@ -176,7 +183,7 @@ function extractAssistantEvents(
 				kind: 'text',
 				title: row.label,
 				summary: text,
-				message,
+				message: textOnlyMessage,
 			});
 		}
 	}
