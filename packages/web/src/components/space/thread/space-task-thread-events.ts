@@ -49,6 +49,7 @@ export interface SpaceTaskThreadEvent {
 	title: string;
 	summary: string;
 	message?: SDKMessage | null;
+	iconToolName?: string;
 	systemSubtype?: string;
 	resultSubtype?: string;
 	isError?: boolean;
@@ -135,6 +136,7 @@ function extractAssistantEvents(
 				kind: 'thinking',
 				title: 'Thinking',
 				summary: oneLine(block.thinking),
+				iconToolName: 'Thinking',
 			});
 			continue;
 		}
@@ -159,6 +161,7 @@ function extractAssistantEvents(
 				kind: isSubagent ? 'subagent' : 'tool',
 				title: isSubagent ? 'Sub-agent' : `Tool · ${block.name}`,
 				summary: toolSummary || block.name,
+				iconToolName: isSubagent ? 'Task' : block.name,
 			});
 			continue;
 		}
@@ -294,6 +297,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 				title: 'Tool Progress',
 				summary: progressSummary,
 				message: row.message,
+				iconToolName: row.message.tool_name,
 			});
 			continue;
 		}
