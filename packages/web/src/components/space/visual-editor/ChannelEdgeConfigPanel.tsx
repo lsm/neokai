@@ -7,7 +7,8 @@ export interface ChannelEdgeConfigPanelProps {
 	channel: WorkflowChannel;
 	onChange: (index: number, channel: WorkflowChannel) => void;
 	onDelete: (index: number) => void;
-	onClose: () => void;
+	onClose?: () => void;
+	showHeader?: boolean;
 }
 
 function gateToCondition(gate: WorkflowChannel['gate']): ConditionDraft {
@@ -30,23 +31,26 @@ export function ChannelEdgeConfigPanel({
 	onChange,
 	onDelete,
 	onClose,
+	showHeader = true,
 }: ChannelEdgeConfigPanelProps) {
 	return (
 		<div
 			data-testid="channel-edge-config-panel"
 			class="flex flex-col gap-3 p-4 bg-dark-850 border border-dark-700 rounded-lg text-sm text-white"
 		>
-			<div class="flex items-center justify-between">
-				<span class="font-semibold text-white text-sm">Channel</span>
-				<button
-					data-testid="channel-close-button"
-					class="text-gray-400 hover:text-white transition-colors"
-					onClick={onClose}
-					aria-label="Close"
-				>
-					×
-				</button>
-			</div>
+			{showHeader && (
+				<div class="flex items-center justify-between">
+					<span class="font-semibold text-white text-sm">Channel</span>
+					<button
+						data-testid="channel-close-button"
+						class="text-gray-400 hover:text-white transition-colors"
+						onClick={onClose}
+						aria-label="Close"
+					>
+						×
+					</button>
+				</div>
+			)}
 
 			<div class="flex flex-col gap-1">
 				<div class="flex items-center gap-2 text-xs">

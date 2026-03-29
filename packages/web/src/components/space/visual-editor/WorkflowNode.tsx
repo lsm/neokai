@@ -21,6 +21,7 @@ import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, isNodeFullyCompleted, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
 import type { AnchorSide } from './semanticWorkflowGraph';
+import { getVisualNodeDimensions } from './nodeMetrics';
 
 // ============================================================================
 // Props
@@ -160,6 +161,7 @@ export function WorkflowNode({
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
+	const dimensions = getVisualNodeDimensions(step);
 
 	const multi = isMultiAgentNode(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
@@ -341,7 +343,8 @@ export function WorkflowNode({
 					position: 'absolute',
 					left: position.x,
 					top: position.y,
-					minWidth: 160,
+					width: dimensions.width,
+					minHeight: dimensions.height,
 					cursor: 'grab',
 					userSelect: 'none',
 					zIndex: 10,
@@ -381,7 +384,8 @@ export function WorkflowNode({
 				position: 'absolute',
 				left: position.x,
 				top: position.y,
-				minWidth: multi ? 200 : 160,
+				width: dimensions.width,
+				minHeight: dimensions.height,
 				cursor: 'grab',
 				userSelect: 'none',
 			}}

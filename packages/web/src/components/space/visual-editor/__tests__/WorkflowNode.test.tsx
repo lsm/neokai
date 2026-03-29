@@ -359,13 +359,15 @@ describe('WorkflowNode multi-agent rendering', () => {
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		const node = getByTestId('workflow-node-step-local-1');
-		expect(node.style.minWidth).toBe('200px');
+		expect(node.style.width).toBe('200px');
+		expect(node.style.minHeight).toBe('112px');
 	});
 
 	it('uses default minWidth for single-agent steps', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps()} />);
 		const node = getByTestId('workflow-node-step-local-1');
-		expect(node.style.minWidth).toBe('160px');
+		expect(node.style.width).toBe('160px');
+		expect(node.style.minHeight).toBe('80px');
 	});
 });
 

@@ -12,6 +12,7 @@ export interface SemanticWorkflowEdge {
 	direction: 'one-way' | 'bidirectional';
 	channelCount: number;
 	hasGate: boolean;
+	channelIndexes: number[];
 }
 
 export interface RoutedSemanticWorkflowEdge extends SemanticWorkflowEdge {
@@ -26,6 +27,7 @@ interface PairAggregate {
 	highToLow: boolean;
 	channelCount: number;
 	hasGate: boolean;
+	channelIndexes: Set<number>;
 }
 
 function buildEndpointNodeLookup(nodes: VisualNode[]): Map<string, string> {
@@ -63,7 +65,7 @@ export function buildSemanticWorkflowEdges(
 	const nodeOrder = new Map(nodes.map((node, index) => [node.step.localId, index]));
 	const aggregates = new Map<string, PairAggregate>();
 
-	for (const channel of channels) {
+	for (const [channelIndex, channel] of channels.entries()) {
 		if (channel.from === 'task-agent' || channel.from === '*') continue;
 
 		const fromStepId = endpointLookup.get(channel.from);
@@ -91,10 +93,12 @@ export function buildSemanticWorkflowEdges(
 				highToLow: false,
 				channelCount: 0,
 				hasGate: false,
+				channelIndexes: new Set<number>(),
 			};
 
 			aggregate.channelCount += 1;
 			aggregate.hasGate ||= !!channel.gate && channel.gate.type !== 'always';
+			aggregate.channelIndexes.add(channelIndex);
 
 			if (channel.direction === 'bidirectional') {
 				aggregate.lowToHigh = true;
@@ -118,6 +122,7 @@ export function buildSemanticWorkflowEdges(
 				direction: 'bidirectional',
 				channelCount: aggregate.channelCount,
 				hasGate: aggregate.hasGate,
+				channelIndexes: Array.from(aggregate.channelIndexes),
 			};
 		}
 
@@ -129,6 +134,7 @@ export function buildSemanticWorkflowEdges(
 				direction: 'one-way',
 				channelCount: aggregate.channelCount,
 				hasGate: aggregate.hasGate,
+				channelIndexes: Array.from(aggregate.channelIndexes),
 			};
 		}
 
@@ -139,6 +145,7 @@ export function buildSemanticWorkflowEdges(
 			direction: 'one-way',
 			channelCount: aggregate.channelCount,
 			hasGate: aggregate.hasGate,
+			channelIndexes: Array.from(aggregate.channelIndexes),
 		};
 	});
 }
