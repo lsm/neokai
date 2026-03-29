@@ -49,7 +49,13 @@ vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-import { WorkflowEditor, filterAgents, initFromWorkflow } from '../WorkflowEditor';
+import {
+	WorkflowEditor,
+	TEMPLATES,
+	buildTemplateNodes,
+	filterAgents,
+	initFromWorkflow,
+} from '../WorkflowEditor';
 
 function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
 	return {
@@ -297,6 +303,7 @@ describe('WorkflowEditor', () => {
 			expect(getByText('Coding (Plan → Code)')).toBeTruthy();
 			expect(getByText('Research (Plan → Research)')).toBeTruthy();
 			expect(getByText('Quick Fix (Code only)')).toBeTruthy();
+			expect(getByText('Coding Workflow V2')).toBeTruthy();
 		});
 
 		it('applying Coding template creates 2 steps', () => {
@@ -318,6 +325,24 @@ describe('WorkflowEditor', () => {
 			fireEvent.click(getByText(/Start from template/));
 			fireEvent.click(getByText('Research (Plan → Research)'));
 			expect(getByText('2 steps')).toBeTruthy();
+		});
+
+		it('applying Coding Workflow V2 template creates 6 steps', () => {
+			const { getByText, getAllByTestId } = render(<WorkflowEditor {...defaultProps} />);
+			fireEvent.click(getByText(/Start from template/));
+			fireEvent.click(getByText('Coding Workflow V2'));
+			expect(getByText('6 steps')).toBeTruthy();
+			expect(getAllByTestId('channel-entry').length).toBe(15);
+		});
+
+		it('Coding Workflow V2 template builds explicit system prompts for every node', () => {
+			const template = TEMPLATES.find((entry) => entry.label === 'Coding Workflow V2');
+			expect(template).toBeTruthy();
+			const nodes = buildTemplateNodes(template!, mockAgents.value);
+			expect(nodes).toHaveLength(6);
+			for (const node of nodes) {
+				expect(node.systemPrompt?.trim().length).toBeGreaterThan(0);
+			}
 		});
 
 		it('template sets workflow name if name is empty', () => {
@@ -416,6 +441,46 @@ describe('WorkflowEditor', () => {
 			await waitFor(() => {
 				expect(mockCreateWorkflow).toHaveBeenCalledWith(
 					expect.objectContaining({ name: 'My Workflow' })
+				);
+			});
+		});
+
+		it('persists node systemPrompt when saving an existing workflow', async () => {
+			const workflow = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Plan',
+						agentId: 'agent-1',
+						systemPrompt: 'Visible workflow prompt.',
+						instructions: 'Plan things',
+					},
+					{
+						id: 'step-2',
+						name: 'Code',
+						agentId: 'agent-2',
+						systemPrompt: 'Implement exactly what was approved.',
+						instructions: '',
+					},
+				],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={workflow} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+					'wf-1',
+					expect.objectContaining({
+						nodes: expect.arrayContaining([
+							expect.objectContaining({
+								name: 'Plan',
+								systemPrompt: 'Visible workflow prompt.',
+							}),
+							expect.objectContaining({
+								name: 'Code',
+								systemPrompt: 'Implement exactly what was approved.',
+							}),
+						]),
+					})
 				);
 			});
 		});

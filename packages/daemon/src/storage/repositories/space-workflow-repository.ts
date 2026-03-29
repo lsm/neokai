@@ -9,7 +9,7 @@
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
  * The `channels` column on space_workflows stores: WorkflowChannel[] JSON (unified channel topology)
- * The `config` column on space_workflow_nodes stores: { instructions? }
+ * The `config` column on space_workflow_nodes stores: { systemPrompt?, instructions?, agents? }
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -66,6 +66,7 @@ interface WorkflowConfigJson {
 
 // JSON stored inside space_workflow_nodes.config
 interface NodeConfigJson {
+	systemPrompt?: string;
 	instructions?: string;
 	/** Multi-agent array — present when the node uses the agents[] format */
 	agents?: WorkflowNodeAgent[];
@@ -96,6 +97,9 @@ function rowToNode(row: NodeRow): WorkflowNode {
 	}
 	if (cfg.instructions) {
 		node.instructions = cfg.instructions;
+	}
+	if (cfg.systemPrompt) {
+		node.systemPrompt = cfg.systemPrompt;
 	}
 	if (cfg.agents && cfg.agents.length > 0) {
 		// Backfill name = agentId for rows persisted before the name field was introduced.
@@ -381,6 +385,7 @@ export class SpaceWorkflowRepository {
 		now: number
 	): void {
 		const nodeCfg: NodeConfigJson = {
+			systemPrompt: input.systemPrompt,
 			instructions: input.instructions,
 		};
 		// Persist agents into the JSON config column so they survive round-trips.

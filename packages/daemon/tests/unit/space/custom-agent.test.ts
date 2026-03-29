@@ -735,6 +735,29 @@ describe('createCustomAgentInit — slotOverrides', () => {
 		expect(promptText).toContain('Agent prompt.');
 	});
 
+	it('workflow runs do not inherit the assigned SpaceAgent system prompt when the node has no prompt', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Hidden agent prompt.' }),
+			workflowRun: makeWorkflowRun(),
+			slotOverrides: undefined,
+		});
+		const init = createCustomAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).not.toContain('Hidden agent prompt.');
+	});
+
+	it('workflow runs use only the node-level system prompt override', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Hidden agent prompt.' }),
+			workflowRun: makeWorkflowRun(),
+			slotOverrides: { systemPrompt: 'Visible workflow prompt.' },
+		});
+		const init = createCustomAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Visible workflow prompt.');
+		expect(promptText).not.toContain('Hidden agent prompt.');
+	});
+
 	it('partial override: only systemPrompt provided leaves model from agent', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ model: 'claude-opus-4-6', systemPrompt: 'Agent prompt.' }),
@@ -840,6 +863,17 @@ describe('resolveAgentInit — slotOverrides pass-through', () => {
 		expect(init.model).toBe('claude-opus-4-6');
 		const promptText = init.systemPrompt?.append ?? '';
 		expect(promptText).toContain('Base.');
+	});
+
+	it('active workflow runs do not inherit the assigned SpaceAgent system prompt', () => {
+		const agent = makeAgent({ id: 'agent-1', systemPrompt: 'Hidden base prompt.' });
+		const config = makeResolveConfigWithOverrides({
+			agentManager: makeMockAgentManagerForOverrides(agent),
+			workflowRun: makeWorkflowRun(),
+		});
+		const init = resolveAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).not.toContain('Hidden base prompt.');
 	});
 });
 

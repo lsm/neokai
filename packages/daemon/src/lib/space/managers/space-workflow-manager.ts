@@ -103,6 +103,7 @@ export class SpaceWorkflowManager {
 					name: n.name,
 					agentId: n.agentId,
 					agents: n.agents,
+					systemPrompt: n.systemPrompt,
 					instructions: n.instructions,
 				})
 			);
