@@ -553,6 +553,7 @@ describe('computeChannelEdgePoints', () => {
 function renderEdgesWithChannels(props: Partial<EdgeRendererProps> = {}) {
 	const onEdgeSelect = vi.fn();
 	const onEdgeDelete = vi.fn();
+	const onChannelSelect = vi.fn();
 	const result = render(
 		<svg>
 			<EdgeRenderer
@@ -560,11 +561,12 @@ function renderEdgesWithChannels(props: Partial<EdgeRendererProps> = {}) {
 				nodePositions={NODE_POSITIONS}
 				onEdgeSelect={onEdgeSelect}
 				onEdgeDelete={onEdgeDelete}
+				onChannelSelect={onChannelSelect}
 				{...props}
 			/>
 		</svg>
 	);
-	return { ...result, onEdgeSelect, onEdgeDelete };
+	return { ...result, onEdgeSelect, onEdgeDelete, onChannelSelect };
 }
 
 describe('EdgeRenderer — channel edge rendering', () => {
@@ -645,6 +647,21 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(visiblePath!.getAttribute('markerEnd')).toContain('channel-selected');
 		const selectedMarkerPath = container.querySelector('marker[id*="channel-selected"] path');
 		expect(selectedMarkerPath?.getAttribute('fill')).toBe('white');
+	});
+
+	it('clicking the gate badge selects the channel relation', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				id: 'plan:review',
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'condition',
+			},
+		];
+		const { getByTestId, onChannelSelect } = renderEdgesWithChannels({ channels });
+		fireEvent.click(getByTestId('channel-gate-step-1-step-2'));
+		expect(onChannelSelect).toHaveBeenCalledWith('plan:review');
 	});
 
 	it('one-way ungated channel edges use dashed stroke style', () => {

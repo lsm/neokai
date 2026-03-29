@@ -741,7 +741,20 @@ export function EdgeRenderer({
 							<g
 								transform={`translate(${gateBadgePosition.x}, ${gateBadgePosition.y})`}
 								data-testid={`channel-gate-${channel.fromStepId}-${channel.toStepId}`}
-								style={{ pointerEvents: 'none' }}
+								style={{
+									pointerEvents:
+										onChannelSelect && channel.id != null ? 'auto' : 'none',
+									cursor:
+										onChannelSelect && channel.id != null ? 'pointer' : 'default',
+								}}
+								onClick={
+									onChannelSelect && channel.id != null
+										? (e: MouseEvent) => {
+												e.stopPropagation();
+												onChannelSelect(channel.id!);
+											}
+										: undefined
+								}
 							>
 								<rect
 									x={-gateBadgeWidth / 2}

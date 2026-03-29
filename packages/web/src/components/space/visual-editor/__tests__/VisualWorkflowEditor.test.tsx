@@ -513,10 +513,12 @@ describe('VisualWorkflowEditor', () => {
 				<VisualWorkflowEditor {...makeProps({ onSave })} />
 			);
 			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'Test WF' } });
-			// Add a step and assign an agent (required by save validation).
-			fireEvent.click(getByTestId('add-step-button'));
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
-			fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-1' } });
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+				)!
+			);
 
 			await act(async () => {
 				fireEvent.click(getByTestId('save-button'));
@@ -530,15 +532,13 @@ describe('VisualWorkflowEditor', () => {
 
 		it('layout includes a position entry for each step', async () => {
 			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			// Add 2 steps and assign agents (required by save validation).
-			fireEvent.click(getByTestId('add-step-button'));
-			fireEvent.click(getByTestId('add-step-button'));
 			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'L' } });
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
-			fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-1' } });
-			fireEvent.click(getByTestId('close-button'));
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
-			fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-2' } });
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				)!
+			);
 
 			await act(async () => {
 				fireEvent.click(getByTestId('save-button'));
@@ -559,10 +559,12 @@ describe('VisualWorkflowEditor', () => {
 				<VisualWorkflowEditor {...makeProps({ onSave })} />
 			);
 			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'N' } });
-			// Add a step and assign an agent (required by save validation).
-			fireEvent.click(getByTestId('add-step-button'));
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
-			fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-1' } });
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+				)!
+			);
 
 			await act(async () => {
 				fireEvent.click(getByTestId('save-button'));
@@ -806,19 +808,16 @@ describe('VisualWorkflowEditor', () => {
 			expect(queryAllByTestId('template-option').length).toBe(0);
 		});
 
-		it('hides template button once nodes have been added (overwrite protection)', () => {
+		it('keeps template button visible after nodes have been added manually', () => {
 			const { getByTestId, queryByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			// Button visible before any nodes
 			expect(queryByTestId('template-picker-button')).toBeTruthy();
 
-			// Add a step manually
 			fireEvent.click(getByTestId('add-step-button'));
 
-			// Button must be hidden now that the canvas has content
-			expect(queryByTestId('template-picker-button')).toBeNull();
+			expect(queryByTestId('template-picker-button')).toBeTruthy();
 		});
 
-		it('hides template button after a template is applied', () => {
+		it('keeps template button visible after a template is applied', () => {
 			const { getByTestId, getAllByTestId, queryByTestId } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
@@ -826,8 +825,106 @@ describe('VisualWorkflowEditor', () => {
 			const options = getAllByTestId('template-option');
 			fireEvent.click(options[0]);
 
-			// Template created nodes → button should be gone
-			expect(queryByTestId('template-picker-button')).toBeNull();
+			expect(queryByTestId('template-picker-button')).toBeTruthy();
+		});
+
+		it('reapplying a template without canvas edits does not show confirmation', () => {
+			const { getByTestId, getAllByTestId, queryByTestId } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				)!
+			);
+
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+				)!
+			);
+
+			expect(queryByTestId('confirm-template-apply-button')).toBeNull();
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(1);
+		});
+
+		it('shows confirmation when selecting a template after canvas edits', () => {
+			const { getByTestId, getAllByTestId, getByText } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				)!
+			);
+
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+			fireEvent.input(getByTestId('step-name-input'), { target: { value: 'Planning Revised' } });
+
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+				)!
+			);
+
+			expect(getByTestId('confirm-template-apply-button')).toBeTruthy();
+			expect(getByText('Replace current canvas?')).toBeTruthy();
+		});
+
+		it('confirms before replacing a modified canvas with a new template', async () => {
+			const { getByTestId, getAllByTestId, getByText, queryByText } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				)!
+			);
+
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+			fireEvent.input(getByTestId('step-name-input'), { target: { value: 'Planning Revised' } });
+
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+				)!
+			);
+			fireEvent.click(getByTestId('confirm-template-apply-button'));
+
+			await waitFor(() => expect(getAllByTestId(/^workflow-node-/).length).toBe(1));
+			expect(queryByText('Replace current canvas?')).toBeNull();
+		});
+
+		it('canceling template confirmation preserves the modified canvas', () => {
+			const { getByTestId, getAllByTestId, getByText, queryByText, getAllByText } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				)!
+			);
+
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+			fireEvent.input(getByTestId('step-name-input'), { target: { value: 'Planning Revised' } });
+
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+				)!
+			);
+			fireEvent.click(getAllByText('Cancel').at(-1)!);
+
+			expect(queryByText('Replace current canvas?')).toBeNull();
+			expect(getAllByText('Planning Revised').length).toBeGreaterThan(0);
 		});
 
 		it('single-step template (Quick Fix) creates one node and no edges', () => {

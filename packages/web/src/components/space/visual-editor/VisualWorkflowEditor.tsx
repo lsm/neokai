@@ -32,6 +32,7 @@ import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, TEMPLATES, buildTemplateNodes } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
+import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import type { ConditionDraft } from './GateConfig';
@@ -63,6 +64,63 @@ import {
 // ============================================================================
 
 const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment'];
+
+function buildTemplateCanvasSignature(
+	nodes: VisualNode[],
+	edges: VisualEdge[],
+	channels: WorkflowChannel[],
+	startNodeId: string
+): string {
+	const regularNodes = nodes
+		.filter((node) => node.step.localId !== TASK_AGENT_NODE_ID && node.step.id !== TASK_AGENT_NODE_ID)
+		.map((node) => ({
+			localId: node.step.localId,
+			id: node.step.id ?? null,
+			name: node.step.name,
+			agentId: node.step.agentId ?? null,
+			instructions: node.step.instructions ?? '',
+			agents:
+				node.step.agents?.map((agent) => ({
+					agentId: agent.agentId ?? null,
+					name: agent.name ?? '',
+				})) ?? [],
+			nodeChannels:
+				node.step.channels?.map((channel) => ({
+					from: channel.from,
+					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+					direction: channel.direction,
+					gate: channel.gate ? { ...channel.gate } : undefined,
+				})) ?? [],
+			position: { x: node.position.x, y: node.position.y },
+		}))
+		.sort((a, b) => a.localId.localeCompare(b.localId));
+
+	const normalizedEdges = edges
+		.map((edge) => ({
+			fromStepKey: edge.fromStepKey,
+			toStepKey: edge.toStepKey,
+			condition: edge.condition ? { ...edge.condition } : undefined,
+		}))
+		.sort((a, b) =>
+			`${a.fromStepKey}:${a.toStepKey}`.localeCompare(`${b.fromStepKey}:${b.toStepKey}`)
+		);
+
+	const normalizedChannels = channels
+		.map((channel) => ({
+			from: channel.from,
+			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+			direction: channel.direction,
+			gate: channel.gate ? { ...channel.gate } : undefined,
+		}))
+		.sort((a, b) => `${a.from}:${String(a.to)}`.localeCompare(`${b.from}:${String(b.to)}`));
+
+	return JSON.stringify({
+		nodes: regularNodes,
+		edges: normalizedEdges,
+		channels: normalizedChannels,
+		startNodeId,
+	});
+}
 
 // ============================================================================
 // Props
@@ -142,6 +200,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [showRules, setShowRules] = useState(false);
 	const [showTemplates, setShowTemplates] = useState(false);
 	const [tagInput, setTagInput] = useState('');
+	const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
 
 	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
@@ -153,6 +212,29 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				(node) => node.step.id !== TASK_AGENT_NODE_ID && node.step.localId !== TASK_AGENT_NODE_ID
 			),
 		[nodes]
+	);
+	const currentTemplateCanvasSignature = useMemo(
+		() => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId),
+		[nodes, edges, channels, startNodeId]
+	);
+	const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
+		buildTemplateCanvasSignature(
+			initState?.nodes ?? [
+				{
+					step: {
+						localId: TASK_AGENT_NODE_ID,
+						id: TASK_AGENT_NODE_ID,
+						name: 'Task Agent',
+						agentId: '',
+						instructions: '',
+					},
+					position: { x: 0, y: 0 },
+				},
+			],
+			initState?.edges ?? [],
+			initState?.channels ?? [],
+			initState?.startNodeId ?? ''
+		)
 	);
 
 	// Determine which workflow run to use for completion indicators.
@@ -850,15 +932,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			},
 			position: { x: 0, y: 0 },
 		};
-		setNodes([taskAgentVisualNode, ...positionedNodes]);
+		const nextNodes = [taskAgentVisualNode, ...positionedNodes];
+		const nextChannels = (template.channels ?? []).map((channel) => ({
+			...channel,
+			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+			gate: channel.gate ? { ...channel.gate } : undefined,
+		}));
+
+		setNodes(nextNodes);
 		setEdges(newEdges);
-		setChannels(
-			(template.channels ?? []).map((channel) => ({
-				...channel,
-				to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-				gate: channel.gate ? { ...channel.gate } : undefined,
-			}))
-		);
+		setChannels(nextChannels);
 		if (template.tags) {
 			setTags([...template.tags]);
 		}
@@ -866,6 +949,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		setSelectedNodeId(null);
 		setSelectedEdgeId(null);
 		setShowTemplates(false);
+		setPendingTemplate(null);
+		setTemplateBaselineSignature(
+			buildTemplateCanvasSignature(nextNodes, newEdges, nextChannels, firstLocalId)
+		);
 		if (!name) setName(template.label);
 
 		// Fit viewport to the new layout
@@ -881,6 +968,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		} else {
 			setViewportState({ offsetX: 0, offsetY: 0, scale: 1 });
 		}
+	}
+
+	function handleTemplateSelection(template: WorkflowTemplate) {
+		setShowTemplates(false);
+		if (currentTemplateCanvasSignature !== templateBaselineSignature) {
+			setPendingTemplate(template);
+			return;
+		}
+		applyTemplate(template);
 	}
 
 	// ------------------------------------------------------------------
@@ -1049,8 +1145,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						Add Step
 					</button>
 
-					{/* Template picker — only shown when creating a new workflow with no steps yet */}
-					{!isEditing && regularNodes.length === 0 && (
+					{/* Template picker — always available in create mode.
+					    Reapplying prompts only when the canvas has diverged. */}
+					{!isEditing && (
 							<div class="relative">
 								<button
 									onClick={() => setShowTemplates((v) => !v)}
@@ -1086,7 +1183,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 										{TEMPLATES.map((t) => (
 											<button
 												key={t.label}
-												onClick={() => applyTemplate(t)}
+												onClick={() => handleTemplateSelection(t)}
 												data-testid="template-option"
 												data-template-label={t.label}
 												class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
@@ -1215,6 +1312,21 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						onClose={() => setSelectedChannelId(null)}
 					/>
 				)}
+
+				<ConfirmModal
+					isOpen={!!pendingTemplate}
+					onClose={() => setPendingTemplate(null)}
+					onConfirm={() => {
+						if (pendingTemplate) applyTemplate(pendingTemplate);
+					}}
+					title="Replace current canvas?"
+					message="Applying a template will replace the current workflow canvas."
+					confirmText="Apply Template"
+					confirmButtonVariant="warning"
+					confirmTestId="confirm-template-apply-button"
+				>
+					<p class="text-xs text-gray-500">Current canvas changes will be discarded.</p>
+				</ConfirmModal>
 			</div>
 
 			{/* ---- Tags and Rules (collapsible) ---- */}
