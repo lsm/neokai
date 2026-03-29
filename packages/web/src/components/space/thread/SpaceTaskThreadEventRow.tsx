@@ -104,18 +104,21 @@ export function SpaceTaskThreadEventRow({
 	}
 
 	if (mode === 'compact' && event.kind === 'text' && event.message) {
+		const agentColor = getAgentColor(event.label);
 		return (
-			<div class="py-1" data-testid="space-task-event-row">
-				<div class="max-w-full">
-					<SDKMessageRenderer
-						message={event.message}
-						sessionId={event.sessionId ?? undefined}
-						toolResultsMap={maps.toolResultsMap}
-						toolInputsMap={maps.toolInputsMap}
-						subagentMessagesMap={maps.subagentMessagesMap}
-						sessionInfo={maps.sessionInfoMap.get((event.message as { uuid?: string }).uuid ?? '')}
-						taskContext={true}
-					/>
+			<div class="py-px" data-testid="space-task-event-row">
+				<div class="border-l-2 pl-3.5 pr-1 py-1.5" style={{ borderColor: agentColor }}>
+					<div class="max-w-full">
+						<SDKMessageRenderer
+							message={event.message}
+							sessionId={event.sessionId ?? undefined}
+							toolResultsMap={maps.toolResultsMap}
+							toolInputsMap={maps.toolInputsMap}
+							subagentMessagesMap={maps.subagentMessagesMap}
+							sessionInfo={maps.sessionInfoMap.get((event.message as { uuid?: string }).uuid ?? '')}
+							taskContext={true}
+						/>
+					</div>
 				</div>
 			</div>
 		);
