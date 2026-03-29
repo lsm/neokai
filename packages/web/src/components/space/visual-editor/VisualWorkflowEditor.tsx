@@ -29,7 +29,7 @@ import type {
 } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
-import { filterAgents, TEMPLATES } from '../WorkflowEditor';
+import { filterAgents, TEMPLATES, buildTemplateNodes } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import type { RuleDraft } from '../WorkflowRulesEditor';
@@ -43,7 +43,7 @@ import {
 	visualStateToUpdateParams,
 } from './serialization';
 import type { WorkflowNodeData } from './WorkflowCanvas';
-import { WorkflowCanvas, DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from './WorkflowCanvas';
+import { WorkflowCanvas } from './WorkflowCanvas';
 import { computeFitToView } from './CanvasToolbar';
 import { autoLayout, TASK_AGENT_INITIAL_POSITION } from './layout';
 import type { NodePosition } from './types';
@@ -51,6 +51,7 @@ import { NodeConfigPanel } from './NodeConfigPanel';
 import { ChannelEditor } from '../ChannelEditor';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 import { ChannelEdgeConfigPanel } from './ChannelEdgeConfigPanel';
+import { buildVisualNodePositions } from './nodeMetrics';
 
 // ============================================================================
 // Constants
@@ -350,6 +351,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			};
 		});
 	}, [nodes, agents, channels, nodeIsStart, tasksByNodeId, relevantRunId]);
+
+	const canvasNodePositions = useMemo<NodePosition>(() => buildVisualNodePositions(nodes), [nodes]);
 
 	// ------------------------------------------------------------------
 	// Derived: selected node / edge
@@ -687,23 +690,24 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function applyTemplate(template: WorkflowTemplate) {
-		const localIds = template.stepRoles.map(() => generateUUID());
-		const firstLocalId = localIds[0];
+		const templateSteps = buildTemplateNodes(template, agents);
+		if (templateSteps.length === 0) return;
+		const firstLocalId = templateSteps[0].localId;
 
-		const newNodes: VisualNode[] = template.stepRoles.map((role, i) => {
-			const found = agents.find(
-				(a) => a.name.toLowerCase() === role || a.role.toLowerCase() === role
-			);
-			return {
-				step: {
-					localId: localIds[i],
-					name: role.charAt(0).toUpperCase() + role.slice(1),
-					agentId: found?.id ?? '',
-					instructions: '',
-				},
-				position: { x: 0, y: 0 }, // overwritten by autoLayout below
-			};
-		});
+		const newNodes: VisualNode[] = templateSteps.map((step) => ({
+			step: {
+				...step,
+				agents: step.agents?.map((slot) => ({ ...slot })),
+				channels: step.channels?.map((channel) => ({
+					...channel,
+					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+					gate: channel.gate ? { ...channel.gate } : undefined,
+				})),
+			},
+			position: { x: 0, y: 0 }, // overwritten by autoLayout below
+		}));
+
+		const localIds = templateSteps.map((step) => step.localId);
 
 		// Linear chain of edges
 		const newEdges: VisualEdge[] = localIds.slice(0, -1).map((fromId, i) => ({
@@ -717,6 +721,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			id: n.step.localId,
 			name: n.step.name,
 			agentId: n.step.agentId,
+			agents: n.step.agents?.map((slot) => ({ ...slot })),
 			instructions: n.step.instructions || undefined,
 		}));
 		const layoutTransitions: VisualTransition[] = newEdges.map((e, i) => ({
@@ -748,6 +753,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		};
 		setNodes([taskAgentVisualNode, ...positionedNodes]);
 		setEdges(newEdges);
+		setChannels(
+			(template.channels ?? []).map((channel) => ({
+				...channel,
+				to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+				gate: channel.gate ? { ...channel.gate } : undefined,
+			}))
+		);
+		if (template.tags) {
+			setTags([...template.tags]);
+		}
 		setStartStepId(firstLocalId);
 		setSelectedNodeId(null);
 		setSelectedEdgeId(null);
@@ -757,17 +772,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		// Fit viewport to the new layout
 		const container = canvasContainerRef.current;
 		if (container) {
-			const nodePositions: NodePosition = {};
-			for (const n of positionedNodes) {
-				nodePositions[n.step.localId] = {
-					x: n.position.x,
-					y: n.position.y,
-					width: DEFAULT_NODE_WIDTH,
-					height: DEFAULT_NODE_HEIGHT,
-				};
-			}
 			setViewportState(
-				computeFitToView(nodePositions, container.clientWidth, container.clientHeight)
+				computeFitToView(
+					buildVisualNodePositions([taskAgentVisualNode, ...positionedNodes]),
+					container.clientWidth,
+					container.clientHeight
+				)
 			);
 		} else {
 			setViewportState({ offsetX: 0, offsetY: 0, scale: 1 });
@@ -1009,6 +1019,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 				<WorkflowCanvas
 					nodes={nodeData}
+					nodePositions={canvasNodePositions}
 					viewportState={viewportState}
 					onViewportChange={setViewportState}
 					transitions={[]}
