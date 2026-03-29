@@ -169,7 +169,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	};
 
 	return (
-		<div class="flex flex-col h-full overflow-hidden bg-dark-950">
+		<div class="flex flex-col h-full overflow-hidden bg-dark-900">
 			<div class="px-4 py-3 flex-shrink-0">
 				<div class="flex items-start gap-3 border-b border-dark-800 pb-3">
 					{onClose && (
