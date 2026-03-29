@@ -640,6 +640,23 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(visiblePath!.getAttribute('strokeDasharray')).toBe(CHANNEL_EDGE_DASH_ARRAY);
 	});
 
+	it('one-way gated channel edges still use dashed stroke style', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'human',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		expect(visiblePath!.getAttribute('strokeDasharray')).toBe(CHANNEL_EDGE_DASH_ARRAY);
+	});
+
 	it('bidirectional channel edges use solid stroke style', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
@@ -650,6 +667,27 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		);
 		expect(visiblePath).not.toBeNull();
 		expect(visiblePath!.getAttribute('strokeDasharray')).toBeNull();
+	});
+
+	it('renders a midpoint gate badge when a channel is gated', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'condition',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Shell');
+	});
+
+	it('does not render a midpoint gate badge when a channel is ungated', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
+		];
+		const { queryByTestId } = renderEdgesWithChannels({ channels });
+		expect(queryByTestId('channel-gate-step-1-step-2')).toBeNull();
 	});
 
 	it('channel edges use teal color (distinct from transition edge colors)', () => {
