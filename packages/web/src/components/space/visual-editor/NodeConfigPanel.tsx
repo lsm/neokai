@@ -26,6 +26,14 @@ import type { ConditionDraft } from './GateConfig';
 // Props
 // ============================================================================
 
+export interface NodeChannelLink {
+	id: string;
+	label: string;
+	direction: 'one-way' | 'bidirectional';
+	channelCount: number;
+	hasGate: boolean;
+}
+
 export interface NodeConfigPanelProps {
 	step: NodeDraft;
 	agents: SpaceAgent[];
@@ -47,6 +55,8 @@ export interface NodeConfigPanelProps {
 	onUpdateExitCondition: (cond: ConditionDraft) => void;
 	/** Designates this step as the workflow start node */
 	onSetAsStart: (stepId: string) => void;
+	channelLinks?: NodeChannelLink[];
+	onOpenChannelLink?: (channelLinkId: string) => void;
 	onClose: () => void;
 	/** Called when the user confirms deletion of this step */
 	onDelete: (stepId: string) => void;
@@ -389,6 +399,8 @@ export function NodeConfigPanel({
 	onUpdateEntryCondition,
 	onUpdateExitCondition,
 	onSetAsStart,
+	channelLinks = [],
+	onOpenChannelLink,
 	onClose,
 	onDelete,
 }: NodeConfigPanelProps) {
@@ -528,6 +540,40 @@ export function NodeConfigPanel({
 						rows={5}
 						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
 					/>
+				</div>
+
+				{/* Channel Links */}
+				<div class="space-y-1.5">
+					<div class="flex items-center justify-between">
+						<label class="text-xs font-medium text-gray-400">Channel Links</label>
+						<span class="text-xs text-gray-600">{channelLinks.length}</span>
+					</div>
+					{channelLinks.length > 0 ? (
+						<div class="space-y-1.5">
+							{channelLinks.map((link) => (
+								<button
+									key={link.id}
+									type="button"
+									data-testid="node-channel-link-button"
+									onClick={() => onOpenChannelLink?.(link.id)}
+									class="w-full rounded border border-dark-700 bg-dark-800 px-2.5 py-2 text-left hover:border-teal-600/60 hover:bg-dark-750 transition-colors"
+								>
+									<div class="flex items-center justify-between gap-2">
+										<span class="text-xs font-mono text-gray-200 truncate">{link.label}</span>
+										<span class="text-[10px] text-teal-400 flex-shrink-0">
+											{link.direction === 'bidirectional' ? '↔' : '→'}
+										</span>
+									</div>
+									<div class="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
+										<span>{link.channelCount} link{link.channelCount === 1 ? '' : 's'}</span>
+										{link.hasGate && <span class="text-teal-400">has gate</span>}
+									</div>
+								</button>
+							))}
+						</div>
+					) : (
+						<p class="text-xs text-gray-600">Create links by dragging from one node to another.</p>
+					)}
 				</div>
 			</div>
 

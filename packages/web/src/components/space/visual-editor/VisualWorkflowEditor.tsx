@@ -48,9 +48,9 @@ import { computeFitToView } from './CanvasToolbar';
 import { autoLayout, TASK_AGENT_INITIAL_POSITION } from './layout';
 import type { NodePosition } from './types';
 import { NodeConfigPanel } from './NodeConfigPanel';
-import { ChannelEditor } from '../ChannelEditor';
+import type { NodeChannelLink } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
-import { ChannelEdgeConfigPanel } from './ChannelEdgeConfigPanel';
+import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { buildVisualNodePositions } from './nodeMetrics';
 import { ReactFlowWorkflowCanvas } from './ReactFlowWorkflowCanvas';
 import {
@@ -137,7 +137,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
 	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
-	const [showChannels, setShowChannels] = useState(true);
 
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -160,26 +159,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (active) return active.id;
 		return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
 	})();
-
-	// Collect known channel endpoint names for ChannelEditor suggestions:
-	// - multi-agent slot names (agents[].name)
-	// - single-agent shorthand names (agentId)
-	// - node names (fan-out targets)
-	const agentRoles = useMemo(() => {
-		const roles = new Set<string>();
-		for (const node of nodes) {
-			if (node.step.id === TASK_AGENT_NODE_ID || node.step.localId === TASK_AGENT_NODE_ID) continue;
-			if (node.step.agents) {
-				for (const agent of node.step.agents) {
-					if (agent.name) roles.add(agent.name);
-				}
-			} else if (node.step.agentId) {
-				roles.add(node.step.agentId);
-			}
-			if (node.step.name) roles.add(node.step.name);
-		}
-		return Array.from(roles);
-	}, [nodes]);
 
 	// ------------------------------------------------------------------
 	// Key-resolution maps
@@ -226,16 +205,17 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			id?: string;
 			label?: string;
 		}[]
-	>(() => {
-		return routedSemanticEdges.map((edge) => ({
-			fromStepId: edge.fromStepId,
-			toStepId: edge.toStepId,
-			direction: edge.direction,
-			gateType: edge.hasGate ? 'condition' : undefined,
-			sourceSide: edge.sourceSide,
-			targetSide: edge.targetSide,
-		}));
-	}, [routedSemanticEdges]);
+		>(() => {
+			return routedSemanticEdges.map((edge) => ({
+				fromStepId: edge.fromStepId,
+				toStepId: edge.toStepId,
+				direction: edge.direction,
+				gateType: edge.hasGate ? 'condition' : undefined,
+				sourceSide: edge.sourceSide,
+				targetSide: edge.targetSide,
+				id: edge.id,
+			}));
+		}, [routedSemanticEdges]);
 
 	// ------------------------------------------------------------------
 	// Helpers
@@ -324,6 +304,53 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		return { fromNode, toNode, edge, fromKey, toKey };
 	}, [selectedEdgeId, nodes, edges, localIdToStepKey]);
 
+	const selectedChannelInfo = useMemo(() => {
+		if (selectedChannelId == null) return null;
+		const relation = routedSemanticEdges.find((edge) => edge.id === selectedChannelId);
+		if (!relation) return null;
+		const fromNode = nodes.find((n) => n.step.localId === relation.fromStepId) ?? null;
+		const toNode = nodes.find((n) => n.step.localId === relation.toStepId) ?? null;
+		const links = Array.from(new Set(relation.channelIndexes))
+			.map((index) => {
+				const channel = channels[index];
+				return channel ? { index, channel } : null;
+			})
+			.filter((entry): entry is { index: number; channel: WorkflowChannel } => !!entry);
+
+		return {
+			relation,
+			fromNode,
+			toNode,
+			links,
+		};
+	}, [selectedChannelId, routedSemanticEdges, nodes, channels]);
+
+	const nodeChannelLinksByNodeId = useMemo(() => {
+		const linksByNodeId = new Map<string, NodeChannelLink[]>();
+
+		for (const edge of routedSemanticEdges) {
+			const fromNode = nodes.find((n) => n.step.localId === edge.fromStepId);
+			const toNode = nodes.find((n) => n.step.localId === edge.toStepId);
+			if (!fromNode || !toNode) continue;
+
+			const link: NodeChannelLink = {
+				id: edge.id,
+				label:
+					edge.direction === 'bidirectional'
+						? `${fromNode.step.name || 'Unnamed'} ↔ ${toNode.step.name || 'Unnamed'}`
+						: `${fromNode.step.name || 'Unnamed'} → ${toNode.step.name || 'Unnamed'}`,
+				direction: edge.direction,
+				channelCount: edge.channelCount,
+				hasGate: edge.hasGate,
+			};
+
+			linksByNodeId.set(edge.fromStepId, [...(linksByNodeId.get(edge.fromStepId) ?? []), link]);
+			linksByNodeId.set(edge.toStepId, [...(linksByNodeId.get(edge.toStepId) ?? []), link]);
+		}
+
+		return linksByNodeId;
+	}, [nodes, routedSemanticEdges]);
+
 	// ------------------------------------------------------------------
 	// Node operations
 	// ------------------------------------------------------------------
@@ -369,7 +396,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		// handler (which fires on the WorkflowCanvas selected node) can remove it.
 		if (localId === TASK_AGENT_NODE_ID) return;
 		setSelectedNodeId(localId);
-		if (localId) setSelectedEdgeId(null);
+		if (localId) {
+			setSelectedEdgeId(null);
+			setSelectedChannelId(null);
+		}
 	}, []);
 
 	const handleDeleteNode = useCallback(
@@ -472,19 +502,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (channelId) {
 			setSelectedNodeId(null);
 			setSelectedEdgeId(null);
-			// Auto-expand the Channels section when a channel is selected via canvas
-			setShowChannels(true);
 		}
 	}, []);
-
-	const selectedChannelInfo = useMemo(() => {
-		if (selectedChannelId == null) return null;
-		const index = Number.parseInt(selectedChannelId, 10);
-		if (!Number.isFinite(index) || index < 0) return null;
-		const channel = channels[index];
-		if (!channel) return null;
-		return { index, channel };
-	}, [selectedChannelId, channels]);
 
 	const resolveSourceChannelNames = useCallback((node: VisualNode): string[] => {
 		if (node.step.agents && node.step.agents.length > 0) {
@@ -557,7 +576,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const handleDeleteChannelFromEdgePanel = useCallback((index: number) => {
 		setChannels((prev) => prev.filter((_, i) => i !== index));
-		setSelectedChannelId(null);
 	}, []);
 
 	const handleDeleteEdge = useCallback(
@@ -975,7 +993,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							onCreateTransition={handleCreateTransition}
 							onEdgeSelect={handleEdgeSelect}
 							onDeleteEdge={handleDeleteEdge}
-							selectedChannelId={null}
+							onChannelSelect={handleChannelSelect}
+							selectedChannelId={selectedChannelId}
 						/>
 					</div>
 
@@ -1021,12 +1040,14 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							)
 						}
 						onUpdate={handleUpdateNode}
-						onUpdateEntryCondition={(c) => handleUpdateEntryCondition(selectedNode, c)}
-						onUpdateExitCondition={(c) => handleUpdateExitCondition(selectedNode, c)}
-						onSetAsStart={handleSetAsStart}
-						onClose={() => setSelectedNodeId(null)}
-						onDelete={handleDeleteNode}
-					/>
+							onUpdateEntryCondition={(c) => handleUpdateEntryCondition(selectedNode, c)}
+							onUpdateExitCondition={(c) => handleUpdateExitCondition(selectedNode, c)}
+							onSetAsStart={handleSetAsStart}
+							channelLinks={nodeChannelLinksByNodeId.get(selectedNode.step.localId) ?? []}
+							onOpenChannelLink={handleChannelSelect}
+							onClose={() => setSelectedNodeId(null)}
+							onDelete={handleDeleteNode}
+						/>
 				)}
 
 				{/* EdgeConfigPanel — floating panel in the bottom-left of the canvas */}
@@ -1046,18 +1067,17 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					</div>
 				)}
 
-				{/* ChannelEdgeConfigPanel — quick gate editing when selecting a channel line */}
-				{selectedChannelInfo && (
-					<div class="absolute bottom-16 left-3 w-72 z-20" style={{ pointerEvents: 'auto' }}>
-						<ChannelEdgeConfigPanel
-							index={selectedChannelInfo.index}
-							channel={selectedChannelInfo.channel}
+					{/* ChannelRelationConfigPanel — edit underlying channel links for a semantic relation */}
+					{selectedChannelInfo && (
+						<ChannelRelationConfigPanel
+							title="Channel Links"
+							description={`${selectedChannelInfo.fromNode?.step.name || 'Unnamed'} → ${selectedChannelInfo.toNode?.step.name || 'Unnamed'} · ${selectedChannelInfo.links.length} editable link${selectedChannelInfo.links.length === 1 ? '' : 's'}`}
+							channels={selectedChannelInfo.links}
 							onChange={handleUpdateChannelFromEdgePanel}
 							onDelete={handleDeleteChannelFromEdgePanel}
 							onClose={() => setSelectedChannelId(null)}
 						/>
-					</div>
-				)}
+					)}
 			</div>
 
 			{/* ---- Tags and Rules (collapsible) ---- */}
@@ -1112,43 +1132,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							))}
 						</div>
 					</div>
-				</div>
-
-				{/* Channels — collapsible section for workflow-level channel management */}
-				<div class="px-4 py-2 border-b border-dark-800">
-					<button
-						onClick={() => setShowChannels((v) => !v)}
-						class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-						data-testid="toggle-channels-button"
-					>
-						<svg
-							class={`w-3 h-3 transition-transform ${showChannels ? 'rotate-90' : ''}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M9 5l7 7-7 7"
-							/>
-						</svg>
-						<span class="font-semibold uppercase tracking-wider">
-							Channels {channels.length > 0 ? `(${channels.length})` : ''}
-						</span>
-					</button>
-
-					{showChannels && (
-						<div class="mt-3" data-testid="channels-section">
-							<ChannelEditor
-								channels={channels}
-								onChange={setChannels}
-								agentRoles={agentRoles}
-								highlightIndex={selectedChannelInfo?.index ?? null}
-							/>
-						</div>
-					)}
 				</div>
 
 				{/* Rules — collapsible */}

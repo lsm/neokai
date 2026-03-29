@@ -941,6 +941,48 @@ describe('VisualWorkflowEditor', () => {
 			expect(getByTestId('native-workflow-canvas-panel')).toBeTruthy();
 			expect(getByTestId('reactflow-workflow-canvas-panel')).toBeTruthy();
 		});
+
+		it('clicking a semantic channel edge opens the channel relation side panel', () => {
+			const { getByTestId, getAllByTestId, container, queryByTestId } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const v2Option = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow V2'
+			);
+			fireEvent.click(v2Option!);
+
+			expect(queryByTestId('channel-relation-config-panel')).toBeNull();
+			const firstChannelHitbox = container.querySelector(
+				'[data-channel-edge="true"] path[stroke="transparent"]'
+			) as SVGPathElement | null;
+			expect(firstChannelHitbox).toBeTruthy();
+			fireEvent.click(firstChannelHitbox!);
+
+			expect(getByTestId('channel-relation-config-panel')).toBeTruthy();
+		});
+
+		it('node side panel lists channel links that open the channel relation side panel', () => {
+			const { getByTestId, getAllByTestId, getByText, queryAllByTestId } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const v2Option = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow V2'
+			);
+			fireEvent.click(v2Option!);
+
+			fireEvent.click(getByText('Code Review'));
+			expect(getByTestId('node-config-panel')).toBeTruthy();
+
+			const linkButtons = queryAllByTestId('node-channel-link-button');
+			expect(linkButtons.length).toBeGreaterThan(0);
+			fireEvent.click(linkButtons[0]);
+
+			expect(getByTestId('channel-relation-config-panel')).toBeTruthy();
+		});
 	});
 
 	// -------------------------------------------------------------------------
