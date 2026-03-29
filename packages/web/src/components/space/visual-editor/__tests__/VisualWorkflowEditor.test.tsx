@@ -1022,14 +1022,19 @@ describe('VisualWorkflowEditor', () => {
 			expect(firstChannelHitbox).toBeTruthy();
 			fireEvent.click(firstChannelHitbox!);
 
-			expect(getByTestId('channel-relation-config-panel')).toBeTruthy();
-			expect(getByText('Plan → Code · 1 editable link')).toBeTruthy();
+			const relationPanel = getByTestId('channel-relation-config-panel');
+			expect(relationPanel).toBeTruthy();
+			expect(relationPanel.textContent).toContain('Plan → Code · 1 editable link');
 			expect(getByTestId('convert-channel-relation-button')).toBeTruthy();
 			expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(1);
 
 			fireEvent.click(getByTestId('convert-channel-relation-button'));
 
-			await waitFor(() => expect(queryByText('Plan ↔ Code · 2 editable links')).toBeTruthy());
+			await waitFor(() =>
+				expect(getByTestId('channel-relation-config-panel').textContent).toContain(
+					'Plan ↔ Code · 2 editable links'
+				)
+			);
 			expect(getByText('Reverse links')).toBeTruthy();
 			expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(2);
 		});
@@ -1053,12 +1058,14 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getAllByTestId('delete-channel-button')[1]);
 
 			await waitFor(() => {
-				expect(queryByText('Plan → Code · 1 editable link')).toBeTruthy();
+				expect(getByTestId('channel-relation-config-panel').textContent).toContain(
+					'Plan → Code · 1 editable link'
+				);
 				expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(1);
 			});
 		});
 
-		it('node side panel lists channel links that open the channel relation side panel and back returns to node panel', () => {
+		it('node side panel lists channel links that open the nested relation view and back returns to node details', () => {
 			const { getByTestId, getAllByTestId, getByText, queryAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
@@ -1077,8 +1084,8 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(linkButtons[0]);
 
 			expect(getByTestId('channel-relation-config-panel')).toBeTruthy();
-			expect(getByTestId('channel-relation-back-button')).toBeTruthy();
-			fireEvent.click(getByTestId('channel-relation-back-button'));
+			expect(getByTestId('node-panel-back-button')).toBeTruthy();
+			fireEvent.click(getByTestId('node-panel-back-button'));
 			expect(getByTestId('node-config-panel')).toBeTruthy();
 		});
 	});

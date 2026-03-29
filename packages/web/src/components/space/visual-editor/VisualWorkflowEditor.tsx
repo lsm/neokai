@@ -1223,7 +1223,25 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						onSetAsStart={handleSetAsStart}
 						channelLinks={nodeChannelLinksByNodeId.get(selectedNode.step.localId) ?? []}
 						onOpenChannelLink={handleChannelSelectFromNodePanel}
-						onClose={() => setSelectedNodeId(null)}
+						selectedChannelRelation={
+							selectedChannelInfo
+								? {
+										title: 'Channel Links',
+										description: `${selectedChannelInfo.relationLabel} · ${selectedChannelInfo.visibleLinkCount} editable link${selectedChannelInfo.visibleLinkCount === 1 ? '' : 's'}`,
+										forwardLinks: selectedChannelInfo.forwardLinks,
+										reverseLinks: selectedChannelInfo.reverseLinks,
+										canConvertToBidirectional: selectedChannelInfo.canConvertToBidirectional,
+								  }
+								: undefined
+						}
+						onUpdateChannelLink={handleUpdateChannelFromEdgePanel}
+						onDeleteChannelLink={handleDeleteChannelFromEdgePanel}
+						onConvertChannelRelationToBidirectional={handleConvertChannelRelationToBidirectional}
+						onCloseChannelLink={() => setSelectedChannelId(null)}
+						onClose={() => {
+							setSelectedChannelId(null);
+							setSelectedNodeId(null);
+						}}
 						onDelete={handleDeleteNode}
 					/>
 				)}
@@ -1246,7 +1264,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				)}
 
 				{/* ChannelRelationConfigPanel — edit underlying channel links for a semantic relation */}
-				{selectedChannelInfo && (
+				{selectedChannelInfo && !selectedNode && (
 					<ChannelRelationConfigPanel
 						title="Channel Links"
 						description={`${selectedChannelInfo.relationLabel} · ${selectedChannelInfo.visibleLinkCount} editable link${selectedChannelInfo.visibleLinkCount === 1 ? '' : 's'}`}
