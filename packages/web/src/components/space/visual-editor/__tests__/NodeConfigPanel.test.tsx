@@ -2,15 +2,13 @@
  * Unit tests for NodeConfigPanel
  *
  * Tests:
- * - Renders all fields (step name, agent dropdown, entry/exit gates, instructions)
+ * - Renders all primary fields (step name, agent dropdown, model override, instructions)
  * - Header shows step name and close button
  * - Step name in header updates when step changes
  * - "Set as Start" button visible for non-start nodes, hidden for start node
  * - "Set as Start" calls onSetAsStart with the step localId
  * - onClose fires when close button clicked
  * - onUpdate fires with updated step when fields change
- * - onUpdateEntryCondition fires when entry gate changes
- * - onUpdateExitCondition fires when exit gate changes
  * - Delete button is disabled for start node with tooltip hint
  * - Delete button shows confirmation dialog when clicked
  * - Confirming delete calls onDelete; cancelling dismisses dialog
@@ -24,7 +22,6 @@ import type { SpaceAgent } from '@neokai/shared';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
 import type { NodeDraft } from '../../WorkflowNodeCard';
-import type { ConditionDraft } from '../GateConfig';
 
 afterEach(() => cleanup());
 
@@ -55,12 +52,8 @@ function makeProps(overrides: Partial<NodeConfigPanelProps> = {}): NodeConfigPan
 	return {
 		step: makeStep(),
 		agents: defaultAgents,
-		entryCondition: { type: 'always' } as ConditionDraft,
-		exitCondition: { type: 'always' } as ConditionDraft,
 		isStartNode: false,
 		onUpdate: vi.fn(),
-		onUpdateEntryCondition: vi.fn(),
-		onUpdateExitCondition: vi.fn(),
 		onSetAsStart: vi.fn(),
 		onClose: vi.fn(),
 		onDelete: vi.fn(),
@@ -121,14 +114,10 @@ describe('NodeConfigPanel', () => {
 			expect(textarea.value).toBe('Do stuff.');
 		});
 
-		it('renders entry gate selector', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(getByText('Entry Gate')).toBeTruthy();
-		});
-
-		it('renders exit gate selector', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(getByText('Exit Gate')).toBeTruthy();
+		it('renders the single-agent model override input', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			const input = getByTestId('single-agent-model-input') as HTMLInputElement;
+			expect(input.value).toBe('');
 		});
 
 		it('renders close button', () => {
@@ -210,44 +199,37 @@ describe('NodeConfigPanel', () => {
 			);
 		});
 
-		it('calls onUpdateEntryCondition when entry gate type changes', () => {
-			const onUpdateEntryCondition = vi.fn();
-			const { getByTestId } = render(
-				<NodeConfigPanel
-					{...makeProps({ onUpdateEntryCondition, entryCondition: { type: 'always' } })}
-				/>
+		it('calls onUpdate with new single-agent model when model input changes', () => {
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			fireEvent.input(getByTestId('single-agent-model-input'), {
+				target: { value: 'claude-opus-4-6' },
+			});
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({ model: 'claude-opus-4-6' })
 			);
-			fireEvent.change(getByTestId('entry-gate-select'), { target: { value: 'human' } });
-			expect(onUpdateEntryCondition).toHaveBeenCalledWith({ type: 'human', expression: undefined });
 		});
 
-		it('calls onUpdateExitCondition when exit gate type changes', () => {
-			const onUpdateExitCondition = vi.fn();
+		it('clearing single-agent model sets model to undefined', () => {
+			const onUpdate = vi.fn();
 			const { getByTestId } = render(
-				<NodeConfigPanel
-					{...makeProps({ onUpdateExitCondition, exitCondition: { type: 'always' } })}
-				/>
+				<NodeConfigPanel {...makeProps({ onUpdate, step: makeStep({ model: 'gpt-5.4' }) })} />
 			);
-			fireEvent.change(getByTestId('exit-gate-select'), { target: { value: 'condition' } });
-			expect(onUpdateExitCondition).toHaveBeenCalledWith({ type: 'condition', expression: '' });
+			fireEvent.input(getByTestId('single-agent-model-input'), {
+				target: { value: '' },
+			});
+			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
 		});
 	});
 
-	describe('gate config — condition type', () => {
-		it('shows shell expression input when entry gate type is "condition"', () => {
-			const { getByPlaceholderText } = render(
-				<NodeConfigPanel
-					{...makeProps({ entryCondition: { type: 'condition', expression: '' } })}
-				/>
-			);
-			expect(getByPlaceholderText('e.g. bun test && git diff --quiet')).toBeTruthy();
-		});
-
-		it('shows human approval hint for "human" type', () => {
-			const { getByText } = render(
-				<NodeConfigPanel {...makeProps({ entryCondition: { type: 'human' } })} />
-			);
-			expect(getByText('Transition requires explicit human approval.')).toBeTruthy();
+	describe('instructions copy', () => {
+		it('explains that instructions are appended guidance, not the base system prompt', () => {
+			const { getByText } = render(<NodeConfigPanel {...makeProps()} />);
+			expect(
+				getByText(
+					'Shared guidance appended for every agent in this node. This is not the base system prompt.'
+				)
+			).toBeTruthy();
 		});
 	});
 
@@ -333,26 +315,6 @@ describe('NodeConfigPanel', () => {
 			// Confirmation dialog should be gone
 			expect(queryByTestId('delete-confirm-button')).toBeNull();
 			expect(getByTestId('delete-step-button')).toBeTruthy();
-		});
-	});
-
-	describe('terminal messages for boundary nodes', () => {
-		it('shows "Workflow starts here" for first step entry gate', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps({ isFirstStep: true })} />);
-			expect(getByText('Workflow starts here')).toBeTruthy();
-		});
-
-		it('shows "Workflow ends here" for last step exit gate', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps({ isLastStep: true })} />);
-			expect(getByText('Workflow ends here')).toBeTruthy();
-		});
-
-		it('does not show terminal messages for mid-workflow nodes', () => {
-			const { container } = render(
-				<NodeConfigPanel {...makeProps({ isFirstStep: false, isLastStep: false })} />
-			);
-			expect(container.textContent).not.toContain('Workflow starts here');
-			expect(container.textContent).not.toContain('Workflow ends here');
 		});
 	});
 

@@ -213,6 +213,7 @@ export function buildWorkflowCreateParams(
 				warnings.push(`node "${exportedNode.name}" references unknown agent "${agentRef}"`);
 			}
 			node.agentId = agentId ?? '';
+			if (exportedNode.model !== undefined) node.model = exportedNode.model;
 		}
 
 		if (exportedNode.instructions !== undefined) node.instructions = exportedNode.instructions;

@@ -101,6 +101,12 @@ describe('resolveNodeAgents', () => {
 		expect(result[0].instructions).toBeUndefined();
 	});
 
+	test('single-agent shorthand preserves node-level model override', () => {
+		const node = makeNode({ agentId: 'agent-coder-id', model: 'gpt-5.4' });
+		const result = resolveNodeAgents(node);
+		expect(result[0].model).toBe('gpt-5.4');
+	});
+
 	test('same agentId can appear multiple times with different roles', () => {
 		const node = makeNode({
 			agents: [

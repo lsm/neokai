@@ -35,7 +35,6 @@ import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
-import type { ConditionDraft } from './GateConfig';
 import type { ViewportState, Point, VisualTransition } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
 import {
@@ -78,6 +77,7 @@ function buildTemplateCanvasSignature(
 			id: node.step.id ?? null,
 			name: node.step.name,
 			agentId: node.step.agentId ?? null,
+			model: node.step.model ?? null,
 			instructions: node.step.instructions ?? '',
 			agents:
 				node.step.agents?.map((agent) => ({
@@ -330,26 +330,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		},
 		[startNodeId]
 	);
-
-	/** Find the first incoming edge condition for a node (entry gate). */
-	function getEntryCondition(node: VisualNode): ConditionDraft | null {
-		const key = node.step.id ?? node.step.localId;
-		const incoming = edges.find((e) => e.toStepKey === key);
-		if (!incoming) return null;
-		const cond = incoming.condition;
-		if (!cond || cond.type === 'always') return { type: 'always' };
-		return { type: cond.type, expression: cond.expression };
-	}
-
-	/** Find the first outgoing edge condition for a node (exit gate). */
-	function getExitCondition(node: VisualNode): ConditionDraft | null {
-		const key = node.step.id ?? node.step.localId;
-		const outgoing = edges.find((e) => e.fromStepKey === key);
-		if (!outgoing) return null;
-		const cond = outgoing.condition;
-		if (!cond || cond.type === 'always') return { type: 'always' };
-		return { type: cond.type, expression: cond.expression };
-	}
 
 	// ------------------------------------------------------------------
 	// Derived: WorkflowNodeData[] for WorkflowCanvas
@@ -633,38 +613,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	 */
 	const handleSetAsStart = useCallback((localId: string) => {
 		setStartStepId(localId);
-	}, []);
-
-	const handleUpdateEntryCondition = useCallback((node: VisualNode, cond: ConditionDraft) => {
-		const key = node.step.id ?? node.step.localId;
-		let updated = false;
-		setEdges((prev) =>
-			prev.map((e) => {
-				if (e.toStepKey !== key || updated) return e;
-				updated = true;
-				const newCond =
-					cond.type === 'always'
-						? undefined
-						: { ...e.condition, type: cond.type, expression: cond.expression };
-				return { ...e, condition: newCond };
-			})
-		);
-	}, []);
-
-	const handleUpdateExitCondition = useCallback((node: VisualNode, cond: ConditionDraft) => {
-		const key = node.step.id ?? node.step.localId;
-		let updated = false;
-		setEdges((prev) =>
-			prev.map((e) => {
-				if (e.fromStepKey !== key || updated) return e;
-				updated = true;
-				const newCond =
-					cond.type === 'always'
-						? undefined
-						: { ...e.condition, type: cond.type, expression: cond.expression };
-				return { ...e, condition: newCond };
-			})
-		);
 	}, []);
 
 	// ------------------------------------------------------------------
@@ -1257,24 +1205,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					<NodeConfigPanel
 						step={selectedNode.step}
 						agents={agents}
-						entryCondition={getEntryCondition(selectedNode)}
-						exitCondition={getExitCondition(selectedNode)}
 						isStartNode={nodeIsStart(selectedNode)}
-						isFirstStep={
-							!edges.some(
-								(e) => e.toStepKey === (selectedNode.step.id ?? selectedNode.step.localId)
-							)
-						}
-						isLastStep={
-							!edges.some(
-								(e) => e.fromStepKey === (selectedNode.step.id ?? selectedNode.step.localId)
-							)
-						}
 						onUpdate={handleUpdateNode}
-							onUpdateEntryCondition={(c) => handleUpdateEntryCondition(selectedNode, c)}
-							onUpdateExitCondition={(c) => handleUpdateExitCondition(selectedNode, c)}
-							onSetAsStart={handleSetAsStart}
-							channelLinks={nodeChannelLinksByNodeId.get(selectedNode.step.localId) ?? []}
+						onSetAsStart={handleSetAsStart}
+						channelLinks={nodeChannelLinksByNodeId.get(selectedNode.step.localId) ?? []}
 							onOpenChannelLink={handleChannelSelect}
 							onClose={() => setSelectedNodeId(null)}
 							onDelete={handleDeleteNode}

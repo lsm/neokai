@@ -251,6 +251,29 @@ describe('visualStateToCreateParams', () => {
 		});
 	});
 
+	it('persists single-agent model overrides into create params', () => {
+		const params = visualStateToCreateParams(
+			makeState({
+				nodes: [
+					{
+						step: {
+							localId: 'local-1',
+							id: 's1',
+							name: 'Step 1',
+							agentId: 'a1',
+							model: 'gpt-5.4',
+							instructions: '',
+						},
+						position: { x: 50, y: 50 },
+					},
+				],
+			}),
+			'space-1',
+			'My Workflow'
+		);
+		expect(params.nodes![0].model).toBe('gpt-5.4');
+	});
+
 	it('omits empty instructions', () => {
 		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
 		expect(params.nodes![0].instructions).toBeUndefined();

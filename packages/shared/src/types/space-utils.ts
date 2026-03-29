@@ -93,7 +93,14 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 	}
 
 	if (node.agentId) {
-		return [{ agentId: node.agentId, name: node.agentId, instructions: node.instructions }];
+		return [
+			{
+				agentId: node.agentId,
+				name: node.agentId,
+				model: node.model,
+				instructions: node.instructions,
+			},
+		];
 	}
 
 	throw new Error(
