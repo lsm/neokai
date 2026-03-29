@@ -74,6 +74,34 @@ const mockWorkflowRuns = signal<unknown[]>([]);
 const mockCreateWorkflow = vi.fn();
 const mockUpdateWorkflow = vi.fn();
 
+vi.mock('../../../../lib/connection-manager', () => ({
+	connectionManager: {
+		getHubIfConnected: () => ({
+			request: vi.fn(async (method: string) => {
+				if (method === 'models.list') {
+					return {
+						models: [
+							{
+								id: 'claude-sonnet-4-6',
+								display_name: 'Claude Sonnet 4.6',
+								description: '',
+								provider: 'anthropic',
+							},
+							{
+								id: 'gpt-5.4',
+								display_name: 'GPT-5.4',
+								description: '',
+								provider: 'openai',
+							},
+						],
+					};
+				}
+				return {};
+			}),
+		}),
+	},
+}));
+
 vi.mock('../../../../lib/space-store', () => ({
 	get spaceStore() {
 		return {
@@ -480,16 +508,16 @@ describe('VisualWorkflowEditor', () => {
 			await waitFor(() => expect(mockCreateWorkflow).not.toHaveBeenCalled());
 		});
 
-		it('shows error when there are no steps', async () => {
+		it('shows error when there are no nodes', async () => {
 			const { getByTestId, getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
 			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'WF' } });
 			fireEvent.click(getByTestId('save-button'));
 			await waitFor(() =>
-				expect(getByText('A workflow must have at least one step.')).toBeTruthy()
+				expect(getByText('A workflow must have at least one node.')).toBeTruthy()
 			);
 		});
 
-		it('shows error when a step has no agent', async () => {
+		it('shows error when a node has no agent', async () => {
 			// Create a step, leave agentId blank
 			const { getByTestId, getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
 			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'WF' } });
@@ -498,7 +526,7 @@ describe('VisualWorkflowEditor', () => {
 			await act(async () => {
 				fireEvent.click(getByTestId('save-button'));
 			});
-			await waitFor(() => expect(getByText('Step 1 requires an agent.')).toBeTruthy());
+			await waitFor(() => expect(getByText('Node 1 requires an agent.')).toBeTruthy());
 		});
 	});
 
@@ -1030,7 +1058,7 @@ describe('VisualWorkflowEditor', () => {
 			});
 		});
 
-		it('node side panel lists channel links that open the channel relation side panel', () => {
+		it('node side panel lists channel links that open the channel relation side panel and back returns to node panel', () => {
 			const { getByTestId, getAllByTestId, getByText, queryAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
@@ -1049,6 +1077,9 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(linkButtons[0]);
 
 			expect(getByTestId('channel-relation-config-panel')).toBeTruthy();
+			expect(getByTestId('channel-relation-back-button')).toBeTruthy();
+			fireEvent.click(getByTestId('channel-relation-back-button'));
+			expect(getByTestId('node-config-panel')).toBeTruthy();
 		});
 	});
 

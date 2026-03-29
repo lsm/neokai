@@ -251,7 +251,7 @@ describe('visualStateToCreateParams', () => {
 		});
 	});
 
-	it('persists single-agent model overrides into create params', () => {
+	it('persists single-agent model and systemPrompt overrides into create params', () => {
 		const params = visualStateToCreateParams(
 			makeState({
 				nodes: [
@@ -262,6 +262,7 @@ describe('visualStateToCreateParams', () => {
 							name: 'Step 1',
 							agentId: 'a1',
 							model: 'gpt-5.4',
+							systemPrompt: 'Be precise.',
 							instructions: '',
 						},
 						position: { x: 50, y: 50 },
@@ -272,6 +273,7 @@ describe('visualStateToCreateParams', () => {
 			'My Workflow'
 		);
 		expect(params.nodes![0].model).toBe('gpt-5.4');
+		expect(params.nodes![0].systemPrompt).toBe('Be precise.');
 	});
 
 	it('omits empty instructions', () => {

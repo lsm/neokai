@@ -214,6 +214,7 @@ export function buildWorkflowCreateParams(
 			}
 			node.agentId = agentId ?? '';
 			if (exportedNode.model !== undefined) node.model = exportedNode.model;
+			if (exportedNode.systemPrompt !== undefined) node.systemPrompt = exportedNode.systemPrompt;
 		}
 
 		if (exportedNode.instructions !== undefined) node.instructions = exportedNode.instructions;

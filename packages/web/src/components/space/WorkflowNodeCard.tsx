@@ -34,6 +34,8 @@ export interface NodeDraft {
 	agentId: string;
 	/** Single-agent model override. Ignored when agents[] is present. */
 	model?: string;
+	/** Single-agent system prompt override. Ignored when agents[] is present. */
+	systemPrompt?: string;
 	/** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
 	agents?: WorkflowNodeAgent[];
 	/** Directed messaging topology between agents. */
