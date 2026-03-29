@@ -92,10 +92,6 @@ vi.mock('../../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-vi.mock('../ReactFlowWorkflowCanvas', () => ({
-	ReactFlowWorkflowCanvas: () => <div data-testid="reactflow-workflow-canvas-mock" />,
-}));
-
 import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 import type { VisualWorkflowEditorProps } from '../VisualWorkflowEditor';
 import { TEMPLATES } from '../../WorkflowEditor';
@@ -939,7 +935,6 @@ describe('VisualWorkflowEditor', () => {
 			expect(getAllByTestId(/^workflow-node-/).length).toBe(7);
 			expect(container.querySelectorAll('[data-channel-edge="true"]').length).toBe(7);
 			expect(getByTestId('native-workflow-canvas-panel')).toBeTruthy();
-			expect(getByTestId('reactflow-workflow-canvas-panel')).toBeTruthy();
 		});
 
 		it('clicking a semantic channel edge opens the channel relation side panel', () => {

@@ -52,7 +52,6 @@ import type { NodeChannelLink } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { buildVisualNodePositions } from './nodeMetrics';
-import { ReactFlowWorkflowCanvas } from './ReactFlowWorkflowCanvas';
 import {
 	buildNodeAnchorUsage,
 	buildSemanticWorkflowEdges,
@@ -1110,10 +1109,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					</div>
 				)}
 
-				<div class="grid h-full min-h-0 grid-cols-1 gap-3 p-3 pt-16 xl:grid-cols-2">
+				<div class="h-full min-h-0 p-3 pt-16">
 					<div
 						ref={canvasContainerRef}
-						class="relative min-h-0 overflow-hidden rounded-xl border border-dark-700 bg-dark-950"
+						class="relative h-full min-h-0 overflow-hidden rounded-xl border border-dark-700 bg-dark-950"
 						data-testid="native-workflow-canvas-panel"
 					>
 						<div class="pointer-events-none absolute left-3 top-3 z-10 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
@@ -1135,24 +1134,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							onChannelSelect={handleChannelSelect}
 							selectedChannelId={selectedChannelId}
 						/>
-					</div>
-
-					<div
-						class="relative min-h-0 overflow-hidden rounded-xl border border-dark-700 bg-dark-950"
-						data-testid="reactflow-workflow-canvas-panel"
-					>
-						<div class="pointer-events-none absolute left-3 top-3 z-10 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-							React Flow
-						</div>
-						<div class="h-full w-full pt-8">
-							<ReactFlowWorkflowCanvas
-								nodes={nodeData}
-								semanticEdges={routedSemanticEdges}
-								selectedNodeId={selectedNodeId}
-								onNodeSelect={handleNodeSelect}
-								onNodePositionChange={handleNodePositionChange}
-							/>
-						</div>
 					</div>
 				</div>
 
