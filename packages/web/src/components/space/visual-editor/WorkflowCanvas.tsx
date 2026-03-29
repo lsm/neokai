@@ -382,7 +382,8 @@ export function WorkflowCanvas({
 		onNodeSelect?.(null);
 		setSelectedEdgeId(null);
 		onEdgeSelect?.(null);
-	}, [onNodeSelect, onEdgeSelect]);
+		onChannelSelect?.(null);
+	}, [onNodeSelect, onEdgeSelect, onChannelSelect]);
 
 	// ---- Port event handlers ----
 	const handlePortMouseDown = useCallback(
