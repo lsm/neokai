@@ -860,6 +860,8 @@ export interface WorkflowNode {
 	agentId?: string;
 	/** Override the agent's default model for single-agent shorthand nodes. */
 	model?: string;
+	/** Override the agent's default system prompt for single-agent shorthand nodes. */
+	systemPrompt?: string;
 	/**
 	 * Multiple agents for parallel execution within this node.
 	 * When provided (non-empty), takes precedence over `agentId`.
@@ -911,6 +913,8 @@ export interface WorkflowNodeInput {
 	agentId?: string;
 	/** Override the agent's default model for single-agent shorthand nodes. */
 	model?: string;
+	/** Override the agent's default system prompt for single-agent shorthand nodes. */
+	systemPrompt?: string;
 	/**
 	 * Multiple agents for parallel execution within this node.
 	 * When provided (non-empty), takes precedence over `agentId`.
@@ -1147,6 +1151,8 @@ export interface ExportedWorkflowNode {
 	agentRef?: string;
 	/** Override the single-agent node's default model. */
 	model?: string;
+	/** Override the single-agent node's default system prompt. */
+	systemPrompt?: string;
 	/**
 	 * Multiple agents for parallel execution.
 	 * Used for multi-agent nodes. Mutually exclusive with `agentRef`.

@@ -125,6 +125,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			name: s.name,
 			agentId: s.agentId ?? '',
 			model: s.model ?? undefined,
+			systemPrompt: s.systemPrompt ?? undefined,
 			agents: s.agents,
 			instructions: s.instructions ?? '',
 		};
@@ -175,6 +176,8 @@ interface BuiltWorkflowFields {
 		id: string;
 		name: string;
 		agentId?: string;
+		model?: string;
+		systemPrompt?: string;
 		agents?: WorkflowNodeAgent[];
 		instructions?: string;
 	}>;
@@ -256,6 +259,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 			// Otherwise use the single agentId (may be empty string, serialized as undefined).
 			agentId: hasMultiAgent ? undefined : node.step.agentId || undefined,
 			model: hasMultiAgent ? undefined : node.step.model || undefined,
+			systemPrompt: hasMultiAgent ? undefined : node.step.systemPrompt || undefined,
 			agents: hasMultiAgent ? node.step.agents : undefined,
 			instructions: node.step.instructions || undefined,
 		};

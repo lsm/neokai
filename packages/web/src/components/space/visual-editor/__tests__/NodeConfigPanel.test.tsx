@@ -16,9 +16,38 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, act } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
+
+vi.mock('../../../../lib/connection-manager', () => ({
+	connectionManager: {
+		getHubIfConnected: () => ({
+			request: vi.fn(async (method: string) => {
+				if (method === 'models.list') {
+					return {
+						models: [
+							{
+								id: 'claude-sonnet-4-6',
+								display_name: 'Claude Sonnet 4.6',
+								description: '',
+								provider: 'anthropic',
+							},
+							{
+								id: 'gpt-5.4',
+								display_name: 'GPT-5.4',
+								description: '',
+								provider: 'openai',
+							},
+						],
+					};
+				}
+				return {};
+			}),
+		}),
+	},
+}));
+
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
 import type { NodeDraft } from '../../WorkflowNodeCard';
@@ -79,11 +108,11 @@ describe('NodeConfigPanel', () => {
 			expect(getByText('Parse Data')).toBeTruthy();
 		});
 
-		it('shows "Unnamed Step" when name is empty', () => {
+		it('shows "Unnamed Node" when name is empty', () => {
 			const { getByText } = render(
 				<NodeConfigPanel {...makeProps({ step: makeStep({ name: '' }) })} />
 			);
-			expect(getByText('Unnamed Step')).toBeTruthy();
+			expect(getByText('Unnamed Node')).toBeTruthy();
 		});
 
 		it('renders the step name input with current value', () => {
@@ -114,9 +143,10 @@ describe('NodeConfigPanel', () => {
 			expect(textarea.value).toBe('Do stuff.');
 		});
 
-		it('renders the single-agent model override input', () => {
+		it('renders the single-agent model selector', async () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			const input = getByTestId('single-agent-model-input') as HTMLInputElement;
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
 			expect(input.value).toBe('');
 		});
 
@@ -125,7 +155,7 @@ describe('NodeConfigPanel', () => {
 			expect(getByTestId('close-button')).toBeTruthy();
 		});
 
-		it('renders delete step button', () => {
+		it('renders delete node button', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
 			expect(getByTestId('delete-step-button')).toBeTruthy();
 		});
@@ -199,26 +229,40 @@ describe('NodeConfigPanel', () => {
 			);
 		});
 
-		it('calls onUpdate with new single-agent model when model input changes', () => {
+		it('calls onUpdate with new single-agent model when model selector changes', async () => {
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
-			fireEvent.input(getByTestId('single-agent-model-input'), {
-				target: { value: 'claude-opus-4-6' },
+			await waitFor(() =>
+				expect((getByTestId('single-agent-model-input') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+			);
+			fireEvent.change(getByTestId('single-agent-model-input'), {
+				target: { value: 'gpt-5.4' },
 			});
 			expect(onUpdate).toHaveBeenCalledWith(
-				expect.objectContaining({ model: 'claude-opus-4-6' })
+				expect.objectContaining({ model: 'gpt-5.4' })
 			);
 		});
 
-		it('clearing single-agent model sets model to undefined', () => {
+		it('clearing single-agent model sets model to undefined', async () => {
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(
 				<NodeConfigPanel {...makeProps({ onUpdate, step: makeStep({ model: 'gpt-5.4' }) })} />
 			);
-			fireEvent.input(getByTestId('single-agent-model-input'), {
+			await waitFor(() =>
+				expect((getByTestId('single-agent-model-input') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+			);
+			fireEvent.change(getByTestId('single-agent-model-input'), {
 				target: { value: '' },
 			});
 			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
+		});
+
+		it('opens the dedicated single-agent system prompt editor', () => {
+			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			expect(queryByTestId('single-agent-system-prompt-input')).toBeNull();
+			fireEvent.click(getByTestId('single-agent-system-prompt-button'));
+			expect(getByTestId('single-agent-system-prompt-input')).toBeTruthy();
+			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 		});
 	});
 
@@ -233,7 +277,7 @@ describe('NodeConfigPanel', () => {
 		});
 	});
 
-	describe('delete step', () => {
+	describe('delete node', () => {
 		it('delete button is disabled for start node', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ isStartNode: true })} />);
 			const btn = getByTestId('delete-step-button') as HTMLButtonElement;
@@ -384,6 +428,15 @@ describe('NodeConfigPanel', () => {
 			expect(roleInput.value).toBe('planner');
 		});
 
+		it('renders an agent selector for each multi-agent slot', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect((getByTestId('agent-slot-select') as HTMLSelectElement).value).toBe('agent-1');
+		});
+
 		it('remove agent button calls onUpdate without that agent', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
@@ -480,7 +533,7 @@ describe('NodeConfigPanel', () => {
 	// Per-slot override fields: role, model, systemPrompt
 	// ============================================================================
 
-	describe('per-slot override fields', () => {
+	describe('per-slot fields', () => {
 		it('renders a role input for each agent slot in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',
@@ -535,82 +588,75 @@ describe('NodeConfigPanel', () => {
 			expect(queryByTestId('override-badge')).toBeNull();
 		});
 
-		it('model and systemPrompt fields are hidden by default (before expanding)', () => {
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner' }],
-			});
-			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			expect(queryByTestId('agent-model-input')).toBeNull();
-			expect(queryByTestId('agent-system-prompt-input')).toBeNull();
-		});
-
-		it('clicking toggle-overrides-button reveals model and systemPrompt fields', () => {
+		it('shows model selector and system prompt button without requiring an extra expand step', async () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			expect(getByTestId('slot-overrides')).toBeTruthy();
-			expect(getByTestId('agent-model-input')).toBeTruthy();
-			expect(getByTestId('agent-system-prompt-input')).toBeTruthy();
+			await waitFor(() =>
+				expect((getByTestId('agent-model-select') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+			);
+			expect(getByTestId('agent-model-select')).toBeTruthy();
+			expect(getByTestId('agent-system-prompt-button')).toBeTruthy();
 		});
 
-		it('clicking toggle-overrides-button twice collapses the override section', () => {
+		it('editing agent selection calls onUpdate with updated agentId', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
-			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			expect(getByTestId('slot-overrides')).toBeTruthy();
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			expect(queryByTestId('slot-overrides')).toBeNull();
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.change(getByTestId('agent-slot-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].agentId).toBe('agent-2');
 		});
 
-		it('editing model input calls onUpdate with model field set', () => {
+		it('editing model selector calls onUpdate with model field set', async () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			// Expand the overrides section first
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			fireEvent.input(getByTestId('agent-model-input'), {
-				target: { value: 'claude-opus-4-6' },
-			});
+			await waitFor(() =>
+				expect((getByTestId('agent-model-select') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+			);
+			fireEvent.change(getByTestId('agent-model-select'), { target: { value: 'gpt-5.4' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			expect(updatedStep.agents[0].model).toBe('claude-opus-4-6');
+			expect(updatedStep.agents[0].model).toBe('gpt-5.4');
 		});
 
-		it('clearing model input sets model to undefined', () => {
+		it('clearing model selector sets model to undefined', async () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner', model: 'claude-opus-4-6' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			fireEvent.input(getByTestId('agent-model-input'), { target: { value: '' } });
+			await waitFor(() =>
+				expect((getByTestId('agent-model-select') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+			);
+			fireEvent.change(getByTestId('agent-model-select'), { target: { value: '' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
 			expect(updatedStep.agents[0].model).toBeUndefined();
 		});
 
-		it('editing systemPrompt textarea calls onUpdate with systemPrompt set', () => {
+		it('opens the dedicated per-agent system prompt editor and saves content', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.click(getByTestId('toggle-overrides-button'));
+			fireEvent.click(getByTestId('agent-system-prompt-button'));
 			fireEvent.input(getByTestId('agent-system-prompt-input'), {
 				target: { value: 'Be very strict.' },
 			});
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
 			expect(updatedStep.agents[0].systemPrompt).toBe('Be very strict.');
+			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 		});
 
 		it('adding same agent twice with different roles: both slots shown', () => {
@@ -649,7 +695,7 @@ describe('NodeConfigPanel', () => {
 			expect(queryAllByTestId('override-badge')).toHaveLength(1);
 		});
 
-		it('override section stays expanded after the slot role is renamed', async () => {
+		it('agent system prompt view stays addressable after the slot role is renamed', async () => {
 			// Use a controlled wrapper so onUpdate actually updates the step prop,
 			// matching how the real parent (VisualWorkflowEditor) behaves.
 			function Wrapper() {
@@ -660,17 +706,12 @@ describe('NodeConfigPanel', () => {
 			}
 			const { getByTestId, queryByTestId } = render(<Wrapper />);
 
-			// Expand the overrides section
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			expect(getByTestId('slot-overrides')).toBeTruthy();
-
-			// Rename the role — expandedSlots must migrate the key from 'planner' to 'lead-planner'
 			await act(async () => {
 				fireEvent.input(getByTestId('agent-role-input'), { target: { value: 'lead-planner' } });
 			});
 
-			// Override section should still be visible after the rename (key migrated in expandedSlots)
-			expect(queryByTestId('slot-overrides')).toBeTruthy();
+			fireEvent.click(getByTestId('agent-system-prompt-button'));
+			expect(queryByTestId('agent-system-prompt-input')).toBeTruthy();
 		});
 	});
 });

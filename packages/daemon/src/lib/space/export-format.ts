@@ -85,6 +85,7 @@ const exportedWorkflowNodeSchema = z
 	.object({
 		agentRef: z.string().min(1).optional(),
 		model: z.string().optional(),
+		systemPrompt: z.string().optional(),
 		agents: z.array(exportedWorkflowNodeAgentSchema).optional(),
 		name: z.string().min(1),
 		instructions: z.string().optional(),
@@ -250,6 +251,7 @@ export function exportWorkflow(
 				exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
 			}
 			if (node.model !== undefined) exported.model = node.model;
+			if (node.systemPrompt !== undefined) exported.systemPrompt = node.systemPrompt;
 		}
 
 		if (node.instructions !== undefined) exported.instructions = node.instructions;

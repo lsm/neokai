@@ -98,6 +98,7 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 				agentId: node.agentId,
 				name: node.agentId,
 				model: node.model,
+				systemPrompt: node.systemPrompt,
 				instructions: node.instructions,
 			},
 		];

@@ -16,7 +16,9 @@ export interface ChannelRelationConfigPanelProps {
 	onConvertToBidirectional?: () => void;
 	onChange: (index: number, channel: WorkflowChannel) => void;
 	onDelete: (index: number) => void;
+	onBack?: () => void;
 	onClose: () => void;
+	width?: number;
 }
 
 export function ChannelRelationConfigPanel({
@@ -28,7 +30,9 @@ export function ChannelRelationConfigPanel({
 	onConvertToBidirectional,
 	onChange,
 	onDelete,
+	onBack,
 	onClose,
+	width = 360,
 }: ChannelRelationConfigPanelProps) {
 	return (
 		<div
@@ -38,7 +42,7 @@ export function ChannelRelationConfigPanel({
 				top: 0,
 				right: 0,
 				bottom: 0,
-				width: 360,
+				width,
 				display: 'flex',
 				flexDirection: 'column',
 				zIndex: 20,
@@ -46,9 +50,29 @@ export function ChannelRelationConfigPanel({
 			class="bg-dark-900 border-l border-dark-700 shadow-xl animate-slideInRight"
 		>
 			<div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0">
-				<div class="min-w-0">
+				<div class="min-w-0 flex items-start gap-2">
+					{onBack && (
+						<button
+							type="button"
+							data-testid="channel-relation-back-button"
+							onClick={onBack}
+							class="mt-0.5 p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+							title="Back"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M15 19l-7-7 7-7"
+								/>
+							</svg>
+						</button>
+					)}
+					<div class="min-w-0">
 					<h3 class="text-sm font-semibold text-gray-100 truncate">{title}</h3>
 					<p class="mt-1 text-xs text-gray-500">{description}</p>
+					</div>
 				</div>
 				<button
 					data-testid="channel-relation-close-button"

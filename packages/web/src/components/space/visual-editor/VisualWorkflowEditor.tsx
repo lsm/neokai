@@ -78,11 +78,15 @@ function buildTemplateCanvasSignature(
 			name: node.step.name,
 			agentId: node.step.agentId ?? null,
 			model: node.step.model ?? null,
+			systemPrompt: node.step.systemPrompt ?? null,
 			instructions: node.step.instructions ?? '',
 			agents:
 				node.step.agents?.map((agent) => ({
 					agentId: agent.agentId ?? null,
 					name: agent.name ?? '',
+					model: agent.model ?? null,
+					systemPrompt: agent.systemPrompt ?? null,
+					instructions: agent.instructions ?? '',
 				})) ?? [],
 			nodeChannels:
 				node.step.channels?.map((channel) => ({
@@ -635,6 +639,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		}
 	}, []);
 
+	const handleChannelSelectFromNodePanel = useCallback((channelId: string | null) => {
+		setSelectedChannelId(channelId);
+		if (channelId) {
+			setSelectedEdgeId(null);
+		}
+	}, []);
+
 	const resolveSourceChannelNames = useCallback((node: VisualNode): string[] => {
 		if (node.step.agents && node.step.agents.length > 0) {
 			return node.step.agents.map((a) => a.name).filter((name) => name.trim().length > 0);
@@ -854,6 +865,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			name: n.step.name,
 			agentId: n.step.agentId,
 			agents: n.step.agents?.map((slot) => ({ ...slot })),
+			model: n.step.model,
+			systemPrompt: n.step.systemPrompt,
 			instructions: n.step.instructions || undefined,
 		}));
 		const layoutTransitions: VisualTransition[] = newEdges.map((e, i) => ({
@@ -943,16 +956,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		);
 
 		if (regularNodes.length === 0) {
-			setError('A workflow must have at least one step.');
+			setError('A workflow must have at least one node.');
 			return;
 		}
 
-		// Validate each step has an agent assigned (single or multi-agent)
+		// Validate each node has an agent assigned (single or multi-agent)
 		for (let i = 0; i < regularNodes.length; i++) {
 			const step = regularNodes[i].step;
 			const hasMultiAgent = Array.isArray(step.agents) && step.agents.length > 0;
 			if (!hasMultiAgent && !step.agentId) {
-				setError(`Step ${i + 1} requires an agent.`);
+				setError(`Node ${i + 1} requires an agent.`);
 				return;
 			}
 		}
@@ -1072,7 +1085,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 			{/* ---- Canvas area ---- */}
 			<div class="flex-1 relative overflow-hidden bg-dark-950">
-				{/* Add Step + Template toolbar */}
+				{/* Add Node + Template toolbar */}
 				<div
 					class="absolute top-3 left-3 z-10 flex items-center gap-2"
 					style={{ pointerEvents: 'auto' }}
@@ -1090,7 +1103,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 								d="M12 4v16m8-8H4"
 							/>
 						</svg>
-						Add Step
+						Add Node
 					</button>
 
 					{/* Template picker — always available in create mode.
@@ -1150,8 +1163,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				{regularNodes.length === 0 && (
 					<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
 						<div class="text-center">
-							<p class="text-sm text-gray-600">No steps yet.</p>
-							<p class="text-xs text-gray-700 mt-1">Click "Add Step" to start building.</p>
+							<p class="text-sm text-gray-600">No nodes yet.</p>
+							<p class="text-xs text-gray-700 mt-1">Click "Add Node" to start building.</p>
 						</div>
 					</div>
 				)}
@@ -1209,10 +1222,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						onUpdate={handleUpdateNode}
 						onSetAsStart={handleSetAsStart}
 						channelLinks={nodeChannelLinksByNodeId.get(selectedNode.step.localId) ?? []}
-							onOpenChannelLink={handleChannelSelect}
-							onClose={() => setSelectedNodeId(null)}
-							onDelete={handleDeleteNode}
-						/>
+						onOpenChannelLink={handleChannelSelectFromNodePanel}
+						onClose={() => setSelectedNodeId(null)}
+						onDelete={handleDeleteNode}
+					/>
 				)}
 
 				{/* EdgeConfigPanel — floating panel in the bottom-left of the canvas */}
@@ -1243,7 +1256,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						onConvertToBidirectional={handleConvertChannelRelationToBidirectional}
 						onChange={handleUpdateChannelFromEdgePanel}
 						onDelete={handleDeleteChannelFromEdgePanel}
+						onBack={selectedNode ? () => setSelectedChannelId(null) : undefined}
 						onClose={() => setSelectedChannelId(null)}
+						width={selectedNode ? 320 : 360}
 					/>
 				)}
 
@@ -1348,7 +1363,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 								rules={rules}
 								steps={nodes.map((n, i) => ({
 									id: n.step.id ?? n.step.localId,
-									name: n.step.name || `Step ${i + 1}`,
+									name: n.step.name || `Node ${i + 1}`,
 									agentId: n.step.agentId,
 									instructions: n.step.instructions,
 								}))}
