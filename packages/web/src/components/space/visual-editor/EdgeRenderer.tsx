@@ -21,7 +21,8 @@
  * collisions when multiple EdgeRenderer instances are mounted simultaneously.
  *
  * Channel edges are also rendered (via the channels prop). Channel edges connect
- * between side ports (left/right) of nodes with a distinct teal style.
+ * between the same port anchors used by drag-create links (source bottom-center
+ * to target top-center) with a distinct teal style.
  * Gated channels (gate condition != always) use solid lines for visual distinction.
  * Ungated channels use dashed lines. Bidirectional channels show double arrowheads.
  * Channels are selectable by clicking; the selected channel highlights in white.
@@ -30,6 +31,7 @@
 import { useEffect, useRef } from 'preact/hooks';
 import type { WorkflowConditionType } from '@neokai/shared';
 import type { NodePosition, VisualTransition } from './types';
+import type { AnchorSide } from './semanticWorkflowGraph';
 
 // Module-level counter -- increments on each EdgeRenderer mount, giving every
 // instance a unique marker ID prefix even when multiple instances are on the
@@ -77,6 +79,8 @@ export interface ResolvedWorkflowChannel {
 	id?: string;
 	/** Optional display label from WorkflowChannel.label */
 	label?: string;
+	sourceSide?: AnchorSide;
+	targetSide?: AnchorSide;
 }
 
 /** Channel edge color -- teal, distinct from transition edge colors */
@@ -84,9 +88,6 @@ export const CHANNEL_EDGE_COLOR = '#14b8a6'; // teal-500
 
 /** Channel edge stroke dash pattern for ungated channels */
 export const CHANNEL_EDGE_DASH_ARRAY = '6 4';
-
-/** Control point horizontal offset for channel edge bezier curves */
-const CHANNEL_CP_OFFSET = 80;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -119,6 +120,11 @@ export interface EdgePoints {
 	cp1y: number;
 	cp2x: number;
 	cp2y: number;
+}
+
+interface Point2D {
+	x: number;
+	y: number;
 }
 
 /**
@@ -162,7 +168,176 @@ export function buildPathD(pts: EdgePoints): string {
 /** Fixed X position for the Task Agent hub rail on the left side of the canvas. */
 export const TASK_AGENT_X = 60;
 
-/** Compute the bezier path for a channel edge connecting side ports of two nodes.
+function getNodeAnchorPoint(
+	nodePos: NodePosition[string],
+	side: AnchorSide
+): Pick<EdgePoints, 'sx' | 'sy'> {
+	switch (side) {
+		case 'top':
+			return { sx: nodePos.x + nodePos.width / 2, sy: nodePos.y };
+		case 'bottom':
+			return { sx: nodePos.x + nodePos.width / 2, sy: nodePos.y + nodePos.height };
+		case 'left':
+			return { sx: nodePos.x, sy: nodePos.y + nodePos.height / 2 };
+		case 'right':
+			return { sx: nodePos.x + nodePos.width, sy: nodePos.y + nodePos.height / 2 };
+	}
+}
+
+function buildChannelControlPoints(
+	sx: number,
+	sy: number,
+	tx: number,
+	ty: number,
+	sourceSide: AnchorSide,
+	targetSide: AnchorSide
+) {
+	const offset = Math.max(56, Math.min(120, Math.max(Math.abs(tx - sx), Math.abs(ty - sy)) * 0.35));
+
+	const cp1x =
+		sourceSide === 'left'
+			? sx - offset
+			: sourceSide === 'right'
+				? sx + offset
+				: sx;
+	const cp1y =
+		sourceSide === 'top'
+			? sy - offset
+			: sourceSide === 'bottom'
+				? sy + offset
+				: sy;
+
+	const cp2x =
+		targetSide === 'left'
+			? tx - offset
+			: targetSide === 'right'
+				? tx + offset
+				: tx;
+	const cp2y =
+		targetSide === 'top'
+			? ty - offset
+			: targetSide === 'bottom'
+				? ty + offset
+				: ty;
+
+	return { cp1x, cp1y, cp2x, cp2y };
+}
+
+function movePoint(point: Point2D, side: AnchorSide, distance: number): Point2D {
+	switch (side) {
+		case 'top':
+			return { x: point.x, y: point.y - distance };
+		case 'bottom':
+			return { x: point.x, y: point.y + distance };
+		case 'left':
+			return { x: point.x - distance, y: point.y };
+		case 'right':
+			return { x: point.x + distance, y: point.y };
+	}
+}
+
+function pointsEqual(a: Point2D | undefined, b: Point2D | undefined): boolean {
+	return !!a && !!b && a.x === b.x && a.y === b.y;
+}
+
+function isCollinear(a: Point2D, b: Point2D, c: Point2D): boolean {
+	return (a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y);
+}
+
+function normalizeOrthogonalPoints(points: Point2D[]): Point2D[] {
+	const normalized: Point2D[] = [];
+
+	for (const point of points) {
+		const last = normalized[normalized.length - 1];
+		if (pointsEqual(last, point)) continue;
+
+		if (normalized.length >= 2) {
+			const prev = normalized[normalized.length - 2];
+			if (isCollinear(prev, last!, point)) {
+				normalized[normalized.length - 1] = point;
+				continue;
+			}
+		}
+
+		normalized.push(point);
+	}
+
+	return normalized;
+}
+
+function roundedOrthogonalPath(points: Point2D[], cornerRadius = 14): string {
+	const normalized = normalizeOrthogonalPoints(points);
+	if (normalized.length === 0) return '';
+	if (normalized.length === 1) return `M ${normalized[0].x} ${normalized[0].y}`;
+
+	let d = `M ${normalized[0].x} ${normalized[0].y}`;
+
+	for (let index = 1; index < normalized.length - 1; index += 1) {
+		const prev = normalized[index - 1];
+		const current = normalized[index];
+		const next = normalized[index + 1];
+
+		if (isCollinear(prev, current, next)) {
+			d += ` L ${current.x} ${current.y}`;
+			continue;
+		}
+
+		const radius = Math.min(
+			cornerRadius,
+			Math.abs(current.x - prev.x || current.y - prev.y) / 2,
+			Math.abs(next.x - current.x || next.y - current.y) / 2
+		);
+
+		const entry: Point2D =
+			prev.x === current.x
+				? { x: current.x, y: current.y - Math.sign(current.y - prev.y) * radius }
+				: { x: current.x - Math.sign(current.x - prev.x) * radius, y: current.y };
+
+		const exit: Point2D =
+			next.x === current.x
+				? { x: current.x, y: current.y + Math.sign(next.y - current.y) * radius }
+				: { x: current.x + Math.sign(next.x - current.x) * radius, y: current.y };
+
+		d += ` L ${entry.x} ${entry.y} Q ${current.x} ${current.y} ${exit.x} ${exit.y}`;
+	}
+
+	const last = normalized[normalized.length - 1];
+	d += ` L ${last.x} ${last.y}`;
+	return d;
+}
+
+export function buildChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoints): string {
+	const sourceSide = channel.fromStepId === 'task-agent' ? 'right' : (channel.sourceSide ?? 'bottom');
+	const targetSide = channel.targetSide ?? 'top';
+	const start = { x: pts.sx, y: pts.sy };
+	const end = { x: pts.tx, y: pts.ty };
+	const startLead = movePoint(start, sourceSide, channel.fromStepId === 'task-agent' ? 42 : 28);
+	const endLead = movePoint(end, targetSide, 28);
+
+	let midPoints: Point2D[] = [];
+	const sourceVertical = sourceSide === 'top' || sourceSide === 'bottom';
+	const targetVertical = targetSide === 'top' || targetSide === 'bottom';
+
+	if (sourceVertical && targetVertical) {
+		const midY = (startLead.y + endLead.y) / 2;
+		midPoints = [
+			{ x: startLead.x, y: midY },
+			{ x: endLead.x, y: midY },
+		];
+	} else if (!sourceVertical && !targetVertical) {
+		const midX = (startLead.x + endLead.x) / 2;
+		midPoints = [
+			{ x: midX, y: startLead.y },
+			{ x: midX, y: endLead.y },
+		];
+	} else {
+		midPoints = [{ x: endLead.x, y: startLead.y }];
+	}
+
+	return roundedOrthogonalPath([start, startLead, ...midPoints, endLead, end]);
+}
+
+/** Compute the bezier path for a channel edge connecting node ports.
  *  For the special 'task-agent' source, routes from the Task Agent rail (left side)
  *  to the target node's top-center port. */
 export function computeChannelEdgePoints(
@@ -192,21 +367,26 @@ export function computeChannelEdgePoints(
 		return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
 	}
 
-	// Regular node-to-node channel: connect from right side of source to left side of target
+	// Regular node-to-node channel: connect using the routed semantic anchor sides.
 	const fromPos = nodePositions[channel.fromStepId];
 	if (!fromPos) return null;
 
-	const sx = fromPos.x + fromPos.width; // right edge of source
-	const sy = fromPos.y + fromPos.height / 2; // vertical center of source
-
-	const tx = toPos.x; // left edge of target
-	const ty = toPos.y + toPos.height / 2; // vertical center of target
-
-	// Horizontal bezier: bow outward from both sides
-	const cp1x = sx + CHANNEL_CP_OFFSET;
-	const cp1y = sy;
-	const cp2x = tx - CHANNEL_CP_OFFSET;
-	const cp2y = ty;
+	const sourceSide = channel.sourceSide ?? 'bottom';
+	const targetSide = channel.targetSide ?? 'top';
+	const sourcePoint = getNodeAnchorPoint(fromPos, sourceSide);
+	const targetPoint = getNodeAnchorPoint(toPos, targetSide);
+	const sx = sourcePoint.sx;
+	const sy = sourcePoint.sy;
+	const tx = targetPoint.sx;
+	const ty = targetPoint.sy;
+	const { cp1x, cp1y, cp2x, cp2y } = buildChannelControlPoints(
+		sx,
+		sy,
+		tx,
+		ty,
+		sourceSide,
+		targetSide
+	);
 
 	return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
 }
@@ -399,7 +579,7 @@ export function EdgeRenderer({
 				const pts = computeChannelEdgePoints(channel, nodePositions);
 				if (!pts) return null;
 
-				const d = buildPathD(pts);
+				const d = buildChannelPathD(channel, pts);
 				const isBidirectional = channel.direction === 'bidirectional';
 				const isGated = !!channel.gateType;
 				const isSelected = channel.id != null && channel.id === selectedChannelId;
