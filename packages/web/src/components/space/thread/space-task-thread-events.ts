@@ -60,6 +60,42 @@ function oneLine(value: string, max = 180): string {
 	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }
 
+function normalizeMultiline(value: string): string {
+	return value.replace(/\r\n/g, '\n').trim();
+}
+
+function summarizeInputValue(value: unknown): string {
+	if (value == null) return 'none';
+	if (typeof value === 'string') return oneLine(value, 120);
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+	if (Array.isArray(value)) {
+		if (value.length === 0) return '[]';
+		const compact = value
+			.slice(0, 2)
+			.map((item) => summarizeInputValue(item))
+			.join(', ');
+		return value.length > 2 ? `[${compact}, +${value.length - 2}]` : `[${compact}]`;
+	}
+	if (typeof value === 'object') {
+		const obj = value as Record<string, unknown>;
+		const keys = Object.keys(obj);
+		if (keys.length === 0) return '{}';
+		if (typeof obj.query === 'string') return `query: ${oneLine(obj.query, 120)}`;
+		const fields = keys.slice(0, 2).join(', ');
+		return keys.length > 2 ? `{${fields}, +${keys.length - 2}}` : `{${fields}}`;
+	}
+	return oneLine(String(value), 120);
+}
+
+function summarizeToolInput(input: Record<string, unknown>): string {
+	const keys = Object.keys(input);
+	if (keys.length === 0) return 'No input';
+
+	const entries = keys.slice(0, 3).map((key) => `${key}: ${summarizeInputValue(input[key])}`);
+	const summary = entries.join(' · ');
+	return keys.length > 3 ? `${summary} · +${keys.length - 3} fields` : summary;
+}
+
 function extractUserText(message: Extract<SDKMessage, { type: 'user' }>): string {
 	const content = message.message?.content;
 	if (typeof content === 'string') return oneLine(content);
@@ -111,7 +147,7 @@ function extractAssistantEvents(
 			const toolSummary =
 				isSubagent && description
 					? `${subagentType} · ${oneLine(description)}`
-					: oneLine(JSON.stringify(block.input ?? {}));
+					: summarizeToolInput(input);
 
 			events.push({
 				id: eventId,
@@ -128,7 +164,7 @@ function extractAssistantEvents(
 		}
 
 		if (isTextBlock(block)) {
-			const text = oneLine(block.text);
+			const text = normalizeMultiline(block.text);
 			if (!text) continue;
 			events.push({
 				id: eventId,
@@ -138,7 +174,7 @@ function extractAssistantEvents(
 				sessionId: row.sessionId,
 				createdAt: row.createdAt,
 				kind: 'text',
-				title: 'Response',
+				title: row.label,
 				summary: text,
 				message,
 			});
@@ -154,7 +190,7 @@ function extractAssistantEvents(
 			sessionId: row.sessionId,
 			createdAt: row.createdAt,
 			kind: 'text',
-			title: 'Response',
+			title: row.label,
 			summary: 'Assistant updated context',
 			message,
 		});
