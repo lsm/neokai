@@ -17,7 +17,7 @@ import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { VisualCanvas, applyWheelEvent, MIN_SCALE, MAX_SCALE } from '../VisualCanvas';
 import { screenToCanvas, canvasToScreen } from '../types';
-import type { ViewportState } from '../types';
+import type { NodePosition, ViewportState } from '../types';
 
 afterEach(() => cleanup());
 
@@ -149,6 +149,26 @@ describe('VisualCanvas', () => {
 		expect(last.offsetX).toBe(42);
 		expect(last.offsetY).toBe(-10);
 		expect(last.scale).toBe(1.5);
+	});
+
+	it('sizes the transform layer from node bounds so the SVG edge layer has canvas space', () => {
+		const nodes: NodePosition = {
+			a: { x: 500, y: 700, width: 160, height: 80 },
+		};
+
+		const { getByTestId } = render(
+			<VisualCanvas viewportState={{ offsetX: 0, offsetY: 0, scale: 1 }} onViewportChange={() => {}} nodes={nodes}>
+				<div data-testid="child-node">Hello</div>
+			</VisualCanvas>
+		);
+
+		const transformEl = getByTestId('visual-canvas-transform') as HTMLElement;
+		expect(transformEl.style.width).toBe('780px');
+		expect(transformEl.style.height).toBe('900px');
+
+		const svgEl = getByTestId('visual-canvas-svg') as HTMLElement;
+		expect(svgEl.style.width).toBe('100%');
+		expect(svgEl.style.height).toBe('100%');
 	});
 });
 

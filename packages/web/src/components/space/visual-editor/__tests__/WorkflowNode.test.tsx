@@ -165,6 +165,21 @@ describe('WorkflowNode rendering', () => {
 		const { getByTestId } = render(<WorkflowNode {...props} />);
 		expect(getByTestId('step-name').textContent).toBe('(unnamed)');
 	});
+
+	it('does not render channel topology text inside the node card', () => {
+		const { queryByTestId, queryByText } = render(
+			<WorkflowNode
+				{...makeProps({
+					workflowChannels: [
+						{ from: 'agent-1', to: 'agent-2', direction: 'one-way', label: 'handoff' },
+					],
+				})}
+			/>
+		);
+
+		expect(queryByTestId('channel-topology-badge')).toBeNull();
+		expect(queryByText('handoff')).toBeNull();
+	});
 });
 
 // ============================================================================
