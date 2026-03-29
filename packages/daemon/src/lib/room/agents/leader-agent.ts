@@ -44,6 +44,7 @@ const LEADER_FEATURES: SessionFeatures = {
 export type ReviewContext = 'plan_review' | 'code_review';
 
 export interface LeaderToolResult {
+	[key: string]: unknown;
 	content: Array<{ type: 'text'; text: string }>;
 }
 

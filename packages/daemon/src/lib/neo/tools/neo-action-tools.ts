@@ -204,6 +204,7 @@ export interface NeoActionManagerFactory {
 
 /** Minimal ToolResult shape shared with global-spaces handlers. */
 interface SharedToolResult {
+	[key: string]: unknown;
 	content: Array<{ type: 'text'; text: string }>;
 }
 
@@ -471,6 +472,7 @@ const APPROVE_TASK_MESSAGE =
 	'Human has approved the PR. Merge it now by running `gh pr merge` (do NOT use --delete-branch). After the merge completes, your work is done.';
 
 interface ToolResult {
+	[key: string]: unknown;
 	content: Array<{ type: 'text'; text: string }>;
 }
 

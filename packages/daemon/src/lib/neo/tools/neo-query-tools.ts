@@ -169,6 +169,7 @@ export interface NeoToolsConfig {
 // ---------------------------------------------------------------------------
 
 interface ToolResult {
+	[key: string]: unknown;
 	content: Array<{ type: 'text'; text: string }>;
 }
 
