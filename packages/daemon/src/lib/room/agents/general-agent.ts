@@ -91,7 +91,8 @@ export function buildGeneralSystemPrompt(): string {
 		`- \`RESEARCH_ONLY:\` — For pure research tasks (e.g., "Analyze and document X")\n` +
 			`- \`VERIFICATION_COMPLETE:\` — For verification tasks (e.g., "Verify Y is correct")\n` +
 			`- \`INVESTIGATION_RESULT:\` — For investigation tasks (e.g., "Investigate why Z fails")\n` +
-			`- \`ANALYSIS_COMPLETE:\` — For analysis tasks (e.g., "Analyze performance")`
+			`- \`ANALYSIS_COMPLETE:\` — For analysis tasks (e.g., "Analyze performance")\n` +
+			`- \`NO_CHANGES_NEEDED:\` — For coding tasks where investigation shows the work is already done (e.g., all deps are current, all pins are exact)`
 	);
 	sections.push(
 		`**Example**:\n` +
@@ -104,7 +105,19 @@ export function buildGeneralSystemPrompt(): string {
 			`\`\`\``
 	);
 	sections.push(
+		`**Example for NO_CHANGES_NEEDED**:\n` +
+			`\`\`\`\n` +
+			`NO_CHANGES_NEEDED:\n\n` +
+			`This was a coding task (update dependencies), but investigation shows no changes are required:\n` +
+			`1. Checked all 12 dependencies — all are already at their latest versions\n` +
+			`2. No security vulnerabilities found\n\n` +
+			`The work was already done; no PR is needed.\n` +
+			`\`\`\``
+	);
+	sections.push(
 		`**Important**: Only use bypass markers when the task genuinely requires NO file changes. ` +
+			`Use \`NO_CHANGES_NEEDED:\` specifically when the task WAS a coding task but investigation confirms ` +
+			`the work is already complete — this is different from a research task. ` +
 			`If you need to create or modify any files, follow the normal git/PR workflow instead.`
 	);
 
