@@ -3,12 +3,14 @@ import type { SpaceTaskThreadEvent, SpaceTaskThreadRenderMode } from './space-ta
 import type { UseMessageMapsResult } from '../../../hooks/useMessageMaps';
 import { SDKMessageRenderer } from '../../sdk/SDKMessageRenderer';
 import { borderRadius, messageColors, messageSpacing } from '../../../lib/design-tokens';
+import { SpaceTaskThreadMessageActions } from './SpaceTaskThreadMessageActions';
 
 interface SpaceTaskThreadEventRowProps {
 	event: SpaceTaskThreadEvent;
 	mode: Exclude<SpaceTaskThreadRenderMode, 'verbose'>;
 	showTaskTitle?: boolean;
 	maps: UseMessageMapsResult;
+	showAgentLabel?: boolean;
 }
 
 const KIND_STYLES: Record<SpaceTaskThreadEvent['kind'], string> = {
@@ -50,6 +52,7 @@ export function SpaceTaskThreadEventRow({
 	mode,
 	showTaskTitle = false,
 	maps,
+	showAgentLabel = true,
 }: SpaceTaskThreadEventRowProps) {
 	if (mode === 'compact' && event.kind === 'user' && event.message) {
 		return (
@@ -73,11 +76,10 @@ export function SpaceTaskThreadEventRow({
 		return (
 			<div class="py-1.5" data-testid="space-task-event-row">
 				<div class="mb-1 flex items-center gap-2 min-w-0">
-					<span class="text-[10px] uppercase tracking-[0.14em] text-gray-500">{event.label}</span>
+					{showAgentLabel && (
+						<span class="text-[10px] uppercase tracking-[0.14em] text-gray-500">{event.label}</span>
+					)}
 					<span class={cn('text-xs font-medium', KIND_STYLES[event.kind])}>{event.title}</span>
-					<span class="ml-auto flex-shrink-0 text-[10px] text-gray-600">
-						{formatTimestamp(event.createdAt)}
-					</span>
 				</div>
 
 				<div
@@ -90,6 +92,7 @@ export function SpaceTaskThreadEventRow({
 				>
 					{event.summary}
 				</div>
+				<SpaceTaskThreadMessageActions timestamp={event.createdAt} copyText={event.summary} />
 
 				{showTaskTitle && <div class="mt-1 text-[11px] text-gray-500">{event.taskTitle}</div>}
 			</div>
