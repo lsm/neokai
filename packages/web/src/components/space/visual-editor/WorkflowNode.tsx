@@ -20,6 +20,7 @@ import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, isNodeFullyCompleted, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
+import type { AnchorSide } from './semanticWorkflowGraph';
 
 // ============================================================================
 // Props
@@ -59,6 +60,80 @@ export interface WorkflowNodeProps {
 	 * When provided, per-agent status indicators are shown inside the node card.
 	 */
 	nodeTaskStates?: AgentTaskState[];
+	/** Semantic edge anchor sides currently in use for this node. */
+	activeAnchorSides?: AnchorSide[];
+}
+
+function renderDock(side: AnchorSide, visible: boolean, highlighted = false) {
+	const commonStyle = {
+		position: 'absolute' as const,
+		width: 14,
+		height: 14,
+		borderRadius: '50%',
+		border: `2px solid ${highlighted ? '#16a34a' : '#374151'}`,
+		background: highlighted ? '#22c55e' : '#6b7280',
+		zIndex: highlighted ? 10 : 5,
+	};
+
+	if (side === 'top') {
+		return (
+			<div
+				data-testid="dock-top"
+				style={{
+					...commonStyle,
+					top: -7,
+					left: '50%',
+					transform: highlighted ? 'translateX(-50%) scale(1.4)' : 'translateX(-50%)',
+					transition: 'transform 0.1s, background 0.1s, opacity 0.15s',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0 transition-opacity group-hover:opacity-100'}
+			/>
+		);
+	}
+
+	if (side === 'bottom') {
+		return (
+			<div
+				data-testid="dock-bottom"
+				style={{
+					...commonStyle,
+					bottom: -7,
+					left: '50%',
+					transform: 'translateX(-50%)',
+					transition: 'opacity 0.15s',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0 transition-opacity group-hover:opacity-100'}
+			/>
+		);
+	}
+
+	if (side === 'left') {
+		return (
+			<div
+				data-testid="dock-left"
+				style={{
+					...commonStyle,
+					left: -7,
+					top: '50%',
+					transform: 'translateY(-50%)',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0'}
+			/>
+		);
+	}
+
+	return (
+		<div
+			data-testid="dock-right"
+			style={{
+				...commonStyle,
+				right: -7,
+				top: '50%',
+				transform: 'translateY(-50%)',
+			}}
+			class={visible ? 'opacity-100' : 'opacity-0'}
+		/>
+	);
 }
 
 // ============================================================================
@@ -81,6 +156,7 @@ export function WorkflowNode({
 	onPortMouseLeave,
 	onClick,
 	nodeTaskStates,
+	activeAnchorSides = [],
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
@@ -250,6 +326,7 @@ export function WorkflowNode({
 	const inputPortScale = isDropTarget ? 'scale(1.4)' : '';
 
 	const ringClass = isSelected ? 'ring-2 ring-blue-500' : '';
+	const activeAnchorSideSet = new Set(activeAnchorSides);
 
 	// Task Agent: render a visually distinct pinned node with no ports
 	if (isTaskAgent) {
@@ -307,12 +384,15 @@ export function WorkflowNode({
 				cursor: 'grab',
 				userSelect: 'none',
 			}}
-			class={`rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}
+			class={`group rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}
 			onMouseDown={handleMouseDown}
 			onClick={handleClick}
 		>
+			{activeAnchorSideSet.has('left') && renderDock('left', true)}
+			{activeAnchorSideSet.has('right') && renderDock('right', true)}
+
 			{/* Top port */}
-			{!isStartNode && (
+			{(!isStartNode || activeAnchorSideSet.has('top')) && (
 				<div
 					data-testid="port-input"
 					style={{
@@ -326,12 +406,17 @@ export function WorkflowNode({
 						background: inputPortBg,
 						border: `2px solid ${inputPortBorder}`,
 						cursor: 'crosshair',
-						transition: 'transform 0.1s, background 0.1s',
-						zIndex: isDropTarget ? 10 : undefined,
+						transition: 'transform 0.1s, background 0.1s, opacity 0.15s',
+						zIndex: isDropTarget ? 10 : 6,
 					}}
-					onMouseDown={handleInputPortMouseDown}
-					onMouseEnter={handleInputPortMouseEnter}
-					onMouseLeave={handleInputPortMouseLeave}
+					class={
+						isDropTarget || activeAnchorSideSet.has('top')
+							? 'opacity-100'
+							: 'opacity-0 transition-opacity group-hover:opacity-100'
+					}
+					onMouseDown={!isStartNode ? handleInputPortMouseDown : undefined}
+					onMouseEnter={!isStartNode ? handleInputPortMouseEnter : undefined}
+					onMouseLeave={!isStartNode ? handleInputPortMouseLeave : undefined}
 					onClick={stopClickPropagation}
 				/>
 			)}
@@ -414,7 +499,13 @@ export function WorkflowNode({
 					background: '#6b7280',
 					border: '2px solid #374151',
 					cursor: 'crosshair',
+					zIndex: 6,
 				}}
+				class={
+					activeAnchorSideSet.has('bottom')
+						? 'opacity-100'
+						: 'opacity-0 transition-opacity group-hover:opacity-100'
+				}
 				onMouseDown={handleOutputPortMouseDown}
 				onClick={stopClickPropagation}
 			/>

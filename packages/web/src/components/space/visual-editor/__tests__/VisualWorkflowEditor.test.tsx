@@ -92,6 +92,10 @@ vi.mock('../../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
+vi.mock('../ReactFlowWorkflowCanvas', () => ({
+	ReactFlowWorkflowCanvas: () => <div data-testid="reactflow-workflow-canvas-mock" />,
+}));
+
 import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 import type { VisualWorkflowEditorProps } from '../VisualWorkflowEditor';
 import { TEMPLATES } from '../../WorkflowEditor';
@@ -917,6 +921,25 @@ describe('VisualWorkflowEditor', () => {
 			// Task Agent + Quick Fix node = 2 nodes
 			expect(getAllByTestId(/^workflow-node-/).length).toBe(2);
 			expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
+		});
+
+		it('shows Coding Workflow V2 template and creates 6 workflow nodes', () => {
+			const { getByTestId, getAllByTestId, container } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const v2Option = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow V2'
+			);
+			expect(v2Option).toBeTruthy();
+			fireEvent.click(v2Option!);
+
+			// Task Agent + six workflow nodes
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(7);
+			expect(container.querySelectorAll('[data-channel-edge="true"]').length).toBe(7);
+			expect(getByTestId('native-workflow-canvas-panel')).toBeTruthy();
+			expect(getByTestId('reactflow-workflow-canvas-panel')).toBeTruthy();
 		});
 	});
 
