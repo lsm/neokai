@@ -6,6 +6,7 @@
  * Pan methods:
  *  - Two-finger trackpad scroll (wheel event without ctrlKey)
  *  - Spacebar + left-click drag
+ *  - Left-click drag on empty canvas or a pan-enabled element (for example the pinned Task Agent)
  *
  * Zoom methods:
  *  - Trackpad pinch (wheel event with ctrlKey=true)
@@ -200,7 +201,15 @@ export function VisualCanvas({
 
 	// ---- Mouse drag for spacebar+click pan ----
 	const handleMouseDown = useCallback((e: MouseEvent) => {
-		if (!spacebarDown.current || e.button !== 0) return;
+		if (e.button !== 0) return;
+
+		const target = e.target as HTMLElement | null;
+		const isBackgroundSurface =
+			target === containerRef.current || target === transformRef.current;
+		const isPanSurface = !!target?.closest('[data-pan-canvas="true"]');
+		const shouldPan = spacebarDown.current || isBackgroundSurface || isPanSurface;
+		if (!shouldPan) return;
+
 		e.preventDefault();
 		didDrag.current = false;
 		dragState.current = {

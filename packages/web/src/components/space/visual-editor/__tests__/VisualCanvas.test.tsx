@@ -23,6 +23,14 @@ afterEach(() => cleanup());
 
 // ---- Helper ----
 
+function windowMouseMove(clientX: number, clientY: number) {
+	window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX, clientY }));
+}
+
+function windowMouseUp() {
+	window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+}
+
 function renderCanvas(initial: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 }) {
 	const changes: ViewportState[] = [];
 
@@ -71,6 +79,21 @@ describe('VisualCanvas', () => {
 		const last = changes[changes.length - 1];
 		expect(last.offsetX).toBe(-30);
 		expect(last.offsetY).toBe(-10);
+		expect(last.scale).toBe(1);
+	});
+
+	it('pans via left-drag on empty canvas without needing spacebar', () => {
+		const { getByTestId, changes } = renderCanvas({ offsetX: 10, offsetY: 20, scale: 1 });
+		const container = getByTestId('visual-canvas');
+
+		fireEvent.mouseDown(container, { button: 0, clientX: 100, clientY: 80 });
+		windowMouseMove(140, 115);
+		windowMouseUp();
+
+		expect(changes.length).toBeGreaterThan(0);
+		const last = changes[changes.length - 1];
+		expect(last.offsetX).toBe(50);
+		expect(last.offsetY).toBe(55);
 		expect(last.scale).toBe(1);
 	});
 

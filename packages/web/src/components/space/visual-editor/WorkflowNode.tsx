@@ -336,12 +336,13 @@ export function WorkflowNode({
 				data-testid={`workflow-node-${stepId}`}
 				data-step-id={stepId}
 				data-task-agent="true"
+				data-pan-canvas="true"
 				style={{
 					position: 'absolute',
 					left: position.x,
 					top: position.y,
 					minWidth: 160,
-					cursor: 'default',
+					cursor: 'grab',
 					userSelect: 'none',
 					zIndex: 10,
 				}}

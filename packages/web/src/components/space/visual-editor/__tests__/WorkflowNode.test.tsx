@@ -656,7 +656,13 @@ describe('WorkflowNode Task Agent rendering', () => {
 	it('uses default cursor (not grab)', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
 		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-		expect(node.style.cursor).toBe('default');
+		expect(node.style.cursor).toBe('grab');
+	});
+
+	it('marks Task Agent as a canvas pan surface', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-pan-canvas')).toBe('true');
 	});
 });
 
