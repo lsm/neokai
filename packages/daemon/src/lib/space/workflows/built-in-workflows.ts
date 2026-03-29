@@ -37,11 +37,34 @@ const CODING_DONE_STEP = 'tpl-coding-done';
 const V2_PLANNING_STEP = 'tpl-v2-planning';
 const V2_PLAN_REVIEW_STEP = 'tpl-v2-plan-review';
 const V2_CODING_STEP = 'tpl-v2-coding';
-const V2_REVIEWER1_STEP = 'tpl-v2-reviewer1';
-const V2_REVIEWER2_STEP = 'tpl-v2-reviewer2';
-const V2_REVIEWER3_STEP = 'tpl-v2-reviewer3';
+const V2_REVIEW_STEP = 'tpl-v2-review';
 const V2_QA_STEP = 'tpl-v2-qa';
 const V2_DONE_STEP = 'tpl-v2-done';
+
+const V2_PLANNING_PROMPT =
+	'You are the Planning node for this workflow. Turn the task into a concrete implementation plan ' +
+	'that downstream nodes can execute without guessing. Surface assumptions, dependencies, sequencing, ' +
+	'and open questions explicitly.';
+
+const V2_PLAN_REVIEW_PROMPT =
+	'You are the Plan Review node for this workflow. Critically review the proposed plan for scope, ' +
+	'correctness, feasibility, testing strategy, and risk. Approve only when the plan is actionable and complete.';
+
+const V2_CODING_PROMPT =
+	'You are the Coding node for this workflow. Implement the approved plan in the workspace, keep the ' +
+	'changes reviewable, and leave the branch in a state that reviewers and QA can validate directly.';
+
+const V2_CODE_REVIEW_PROMPT =
+	'You are part of the Code Review node for this workflow. Review the implementation independently for ' +
+	'correctness, regressions, maintainability, and test coverage. Record a clear approve or reject vote with concise reasoning.';
+
+const V2_QA_PROMPT =
+	'You are the QA node for this workflow. Validate the implementation from an execution and release-readiness ' +
+	'perspective. Run the relevant checks, confirm the reported state, and fail the handoff when issues remain.';
+
+const V2_DONE_PROMPT =
+	'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce ' +
+	'a concise final outcome summary without reopening work unless a blocking issue is discovered.';
 
 const RESEARCH_PLANNER_STEP = 'tpl-research-planner';
 const RESEARCH_GENERAL_STEP = 'tpl-research-general';
@@ -222,12 +245,13 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 /**
  * Coding Workflow V2
  *
- * Eight-node graph with parallel reviewers and QA verification.
+ * Six-node graph with a single code-review node that runs three reviewers
+ * in parallel (via `node.agents[]`) and a QA verification gate.
  *
  * Main progression:
  *   Planning → Plan Review (plan-pr-gate: planner submits plan)
  *   Plan Review → Coding (plan-approval-gate: reviewer approves)
- *   Coding → Reviewer 1/2/3 in parallel (code-pr-gate: PR opened)
+ *   Coding → Code Review (code-pr-gate: PR opened; node contains Reviewer 1/2/3 slots)
  *   Reviewer 1/2/3 → QA (review-votes-gate: all 3 approve)
  *   QA → Done (qa-result-gate: QA passes)
  *
@@ -252,6 +276,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			id: V2_PLANNING_STEP,
 			name: 'Planning',
 			agentId: 'planner',
+			systemPrompt: V2_PLANNING_PROMPT,
 			instructions:
 				'Break down the task into an actionable implementation plan. ' +
 				'When the plan is ready, write it to the plan-pr-gate (field: plan_submitted) to notify reviewers.',
@@ -260,6 +285,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			id: V2_PLAN_REVIEW_STEP,
 			name: 'Plan Review',
 			agentId: 'reviewer',
+			systemPrompt: V2_PLAN_REVIEW_PROMPT,
 			instructions:
 				'Review the implementation plan for feasibility and completeness. ' +
 				'Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
@@ -268,47 +294,53 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			id: V2_CODING_STEP,
 			name: 'Coding',
 			agentId: 'coder',
+			systemPrompt: V2_CODING_PROMPT,
 			instructions:
 				'Implement the approved plan. Open a pull request when done. ' +
 				'Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
 		},
 		{
-			id: V2_REVIEWER1_STEP,
-			name: 'Reviewer 1',
-			agentId: 'reviewer',
-			instructions:
-				'Review the pull request for correctness, style, and test coverage. ' +
-				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-				'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
-				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
-		},
-		{
-			id: V2_REVIEWER2_STEP,
-			name: 'Reviewer 2',
-			agentId: 'reviewer',
-			instructions:
-				'Review the pull request for correctness, style, and test coverage. ' +
-				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-				'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
-				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
-		},
-		{
-			id: V2_REVIEWER3_STEP,
-			name: 'Reviewer 3',
-			agentId: 'reviewer',
-			instructions:
-				'Review the pull request for correctness, style, and test coverage. ' +
-				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-				'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
-				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+			id: V2_REVIEW_STEP,
+			name: 'Code Review',
+			systemPrompt: V2_CODE_REVIEW_PROMPT,
+			agents: [
+				{
+					agentId: 'reviewer',
+					name: 'Reviewer 1',
+					instructions:
+						'Review the pull request for correctness, style, and test coverage. ' +
+						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+						'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
+						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+				},
+				{
+					agentId: 'reviewer',
+					name: 'Reviewer 2',
+					instructions:
+						'Review the pull request for correctness, style, and test coverage. ' +
+						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+						'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
+						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+				},
+				{
+					agentId: 'reviewer',
+					name: 'Reviewer 3',
+					instructions:
+						'Review the pull request for correctness, style, and test coverage. ' +
+						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+						'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
+						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+				},
+			],
 		},
 		{
 			id: V2_QA_STEP,
 			name: 'QA',
 			agentId: 'qa',
+			systemPrompt: V2_QA_PROMPT,
 			instructions:
 				'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. ' +
 				'Write "result: passed" to qa-result-gate if everything is green, or ' +
@@ -319,6 +351,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			id: V2_DONE_STEP,
 			name: 'Done',
 			agentId: 'general',
+			systemPrompt: V2_DONE_PROMPT,
 		},
 	],
 	startNodeId: V2_PLANNING_STEP,
@@ -415,7 +448,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			gateId: 'plan-approval-gate',
 			label: 'Plan Review → Coding',
 		},
-		// Coding → Reviewers (fan-out, shared code-pr-gate)
+		// Coding → reviewers (3 reviewer slots in the Code Review node)
 		{
 			from: 'Coding',
 			to: 'Reviewer 1',
@@ -568,11 +601,15 @@ export function seedBuiltInWorkflows(
 	// Pre-validate: resolve every role needed across ALL templates before
 	// persisting anything. This guarantees all-or-nothing behaviour.
 	const templates = getBuiltInWorkflows();
-	const neededRoles = new Set<string>(
-		templates
-			.flatMap((t) => t.nodes.map((s) => s.agentId))
-			.filter((r): r is string => r !== undefined)
-	);
+	const neededRoles = new Set<string>();
+	for (const template of templates) {
+		for (const node of template.nodes) {
+			if (node.agentId) neededRoles.add(node.agentId);
+			for (const agent of node.agents ?? []) {
+				if (agent.agentId) neededRoles.add(agent.agentId);
+			}
+		}
+	}
 	const resolvedIds = new Map<string, string>();
 	for (const role of neededRoles) {
 		const agentId = resolveAgentId(role);
@@ -593,12 +630,24 @@ export function seedBuiltInWorkflows(
 			nodeIdMap.set(node.id, generateUUID());
 		}
 
-		const nodes = template.nodes.map((s) => ({
-			id: nodeIdMap.get(s.id)!,
-			name: s.name,
-			agentId: resolvedIds.get(s.agentId ?? '')!,
-			instructions: s.instructions,
-		}));
+		const nodes = template.nodes.map((s) => {
+			const hasAgents = Array.isArray(s.agents) && s.agents.length > 0;
+			const resolvedAgents = hasAgents
+				? s.agents!.map((a) => ({
+						...a,
+						agentId: resolvedIds.get(a.agentId)!,
+					}))
+				: undefined;
+
+			return {
+				id: nodeIdMap.get(s.id)!,
+				name: s.name,
+				agentId: hasAgents ? undefined : resolvedIds.get(s.agentId ?? '')!,
+				agents: resolvedAgents,
+				systemPrompt: s.systemPrompt,
+				instructions: s.instructions,
+			};
+		});
 
 		const startNodeId = nodeIdMap.get(template.startNodeId)!;
 

@@ -904,7 +904,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
  * room-runtime pattern where the initial user message is sent after session start.
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
-	const { customAgent, space, sessionId, workspacePath, slotOverrides } = config;
+	const { customAgent, space, sessionId, workspacePath, slotOverrides, workflowRun } = config;
 
 	const customTools =
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
@@ -914,12 +914,15 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
 	const provider = inferProviderForModel(model);
 
-	// Apply per-slot systemPrompt override: slot override replaces agent's default system prompt.
-	// The override is applied by building the prompt with a modified agent copy.
+	// Workflow execution must be WYSIWYG: only the workflow node's visible prompt
+	// should shape runtime behavior. Outside workflows, retain the SpaceAgent prompt.
+	const workflowSystemPrompt = workflowRun ? slotOverrides?.systemPrompt : undefined;
 	const agentForPrompt: SpaceAgent =
-		slotOverrides?.systemPrompt !== undefined
-			? { ...customAgent, systemPrompt: slotOverrides.systemPrompt }
-			: customAgent;
+		workflowRun !== null
+			? { ...customAgent, systemPrompt: workflowSystemPrompt }
+			: slotOverrides?.systemPrompt !== undefined
+				? { ...customAgent, systemPrompt: slotOverrides.systemPrompt }
+				: customAgent;
 	const behavioralPrompt =
 		agentForPrompt.role === 'reviewer'
 			? buildReviewerNodeAgentPrompt(agentForPrompt)

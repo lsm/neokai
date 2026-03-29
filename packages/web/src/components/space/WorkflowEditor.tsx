@@ -12,7 +12,12 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { SpaceWorkflow, SpaceAgent, WorkflowChannel } from '@neokai/shared';
+import type {
+	SpaceWorkflow,
+	SpaceAgent,
+	WorkflowChannel,
+	WorkflowNodeAgent,
+} from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { WorkflowNodeCard } from './WorkflowNodeCard';
@@ -35,8 +40,52 @@ const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment']
 export interface WorkflowTemplate {
 	label: string;
 	description: string;
-	stepRoles: string[]; // agent role names to look up from agent list
+	/** Legacy shorthand for single-agent linear templates. */
+	stepRoles?: string[]; // agent role names to look up from agent list
+	/** Rich step definitions for multi-agent templates. */
+	steps?: WorkflowTemplateStep[];
+	/** Optional workflow-level channels to seed with the template. */
+	channels?: WorkflowChannel[];
+	/** Optional tags to seed with the template. */
+	tags?: string[];
 }
+
+export interface WorkflowTemplateStep {
+	/** Display name for the node. */
+	name: string;
+	/** Single-agent role/name lookup key. Ignored when agentSlots is provided. */
+	role?: string;
+	/** Multi-agent slot definitions for parallel node execution. */
+	agentSlots?: WorkflowTemplateAgentSlot[];
+	/** Optional default node system prompt. */
+	systemPrompt?: string;
+	/** Optional default node instructions. */
+	instructions?: string;
+}
+
+export interface WorkflowTemplateAgentSlot {
+	/** Unique slot name inside the node (e.g. "Reviewer 1"). */
+	name: string;
+	/** Agent role/name lookup key used to assign the slot. */
+	role: string;
+	/** Optional default slot instructions. */
+	instructions?: string;
+}
+
+const V2_TEMPLATE_PROMPTS = {
+	planning:
+		'You are the Planning node for this workflow. Turn the task into a concrete implementation plan that downstream nodes can execute without guessing. Surface assumptions, dependencies, sequencing, and open questions explicitly.',
+	planReview:
+		'You are the Plan Review node for this workflow. Critically review the proposed plan for scope, correctness, feasibility, testing strategy, and risk. Approve only when the plan is actionable and complete.',
+	coding:
+		'You are the Coding node for this workflow. Implement the approved plan in the workspace, keep the changes reviewable, and leave the branch in a state that reviewers and QA can validate directly.',
+	codeReview:
+		'You are part of the Code Review node for this workflow. Review the implementation independently for correctness, regressions, maintainability, and test coverage. Record a clear approve or reject vote with concise reasoning.',
+	qa:
+		'You are the QA node for this workflow. Validate the implementation from an execution and release-readiness perspective. Run the relevant checks, confirm the reported state, and fail the handoff when issues remain.',
+	done:
+		'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce a concise final outcome summary without reopening work unless a blocking issue is discovered.',
+} as const;
 
 export const TEMPLATES: WorkflowTemplate[] = [
 	{
@@ -53,6 +102,164 @@ export const TEMPLATES: WorkflowTemplate[] = [
 		label: 'Quick Fix (Code only)',
 		description: 'Single coder step for focused, scope-limited changes.',
 		stepRoles: ['coder'],
+	},
+	{
+		label: 'Coding Workflow V2',
+		description: 'Plan, review, code, then parallel code review (3 reviewers) and QA before done.',
+		steps: [
+			{
+				name: 'Planning',
+				role: 'planner',
+				systemPrompt: V2_TEMPLATE_PROMPTS.planning,
+				instructions:
+					'Break down the task into an actionable implementation plan. When the plan is ready, write it to the plan-pr-gate (field: plan_submitted) to notify reviewers.',
+			},
+			{
+				name: 'Plan Review',
+				role: 'reviewer',
+				systemPrompt: V2_TEMPLATE_PROMPTS.planReview,
+				instructions:
+					'Review the implementation plan for feasibility and completeness. Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
+			},
+			{
+				name: 'Coding',
+				role: 'coder',
+				systemPrompt: V2_TEMPLATE_PROMPTS.coding,
+				instructions:
+					'Implement the approved plan. Open a pull request when done. Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
+			},
+			{
+				name: 'Code Review',
+				systemPrompt: V2_TEMPLATE_PROMPTS.codeReview,
+				agentSlots: [
+					{ name: 'Reviewer 1', role: 'reviewer' },
+					{ name: 'Reviewer 2', role: 'reviewer' },
+					{ name: 'Reviewer 3', role: 'reviewer' },
+				],
+			},
+			{
+				name: 'QA',
+				role: 'qa',
+				systemPrompt: V2_TEMPLATE_PROMPTS.qa,
+				instructions:
+					'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. Write "result: passed" to qa-result-gate if everything is green, or "result: failed" with a summary to qa-fail-gate if issues are found. If QA fails, the coder will fix the issues and all reviewers must re-vote before QA runs again.',
+			},
+			{
+				name: 'Done',
+				role: 'general',
+				systemPrompt: V2_TEMPLATE_PROMPTS.done,
+			},
+		],
+		channels: [
+			{
+				from: 'Planning',
+				to: 'Plan Review',
+				direction: 'one-way',
+				label: 'Planning -> Plan Review',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Plan Review',
+				to: 'Coding',
+				direction: 'one-way',
+				label: 'Plan Review -> Coding',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Coding',
+				to: 'Reviewer 1',
+				direction: 'one-way',
+				label: 'Coding -> Reviewer 1',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Coding',
+				to: 'Reviewer 2',
+				direction: 'one-way',
+				label: 'Coding -> Reviewer 2',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Coding',
+				to: 'Reviewer 3',
+				direction: 'one-way',
+				label: 'Coding -> Reviewer 3',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Reviewer 1',
+				to: 'QA',
+				direction: 'one-way',
+				label: 'Reviewer 1 -> QA',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Reviewer 2',
+				to: 'QA',
+				direction: 'one-way',
+				label: 'Reviewer 2 -> QA',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Reviewer 3',
+				to: 'QA',
+				direction: 'one-way',
+				label: 'Reviewer 3 -> QA',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'QA',
+				to: 'Done',
+				direction: 'one-way',
+				label: 'QA -> Done',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'QA',
+				to: 'Coding',
+				direction: 'one-way',
+				isCyclic: true,
+				label: 'QA -> Coding (on fail)',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Reviewer 1',
+				to: 'Coding',
+				direction: 'one-way',
+				isCyclic: true,
+				label: 'Reviewer 1 -> Coding (on reject)',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Reviewer 2',
+				to: 'Coding',
+				direction: 'one-way',
+				isCyclic: true,
+				label: 'Reviewer 2 -> Coding (on reject)',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Reviewer 3',
+				to: 'Coding',
+				direction: 'one-way',
+				isCyclic: true,
+				label: 'Reviewer 3 -> Coding (on reject)',
+				gate: { type: 'condition', expression: 'true' },
+			},
+			{
+				from: 'Plan Review',
+				to: 'Planning',
+				direction: 'one-way',
+				label: 'Plan Review -> Planning (feedback)',
+			},
+			{
+				from: 'Coding',
+				to: 'Planning',
+				direction: 'one-way',
+				label: 'Coding -> Planning (feedback)',
+			},
+		],
+		tags: ['coding', 'v2', 'parallel-review'],
 	},
 ];
 
@@ -81,6 +288,79 @@ export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
 	return agents.filter(
 		(a) => a.name.toLowerCase() !== 'leader' && a.role.toLowerCase() !== 'leader'
 	);
+}
+
+function capitalizeRole(role: string): string {
+	return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function resolveTemplateAgent(
+	roleOrName: string,
+	agents: SpaceAgent[],
+	usageByRole: Map<string, number>
+): SpaceAgent | undefined {
+	const key = roleOrName.trim().toLowerCase();
+	if (!key) return undefined;
+	const matches = agents.filter((a) => a.name.toLowerCase() === key || a.role.toLowerCase() === key);
+	if (matches.length === 0) return undefined;
+
+	// Prefer distinct matches for repeated slots of the same role, then fall back
+	// to the last available match if there are more slots than agents.
+	const used = usageByRole.get(key) ?? 0;
+	usageByRole.set(key, used + 1);
+	return matches[Math.min(used, matches.length - 1)];
+}
+
+function getTemplateStepDefs(template: WorkflowTemplate): WorkflowTemplateStep[] {
+	if (Array.isArray(template.steps) && template.steps.length > 0) {
+		return template.steps;
+	}
+
+	const stepRoles = template.stepRoles ?? [];
+	return stepRoles.map((role) => ({ name: capitalizeRole(role), role }));
+}
+
+/**
+ * Build workflow node drafts from a template definition.
+ * Supports both legacy single-agent stepRoles and multi-agent steps.
+ */
+export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgent[]): NodeDraft[] {
+	const usageByRole = new Map<string, number>();
+	const stepDefs = getTemplateStepDefs(template);
+
+	return stepDefs.map((step, index) => {
+		const name = step.name?.trim() || `Step ${index + 1}`;
+
+		if (Array.isArray(step.agentSlots) && step.agentSlots.length > 0) {
+			const agentSlots: WorkflowNodeAgent[] = step.agentSlots.map((slot, slotIndex) => {
+				const assigned = resolveTemplateAgent(slot.role, agents, usageByRole);
+				return {
+					agentId: assigned?.id ?? '',
+					name: slot.name?.trim() || `${capitalizeRole(slot.role)} ${slotIndex + 1}`,
+					instructions: slot.instructions?.trim() || undefined,
+				};
+			});
+
+			return {
+				localId: makeLocalId(),
+				name,
+				agentId: '',
+				agents: agentSlots,
+				systemPrompt: step.systemPrompt?.trim() ?? undefined,
+				instructions: step.instructions?.trim() ?? '',
+			};
+		}
+
+		const role = step.role?.trim() ?? '';
+		const assigned = role ? resolveTemplateAgent(role, agents, usageByRole) : undefined;
+		return {
+			localId: makeLocalId(),
+			name,
+			agentId: assigned?.id ?? '',
+			systemPrompt: step.systemPrompt?.trim() ?? undefined,
+			instructions: step.instructions?.trim() ?? '',
+		};
+	});
 }
 
 /**
@@ -118,6 +398,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 			id: startNode.id,
 			name: startNode.name,
 			agentId: startNode.agentId ?? '',
+			systemPrompt: startNode.systemPrompt ?? undefined,
 			instructions: startNode.instructions ?? '',
 		});
 	}
@@ -130,6 +411,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 				id: s.id,
 				name: s.name,
 				agentId: s.agentId ?? '',
+				systemPrompt: s.systemPrompt ?? undefined,
 				instructions: s.instructions ?? '',
 			});
 		}
@@ -277,20 +559,21 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	// ---- Template ----
 
 	function applyTemplate(template: WorkflowTemplate) {
-		const newSteps: NodeDraft[] = template.stepRoles.map((role) => {
-			const found = agents.find(
-				(a) => a.name.toLowerCase() === role || a.role.toLowerCase() === role
-			);
-			return {
-				localId: makeLocalId(),
-				name: role.charAt(0).toUpperCase() + role.slice(1),
-				agentId: found?.id ?? '',
-				instructions: '',
-			};
-		});
+		const newSteps: NodeDraft[] = buildTemplateNodes(template, agents);
+		if (newSteps.length === 0) return;
 
 		setSteps(newSteps);
 		setTransitions(newSteps.slice(1).map(() => makeDefaultCondition()));
+		setChannels(
+			(template.channels ?? []).map((channel) => ({
+				...channel,
+				to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+				gate: channel.gate ? { ...channel.gate } : undefined,
+			}))
+		);
+		if (template.tags) {
+			setTags([...template.tags]);
+		}
 		setExpandedIndex(0);
 		setShowTemplates(false);
 		if (!name) setName(template.label);
@@ -345,6 +628,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				id: stepIds[i],
 				name: s.name || `Step ${i + 1}`,
 				agentId: s.agentId ?? '',
+				systemPrompt: s.systemPrompt || undefined,
 				instructions: s.instructions || undefined,
 			}));
 

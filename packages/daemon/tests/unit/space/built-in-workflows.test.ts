@@ -4,8 +4,8 @@
  * Covers:
  * - Template structure: correct agentId placeholders, transition conditions, step count
  * - agentId placeholders are valid builtin role names (no 'leader')
- * - getBuiltInWorkflows() returns all three templates
- * - seedBuiltInWorkflows(): seeds all three templates with real agent IDs
+ * - getBuiltInWorkflows() returns all four templates
+ * - seedBuiltInWorkflows(): seeds all four templates with real agent IDs
  * - seedBuiltInWorkflows(): idempotent — no re-seed if workflows already exist
  * - Export/import round-trip: isCyclic and task_result conditions are preserved
  */
@@ -75,7 +75,9 @@ const VALID_BUILTIN_ROLES = new Set<string>(['planner', 'coder', 'general', 'rev
  * Returns true if any step in the workflow has 'leader' as its agentId placeholder.
  */
 function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
-	return wf.nodes.some((s) => s.agentId === 'leader');
+	return wf.nodes.some(
+		(s) => s.agentId === 'leader' || (s.agents ?? []).some((agent) => agent.agentId === 'leader')
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -251,8 +253,8 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 });
 
 describe('CODING_WORKFLOW_V2 template', () => {
-	test('has eight nodes', () => {
-		expect(CODING_WORKFLOW_V2.nodes).toHaveLength(8);
+	test('has six nodes', () => {
+		expect(CODING_WORKFLOW_V2.nodes).toHaveLength(6);
 	});
 
 	test('node names are correct', () => {
@@ -260,24 +262,29 @@ describe('CODING_WORKFLOW_V2 template', () => {
 			'Planning',
 			'Plan Review',
 			'Coding',
-			'Reviewer 1',
-			'Reviewer 2',
-			'Reviewer 3',
+			'Code Review',
 			'QA',
 			'Done',
 		]);
 	});
 
-	test('node agentId placeholders are correct', () => {
+	test('node agent placeholders are correct', () => {
 		const nodes = CODING_WORKFLOW_V2.nodes;
 		expect(nodes[0].agentId).toBe('planner'); // Planning
 		expect(nodes[1].agentId).toBe('reviewer'); // Plan Review
 		expect(nodes[2].agentId).toBe('coder'); // Coding
-		expect(nodes[3].agentId).toBe('reviewer'); // Reviewer 1
-		expect(nodes[4].agentId).toBe('reviewer'); // Reviewer 2
-		expect(nodes[5].agentId).toBe('reviewer'); // Reviewer 3
-		expect(nodes[6].agentId).toBe('qa'); // QA
-		expect(nodes[7].agentId).toBe('general'); // Done
+		expect(nodes[3].agentId).toBeUndefined(); // Code Review uses agents[]
+		expect(nodes[3].agents).toHaveLength(3);
+		expect(nodes[3].agents?.map((a) => a.agentId)).toEqual(['reviewer', 'reviewer', 'reviewer']);
+		expect(nodes[3].agents?.map((a) => a.name)).toEqual(['Reviewer 1', 'Reviewer 2', 'Reviewer 3']);
+		expect(nodes[4].agentId).toBe('qa'); // QA
+		expect(nodes[5].agentId).toBe('general'); // Done
+	});
+
+	test('all V2 nodes define explicit system prompts', () => {
+		for (const node of CODING_WORKFLOW_V2.nodes) {
+			expect(node.systemPrompt?.trim().length).toBeGreaterThan(0);
+		}
 	});
 
 	test('startNodeId points to the Planning (planner) node', () => {
@@ -438,21 +445,32 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		}
 	});
 
-	test('all channel from/to fields reference valid node names', () => {
-		const nodeNames = new Set(CODING_WORKFLOW_V2.nodes.map((n) => n.name));
+	test('all channel from/to fields reference valid node names or agent slot names', () => {
+		const refs = new Set<string>();
+		for (const node of CODING_WORKFLOW_V2.nodes) {
+			refs.add(node.name);
+			for (const agent of node.agents ?? []) refs.add(agent.name);
+		}
 		for (const ch of CODING_WORKFLOW_V2.channels!) {
-			expect(nodeNames.has(ch.from as string)).toBe(true);
-			expect(nodeNames.has(ch.to as string)).toBe(true);
+			expect(refs.has(ch.from as string)).toBe(true);
+			if (Array.isArray(ch.to)) {
+				for (const target of ch.to) {
+					expect(refs.has(target)).toBe(true);
+				}
+			} else {
+				expect(refs.has(ch.to as string)).toBe(true);
+			}
 		}
 	});
 
-	test('reviewer nodes instruct read-merge-write for votes (not bare write)', () => {
-		for (const name of ['Reviewer 1', 'Reviewer 2', 'Reviewer 3']) {
-			const node = CODING_WORKFLOW_V2.nodes.find((n) => n.name === name)!;
-			expect(node.instructions).toContain('read_gate');
-			expect(node.instructions).toContain('write_gate');
+	test('code review node contains three reviewer slots with read-merge-write instructions', () => {
+		const reviewNode = CODING_WORKFLOW_V2.nodes.find((n) => n.name === 'Code Review')!;
+		expect(reviewNode.agents).toHaveLength(3);
+		for (const slot of reviewNode.agents ?? []) {
+			expect(slot.instructions).toContain('read_gate');
+			expect(slot.instructions).toContain('write_gate');
 			// Must warn against writing only own entry to prevent overwriting peers
-			expect(node.instructions).toContain('overwriting');
+			expect(slot.instructions).toContain('overwriting');
 		}
 	});
 
@@ -535,12 +553,17 @@ describe('getBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('all agentId placeholders are valid builtin role names', () => {
+	test('all agent placeholders are valid builtin role names', () => {
 		for (const wf of getBuiltInWorkflows()) {
 			for (const step of wf.nodes) {
-				// Built-in workflows use single-agent steps; agentId must be defined and a valid role name.
-				expect(step.agentId).toBeDefined();
-				expect(VALID_BUILTIN_ROLES.has(step.agentId!)).toBe(true);
+				const slotAgentIds =
+					step.agents && step.agents.length > 0
+						? step.agents.map((a) => a.agentId)
+						: [step.agentId].filter((id): id is string => !!id);
+				expect(slotAgentIds.length).toBeGreaterThan(0);
+				for (const agentId of slotAgentIds) {
+					expect(VALID_BUILTIN_ROLES.has(agentId)).toBe(true);
+				}
 			}
 		}
 	});
@@ -612,6 +635,15 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(names).toContain(CODING_WORKFLOW_V2.name);
 		expect(names).toContain(RESEARCH_WORKFLOW.name);
 		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
+	});
+
+	test('Coding Workflow V2 seeding preserves explicit node system prompts', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name);
+		expect(wf).toBeDefined();
+		for (const node of wf!.nodes) {
+			expect((node.systemPrompt?.trim().length ?? 0) > 0).toBe(true);
+		}
 	});
 
 	test('CODING_WORKFLOW seeded correctly — four steps with real agent IDs', async () => {
@@ -733,19 +765,28 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[0].agentId).toBe(CODER_ID);
 	});
 
-	test('CODING_WORKFLOW_V2 seeded correctly — eight nodes with real agent IDs', async () => {
+	test('CODING_WORKFLOW_V2 seeded correctly — six nodes with code-review agents[]', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name);
 		expect(wf).toBeDefined();
-		expect(wf!.nodes).toHaveLength(8);
+		expect(wf!.nodes).toHaveLength(6);
 		expect(wf!.nodes[0].agentId).toBe(PLANNER_ID); // Planning
 		expect(wf!.nodes[1].agentId).toBe(roleMap.reviewer); // Plan Review
 		expect(wf!.nodes[2].agentId).toBe(CODER_ID); // Coding
-		expect(wf!.nodes[3].agentId).toBe(roleMap.reviewer); // Reviewer 1
-		expect(wf!.nodes[4].agentId).toBe(roleMap.reviewer); // Reviewer 2
-		expect(wf!.nodes[5].agentId).toBe(roleMap.reviewer); // Reviewer 3
-		expect(wf!.nodes[6].agentId).toBe(QA_ID); // QA
-		expect(wf!.nodes[7].agentId).toBe(GENERAL_ID); // Done
+		expect(wf!.nodes[3].agentId).toBeUndefined(); // Code Review uses agents[]
+		expect(wf!.nodes[3].agents).toHaveLength(3);
+		expect(wf!.nodes[3].agents?.map((a) => a.agentId)).toEqual([
+			roleMap.reviewer,
+			roleMap.reviewer,
+			roleMap.reviewer,
+		]);
+		expect(wf!.nodes[3].agents?.map((a) => a.name)).toEqual([
+			'Reviewer 1',
+			'Reviewer 2',
+			'Reviewer 3',
+		]);
+		expect(wf!.nodes[4].agentId).toBe(QA_ID); // QA
+		expect(wf!.nodes[5].agentId).toBe(GENERAL_ID); // Done
 	});
 
 	test('CODING_WORKFLOW_V2 seeded with 15 channels', async () => {
@@ -784,13 +825,23 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(cyclicChannels).toHaveLength(4);
 	});
 
-	test('CODING_WORKFLOW_V2 seeded channels from/to fields are node names (not UUIDs)', async () => {
+	test('CODING_WORKFLOW_V2 seeded channels reference node names or reviewer slot names', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
-		const nodeNames = new Set(wf.nodes.map((n) => n.name));
+		const refs = new Set<string>();
+		for (const node of wf.nodes) {
+			refs.add(node.name);
+			for (const slot of node.agents ?? []) refs.add(slot.name);
+		}
 		for (const ch of wf.channels!) {
-			expect(nodeNames.has(ch.from as string)).toBe(true);
-			expect(nodeNames.has(ch.to as string)).toBe(true);
+			expect(refs.has(ch.from as string)).toBe(true);
+			if (Array.isArray(ch.to)) {
+				for (const target of ch.to) {
+					expect(refs.has(target)).toBe(true);
+				}
+			} else {
+				expect(refs.has(ch.to as string)).toBe(true);
+			}
 		}
 	});
 
