@@ -9,8 +9,7 @@
  * - Step Name input
  * - "Set as Start" button (disabled when node is already the start node)
  * - Agent dropdown
- * - Entry Gate selector (GateConfig)
- * - Exit Gate selector (GateConfig)
+ * - Model override for single-agent nodes
  * - Instructions textarea
  * - Delete Step button with confirmation (disabled for start node)
  */
@@ -19,8 +18,6 @@ import { useState, useEffect, useCallback } from 'preact/hooks';
 import type { SpaceAgent, WorkflowNodeAgent } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode } from '../WorkflowNodeCard';
-import { GateConfig } from './GateConfig';
-import type { ConditionDraft } from './GateConfig';
 
 // ============================================================================
 // Props
@@ -37,22 +34,8 @@ export interface NodeChannelLink {
 export interface NodeConfigPanelProps {
 	step: NodeDraft;
 	agents: SpaceAgent[];
-	entryCondition: ConditionDraft | null;
-	exitCondition: ConditionDraft | null;
 	isStartNode: boolean;
-	/**
-	 * When true, the entry gate shows "Workflow starts here" (no selector).
-	 * Mirrors the WorkflowNodeCard terminal message for the first step.
-	 */
-	isFirstStep?: boolean;
-	/**
-	 * When true, the exit gate shows "Workflow ends here" (no selector).
-	 * Mirrors the WorkflowNodeCard terminal message for the last step.
-	 */
-	isLastStep?: boolean;
 	onUpdate: (step: NodeDraft) => void;
-	onUpdateEntryCondition: (cond: ConditionDraft) => void;
-	onUpdateExitCondition: (cond: ConditionDraft) => void;
 	/** Designates this step as the workflow start node */
 	onSetAsStart: (stepId: string) => void;
 	channelLinks?: NodeChannelLink[];
@@ -191,6 +174,24 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 						</option>
 					))}
 				</select>
+				<div class="space-y-1">
+					<label class="text-xs font-medium text-gray-400">
+						Model <span class="font-normal text-gray-600">(optional override)</span>
+					</label>
+					<input
+						type="text"
+						data-testid="single-agent-model-input"
+						value={step.model ?? ''}
+						onInput={(e) =>
+							onUpdate({
+								...step,
+								model: (e.currentTarget as HTMLInputElement).value || undefined,
+							})
+						}
+						placeholder="Use agent default"
+						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+					/>
+				</div>
 			</div>
 		);
 	}
@@ -390,14 +391,8 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 export function NodeConfigPanel({
 	step,
 	agents,
-	entryCondition,
-	exitCondition,
 	isStartNode,
-	isFirstStep = false,
-	isLastStep = false,
 	onUpdate,
-	onUpdateEntryCondition,
-	onUpdateExitCondition,
 	onSetAsStart,
 	channelLinks = [],
 	onOpenChannelLink,
@@ -504,24 +499,6 @@ export function NodeConfigPanel({
 				{/* Agent(s) */}
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
 
-				{/* Entry Gate */}
-				<GateConfig
-					label="Entry Gate"
-					condition={entryCondition ?? { type: 'always' }}
-					onChange={onUpdateEntryCondition}
-					terminalMessage={isFirstStep ? 'Workflow starts here' : undefined}
-					testId="entry-gate-select"
-				/>
-
-				{/* Exit Gate */}
-				<GateConfig
-					label="Exit Gate"
-					condition={exitCondition ?? { type: 'always' }}
-					onChange={onUpdateExitCondition}
-					terminalMessage={isLastStep ? 'Workflow ends here' : undefined}
-					testId="exit-gate-select"
-				/>
-
 				{/* Instructions */}
 				<div class="space-y-1.5">
 					<label class="text-xs font-medium text-gray-400">
@@ -536,10 +513,13 @@ export function NodeConfigPanel({
 								instructions: (e.currentTarget as HTMLTextAreaElement).value,
 							})
 						}
-						placeholder="Step-specific instructions appended to the agent's system prompt…"
+						placeholder="Step-specific instructions appended to the agent prompt…"
 						rows={5}
 						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
 					/>
+					<p class="text-[11px] text-gray-600">
+						Shared guidance appended for every agent in this node. This is not the base system prompt.
+					</p>
 				</div>
 
 				{/* Channel Links */}

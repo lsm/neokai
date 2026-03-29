@@ -124,6 +124,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			id: s.id,
 			name: s.name,
 			agentId: s.agentId ?? '',
+			model: s.model ?? undefined,
 			agents: s.agents,
 			instructions: s.instructions ?? '',
 		};
@@ -254,6 +255,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 			// When agents array is provided and non-empty, omit agentId (agents takes precedence).
 			// Otherwise use the single agentId (may be empty string, serialized as undefined).
 			agentId: hasMultiAgent ? undefined : node.step.agentId || undefined,
+			model: hasMultiAgent ? undefined : node.step.model || undefined,
 			agents: hasMultiAgent ? node.step.agents : undefined,
 			instructions: node.step.instructions || undefined,
 		};

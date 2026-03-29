@@ -32,6 +32,8 @@ export interface NodeDraft {
 	name: string;
 	/** Single-agent shorthand (backward compat). When agents is provided and non-empty, agents takes precedence. */
 	agentId: string;
+	/** Single-agent model override. Ignored when agents[] is present. */
+	model?: string;
 	/** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
 	agents?: WorkflowNodeAgent[];
 	/** Directed messaging topology between agents. */

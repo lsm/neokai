@@ -84,6 +84,7 @@ const exportedWorkflowChannelSchema = z.object({
 const exportedWorkflowNodeSchema = z
 	.object({
 		agentRef: z.string().min(1).optional(),
+		model: z.string().optional(),
 		agents: z.array(exportedWorkflowNodeAgentSchema).optional(),
 		name: z.string().min(1),
 		instructions: z.string().optional(),
@@ -248,6 +249,7 @@ export function exportWorkflow(
 			if (primaryAgentId) {
 				exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
 			}
+			if (node.model !== undefined) exported.model = node.model;
 		}
 
 		if (node.instructions !== undefined) exported.instructions = node.instructions;

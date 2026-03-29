@@ -858,6 +858,8 @@ export interface WorkflowNode {
 	 * At least one of `agentId` or `agents` must be provided.
 	 */
 	agentId?: string;
+	/** Override the agent's default model for single-agent shorthand nodes. */
+	model?: string;
 	/**
 	 * Multiple agents for parallel execution within this node.
 	 * When provided (non-empty), takes precedence over `agentId`.
@@ -907,6 +909,8 @@ export interface WorkflowNodeInput {
 	 * precedence. At least one of `agentId` or `agents` must be provided.
 	 */
 	agentId?: string;
+	/** Override the agent's default model for single-agent shorthand nodes. */
+	model?: string;
 	/**
 	 * Multiple agents for parallel execution within this node.
 	 * When provided (non-empty), takes precedence over `agentId`.
@@ -1141,6 +1145,8 @@ export interface ExportedWorkflowNode {
 	 * Used for single-agent nodes. Mutually exclusive with `agents`.
 	 */
 	agentRef?: string;
+	/** Override the single-agent node's default model. */
+	model?: string;
 	/**
 	 * Multiple agents for parallel execution.
 	 * Used for multi-agent nodes. Mutually exclusive with `agentRef`.
