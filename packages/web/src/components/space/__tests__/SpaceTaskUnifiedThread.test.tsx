@@ -76,6 +76,80 @@ function makeRows() {
 	];
 }
 
+function makeNoiseRows() {
+	return [
+		{
+			id: 'sys-init',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'coder',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'system',
+			content: JSON.stringify({
+				type: 'system',
+				subtype: 'init',
+				uuid: 's1',
+				session_id: 'space:space-1:task:task-1',
+			}),
+			createdAt: 1_710_000_000_000,
+		},
+		{
+			id: 'result-success',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'coder',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'result',
+			content: JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				uuid: 'r1',
+				session_id: 'space:space-1:task:task-1',
+				usage: { input_tokens: 10, output_tokens: 5 },
+			}),
+			createdAt: 1_710_000_000_100,
+		},
+		{
+			id: 'rate-allowed',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'coder',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'rate_limit_event',
+			content: JSON.stringify({
+				type: 'rate_limit_event',
+				uuid: 'rl1',
+				session_id: 'space:space-1:task:task-1',
+				rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour' },
+			}),
+			createdAt: 1_710_000_000_200,
+		},
+		{
+			id: 'rate-rejected',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'coder',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'rate_limit_event',
+			content: JSON.stringify({
+				type: 'rate_limit_event',
+				uuid: 'rl2',
+				session_id: 'space:space-1:task:task-1',
+				rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour' },
+			}),
+			createdAt: 1_710_000_000_300,
+		},
+	];
+}
+
 describe('SpaceTaskUnifiedThread', () => {
 	beforeEach(() => {
 		cleanup();
@@ -108,5 +182,14 @@ describe('SpaceTaskUnifiedThread', () => {
 		fireEvent.click(screen.getByTestId('space-task-thread-mode-verbose'));
 		expect(screen.getByTestId('space-task-event-feed-verbose')).toBeTruthy();
 		expect(screen.getAllByTestId('sdk-message-renderer')).toHaveLength(2);
+	});
+
+	it('filters init/success/non-error-rate-limit noise in compact mode', () => {
+		mockRows = makeNoiseRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		expect(screen.queryByText('Completed')).toBeNull();
+		expect(screen.queryByText('System')).toBeNull();
+		expect(screen.getByText('Rate Limit')).toBeTruthy();
+		expect(screen.getByText('five hour · rejected')).toBeTruthy();
 	});
 });
