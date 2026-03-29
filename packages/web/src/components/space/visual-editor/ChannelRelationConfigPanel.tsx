@@ -19,6 +19,7 @@ export interface ChannelRelationConfigPanelProps {
 	onBack?: () => void;
 	onClose: () => void;
 	width?: number;
+	embedded?: boolean;
 }
 
 export function ChannelRelationConfigPanel({
@@ -33,10 +34,77 @@ export function ChannelRelationConfigPanel({
 	onBack,
 	onClose,
 	width = 360,
+	embedded = false,
 }: ChannelRelationConfigPanelProps) {
-	return (
+	const content = (
 		<div
 			data-testid="channel-relation-config-panel"
+			class={embedded ? 'flex-1 overflow-y-auto px-4 py-4 space-y-3' : 'flex-1 overflow-y-auto px-4 py-4 space-y-3'}
+		>
+			<p class="text-xs text-gray-500">{description}</p>
+			{canConvertToBidirectional && (
+				<button
+					type="button"
+					data-testid="convert-channel-relation-button"
+					onClick={onConvertToBidirectional}
+					class="w-full rounded border border-blue-600 bg-blue-600/10 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-blue-600/20 transition-colors"
+				>
+					Convert to bidirectional
+				</button>
+			)}
+
+			{forwardLinks.length > 0 ? (
+				<div class="space-y-3">
+					{reverseLinks.length > 0 && (
+						<p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+							Forward links
+						</p>
+					)}
+					{forwardLinks.map(({ index, channel }) => (
+						<ChannelEdgeConfigPanel
+							key={`${index}-${channel.from}-${Array.isArray(channel.to) ? channel.to.join(',') : channel.to}`}
+							index={index}
+							channel={channel}
+							onChange={onChange}
+							onDelete={onDelete}
+							showHeader={false}
+							showDirectionControls={false}
+						/>
+					))}
+				</div>
+			) : null}
+
+			{reverseLinks.length > 0 && (
+				<div class="space-y-3">
+					<p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+						Reverse links
+					</p>
+					{reverseLinks.map(({ index, channel }) => (
+						<ChannelEdgeConfigPanel
+							key={`${index}-${channel.from}-${Array.isArray(channel.to) ? channel.to.join(',') : channel.to}`}
+							index={index}
+							channel={channel}
+							onChange={onChange}
+							onDelete={onDelete}
+							showHeader={false}
+							showDirectionControls={false}
+						/>
+					))}
+				</div>
+			)}
+
+			{forwardLinks.length === 0 && reverseLinks.length === 0 && (
+				<p class="text-xs text-gray-600">No editable channel links found for this relation.</p>
+			)}
+		</div>
+	);
+
+	if (embedded) {
+		return content;
+	}
+
+	return (
+		<div
 			style={{
 				position: 'absolute',
 				top: 0,
@@ -91,62 +159,7 @@ export function ChannelRelationConfigPanel({
 				</button>
 			</div>
 
-			<div class="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-				{canConvertToBidirectional && (
-					<button
-						type="button"
-						data-testid="convert-channel-relation-button"
-						onClick={onConvertToBidirectional}
-						class="w-full rounded border border-blue-600 bg-blue-600/10 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-blue-600/20 transition-colors"
-					>
-						Convert to bidirectional
-					</button>
-				)}
-
-				{forwardLinks.length > 0 ? (
-					<div class="space-y-3">
-						{reverseLinks.length > 0 && (
-							<p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
-								Forward links
-							</p>
-						)}
-						{forwardLinks.map(({ index, channel }) => (
-							<ChannelEdgeConfigPanel
-								key={`${index}-${channel.from}-${Array.isArray(channel.to) ? channel.to.join(',') : channel.to}`}
-								index={index}
-								channel={channel}
-								onChange={onChange}
-								onDelete={onDelete}
-								showHeader={false}
-								showDirectionControls={false}
-							/>
-						))}
-					</div>
-				) : null}
-
-				{reverseLinks.length > 0 && (
-					<div class="space-y-3">
-						<p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
-							Reverse links
-						</p>
-						{reverseLinks.map(({ index, channel }) => (
-						<ChannelEdgeConfigPanel
-							key={`${index}-${channel.from}-${Array.isArray(channel.to) ? channel.to.join(',') : channel.to}`}
-							index={index}
-							channel={channel}
-							onChange={onChange}
-							onDelete={onDelete}
-							showHeader={false}
-							showDirectionControls={false}
-						/>
-						))}
-					</div>
-				)}
-
-				{forwardLinks.length === 0 && reverseLinks.length === 0 && (
-					<p class="text-xs text-gray-600">No editable channel links found for this relation.</p>
-				)}
-			</div>
+			{content}
 		</div>
 	);
 }

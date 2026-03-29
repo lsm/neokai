@@ -139,6 +139,7 @@ describe('NodeConfigPanel', () => {
 
 		it('renders the instructions textarea with current value', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			fireEvent.click(getByTestId('prompt-instructions-button'));
 			const textarea = getByTestId('instructions-textarea') as HTMLTextAreaElement;
 			expect(textarea.value).toBe('Do stuff.');
 		});
@@ -221,6 +222,7 @@ describe('NodeConfigPanel', () => {
 		it('calls onUpdate with new instructions when textarea changes', () => {
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			fireEvent.click(getByTestId('prompt-instructions-button'));
 			fireEvent.input(getByTestId('instructions-textarea'), {
 				target: { value: 'New instructions.' },
 			});
@@ -257,21 +259,22 @@ describe('NodeConfigPanel', () => {
 			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
 		});
 
-		it('opens the dedicated single-agent system prompt editor', () => {
+		it('opens the dedicated prompt and instructions editor', () => {
 			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(queryByTestId('single-agent-system-prompt-input')).toBeNull();
-			fireEvent.click(getByTestId('single-agent-system-prompt-button'));
-			expect(getByTestId('single-agent-system-prompt-input')).toBeTruthy();
+			expect(queryByTestId('node-system-prompt-input')).toBeNull();
+			fireEvent.click(getByTestId('prompt-instructions-button'));
+			expect(getByTestId('node-system-prompt-input')).toBeTruthy();
 			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 		});
 	});
 
 	describe('instructions copy', () => {
 		it('explains that instructions are appended guidance, not the base system prompt', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps()} />);
+			const { getByTestId, getByText } = render(<NodeConfigPanel {...makeProps()} />);
+			fireEvent.click(getByTestId('prompt-instructions-button'));
 			expect(
 				getByText(
-					'Shared guidance appended for every agent in this node. This is not the base system prompt.'
+					'This editor shows the current values for both the shared prompt override and the shared instructions.'
 				)
 			).toBeTruthy();
 		});
@@ -530,7 +533,7 @@ describe('NodeConfigPanel', () => {
 	});
 
 	// ============================================================================
-	// Per-slot override fields: role, model, systemPrompt
+	// Per-slot fields: role and model
 	// ============================================================================
 
 	describe('per-slot fields', () => {
@@ -570,15 +573,6 @@ describe('NodeConfigPanel', () => {
 			expect(getByTestId('override-badge')).toBeTruthy();
 		});
 
-		it('shows override-badge when slot has systemPrompt override', () => {
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner', systemPrompt: 'You are strict.' }],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			expect(getByTestId('override-badge')).toBeTruthy();
-		});
-
 		it('does not show override-badge when slot has no overrides', () => {
 			const step = makeStep({
 				agentId: '',
@@ -588,7 +582,7 @@ describe('NodeConfigPanel', () => {
 			expect(queryByTestId('override-badge')).toBeNull();
 		});
 
-		it('shows model selector and system prompt button without requiring an extra expand step', async () => {
+		it('shows model selector for each slot without extra expansion', async () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
@@ -598,7 +592,6 @@ describe('NodeConfigPanel', () => {
 				expect((getByTestId('agent-model-select') as HTMLSelectElement).options.length).toBeGreaterThan(1)
 			);
 			expect(getByTestId('agent-model-select')).toBeTruthy();
-			expect(getByTestId('agent-system-prompt-button')).toBeTruthy();
 		});
 
 		it('editing agent selection calls onUpdate with updated agentId', () => {
@@ -643,19 +636,19 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.agents[0].model).toBeUndefined();
 		});
 
-		it('opens the dedicated per-agent system prompt editor and saves content', () => {
-			const onUpdate = vi.fn();
+		it('shared prompt and instructions editor is used for multi-agent nodes too', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
+			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.click(getByTestId('agent-system-prompt-button'));
-			fireEvent.input(getByTestId('agent-system-prompt-input'), {
+			fireEvent.click(getByTestId('prompt-instructions-button'));
+			fireEvent.input(getByTestId('node-system-prompt-input'), {
 				target: { value: 'Be very strict.' },
 			});
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			expect(updatedStep.agents[0].systemPrompt).toBe('Be very strict.');
+			expect(updatedStep.systemPrompt).toBe('Be very strict.');
 			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 		});
 
@@ -695,7 +688,7 @@ describe('NodeConfigPanel', () => {
 			expect(queryAllByTestId('override-badge')).toHaveLength(1);
 		});
 
-		it('agent system prompt view stays addressable after the slot role is renamed', async () => {
+		it('shared prompt and instructions view stays addressable after a slot role is renamed', async () => {
 			// Use a controlled wrapper so onUpdate actually updates the step prop,
 			// matching how the real parent (VisualWorkflowEditor) behaves.
 			function Wrapper() {
@@ -710,8 +703,8 @@ describe('NodeConfigPanel', () => {
 				fireEvent.input(getByTestId('agent-role-input'), { target: { value: 'lead-planner' } });
 			});
 
-			fireEvent.click(getByTestId('agent-system-prompt-button'));
-			expect(queryByTestId('agent-system-prompt-input')).toBeTruthy();
+			fireEvent.click(getByTestId('prompt-instructions-button'));
+			expect(queryByTestId('node-system-prompt-input')).toBeTruthy();
 		});
 	});
 });

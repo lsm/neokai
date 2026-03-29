@@ -89,7 +89,11 @@ export interface ResolvedChannel {
  */
 export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 	if (node.agents && node.agents.length > 0) {
-		return node.agents;
+		return node.agents.map((agent) => ({
+			...agent,
+			systemPrompt: node.systemPrompt,
+			instructions: node.instructions,
+		}));
 	}
 
 	if (node.agentId) {
