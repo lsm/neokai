@@ -65,6 +65,7 @@ describe('buildSemanticWorkflowEdges', () => {
 				direction: 'one-way',
 				channelCount: 3,
 				hasGate: false,
+				gateType: undefined,
 				channelIndexes: [0, 1, 2],
 			},
 		]);
@@ -84,6 +85,7 @@ describe('buildSemanticWorkflowEdges', () => {
 				direction: 'bidirectional',
 				channelCount: 2,
 				hasGate: false,
+				gateType: undefined,
 				channelIndexes: [0, 1],
 			},
 		]);
@@ -104,6 +106,7 @@ describe('buildSemanticWorkflowEdges', () => {
 				direction: 'one-way',
 				channelCount: 1,
 				hasGate: true,
+				gateType: 'condition',
 				channelIndexes: [2],
 			},
 		]);

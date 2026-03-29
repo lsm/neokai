@@ -21,10 +21,12 @@
  * collisions when multiple EdgeRenderer instances are mounted simultaneously.
  *
  * Channel edges are also rendered (via the channels prop). Channel edges connect
- * between the same port anchors used by drag-create links (source bottom-center
- * to target top-center) with a distinct teal style.
- * Gated channels (gate condition != always) use solid lines for visual distinction.
- * Ungated channels use dashed lines. Bidirectional channels show double arrowheads.
+ * between routed semantic node anchors with a distinct teal style.
+ * Direction is encoded by the line style:
+ *   one-way       -> dashed
+ *   bidirectional -> solid + double arrowheads
+ * Gates are rendered as midpoint badges so gate state does not compete with
+ * direction for the same visual channel.
  * Channels are selectable by clicking; the selected channel highlights in white.
  */
 
@@ -88,9 +90,19 @@ export interface ResolvedWorkflowChannel {
 /** Channel edge color -- teal, distinct from transition edge colors */
 export const CHANNEL_EDGE_COLOR = '#14b8a6'; // teal-500
 
-/** Channel edge stroke dash pattern for ungated channels */
+/** Channel edge stroke dash pattern for one-way channels */
 export const CHANNEL_EDGE_DASH_ARRAY = '6 4';
 const CHANNEL_DOCK_RADIUS = 7;
+const CHANNEL_GATE_BADGE_HEIGHT = 20;
+const CHANNEL_GATE_BADGE_HORIZONTAL_PADDING = 8;
+const CHANNEL_GATE_BADGE_CHAR_WIDTH = 7;
+const CHANNEL_GATE_BADGE_BG = '#0f1115';
+const CHANNEL_GATE_BADGE_BORDER = '#232733';
+const CHANNEL_GATE_BADGE_LABELS: Record<NonNullable<ResolvedWorkflowChannel['gateType']>, string> = {
+	human: 'Human',
+	condition: 'Shell',
+	task_result: 'Result',
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -298,6 +310,47 @@ function trimOrthogonalPathPoints(points: Point2D[], trimStart: number, trimEnd:
 	return normalizeOrthogonalPoints(trimmed);
 }
 
+function getOrthogonalPathMidpoint(points: Point2D[]): Point2D {
+	const normalized = normalizeOrthogonalPoints(points);
+	if (normalized.length === 0) return { x: 0, y: 0 };
+	if (normalized.length === 1) return normalized[0];
+
+	let totalLength = 0;
+	for (let index = 1; index < normalized.length; index += 1) {
+		totalLength +=
+			Math.abs(normalized[index].x - normalized[index - 1].x) +
+			Math.abs(normalized[index].y - normalized[index - 1].y);
+	}
+
+	const midpointDistance = totalLength / 2;
+	let traversed = 0;
+
+	for (let index = 1; index < normalized.length; index += 1) {
+		const start = normalized[index - 1];
+		const end = normalized[index];
+		const segmentLength = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+		if (traversed + segmentLength < midpointDistance) {
+			traversed += segmentLength;
+			continue;
+		}
+
+		const distanceIntoSegment = midpointDistance - traversed;
+		if (start.x === end.x) {
+			return {
+				x: start.x,
+				y: start.y + Math.sign(end.y - start.y) * distanceIntoSegment,
+			};
+		}
+
+		return {
+			x: start.x + Math.sign(end.x - start.x) * distanceIntoSegment,
+			y: start.y,
+		};
+	}
+
+	return normalized[normalized.length - 1];
+}
+
 function roundedOrthogonalPath(points: Point2D[], cornerRadius = 14): string {
 	const normalized = normalizeOrthogonalPoints(points);
 	if (normalized.length === 0) return '';
@@ -339,7 +392,7 @@ function roundedOrthogonalPath(points: Point2D[], cornerRadius = 14): string {
 	return d;
 }
 
-export function buildChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoints): string {
+function buildChannelOrthogonalPoints(channel: ResolvedWorkflowChannel, pts: EdgePoints): Point2D[] {
 	const sourceSide = channel.fromStepId === 'task-agent' ? 'right' : (channel.sourceSide ?? 'bottom');
 	const targetSide = channel.targetSide ?? 'top';
 	const start = { x: pts.sx, y: pts.sy };
@@ -367,44 +420,29 @@ export function buildChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoi
 		midPoints = [{ x: endLead.x, y: startLead.y }];
 	}
 
-	return roundedOrthogonalPath([start, startLead, ...midPoints, endLead, end]);
+	return [start, startLead, ...midPoints, endLead, end];
+}
+
+export function buildChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoints): string {
+	return roundedOrthogonalPath(buildChannelOrthogonalPoints(channel, pts));
 }
 
 export function buildVisibleChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoints): string {
-	const sourceSide = channel.fromStepId === 'task-agent' ? 'right' : (channel.sourceSide ?? 'bottom');
-	const targetSide = channel.targetSide ?? 'top';
-	const start = { x: pts.sx, y: pts.sy };
-	const end = { x: pts.tx, y: pts.ty };
-	const startLead = movePoint(start, sourceSide, channel.fromStepId === 'task-agent' ? 42 : 28);
-	const endLead = movePoint(end, targetSide, 28);
-
-	let midPoints: Point2D[] = [];
-	const sourceVertical = sourceSide === 'top' || sourceSide === 'bottom';
-	const targetVertical = targetSide === 'top' || targetSide === 'bottom';
-
-	if (sourceVertical && targetVertical) {
-		const midY = (startLead.y + endLead.y) / 2;
-		midPoints = [
-			{ x: startLead.x, y: midY },
-			{ x: endLead.x, y: midY },
-		];
-	} else if (!sourceVertical && !targetVertical) {
-		const midX = (startLead.x + endLead.x) / 2;
-		midPoints = [
-			{ x: midX, y: startLead.y },
-			{ x: midX, y: endLead.y },
-		];
-	} else {
-		midPoints = [{ x: endLead.x, y: startLead.y }];
-	}
-
 	const trimmedPoints = trimOrthogonalPathPoints(
-		[start, startLead, ...midPoints, endLead, end],
+		buildChannelOrthogonalPoints(channel, pts),
 		channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
 		CHANNEL_DOCK_RADIUS
 	);
 
 	return roundedOrthogonalPath(trimmedPoints);
+}
+
+function getVisibleChannelPathPoints(channel: ResolvedWorkflowChannel, pts: EdgePoints): Point2D[] {
+	return trimOrthogonalPathPoints(
+		buildChannelOrthogonalPoints(channel, pts),
+		channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
+		CHANNEL_DOCK_RADIUS
+	);
 }
 
 /** Compute the bezier path for a channel edge connecting node ports.
@@ -619,27 +657,30 @@ export function EdgeRenderer({
 				);
 			})}
 
-			{/* Channel edges -- teal edges connecting nodes.
-			    Gated channels (gateType present) render as solid lines for visual distinction.
-			    Ungated channels render as dashed lines.
-			    Selected channels are highlighted in white. */}
+			{/* Channel edges -- teal edges connecting semantic node relationships.
+			    One-way channels render dashed. Bidirectional channels render solid.
+			    Gates are shown as midpoint badges instead of changing the line style. */}
 			{channels.map((channel, idx) => {
 				const pts = computeChannelEdgePoints(channel, nodePositions);
 				if (!pts) return null;
 
 				const d = buildChannelPathD(channel, pts);
-				const visibleD = buildVisibleChannelPathD(channel, pts);
+				const visiblePoints = getVisibleChannelPathPoints(channel, pts);
+				const visibleD = roundedOrthogonalPath(visiblePoints);
 				const isBidirectional = channel.direction === 'bidirectional';
 				const isGated = !!channel.gateType;
 				const isSelected = channel.id != null && channel.id === selectedChannelId;
 
 				const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
 				const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
-				// Bidirectional channels read better as solid relations.
-				// One-way ungated channels keep the dashed styling.
-				const strokeDasharray =
-					isSelected || isGated || isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
+				const strokeDasharray = isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
 				const strokeOpacity = isSelected ? 1 : 0.85;
+				const gateBadgePosition = isGated ? getOrthogonalPathMidpoint(visiblePoints) : null;
+				const gateColor = channel.gateType ? EDGE_COLORS[channel.gateType] : CHANNEL_EDGE_COLOR;
+				const gateLabel = channel.gateType ? CHANNEL_GATE_BADGE_LABELS[channel.gateType] : 'Gate';
+				const gateBadgeWidth =
+					gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
+					CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
 
 				// Use the same marker geometry on both ends. `auto-start-reverse`
 				// handles the start-end orientation flip for markerStart.
@@ -694,6 +735,35 @@ export function EdgeRenderer({
 							data-channel-gated={isGated ? 'true' : undefined}
 							style={{ pointerEvents: 'none' }}
 						/>
+						{gateBadgePosition && (
+							<g
+								transform={`translate(${gateBadgePosition.x}, ${gateBadgePosition.y})`}
+								data-testid={`channel-gate-${channel.fromStepId}-${channel.toStepId}`}
+								style={{ pointerEvents: 'none' }}
+							>
+								<rect
+									x={-gateBadgeWidth / 2}
+									y={-CHANNEL_GATE_BADGE_HEIGHT / 2}
+									width={gateBadgeWidth}
+									height={CHANNEL_GATE_BADGE_HEIGHT}
+									rx="10"
+									fill={CHANNEL_GATE_BADGE_BG}
+									stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
+									strokeWidth="1"
+								/>
+								<text
+									x="0"
+									y="4"
+									textAnchor="middle"
+									fontSize="11"
+									fontWeight="600"
+									letterSpacing="0.06em"
+									fill={isSelected ? 'white' : gateColor}
+								>
+									{gateLabel}
+								</text>
+							</g>
+						)}
 					</g>
 				);
 			})}

@@ -45,7 +45,7 @@ import {
 import type { WorkflowNodeData } from './WorkflowCanvas';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { computeFitToView } from './CanvasToolbar';
-import { autoLayout, TASK_AGENT_INITIAL_POSITION } from './layout';
+import { autoLayout } from './layout';
 import type { NodePosition } from './types';
 import { NodeConfigPanel } from './NodeConfigPanel';
 import type { NodeChannelLink } from './NodeConfigPanel';
@@ -113,7 +113,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					agentId: '',
 					instructions: '',
 				},
-				position: TASK_AGENT_INITIAL_POSITION,
+				position: { x: 0, y: 0 },
 			},
 		];
 	});
@@ -147,6 +147,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const agents = filterAgents(spaceStore.agents.value);
 	const tasksByNodeId = spaceStore.tasksByNodeId.value;
+	const regularNodes = useMemo(
+		() =>
+			nodes.filter(
+				(node) => node.step.id !== TASK_AGENT_NODE_ID && node.step.localId !== TASK_AGENT_NODE_ID
+			),
+		[nodes]
+	);
 
 	// Determine which workflow run to use for completion indicators.
 	// Prefer an active run; fall back to the most recently updated run.
@@ -223,7 +230,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				fromStepId: edge.fromStepId,
 				toStepId: edge.toStepId,
 				direction: edge.direction,
-				gateType: edge.hasGate ? 'condition' : undefined,
+				gateType: edge.gateType,
 				sourceSide: edge.sourceSide,
 				targetSide: edge.targetSide,
 				id: edge.id,
@@ -267,7 +274,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	const nodeData = useMemo<WorkflowNodeData[]>(() => {
-		return nodes.map((node, i) => {
+		return regularNodes.map((node, i) => {
 			const nodeId = node.step.id;
 			const allNodeTasks = nodeId ? (tasksByNodeId.get(nodeId) ?? []) : [];
 			// Filter to the most relevant run to avoid mixing state from past runs.
@@ -290,9 +297,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
 			};
 		});
-	}, [nodes, agents, channels, nodeIsStart, tasksByNodeId, relevantRunId, anchorUsageByNodeId]);
+	}, [regularNodes, agents, channels, nodeIsStart, tasksByNodeId, relevantRunId, anchorUsageByNodeId]);
 
-	const canvasNodePositions = useMemo<NodePosition>(() => buildVisualNodePositions(nodes), [nodes]);
+	const canvasNodePositions = useMemo<NodePosition>(
+		() => buildVisualNodePositions(regularNodes),
+		[regularNodes]
+	);
 
 	// ------------------------------------------------------------------
 	// Derived: selected node / edge
@@ -823,16 +833,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			order: i,
 		}));
 
-		const positions = autoLayout(layoutSteps, layoutTransitions, firstLocalId);
+		const positions = autoLayout(layoutSteps, layoutTransitions, firstLocalId, template.channels ?? []);
 
 		const positionedNodes: VisualNode[] = newNodes.map((n) => ({
 			...n,
 			position: positions.get(n.step.localId) ?? n.position,
 		}));
 
-		// Re-inject the Task Agent virtual node at the position autoLayout computed for it.
-		// applyTemplate replaces the entire nodes array, so without this the Task Agent
-		// would be evicted even in edit mode (where it was previously present).
 		const taskAgentVisualNode: VisualNode = {
 			step: {
 				localId: TASK_AGENT_NODE_ID,
@@ -841,7 +848,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				agentId: '',
 				instructions: '',
 			},
-			position: positions.get(TASK_AGENT_NODE_ID) ?? TASK_AGENT_INITIAL_POSITION,
+			position: { x: 0, y: 0 },
 		};
 		setNodes([taskAgentVisualNode, ...positionedNodes]);
 		setEdges(newEdges);
@@ -866,7 +873,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (container) {
 			setViewportState(
 				computeFitToView(
-					buildVisualNodePositions([taskAgentVisualNode, ...positionedNodes]),
+					buildVisualNodePositions(positionedNodes),
 					container.clientWidth,
 					container.clientHeight
 				)
@@ -1043,10 +1050,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					</button>
 
 					{/* Template picker — only shown when creating a new workflow with no steps yet */}
-					{!isEditing &&
-						nodes.filter(
-							(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-						).length === 0 && (
+					{!isEditing && regularNodes.length === 0 && (
 							<div class="relative">
 								<button
 									onClick={() => setShowTemplates((v) => !v)}
@@ -1098,9 +1102,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				</div>
 
 				{/* Empty state overlay — shown when no regular steps exist (Task Agent doesn't count) */}
-				{nodes.filter(
-					(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-				).length === 0 && (
+				{regularNodes.length === 0 && (
 					<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
 						<div class="text-center">
 							<p class="text-sm text-gray-600">No steps yet.</p>
@@ -1117,6 +1119,18 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					>
 						<div class="pointer-events-none absolute left-3 top-3 z-10 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
 							Current Canvas
+						</div>
+						<div
+							data-testid="task-agent-overlay"
+							class="absolute right-3 top-3 z-20 rounded-xl border border-amber-400 bg-amber-950/95 px-4 py-3 shadow-lg"
+						>
+							<div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-300">
+								Task Agent
+							</div>
+							<div class="mt-1 text-sm text-amber-100">Always available coordinator</div>
+							<div class="mt-1 text-xs text-amber-200/70">
+								Implicitly reachable by every workflow node.
+							</div>
 						</div>
 						<WorkflowCanvas
 							nodes={nodeData}

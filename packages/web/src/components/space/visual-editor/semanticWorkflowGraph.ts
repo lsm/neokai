@@ -12,6 +12,7 @@ export interface SemanticWorkflowEdge {
 	direction: 'one-way' | 'bidirectional';
 	channelCount: number;
 	hasGate: boolean;
+	gateType?: 'human' | 'condition' | 'task_result';
 	channelIndexes: number[];
 }
 
@@ -27,6 +28,7 @@ interface PairAggregate {
 	highToLow: boolean;
 	channelCount: number;
 	hasGate: boolean;
+	gateType?: 'human' | 'condition' | 'task_result';
 	channelIndexes: Set<number>;
 }
 
@@ -93,11 +95,16 @@ export function buildSemanticWorkflowEdges(
 				highToLow: false,
 				channelCount: 0,
 				hasGate: false,
+				gateType: undefined,
 				channelIndexes: new Set<number>(),
 			};
 
 			aggregate.channelCount += 1;
-			aggregate.hasGate ||= !!channel.gate && channel.gate.type !== 'always';
+			const gateType = channel.gate?.type;
+			if (gateType && gateType !== 'always') {
+				aggregate.hasGate = true;
+				aggregate.gateType ??= gateType;
+			}
 			aggregate.channelIndexes.add(channelIndex);
 
 			if (channel.direction === 'bidirectional') {
@@ -122,6 +129,7 @@ export function buildSemanticWorkflowEdges(
 				direction: 'bidirectional',
 				channelCount: aggregate.channelCount,
 				hasGate: aggregate.hasGate,
+				gateType: aggregate.gateType,
 				channelIndexes: Array.from(aggregate.channelIndexes),
 			};
 		}
@@ -134,6 +142,7 @@ export function buildSemanticWorkflowEdges(
 				direction: 'one-way',
 				channelCount: aggregate.channelCount,
 				hasGate: aggregate.hasGate,
+				gateType: aggregate.gateType,
 				channelIndexes: Array.from(aggregate.channelIndexes),
 			};
 		}
@@ -145,6 +154,7 @@ export function buildSemanticWorkflowEdges(
 			direction: 'one-way',
 			channelCount: aggregate.channelCount,
 			hasGate: aggregate.hasGate,
+			gateType: aggregate.gateType,
 			channelIndexes: Array.from(aggregate.channelIndexes),
 		};
 	});

@@ -63,7 +63,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
-import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 
 // ---- Mocks ----
 
@@ -240,22 +239,19 @@ describe('VisualWorkflowEditor', () => {
 
 	describe('Add Step', () => {
 		it('adds a node when Add Step is clicked', () => {
-			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			// Task Agent virtual node is always present in create mode (P0 fix).
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(1);
+			const { getByTestId, queryAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			expect(queryAllByTestId(/^workflow-node-/).length).toBe(0);
 
 			fireEvent.click(getByTestId('add-step-button'));
 
-			// Task Agent + new step = 2
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(2);
+			expect(queryAllByTestId(/^workflow-node-/).length).toBe(1);
 		});
 
 		it('adding a second step does not replace the first', () => {
 			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
 			fireEvent.click(getByTestId('add-step-button'));
 			fireEvent.click(getByTestId('add-step-button'));
-			// Task Agent + step-1 + step-2 = 3
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(3);
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(2);
 		});
 
 		it('first added step gets the START badge', () => {
@@ -297,8 +293,7 @@ describe('VisualWorkflowEditor', () => {
 			);
 			expect(queryByTestId('node-config-panel')).toBeNull();
 
-			// [0] is Task Agent (not selectable); use [1] for the first regular node.
-			const firstRegularNode = getAllByTestId(/^workflow-node-/)[1];
+			const firstRegularNode = getAllByTestId(/^workflow-node-/)[0];
 			fireEvent.click(firstRegularNode);
 
 			expect(queryByTestId('node-config-panel')).toBeTruthy();
@@ -308,8 +303,7 @@ describe('VisualWorkflowEditor', () => {
 			const { getAllByTestId, queryByTestId, getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
-			// [0] is Task Agent (not selectable); [1] is the first regular node.
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
 			expect(queryByTestId('node-config-panel')).toBeTruthy();
 
 			fireEvent.click(getByTestId('close-button'));
@@ -323,15 +317,8 @@ describe('VisualWorkflowEditor', () => {
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 
-			// Find a regular non-start node (exclude Task Agent which is not selectable).
 			const nodes = getAllByTestId(/^workflow-node-/);
-			// Click the regular node that does NOT have the canvas start badge.
-			// WorkflowNode renders the canvas badge as data-testid="start-badge".
-			const nonStartNode = nodes.find(
-				(n) =>
-					!n.querySelector('[data-testid="start-badge"]') &&
-					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
-			);
+			const nonStartNode = nodes.find((n) => !n.querySelector('[data-testid="start-badge"]'));
 			expect(nonStartNode).toBeTruthy();
 			fireEvent.click(nonStartNode!);
 
@@ -356,15 +343,8 @@ describe('VisualWorkflowEditor', () => {
 			);
 			const nodesBefore = getAllByTestId(/^workflow-node-/).length;
 
-			// Select step-2 (the non-start regular node).
-			// Skip the Task Agent virtual node (data-testid="workflow-node-__task_agent__")
-			// since it is always present and has no start badge.
 			const nodes = getAllByTestId(/^workflow-node-/);
-			const nonStartNode = nodes.find(
-				(n) =>
-					!n.querySelector('[data-testid="start-badge"]') &&
-					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
-			)!;
+			const nonStartNode = nodes.find((n) => !n.querySelector('[data-testid="start-badge"]'))!;
 			fireEvent.click(nonStartNode);
 
 			// Initiate delete
@@ -377,43 +357,26 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('Task Agent never receives the start badge after any node deletion', () => {
-			// Workflow: Task Agent (virtual) + step-1 (start) + step-2 (non-start).
-			// We transfer start to step-2 first, then delete step-1 (wasStart=false).
-			// After deletion remaining = [Task Agent, step-2]. Task Agent must NOT
-			// receive the start badge.
-			//
-			// The `wasStart = true` branch (where the regularRemaining filter is also
-			// exercised) is covered by the keyboard-Delete test below.
 			const { getAllByTestId, queryByTestId, getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 
-			// Step 1: Set step-2 as the new start node
 			const allNodes = getAllByTestId(/^workflow-node-/);
-			const step2Node = allNodes.find(
-				(n) =>
-					!n.querySelector('[data-testid="start-badge"]') &&
-					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
-			)!;
+			const step2Node = allNodes.find((n) => !n.querySelector('[data-testid="start-badge"]'))!;
 			fireEvent.click(step2Node);
 			fireEvent.click(getByTestId('set-as-start-button'));
 
 			// step-2 should now be the start node
 			expect(step2Node.querySelector('[data-testid="start-badge"]')).toBeTruthy();
 
-			// Step 2: Delete step-1 (no longer the start, so delete button is enabled)
 			const step1Node = getAllByTestId(/^workflow-node-/).find(
-				(n) =>
-					!n.querySelector('[data-testid="start-badge"]') &&
-					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+				(n) => !n.querySelector('[data-testid="start-badge"]')
 			)!;
 			fireEvent.click(step1Node);
 			fireEvent.click(getByTestId('delete-step-button'));
 			fireEvent.click(getByTestId('delete-confirm-button'));
 
-			// Task Agent must never receive the start badge
-			const taskAgentNode = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			expect(taskAgentNode?.querySelector('[data-testid="start-badge"]')).toBeNull();
+			expect(queryByTestId('task-agent-overlay')).toBeTruthy();
 
 			// step-2 should still be the start
 			const startBadges = document.querySelectorAll('[data-testid="start-badge"]');
@@ -421,82 +384,53 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('Task Agent never receives the start badge — create mode invariant', () => {
-			// Create mode: Task Agent is injected immediately (P0 fix).
-			// Add two steps, transfer start to step-2, delete step-1.
-			// remaining = [Task Agent, step-2] → Task Agent must NOT become start.
-			const { getByTestId, getAllByTestId, queryByTestId } = render(
+			const { getByTestId, queryAllByTestId, queryByTestId } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
 
-			// Task Agent is present from the start in create mode.
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(1);
+			expect(queryByTestId('task-agent-overlay')).toBeTruthy();
+			expect(queryAllByTestId(/^workflow-node-/).length).toBe(0);
 
-			// Add step-1 (becomes start) and step-2
 			fireEvent.click(getByTestId('add-step-button'));
 			fireEvent.click(getByTestId('add-step-button'));
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(3); // Task Agent + step-1 + step-2
+			expect(queryAllByTestId(/^workflow-node-/).length).toBe(2);
 
-			// Transfer start to step-2
-			const step2 = getAllByTestId(/^workflow-node-/).find(
-				(n) =>
-					!n.querySelector('[data-testid="start-badge"]') &&
-					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+			const step2 = queryAllByTestId(/^workflow-node-/).find(
+				(n) => !n.querySelector('[data-testid="start-badge"]')
 			)!;
 			fireEvent.click(step2);
 			fireEvent.click(getByTestId('set-as-start-button'));
 
-			// Delete step-1 (no longer start; remaining = [Task Agent, step-2])
-			const step1 = getAllByTestId(/^workflow-node-/).find(
-				(n) =>
-					!n.querySelector('[data-testid="start-badge"]') &&
-					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+			const step1 = queryAllByTestId(/^workflow-node-/).find(
+				(n) => !n.querySelector('[data-testid="start-badge"]')
 			)!;
 			fireEvent.click(step1);
 			fireEvent.click(getByTestId('delete-step-button'));
 			fireEvent.click(getByTestId('delete-confirm-button'));
 
-			// Task Agent must still not carry the start badge
-			const taskAgent = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			expect(taskAgent?.querySelector('[data-testid="start-badge"]')).toBeNull();
-			// Exactly one START badge — on step-2
+			expect(queryByTestId('task-agent-overlay')).toBeTruthy();
 			expect(document.querySelectorAll('[data-testid="start-badge"]')).toHaveLength(1);
 		});
 
 		it('keyboard Delete on start node — next regular node becomes start (wasStart=true path)', () => {
-			// WorkflowCanvas keyboard handler fires onDeleteNode without checking isStartNode,
-			// so handleDeleteNode is called with wasStart=true for the start node.
-			// This exercises the regularRemaining filter: Task Agent must be excluded and
-			// the next regular node (step-2) must be promoted as the new start.
 			const { container, getAllByTestId, queryByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 
 			const allNodes = getAllByTestId(/^workflow-node-/);
-			// step-1 is start (has badge); step-2 is non-start
 			const startNode = allNodes.find((n) => n.querySelector('[data-testid="start-badge"]'))!;
 			const nonStartRegular = allNodes.find(
-				(n) =>
-					!n.querySelector('[data-testid="start-badge"]') &&
-					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+				(n) => !n.querySelector('[data-testid="start-badge"]')
 			)!;
 
-			// Click start node to set it as WorkflowCanvas's selected node
 			fireEvent.click(startNode);
-
-			// Keyboard Delete triggers handleDeleteNode(startNode.localId) with wasStart=true
 			fireEvent.keyDown(document.body, { key: 'Delete' });
 
-			// Start node removed; Task Agent + non-start remain
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(2);
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(1);
 
-			// Former non-start node must now carry the START badge
 			expect(nonStartRegular.querySelector('[data-testid="start-badge"]')).toBeTruthy();
+			expect(queryByTestId('task-agent-overlay')).toBeTruthy();
 
-			// Task Agent must NOT receive the start badge
-			const taskAgent = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			expect(taskAgent?.querySelector('[data-testid="start-badge"]')).toBeNull();
-
-			// Exactly one START badge must exist
 			expect(container.querySelectorAll('[data-testid="start-badge"]')).toHaveLength(1);
 		});
 
@@ -504,8 +438,7 @@ describe('VisualWorkflowEditor', () => {
 			const { getAllByTestId, getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
-			// [0] is Task Agent (not selectable); [1] is the first regular node.
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
 
 			const nameInput = getByTestId('step-name-input') as HTMLInputElement;
 			fireEvent.input(nameInput, { target: { value: 'Updated Step Name' } });
@@ -581,9 +514,8 @@ describe('VisualWorkflowEditor', () => {
 			);
 			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'Test WF' } });
 			// Add a step and assign an agent (required by save validation).
-			// Index [1]: Task Agent is always at [0] in create mode.
 			fireEvent.click(getByTestId('add-step-button'));
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
 			fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-1' } });
 
 			await act(async () => {
@@ -599,16 +531,13 @@ describe('VisualWorkflowEditor', () => {
 		it('layout includes a position entry for each step', async () => {
 			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
 			// Add 2 steps and assign agents (required by save validation).
-			// Task Agent is always at index [0] in create mode; regular steps start at [1].
 			fireEvent.click(getByTestId('add-step-button'));
 			fireEvent.click(getByTestId('add-step-button'));
 			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'L' } });
-			// Assign agent to step 1 (index [1])
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
 			fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-1' } });
 			fireEvent.click(getByTestId('close-button'));
-			// Assign agent to step 2 (index [2])
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[2]);
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
 			fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-2' } });
 
 			await act(async () => {
@@ -631,9 +560,8 @@ describe('VisualWorkflowEditor', () => {
 			);
 			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'N' } });
 			// Add a step and assign an agent (required by save validation).
-			// Index [1]: Task Agent is always at [0] in create mode.
 			fireEvent.click(getByTestId('add-step-button'));
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
 			fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-1' } });
 
 			await act(async () => {
@@ -785,8 +713,7 @@ describe('VisualWorkflowEditor', () => {
 			expect(codingOption).toBeTruthy();
 			fireEvent.click(codingOption!);
 
-			// Task Agent + planner + coder = 3 nodes
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(3);
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(2);
 		});
 
 		it('selecting a template creates nodes but no visible edges (transitions hidden)', () => {
@@ -914,8 +841,7 @@ describe('VisualWorkflowEditor', () => {
 			);
 			fireEvent.click(quickFixOption!);
 
-			// Task Agent + Quick Fix node = 2 nodes
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(2);
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(1);
 			expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
 		});
 
@@ -931,8 +857,7 @@ describe('VisualWorkflowEditor', () => {
 			expect(v2Option).toBeTruthy();
 			fireEvent.click(v2Option!);
 
-			// Task Agent + six workflow nodes
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(7);
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(6);
 			expect(container.querySelectorAll('[data-channel-edge="true"]').length).toBe(7);
 			expect(getByTestId('native-workflow-canvas-panel')).toBeTruthy();
 		});
@@ -1030,77 +955,18 @@ describe('VisualWorkflowEditor', () => {
 		});
 	});
 
-	// -------------------------------------------------------------------------
-	// Task Agent visible node
-	// -------------------------------------------------------------------------
-
-	describe('Task Agent visible node', () => {
-		it('Task Agent node is always rendered in create mode', () => {
-			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			expect(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`)).toBeTruthy();
+	describe('Task Agent overlay', () => {
+		it('renders a pinned Task Agent overlay in create mode', () => {
+			const { getByTestId, getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
+			expect(getByTestId('task-agent-overlay')).toBeTruthy();
+			expect(getByText('Always available coordinator')).toBeTruthy();
 		});
 
-		it('Task Agent node is always rendered in edit mode', () => {
+		it('renders a pinned Task Agent overlay in edit mode', () => {
 			const { getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
-			expect(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`)).toBeTruthy();
-		});
-
-		it('Task Agent node renders with amber border (distinct style)', () => {
-			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			expect(node.className).toContain('border-amber-400');
-		});
-
-		it('Task Agent node renders with amber background (distinct style)', () => {
-			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			expect(node.className).toContain('bg-amber-950');
-		});
-
-		it('Task Agent node shows "Task Agent" badge', () => {
-			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			expect(getByTestId('task-agent-badge').textContent).toBe('Task Agent');
-		});
-
-		it('Task Agent node has no input port', () => {
-			const { queryByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			// The Task Agent node does not render input/output ports
-			const node = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			expect(node?.querySelector('[data-testid="port-input"]')).toBeNull();
-		});
-
-		it('Task Agent node has no output port', () => {
-			const { queryByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			const node = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			expect(node?.querySelector('[data-testid="port-output"]')).toBeNull();
-		});
-
-		it('Task Agent node cannot be deleted via keyboard Delete', () => {
-			const { getAllByTestId, getByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-			// Click the Task Agent node — it should not become selected
-			const taskAgentNode = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			fireEvent.click(taskAgentNode);
-			// Press Delete — should not delete the Task Agent
-			fireEvent.keyDown(document.body, { key: 'Delete' });
-			// Task Agent must still be present
-			expect(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`)).toBeTruthy();
-			// Total node count unchanged
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(3); // Task Agent + 2 steps
-		});
-
-		it('Task Agent node cannot be deleted via Backspace', () => {
-			const { getAllByTestId, getByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-			const taskAgentNode = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-			fireEvent.click(taskAgentNode);
-			fireEvent.keyDown(document.body, { key: 'Backspace' });
-			expect(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`)).toBeTruthy();
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(3);
+			expect(getByTestId('task-agent-overlay')).toBeTruthy();
 		});
 	});
 
