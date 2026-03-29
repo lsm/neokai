@@ -1,99 +1,54 @@
-import { useEffect, useMemo, useRef } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
-import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
+import { SpaceTaskThreadEventFeed } from './thread/SpaceTaskThreadEventFeed';
+import { SpaceTaskThreadModeToggle } from './thread/SpaceTaskThreadModeToggle';
+import { SpaceTaskThreadVerboseFeed } from './thread/SpaceTaskThreadVerboseFeed';
+import {
+	type SpaceTaskThreadRenderMode,
+	buildThreadEvents,
+	parseThreadRow,
+} from './thread/space-task-thread-events';
 
 interface SpaceTaskUnifiedThreadProps {
 	taskId: string;
 }
 
-interface ParsedThreadRow {
-	id: string | number;
-	sessionId: string | null;
-	label: string;
-	taskId: string;
-	taskTitle: string;
-	message: SDKMessage | null;
-	fallbackText: string | null;
-}
+const THREAD_MODE_STORAGE_KEY = 'space-task-thread-view-mode';
 
-interface ThreadGroup {
-	id: string;
-	label: string;
-	taskId: string;
-	taskTitle: string;
-	rows: ParsedThreadRow[];
-}
-
-function parseThreadRow(
-	row: ReturnType<typeof useSpaceTaskMessages>['rows'][number]
-): ParsedThreadRow {
-	try {
-		const parsed = JSON.parse(row.content) as SDKMessage;
-		const withTimestamp = {
-			...(parsed as Record<string, unknown>),
-			timestamp: row.createdAt,
-		} as unknown as SDKMessage;
-		return {
-			id: row.id,
-			sessionId: row.sessionId,
-			label: row.label,
-			taskId: row.taskId,
-			taskTitle: row.taskTitle,
-			message: withTimestamp,
-			fallbackText: null,
-		};
-	} catch {
-		return {
-			id: row.id,
-			sessionId: row.sessionId,
-			label: row.label,
-			taskId: row.taskId,
-			taskTitle: row.taskTitle,
-			message: null,
-			fallbackText: row.content,
-		};
+function getInitialThreadMode(): SpaceTaskThreadRenderMode {
+	if (typeof window === 'undefined') return 'compact';
+	const stored = window.localStorage.getItem(THREAD_MODE_STORAGE_KEY);
+	if (stored === 'verbose' || stored === 'compact' || stored === 'roster') {
+		return stored;
 	}
+	return 'compact';
 }
 
 export function SpaceTaskUnifiedThread({ taskId }: SpaceTaskUnifiedThreadProps) {
 	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId);
 	const containerRef = useRef<HTMLDivElement>(null);
+	const [viewMode, setViewMode] = useState<SpaceTaskThreadRenderMode>(getInitialThreadMode);
 
 	const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
+	const threadEvents = useMemo(() => buildThreadEvents(parsedRows), [parsedRows]);
 	const parsedMessages = useMemo(
-		() => parsedRows.map((row) => row.message).filter((message): message is SDKMessage => !!message),
+		() =>
+			parsedRows.map((row) => row.message).filter((message): message is SDKMessage => !!message),
 		[parsedRows]
 	);
 	const maps = useMessageMaps(parsedMessages, `space-task-${taskId}`);
-	const groups = useMemo<ThreadGroup[]>(() => {
-		const next: ThreadGroup[] = [];
-		for (const row of parsedRows) {
-			const previous = next[next.length - 1];
-			const isSameGroup =
-				previous &&
-				previous.label === row.label &&
-				previous.taskId === row.taskId;
-			if (isSameGroup) {
-				previous.rows.push(row);
-				continue;
-			}
-			next.push({
-				id: `${row.label}-${row.taskId}-${row.id}`,
-				label: row.label,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				rows: [row],
-			});
-		}
-		return next;
-	}, [parsedRows]);
+
+	useEffect(() => {
+		if (typeof window === 'undefined') return;
+		window.localStorage.setItem(THREAD_MODE_STORAGE_KEY, viewMode);
+	}, [viewMode]);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
 		containerRef.current.scrollTop = containerRef.current.scrollHeight;
-	}, [parsedRows.length]);
+	}, [parsedRows.length, threadEvents.length, viewMode]);
 
 	if (isReconnecting) {
 		return (
@@ -120,40 +75,18 @@ export function SpaceTaskUnifiedThread({ taskId }: SpaceTaskUnifiedThreadProps) 
 	}
 
 	return (
-		<div
-			ref={containerRef}
-			class="h-full overflow-y-auto py-3 space-y-5"
-			data-testid="space-task-unified-thread"
-		>
-			{groups.map((group) => (
-				<div key={group.id} data-testid="space-task-thread-row">
-					<div class="mb-2 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-gray-500">
-						<span>{group.label}</span>
-						{group.taskId !== taskId && <span>{group.taskTitle}</span>}
-					</div>
+		<div class="h-full min-h-0 flex flex-col" data-testid="space-task-unified-thread">
+			<div class="flex-shrink-0 py-2 flex items-center justify-end">
+				<SpaceTaskThreadModeToggle value={viewMode} onChange={setViewMode} />
+			</div>
 
-					<div class="space-y-2">
-						{group.rows.map((row) =>
-							row.message ? (
-								<SDKMessageRenderer
-									key={String(row.id)}
-									message={row.message}
-									sessionId={row.sessionId ?? undefined}
-									toolResultsMap={maps.toolResultsMap}
-									toolInputsMap={maps.toolInputsMap}
-									subagentMessagesMap={maps.subagentMessagesMap}
-									sessionInfo={maps.sessionInfoMap.get((row.message as { uuid?: string }).uuid ?? '')}
-									taskContext={true}
-								/>
-							) : (
-								<pre key={String(row.id)} class="whitespace-pre-wrap text-sm text-gray-300 font-mono">
-									{row.fallbackText}
-								</pre>
-							)
-						)}
-					</div>
-				</div>
-			))}
+			<div ref={containerRef} class="flex-1 overflow-y-auto pb-3">
+				{viewMode === 'verbose' ? (
+					<SpaceTaskThreadVerboseFeed parsedRows={parsedRows} taskId={taskId} maps={maps} />
+				) : (
+					<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} mode={viewMode} />
+				)}
+			</div>
 		</div>
 	);
 }

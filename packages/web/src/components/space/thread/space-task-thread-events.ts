@@ -1,0 +1,302 @@
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import {
+	type ContentBlock,
+	isSDKAssistantMessage,
+	isSDKResultMessage,
+	isSDKSystemMessage,
+	isSDKToolProgressMessage,
+	isSDKUserMessage,
+	isTextBlock,
+	isThinkingBlock,
+	isToolUseBlock,
+} from '@neokai/shared/sdk/type-guards';
+import type { SpaceTaskThreadMessageRow } from '../../../hooks/useSpaceTaskMessages';
+
+export type SpaceTaskThreadEventKind =
+	| 'thinking'
+	| 'tool'
+	| 'subagent'
+	| 'text'
+	| 'user'
+	| 'system'
+	| 'result'
+	| 'progress'
+	| 'unknown';
+
+export type SpaceTaskThreadRenderMode = 'verbose' | 'compact' | 'roster';
+
+export interface ParsedThreadRow {
+	id: string | number;
+	sessionId: string | null;
+	label: string;
+	taskId: string;
+	taskTitle: string;
+	createdAt: number;
+	message: SDKMessage | null;
+	fallbackText: string | null;
+}
+
+export interface SpaceTaskThreadEvent {
+	id: string;
+	label: string;
+	taskId: string;
+	taskTitle: string;
+	sessionId: string | null;
+	createdAt: number;
+	kind: SpaceTaskThreadEventKind;
+	title: string;
+	summary: string;
+}
+
+function oneLine(value: string, max = 180): string {
+	const collapsed = value.replace(/\s+/g, ' ').trim();
+	if (!collapsed) return '';
+	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+}
+
+function extractUserText(message: Extract<SDKMessage, { type: 'user' }>): string {
+	const content = message.message?.content;
+	if (typeof content === 'string') return oneLine(content);
+	if (!Array.isArray(content)) return '';
+
+	const textParts: string[] = [];
+	for (const block of content) {
+		const blockObj = block as Record<string, unknown>;
+		if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
+			textParts.push(blockObj.text);
+		}
+	}
+	return oneLine(textParts.join(' '));
+}
+
+function extractAssistantEvents(
+	row: ParsedThreadRow,
+	message: Extract<SDKMessage, { type: 'assistant' }>
+) {
+	const events: SpaceTaskThreadEvent[] = [];
+	const content = Array.isArray(message.message?.content)
+		? (message.message.content as ContentBlock[])
+		: [];
+
+	for (let idx = 0; idx < content.length; idx += 1) {
+		const block = content[idx];
+		const eventId = `${String(row.id)}-assistant-${idx}`;
+
+		if (isThinkingBlock(block)) {
+			events.push({
+				id: eventId,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: 'thinking',
+				title: 'Thinking',
+				summary: oneLine(block.thinking),
+			});
+			continue;
+		}
+
+		if (isToolUseBlock(block)) {
+			const isSubagent = block.name === 'Task';
+			const input = (block.input ?? {}) as Record<string, unknown>;
+			const subagentType = typeof input.subagent_type === 'string' ? input.subagent_type : 'agent';
+			const description = typeof input.description === 'string' ? input.description : '';
+			const toolSummary =
+				isSubagent && description
+					? `${subagentType} · ${oneLine(description)}`
+					: oneLine(JSON.stringify(block.input ?? {}));
+
+			events.push({
+				id: eventId,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: isSubagent ? 'subagent' : 'tool',
+				title: isSubagent ? 'Sub-agent' : `Tool · ${block.name}`,
+				summary: toolSummary || block.name,
+			});
+			continue;
+		}
+
+		if (isTextBlock(block)) {
+			const text = oneLine(block.text);
+			if (!text) continue;
+			events.push({
+				id: eventId,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: 'text',
+				title: 'Response',
+				summary: text,
+			});
+		}
+	}
+
+	if (events.length === 0) {
+		events.push({
+			id: `${String(row.id)}-assistant-empty`,
+			label: row.label,
+			taskId: row.taskId,
+			taskTitle: row.taskTitle,
+			sessionId: row.sessionId,
+			createdAt: row.createdAt,
+			kind: 'text',
+			title: 'Response',
+			summary: 'Assistant updated context',
+		});
+	}
+
+	return events;
+}
+
+export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow {
+	try {
+		const parsed = JSON.parse(row.content) as SDKMessage;
+		const withTimestamp = {
+			...(parsed as Record<string, unknown>),
+			timestamp: row.createdAt,
+		} as unknown as SDKMessage;
+
+		return {
+			id: row.id,
+			sessionId: row.sessionId,
+			label: row.label,
+			taskId: row.taskId,
+			taskTitle: row.taskTitle,
+			createdAt: row.createdAt,
+			message: withTimestamp,
+			fallbackText: null,
+		};
+	} catch {
+		return {
+			id: row.id,
+			sessionId: row.sessionId,
+			label: row.label,
+			taskId: row.taskId,
+			taskTitle: row.taskTitle,
+			createdAt: row.createdAt,
+			message: null,
+			fallbackText: row.content,
+		};
+	}
+}
+
+export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThreadEvent[] {
+	const events: SpaceTaskThreadEvent[] = [];
+
+	for (const row of parsedRows) {
+		if (!row.message) {
+			events.push({
+				id: `${String(row.id)}-fallback`,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: 'unknown',
+				title: 'Raw',
+				summary: oneLine(row.fallbackText ?? ''),
+			});
+			continue;
+		}
+
+		if (isSDKAssistantMessage(row.message)) {
+			events.push(...extractAssistantEvents(row, row.message));
+			continue;
+		}
+
+		if (isSDKUserMessage(row.message)) {
+			events.push({
+				id: `${String(row.id)}-user`,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: 'user',
+				title: 'User',
+				summary: extractUserText(row.message) || 'User message',
+			});
+			continue;
+		}
+
+		if (isSDKToolProgressMessage(row.message)) {
+			const progressSummary = oneLine(
+				`${row.message.tool_name} · ${Math.max(0, Math.round(row.message.elapsed_time_seconds))}s`
+			);
+			events.push({
+				id: `${String(row.id)}-progress`,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: 'progress',
+				title: 'Tool Progress',
+				summary: progressSummary,
+			});
+			continue;
+		}
+
+		if (isSDKResultMessage(row.message)) {
+			events.push({
+				id: `${String(row.id)}-result`,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: 'result',
+				title: row.message.subtype === 'success' ? 'Completed' : 'Error',
+				summary: `${row.message.usage.input_tokens}→${row.message.usage.output_tokens} tokens`,
+			});
+			continue;
+		}
+
+		if (isSDKSystemMessage(row.message)) {
+			const subtype = row.message.subtype ?? 'system';
+			let summary = subtype.replace(/_/g, ' ');
+
+			if (subtype === 'task_progress' && 'description' in row.message) {
+				summary = oneLine(String(row.message.description ?? 'task progress'));
+			} else if (subtype === 'task_notification' && 'summary' in row.message) {
+				summary = oneLine(String(row.message.summary ?? 'task notification'));
+			} else if (subtype === 'status' && 'status' in row.message) {
+				summary = oneLine(String(row.message.status ?? 'status updated'));
+			}
+
+			events.push({
+				id: `${String(row.id)}-system`,
+				label: row.label,
+				taskId: row.taskId,
+				taskTitle: row.taskTitle,
+				sessionId: row.sessionId,
+				createdAt: row.createdAt,
+				kind: 'system',
+				title: 'System',
+				summary,
+			});
+			continue;
+		}
+
+		events.push({
+			id: `${String(row.id)}-unknown`,
+			label: row.label,
+			taskId: row.taskId,
+			taskTitle: row.taskTitle,
+			sessionId: row.sessionId,
+			createdAt: row.createdAt,
+			kind: 'unknown',
+			title: String(row.message.type),
+			summary: oneLine(JSON.stringify(row.message)),
+		});
+	}
+
+	return events;
+}
