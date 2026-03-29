@@ -8,7 +8,6 @@ interface SpaceTaskThreadModeToggleProps {
 
 const OPTIONS: Array<{ value: SpaceTaskThreadRenderMode; label: string }> = [
 	{ value: 'compact', label: 'Compact' },
-	{ value: 'roster', label: 'Roster' },
 	{ value: 'verbose', label: 'Verbose' },
 ];
 

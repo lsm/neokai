@@ -25,7 +25,7 @@ export type SpaceTaskThreadEventKind =
 	| 'progress'
 	| 'unknown';
 
-export type SpaceTaskThreadRenderMode = 'verbose' | 'compact' | 'roster';
+export type SpaceTaskThreadRenderMode = 'verbose' | 'compact';
 
 export interface ParsedThreadRow {
 	id: string | number;
@@ -322,7 +322,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 
 		if (isSDKRateLimitEvent(row.message)) {
 			const rateLimitInfo = row.message.rate_limit_info;
-			// Only surface hard-rejected rate-limit states in compact/roster feeds.
+			// Only surface hard-rejected rate-limit states in compact feeds.
 			// `allowed` / `allowed_warning` are informational noise here, even if
 			// overageStatus contains warnings or restrictions.
 			const isRejected = rateLimitInfo.status === 'rejected';

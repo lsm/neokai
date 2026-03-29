@@ -6,7 +6,6 @@ import { getAgentColor } from './space-task-thread-agent-colors';
 interface SpaceTaskThreadEventFeedProps {
 	events: SpaceTaskThreadEvent[];
 	taskId: string;
-	mode: 'compact' | 'roster';
 	maps: UseMessageMapsResult;
 }
 
@@ -37,19 +36,17 @@ function isEmptyUserEvent(event: SpaceTaskThreadEvent): boolean {
 	return true;
 }
 
-function shouldRenderEvent(event: SpaceTaskThreadEvent, mode: 'compact' | 'roster'): boolean {
-	// Never show non-error rate-limit notices in compact/roster feeds.
+function shouldRenderEvent(event: SpaceTaskThreadEvent): boolean {
+	// Never show non-error rate-limit notices in compact feeds.
 	if (event.kind === 'rate_limit' && !event.isError) return false;
 
 	// Compact mode is a Slack-like active conversation stream:
 	// - hide system init noise
 	// - hide successful terminal result summaries
 	// - hide empty user placeholders (prevents fake gaps / header resets)
-	if (mode === 'compact') {
-		if (event.kind === 'system' && event.systemSubtype === 'init') return false;
-		if (event.kind === 'result' && event.resultSubtype === 'success') return false;
-		if (isEmptyUserEvent(event)) return false;
-	}
+	if (event.kind === 'system' && event.systemSubtype === 'init') return false;
+	if (event.kind === 'result' && event.resultSubtype === 'success') return false;
+	if (isEmptyUserEvent(event)) return false;
 	return true;
 }
 
@@ -57,42 +54,8 @@ function normalizeAgentKey(label: string): string {
 	return label.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-export function SpaceTaskThreadEventFeed({
-	events,
-	taskId,
-	mode,
-	maps,
-}: SpaceTaskThreadEventFeedProps) {
-	const visibleEvents = events.filter((event) => shouldRenderEvent(event, mode));
-
-	if (mode === 'roster') {
-		return (
-			<div class="space-y-1.5" data-testid="space-task-event-feed-roster">
-				{visibleEvents.map((event, index) => {
-					const previous = index > 0 ? visibleEvents[index - 1] : null;
-					const showAgentHeader = !previous || previous.label !== event.label;
-					return (
-						<div key={event.id} class="space-y-0.5">
-							{showAgentHeader && (
-								<div
-									class="pt-1 text-[10px] uppercase tracking-[0.16em]"
-									style={{ color: getAgentColor(event.label) }}
-								>
-									{event.label}
-								</div>
-							)}
-							<SpaceTaskThreadEventRow
-								event={event}
-								mode="roster"
-								showTaskTitle={event.taskId !== taskId}
-								maps={maps}
-							/>
-						</div>
-					);
-				})}
-			</div>
-		);
-	}
+export function SpaceTaskThreadEventFeed({ events, taskId, maps }: SpaceTaskThreadEventFeedProps) {
+	const visibleEvents = events.filter(shouldRenderEvent);
 
 	return (
 		<div class="space-y-0.5" data-testid="space-task-event-feed-compact">

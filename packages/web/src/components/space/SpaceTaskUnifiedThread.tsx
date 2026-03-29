@@ -20,7 +20,7 @@ const THREAD_MODE_STORAGE_KEY = 'space-task-thread-view-mode';
 function getInitialThreadMode(): SpaceTaskThreadRenderMode {
 	if (typeof window === 'undefined') return 'compact';
 	const stored = window.localStorage.getItem(THREAD_MODE_STORAGE_KEY);
-	if (stored === 'verbose' || stored === 'compact' || stored === 'roster') {
+	if (stored === 'verbose' || stored === 'compact') {
 		return stored;
 	}
 	return 'compact';
@@ -84,12 +84,7 @@ export function SpaceTaskUnifiedThread({ taskId }: SpaceTaskUnifiedThreadProps) 
 				{viewMode === 'verbose' ? (
 					<SpaceTaskThreadVerboseFeed parsedRows={parsedRows} taskId={taskId} maps={maps} />
 				) : (
-					<SpaceTaskThreadEventFeed
-						events={threadEvents}
-						taskId={taskId}
-						mode={viewMode}
-						maps={maps}
-					/>
+					<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
 				)}
 			</div>
 		</div>
