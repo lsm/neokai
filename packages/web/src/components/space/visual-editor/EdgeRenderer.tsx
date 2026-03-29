@@ -55,6 +55,8 @@ export const EDGE_COLORS: Record<WorkflowConditionType, string> = {
 
 export const NORMAL_STROKE_WIDTH = 1.5;
 export const SELECTED_STROKE_WIDTH = 3;
+export const CHANNEL_STROKE_WIDTH = 2.4;
+export const CHANNEL_SELECTED_STROKE_WIDTH = 3.6;
 const HITBOX_STROKE_WIDTH = 12;
 
 // ---------------------------------------------------------------------------
@@ -476,8 +478,8 @@ export function EdgeRenderer({
 							viewBox="0 0 10 10"
 							refX="10"
 							refY="5"
-							markerWidth="6"
-							markerHeight="6"
+							markerWidth="8"
+							markerHeight="8"
 							orient="auto-start-reverse"
 						>
 							<path d="M 0 0 L 10 5 L 0 10 z" fill={CHANNEL_EDGE_COLOR} />
@@ -487,8 +489,8 @@ export function EdgeRenderer({
 							viewBox="0 0 10 10"
 							refX="0"
 							refY="5"
-							markerWidth="6"
-							markerHeight="6"
+							markerWidth="8"
+							markerHeight="8"
 							orient="auto-start-reverse"
 						>
 							<path d="M 10 0 L 0 5 L 10 10 z" fill={CHANNEL_EDGE_COLOR} />
@@ -499,8 +501,8 @@ export function EdgeRenderer({
 							viewBox="0 0 10 10"
 							refX="10"
 							refY="5"
-							markerWidth="6"
-							markerHeight="6"
+							markerWidth="8"
+							markerHeight="8"
 							orient="auto-start-reverse"
 						>
 							<path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
@@ -510,8 +512,8 @@ export function EdgeRenderer({
 							viewBox="0 0 10 10"
 							refX="0"
 							refY="5"
-							markerWidth="6"
-							markerHeight="6"
+							markerWidth="8"
+							markerHeight="8"
 							orient="auto-start-reverse"
 						>
 							<path d="M 10 0 L 0 5 L 10 10 z" fill="white" />
@@ -585,7 +587,7 @@ export function EdgeRenderer({
 				const isSelected = channel.id != null && channel.id === selectedChannelId;
 
 				const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
-				const strokeWidth = isSelected ? SELECTED_STROKE_WIDTH : NORMAL_STROKE_WIDTH;
+				const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
 				// Gated channels render as solid lines; ungated as dashed
 				const strokeDasharray = isSelected || isGated ? undefined : CHANNEL_EDGE_DASH_ARRAY;
 				const strokeOpacity = isSelected ? 1 : 0.85;
