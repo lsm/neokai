@@ -1039,6 +1039,27 @@ describe('VisualWorkflowEditor', () => {
 			expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(2);
 		});
 
+		it('converting to bidirectional auto-marks the reverse link as cyclic', async () => {
+			const workflow = makeWorkflow({
+				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
+			});
+			const { container, getByTestId, getAllByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow })} />
+			);
+
+			const firstChannelHitbox = container.querySelector(
+				'[data-channel-edge="true"] path[stroke="transparent"]'
+			) as SVGPathElement | null;
+			expect(firstChannelHitbox).toBeTruthy();
+			fireEvent.click(firstChannelHitbox!);
+			fireEvent.click(getByTestId('convert-channel-relation-button'));
+
+			await waitFor(() => expect(getAllByTestId('channel-cyclic-checkbox')).toHaveLength(2));
+			const cyclicCheckboxes = getAllByTestId('channel-cyclic-checkbox') as HTMLInputElement[];
+			expect(cyclicCheckboxes[0].checked).toBe(false);
+			expect(cyclicCheckboxes[1].checked).toBe(true);
+		});
+
 		it('deleting the reverse link downgrades a converted relation back to one-way', async () => {
 			const workflow = makeWorkflow({
 				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
@@ -1063,6 +1084,27 @@ describe('VisualWorkflowEditor', () => {
 				);
 				expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(1);
 			});
+		});
+
+		it('warns when a backward link closes a loop but is not marked cyclic', async () => {
+			const workflow = makeWorkflow({
+				channels: [
+					{ from: 'Plan', to: 'Code', direction: 'one-way' },
+					{ from: 'Code', to: 'Plan', direction: 'one-way' },
+				],
+			});
+			const { container, getAllByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow })} />
+			);
+
+			const firstChannelHitbox = container.querySelector(
+				'[data-channel-edge="true"] path[stroke="transparent"]'
+			) as SVGPathElement | null;
+			expect(firstChannelHitbox).toBeTruthy();
+			fireEvent.click(firstChannelHitbox!);
+
+			await waitFor(() => expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(2));
+			expect(getAllByTestId('channel-cyclic-warning')).toHaveLength(1);
 		});
 
 		it('node side panel lists channel links that open the nested relation view and back returns to node details', () => {

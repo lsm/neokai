@@ -5,6 +5,7 @@ import type { ConditionDraft } from './GateConfig';
 export interface ChannelEdgeConfigPanelProps {
 	index: number;
 	channel: WorkflowChannel;
+	shouldBeCyclic?: boolean;
 	onChange: (index: number, channel: WorkflowChannel) => void;
 	onDelete: (index: number) => void;
 	onClose?: () => void;
@@ -29,6 +30,7 @@ function formatTo(to: string | string[]): string {
 export function ChannelEdgeConfigPanel({
 	index,
 	channel,
+	shouldBeCyclic = false,
 	onChange,
 	onDelete,
 	onClose,
@@ -141,6 +143,14 @@ export function ChannelEdgeConfigPanel({
 				/>
 				<span class="text-xs text-gray-400">Cyclic channel</span>
 			</label>
+			{shouldBeCyclic && !channel.isCyclic && (
+				<div
+					data-testid="channel-cyclic-warning"
+					class="rounded border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-200"
+				>
+					This link closes a workflow loop. Mark it as cyclic so iteration limits and cycle gate resets work correctly.
+				</div>
+			)}
 
 			<button
 				data-testid="delete-channel-button"
