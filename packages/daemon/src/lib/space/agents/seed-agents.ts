@@ -3,8 +3,8 @@
  *
  * Seeds the five default SpaceAgent records when a new Space is created.
  * Preset agents are regular SpaceAgent rows — fully editable by users — that
- * happen to have a well-known role label and sensible defaults for system
- * prompt, tools, and model. SpaceRuntime resolves all agents by ID at
+ * happen to have a well-known role label and sensible defaults for tools and model.
+ * SpaceRuntime resolves all agents by ID at
  * runtime; there is no special builtin code path.
  *
  * Preset agents seeded per Space:
@@ -18,8 +18,6 @@
 import type { SpaceAgent, SessionFeatures } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
-import { buildQaNodeAgentPrompt, buildDoneNodeAgentPrompt } from './custom-agent';
-
 // ---------------------------------------------------------------------------
 // Feature flag profiles per role
 // ---------------------------------------------------------------------------
@@ -113,8 +111,6 @@ interface PresetDefinition {
 	role: SpaceAgent['role'];
 	description: string;
 	tools: string[];
-	injectWorkflowContext?: boolean;
-	systemPrompt?: string;
 }
 
 const PRESET_AGENTS: PresetDefinition[] = [
@@ -132,8 +128,6 @@ const PRESET_AGENTS: PresetDefinition[] = [
 			'Done node agent. Reads gate data from completed workflow stages and produces a ' +
 			'comprehensive human-readable summary of what was accomplished.',
 		tools: DONE_TOOLS,
-		// systemPrompt is populated lazily in seedPresetAgents() to avoid
-		// calling buildDoneNodeAgentPrompt() at module-init time.
 	},
 	{
 		name: 'Planner',
@@ -141,10 +135,6 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		description:
 			'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
 		tools: PLANNER_TOOLS,
-		// Planners need full workflow structure in their task message so they can
-		// create tasks aligned with the current workflow step. Driven by data, not
-		// by a hardcoded role check in prompt builders.
-		injectWorkflowContext: true,
 	},
 	{
 		name: 'Reviewer',
@@ -159,8 +149,6 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		description:
 			'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
 		tools: QA_TOOLS,
-		// systemPrompt is populated lazily in seedPresetAgents() to avoid
-		// calling buildQaNodeAgentPrompt() at module-init time.
 	},
 ];
 
@@ -194,22 +182,12 @@ export async function seedPresetAgents(
 	const errors: Array<{ name: string; error: string }> = [];
 
 	for (const preset of PRESET_AGENTS) {
-		// Resolve role-specific system prompts lazily (at seed time, not module-init).
-		const systemPrompt =
-			preset.role === 'qa'
-				? buildQaNodeAgentPrompt()
-				: preset.role === 'general'
-					? buildDoneNodeAgentPrompt()
-					: preset.systemPrompt;
-
 		const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
 			spaceId,
 			name: preset.name,
 			role: preset.role,
 			description: preset.description,
 			tools: preset.tools,
-			injectWorkflowContext: preset.injectWorkflowContext,
-			systemPrompt,
 		});
 
 		if (result.ok) {

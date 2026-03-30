@@ -1813,12 +1813,8 @@ describe('node-agent-tools: createNodeAgentMcpServer', () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Tests: node agent system prompt
-// ---------------------------------------------------------------------------
-
-describe('node-agent-tools: system prompt includes peer communication section', () => {
-	test('buildCustomAgentSystemPrompt includes Peer Communication section', async () => {
+describe('node-agent-tools: system prompt uses only visible prompt text', () => {
+	test('buildCustomAgentSystemPrompt returns configured text only', async () => {
 		const { buildCustomAgentSystemPrompt } = await import(
 			'../../../src/lib/space/agents/custom-agent.ts'
 		);
@@ -1831,16 +1827,13 @@ describe('node-agent-tools: system prompt includes peer communication section', 
 			description: '',
 			model: null,
 			tools: [],
-			systemPrompt: null,
+			systemPrompt: 'Visible workflow prompt',
 			injectWorkflowContext: false,
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		});
 
-		expect(prompt).toContain('Peer Communication');
-		expect(prompt).toContain('send_message');
-		expect(prompt).toContain('list_peers');
-		expect(prompt).toContain('channel-validated');
+		expect(prompt).toBe('Visible workflow prompt');
 	});
 });
 

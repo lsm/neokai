@@ -442,14 +442,14 @@ export interface SpaceAgent {
 	description?: string;
 	/**
 	 * Role label — a free-form string describing the agent's purpose (e.g. 'coder', 'general').
-	 * Used only for display and default system prompt labeling; has no runtime routing effect.
+	 * Used for display and default tool/feature profiles; has no runtime routing effect.
 	 */
 	role: string;
 	/** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
 	model?: string;
 	/** Provider name override (e.g., 'anthropic', 'openai') */
 	provider?: string;
-	/** Custom system prompt appended to the role preset */
+	/** Exact system prompt text for this agent */
 	systemPrompt?: string;
 	/**
 	 * Tool list override — which tools this agent may use.
@@ -459,14 +459,7 @@ export interface SpaceAgent {
 	tools?: string[];
 	/** Tool configuration overrides */
 	toolConfig?: Record<string, unknown>;
-	/**
-	 * When true, the agent's task message includes the full workflow structure
-	 * (nodes, current node marker, and rules) when the agent runs inside an active
-	 * workflow run. Set this on agents whose role involves planning or orchestration
-	 * so they can create tasks aligned with the current workflow node.
-	 *
-	 * Driven by data, not by hardcoded role checks — any agent can have this set.
-	 */
+	/** @deprecated Workflow runs always include factual workflow structure. */
 	injectWorkflowContext?: boolean;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
@@ -488,7 +481,7 @@ export interface CreateSpaceAgentParams {
 	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
 	tools?: string[];
 	toolConfig?: Record<string, unknown>;
-	/** When true, the agent receives workflow structure context in its task message. */
+	/** @deprecated Workflow runs always include factual workflow structure. */
 	injectWorkflowContext?: boolean;
 }
 
@@ -505,7 +498,7 @@ export interface UpdateSpaceAgentParams {
 	/** Tool list override — null clears (reverts to role defaults) */
 	tools?: string[] | null;
 	toolConfig?: Record<string, unknown> | null;
-	/** When true, the agent receives workflow structure context in its task message. */
+	/** @deprecated Workflow runs always include factual workflow structure. */
 	injectWorkflowContext?: boolean | null;
 }
 
@@ -1204,7 +1197,7 @@ export interface ExportedSpaceAgent {
 	provider?: string;
 	/**
 	 * Role label — free-form string describing the agent's purpose (e.g. 'coder', 'reviewer').
-	 * Used for display and default system prompt labeling; has no runtime routing effect.
+	 * Used for display and default tool/feature profiles; has no runtime routing effect.
 	 * Mirrors `SpaceAgent.role`.
 	 */
 	role: string;
@@ -1216,10 +1209,7 @@ export interface ExportedSpaceAgent {
 	 * Mirrors `SpaceAgent.tools`.
 	 */
 	tools?: string[];
-	/**
-	 * When true, the agent receives full workflow structure in its task message when
-	 * running inside an active workflow run. Mirrors `SpaceAgent.injectWorkflowContext`.
-	 */
+	/** @deprecated Workflow runs always include factual workflow structure. */
 	injectWorkflowContext?: boolean;
 	/**
 	 * Additional agent configuration.

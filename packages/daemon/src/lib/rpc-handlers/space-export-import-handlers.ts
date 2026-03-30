@@ -140,7 +140,6 @@ function buildAgentCreateParams(
 	if (exported.provider !== undefined) params.provider = exported.provider;
 	if (exported.systemPrompt !== undefined) params.systemPrompt = exported.systemPrompt;
 	if (exported.tools !== undefined) params.tools = exported.tools;
-	if (exported.injectWorkflowContext === true) params.injectWorkflowContext = true;
 	return params;
 }
 
@@ -557,7 +556,6 @@ export function setupSpaceExportImportHandlers(
 							provider: exportedAgent.provider ?? null,
 							systemPrompt: exportedAgent.systemPrompt ?? null,
 							tools: exportedAgent.tools ?? null,
-							injectWorkflowContext: exportedAgent.injectWorkflowContext ?? null,
 						});
 						const id = updated?.id ?? existing.id;
 						importedAgentNameToId.set(exportedAgent.name, id);

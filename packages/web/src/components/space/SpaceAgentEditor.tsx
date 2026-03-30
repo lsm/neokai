@@ -13,7 +13,6 @@
  * - System Prompt (monospace textarea with line numbers)
  *
  * Tool presets: "Full Coding" · "Read Only" · "Custom"
- * System prompt templates: "Coder" · "Reviewer" · "Research" · "Custom (blank)"
  *
  * Validation: name required + unique, model required, at least one tool selected.
  */
@@ -54,14 +53,6 @@ const AGENT_ROLES = [
 const TOOL_PRESETS: Record<string, ToolName[]> = {
 	'Full Coding': ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
 	'Read Only': ['Read', 'Grep', 'Glob'],
-};
-
-/** System prompt templates */
-const SYSTEM_PROMPT_TEMPLATES: Record<string, string> = {
-	Coder: `You are a skilled software engineer. Your role is to implement features, fix bugs, and write clean, maintainable code. Follow the project's conventions and best practices. Always write tests for new functionality and ensure all existing tests continue to pass.`,
-	Reviewer: `You are a thorough code reviewer. Your role is to analyze code changes for correctness, security, performance, and style. Provide constructive, actionable feedback with specific suggestions for improvement. Be concise and prioritize blocking issues.`,
-	Research: `You are a research assistant. Your role is to investigate technical questions, gather information from available sources, and produce clear, accurate summaries. Cite evidence when possible and flag uncertainty explicitly.`,
-	'Custom (blank)': '',
 };
 
 // ============================================================================
@@ -198,10 +189,6 @@ export function SpaceAgentEditor({
 		if (presetName in TOOL_PRESETS) {
 			setTools([...TOOL_PRESETS[presetName]]);
 		}
-	};
-
-	const applyTemplate = (templateName: string) => {
-		setSystemPrompt(SYSTEM_PROMPT_TEMPLATES[templateName] ?? '');
 	};
 
 	const toggleTool = (tool: string) => {
@@ -453,29 +440,14 @@ export function SpaceAgentEditor({
 
 				{/* System Prompt */}
 				<div>
-					<div class="flex items-center justify-between mb-2">
-						<label class="block text-sm font-medium text-gray-300">
-							System Prompt
-							<span class="text-gray-500 text-xs ml-2">(optional)</span>
-						</label>
-						{/* Templates */}
-						<div class="flex gap-1.5">
-							{Object.keys(SYSTEM_PROMPT_TEMPLATES).map((tmpl) => (
-								<button
-									key={tmpl}
-									type="button"
-									onClick={() => applyTemplate(tmpl)}
-									class="text-xs px-2 py-1 rounded border border-dark-600 text-gray-500 hover:border-dark-500 hover:text-gray-300 transition-colors"
-								>
-									{tmpl}
-								</button>
-							))}
-						</div>
-					</div>
+					<label class="block text-sm font-medium text-gray-300 mb-2">
+						System Prompt
+						<span class="text-gray-500 text-xs ml-2">(optional)</span>
+					</label>
 					<LineNumberedTextarea
 						value={systemPrompt}
 						onChange={setSystemPrompt}
-						placeholder="Custom instructions for this agent (appended to the role preset)..."
+						placeholder="Exact system prompt text for this agent..."
 						rows={8}
 					/>
 				</div>
