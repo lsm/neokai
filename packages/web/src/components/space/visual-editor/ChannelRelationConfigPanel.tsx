@@ -7,10 +7,12 @@ export interface ChannelRelationConfigPanelProps {
 	forwardLinks: Array<{
 		index: number;
 		channel: WorkflowChannel;
+		shouldBeCyclic?: boolean;
 	}>;
 	reverseLinks?: Array<{
 		index: number;
 		channel: WorkflowChannel;
+		shouldBeCyclic?: boolean;
 	}>;
 	canConvertToBidirectional?: boolean;
 	onConvertToBidirectional?: () => void;
@@ -60,11 +62,12 @@ export function ChannelRelationConfigPanel({
 							Forward links
 						</p>
 					)}
-					{forwardLinks.map(({ index, channel }) => (
+					{forwardLinks.map(({ index, channel, shouldBeCyclic }) => (
 						<ChannelEdgeConfigPanel
 							key={`${index}-${channel.from}-${Array.isArray(channel.to) ? channel.to.join(',') : channel.to}`}
 							index={index}
 							channel={channel}
+							shouldBeCyclic={shouldBeCyclic}
 							onChange={onChange}
 							onDelete={onDelete}
 							showHeader={false}
@@ -79,11 +82,12 @@ export function ChannelRelationConfigPanel({
 					<p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
 						Reverse links
 					</p>
-					{reverseLinks.map(({ index, channel }) => (
+					{reverseLinks.map(({ index, channel, shouldBeCyclic }) => (
 						<ChannelEdgeConfigPanel
 							key={`${index}-${channel.from}-${Array.isArray(channel.to) ? channel.to.join(',') : channel.to}`}
 							index={index}
 							channel={channel}
+							shouldBeCyclic={shouldBeCyclic}
 							onChange={onChange}
 							onDelete={onDelete}
 							showHeader={false}

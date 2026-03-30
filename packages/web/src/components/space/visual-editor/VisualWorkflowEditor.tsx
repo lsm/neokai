@@ -126,6 +126,83 @@ function buildTemplateCanvasSignature(
 	});
 }
 
+function resolveChannelTargetNodeIds(
+	channel: WorkflowChannel,
+	endpointNodeIdLookup: Map<string, string>
+): string[] {
+	const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+	return targets
+		.map((target) => endpointNodeIdLookup.get(target) ?? null)
+		.filter((nodeId): nodeId is string => !!nodeId);
+}
+
+function doesPathExistBetweenNodes(
+	channels: WorkflowChannel[],
+	endpointNodeIdLookup: Map<string, string>,
+	startNodeId: string,
+	targetNodeId: string,
+	options?: { ignoreChannelIndex?: number }
+): boolean {
+	if (startNodeId === targetNodeId) return true;
+
+	const adjacency = new Map<string, Set<string>>();
+	for (const [index, channel] of channels.entries()) {
+		if (options?.ignoreChannelIndex === index) continue;
+
+		const fromNodeId = endpointNodeIdLookup.get(channel.from);
+		if (!fromNodeId) continue;
+
+		for (const toNodeId of resolveChannelTargetNodeIds(channel, endpointNodeIdLookup)) {
+			if (toNodeId === fromNodeId) continue;
+			const targets = adjacency.get(fromNodeId) ?? new Set<string>();
+			targets.add(toNodeId);
+			adjacency.set(fromNodeId, targets);
+		}
+	}
+
+	const visited = new Set<string>();
+	const queue = [startNodeId];
+	while (queue.length > 0) {
+		const current = queue.shift()!;
+		if (current === targetNodeId) return true;
+		if (visited.has(current)) continue;
+		visited.add(current);
+
+		for (const next of adjacency.get(current) ?? []) {
+			if (!visited.has(next)) {
+				queue.push(next);
+			}
+		}
+	}
+
+	return false;
+}
+
+function inferChannelIsCyclic(
+	channel: WorkflowChannel,
+	channels: WorkflowChannel[],
+	endpointNodeIdLookup: Map<string, string>,
+	nodeOrder: Map<string, number>,
+	options?: { ignoreChannelIndex?: number }
+): boolean {
+	const fromNodeId = endpointNodeIdLookup.get(channel.from);
+	if (!fromNodeId) return false;
+
+	for (const toNodeId of resolveChannelTargetNodeIds(channel, endpointNodeIdLookup)) {
+		if (toNodeId === fromNodeId) continue;
+		const fromOrder = nodeOrder.get(fromNodeId) ?? Number.MAX_SAFE_INTEGER;
+		const toOrder = nodeOrder.get(toNodeId) ?? Number.MAX_SAFE_INTEGER;
+		if (toOrder > fromOrder) continue;
+		if (
+			doesPathExistBetweenNodes(channels, endpointNodeIdLookup, toNodeId, fromNodeId, options)
+		) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 // ============================================================================
 // Props
 // ============================================================================
@@ -264,6 +341,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		}
 		return map;
 	}, [nodes]);
+
+	const nodeOrderByLocalId = useMemo(
+		() => new Map(regularNodes.map((node, index) => [node.step.localId, index])),
+		[regularNodes]
+	);
 
 	const endpointNodeIdLookup = useMemo(() => {
 		const map = new Map<string, string>();
@@ -406,22 +488,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			})
 			.filter((entry): entry is { index: number; channel: WorkflowChannel } => !!entry);
 
-		const resolveTargetNodeIds = (channel: WorkflowChannel) => {
-			const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
-			return targets
-				.map((target) => endpointNodeIdLookup.get(target) ?? null)
-				.filter((nodeId): nodeId is string => !!nodeId);
-		};
-
 		const forwardLinks = links.filter(({ channel }) => {
 			const fromId = endpointNodeIdLookup.get(channel.from);
-			const targetIds = resolveTargetNodeIds(channel);
+			const targetIds = resolveChannelTargetNodeIds(channel, endpointNodeIdLookup);
 			return fromId === relation.fromStepId && targetIds.includes(relation.toStepId);
 		});
 
 		const reverseLinks = links.filter(({ channel }) => {
 			const fromId = endpointNodeIdLookup.get(channel.from);
-			const targetIds = resolveTargetNodeIds(channel);
+			const targetIds = resolveChannelTargetNodeIds(channel, endpointNodeIdLookup);
 			return fromId === relation.toStepId && targetIds.includes(relation.fromStepId);
 		});
 
@@ -433,8 +508,32 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			fromNode,
 			toNode,
 			links,
-			forwardLinks,
-			reverseLinks,
+			forwardLinks: forwardLinks.map(({ index, channel }) => ({
+				index,
+				channel,
+				shouldBeCyclic: inferChannelIsCyclic(
+					channel,
+					channels,
+					endpointNodeIdLookup,
+					nodeOrderByLocalId,
+					{
+					ignoreChannelIndex: index,
+					}
+				),
+			})),
+			reverseLinks: reverseLinks.map(({ index, channel }) => ({
+				index,
+				channel,
+				shouldBeCyclic: inferChannelIsCyclic(
+					channel,
+					channels,
+					endpointNodeIdLookup,
+					nodeOrderByLocalId,
+					{
+					ignoreChannelIndex: index,
+					}
+				),
+			})),
 			relationIsBidirectional,
 			visibleLinkCount,
 			canConvertToBidirectional: forwardLinks.length > 0 && reverseLinks.length === 0,
@@ -443,7 +542,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					? `${fromNode?.step.name || 'Unnamed'} ↔ ${toNode?.step.name || 'Unnamed'}`
 					: `${fromNode?.step.name || 'Unnamed'} → ${toNode?.step.name || 'Unnamed'}`,
 		};
-	}, [selectedChannelId, routedSemanticEdges, nodes, channels, endpointNodeIdLookup]);
+	}, [selectedChannelId, routedSemanticEdges, nodes, channels, endpointNodeIdLookup, nodeOrderByLocalId]);
 
 	const nodeChannelLinksByNodeId = useMemo(() => {
 		const linksByNodeId = new Map<string, NodeChannelLink[]>();
@@ -676,29 +775,36 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			if (!toName || !fromName) return;
 
 			setChannels((prev) => {
+				const newChannel: WorkflowChannel = {
+					from: fromName,
+					to: toName,
+					direction: 'one-way',
+				};
+
 				// Deduplicate exact same directed channel produced by repeated drags.
 				if (
 					prev.some(
 						(ch) =>
-							ch.from === fromName &&
+							ch.from === newChannel.from &&
 							!Array.isArray(ch.to) &&
-							ch.to === toName &&
-							ch.direction === 'one-way'
+							ch.to === newChannel.to &&
+							ch.direction === newChannel.direction
 					)
 				) {
 					return prev;
 				}
+
+				if (inferChannelIsCyclic(newChannel, prev, endpointNodeIdLookup, nodeOrderByLocalId)) {
+					newChannel.isCyclic = true;
+				}
+
 				return [
 					...prev,
-					{
-						from: fromName,
-						to: toName,
-						direction: 'one-way',
-					},
+					newChannel,
 				];
 			});
 		},
-		[nodes, resolveSourceChannelName, resolveTargetChannelName]
+		[nodes, resolveSourceChannelName, resolveTargetChannelName, endpointNodeIdLookup, nodeOrderByLocalId]
 	);
 
 	const handleUpdateChannelFromEdgePanel = useCallback(
@@ -742,11 +848,22 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 			if (reverseAlreadyExists) return prev;
 
-			next.push({
+			const reverseChannel: WorkflowChannel = {
 				from: reverseSourceName,
 				to: reverseTargetName,
 				direction: 'one-way',
-			});
+			};
+			if (
+				inferChannelIsCyclic(
+					reverseChannel,
+					next,
+					endpointNodeIdLookup,
+					nodeOrderByLocalId
+				)
+			) {
+				reverseChannel.isCyclic = true;
+			}
+			next.push(reverseChannel);
 
 			return next;
 		});
@@ -755,6 +872,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		resolveSourceChannelName,
 		resolveTargetChannelName,
 		endpointNodeIdLookup,
+		nodeOrderByLocalId,
 	]);
 
 	const handleDeleteEdge = useCallback(
