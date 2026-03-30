@@ -127,7 +127,6 @@ const exportedAgentBaseSchema = z.object({
 	role: z.string().min(1),
 	systemPrompt: z.string().optional(),
 	tools: z.array(z.string()).optional(),
-	injectWorkflowContext: z.boolean().optional(),
 	config: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -183,7 +182,6 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 	if (agent.provider !== undefined) exported.provider = agent.provider;
 	if (agent.systemPrompt !== undefined) exported.systemPrompt = agent.systemPrompt;
 	if (agent.tools !== undefined) exported.tools = agent.tools;
-	if (agent.injectWorkflowContext === true) exported.injectWorkflowContext = true;
 	return exported;
 }
 

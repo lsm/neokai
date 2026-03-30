@@ -12,8 +12,7 @@
  * - Tool presets: "Full Coding" selects correct tools
  * - Tool presets: "Read Only" selects correct tools
  * - Tool presets: toggling a tool manually switches to "Custom"
- * - System prompt templates: applying a template sets the textarea value
- * - System prompt templates: "Custom (blank)" clears the textarea
+ * - System prompt field accepts direct edits
  * - KNOWN_TOOLS: all tools are rendered as checkboxes
  * - Create mode: calls spaceStore.createAgent with correct params
  * - Edit mode: calls spaceStore.updateAgent with correct params
@@ -344,44 +343,15 @@ describe('SpaceAgentEditor', () => {
 		expect(customButton.className).toContain('blue');
 	});
 
-	// ── System prompt templates ───────────────────────────────────────────────
-
-	it('applies "Coder" template text to system prompt', () => {
-		const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-		fireEvent.click(getByText('Coder'));
+	it('uses direct system prompt edits without template buttons', () => {
+		const { container, queryByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
 		const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-		expect(textarea.value).toContain('software engineer');
-	});
 
-	it('applies "Reviewer" template text to system prompt', () => {
-		const { getAllByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-		// "Reviewer" appears both in the role section and as a template button — click the button
-		const reviewerButtons = getAllByText('Reviewer').filter(
-			(el) => el.tagName.toLowerCase() === 'button'
-		);
-		expect(reviewerButtons.length).toBeGreaterThan(0);
-		fireEvent.click(reviewerButtons[0]);
-		const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-		expect(textarea.value).toContain('code reviewer');
-	});
+		fireEvent.input(textarea, { target: { value: 'Exact prompt text' } });
 
-	it('applies "Research" template text to system prompt', () => {
-		const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-		fireEvent.click(getByText('Research'));
-		const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-		expect(textarea.value).toContain('research assistant');
-	});
-
-	it('clears system prompt when "Custom (blank)" template is applied', () => {
-		const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-		// First apply Coder template
-		fireEvent.click(getByText('Coder'));
-		const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-		expect(textarea.value).not.toBe('');
-
-		// Then apply Custom (blank)
-		fireEvent.click(getByText('Custom (blank)'));
-		expect(textarea.value).toBe('');
+		expect(textarea.value).toBe('Exact prompt text');
+		expect(queryByText('Custom (blank)')).toBeNull();
+		expect(queryByText('Research')).toBeNull();
 	});
 
 	// ── Role selection ─────────────────────────────────────────────────────────
