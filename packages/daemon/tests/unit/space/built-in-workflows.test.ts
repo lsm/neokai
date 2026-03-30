@@ -369,8 +369,8 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('has 15 channels', () => {
-		expect(CODING_WORKFLOW_V2.channels).toHaveLength(15);
+	test('has 9 node-level channels', () => {
+		expect(CODING_WORKFLOW_V2.channels).toHaveLength(9);
 	});
 
 	test('main progression channels have correct gateIds', () => {
@@ -382,24 +382,14 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		const reviewToCoding = ch.find((c) => c.from === 'Plan Review' && c.to === 'Coding');
 		expect(reviewToCoding?.gateId).toBe('plan-approval-gate');
 
-		const codingToRev1 = ch.find((c) => c.from === 'Coding' && c.to === 'Reviewer 1');
-		expect(codingToRev1?.gateId).toBe('code-pr-gate');
-
-		const codingToRev2 = ch.find((c) => c.from === 'Coding' && c.to === 'Reviewer 2');
-		expect(codingToRev2?.gateId).toBe('code-pr-gate');
-
-		const codingToRev3 = ch.find((c) => c.from === 'Coding' && c.to === 'Reviewer 3');
-		expect(codingToRev3?.gateId).toBe('code-pr-gate');
+		const codingToReview = ch.find((c) => c.from === 'Coding' && c.to === 'Code Review');
+		expect(codingToReview?.gateId).toBe('code-pr-gate');
 	});
 
-	test('reviewer-to-QA channels share review-votes-gate', () => {
+	test('Code Review-to-QA uses review-votes-gate', () => {
 		const ch = CODING_WORKFLOW_V2.channels!;
-		const rev1ToQA = ch.find((c) => c.from === 'Reviewer 1' && c.to === 'QA');
-		const rev2ToQA = ch.find((c) => c.from === 'Reviewer 2' && c.to === 'QA');
-		const rev3ToQA = ch.find((c) => c.from === 'Reviewer 3' && c.to === 'QA');
-		expect(rev1ToQA?.gateId).toBe('review-votes-gate');
-		expect(rev2ToQA?.gateId).toBe('review-votes-gate');
-		expect(rev3ToQA?.gateId).toBe('review-votes-gate');
+		const reviewToQA = ch.find((c) => c.from === 'Code Review' && c.to === 'QA');
+		expect(reviewToQA?.gateId).toBe('review-votes-gate');
 	});
 
 	test('QA-to-Done uses qa-result-gate', () => {
@@ -415,17 +405,9 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		expect(qaToCoding?.gateId).toBe('qa-fail-gate');
 		expect(qaToCoding?.isCyclic).toBe(true);
 
-		const rev1ToCoding = ch.find((c) => c.from === 'Reviewer 1' && c.to === 'Coding');
-		expect(rev1ToCoding?.gateId).toBe('review-reject-gate');
-		expect(rev1ToCoding?.isCyclic).toBe(true);
-
-		const rev2ToCoding = ch.find((c) => c.from === 'Reviewer 2' && c.to === 'Coding');
-		expect(rev2ToCoding?.gateId).toBe('review-reject-gate');
-		expect(rev2ToCoding?.isCyclic).toBe(true);
-
-		const rev3ToCoding = ch.find((c) => c.from === 'Reviewer 3' && c.to === 'Coding');
-		expect(rev3ToCoding?.gateId).toBe('review-reject-gate');
-		expect(rev3ToCoding?.isCyclic).toBe(true);
+		const reviewToCoding = ch.find((c) => c.from === 'Code Review' && c.to === 'Coding');
+		expect(reviewToCoding?.gateId).toBe('review-reject-gate');
+		expect(reviewToCoding?.isCyclic).toBe(true);
 	});
 
 	test('ungated feedback channels have no gateId', () => {
@@ -789,10 +771,10 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[5].agentId).toBe(GENERAL_ID); // Done
 	});
 
-	test('CODING_WORKFLOW_V2 seeded with 15 channels', async () => {
+	test('CODING_WORKFLOW_V2 seeded with 9 node-level channels', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
-		expect(wf.channels).toHaveLength(15);
+		expect(wf.channels).toHaveLength(9);
 	});
 
 	test('CODING_WORKFLOW_V2 seeded with 7 gates', async () => {
@@ -813,16 +795,16 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
 		const gatedChannels = wf.channels!.filter((c) => c.gateId !== undefined);
-		// 13 channels have gateIds (15 total minus 2 ungated feedback channels)
-		expect(gatedChannels).toHaveLength(13);
+		// 7 channels have gateIds (9 total minus 2 ungated feedback channels)
+		expect(gatedChannels).toHaveLength(7);
 	});
 
 	test('CODING_WORKFLOW_V2 seeded cyclic channels are marked isCyclic', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
 		const cyclicChannels = wf.channels!.filter((c) => c.isCyclic === true);
-		// 4 cyclic: QA→Coding, Reviewer1→Coding, Reviewer2→Coding, Reviewer3→Coding
-		expect(cyclicChannels).toHaveLength(4);
+		// 2 cyclic: QA→Coding and Code Review→Coding
+		expect(cyclicChannels).toHaveLength(2);
 	});
 
 	test('CODING_WORKFLOW_V2 seeded channels reference node names or reviewer slot names', async () => {

@@ -646,24 +646,17 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		}
 	}, []);
 
-	const resolveSourceChannelNames = useCallback((node: VisualNode): string[] => {
-		if (node.step.agents && node.step.agents.length > 0) {
-			return node.step.agents.map((a) => a.name).filter((name) => name.trim().length > 0);
-		}
-		if (node.step.name?.trim()) return [node.step.name.trim()];
-		if (node.step.agentId?.trim()) return [node.step.agentId.trim()];
-		return [];
+	const resolveSourceChannelName = useCallback((node: VisualNode): string | null => {
+		// Persist workflow channels at node granularity. Runtime fans out from the
+		// node to agent slots when delivery happens.
+		if (node.step.name?.trim()) return node.step.name.trim();
+		if (node.step.agentId?.trim()) return node.step.agentId.trim();
+		return null;
 	}, []);
 
 	const resolveTargetChannelName = useCallback((node: VisualNode): string | null => {
-		// For multi-agent targets, route to the node name so delivery fans out to
-		// all agents in that node.
-		if (node.step.agents && node.step.agents.length > 1) {
-			return node.step.name?.trim() || null;
-		}
-		if (node.step.agents && node.step.agents.length === 1) {
-			return node.step.agents[0]?.name?.trim() || null;
-		}
+		// Persist workflow channels at node granularity for both single-agent and
+		// multi-agent nodes so channel config is shared by the whole node.
 		if (node.step.name?.trim()) return node.step.name.trim();
 		if (node.step.agentId?.trim()) return node.step.agentId.trim();
 		return null;
@@ -678,35 +671,34 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			const toNode = nodes.find((n) => n.step.localId === toLocalId);
 			if (!fromNode || !toNode) return;
 
-			const fromNames = resolveSourceChannelNames(fromNode);
+			const fromName = resolveSourceChannelName(fromNode);
 			const toName = resolveTargetChannelName(toNode);
-			if (!toName || fromNames.length === 0) return;
+			if (!toName || !fromName) return;
 
 			setChannels((prev) => {
-				const next = [...prev];
-				for (const fromName of fromNames) {
-					// Deduplicate exact same directed channel produced by repeated drags.
-					if (
-						next.some(
-							(ch) =>
-								ch.from === fromName &&
-								!Array.isArray(ch.to) &&
-								ch.to === toName &&
-								ch.direction === 'one-way'
-						)
-					) {
-						continue;
-					}
-					next.push({
+				// Deduplicate exact same directed channel produced by repeated drags.
+				if (
+					prev.some(
+						(ch) =>
+							ch.from === fromName &&
+							!Array.isArray(ch.to) &&
+							ch.to === toName &&
+							ch.direction === 'one-way'
+					)
+				) {
+					return prev;
+				}
+				return [
+					...prev,
+					{
 						from: fromName,
 						to: toName,
 						direction: 'one-way',
-					});
-				}
-				return next;
+					},
+				];
 			});
 		},
-		[nodes, resolveSourceChannelNames, resolveTargetChannelName]
+		[nodes, resolveSourceChannelName, resolveTargetChannelName]
 	);
 
 	const handleUpdateChannelFromEdgePanel = useCallback(
@@ -723,9 +715,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const handleConvertChannelRelationToBidirectional = useCallback(() => {
 		if (!selectedChannelInfo?.fromNode || !selectedChannelInfo.toNode) return;
 
-		const reverseSourceNames = resolveSourceChannelNames(selectedChannelInfo.toNode);
+		const reverseSourceName = resolveSourceChannelName(selectedChannelInfo.toNode);
 		const reverseTargetName = resolveTargetChannelName(selectedChannelInfo.fromNode);
-		if (reverseSourceNames.length === 0 || !reverseTargetName) return;
+		if (!reverseSourceName || !reverseTargetName) return;
 
 		const relationFromStepId = selectedChannelInfo.relation.fromStepId;
 		const relationToStepId = selectedChannelInfo.relation.toStepId;
@@ -733,36 +725,34 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		setChannels((prev) => {
 			const next = [...prev];
 
-			for (const fromName of reverseSourceNames) {
-				const reverseAlreadyExists = next.some((channel) => {
-					const fromId = endpointNodeIdLookup.get(channel.from);
-					const targetValues = Array.isArray(channel.to) ? channel.to : [channel.to];
-					const targetNodeIds = targetValues
-						.map((target) => endpointNodeIdLookup.get(target) ?? null)
-						.filter((nodeId): nodeId is string => !!nodeId);
+			const reverseAlreadyExists = next.some((channel) => {
+				const fromId = endpointNodeIdLookup.get(channel.from);
+				const targetValues = Array.isArray(channel.to) ? channel.to : [channel.to];
+				const targetNodeIds = targetValues
+					.map((target) => endpointNodeIdLookup.get(target) ?? null)
+					.filter((nodeId): nodeId is string => !!nodeId);
 
-					return (
-						fromId === relationToStepId &&
-						targetNodeIds.includes(relationFromStepId) &&
-						channel.from === fromName &&
-						targetValues.includes(reverseTargetName)
-					);
-				});
+				return (
+					fromId === relationToStepId &&
+					targetNodeIds.includes(relationFromStepId) &&
+					channel.from === reverseSourceName &&
+					targetValues.includes(reverseTargetName)
+				);
+			});
 
-				if (reverseAlreadyExists) continue;
+			if (reverseAlreadyExists) return prev;
 
-				next.push({
-					from: fromName,
-					to: reverseTargetName,
-					direction: 'one-way',
-				});
-			}
+			next.push({
+				from: reverseSourceName,
+				to: reverseTargetName,
+				direction: 'one-way',
+			});
 
 			return next;
 		});
 	}, [
 		selectedChannelInfo,
-		resolveSourceChannelNames,
+		resolveSourceChannelName,
 		resolveTargetChannelName,
 		endpointNodeIdLookup,
 	]);

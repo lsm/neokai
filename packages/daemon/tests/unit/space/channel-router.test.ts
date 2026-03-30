@@ -2734,25 +2734,11 @@ describe('ChannelRouter', () => {
 
 			function buildQaWorkflow() {
 				const channels: WorkflowChannel[] = [
-					// Coding → Reviewers
-					{ from: 'Coding', to: 'Reviewer 1', direction: 'one-way', gateId: 'code-pr-gate' },
-					{ from: 'Coding', to: 'Reviewer 2', direction: 'one-way', gateId: 'code-pr-gate' },
-					{ from: 'Coding', to: 'Reviewer 3', direction: 'one-way', gateId: 'code-pr-gate' },
-					// Reviewers → QA
+					// Coding → Code Review node
+					{ from: 'Coding', to: 'Code Review', direction: 'one-way', gateId: 'code-pr-gate' },
+					// Code Review node → QA
 					{
-						from: 'Reviewer 1',
-						to: 'QA',
-						direction: 'one-way',
-						gateId: 'review-votes-gate',
-					},
-					{
-						from: 'Reviewer 2',
-						to: 'QA',
-						direction: 'one-way',
-						gateId: 'review-votes-gate',
-					},
-					{
-						from: 'Reviewer 3',
+						from: 'Code Review',
 						to: 'QA',
 						direction: 'one-way',
 						gateId: 'review-votes-gate',
@@ -2775,18 +2761,12 @@ describe('ChannelRouter', () => {
 						{ id: NODE_CODING, name: 'Coding', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
 						{
 							id: NODE_REV1,
-							name: 'Reviewer 1',
-							agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer-1' }],
-						},
-						{
-							id: NODE_REV2,
-							name: 'Reviewer 2',
-							agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer-2' }],
-						},
-						{
-							id: NODE_REV3,
-							name: 'Reviewer 3',
-							agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer-3' }],
+							name: 'Code Review',
+							agents: [
+								{ agentId: AGENT_REVIEWER, name: 'Reviewer 1' },
+								{ agentId: AGENT_REVIEWER, name: 'Reviewer 2' },
+								{ agentId: AGENT_REVIEWER, name: 'Reviewer 3' },
+							],
 						},
 						{ id: NODE_QA, name: 'QA', agents: [{ agentId: AGENT_QA, name: 'qa' }] },
 						{

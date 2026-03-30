@@ -332,7 +332,7 @@ describe('WorkflowEditor', () => {
 			fireEvent.click(getByText(/Start from template/));
 			fireEvent.click(getByText('Coding Workflow V2'));
 			expect(getByText('6 steps')).toBeTruthy();
-			expect(getAllByTestId('channel-entry').length).toBe(15);
+			expect(getAllByTestId('channel-entry').length).toBe(9);
 		});
 
 		it('Coding Workflow V2 template builds explicit system prompts for every node', () => {

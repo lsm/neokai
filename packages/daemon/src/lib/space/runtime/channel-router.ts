@@ -698,9 +698,10 @@ export class ChannelRouter {
 	 * fromRole → toTarget pair.
 	 *
 	 * Matching rules:
-	 * - `channel.from` must equal `fromRole` (wildcard `'*'` matches any sender)
-	 * - `channel.to` must equal `toTarget`, or contain it in an array
-	 *   (wildcard `'*'` matches any target)
+	 * - `channel.from` may equal either the sender agent role/name or the sender
+	 *   node name (wildcard `'*'` matches any sender)
+	 * - `channel.to` may equal either the explicit target string or the target
+	 *   node name, or contain either in an array (wildcard `'*'` matches any target)
 	 *
 	 * `toTarget` may be either an agent role name or a node name — the raw
 	 * WorkflowChannel declaration is not resolved; the caller is responsible for
@@ -713,13 +714,19 @@ export class ChannelRouter {
 		fromRole: string,
 		toTarget: string
 	): WorkflowChannel | undefined {
+		const fromNodeName = this.findNodeByAgentRole(workflow, fromRole)?.name;
+		const toNodeName =
+			this.findNodeByAgentRole(workflow, toTarget)?.name ??
+			workflow.nodes.find((node) => node.name === toTarget)?.name;
 		const channels = workflow.channels ?? [];
 		return channels.find((ch) => {
 			// Match the from side
-			if (ch.from !== '*' && ch.from !== fromRole) return false;
+			if (ch.from !== '*' && ch.from !== fromRole && ch.from !== fromNodeName) return false;
 			// Match the to side
-			if (ch.to === '*' || ch.to === toTarget) return true;
-			if (Array.isArray(ch.to)) return ch.to.includes(toTarget);
+			if (ch.to === '*' || ch.to === toTarget || (!!toNodeName && ch.to === toNodeName)) return true;
+			if (Array.isArray(ch.to)) {
+				return ch.to.includes(toTarget) || (!!toNodeName && ch.to.includes(toNodeName));
+			}
 			return false;
 		});
 	}
