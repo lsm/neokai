@@ -408,6 +408,14 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		const reviewToCoding = ch.find((c) => c.from === 'Code Review' && c.to === 'Coding');
 		expect(reviewToCoding?.gateId).toBe('review-reject-gate');
 		expect(reviewToCoding?.isCyclic).toBe(true);
+
+		const reviewToPlanning = ch.find((c) => c.from === 'Plan Review' && c.to === 'Planning');
+		expect(reviewToPlanning?.gateId).toBeUndefined();
+		expect(reviewToPlanning?.isCyclic).toBe(true);
+
+		const codingToPlanning = ch.find((c) => c.from === 'Coding' && c.to === 'Planning');
+		expect(codingToPlanning?.gateId).toBeUndefined();
+		expect(codingToPlanning?.isCyclic).toBe(true);
 	});
 
 	test('ungated feedback channels have no gateId', () => {
@@ -803,8 +811,8 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
 		const cyclicChannels = wf.channels!.filter((c) => c.isCyclic === true);
-		// 2 cyclic: QA→Coding and Code Review→Coding
-		expect(cyclicChannels).toHaveLength(2);
+		// 4 cyclic: Plan Review→Planning, Coding→Planning, QA→Coding, Code Review→Coding
+		expect(cyclicChannels).toHaveLength(4);
 	});
 
 	test('CODING_WORKFLOW_V2 seeded channels reference node names or reviewer slot names', async () => {

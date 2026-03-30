@@ -19,7 +19,7 @@ export interface ConditionDraft {
 }
 
 export const CONDITION_LABELS: Record<WorkflowConditionType, string> = {
-	always: 'Automatic',
+	always: 'None',
 	human: 'Human Approval',
 	condition: 'Shell Condition',
 	task_result: 'Task Result',
@@ -139,7 +139,7 @@ export function GateConfig({
 					)}
 
 					{condition.type === 'always' && (
-						<p class="text-xs text-gray-600">Transition fires automatically.</p>
+						<p class="text-xs text-gray-600">No gate. Transition fires automatically.</p>
 					)}
 				</>
 			)}

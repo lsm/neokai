@@ -387,6 +387,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			fromStepId: string;
 			toStepId: string;
 			direction: 'one-way' | 'bidirectional';
+			isCyclic?: boolean;
 			gateType?: 'human' | 'condition' | 'task_result';
 			sourceSide?: 'top' | 'bottom' | 'left' | 'right';
 			targetSide?: 'top' | 'bottom' | 'left' | 'right';
@@ -399,6 +400,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				toStepId: edge.toStepId,
 				direction: edge.direction,
 				gateType: edge.gateType,
+				isCyclic: edge.hasCyclic,
 				sourceSide: edge.sourceSide,
 				targetSide: edge.targetSide,
 				id: edge.id,

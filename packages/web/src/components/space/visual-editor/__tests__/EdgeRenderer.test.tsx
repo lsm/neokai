@@ -718,6 +718,19 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Shell');
 	});
 
+	it('renders a loop badge when a channel is cyclic', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-2',
+				toStepId: 'step-1',
+				direction: 'one-way',
+				isCyclic: true,
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-loop-step-2-step-1').textContent).toBe('Loop');
+	});
+
 	it('does not render a midpoint gate badge when a channel is ungated', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
