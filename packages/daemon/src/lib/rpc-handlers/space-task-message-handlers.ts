@@ -109,8 +109,21 @@ export function setupSpaceTaskMessageHandlers(
 		if (task.spaceId !== params.spaceId) {
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
-		if (!task.taskAgentSessionId) {
-			throw new Error(`Task Agent session not started for task: ${params.taskId}`);
+
+		// Ensure a live Task Agent session exists before injecting. This recovers from:
+		// - first message on a task that has not spawned yet
+		// - persisted-but-not-live sessions after daemon restart
+		const sessionBefore = task.taskAgentSessionId ?? null;
+		const ensuredTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
+		const sessionAfter = ensuredTask.taskAgentSessionId ?? null;
+
+		if (sessionAfter !== sessionBefore) {
+			await daemonHub.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				taskId: params.taskId,
+				task: ensuredTask,
+			});
 		}
 
 		await taskAgentManager.injectTaskAgentMessage(params.taskId, params.message);

@@ -298,6 +298,10 @@ function makeCtx(): TestCtx {
 		registerSession: (_agentSession: unknown) => {
 			// no-op: unit tests don't exercise cache registration
 		},
+		getSessionFromDB: (sessionId: string) => {
+			const row = mockDb.getSession(sessionId);
+			return row ? ({ id: sessionId } as { id: string }) : null;
+		},
 	};
 
 	// Spy on AgentSession.fromInit to return mock sessions
@@ -477,6 +481,33 @@ describe('TaskAgentManager', () => {
 
 			expect(ensured.workflowRunId).toBeUndefined();
 			expect(ensured.taskAgentSessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
+		});
+
+		test('rehydrates a persisted Task Agent session when in-memory map is empty', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const persistedSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+
+			ctx.taskRepo.updateTask(task.id, {
+				taskAgentSessionId: persistedSessionId,
+				status: 'in_progress',
+			});
+			ctx.mockDb.createSession({ id: persistedSessionId, type: 'space_task_agent' });
+
+			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				if (sessionId !== persistedSessionId) return null;
+				const restored = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, restored);
+				return restored as unknown as AgentSession;
+			});
+
+			const ensured = await ctx.manager.ensureTaskAgentSession(task.id);
+			const restoredSession = ctx.createdSessions.get(persistedSessionId);
+
+			expect(ensured.taskAgentSessionId).toBe(persistedSessionId);
+			expect(ctx.manager.getTaskAgent(task.id)).toBeDefined();
+			expect(restoredSession?._startCalled).toBe(true);
+
+			restoreSpy.mockRestore();
 		});
 	});
 
@@ -1056,6 +1087,32 @@ describe('TaskAgentManager', () => {
 			expect(session._enqueuedMessages.length).toBeGreaterThan(messagesBefore);
 			const lastMsg = session._enqueuedMessages[session._enqueuedMessages.length - 1];
 			expect(lastMsg.msg).toBe('Hello Task Agent!');
+		});
+
+		test('lazily restores persisted session before injecting a message', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const persistedSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+
+			ctx.taskRepo.updateTask(task.id, {
+				taskAgentSessionId: persistedSessionId,
+				status: 'in_progress',
+			});
+			ctx.mockDb.createSession({ id: persistedSessionId, type: 'space_task_agent' });
+
+			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				if (sessionId !== persistedSessionId) return null;
+				const restored = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, restored);
+				return restored as unknown as AgentSession;
+			});
+
+			await expect(ctx.manager.injectTaskAgentMessage(task.id, 'resume work')).resolves.toBeUndefined();
+
+			const session = ctx.createdSessions.get(persistedSessionId);
+			expect(session?._startCalled).toBe(true);
+			expect(session?._enqueuedMessages.at(-1)?.msg).toBe('resume work');
+
+			restoreSpy.mockRestore();
 		});
 	});
 
