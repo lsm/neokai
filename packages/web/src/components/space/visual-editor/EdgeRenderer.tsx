@@ -74,6 +74,7 @@ export interface ResolvedWorkflowChannel {
 	fromStepId: string;
 	toStepId: string;
 	direction: 'one-way' | 'bidirectional';
+	isCyclic?: boolean;
 	/**
 	 * Gate condition type -- when present (and not 'always'), the channel has a gate.
 	 * Gated channels render as solid lines; ungated channels render as dashed lines.
@@ -99,6 +100,7 @@ const CHANNEL_GATE_BADGE_HORIZONTAL_PADDING = 8;
 const CHANNEL_GATE_BADGE_CHAR_WIDTH = 7;
 const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
+const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
 const CHANNEL_GATE_BADGE_LABELS: Record<NonNullable<ResolvedWorkflowChannel['gateType']>, string> = {
 	human: 'Human',
 	condition: 'Shell',
@@ -670,6 +672,7 @@ export function EdgeRenderer({
 				const visibleD = roundedOrthogonalPath(visiblePoints);
 				const isBidirectional = channel.direction === 'bidirectional';
 				const isGated = !!channel.gateType;
+				const isCyclic = !!channel.isCyclic;
 				const isSelected = channel.id != null && channel.id === selectedChannelId;
 
 				const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
@@ -677,11 +680,19 @@ export function EdgeRenderer({
 				const strokeDasharray = isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
 				const strokeOpacity = isSelected ? 1 : 0.85;
 				const gateBadgePosition = isGated ? getOrthogonalPathMidpoint(visiblePoints) : null;
+				const loopBadgePosition = isCyclic
+					? {
+							x: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).x,
+							y: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).y + (isGated ? 26 : 0),
+						}
+					: null;
 				const gateColor = channel.gateType ? EDGE_COLORS[channel.gateType] : CHANNEL_EDGE_COLOR;
 				const gateLabel = channel.gateType ? CHANNEL_GATE_BADGE_LABELS[channel.gateType] : 'Gate';
 				const gateBadgeWidth =
 					gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
 					CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
+				const loopBadgeWidth =
+					'Loop'.length * CHANNEL_GATE_BADGE_CHAR_WIDTH + CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
 
 				// Use the same marker geometry on both ends. `auto-start-reverse`
 				// handles the start-end orientation flip for markerStart.
@@ -700,6 +711,7 @@ export function EdgeRenderer({
 						data-channel-direction={channel.direction}
 						data-channel-id={channel.id}
 						data-channel-gated={isGated ? 'true' : undefined}
+						data-channel-cyclic={isCyclic ? 'true' : undefined}
 						data-selected={isSelected ? 'true' : 'false'}
 						style={{ pointerEvents: 'auto' }}
 					>
@@ -776,6 +788,48 @@ export function EdgeRenderer({
 									fill={isSelected ? 'white' : gateColor}
 								>
 									{gateLabel}
+								</text>
+							</g>
+						)}
+						{loopBadgePosition && (
+							<g
+								transform={`translate(${loopBadgePosition.x}, ${loopBadgePosition.y})`}
+								data-testid={`channel-loop-${channel.fromStepId}-${channel.toStepId}`}
+								style={{
+									pointerEvents:
+										onChannelSelect && channel.id != null ? 'auto' : 'none',
+									cursor:
+										onChannelSelect && channel.id != null ? 'pointer' : 'default',
+								}}
+								onClick={
+									onChannelSelect && channel.id != null
+										? (e: MouseEvent) => {
+												e.stopPropagation();
+												onChannelSelect(channel.id!);
+											}
+										: undefined
+								}
+							>
+								<rect
+									x={-loopBadgeWidth / 2}
+									y={-CHANNEL_GATE_BADGE_HEIGHT / 2}
+									width={loopBadgeWidth}
+									height={CHANNEL_GATE_BADGE_HEIGHT}
+									rx="10"
+									fill={CHANNEL_GATE_BADGE_BG}
+									stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
+									strokeWidth="1"
+								/>
+								<text
+									x="0"
+									y="4"
+									textAnchor="middle"
+									fontSize="11"
+									fontWeight="600"
+									letterSpacing="0.06em"
+									fill={isSelected ? 'white' : CHANNEL_LOOP_BADGE_COLOR}
+								>
+									Loop
 								</text>
 							</g>
 						)}
