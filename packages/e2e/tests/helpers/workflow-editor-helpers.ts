@@ -94,11 +94,21 @@ export async function openNewWorkflowEditor(page: Page): Promise<void> {
 	const createBtn = page.getByRole('button', { name: 'Create Workflow' });
 	await expect(createBtn).toBeVisible({ timeout: 5000 });
 	await createBtn.click();
-	await expect(page.getByTestId('editor-mode-toggle')).toBeVisible({ timeout: 5000 });
+	// Current UX opens Visual editor directly. Keep compatibility with older
+	// builds that still render an editor mode toggle.
+	await Promise.any([
+		page.getByTestId('visual-workflow-editor').waitFor({ state: 'visible', timeout: 5000 }),
+		page.getByTestId('editor-mode-toggle').waitFor({ state: 'visible', timeout: 5000 }),
+	]);
 }
 
 /** Switch to Visual editor mode, accepting any confirmation dialogs. */
 export async function switchToVisualMode(page: Page): Promise<void> {
+	// Modern flow: visual editor is already active.
+	if (await page.getByTestId('visual-workflow-editor').isVisible().catch(() => false)) {
+		return;
+	}
+
 	// Register dialog handler before clicking — native confirm() fires synchronously
 	page.once('dialog', (d) => d.accept());
 	await page.getByTestId('editor-mode-visual').click();
@@ -127,7 +137,10 @@ export async function openWorkflowForEdit(page: Page, workflowName: string): Pro
 	await expect(editBtn).toBeVisible({ timeout: 3000 });
 	await editBtn.click();
 
-	await expect(page.getByTestId('editor-mode-toggle')).toBeVisible({ timeout: 5000 });
+	await Promise.any([
+		page.getByTestId('visual-workflow-editor').waitFor({ state: 'visible', timeout: 5000 }),
+		page.getByTestId('editor-mode-toggle').waitFor({ state: 'visible', timeout: 5000 }),
+	]);
 }
 
 // ─── Multi-agent step helpers ──────────────────────────────────────────────────
