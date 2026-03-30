@@ -50,11 +50,9 @@ const NODES: VisualNode[] = [
 ];
 
 describe('buildSemanticWorkflowEdges', () => {
-	it('collapses multiple channels between the same node pair into one semantic edge', () => {
+	it('preserves a node-level channel between a single-agent node and a multi-agent node', () => {
 		const channels: WorkflowChannel[] = [
-			{ from: 'Planning', to: 'Reviewer 1', direction: 'one-way' },
-			{ from: 'Planning', to: 'Reviewer 2', direction: 'one-way' },
-			{ from: 'Planning', to: 'Reviewer 3', direction: 'one-way' },
+			{ from: 'Planning', to: 'Code Review', direction: 'one-way' },
 		];
 
 		expect(buildSemanticWorkflowEdges(NODES, channels)).toEqual([
@@ -63,10 +61,10 @@ describe('buildSemanticWorkflowEdges', () => {
 				fromStepId: 'plan',
 				toStepId: 'review',
 				direction: 'one-way',
-				channelCount: 3,
+				channelCount: 1,
 				hasGate: false,
 				gateType: undefined,
-				channelIndexes: [0, 1, 2],
+				channelIndexes: [0],
 			},
 		]);
 	});

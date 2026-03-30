@@ -252,11 +252,11 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  *   Planning → Plan Review (plan-pr-gate: planner submits plan)
  *   Plan Review → Coding (plan-approval-gate: reviewer approves)
  *   Coding → Code Review (code-pr-gate: PR opened; node contains Reviewer 1/2/3 slots)
- *   Reviewer 1/2/3 → QA (review-votes-gate: all 3 approve)
+ *   Code Review → QA (review-votes-gate: all 3 approve)
  *   QA → Done (qa-result-gate: QA passes)
  *
  * Cyclic paths:
- *   Reviewer 1/2/3 → Coding (review-reject-gate: any reviewer rejects)
+ *   Code Review → Coding (review-reject-gate: any reviewer rejects)
  *   QA → Coding (qa-fail-gate: QA finds issues)
  *
  * Ungated feedback channels:
@@ -448,49 +448,21 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			gateId: 'plan-approval-gate',
 			label: 'Plan Review → Coding',
 		},
-		// Coding → reviewers (3 reviewer slots in the Code Review node)
+		// Coding → Code Review (fan-out to the 3 reviewer slots in the node)
 		{
 			from: 'Coding',
-			to: 'Reviewer 1',
+			to: 'Code Review',
 			direction: 'one-way',
 			gateId: 'code-pr-gate',
-			label: 'Coding → Reviewer 1',
+			label: 'Coding → Code Review',
 		},
+		// Code Review → QA (fan-in, shared review-votes-gate: all 3 must approve)
 		{
-			from: 'Coding',
-			to: 'Reviewer 2',
-			direction: 'one-way',
-			gateId: 'code-pr-gate',
-			label: 'Coding → Reviewer 2',
-		},
-		{
-			from: 'Coding',
-			to: 'Reviewer 3',
-			direction: 'one-way',
-			gateId: 'code-pr-gate',
-			label: 'Coding → Reviewer 3',
-		},
-		// Reviewers → QA (fan-in, shared review-votes-gate: all 3 must approve)
-		{
-			from: 'Reviewer 1',
+			from: 'Code Review',
 			to: 'QA',
 			direction: 'one-way',
 			gateId: 'review-votes-gate',
-			label: 'Reviewer 1 → QA',
-		},
-		{
-			from: 'Reviewer 2',
-			to: 'QA',
-			direction: 'one-way',
-			gateId: 'review-votes-gate',
-			label: 'Reviewer 2 → QA',
-		},
-		{
-			from: 'Reviewer 3',
-			to: 'QA',
-			direction: 'one-way',
-			gateId: 'review-votes-gate',
-			label: 'Reviewer 3 → QA',
+			label: 'Code Review → QA',
 		},
 		// QA → Done (success path)
 		{
@@ -509,30 +481,14 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			isCyclic: true,
 			label: 'QA → Coding (on fail)',
 		},
-		// Cyclic: Reviewer 1/2/3 → Coding (reviewer rejected changes)
+		// Cyclic: Code Review → Coding (reviewer rejected changes)
 		{
-			from: 'Reviewer 1',
+			from: 'Code Review',
 			to: 'Coding',
 			direction: 'one-way',
 			gateId: 'review-reject-gate',
 			isCyclic: true,
-			label: 'Reviewer 1 → Coding (on reject)',
-		},
-		{
-			from: 'Reviewer 2',
-			to: 'Coding',
-			direction: 'one-way',
-			gateId: 'review-reject-gate',
-			isCyclic: true,
-			label: 'Reviewer 2 → Coding (on reject)',
-		},
-		{
-			from: 'Reviewer 3',
-			to: 'Coding',
-			direction: 'one-way',
-			gateId: 'review-reject-gate',
-			isCyclic: true,
-			label: 'Reviewer 3 → Coding (on reject)',
+			label: 'Code Review → Coding (on reject)',
 		},
 		// Ungated feedback: Plan Review ↔ Planning, Coding → Planning
 		{
