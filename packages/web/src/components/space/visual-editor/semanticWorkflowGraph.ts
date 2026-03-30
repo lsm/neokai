@@ -1,4 +1,4 @@
-import type { WorkflowChannel } from '@neokai/shared';
+import type { Gate, WorkflowChannel } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { VisualNode } from './serialization';
 import { getVisualNodeDimensions } from './nodeMetrics';
@@ -13,7 +13,7 @@ export interface SemanticWorkflowEdge {
 	channelCount: number;
 	hasGate: boolean;
 	hasCyclic: boolean;
-	gateType?: 'human' | 'condition' | 'task_result';
+	gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
 	channelIndexes: number[];
 }
 
@@ -30,8 +30,34 @@ interface PairAggregate {
 	channelCount: number;
 	hasGate: boolean;
 	hasCyclic: boolean;
-	gateType?: 'human' | 'condition' | 'task_result';
+	gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
 	channelIndexes: Set<number>;
+}
+
+function resolveSemanticGateType(
+	channel: WorkflowChannel,
+	gateLookup: Map<string, Gate>
+): SemanticWorkflowEdge['gateType'] {
+	if (channel.gateId) {
+		const gate = gateLookup.get(channel.gateId);
+		if (!gate) return 'check';
+		if (gate.condition.type === 'count') return 'count';
+		if (gate.condition.type === 'check') {
+			const op = gate.condition.op ?? '==';
+			if (gate.condition.field === 'approved' && op === '==' && gate.condition.value === true) {
+				return 'human';
+			}
+			if (gate.condition.field === 'result' && op === '==' && typeof gate.condition.value === 'string') {
+				return 'task_result';
+			}
+			return 'check';
+		}
+		return 'check';
+	}
+
+	const gateType = channel.gate?.type;
+	if (!gateType || gateType === 'always') return undefined;
+	return gateType;
 }
 
 function buildEndpointNodeLookup(nodes: VisualNode[]): Map<string, string> {
@@ -63,11 +89,13 @@ function buildEndpointNodeLookup(nodes: VisualNode[]): Map<string, string> {
 
 export function buildSemanticWorkflowEdges(
 	nodes: VisualNode[],
-	channels: WorkflowChannel[]
+	channels: WorkflowChannel[],
+	gates: Gate[] = []
 ): SemanticWorkflowEdge[] {
 	const endpointLookup = buildEndpointNodeLookup(nodes);
 	const nodeOrder = new Map(nodes.map((node, index) => [node.step.localId, index]));
 	const aggregates = new Map<string, PairAggregate>();
+	const gateLookup = new Map(gates.map((gate) => [gate.id, gate]));
 
 	for (const [channelIndex, channel] of channels.entries()) {
 		if (channel.from === 'task-agent' || channel.from === '*') continue;
@@ -103,8 +131,8 @@ export function buildSemanticWorkflowEdges(
 			};
 
 			aggregate.channelCount += 1;
-			const gateType = channel.gate?.type;
-			if (gateType && gateType !== 'always') {
+			const gateType = resolveSemanticGateType(channel, gateLookup);
+			if (gateType) {
 				aggregate.hasGate = true;
 				aggregate.gateType ??= gateType;
 			}

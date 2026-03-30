@@ -26,6 +26,7 @@ import type {
 	WorkflowNode,
 	WorkflowConditionType,
 	WorkflowChannel,
+	Gate,
 } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
@@ -68,7 +69,8 @@ function buildTemplateCanvasSignature(
 	nodes: VisualNode[],
 	edges: VisualEdge[],
 	channels: WorkflowChannel[],
-	startNodeId: string
+	startNodeId: string,
+	gates: Gate[]
 ): string {
 	const regularNodes = nodes
 		.filter((node) => node.step.localId !== TASK_AGENT_NODE_ID && node.step.id !== TASK_AGENT_NODE_ID)
@@ -115,14 +117,28 @@ function buildTemplateCanvasSignature(
 			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
 			direction: channel.direction,
 			gate: channel.gate ? { ...channel.gate } : undefined,
+			gateId: channel.gateId ?? null,
+			isCyclic: channel.isCyclic ?? false,
 		}))
 		.sort((a, b) => `${a.from}:${String(a.to)}`.localeCompare(`${b.from}:${String(b.to)}`));
+
+	const normalizedGates = gates
+		.map((gate) => ({
+			id: gate.id,
+			description: gate.description ?? null,
+			condition: gate.condition,
+			data: gate.data,
+			allowedWriterRoles: [...gate.allowedWriterRoles],
+			resetOnCycle: gate.resetOnCycle,
+		}))
+		.sort((a, b) => a.id.localeCompare(b.id));
 
 	return JSON.stringify({
 		nodes: regularNodes,
 		edges: normalizedEdges,
 		channels: normalizedChannels,
 		startNodeId,
+		gates: normalizedGates,
 	});
 }
 
@@ -261,6 +277,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
 	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
 	const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
+	const [gates, setGates] = useState<Gate[]>(() => initState?.gates ?? []);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -295,8 +312,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		[nodes]
 	);
 	const currentTemplateCanvasSignature = useMemo(
-		() => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId),
-		[nodes, edges, channels, startNodeId]
+		() => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates),
+		[nodes, edges, channels, startNodeId, gates]
 	);
 	const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
 		buildTemplateCanvasSignature(
@@ -314,7 +331,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			],
 			initState?.edges ?? [],
 			initState?.channels ?? [],
-			initState?.startNodeId ?? ''
+			initState?.startNodeId ?? '',
+			initState?.gates ?? []
 		)
 	);
 
@@ -368,8 +386,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	const semanticEdges = useMemo(
-		() => buildSemanticWorkflowEdges(nodes, channels),
-		[nodes, channels]
+		() => buildSemanticWorkflowEdges(nodes, channels, gates),
+		[nodes, channels, gates]
 	);
 
 	const routedSemanticEdges = useMemo(
@@ -388,7 +406,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			toStepId: string;
 			direction: 'one-way' | 'bidirectional';
 			isCyclic?: boolean;
-			gateType?: 'human' | 'condition' | 'task_result';
+			gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
 			sourceSide?: 'top' | 'bottom' | 'left' | 'right';
 			targetSide?: 'top' | 'bottom' | 'left' | 'right';
 			id?: string;
@@ -816,6 +834,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		[]
 	);
 
+	const handleUpdateGatesFromEdgePanel = useCallback((nextGates: Gate[]) => {
+		setGates(nextGates);
+	}, []);
+
 	const handleDeleteChannelFromEdgePanel = useCallback((index: number) => {
 		setChannels((prev) => prev.filter((_, i) => i !== index));
 	}, []);
@@ -1009,10 +1031,17 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
 			gate: channel.gate ? { ...channel.gate } : undefined,
 		}));
+		const nextGates = (template.gates ?? []).map((gate) => ({
+			...gate,
+			condition: { ...gate.condition },
+			data: { ...gate.data },
+			allowedWriterRoles: [...gate.allowedWriterRoles],
+		}));
 
 		setNodes(nextNodes);
 		setEdges(newEdges);
 		setChannels(nextChannels);
+		setGates(nextGates);
 		if (template.tags) {
 			setTags([...template.tags]);
 		}
@@ -1022,7 +1051,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		setShowTemplates(false);
 		setPendingTemplate(null);
 		setTemplateBaselineSignature(
-			buildTemplateCanvasSignature(nextNodes, newEdges, nextChannels, firstLocalId)
+			buildTemplateCanvasSignature(nextNodes, newEdges, nextChannels, firstLocalId, nextGates)
 		);
 		if (!name) setName(template.label);
 
@@ -1088,7 +1117,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			}
 		}
 
-		const visualState: VisualEditorState = { nodes, edges, startNodeId, rules, tags, channels };
+		const visualState: VisualEditorState = {
+			nodes,
+			edges,
+			startNodeId,
+			rules,
+			tags,
+			channels,
+			gates,
+		};
 
 		setSaving(true);
 		setError(null);
@@ -1346,6 +1383,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						}
 						onUpdateChannelLink={handleUpdateChannelFromEdgePanel}
 						onDeleteChannelLink={handleDeleteChannelFromEdgePanel}
+						channelRelationGates={gates}
+						onUpdateChannelGates={handleUpdateGatesFromEdgePanel}
 						onConvertChannelRelationToBidirectional={handleConvertChannelRelationToBidirectional}
 						onCloseChannelLink={() => setSelectedChannelId(null)}
 						onClose={() => {
@@ -1382,6 +1421,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						reverseLinks={selectedChannelInfo.reverseLinks}
 						canConvertToBidirectional={selectedChannelInfo.canConvertToBidirectional}
 						onConvertToBidirectional={handleConvertChannelRelationToBidirectional}
+						gates={gates}
+						onGatesChange={handleUpdateGatesFromEdgePanel}
 						onChange={handleUpdateChannelFromEdgePanel}
 						onDelete={handleDeleteChannelFromEdgePanel}
 						onBack={selectedNode ? () => setSelectedChannelId(null) : undefined}

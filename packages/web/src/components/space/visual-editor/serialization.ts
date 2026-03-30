@@ -31,6 +31,7 @@ import type {
 	WorkflowCondition,
 	WorkflowNodeAgent,
 	WorkflowChannel,
+	Gate,
 } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { RuleDraft } from '../WorkflowRulesEditor';
@@ -86,6 +87,8 @@ export interface VisualEditorState {
 	tags: string[];
 	/** Directed messaging channels at the workflow level. */
 	channels: WorkflowChannel[];
+	/** First-class workflow gates referenced by channel.gateId. */
+	gates: Gate[];
 }
 
 // ============================================================================
@@ -161,6 +164,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		rules: rulesToDrafts(workflow.rules ?? []),
 		tags: workflow.tags ?? [],
 		channels: workflow.channels ?? [],
+		gates: workflow.gates ?? [],
 	};
 }
 
@@ -186,6 +190,7 @@ interface BuiltWorkflowFields {
 	layout: Record<string, { x: number; y: number }>;
 	tags: string[];
 	channels?: WorkflowChannel[];
+	gates?: Gate[];
 }
 
 /**
@@ -295,6 +300,13 @@ function buildWorkflowFields(state: VisualEditorState): {
 			appliesTo: r.appliesTo.map((id) => keyToPersistedId.get(id) ?? id),
 		}));
 
+	const referencedGateIds = new Set(
+		state.channels
+			.map((channel) => channel.gateId)
+			.filter((gateId): gateId is string => !!gateId)
+	);
+	const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
+
 	return {
 		fields: {
 			nodes,
@@ -303,6 +315,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 			layout,
 			tags: state.tags,
 			channels: state.channels,
+			gates,
 		},
 		keyToPersistedId,
 	};
@@ -335,6 +348,7 @@ export function visualStateToCreateParams(
 		layout: fields.layout,
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
+		gates: fields.gates && fields.gates.length > 0 ? fields.gates : undefined,
 	};
 }
 
@@ -364,5 +378,6 @@ export function visualStateToUpdateParams(
 		layout: fields.layout,
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
+		gates: fields.gates && fields.gates.length > 0 ? fields.gates : null,
 	};
 }

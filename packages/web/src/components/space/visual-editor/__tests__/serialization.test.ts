@@ -189,6 +189,31 @@ describe('workflowToVisualState', () => {
 		expect(state.tags).toEqual(['coding', 'review']);
 	});
 
+	it('passes workflow gates through', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1')],
+			startNodeId: 's1',
+			gates: [
+				{
+					id: 'review-votes-gate',
+					condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+					data: { votes: {} },
+					allowedWriterRoles: ['*'],
+					resetOnCycle: true,
+				},
+			],
+		});
+		const state = workflowToVisualState(wf);
+		expect(state.gates).toHaveLength(1);
+		expect(state.gates[0].id).toBe('review-votes-gate');
+		expect(state.gates[0].condition).toMatchObject({
+			type: 'count',
+			field: 'votes',
+			matchValue: 'approved',
+			min: 3,
+		});
+	});
+
 	it('assigns fresh localIds to each node (including Task Agent)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
@@ -235,6 +260,7 @@ describe('visualStateToCreateParams', () => {
 			rules: [],
 			tags: [],
 			channels: [],
+			gates: [],
 			...overrides,
 		};
 	}
@@ -357,6 +383,7 @@ describe('visualStateToCreateParams', () => {
 			rules: [],
 			tags: [],
 			channels: [],
+			gates: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.nodes![0].id).toBeTruthy();
@@ -371,6 +398,7 @@ describe('visualStateToCreateParams', () => {
 			rules: [],
 			tags: [],
 			channels: [],
+			gates: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.nodes).toHaveLength(0);
@@ -528,6 +556,7 @@ describe('visualStateToUpdateParams', () => {
 			rules: [],
 			tags: [],
 			channels: [],
+			gates: [],
 		};
 		const params = visualStateToUpdateParams(state, {
 			name: 'Updated Name',
@@ -552,6 +581,7 @@ describe('visualStateToUpdateParams', () => {
 			],
 			tags: [],
 			channels: [],
+			gates: [],
 		};
 		const params = visualStateToUpdateParams(state);
 		expect(params.rules![0].id).toBeTruthy();
@@ -634,6 +664,7 @@ describe('multi-agent step serialization', () => {
 			rules: [],
 			tags: [],
 			channels: [],
+			gates: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		const step = params.nodes![0];
@@ -664,10 +695,71 @@ describe('multi-agent step serialization', () => {
 			rules: [],
 			tags: [],
 			channels: [],
+			gates: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		// Channels are not yet supported in visualStateToCreateParams output
 		// (they are workflow-level, not editor state level)
+	});
+
+	it('visualStateToCreateParams persists only gates referenced by channels', () => {
+		const state: VisualEditorState = {
+			nodes: [
+				{
+					step: {
+						localId: 'local-1',
+						id: 's1',
+						name: 'Plan',
+						agentId: '',
+						agents: [{ agentId: 'a1', name: 'planner' }],
+						instructions: '',
+					},
+					position: { x: 0, y: 0 },
+				},
+				{
+					step: {
+						localId: 'local-2',
+						id: 's2',
+						name: 'Code',
+						agentId: '',
+						agents: [{ agentId: 'a2', name: 'coder' }],
+						instructions: '',
+					},
+					position: { x: 200, y: 0 },
+				},
+			],
+			edges: [],
+			startNodeId: 's1',
+			rules: [],
+			tags: [],
+			channels: [
+				{
+					from: 'Plan',
+					to: 'Code',
+					direction: 'one-way',
+					gateId: 'review-votes-gate',
+				},
+			],
+			gates: [
+				{
+					id: 'review-votes-gate',
+					condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+					data: { votes: {} },
+					allowedWriterRoles: ['*'],
+					resetOnCycle: true,
+				},
+				{
+					id: 'unused-gate',
+					condition: { type: 'check', field: 'approved', op: '==', value: true },
+					data: {},
+					allowedWriterRoles: ['*'],
+					resetOnCycle: false,
+				},
+			],
+		};
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		expect(params.gates).toHaveLength(1);
+		expect(params.gates![0].id).toBe('review-votes-gate');
 	});
 
 	it('single-agent step round-trip: agentId preserved, no agents array', () => {

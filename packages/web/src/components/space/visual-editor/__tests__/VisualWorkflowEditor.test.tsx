@@ -1107,6 +1107,42 @@ describe('VisualWorkflowEditor', () => {
 			expect(getAllByTestId('channel-cyclic-warning')).toHaveLength(1);
 		});
 
+		it('edits a vote-count gate backed by workflow.gates', async () => {
+			const workflow = makeWorkflow({
+				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way', gateId: 'review-votes-gate' }],
+				gates: [
+					{
+						id: 'review-votes-gate',
+						condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+						data: { votes: {} },
+						allowedWriterRoles: ['*'],
+						resetOnCycle: true,
+					},
+				],
+			});
+			const { container, getByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow })} />
+			);
+
+			const firstChannelHitbox = container.querySelector(
+				'[data-channel-edge="true"] path[stroke="transparent"]'
+			) as SVGPathElement | null;
+			expect(firstChannelHitbox).toBeTruthy();
+			fireEvent.click(firstChannelHitbox!);
+
+			const minInput = getByTestId(
+				'channel-edge-gate-select-0-count-min'
+			) as HTMLInputElement;
+			expect(minInput.value).toBe('3');
+			fireEvent.input(minInput, { target: { value: '2' } });
+
+			await waitFor(() =>
+				expect(
+					(getByTestId('channel-edge-gate-select-0-count-min') as HTMLInputElement).value
+				).toBe('2')
+			);
+		});
+
 		it('node side panel lists channel links that open the nested relation view and back returns to node details', () => {
 			const { getByTestId, getAllByTestId, getByText, queryAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps()} />
