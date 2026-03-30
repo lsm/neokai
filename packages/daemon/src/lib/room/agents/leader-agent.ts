@@ -168,7 +168,7 @@ You MUST call tools (no text-only final responses).
   - mode=\`defer\`: enqueue for next-turn processing (default, preferred for review URLs)
   - mode=\`immediate\`: inject for current-turn steering
 - \`complete_task\` — Accept the work if it meets all requirements
-  - \`no_pr\`: set to true when the task produced no PR — use for research, investigation, meta-tasks (e.g., "create more tasks"), or any work without code changes. Do NOT set for coding tasks that should produce a PR.
+  - \`no_pr\`: set to true when the task produced no PR — use for research, investigation, meta-tasks (e.g., "create more tasks"), any work without code changes, or coding tasks where the worker used the \`NO_CHANGES_NEEDED:\` bypass marker (i.e., verification showed the work was already done). Keep as false (default) for coding tasks that should produce code changes and a PR.
   - \`artifacts\`: free-form description of what was produced or accomplished (use with \`no_pr=true\`)
 - \`fail_task\` — Mark the task as not achievable
 - \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried

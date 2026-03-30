@@ -131,8 +131,8 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
 	);
 
-	// Bypass markers for research/verification tasks
-	sections.push(`\n## Bypassing Git/PR Gates for Research-Only Tasks\n`);
+	// Bypass markers for research/verification/no-op tasks
+	sections.push(`\n## Bypassing Git/PR Gates for Research-Only and No-Op Coding Tasks\n`);
 	sections.push(
 		`For **research-only**, **verification-only**, or **investigation-only** tasks that do NOT modify any files, ` +
 			`you can bypass the git/PR requirements by starting your final output with one of these markers:`
@@ -141,7 +141,8 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 		`- \`RESEARCH_ONLY:\` — For pure research tasks (e.g., "Analyze and document X")\n` +
 			`- \`VERIFICATION_COMPLETE:\` — For verification tasks (e.g., "Verify Y is correct")\n` +
 			`- \`INVESTIGATION_RESULT:\` — For investigation tasks (e.g., "Investigate why Z fails")\n` +
-			`- \`ANALYSIS_COMPLETE:\` — For analysis tasks (e.g., "Analyze performance")`
+			`- \`ANALYSIS_COMPLETE:\` — For analysis tasks (e.g., "Analyze performance")\n` +
+			`- \`NO_CHANGES_NEEDED:\` — For coding tasks where investigation shows the work is already done (e.g., all deps are current, all pins are exact)`
 	);
 	sections.push(
 		`**Example**:\n` +
@@ -154,7 +155,19 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 			`\`\`\``
 	);
 	sections.push(
+		`**Example for NO_CHANGES_NEEDED**:\n` +
+			`\`\`\`\n` +
+			`NO_CHANGES_NEEDED:\n\n` +
+			`This was a coding task (update dependencies), but investigation shows no changes are required:\n` +
+			`1. Checked all 12 dependencies — all are already at their latest versions\n` +
+			`2. No security vulnerabilities found\n\n` +
+			`The work was already done; no PR is needed.\n` +
+			`\`\`\``
+	);
+	sections.push(
 		`**Important**: Only use bypass markers when the task genuinely requires NO code changes. ` +
+			`Use \`NO_CHANGES_NEEDED:\` specifically when the task WAS a coding task but investigation confirms ` +
+			`the work is already complete — this is different from a research task. ` +
 			`If you need to modify any files, follow the normal git/PR workflow instead.`
 	);
 
@@ -465,7 +478,7 @@ export function buildQaNodeAgentPrompt(): string {
 			`The broader workflow prompt includes a "Git Workflow (MANDATORY)" section that applies to coding agents. ` +
 			`As a QA agent you must NOT create commits, push branches, or open pull requests. ` +
 			`When you finish verification, use the \`VERIFICATION_COMPLETE:\` bypass marker (documented in ` +
-			`the "Bypassing Git/PR Gates for Research-Only Tasks" section) as the opening of your final response, ` +
+			`the "Bypassing Git/PR Gates for Research-Only and No-Op Coding Tasks" section) as the opening of your final response, ` +
 			`after writing the QA result to the gate.`
 	);
 
@@ -672,7 +685,7 @@ export function buildDoneNodeAgentPrompt(): string {
 			`The broader workflow prompt includes a "Git Workflow (MANDATORY)" section that applies to coding agents. ` +
 			`As the Done node agent you must NOT create commits, push branches, or open pull requests. ` +
 			`When you finish producing the summary, use the \`ANALYSIS_COMPLETE:\` bypass marker ` +
-			`(documented in the "Bypassing Git/PR Gates for Research-Only Tasks" section) as the opening of your final response, ` +
+			`(documented in the "Bypassing Git/PR Gates for Research-Only and No-Op Coding Tasks" section) as the opening of your final response, ` +
 			`after calling \`report_done\` with the summary.`
 	);
 
