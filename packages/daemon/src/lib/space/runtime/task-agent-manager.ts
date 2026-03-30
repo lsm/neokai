@@ -273,9 +273,13 @@ export class TaskAgentManager {
 		let task = initialTask;
 
 		if (task.taskAgentSessionId) {
-			const existingSession = this.config.sessionManager.getSessionFromDB(task.taskAgentSessionId);
-			if (existingSession) {
-				return task;
+			const restored = await this.restoreTaskAgentFromPersistedSession(task);
+			if (restored) {
+				const refreshedTask = this.config.taskRepo.getTask(taskId);
+				if (!refreshedTask) {
+					throw new Error(`Task not found after restoring task agent session: ${taskId}`);
+				}
+				return refreshedTask;
 			}
 
 			log.warn(
@@ -327,6 +331,36 @@ export class TaskAgentManager {
 			throw new Error(`Failed to reload task after starting Task Agent: ${taskId}`);
 		}
 		return refreshed;
+	}
+
+	/**
+	 * Restore an in-memory Task Agent from a persisted session ID on the task.
+	 *
+	 * Returns true when a live in-memory session is available after this call.
+	 */
+	private async restoreTaskAgentFromPersistedSession(task: SpaceTask): Promise<boolean> {
+		const sessionId = task.taskAgentSessionId;
+		if (!sessionId) return false;
+
+		// Already active in memory.
+		const live = this.taskAgentSessions.get(task.id);
+		if (live) return true;
+
+		// No persisted session metadata means we cannot restore.
+		const persisted = this.config.sessionManager.getSessionFromDB(sessionId);
+		if (!persisted) return false;
+
+		try {
+			await this.rehydrateTaskAgent(task, sessionId);
+		} catch (err) {
+			log.warn(
+				`TaskAgentManager: failed to restore persisted task-agent session ${sessionId} for task ${task.id}:`,
+				err
+			);
+			return false;
+		}
+
+		return this.taskAgentSessions.has(task.id);
 	}
 
 	/**
@@ -759,7 +793,16 @@ export class TaskAgentManager {
 	 * Used by Space Agent's `send_message_to_task` tool.
 	 */
 	async injectTaskAgentMessage(taskId: string, message: string): Promise<void> {
-		const session = this.taskAgentSessions.get(taskId);
+		let session = this.taskAgentSessions.get(taskId);
+		if (!session) {
+			const task = this.config.taskRepo.getTask(taskId);
+			if (task?.taskAgentSessionId) {
+				const restored = await this.restoreTaskAgentFromPersistedSession(task);
+				if (restored) {
+					session = this.taskAgentSessions.get(taskId);
+				}
+			}
+		}
 		if (!session) {
 			throw new Error(`Task Agent session not found for task ${taskId}`);
 		}
