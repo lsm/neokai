@@ -173,7 +173,9 @@ describe('Leader Agent', () => {
 			expect(artifactsIdx).toBeLessThan(taskMgmtIdx);
 			// Verify usage guidance content
 			expect(prompt).toContain('research, investigation, meta-tasks');
-			expect(prompt).toContain('Do NOT set for coding tasks');
+			expect(prompt).toContain(
+				'Keep as false (default) for coding tasks that should produce code changes and a PR'
+			);
 			expect(prompt).toContain('description of what was produced or accomplished');
 		});
 
