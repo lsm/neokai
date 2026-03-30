@@ -1,4 +1,4 @@
-import type { WorkflowChannel } from '@neokai/shared';
+import type { Gate, WorkflowChannel } from '@neokai/shared';
 import { ChannelEdgeConfigPanel } from './ChannelEdgeConfigPanel';
 
 export interface ChannelRelationConfigPanelProps {
@@ -18,6 +18,8 @@ export interface ChannelRelationConfigPanelProps {
 	onConvertToBidirectional?: () => void;
 	onChange: (index: number, channel: WorkflowChannel) => void;
 	onDelete: (index: number) => void;
+	gates: Gate[];
+	onGatesChange: (gates: Gate[]) => void;
 	onBack?: () => void;
 	onClose: () => void;
 	width?: number;
@@ -33,6 +35,8 @@ export function ChannelRelationConfigPanel({
 	onConvertToBidirectional,
 	onChange,
 	onDelete,
+	gates,
+	onGatesChange,
 	onBack,
 	onClose,
 	width = 360,
@@ -70,6 +74,8 @@ export function ChannelRelationConfigPanel({
 							shouldBeCyclic={shouldBeCyclic}
 							onChange={onChange}
 							onDelete={onDelete}
+							gates={gates}
+							onGatesChange={onGatesChange}
 							showHeader={false}
 							showDirectionControls={false}
 						/>
@@ -90,6 +96,8 @@ export function ChannelRelationConfigPanel({
 							shouldBeCyclic={shouldBeCyclic}
 							onChange={onChange}
 							onDelete={onDelete}
+							gates={gates}
+							onGatesChange={onGatesChange}
 							showHeader={false}
 							showDirectionControls={false}
 						/>

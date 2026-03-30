@@ -17,6 +17,7 @@ import type {
 	SpaceAgent,
 	WorkflowChannel,
 	WorkflowNodeAgent,
+	Gate,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
@@ -46,6 +47,8 @@ export interface WorkflowTemplate {
 	steps?: WorkflowTemplateStep[];
 	/** Optional workflow-level channels to seed with the template. */
 	channels?: WorkflowChannel[];
+	/** Optional first-class workflow gates to seed with the template. */
+	gates?: Gate[];
 	/** Optional tags to seed with the template. */
 	tags?: string[];
 }
@@ -156,35 +159,35 @@ export const TEMPLATES: WorkflowTemplate[] = [
 				to: 'Plan Review',
 				direction: 'one-way',
 				label: 'Planning -> Plan Review',
-				gate: { type: 'condition', expression: 'true' },
+				gateId: 'plan-pr-gate',
 			},
 			{
 				from: 'Plan Review',
 				to: 'Coding',
 				direction: 'one-way',
 				label: 'Plan Review -> Coding',
-				gate: { type: 'condition', expression: 'true' },
+				gateId: 'plan-approval-gate',
 			},
 			{
 				from: 'Coding',
 				to: 'Code Review',
 				direction: 'one-way',
 				label: 'Coding -> Code Review',
-				gate: { type: 'condition', expression: 'true' },
+				gateId: 'code-pr-gate',
 			},
 			{
 				from: 'Code Review',
 				to: 'QA',
 				direction: 'one-way',
 				label: 'Code Review -> QA',
-				gate: { type: 'condition', expression: 'true' },
+				gateId: 'review-votes-gate',
 			},
 			{
 				from: 'QA',
 				to: 'Done',
 				direction: 'one-way',
 				label: 'QA -> Done',
-				gate: { type: 'condition', expression: 'true' },
+				gateId: 'qa-result-gate',
 			},
 			{
 				from: 'QA',
@@ -192,7 +195,7 @@ export const TEMPLATES: WorkflowTemplate[] = [
 				direction: 'one-way',
 				isCyclic: true,
 				label: 'QA -> Coding (on fail)',
-				gate: { type: 'condition', expression: 'true' },
+				gateId: 'qa-fail-gate',
 			},
 			{
 				from: 'Code Review',
@@ -200,7 +203,7 @@ export const TEMPLATES: WorkflowTemplate[] = [
 				direction: 'one-way',
 				isCyclic: true,
 				label: 'Code Review -> Coding (on reject)',
-				gate: { type: 'condition', expression: 'true' },
+				gateId: 'review-reject-gate',
 			},
 			{
 				from: 'Plan Review',
@@ -215,6 +218,64 @@ export const TEMPLATES: WorkflowTemplate[] = [
 				direction: 'one-way',
 				isCyclic: true,
 				label: 'Coding -> Planning (feedback)',
+			},
+		],
+		gates: [
+			{
+				id: 'plan-pr-gate',
+				description: 'Planning node has submitted a plan for review.',
+				condition: { type: 'check', field: 'plan_submitted', op: 'exists' },
+				data: {},
+				allowedWriterRoles: ['*'],
+				resetOnCycle: false,
+			},
+			{
+				id: 'plan-approval-gate',
+				description: 'Plan has been reviewed and approved.',
+				condition: { type: 'check', field: 'approved', op: '==', value: true },
+				data: {},
+				allowedWriterRoles: ['*'],
+				resetOnCycle: true,
+			},
+			{
+				id: 'code-pr-gate',
+				description: 'Coding node has opened or updated a pull request.',
+				condition: { type: 'check', field: 'pr_url', op: 'exists' },
+				data: {},
+				allowedWriterRoles: ['*'],
+				resetOnCycle: false,
+			},
+			{
+				id: 'review-votes-gate',
+				description: 'All three reviewers have approved the code review node.',
+				condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+				data: { votes: {} },
+				allowedWriterRoles: ['*'],
+				resetOnCycle: true,
+			},
+			{
+				id: 'review-reject-gate',
+				description: 'Any reviewer has rejected the current changes.',
+				condition: { type: 'count', field: 'votes', matchValue: 'rejected', min: 1 },
+				data: { votes: {} },
+				allowedWriterRoles: ['*'],
+				resetOnCycle: true,
+			},
+			{
+				id: 'qa-result-gate',
+				description: 'QA marked the current cycle as passed.',
+				condition: { type: 'check', field: 'result', op: '==', value: 'passed' },
+				data: {},
+				allowedWriterRoles: ['*'],
+				resetOnCycle: true,
+			},
+			{
+				id: 'qa-fail-gate',
+				description: 'QA marked the current cycle as failed.',
+				condition: { type: 'check', field: 'result', op: '==', value: 'failed' },
+				data: {},
+				allowedWriterRoles: ['*'],
+				resetOnCycle: true,
 			},
 		],
 		tags: ['coding', 'v2', 'parallel-review'],
@@ -341,6 +402,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 	rules: RuleDraft[];
 	tags: string[];
 	channels: WorkflowChannel[];
+	gates: Gate[];
 } {
 	// Use node order from wf.nodes, placing startNodeId first if possible.
 	const stepMap = new Map(wf.nodes.map((s) => [s.id, s]));
@@ -384,6 +446,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 		rules: rulesToDrafts(wf.rules ?? []),
 		tags: wf.tags ?? [],
 		channels: wf.channels ?? [],
+		gates: wf.gates ?? [],
 	};
 }
 
@@ -408,6 +471,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [steps, setSteps] = useState<NodeDraft[]>(initial?.steps ?? [makeEmptyStep()]);
 	const [transitions, setTransitions] = useState<ConditionDraft[]>(initial?.transitions ?? []);
 	const [channels, setChannels] = useState<WorkflowChannel[]>(initial?.channels ?? []);
+	const [gates, setGates] = useState<Gate[]>(initial?.gates ?? []);
 	const [rules, setRules] = useState<RuleDraft[]>(initial?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
 	const [tagInput, setTagInput] = useState('');
@@ -529,6 +593,14 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				gate: channel.gate ? { ...channel.gate } : undefined,
 			}))
 		);
+		setGates(
+			(template.gates ?? []).map((gate) => ({
+				...gate,
+				condition: { ...gate.condition },
+				data: { ...gate.data },
+				allowedWriterRoles: [...gate.allowedWriterRoles],
+			}))
+		);
 		if (template.tags) {
 			setTags([...template.tags]);
 		}
@@ -610,6 +682,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					rules: updateRules,
 					tags,
 					channels: channels.length > 0 ? channels : [],
+					gates: gates.length > 0 ? gates : [],
 				});
 			} else {
 				// Create uses WorkflowRuleInput (no id)
@@ -627,6 +700,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					rules: createRules,
 					tags,
 					channels: channels.length > 0 ? channels : undefined,
+					gates: gates.length > 0 ? gates : undefined,
 				});
 			}
 

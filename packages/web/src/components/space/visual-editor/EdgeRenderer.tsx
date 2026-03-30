@@ -79,7 +79,7 @@ export interface ResolvedWorkflowChannel {
 	 * Gate condition type -- when present (and not 'always'), the channel has a gate.
 	 * Gated channels render as solid lines; ungated channels render as dashed lines.
 	 */
-	gateType?: 'human' | 'condition' | 'task_result';
+	gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
 	/** Stable ID for selection -- typically the workflow-level channel array index as a string. */
 	id?: string;
 	/** Optional display label from WorkflowChannel.label */
@@ -101,10 +101,19 @@ const CHANNEL_GATE_BADGE_CHAR_WIDTH = 7;
 const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
 const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
+const CHANNEL_GATE_BADGE_COLORS: Record<NonNullable<ResolvedWorkflowChannel['gateType']>, string> = {
+	human: EDGE_COLORS.human,
+	condition: EDGE_COLORS.condition,
+	task_result: EDGE_COLORS.task_result,
+	check: '#60a5fa',
+	count: '#ec4899',
+};
 const CHANNEL_GATE_BADGE_LABELS: Record<NonNullable<ResolvedWorkflowChannel['gateType']>, string> = {
 	human: 'Human',
 	condition: 'Shell',
 	task_result: 'Result',
+	check: 'Check',
+	count: 'Votes',
 };
 
 // ---------------------------------------------------------------------------
@@ -686,7 +695,9 @@ export function EdgeRenderer({
 							y: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).y + (isGated ? 26 : 0),
 						}
 					: null;
-				const gateColor = channel.gateType ? EDGE_COLORS[channel.gateType] : CHANNEL_EDGE_COLOR;
+				const gateColor = channel.gateType
+					? CHANNEL_GATE_BADGE_COLORS[channel.gateType]
+					: CHANNEL_EDGE_COLOR;
 				const gateLabel = channel.gateType ? CHANNEL_GATE_BADGE_LABELS[channel.gateType] : 'Gate';
 				const gateBadgeWidth =
 					gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +

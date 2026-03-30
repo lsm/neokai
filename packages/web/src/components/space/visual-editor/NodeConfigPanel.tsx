@@ -16,7 +16,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { SpaceAgent, WorkflowChannel, WorkflowNodeAgent } from '@neokai/shared';
+import type { Gate, SpaceAgent, WorkflowChannel, WorkflowNodeAgent } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
@@ -50,8 +50,10 @@ export interface NodeConfigPanelProps {
 		reverseLinks?: Array<{ index: number; channel: WorkflowChannel }>;
 		canConvertToBidirectional?: boolean;
 	};
+	channelRelationGates?: Gate[];
 	onUpdateChannelLink?: (index: number, channel: WorkflowChannel) => void;
 	onDeleteChannelLink?: (index: number) => void;
+	onUpdateChannelGates?: (gates: Gate[]) => void;
 	onConvertChannelRelationToBidirectional?: () => void;
 	onCloseChannelLink?: () => void;
 	onClose: () => void;
@@ -346,8 +348,10 @@ export function NodeConfigPanel({
 	channelLinks = [],
 	onOpenChannelLink,
 	selectedChannelRelation,
+	channelRelationGates = [],
 	onUpdateChannelLink,
 	onDeleteChannelLink,
+	onUpdateChannelGates,
 	onConvertChannelRelationToBidirectional,
 	onCloseChannelLink,
 	onClose,
@@ -539,6 +543,8 @@ export function NodeConfigPanel({
 					reverseLinks={selectedChannelRelation.reverseLinks}
 					canConvertToBidirectional={selectedChannelRelation.canConvertToBidirectional}
 					onConvertToBidirectional={onConvertChannelRelationToBidirectional}
+					gates={channelRelationGates}
+					onGatesChange={(nextGates) => onUpdateChannelGates?.(nextGates)}
 					onChange={(index, channel) => onUpdateChannelLink?.(index, channel)}
 					onDelete={(index) => onDeleteChannelLink?.(index)}
 					onClose={onClose}
