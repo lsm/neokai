@@ -374,7 +374,9 @@ export function NodeConfigPanel({
 			setPanelView({ kind: 'channel-links' });
 			return;
 		}
-		setPanelView((prev) => (prev.kind === 'channel-links' ? { kind: 'main' } : prev));
+		setPanelView((prev) =>
+			prev.kind === 'channel-links' || prev.kind === 'gate-editor' ? { kind: 'main' } : prev
+		);
 	}, [selectedChannelRelation]);
 
 	const handleDeleteClick = () => {
