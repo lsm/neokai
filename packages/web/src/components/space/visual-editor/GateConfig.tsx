@@ -6,7 +6,7 @@
  * can reuse the same UI without duplication.
  */
 
-import type { WorkflowConditionType } from '@neokai/shared';
+import type { WorkflowConditionType } from './legacy-condition-types';
 
 // ============================================================================
 // Types

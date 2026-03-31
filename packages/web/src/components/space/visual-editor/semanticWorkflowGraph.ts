@@ -55,9 +55,7 @@ function resolveSemanticGateType(
 		return 'check';
 	}
 
-	const gateType = channel.gate?.type;
-	if (!gateType || gateType === 'always') return undefined;
-	return gateType;
+	return undefined;
 }
 
 function buildEndpointNodeLookup(nodes: VisualNode[]): Map<string, string> {

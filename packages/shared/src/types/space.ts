@@ -510,39 +510,6 @@ export interface UpdateSpaceAgentParams {
 // Workflow Types (M3)
 // ============================================================================
 
-// ---- Legacy condition types (kept for backward compatibility) ----
-
-/**
- * @deprecated Use `GateCondition` instead. Will be removed in a future milestone.
- *
- * Primitive condition type for workflow channel gates.
- */
-export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
-
-/**
- * @deprecated Use `GateCondition` instead. Will be removed in a future milestone.
- *
- * A condition that guards a workflow channel gate.
- * Conditions determine whether a channel may deliver a message.
- */
-export interface WorkflowCondition {
-	/** Condition type. */
-	type: WorkflowConditionType;
-	/**
-	 * Expression to evaluate for the `condition` and `task_result` types.
-	 */
-	expression?: string;
-	/** Human-readable description of what this condition checks */
-	description?: string;
-	/**
-	 * Maximum number of times to retry condition evaluation on failure.
-	 * Defaults to 0 (no retries — fail immediately on first failure).
-	 */
-	maxRetries?: number;
-	/** Timeout for condition evaluation in milliseconds (0 = use default) */
-	timeoutMs?: number;
-}
-
 // ============================================================================
 // Gate System (M1.1) — separated from channels
 // ============================================================================
@@ -685,9 +652,8 @@ export interface Gate {
  * When `gateId` is set, the channel is gated — messages are held until the
  * referenced Gate's condition passes.
  *
- * This is the separated Channel type (M1.1). The legacy `WorkflowChannel` type
- * with its inline `gate?: WorkflowCondition` is preserved for backward compatibility
- * but new code should use `Channel` + `Gate`.
+ * This is the separated Channel type (M1.1). Uses `gateId` to reference Gate
+ * entities rather than inlining gate conditions.
  */
 export interface Channel {
 	/** Unique identifier */
@@ -820,17 +786,9 @@ export interface WorkflowChannel {
 	/** Optional human-readable label for display in the visual editor */
 	label?: string;
 	/**
-	 * Optional gate condition evaluated before a message is delivered on this channel.
-	 * When present, the message is held until the condition passes.
-	 * Absent means the channel is always open (no gate).
-	 * @deprecated Use `gateId` to reference a `Gate` entity instead. Will be removed in a future milestone.
-	 */
-	gate?: WorkflowCondition;
-	/**
 	 * Optional reference to a Gate entity in `SpaceWorkflow.gates`.
 	 * When set, the channel is gated — delivery is blocked until the referenced gate's
 	 * condition passes against runtime data in `gate_data`.
-	 * Takes precedence over the legacy inline `gate` field when both are set.
 	 * Absent means the channel is always open (no gate).
 	 */
 	gateId?: string;
@@ -1098,7 +1056,6 @@ export interface ExportedWorkflowChannel {
 	direction: 'one-way' | 'bidirectional';
 	maxCycles?: number;
 	label?: string;
-	gate?: WorkflowCondition;
 }
 
 /**

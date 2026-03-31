@@ -1032,7 +1032,7 @@ describe('node-agent-tools: list_channels', () => {
 			from: 'coder',
 			to: 'reviewer',
 			direction: 'one-way',
-			gate: { type: 'human', description: 'Needs approval' },
+			gateId: 'approval-gate',
 		};
 		const workflow: SpaceWorkflow = {
 			id: 'wf-1',
@@ -1669,73 +1669,117 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		expect(data.crossNodeTargets[0].gate.isGated).toBe(false);
 	});
 
-	test('gate type human: isGated true', async () => {
+	test('gate type check: isGated true', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'approval-gate' }],
+			gates: [
+				{
+					id: 'approval-gate',
+					condition: { type: 'check', field: 'approved', op: '==', value: true },
+					data: {},
+					allowedWriterRoles: ['*'],
+					resetOnCycle: false,
+				},
+			],
+		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([
-				makeResolvedChannel('coder', 'tester', false, { gate: { type: 'human' } }),
-			]),
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.crossNodeTargets[0].gate.type).toBe('human');
+		expect(data.crossNodeTargets[0].gate.type).toBe('check');
 		expect(data.crossNodeTargets[0].gate.isGated).toBe(true);
 	});
 
-	test('gate type condition: isGated true', async () => {
+	test('gate type count: isGated true', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'vote-gate' }],
+			gates: [
+				{
+					id: 'vote-gate',
+					condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 2 },
+					data: {},
+					allowedWriterRoles: ['*'],
+					resetOnCycle: false,
+				},
+			],
+		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([
-				makeResolvedChannel('coder', 'tester', false, {
-					gate: { type: 'condition', expression: 'test -f pr.txt' },
-				}),
-			]),
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.crossNodeTargets[0].gate.type).toBe('condition');
+		expect(data.crossNodeTargets[0].gate.type).toBe('count');
 		expect(data.crossNodeTargets[0].gate.isGated).toBe(true);
 	});
 
-	test('gate type task_result: isGated true', async () => {
+	test('no gateId on channel: isGated false', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'coder', to: 'tester', direction: 'one-way' }],
+		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([
-				makeResolvedChannel('coder', 'tester', false, {
-					gate: { type: 'task_result', expression: 'passed' },
-				}),
-			]),
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.crossNodeTargets[0].gate.type).toBe('task_result');
-		expect(data.crossNodeTargets[0].gate.isGated).toBe(true);
-	});
-
-	test('gate type always: isGated false (always passes)', async () => {
-		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([
-				makeResolvedChannel('coder', 'tester', false, { gate: { type: 'always' } }),
-			]),
-		});
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.list_reachable_agents({});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.crossNodeTargets[0].gate.type).toBe('always');
+		expect(data.crossNodeTargets[0].gate.type).toBe('none');
 		expect(data.crossNodeTargets[0].gate.isGated).toBe(false);
 	});
 
 	test('gate description propagated when present', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'lead-gate' }],
+			gates: [
+				{
+					id: 'lead-gate',
+					description: 'Needs tech lead approval',
+					condition: { type: 'check', field: 'approved', op: '==', value: true },
+					data: {},
+					allowedWriterRoles: ['*'],
+					resetOnCycle: false,
+				},
+			],
+		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([
-				makeResolvedChannel('coder', 'tester', false, {
-					gate: { type: 'human', description: 'Needs tech lead approval' },
-				}),
-			]),
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_reachable_agents({});

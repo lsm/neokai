@@ -1721,7 +1721,7 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 					from: 'coder',
 					to: 'reviewer',
 					direction: 'one-way',
-					gate: { type: 'human', description: 'Needs human approval' },
+					gateId: 'approval-gate',
 				},
 			],
 			createdAt: 1000,
@@ -1731,7 +1731,8 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 
 		const ch = exported.channels![0] as Record<string, unknown>;
 		expect('id' in ch).toBe(false);
-		expect(ch.gate).toEqual({ type: 'human', description: 'Needs human approval' });
+		// gate field is not exported (gates are separate entities)
+		expect(ch.gate).toBeUndefined();
 	});
 
 	test('exportWorkflow strips id from channel with isCyclic', () => {

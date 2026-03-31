@@ -6,19 +6,11 @@
  * - Cross-node DMs (target resolved by agent role)
  * - Fan-out (target resolved by node name → all agents in that node)
  *
- * Gate enforcement — two systems are supported:
- *
- * 1. **New separated Channel+Gate architecture (M1.1/M1.2)**:
+ * Gate enforcement:
  *    When a WorkflowChannel has a `gateId`, the corresponding Gate entity is
  *    loaded from `workflow.gates`, its runtime data is fetched from `gate_data`
- *    via `GateDataRepository`, and `evaluateGate()` is called. This is the
- *    preferred path for new workflows.
- *
- * 2. **Legacy inline gate (WorkflowCondition)**:
- *    When a WorkflowChannel has an inline `gate` (no `gateId`), the
- *    `ChannelGateEvaluator` is used as before. Kept for backward compatibility.
- *
- * Channels without either `gateId` or `gate` are always open.
+ *    via `GateDataRepository`, and `evaluateGate()` is called.
+ *    Channels without `gateId` are always open.
  *
  * `onGateDataChanged(runId, gateId)`:
  *    Called by agents (via MCP write_gate) whenever gate data changes.
@@ -29,7 +21,7 @@
  * `resetOnCycle`:
  *    When a cyclic channel is traversed, gates with `resetOnCycle: true` in the
  *    workflow have their data reset to defaults in `gate_data`. This operation
- *    is performed in the same SQLite transaction as the iteration counter increment.
+ *    is performed in the same SQLite transaction as the per-channel cycle increment.
  *
  * Lazy node activation:
  * - activateNode() is idempotent: if tasks already exist for the node the
@@ -58,13 +50,31 @@ import type { GateDataRepository } from '../../../storage/repositories/gate-data
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import { ChannelGateEvaluator, ChannelGateBlockedError } from './channel-gate-evaluator';
-import type { ChannelGateContext, GateResult } from './channel-gate-evaluator';
 import { evaluateGate } from './gate-evaluator';
 
-// Re-export for callers that only need to import from channel-router
-export { ChannelGateBlockedError };
-export type { ChannelGateContext, GateResult };
+// ---------------------------------------------------------------------------
+// Gate result types (formerly in channel-gate-evaluator.ts)
+// ---------------------------------------------------------------------------
+
+/** Result of a gate evaluation check. */
+export interface GateResult {
+	allowed: boolean;
+	reason?: string;
+}
+
+/**
+ * Thrown when a gate blocks message delivery on a channel.
+ * Callers can inspect `gateIdentifier` to identify the blocking gate.
+ */
+export class ChannelGateBlockedError extends Error {
+	constructor(
+		message: string,
+		public readonly gateIdentifier: string
+	) {
+		super(message);
+		this.name = 'ChannelGateBlockedError';
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,11 +170,6 @@ export interface ChannelRouterConfig {
 	 * single-process use cases but not ACID-atomic on crash).
 	 */
 	db?: BunDatabase;
-	/**
-	 * Injectable gate evaluator — omit to use the real evaluator (Bun.spawn).
-	 * Inject a mock in tests to avoid real subprocess calls.
-	 */
-	gateEvaluator?: ChannelGateEvaluator;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,11 +177,7 @@ export interface ChannelRouterConfig {
 // ---------------------------------------------------------------------------
 
 export class ChannelRouter {
-	private readonly gateEvaluator: ChannelGateEvaluator;
-
-	constructor(private readonly config: ChannelRouterConfig) {
-		this.gateEvaluator = config.gateEvaluator ?? new ChannelGateEvaluator();
-	}
+	constructor(private readonly config: ChannelRouterConfig) {}
 
 	// -------------------------------------------------------------------------
 	// Public API
@@ -284,24 +285,19 @@ export class ChannelRouter {
 	 * Evaluation order:
 	 * 1. **Open topology** — when no channel is declared for the pair, delivery is
 	 *    always allowed (no restriction).
-	 * 2. **Iteration cap** — for cyclic channels, blocks when
-	 *    `run.iterationCount >= run.maxIterations`.
-	 * 3. **Gate condition** — evaluates the channel's gate using the provided context.
-	 *    For new-style channels (gateId): uses `evaluateGate()`.
-	 *    For legacy channels (inline gate): uses `ChannelGateEvaluator`.
+	 * 2. **Cycle cap** — for cyclic channels, blocks when the per-channel cap is reached.
+	 * 3. **Gate condition** — evaluates the channel's gate via `evaluateGateById()`.
 	 *
 	 * @param runId     - Workflow run ID
 	 * @param fromRole  - Sending agent role name
 	 * @param toTarget  - Receiving agent role name, or node name for fan-out
-	 * @param context   - Gate evaluation context (workspace path, human approval, task result)
 	 * @returns GateResult — `{ allowed: true }` or `{ allowed: false, reason }` when blocked
 	 * @throws ActivationError when the run or workflow is not found
 	 */
 	async canDeliver(
 		runId: string,
 		fromRole: string,
-		toTarget: string,
-		context: ChannelGateContext
+		toTarget: string
 	): Promise<GateResult> {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) throw new ActivationError(`Run not found: ${runId}`);
@@ -328,15 +324,12 @@ export class ChannelRouter {
 		}
 
 		// ── Gate condition evaluation ────────────────────────────────────────
-		// New separated architecture: gateId takes precedence
 		if (channel.gateId) {
 			const gateResult = this.evaluateGateById(runId, channel.gateId, workflow);
 			return { allowed: gateResult.open, reason: gateResult.reason };
 		}
 
-		// Legacy inline gate
-		if (!channel.gate) return { allowed: true };
-		return this.gateEvaluator.evaluateCondition(channel.gate, context);
+		return { allowed: true };
 	}
 
 	/**
@@ -350,38 +343,31 @@ export class ChannelRouter {
 	 *   activated (lazy-activated if not already active)
 	 *
 	 * **Gate evaluation:**
-	 * - Channels with `gateId` (new architecture): `evaluateGate()` is called;
-	 *   gate data is loaded from `gate_data` via `GateDataRepository`.
-	 *   Does NOT require a context object.
-	 * - Channels with inline `gate` (legacy): `ChannelGateEvaluator` is used
-	 *   when a `context` object is provided.
-	 * - Channels with neither: always open.
+	 * - Channels with `gateId`: `evaluateGate()` is called; gate data is loaded
+	 *   from `gate_data` via `GateDataRepository`.
+	 * - Channels without `gateId`: always open.
 	 * - Throws `ChannelGateBlockedError` when a gate blocks delivery.
 	 *
-	 * **Cyclic iteration tracking:**
-	 * - If the matching channel has `isCyclic: true`, `run.iterationCount` is
-	 *   incremented after successful delivery.
-	 * - Gates with `resetOnCycle: true` have their data reset to defaults in the
-	 *   same atomic operation (single SQLite transaction when `db` is in config).
-	 * - If the iteration cap has already been reached, throws `ActivationError`.
+	 * **Cyclic tracking:**
+	 * - For cyclic channels, the per-channel cycle counter is incremented after
+	 *   successful delivery. Gates with `resetOnCycle: true` are reset atomically.
+	 * - If the cycle cap has been reached, throws `ActivationError`.
 	 *
 	 * @param runId    - Workflow run ID
 	 * @param fromRole - Role name of the sending agent (WorkflowNodeAgent.name)
 	 * @param toTarget - Role name of the receiving agent, or node name for fan-out
 	 * @param message  - Message content to deliver
-	 * @param context  - Optional gate evaluation context; used only for legacy inline gates
 	 * @returns DeliveredMessage descriptor; `activatedTasks` is set when the
 	 *   target node was lazily activated, undefined when it was already active
 	 * @throws ActivationError when the run, workflow, or target role/node is not
-	 *   found, or the cyclic iteration cap is exceeded
+	 *   found, or the cyclic cap is exceeded
 	 * @throws ChannelGateBlockedError when a gate condition blocks delivery
 	 */
 	async deliverMessage(
 		runId: string,
 		fromRole: string,
 		toTarget: string,
-		message: string,
-		context?: ChannelGateContext
+		message: string
 	): Promise<DeliveredMessage> {
 		// ── 1. Load the run and workflow ───────────────────────────────────────
 		const run = this.config.workflowRunRepo.getRun(runId);
@@ -401,7 +387,7 @@ export class ChannelRouter {
 		const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
 
 		if (channel) {
-			// Enforce per-channel cycle cap for cyclic channels (even without context)
+			// Enforce per-channel cycle cap for cyclic channels
 			if (channelIsCyclic) {
 				const maxCycles = channel.maxCycles ?? 5;
 				if (this.isCycleCapReached(runId, channelIndex, maxCycles)) {
@@ -411,7 +397,7 @@ export class ChannelRouter {
 				}
 			}
 
-			// New separated architecture: gateId takes precedence over legacy inline gate
+			// Gate evaluation via separated Gate entity
 			if (channel.gateId) {
 				const gateResult = this.evaluateGateById(runId, channel.gateId, workflow);
 				if (!gateResult.open) {
@@ -419,15 +405,6 @@ export class ChannelRouter {
 						gateResult.reason ??
 							`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
 						channel.gateId
-					);
-				}
-			} else if (context && channel.gate) {
-				// Legacy inline gate evaluation — only when the caller supplies evaluation context
-				const gateResult = await this.gateEvaluator.evaluateCondition(channel.gate, context);
-				if (!gateResult.allowed) {
-					throw new ChannelGateBlockedError(
-						gateResult.reason ?? `Gate blocked delivery from "${fromRole}" to "${toTarget}"`,
-						channel.gate.type
 					);
 				}
 			}

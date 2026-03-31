@@ -12,7 +12,6 @@ import type {
 	SpaceAgent,
 	SpaceWorkflow,
 	WorkflowChannel,
-	WorkflowCondition,
 	WorkflowNode,
 	WorkflowNodeAgent,
 } from './space.ts';
@@ -58,12 +57,6 @@ export interface ResolvedChannel {
 	 * In hub-spoke, spokes may only reply to the hub — no spoke-to-spoke messaging.
 	 */
 	isHubSpoke: boolean;
-	/**
-	 * Optional gate condition inherited from the source WorkflowChannel.
-	 * When present, the message must pass this condition before delivery.
-	 * Absent means the channel is always open (no gate enforcement).
-	 */
-	gate?: WorkflowCondition;
 }
 
 // ============================================================================
@@ -186,7 +179,7 @@ function expandChannel(
 	nameToAgentId: Map<string, string>,
 	out: ResolvedChannel[]
 ): void {
-	const { from, to, direction, label, gate } = channel;
+	const { from, to, direction, label } = channel;
 
 	// Resolve concrete from-names.
 	const fromNames: string[] = from === '*' ? allNames : [from];
@@ -218,7 +211,6 @@ function expandChannel(
 				toAgentId,
 				direction: 'one-way',
 				label,
-				gate,
 				isHubSpoke,
 			});
 
@@ -233,7 +225,6 @@ function expandChannel(
 					toAgentId: fromAgentId,
 					direction: 'one-way',
 					label,
-					gate,
 					isHubSpoke,
 				});
 			}
@@ -413,7 +404,7 @@ function expandUnifiedChannel(
 	nodeNameToAgents: Map<string, Array<{ name: string; agentId: string }>>,
 	out: ResolvedChannel[]
 ): void {
-	const { from, to, direction, label, gate, maxCycles } = channel;
+	const { from, to, direction, label, maxCycles } = channel;
 
 	// Resolve from-agents
 	const fromAgents = resolveAgentRef(from, allAgentNames, nameToAgent, nodeNameToAgents);
@@ -456,7 +447,6 @@ function expandUnifiedChannel(
 				toAgentId: toAgent.agentId,
 				direction: 'one-way',
 				label,
-				gate,
 				isFanOut,
 				maxCycles,
 				isHubSpoke,
@@ -470,7 +460,6 @@ function expandUnifiedChannel(
 					toAgentId: fromAgent.agentId,
 					direction: 'one-way',
 					label,
-					gate,
 					isFanOut,
 					maxCycles,
 					isHubSpoke,

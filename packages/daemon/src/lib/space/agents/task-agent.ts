@@ -53,7 +53,6 @@ import type {
 	SpaceAgent,
 	WorkflowNode,
 	WorkflowChannel,
-	WorkflowCondition,
 	WorkflowRule,
 	SessionFeatures,
 	Gate,
@@ -119,19 +118,17 @@ function formatRule(rule: WorkflowRule): string {
 	return `- **${rule.name}**${scope}: ${rule.content}`;
 }
 
-function formatGateCondition(gate: WorkflowCondition): string {
-	if (gate.type === 'always') return '';
-	if (gate.type === 'human') return ' **[HUMAN GATE — call request_human_input]**';
-	if (gate.type === 'condition') return ` [condition gate: ${gate.expression ?? '?'}]`;
-	if (gate.type === 'task_result')
-		return ` [task_result gate: matches "${gate.expression ?? '?'}"]`;
-	return '';
+function formatChannelGateLabel(ch: WorkflowChannel, gates: Gate[]): string {
+	if (!ch.gateId) return '';
+	const gate = gates.find((g) => g.id === ch.gateId);
+	if (!gate) return ` [gate: ${ch.gateId}]`;
+	return ` [gate: ${gate.id}${gate.description ? ` — ${gate.description}` : ''}]`;
 }
 
-function formatChannel(ch: WorkflowChannel): string {
+function formatChannel(ch: WorkflowChannel, gates: Gate[]): string {
 	const to = Array.isArray(ch.to) ? ch.to.join(', ') : ch.to;
 	const dir = ch.direction === 'bidirectional' ? '↔' : '→';
-	const gateLabel = ch.gate ? formatGateCondition(ch.gate) : '';
+	const gateLabel = formatChannelGateLabel(ch, gates);
 	const label = ch.label ? ` (${ch.label})` : '';
 	return `- \`${ch.from}\` ${dir} \`${to}\`${label}${gateLabel}`;
 }
@@ -454,8 +451,9 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 					`fan-out to all agents in that node. Node agents can call \`list_reachable_agents\` to ` +
 					`discover their full reachability graph.\n`
 			);
+			const workflowGates = context.workflow.gates ?? [];
 			for (const ch of channels) {
-				parts.push(formatChannel(ch));
+				parts.push(formatChannel(ch, workflowGates));
 			}
 		} else {
 			parts.push(`\n## Collaboration Channel Map\n`);

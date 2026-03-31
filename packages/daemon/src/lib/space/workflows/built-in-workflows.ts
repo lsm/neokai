@@ -79,11 +79,11 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
  * Coding Workflow
  *
  * Four-node graph: Plan → Code → Verify → Done (with cycle).
- * Routing is channel-based (agent-centric model); routing is channel-based.
- * - Plan → Code: `human` gate — a human must approve the plan.
- * - Code → Verify: `always` gate — automatically verify after coding.
- * - Verify → Plan: `task_result` gate on 'failed' — loops back (cyclic).
- * - Verify → Done: `task_result` gate on 'passed' — completes the workflow.
+ * Routing is channel-based (agent-centric model).
+ * - Plan → Code: gated by `plan-approval-gate` — a human must approve the plan.
+ * - Code → Verify: no gate — automatically verify after coding.
+ * - Verify → Plan: gated by `verify-fail-gate` on 'failed' — loops back (cyclic).
+ * - Verify → Done: gated by `verify-pass-gate` on 'passed' — completes the workflow.
  * - Per-channel `maxCycles: 3` caps the number of Plan→Code→Verify cycles.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
@@ -122,25 +122,44 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
+	gates: [
+		{
+			id: 'plan-approval-gate',
+			description: 'Review and approve the plan before coding begins',
+			condition: { type: 'check', field: 'approved', op: '==', value: true },
+			data: {},
+			allowedWriterRoles: ['*'],
+			resetOnCycle: false,
+		},
+		{
+			id: 'verify-fail-gate',
+			description: 'Loop back to planning when verification fails',
+			condition: { type: 'check', field: 'result', op: '==', value: 'failed' },
+			data: {},
+			allowedWriterRoles: ['general'],
+			resetOnCycle: true,
+		},
+		{
+			id: 'verify-pass-gate',
+			description: 'Complete workflow when verification passes',
+			condition: { type: 'check', field: 'result', op: '==', value: 'passed' },
+			data: {},
+			allowedWriterRoles: ['general'],
+			resetOnCycle: true,
+		},
+	],
 	channels: [
 		{
 			from: 'Plan',
 			to: 'Code',
 			direction: 'one-way',
-			gate: {
-				type: 'human',
-				description: 'Review and approve the plan before coding begins',
-			},
+			gateId: 'plan-approval-gate',
 			label: 'Plan → Code',
 		},
 		{
 			from: 'Code',
 			to: 'Verify & Test',
 			direction: 'one-way',
-			gate: {
-				type: 'always',
-				description: 'Automatically verify after coding is complete',
-			},
 			label: 'Code → Verify',
 		},
 		{
@@ -148,22 +167,14 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			to: 'Plan',
 			direction: 'one-way',
 			maxCycles: 3,
-			gate: {
-				type: 'task_result',
-				expression: 'failed',
-				description: 'Loop back to planning when verification fails',
-			},
+			gateId: 'verify-fail-gate',
 			label: 'Verify → Plan (on fail)',
 		},
 		{
 			from: 'Verify & Test',
 			to: 'Done',
 			direction: 'one-way',
-			gate: {
-				type: 'task_result',
-				expression: 'passed',
-				description: 'Complete workflow when verification passes',
-			},
+			gateId: 'verify-pass-gate',
 			label: 'Verify → Done (on pass)',
 		},
 	],
@@ -173,8 +184,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  * Research Workflow
  *
  * Two-node graph: Planner → General.
- * Routing is channel-based (agent-centric model); routing is channel-based.
- * - Plan Research → Research: `always` gate — advances without human intervention.
+ * Routing is channel-based (agent-centric model).
+ * - Plan Research → Research: no gate — advances without human intervention.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -204,10 +215,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 			from: 'Plan Research',
 			to: 'Research',
 			direction: 'one-way',
-			gate: {
-				type: 'always',
-				description: 'Automatically advance after planning is complete',
-			},
 			label: 'Plan → Research',
 		},
 	],

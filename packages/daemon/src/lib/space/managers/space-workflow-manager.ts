@@ -14,7 +14,6 @@
 
 import type {
 	SpaceWorkflow,
-	WorkflowCondition,
 	WorkflowNodeInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
@@ -264,20 +263,6 @@ export class SpaceWorkflowManager {
 				}
 			}
 
-			// Validate gate condition if present
-			if (ch.gate) {
-				this.validateCondition(ch.gate, `${loc}.gate`);
-			}
-		}
-	}
-
-	private validateCondition(condition: WorkflowCondition, location: string): void {
-		if (condition.type === 'condition') {
-			if (!condition.expression || !condition.expression.trim()) {
-				throw new WorkflowValidationError(
-					`${location}: 'condition' type requires a non-empty expression`
-				);
-			}
 		}
 	}
 }

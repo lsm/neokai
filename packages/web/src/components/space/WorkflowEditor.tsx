@@ -590,7 +590,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 			(template.channels ?? []).map((channel) => ({
 				...channel,
 				to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-				gate: channel.gate ? { ...channel.gate } : undefined,
 			}))
 		);
 		setGates(

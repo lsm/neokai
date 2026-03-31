@@ -24,7 +24,6 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks'
 import type {
 	SpaceWorkflow,
 	WorkflowNode,
-	WorkflowConditionType,
 	WorkflowChannel,
 	Gate,
 } from '@neokai/shared';
@@ -36,6 +35,7 @@ import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
+import type { WorkflowConditionType } from './legacy-condition-types';
 import type { ViewportState, Point, VisualTransition } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
 import {
@@ -95,7 +95,7 @@ function buildTemplateCanvasSignature(
 					from: channel.from,
 					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
 					direction: channel.direction,
-					gate: channel.gate ? { ...channel.gate } : undefined,
+					gateId: channel.gateId,
 				})) ?? [],
 			position: { x: node.position.x, y: node.position.y },
 		}))
@@ -116,7 +116,6 @@ function buildTemplateCanvasSignature(
 			from: channel.from,
 			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
 			direction: channel.direction,
-			gate: channel.gate ? { ...channel.gate } : undefined,
 			gateId: channel.gateId ?? null,
 			maxCycles: channel.maxCycles ?? null,
 		}))
@@ -561,14 +560,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			const next = [...prev];
 			let changed = false;
 
-			for (const { index, channel } of legacyBidirectionalLinks) {
+			for (const { index } of legacyBidirectionalLinks) {
 				const current = next[index];
 				if (!current || current.direction !== 'bidirectional') continue;
 
 				next[index] = {
 					...current,
 					direction: 'one-way',
-					gate: current.gate ? { ...current.gate } : undefined,
 				};
 
 				const targets = Array.isArray(current.to) ? current.to : [current.to];
@@ -585,7 +583,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						to: current.from,
 						direction: 'one-way',
 						maxCycles: current.maxCycles,
-						gate: current.gate ? { ...current.gate } : undefined,
+						gateId: current.gateId,
 					});
 				}
 				changed = true;
@@ -935,7 +933,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				channels: step.channels?.map((channel) => ({
 					...channel,
 					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-					gate: channel.gate ? { ...channel.gate } : undefined,
 				})),
 			},
 			position: { x: 0, y: 0 }, // overwritten by autoLayout below
@@ -988,7 +985,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		const nextChannels = (template.channels ?? []).map((channel) => ({
 			...channel,
 			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-			gate: channel.gate ? { ...channel.gate } : undefined,
 		}));
 		const nextGates = (template.gates ?? []).map((gate) => ({
 			...gate,
