@@ -41,8 +41,8 @@ export function WorkflowModelSelect({
 
 		async function loadModels() {
 			try {
-				const hub = connectionManager.getHubIfConnected();
-				if (!hub) return;
+				const hub = await connectionManager.getHub();
+				if (cancelled) return;
 				const response = (await hub.request('models.list', {
 					useCache: true,
 				})) as { models: RawModelEntry[] };
