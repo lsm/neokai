@@ -21,6 +21,7 @@ import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
+import { GateEditorPanel } from './GateEditorPanel';
 
 // ============================================================================
 // Props
@@ -337,7 +338,8 @@ function AgentsSection({
 type PanelView =
 	| { kind: 'main' }
 	| { kind: 'prompt-and-instructions' }
-	| { kind: 'channel-links' };
+	| { kind: 'channel-links' }
+	| { kind: 'gate-editor'; gateId: string };
 
 export function NodeConfigPanel({
 	step,
@@ -437,7 +439,9 @@ export function NodeConfigPanel({
 				? 'Prompt and Instructions'
 				: panelView.kind === 'channel-links'
 					? 'Channel Links'
-					: step.name || 'Unnamed Node';
+					: panelView.kind === 'gate-editor'
+						? 'Gate Editor'
+						: step.name || 'Unnamed Node';
 
 		return (
 			<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0">
@@ -446,6 +450,10 @@ export function NodeConfigPanel({
 						type="button"
 						data-testid="node-panel-back-button"
 						onClick={() => {
+							if (panelView.kind === 'gate-editor') {
+								setPanelView({ kind: 'channel-links' });
+								return;
+							}
 							if (panelView.kind === 'channel-links') {
 								onCloseChannelLink?.();
 							}
@@ -534,6 +542,23 @@ export function NodeConfigPanel({
 			);
 		}
 
+		if (panelView.kind === 'gate-editor') {
+			const editingGate = channelRelationGates.find((g) => g.id === panelView.gateId);
+			if (!editingGate) return null;
+			return (
+				<GateEditorPanel
+					gate={editingGate}
+					onChange={(updated) => {
+						onUpdateChannelGates?.(
+							channelRelationGates.map((g) => (g.id === updated.id ? updated : g))
+						);
+					}}
+					onBack={() => setPanelView({ kind: 'channel-links' })}
+					embedded
+				/>
+			);
+		}
+
 		if (panelView.kind === 'channel-links' && selectedChannelRelation) {
 			return (
 				<ChannelRelationConfigPanel
@@ -545,6 +570,7 @@ export function NodeConfigPanel({
 					onConvertToBidirectional={onConvertChannelRelationToBidirectional}
 					gates={channelRelationGates}
 					onGatesChange={(nextGates) => onUpdateChannelGates?.(nextGates)}
+					onEditGate={(gateId) => setPanelView({ kind: 'gate-editor', gateId })}
 					onChange={(index, channel) => onUpdateChannelLink?.(index, channel)}
 					onDelete={(index) => onDeleteChannelLink?.(index)}
 					onClose={onClose}

@@ -51,7 +51,6 @@ import { NodeConfigPanel } from './NodeConfigPanel';
 import type { NodeChannelLink } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
-import { GateEditorPanel } from './GateEditorPanel';
 import { buildVisualNodePositions } from './nodeMetrics';
 import {
 	buildNodeAnchorUsage,
@@ -238,7 +237,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
 	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
-	const [editingGateId, setEditingGateId] = useState<string | null>(null);
 
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -1364,23 +1362,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					</div>
 				)}
 
-				{/* GateEditorPanel — slide-in editor for a specific gate */}
-				{editingGateId && (() => {
-					const editingGate = gates.find((g) => g.id === editingGateId);
-					if (!editingGate) return null;
-					return (
-						<GateEditorPanel
-							gate={editingGate}
-							onChange={(updated) => {
-								setGates(gates.map((g) => (g.id === updated.id ? updated : g)));
-							}}
-							onBack={() => setEditingGateId(null)}
-						/>
-					);
-				})()}
-
 				{/* ChannelRelationConfigPanel — edit underlying channel links for a semantic relation */}
-				{selectedChannelInfo && !selectedNode && !editingGateId && (
+				{selectedChannelInfo && !selectedNode && (
 					<ChannelRelationConfigPanel
 						title="Channel Links"
 						description={`${selectedChannelInfo.relationLabel} · ${selectedChannelInfo.visibleLinkCount} editable link${selectedChannelInfo.visibleLinkCount === 1 ? '' : 's'}`}
@@ -1392,7 +1375,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						onGatesChange={handleUpdateGatesFromEdgePanel}
 						onChange={handleUpdateChannelFromEdgePanel}
 						onDelete={handleDeleteChannelFromEdgePanel}
-						onEditGate={setEditingGateId}
 						onBack={selectedNode ? () => setSelectedChannelId(null) : undefined}
 						onClose={() => setSelectedChannelId(null)}
 						width={selectedNode ? 320 : 360}

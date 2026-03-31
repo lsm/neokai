@@ -1,5 +1,7 @@
+import { useState } from 'preact/hooks';
 import type { Gate, WorkflowChannel } from '@neokai/shared';
 import { ChannelEdgeConfigPanel } from './ChannelEdgeConfigPanel';
+import { GateEditorPanel } from './GateEditorPanel';
 
 export interface ChannelRelationConfigPanelProps {
 	title: string;
@@ -44,6 +46,93 @@ export function ChannelRelationConfigPanel({
 	width = 360,
 	embedded = false,
 }: ChannelRelationConfigPanelProps) {
+	// Internal gate editing state — used when no external onEditGate is provided
+	const [editingGateId, setEditingGateId] = useState<string | null>(null);
+
+	const handleEditGate = (gateId: string) => {
+		if (onEditGate) {
+			onEditGate(gateId);
+		} else {
+			setEditingGateId(gateId);
+		}
+	};
+
+	// If editing a gate internally, show GateEditorPanel in place of channel list
+	const editingGate = editingGateId ? gates.find((g) => g.id === editingGateId) : undefined;
+	if (editingGate && !onEditGate) {
+		const gateContent = (
+			<GateEditorPanel
+				gate={editingGate}
+				onChange={(updated) => {
+					onGatesChange(gates.map((g) => (g.id === updated.id ? updated : g)));
+				}}
+				onBack={() => setEditingGateId(null)}
+				embedded={embedded}
+			/>
+		);
+
+		if (embedded) {
+			return gateContent;
+		}
+
+		return (
+			<div
+				style={{
+					position: 'absolute',
+					top: 0,
+					right: 0,
+					bottom: 0,
+					width,
+					display: 'flex',
+					flexDirection: 'column',
+					zIndex: 20,
+				}}
+				class="bg-dark-900 border-l border-dark-700 shadow-xl animate-slideInRight"
+			>
+				<div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0">
+					<div class="min-w-0 flex items-start gap-2">
+						<button
+							type="button"
+							data-testid="gate-editor-back-button"
+							onClick={() => setEditingGateId(null)}
+							class="mt-0.5 p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+							title="Back"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M15 19l-7-7 7-7"
+								/>
+							</svg>
+						</button>
+						<div class="min-w-0">
+							<h3 class="text-sm font-semibold text-gray-100 truncate">Gate Editor</h3>
+						</div>
+					</div>
+					<button
+						data-testid="gate-editor-close-button"
+						onClick={onClose}
+						class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+						title="Close panel"
+					>
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+					</button>
+				</div>
+
+				{gateContent}
+			</div>
+		);
+	}
+
 	const content = (
 		<div
 			data-testid="channel-relation-config-panel"
@@ -78,7 +167,7 @@ export function ChannelRelationConfigPanel({
 							onDelete={onDelete}
 							gates={gates}
 							onGatesChange={onGatesChange}
-							onEditGate={onEditGate}
+							onEditGate={handleEditGate}
 							showHeader={false}
 							showDirectionControls={false}
 						/>
@@ -101,7 +190,7 @@ export function ChannelRelationConfigPanel({
 							onDelete={onDelete}
 							gates={gates}
 							onGatesChange={onGatesChange}
-							onEditGate={onEditGate}
+							onEditGate={handleEditGate}
 							showHeader={false}
 							showDirectionControls={false}
 						/>
