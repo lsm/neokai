@@ -252,8 +252,6 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };
 			expect(runMid.status).toBe('in_progress');
-			// Sanity-check: iterationCount must be 0 — no cycles have occurred
-			expect(runMid.iterationCount).toBe(0);
 
 			// Done must NOT be active yet
 			const doneBefore = await getTasksForNode(daemon, spaceId, runId, 'Done');
@@ -300,9 +298,6 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const qaResultGate = await readGateData(daemon, runId, 'qa-result-gate');
 			expect(qaResultGate).not.toBeNull();
 			expect(qaResultGate?.data.result).toBe('passed');
-
-			// Confirm iteration count stayed at 0 (no cycles needed)
-			expect(completedRun.iterationCount).toBe(0);
 		},
 		TEST_TIMEOUT
 	);
@@ -312,8 +307,8 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 	//
 	// Pipeline path:
 	//   driveToCodePrGateOpen → QA activates (all approved, round 1)
-	//   → QA fails (qa-fail-gate) → Coding cycles back (iteration 1)
-	//   → Reviewer 1 rejects (review-reject-gate) → Coding cycles back (iteration 2)
+	//   → QA fails (qa-fail-gate) → Coding cycles back (cycle 1 via qa-fail channel)
+	//   → Reviewer 1 rejects (review-reject-gate) → Coding cycles back (cycle 1 via reject channel)
 	//   → all 3 approve (round 3) → QA passes → Done → completed
 	// -------------------------------------------------------------------------
 	test(
@@ -534,9 +529,6 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const completedRun = await waitForRunStatus(daemon, runId, ['completed'], RUN_STATUS_TIMEOUT);
 			expect(completedRun.status).toBe('completed');
 			expect(completedRun.completedAt).toBeDefined();
-
-			// Exactly 2 iteration increments: one QA fail + one reviewer reject
-			expect(completedRun.iterationCount).toBe(2);
 
 			// Completion summary available on the Done task
 			const doneTasks = await getTasksForNode(daemon, spaceId, runId, 'Done');
