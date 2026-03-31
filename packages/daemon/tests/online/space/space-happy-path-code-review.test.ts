@@ -239,9 +239,9 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 				waitForNodeActivated(daemon, spaceId, runId, 'Reviewer 3', NODE_ACTIVATION_TIMEOUT),
 			]);
 
-			expect(r1.title).toBe('Reviewer 1');
-			expect(r2.title).toBe('Reviewer 2');
-			expect(r3.title).toBe('Reviewer 3');
+			expect(r1.agentName).toBe('Reviewer 1');
+			expect(r2.agentName).toBe('Reviewer 2');
+			expect(r3.agentName).toBe('Reviewer 3');
 			for (const task of [r1, r2, r3]) {
 				expect(task.workflowRunId).toBe(runId);
 				expect(['pending', 'in_progress']).toContain(task.status);

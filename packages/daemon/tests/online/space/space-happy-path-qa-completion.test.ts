@@ -552,9 +552,9 @@ describe('Space Happy Path — QA Completion Flow', () => {
 				),
 			]);
 
-			expect(newR1.title).toBe('Reviewer 1');
-			expect(newR2.title).toBe('Reviewer 2');
-			expect(newR3.title).toBe('Reviewer 3');
+			expect(newR1.agentName).toBe('Reviewer 1');
+			expect(newR2.agentName).toBe('Reviewer 2');
+			expect(newR3.agentName).toBe('Reviewer 3');
 
 			// Complete all reviewer tasks
 			await mockAgentDone(daemon, spaceId, newR1.id);
