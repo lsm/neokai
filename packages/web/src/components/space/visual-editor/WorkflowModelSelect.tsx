@@ -12,9 +12,10 @@ interface WorkflowModelSelectProps {
 	value?: string;
 	onChange: (value: string | undefined) => void;
 	testId: string;
-	defaultLabel?: string;
 	className?: string;
 }
+
+type LoadState = 'loading' | 'ready' | 'no-providers';
 
 function dedupeModelsById(models: ModelInfo[]): ModelInfo[] {
 	const seen = new Set<string>();
@@ -31,10 +32,10 @@ export function WorkflowModelSelect({
 	value,
 	onChange,
 	testId,
-	defaultLabel = 'Use agent default',
-	className = 'w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500',
+	className = 'w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed',
 }: WorkflowModelSelectProps) {
 	const [models, setModels] = useState<ModelInfo[]>([]);
+	const [loadState, setLoadState] = useState<LoadState>('loading');
 
 	useEffect(() => {
 		let cancelled = false;
@@ -47,9 +48,14 @@ export function WorkflowModelSelect({
 					useCache: true,
 				})) as { models: RawModelEntry[] };
 				if (cancelled) return;
-				setModels(dedupeModelsById(mapRawModelsToModelInfos(response.models ?? [])));
+				const loaded = dedupeModelsById(mapRawModelsToModelInfos(response.models ?? []));
+				setModels(loaded);
+				setLoadState(loaded.length > 0 ? 'ready' : 'no-providers');
 			} catch {
-				if (!cancelled) setModels([]);
+				if (!cancelled) {
+					setModels([]);
+					setLoadState('no-providers');
+				}
 			}
 		}
 
@@ -62,6 +68,22 @@ export function WorkflowModelSelect({
 	const groupedModels = useMemo(() => groupModelsByProvider(models), [models]);
 	const hasCurrentOutsideList = !!value && !models.some((model) => model.id === value);
 
+	if (loadState === 'loading') {
+		return (
+			<select data-testid={testId} disabled class={className}>
+				<option>Loading models…</option>
+			</select>
+		);
+	}
+
+	if (loadState === 'no-providers') {
+		return (
+			<select data-testid={testId} disabled class={className}>
+				<option>No providers available</option>
+			</select>
+		);
+	}
+
 	return (
 		<select
 			data-testid={testId}
@@ -72,7 +94,7 @@ export function WorkflowModelSelect({
 			}}
 			class={className}
 		>
-			<option value="">{defaultLabel}</option>
+			<option value="">— No override —</option>
 			{hasCurrentOutsideList && <option value={value}>{`Current (${value})`}</option>}
 			{Array.from(groupedModels.entries()).map(([provider, providerModels]) => (
 				<optgroup key={provider} label={PROVIDER_LABELS[provider] || provider}>
