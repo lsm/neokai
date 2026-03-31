@@ -28,7 +28,7 @@ import type {
 	WorkflowChannel,
 	Gate,
 } from '@neokai/shared';
-import { generateUUID, TASK_AGENT_NODE_ID } from '@neokai/shared';
+import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, TEMPLATES, buildTemplateNodes } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
@@ -152,48 +152,10 @@ function resolveChannelTargetNodeIds(
 		.filter((nodeId): nodeId is string => !!nodeId);
 }
 
-function doesPathExistBetweenNodes(
-	channels: WorkflowChannel[],
-	endpointNodeIdLookup: Map<string, string>,
-	startNodeId: string,
-	targetNodeId: string,
-	options?: { ignoreChannelIndex?: number }
-): boolean {
-	if (startNodeId === targetNodeId) return true;
-
-	const adjacency = new Map<string, Set<string>>();
-	for (const [index, channel] of channels.entries()) {
-		if (options?.ignoreChannelIndex === index) continue;
-
-		const fromNodeId = endpointNodeIdLookup.get(channel.from);
-		if (!fromNodeId) continue;
-
-		for (const toNodeId of resolveChannelTargetNodeIds(channel, endpointNodeIdLookup)) {
-			if (toNodeId === fromNodeId) continue;
-			const targets = adjacency.get(fromNodeId) ?? new Set<string>();
-			targets.add(toNodeId);
-			adjacency.set(fromNodeId, targets);
-		}
-	}
-
-	const visited = new Set<string>();
-	const queue = [startNodeId];
-	while (queue.length > 0) {
-		const current = queue.shift()!;
-		if (current === targetNodeId) return true;
-		if (visited.has(current)) continue;
-		visited.add(current);
-
-		for (const next of adjacency.get(current) ?? []) {
-			if (!visited.has(next)) {
-				queue.push(next);
-			}
-		}
-	}
-
-	return false;
-}
-
+/**
+ * Thin wrapper around the shared `isChannelCyclic` that accepts pre-built
+ * editor-local lookup maps (keyed by localId, not persisted node.id).
+ */
 function inferChannelIsCyclic(
 	channel: WorkflowChannel,
 	channels: WorkflowChannel[],
@@ -201,22 +163,9 @@ function inferChannelIsCyclic(
 	nodeOrder: Map<string, number>,
 	options?: { ignoreChannelIndex?: number }
 ): boolean {
-	const fromNodeId = endpointNodeIdLookup.get(channel.from);
-	if (!fromNodeId) return false;
-
-	for (const toNodeId of resolveChannelTargetNodeIds(channel, endpointNodeIdLookup)) {
-		if (toNodeId === fromNodeId) continue;
-		const fromOrder = nodeOrder.get(fromNodeId) ?? Number.MAX_SAFE_INTEGER;
-		const toOrder = nodeOrder.get(toNodeId) ?? Number.MAX_SAFE_INTEGER;
-		if (toOrder > fromOrder) continue;
-		if (
-			doesPathExistBetweenNodes(channels, endpointNodeIdLookup, toNodeId, fromNodeId, options)
-		) {
-			return true;
-		}
-	}
-
-	return false;
+	const index = channels.indexOf(channel);
+	if (index === -1) return false;
+	return isChannelCyclic(index, channels, [], endpointNodeIdLookup, nodeOrder, options?.ignoreChannelIndex);
 }
 
 // ============================================================================
