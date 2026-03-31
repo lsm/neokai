@@ -105,7 +105,12 @@ export async function openNewWorkflowEditor(page: Page): Promise<void> {
 /** Switch to Visual editor mode, accepting any confirmation dialogs. */
 export async function switchToVisualMode(page: Page): Promise<void> {
 	// Modern flow: visual editor is already active.
-	if (await page.getByTestId('visual-workflow-editor').isVisible().catch(() => false)) {
+	if (
+		await page
+			.getByTestId('visual-workflow-editor')
+			.isVisible()
+			.catch(() => false)
+	) {
 		return;
 	}
 

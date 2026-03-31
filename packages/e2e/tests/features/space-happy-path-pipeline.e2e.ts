@@ -142,11 +142,15 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 		await expect(page.getByText('Planner', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Coder', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('General', { exact: true }).first()).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Reviewer', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Reviewer', { exact: true }).first()).toBeVisible({
+			timeout: 5000,
+		});
 		await expect(page.getByText('QA', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 
 		await page.locator('button:has-text("Workflows")').click();
-		await expect(page.getByText('Coding Workflow V2', { exact: true })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Coding Workflow V2', { exact: true })).toBeVisible({
+			timeout: 5000,
+		});
 
 		const reviewSlotCount = await page.evaluate(async () => {
 			const hub = window.__messageHub || window.appState?.messageHub;
@@ -205,14 +209,20 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 					taskId: tid,
 				})) as { status: string };
 				if (current.status === 'pending') {
-					await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'in_progress' });
+					await hub.request('spaceTask.update', {
+						spaceId: sid,
+						taskId: tid,
+						status: 'in_progress',
+					});
 				}
 				await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'completed' });
 			},
 			{ sid: spaceId, tid: taskId }
 		);
 
-		await expect(page.getByText('Completed', { exact: false }).first()).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Completed', { exact: false }).first()).toBeVisible({
+			timeout: 5000,
+		});
 		await expect(page.getByText('This task is read-only in its current state.')).toBeVisible({
 			timeout: 5000,
 		});

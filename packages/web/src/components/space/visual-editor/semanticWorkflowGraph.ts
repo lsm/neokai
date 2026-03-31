@@ -61,7 +61,11 @@ function resolveSemanticGateType(
 
 		// If the gate has a field named 'result' with string == check -> 'task_result'
 		const resultField = fields.find((f) => f.name === 'result' && f.type === 'string');
-		if (resultField && resultField.check.op === '==' && typeof resultField.check.value === 'string') {
+		if (
+			resultField &&
+			resultField.check.op === '==' &&
+			typeof resultField.check.value === 'string'
+		) {
 			return 'task_result';
 		}
 

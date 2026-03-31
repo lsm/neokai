@@ -279,7 +279,6 @@ function ChannelEntry({
 							class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-teal-500"
 						/>
 					</div>
-
 				</div>
 			)}
 		</div>

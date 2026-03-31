@@ -300,9 +300,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 		}));
 
 	const referencedGateIds = new Set(
-		state.channels
-			.map((channel) => channel.gateId)
-			.filter((gateId): gateId is string => !!gateId)
+		state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
 	);
 	const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
 

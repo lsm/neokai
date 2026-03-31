@@ -136,7 +136,11 @@ export function ChannelRelationConfigPanel({
 	const content = (
 		<div
 			data-testid="channel-relation-config-panel"
-			class={embedded ? 'flex-1 overflow-y-auto px-4 py-4 space-y-3' : 'flex-1 overflow-y-auto px-4 py-4 space-y-3'}
+			class={
+				embedded
+					? 'flex-1 overflow-y-auto px-4 py-4 space-y-3'
+					: 'flex-1 overflow-y-auto px-4 py-4 space-y-3'
+			}
 		>
 			<p class="text-xs text-gray-500">{description}</p>
 			{canConvertToBidirectional && (
@@ -243,8 +247,8 @@ export function ChannelRelationConfigPanel({
 						</button>
 					)}
 					<div class="min-w-0">
-					<h3 class="text-sm font-semibold text-gray-100 truncate">{title}</h3>
-					<p class="mt-1 text-xs text-gray-500">{description}</p>
+						<h3 class="text-sm font-semibold text-gray-100 truncate">{title}</h3>
+						<p class="mt-1 text-xs text-gray-500">{description}</p>
 					</div>
 				</div>
 				<button

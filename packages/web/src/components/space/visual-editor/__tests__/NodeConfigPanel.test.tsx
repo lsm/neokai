@@ -235,14 +235,14 @@ describe('NodeConfigPanel', () => {
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
 			await waitFor(() =>
-				expect((getByTestId('single-agent-model-input') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+				expect(
+					(getByTestId('single-agent-model-input') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
 			);
 			fireEvent.change(getByTestId('single-agent-model-input'), {
 				target: { value: 'gpt-5.4' },
 			});
-			expect(onUpdate).toHaveBeenCalledWith(
-				expect.objectContaining({ model: 'gpt-5.4' })
-			);
+			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4' }));
 		});
 
 		it('clearing single-agent model sets model to undefined', async () => {
@@ -251,7 +251,9 @@ describe('NodeConfigPanel', () => {
 				<NodeConfigPanel {...makeProps({ onUpdate, step: makeStep({ model: 'gpt-5.4' }) })} />
 			);
 			await waitFor(() =>
-				expect((getByTestId('single-agent-model-input') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+				expect(
+					(getByTestId('single-agent-model-input') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
 			);
 			fireEvent.change(getByTestId('single-agent-model-input'), {
 				target: { value: '' },
@@ -589,7 +591,9 @@ describe('NodeConfigPanel', () => {
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			await waitFor(() =>
-				expect((getByTestId('agent-model-select') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+				expect(
+					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
 			);
 			expect(getByTestId('agent-model-select')).toBeTruthy();
 		});
@@ -614,7 +618,9 @@ describe('NodeConfigPanel', () => {
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			await waitFor(() =>
-				expect((getByTestId('agent-model-select') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+				expect(
+					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
 			);
 			fireEvent.change(getByTestId('agent-model-select'), { target: { value: 'gpt-5.4' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
@@ -629,7 +635,9 @@ describe('NodeConfigPanel', () => {
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			await waitFor(() =>
-				expect((getByTestId('agent-model-select') as HTMLSelectElement).options.length).toBeGreaterThan(1)
+				expect(
+					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
 			);
 			fireEvent.change(getByTestId('agent-model-select'), { target: { value: '' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];

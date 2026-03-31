@@ -21,12 +21,7 @@
  */
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks';
-import type {
-	SpaceWorkflow,
-	WorkflowNode,
-	WorkflowChannel,
-	Gate,
-} from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowNode, WorkflowChannel, Gate } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, TEMPLATES, buildTemplateNodes } from '../WorkflowEditor';
@@ -72,7 +67,9 @@ function buildTemplateCanvasSignature(
 	gates: Gate[]
 ): string {
 	const regularNodes = nodes
-		.filter((node) => node.step.localId !== TASK_AGENT_NODE_ID && node.step.id !== TASK_AGENT_NODE_ID)
+		.filter(
+			(node) => node.step.localId !== TASK_AGENT_NODE_ID && node.step.id !== TASK_AGENT_NODE_ID
+		)
 		.map((node) => ({
 			localId: node.step.localId,
 			id: node.step.id ?? null,
@@ -161,7 +158,14 @@ function inferChannelIsCyclic(
 ): boolean {
 	const index = channels.indexOf(channel);
 	if (index === -1) return false;
-	return isChannelCyclic(index, channels, [], endpointNodeIdLookup, nodeOrder, options?.ignoreChannelIndex);
+	return isChannelCyclic(
+		index,
+		channels,
+		[],
+		endpointNodeIdLookup,
+		nodeOrder,
+		options?.ignoreChannelIndex
+	);
 }
 
 // ============================================================================
@@ -367,18 +371,18 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			id?: string;
 			label?: string;
 		}[]
-		>(() => {
-			return routedSemanticEdges.map((edge) => ({
-				fromStepId: edge.fromStepId,
-				toStepId: edge.toStepId,
-				direction: edge.direction,
-				gateType: edge.gateType,
-				isCyclic: edge.hasCyclic,
-				sourceSide: edge.sourceSide,
-				targetSide: edge.targetSide,
-				id: edge.id,
-			}));
-		}, [routedSemanticEdges]);
+	>(() => {
+		return routedSemanticEdges.map((edge) => ({
+			fromStepId: edge.fromStepId,
+			toStepId: edge.toStepId,
+			direction: edge.direction,
+			gateType: edge.gateType,
+			isCyclic: edge.hasCyclic,
+			sourceSide: edge.sourceSide,
+			targetSide: edge.targetSide,
+			id: edge.id,
+		}));
+	}, [routedSemanticEdges]);
 
 	// ------------------------------------------------------------------
 	// Helpers
@@ -420,7 +424,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
 			};
 		});
-	}, [regularNodes, agents, channels, nodeIsStart, tasksByNodeId, relevantRunId, anchorUsageByNodeId]);
+	}, [
+		regularNodes,
+		agents,
+		channels,
+		nodeIsStart,
+		tasksByNodeId,
+		relevantRunId,
+		anchorUsageByNodeId,
+	]);
 
 	const canvasNodePositions = useMemo<NodePosition>(
 		() => buildVisualNodePositions(regularNodes),
@@ -476,7 +488,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		});
 
 		const visibleLinkCount = forwardLinks.length + reverseLinks.length;
-		const relationIsBidirectional = reverseLinks.length > 0 || relation.direction === 'bidirectional';
+		const relationIsBidirectional =
+			reverseLinks.length > 0 || relation.direction === 'bidirectional';
 
 		return {
 			relation,
@@ -492,7 +505,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					endpointNodeIdLookup,
 					nodeOrderByLocalId,
 					{
-					ignoreChannelIndex: index,
+						ignoreChannelIndex: index,
 					}
 				),
 			})),
@@ -505,19 +518,25 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					endpointNodeIdLookup,
 					nodeOrderByLocalId,
 					{
-					ignoreChannelIndex: index,
+						ignoreChannelIndex: index,
 					}
 				),
 			})),
 			relationIsBidirectional,
 			visibleLinkCount,
 			canConvertToBidirectional: forwardLinks.length > 0 && reverseLinks.length === 0,
-			relationLabel:
-				relationIsBidirectional
-					? `${fromNode?.step.name || 'Unnamed'} ↔ ${toNode?.step.name || 'Unnamed'}`
-					: `${fromNode?.step.name || 'Unnamed'} → ${toNode?.step.name || 'Unnamed'}`,
+			relationLabel: relationIsBidirectional
+				? `${fromNode?.step.name || 'Unnamed'} ↔ ${toNode?.step.name || 'Unnamed'}`
+				: `${fromNode?.step.name || 'Unnamed'} → ${toNode?.step.name || 'Unnamed'}`,
 		};
-	}, [selectedChannelId, routedSemanticEdges, nodes, channels, endpointNodeIdLookup, nodeOrderByLocalId]);
+	}, [
+		selectedChannelId,
+		routedSemanticEdges,
+		nodes,
+		channels,
+		endpointNodeIdLookup,
+		nodeOrderByLocalId,
+	]);
 
 	const nodeChannelLinksByNodeId = useMemo(() => {
 		const linksByNodeId = new Map<string, NodeChannelLink[]>();
@@ -551,7 +570,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		const legacyBidirectionalLinks = selectedChannelInfo.forwardLinks.filter(
 			({ channel }) => channel.direction === 'bidirectional'
 		);
-		if (legacyBidirectionalLinks.length === 0 || selectedChannelInfo.reverseLinks.length > 0) return;
+		if (legacyBidirectionalLinks.length === 0 || selectedChannelInfo.reverseLinks.length > 0)
+			return;
 
 		setChannels((prev) => {
 			const next = [...prev];
@@ -571,7 +591,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					const reverseExists = next.some(
 						(existing) =>
 							existing.from === target &&
-							(Array.isArray(existing.to) ? existing.to.includes(current.from) : existing.to === current.from)
+							(Array.isArray(existing.to)
+								? existing.to.includes(current.from)
+								: existing.to === current.from)
 					);
 					if (reverseExists) continue;
 
@@ -772,13 +794,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					newChannel.maxCycles = 5;
 				}
 
-				return [
-					...prev,
-					newChannel,
-				];
+				return [...prev, newChannel];
 			});
 		},
-		[nodes, resolveSourceChannelName, resolveTargetChannelName, endpointNodeIdLookup, nodeOrderByLocalId]
+		[
+			nodes,
+			resolveSourceChannelName,
+			resolveTargetChannelName,
+			endpointNodeIdLookup,
+			nodeOrderByLocalId,
+		]
 	);
 
 	const handleUpdateChannelFromEdgePanel = useCallback(
@@ -831,14 +856,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				to: reverseTargetName,
 				direction: 'one-way',
 			};
-			if (
-				inferChannelIsCyclic(
-					reverseChannel,
-					next,
-					endpointNodeIdLookup,
-					nodeOrderByLocalId
-				)
-			) {
+			if (inferChannelIsCyclic(reverseChannel, next, endpointNodeIdLookup, nodeOrderByLocalId)) {
 				reverseChannel.maxCycles = 5;
 			}
 			next.push(reverseChannel);
@@ -961,7 +979,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			order: i,
 		}));
 
-		const positions = autoLayout(layoutSteps, layoutTransitions, firstLocalId, template.channels ?? []);
+		const positions = autoLayout(
+			layoutSteps,
+			layoutTransitions,
+			firstLocalId,
+			template.channels ?? []
+		);
 
 		const positionedNodes: VisualNode[] = newNodes.map((n) => ({
 			...n,
@@ -1206,54 +1229,54 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					{/* Template picker — always available in create mode.
 					    Reapplying prompts only when the canvas has diverged. */}
 					{!isEditing && (
-							<div class="relative">
-								<button
-									onClick={() => setShowTemplates((v) => !v)}
-									data-testid="template-picker-button"
-									class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
+						<div class="relative">
+							<button
+								onClick={() => setShowTemplates((v) => !v)}
+								data-testid="template-picker-button"
+								class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
+							>
+								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M4 6h16M4 10h16M4 14h8"
+									/>
+								</svg>
+								From Template
+								<svg
+									class={`w-3 h-3 transition-transform ${showTemplates ? 'rotate-180' : ''}`}
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
 								>
-									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M4 6h16M4 10h16M4 14h8"
-										/>
-									</svg>
-									From Template
-									<svg
-										class={`w-3 h-3 transition-transform ${showTemplates ? 'rotate-180' : ''}`}
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M19 9l-7 7-7-7"
-										/>
-									</svg>
-								</button>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M19 9l-7 7-7-7"
+									/>
+								</svg>
+							</button>
 
-								{showTemplates && (
-									<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
-										{TEMPLATES.map((t) => (
-											<button
-												key={t.label}
-												onClick={() => handleTemplateSelection(t)}
-												data-testid="template-option"
-												data-template-label={t.label}
-												class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
-											>
-												<div class="text-xs font-medium text-gray-200">{t.label}</div>
-												<div class="text-xs text-gray-500 mt-0.5">{t.description}</div>
-											</button>
-										))}
-									</div>
-								)}
-							</div>
-						)}
+							{showTemplates && (
+								<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
+									{TEMPLATES.map((t) => (
+										<button
+											key={t.label}
+											onClick={() => handleTemplateSelection(t)}
+											data-testid="template-option"
+											data-template-label={t.label}
+											class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
+										>
+											<div class="text-xs font-medium text-gray-200">{t.label}</div>
+											<div class="text-xs text-gray-500 mt-0.5">{t.description}</div>
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+					)}
 				</div>
 
 				{/* Empty state overlay — shown when no regular steps exist (Task Agent doesn't count) */}
@@ -1328,7 +1351,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 										forwardLinks: selectedChannelInfo.forwardLinks,
 										reverseLinks: selectedChannelInfo.reverseLinks,
 										canConvertToBidirectional: selectedChannelInfo.canConvertToBidirectional,
-								  }
+									}
 								: undefined
 						}
 						onUpdateChannelLink={handleUpdateChannelFromEdgePanel}

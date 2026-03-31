@@ -72,11 +72,7 @@ interface AgentsSectionProps {
 	onUpdate: (step: NodeDraft) => void;
 }
 
-function AgentsSection({
-	step,
-	agents,
-	onUpdate,
-}: AgentsSectionProps) {
+function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const multi = isMultiAgentNode(step);
 	const nodeAgents = step.agents ?? [];
 
@@ -500,8 +496,8 @@ export function NodeConfigPanel({
 				<div class="flex-1 overflow-y-auto px-4 py-4 space-y-3">
 					<p class="text-xs text-gray-500">
 						Shared instructions are appended for every agent in this node. A shared system prompt
-						override applies to the assigned agent, or acts as the default prompt override for
-						agent slots that do not define their own override.
+						override applies to the assigned agent, or acts as the default prompt override for agent
+						slots that do not define their own override.
 					</p>
 					<div class="space-y-1.5">
 						<label class="text-xs font-medium text-gray-400">
@@ -510,9 +506,7 @@ export function NodeConfigPanel({
 						<textarea
 							data-testid="node-system-prompt-input"
 							value={step.systemPrompt ?? ''}
-							onInput={(e) =>
-								updateNodePrompt((e.currentTarget as HTMLTextAreaElement).value)
-							}
+							onInput={(e) => updateNodePrompt((e.currentTarget as HTMLTextAreaElement).value)}
 							placeholder="Leave blank to use the selected agent's default system prompt…"
 							rows={12}
 							class="w-full text-xs font-mono bg-dark-800 border border-dark-600 rounded px-3 py-2 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
@@ -537,8 +531,8 @@ export function NodeConfigPanel({
 						/>
 					</div>
 					<p class="text-[11px] text-gray-600">
-						This editor shows the current values for both the shared prompt override and the
-						shared instructions.
+						This editor shows the current values for both the shared prompt override and the shared
+						instructions.
 					</p>
 				</div>
 			);
@@ -607,11 +601,7 @@ export function NodeConfigPanel({
 					</button>
 				)}
 
-				<AgentsSection
-					step={step}
-					agents={agents}
-					onUpdate={onUpdate}
-				/>
+				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
 
 				<button
 					type="button"

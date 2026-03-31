@@ -203,4 +203,3 @@ describe('SpaceTaskPane — composer', () => {
 		expect(mockSendTaskMessage).not.toHaveBeenCalled();
 	});
 });
-

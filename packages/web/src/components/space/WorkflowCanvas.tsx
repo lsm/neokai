@@ -85,9 +85,7 @@ interface RenderedChannel {
  * field named 'approved' with 'human' in writers.
  */
 function isHumanApprovalGate(fields: GateField[]): boolean {
-	return fields.some(
-		(f) => f.name === 'approved' && f.writers.includes('human')
-	);
+	return fields.some((f) => f.name === 'approved' && f.writers.includes('human'));
 }
 
 /**

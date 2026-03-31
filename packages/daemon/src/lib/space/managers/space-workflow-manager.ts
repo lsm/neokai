@@ -262,7 +262,6 @@ export class SpaceWorkflowManager {
 					throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty agent name string`);
 				}
 			}
-
 		}
 	}
 }

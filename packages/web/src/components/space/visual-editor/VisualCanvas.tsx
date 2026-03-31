@@ -204,8 +204,7 @@ export function VisualCanvas({
 		if (e.button !== 0) return;
 
 		const target = e.target as HTMLElement | null;
-		const isBackgroundSurface =
-			target === containerRef.current || target === transformRef.current;
+		const isBackgroundSurface = target === containerRef.current || target === transformRef.current;
 		const isPanSurface = !!target?.closest('[data-pan-canvas="true"]');
 		const shouldPan = spacebarDown.current || isBackgroundSurface || isPanSurface;
 		if (!shouldPan) return;

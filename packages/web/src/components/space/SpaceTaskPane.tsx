@@ -46,7 +46,7 @@ function formatTaskThreadError(err: unknown): string {
 
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
-	const task = taskId ? tasks.find((t) => t.id === taskId) ?? null : null;
+	const task = taskId ? (tasks.find((t) => t.id === taskId) ?? null) : null;
 	const runtimeSpaceIdCandidate = task?.spaceId ?? spaceId;
 
 	const [threadSessionId, setThreadSessionId] = useState<string | null>(null);
@@ -119,7 +119,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const isTerminalTask =
 		task.status === 'completed' || task.status === 'cancelled' || task.status === 'archived';
 	const showInlineComposer = !!agentSessionId && !isTerminalTask;
-	const canSendThreadMessage = !!agentSessionId && !isTerminalTask && !ensuringThread && !sendingThread;
+	const canSendThreadMessage =
+		!!agentSessionId && !isTerminalTask && !ensuringThread && !sendingThread;
 	const showHeaderSessionAction = !!runtimeSpaceId && (!!agentSessionId || !isTerminalTask);
 	const activitySummary = STATUS_LABELS[task.status];
 	const agentActionLabel =
@@ -181,7 +182,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							data-testid="task-back-button"
 						>
 							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M15 19l-7-7 7-7" />
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M15 19l-7-7 7-7"
+								/>
 							</svg>
 						</button>
 					)}
@@ -265,7 +271,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						)}
 
 						{!agentSessionId && (
-							<p class="text-xs text-gray-500">Waiting for task thread before messages can be sent.</p>
+							<p class="text-xs text-gray-500">
+								Waiting for task thread before messages can be sent.
+							</p>
 						)}
 
 						{isTerminalTask && (
@@ -284,11 +292,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							</div>
 						)}
 
-						{threadSendError && (
-							<p class="text-xs text-red-300">
-								{threadSendError}
-							</p>
-						)}
+						{threadSendError && <p class="text-xs text-red-300">{threadSendError}</p>}
 					</div>
 				</div>
 			</div>

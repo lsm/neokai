@@ -100,14 +100,20 @@ const CHANNEL_GATE_BADGE_CHAR_WIDTH = 7;
 const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
 const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
-const CHANNEL_GATE_BADGE_COLORS: Record<NonNullable<ResolvedWorkflowChannel['gateType']>, string> = {
+const CHANNEL_GATE_BADGE_COLORS: Record<
+	NonNullable<ResolvedWorkflowChannel['gateType']>,
+	string
+> = {
 	human: EDGE_COLORS.human,
 	condition: EDGE_COLORS.condition,
 	task_result: EDGE_COLORS.task_result,
 	check: '#60a5fa',
 	count: '#ec4899',
 };
-const CHANNEL_GATE_BADGE_LABELS: Record<NonNullable<ResolvedWorkflowChannel['gateType']>, string> = {
+const CHANNEL_GATE_BADGE_LABELS: Record<
+	NonNullable<ResolvedWorkflowChannel['gateType']>,
+	string
+> = {
 	human: 'Human',
 	condition: 'Shell',
 	task_result: 'Result',
@@ -220,31 +226,11 @@ function buildChannelControlPoints(
 ) {
 	const offset = Math.max(56, Math.min(120, Math.max(Math.abs(tx - sx), Math.abs(ty - sy)) * 0.35));
 
-	const cp1x =
-		sourceSide === 'left'
-			? sx - offset
-			: sourceSide === 'right'
-				? sx + offset
-				: sx;
-	const cp1y =
-		sourceSide === 'top'
-			? sy - offset
-			: sourceSide === 'bottom'
-				? sy + offset
-				: sy;
+	const cp1x = sourceSide === 'left' ? sx - offset : sourceSide === 'right' ? sx + offset : sx;
+	const cp1y = sourceSide === 'top' ? sy - offset : sourceSide === 'bottom' ? sy + offset : sy;
 
-	const cp2x =
-		targetSide === 'left'
-			? tx - offset
-			: targetSide === 'right'
-				? tx + offset
-				: tx;
-	const cp2y =
-		targetSide === 'top'
-			? ty - offset
-			: targetSide === 'bottom'
-				? ty + offset
-				: ty;
+	const cp2x = targetSide === 'left' ? tx - offset : targetSide === 'right' ? tx + offset : tx;
+	const cp2y = targetSide === 'top' ? ty - offset : targetSide === 'bottom' ? ty + offset : ty;
 
 	return { cp1x, cp1y, cp2x, cp2y };
 }
@@ -305,7 +291,11 @@ function trimOrthogonalEndpoint(a: Point2D, b: Point2D, distance: number): Point
 	};
 }
 
-function trimOrthogonalPathPoints(points: Point2D[], trimStart: number, trimEnd: number): Point2D[] {
+function trimOrthogonalPathPoints(
+	points: Point2D[],
+	trimStart: number,
+	trimEnd: number
+): Point2D[] {
 	const normalized = normalizeOrthogonalPoints(points);
 	if (normalized.length < 2) return normalized;
 
@@ -315,7 +305,11 @@ function trimOrthogonalPathPoints(points: Point2D[], trimStart: number, trimEnd:
 	}
 	if (trimEnd > 0) {
 		const lastIndex = trimmed.length - 1;
-		trimmed[lastIndex] = trimOrthogonalEndpoint(trimmed[lastIndex], trimmed[lastIndex - 1], trimEnd);
+		trimmed[lastIndex] = trimOrthogonalEndpoint(
+			trimmed[lastIndex],
+			trimmed[lastIndex - 1],
+			trimEnd
+		);
 	}
 
 	return normalizeOrthogonalPoints(trimmed);
@@ -403,8 +397,12 @@ function roundedOrthogonalPath(points: Point2D[], cornerRadius = 14): string {
 	return d;
 }
 
-function buildChannelOrthogonalPoints(channel: ResolvedWorkflowChannel, pts: EdgePoints): Point2D[] {
-	const sourceSide = channel.fromStepId === 'task-agent' ? 'right' : (channel.sourceSide ?? 'bottom');
+function buildChannelOrthogonalPoints(
+	channel: ResolvedWorkflowChannel,
+	pts: EdgePoints
+): Point2D[] {
+	const sourceSide =
+		channel.fromStepId === 'task-agent' ? 'right' : (channel.sourceSide ?? 'bottom');
 	const targetSide = channel.targetSide ?? 'top';
 	const start = { x: pts.sx, y: pts.sy };
 	const end = { x: pts.tx, y: pts.ty };
@@ -438,7 +436,10 @@ export function buildChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoi
 	return roundedOrthogonalPath(buildChannelOrthogonalPoints(channel, pts));
 }
 
-export function buildVisibleChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoints): string {
+export function buildVisibleChannelPathD(
+	channel: ResolvedWorkflowChannel,
+	pts: EdgePoints
+): string {
 	const trimmedPoints = trimOrthogonalPathPoints(
 		buildChannelOrthogonalPoints(channel, pts),
 		channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
@@ -691,7 +692,9 @@ export function EdgeRenderer({
 				const loopBadgePosition = isCyclic
 					? {
 							x: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).x,
-							y: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).y + (isGated ? 26 : 0),
+							y:
+								(gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).y +
+								(isGated ? 26 : 0),
 						}
 					: null;
 				const gateColor = channel.gateType
@@ -764,10 +767,8 @@ export function EdgeRenderer({
 								transform={`translate(${gateBadgePosition.x}, ${gateBadgePosition.y})`}
 								data-testid={`channel-gate-${channel.fromStepId}-${channel.toStepId}`}
 								style={{
-									pointerEvents:
-										onChannelSelect && channel.id != null ? 'auto' : 'none',
-									cursor:
-										onChannelSelect && channel.id != null ? 'pointer' : 'default',
+									pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
+									cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
 								}}
 								onClick={
 									onChannelSelect && channel.id != null
@@ -806,10 +807,8 @@ export function EdgeRenderer({
 								transform={`translate(${loopBadgePosition.x}, ${loopBadgePosition.y})`}
 								data-testid={`channel-loop-${channel.fromStepId}-${channel.toStepId}`}
 								style={{
-									pointerEvents:
-										onChannelSelect && channel.id != null ? 'auto' : 'none',
-									cursor:
-										onChannelSelect && channel.id != null ? 'pointer' : 'default',
+									pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
+									cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
 								}}
 								onClick={
 									onChannelSelect && channel.id != null

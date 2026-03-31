@@ -223,7 +223,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				sessionId: 'space:space-1:task:task-1',
 			});
 			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-1');
-			expect((daemonHub.emit as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe('space.task.updated');
+			expect((daemonHub.emit as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
+				'space.task.updated'
+			);
 		});
 
 		it('throws when spaceId is missing', async () => {
@@ -342,7 +344,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(result).toEqual({ ok: true });
 			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-2');
 			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith('task-2', 'Hello');
-			expect((daemonHub.emit as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe('space.task.updated');
+			expect((daemonHub.emit as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
+				'space.task.updated'
+			);
 		});
 
 		it('propagates errors from TaskAgentManager', async () => {

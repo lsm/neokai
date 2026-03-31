@@ -1108,7 +1108,14 @@ describe('node-agent-tools: list_gates', () => {
 	test('returns gate with default data when no runtime data exists', async () => {
 		const gate: Gate = {
 			id: 'gate-approval',
-			fields: [{ name: 'approved', type: 'boolean', writers: ['reviewer'], check: { op: '==', value: true } }],
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1140,7 +1147,14 @@ describe('node-agent-tools: list_gates', () => {
 	test('returns gate with runtime data overriding defaults', async () => {
 		const gate: Gate = {
 			id: 'gate-vote',
-			fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 2 } }],
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
+			],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1221,7 +1235,9 @@ describe('node-agent-tools: read_gate', () => {
 	test('returns gate data and open status for existing gate (closed)', async () => {
 		const gate: Gate = {
 			id: 'gate-check',
-			fields: [{ name: 'ready', type: 'boolean', writers: ['coder'], check: { op: '==', value: true } }],
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['coder'], check: { op: '==', value: true } },
+			],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1455,7 +1471,14 @@ describe('node-agent-tools: write_gate', () => {
 	test('count condition gate opens after sufficient votes', async () => {
 		const gate: Gate = {
 			id: 'gate-vote',
-			fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 2 } }],
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
+			],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1659,7 +1682,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			gates: [
 				{
 					id: 'approval-gate',
-					fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
+					fields: [
+						{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+					],
 					resetOnCycle: false,
 				},
 			],
@@ -1689,7 +1714,14 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			gates: [
 				{
 					id: 'vote-gate',
-					fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 2 } }],
+					fields: [
+						{
+							name: 'votes',
+							type: 'map',
+							writers: ['*'],
+							check: { op: 'count', match: 'approved', min: 2 },
+						},
+					],
 					resetOnCycle: false,
 				},
 			],
@@ -1743,7 +1775,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
 				{
 					id: 'lead-gate',
 					description: 'Needs tech lead approval',
-					fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
+					fields: [
+						{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+					],
 					resetOnCycle: false,
 				},
 			],
