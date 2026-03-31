@@ -14,7 +14,7 @@
  *   qa-result-gate     (QA writes result: passed)
  *     └─► Done node activates → workflow completes
  *   qa-fail-gate       (QA writes result: failed)
- *     └─► Coding re-activates (cyclic), iteration counter increments
+ *     └─► Coding re-activates (cyclic, per-channel maxCycles enforced)
  *         └─► code-pr-gate must be re-written → 3 Reviewers re-activate
  *             └─► review-votes-gate must be re-satisfied (all 3 re-vote)
  *                 └─► QA re-activates
@@ -24,14 +24,13 @@
  *  1. QA passes → qa-result-gate opens → Done node activates
  *  2. Done node does not activate before qa-result-gate is written
  *  3. QA failure → qa-fail-gate opens → Coding re-activates (cyclic)
- *  4. Iteration counter increments on QA → Coding cycle
- *  5. qa-result-gate resets after a QA fail cycle (resetOnCycle: true)
- *  6. qa-fail-gate resets after cycle (resetOnCycle: true)
- *  7. After QA fail cycle: Reviewers must re-activate (review-votes-gate reset)
- *  8. After QA fail cycle: All 3 reviewers must re-approve before QA re-activates
- *  9. Full QA fail → re-review → QA re-activates end-to-end
- * 10. Run remains in_progress throughout QA phase
- * 11. Max iterations cap prevents further QA fail cycles
+ *  4. qa-result-gate resets after a QA fail cycle (resetOnCycle: true)
+ *  5. qa-fail-gate resets after cycle (resetOnCycle: true)
+ *  6. After QA fail cycle: Reviewers must re-activate (review-votes-gate reset)
+ *  7. After QA fail cycle: All 3 reviewers must re-approve before QA re-activates
+ *  8. Full QA fail → re-review → QA re-activates end-to-end
+ *  9. Run remains in_progress throughout QA phase
+ * 10. Channel maxCycles cap prevents further QA fail cycles
  *
  * ## Running
  *
@@ -315,40 +314,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 4: A QA fail cycle creates a new Coding task and keeps run in_progress
-	// -------------------------------------------------------------------------
-	test(
-		'A QA fail cycle creates a new Coding task and run stays in_progress',
-		async () => {
-			const { spaceId, runId, qaTask } = await setupToQaActivated(daemon);
-
-			const existingCodingTasks = await getTasksForNode(daemon, spaceId, runId, 'Coding');
-			const preCycleIds = new Set(existingCodingTasks.map((t) => t.id));
-
-			const newCodingTask = await triggerQaFailCycle(
-				daemon,
-				spaceId,
-				runId,
-				qaTask.id,
-				preCycleIds
-			);
-
-			// A fresh Coding task must have been created by the cycle
-			expect(newCodingTask.title).toBe('Coding');
-			expect(newCodingTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(newCodingTask.status);
-
-			// Run must remain in_progress — qa fail is a cyclic correction, not a hard failure
-			const { run: runAfter } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(runAfter.status).toBe('in_progress');
-		},
-		TEST_TIMEOUT
-	);
-
-	// -------------------------------------------------------------------------
-	// Test 5: qa-result-gate resets after a QA fail cycle
+	// Test 4: qa-result-gate resets after a QA fail cycle
 	// -------------------------------------------------------------------------
 	test(
 		'qa-result-gate is reset after a QA fail cycle (resetOnCycle: true)',
@@ -375,7 +341,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 6: qa-fail-gate resets after cycle (resetOnCycle: true)
+	// Test 5: qa-fail-gate resets after cycle (resetOnCycle: true)
 	// -------------------------------------------------------------------------
 	test(
 		'qa-fail-gate is reset after the QA fail cycle (resetOnCycle: true)',
@@ -397,7 +363,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 7: After QA fail cycle, review-votes-gate is reset so reviewers
+	// Test 6: After QA fail cycle, review-votes-gate is reset so reviewers
 	//         must re-activate (code-pr-gate triggers them again)
 	// -------------------------------------------------------------------------
 	test(
@@ -437,7 +403,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 8: After QA fail cycle, partial re-review (2/3) still blocks QA
+	// Test 7: After QA fail cycle, partial re-review (2/3) still blocks QA
 	// -------------------------------------------------------------------------
 	test(
 		'After QA fail cycle, partial re-review (2/3 votes) does not re-activate QA',
@@ -523,7 +489,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 9: Full QA fail → re-review → QA re-activates end-to-end
+	// Test 8: Full QA fail → re-review → QA re-activates end-to-end
 	// -------------------------------------------------------------------------
 	test(
 		'Full QA fail cycle: QA fails → Coding → 3 reviewers re-vote → QA re-activates',
@@ -631,7 +597,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 10: Run remains in_progress throughout the QA phase
+	// Test 9: Run remains in_progress throughout the QA phase
 	// -------------------------------------------------------------------------
 	test(
 		'Run status remains in_progress throughout the QA phase',
@@ -645,10 +611,10 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 11: Max iterations cap prevents further QA fail cycles
+	// Test 10: Max cycles cap prevents further QA fail cycles
 	// -------------------------------------------------------------------------
 	test(
-		'QA fail cycles stop when the run reaches maxIterations',
+		'QA fail cycles stop when the channel maxCycles cap is reached',
 		async () => {
 			// Cap at 1 cycle so the first QA fail cycle exhausts the budget.
 			// After the cap, writing qa-fail-gate again must NOT create a new Coding task.

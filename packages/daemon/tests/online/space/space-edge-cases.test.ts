@@ -106,23 +106,6 @@ describe('Space Workflow — Edge Cases', () => {
 
 			expect(runA).not.toBe(runB);
 
-			// Both runs start with iterationCount = 0.
-			// incrementIterationCount has no public RPC, so this verifies initial
-			// isolation: each run owns its own counter row, not a shared counter.
-			const runAObj = (
-				(await daemon.messageHub.request('spaceWorkflowRun.get', { id: runA })) as {
-					run: SpaceWorkflowRun;
-				}
-			).run;
-			const runBObj = (
-				(await daemon.messageHub.request('spaceWorkflowRun.get', { id: runB })) as {
-					run: SpaceWorkflowRun;
-				}
-			).run;
-
-			expect(runAObj.iterationCount).toBe(0);
-			expect(runBObj.iterationCount).toBe(0);
-
 			// Each run has its own Planning task
 			const tasksA = await getTasksForNode(daemon, space.id, runA, 'Planning');
 			const tasksB = await getTasksForNode(daemon, space.id, runB, 'Planning');
