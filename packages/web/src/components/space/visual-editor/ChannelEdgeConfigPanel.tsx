@@ -569,7 +569,24 @@ export function ChannelEdgeConfigPanel({
 					data-testid="channel-cyclic-info"
 					class="rounded border border-blue-700/60 bg-blue-950/30 px-3 py-2 text-[11px] text-blue-200"
 				>
-					This link closes a workflow loop. Cycle limit: {channel.maxCycles ?? 5}.
+					<div class="mb-1.5">This link closes a workflow loop.</div>
+					<label class="flex items-center gap-2">
+						<span class="text-blue-300">Max cycles</span>
+						<input
+							data-testid="channel-max-cycles-input"
+							type="number"
+							min={1}
+							max={100}
+							value={channel.maxCycles ?? 5}
+							class="w-16 rounded bg-dark-800 border border-blue-700/40 px-2 py-0.5 text-[11px] text-blue-100"
+							onChange={(e) => {
+								const val = parseInt((e.target as HTMLInputElement).value, 10);
+								if (!isNaN(val) && val >= 1) {
+									onChange(index, { ...channel, maxCycles: val });
+								}
+							}}
+						/>
+					</label>
 				</div>
 			)}
 
