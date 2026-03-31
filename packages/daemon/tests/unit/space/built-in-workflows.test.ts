@@ -157,9 +157,7 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('maxIterations is set to 3', () => {
-		expect(CODING_WORKFLOW.maxIterations).toBe(3);
-	});
+	// maxIterations removed from CreateSpaceWorkflowParams; per-channel maxCycles used instead.
 
 	test('startNodeId points to the planner step', () => {
 		const plannerStep = CODING_WORKFLOW.nodes.find((s) => s.agentId === 'planner');
@@ -495,9 +493,7 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		expect(CODING_WORKFLOW_V2.spaceId).toBe('');
 	});
 
-	test('maxIterations is set to 5', () => {
-		expect(CODING_WORKFLOW_V2.maxIterations).toBe(5);
-	});
+	// maxIterations removed from CreateSpaceWorkflowParams; per-channel maxCycles used instead.
 
 	test('has the default tag so workflow selector ranks it first for coding requests', () => {
 		expect(CODING_WORKFLOW_V2.tags).toContain('default');
@@ -698,11 +694,7 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('CODING_WORKFLOW seeded with maxIterations', async () => {
-		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
-		expect(wf!.maxIterations).toBe(3);
-	});
+	// maxIterations removed from CreateSpaceWorkflowParams; per-channel maxCycles used instead.
 
 	test('CODING_WORKFLOW seeded Verify step has instructions', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
