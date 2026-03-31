@@ -152,7 +152,7 @@ describe('buildCustomAgentSystemPrompt', () => {
 	it('includes bypass markers section', () => {
 		const agent = makeAgent();
 		const prompt = buildCustomAgentSystemPrompt(agent);
-		expect(prompt).toContain('Bypassing Git/PR Gates for Research-Only Tasks');
+		expect(prompt).toContain('Bypassing Git/PR Gates for Research-Only and No-Op Coding Tasks');
 		expect(prompt).toContain('RESEARCH_ONLY:');
 		expect(prompt).toContain('VERIFICATION_COMPLETE:');
 		expect(prompt).toContain('INVESTIGATION_RESULT:');
@@ -1517,7 +1517,7 @@ describe('buildCustomAgentSystemPrompt coder integration', () => {
 	it('coder prompt still includes bypass markers', () => {
 		const agent = makeAgent({ role: 'coder', name: 'Coder' });
 		const prompt = buildCustomAgentSystemPrompt(agent);
-		expect(prompt).toContain('Bypassing Git/PR Gates for Research-Only Tasks');
+		expect(prompt).toContain('Bypassing Git/PR Gates for Research-Only and No-Op Coding Tasks');
 		expect(prompt).toContain('RESEARCH_ONLY:');
 	});
 

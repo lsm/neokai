@@ -197,10 +197,10 @@ declare type ControlResponse = {
 
 declare namespace coreTypes {
     export {
-        SandboxSettings,
-        SandboxNetworkConfig,
         SandboxFilesystemConfig,
         SandboxIgnoreViolations,
+        SandboxNetworkConfig,
+        SandboxSettings,
         NonNullableUsage,
         HOOK_EVENTS,
         EXIT_REASONS,
@@ -1578,6 +1578,20 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     mcpServerStatus(): Promise<McpServerStatus[]>;
     /**
+     * Get a breakdown of current context window usage by category
+     * (system prompt, tools, messages, MCP tools, memory files, etc.).
+     *
+     * @returns Context usage breakdown including token counts per category and total usage
+     */
+    getContextUsage(): Promise<SDKControlGetContextUsageResponse>;
+    /**
+     * Reload plugins from disk and return the refreshed commands, agents,
+     * plugins, and MCP server status.
+     *
+     * @returns The refreshed session components after plugin reload
+     */
+    reloadPlugins(): Promise<SDKControlReloadPluginsResponse>;
+    /**
      * Get information about the authenticated account.
      *
      * @returns Account information including email, organization, and subscription type
@@ -1605,6 +1619,7 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @param mtime - File mtime (floored ms) at the time of the observed Read
      */
     seedReadState(path: string, mtime: number): Promise<void>;
+
 
 
 
@@ -1852,6 +1867,106 @@ declare type SDKControlElicitationRequest = {
 };
 
 /**
+ * Requests a breakdown of current context window usage by category.
+ */
+declare type SDKControlGetContextUsageRequest = {
+    subtype: 'get_context_usage';
+};
+
+/**
+ * Breakdown of current context window usage by category (system prompt, tools, messages, etc.).
+ */
+export declare type SDKControlGetContextUsageResponse = {
+    categories: {
+        name: string;
+        tokens: number;
+        color: string;
+        isDeferred?: boolean;
+    }[];
+    totalTokens: number;
+    maxTokens: number;
+    rawMaxTokens: number;
+    percentage: number;
+    gridRows: {
+        color: string;
+        isFilled: boolean;
+        categoryName: string;
+        tokens: number;
+        percentage: number;
+        squareFullness: number;
+    }[][];
+    model: string;
+    memoryFiles: {
+        path: string;
+        type: string;
+        tokens: number;
+    }[];
+    mcpTools: {
+        name: string;
+        serverName: string;
+        tokens: number;
+        isLoaded?: boolean;
+    }[];
+    deferredBuiltinTools?: {
+        name: string;
+        tokens: number;
+        isLoaded: boolean;
+    }[];
+    systemTools?: {
+        name: string;
+        tokens: number;
+    }[];
+    systemPromptSections?: {
+        name: string;
+        tokens: number;
+    }[];
+    agents: {
+        agentType: string;
+        source: string;
+        tokens: number;
+    }[];
+    slashCommands?: {
+        totalCommands: number;
+        includedCommands: number;
+        tokens: number;
+    };
+    skills?: {
+        totalSkills: number;
+        includedSkills: number;
+        tokens: number;
+        skillFrontmatter: {
+            name: string;
+            source: string;
+            tokens: number;
+        }[];
+    };
+    autoCompactThreshold?: number;
+    isAutoCompactEnabled: boolean;
+    messageBreakdown?: {
+        toolCallTokens: number;
+        toolResultTokens: number;
+        attachmentTokens: number;
+        assistantMessageTokens: number;
+        userMessageTokens: number;
+        toolCallsByType: {
+            name: string;
+            callTokens: number;
+            resultTokens: number;
+        }[];
+        attachmentsByType: {
+            name: string;
+            tokens: number;
+        }[];
+    };
+    apiUsage: {
+        input_tokens: number;
+        output_tokens: number;
+        cache_creation_input_tokens: number;
+        cache_read_input_tokens: number;
+    } | null;
+};
+
+/**
  * Returns the effective merged settings and the raw per-source settings.
  */
 declare type SDKControlGetSettingsRequest = {
@@ -1876,7 +1991,7 @@ declare type SDKControlInitializeRequest = {
 /**
  * Response from session initialization with available commands, models, and account info.
  */
-declare type SDKControlInitializeResponse = {
+export declare type SDKControlInitializeResponse = {
     commands: coreTypes.SlashCommand[];
     agents: coreTypes.AgentInfo[];
     output_style: string;
@@ -1955,13 +2070,35 @@ declare type SDKControlPermissionRequest = {
     description?: string;
 };
 
+/**
+ * Reloads plugins from disk and returns the refreshed session components.
+ */
+declare type SDKControlReloadPluginsRequest = {
+    subtype: 'reload_plugins';
+};
+
+/**
+ * Refreshed commands, agents, plugins, and MCP server status after reload.
+ */
+export declare type SDKControlReloadPluginsResponse = {
+    commands: coreTypes.SlashCommand[];
+    agents: coreTypes.AgentInfo[];
+    plugins: {
+        name: string;
+        path: string;
+        source?: string;
+    }[];
+    mcpServers: coreTypes.McpServerStatus[];
+    error_count: number;
+};
+
 export declare type SDKControlRequest = {
     type: 'control_request';
     request_id: string;
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlSetProactiveRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlReloadPluginsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlSetProactiveRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest;
 
 export declare type SDKControlResponse = {
     type: 'control_response';
@@ -2503,7 +2640,7 @@ export declare type SDKUserMessage = {
      */
     timestamp?: string;
     uuid?: UUID;
-    session_id: string;
+    session_id?: string;
 };
 
 export declare type SDKUserMessageReplay = {
@@ -2752,6 +2889,10 @@ export declare interface Settings {
                  */
                 command: string;
                 /**
+                 * Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.
+                 */
+                if?: string;
+                /**
                  * Shell interpreter. 'bash' uses your $SHELL (bash/zsh/sh); 'powershell' uses pwsh. Defaults to bash.
                  */
                 shell?: 'bash' | 'powershell';
@@ -2785,6 +2926,10 @@ export declare interface Settings {
                  */
                 prompt: string;
                 /**
+                 * Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.
+                 */
+                if?: string;
+                /**
                  * Timeout in seconds for this specific prompt evaluation
                  */
                 timeout?: number;
@@ -2810,6 +2955,10 @@ export declare interface Settings {
                  */
                 prompt: string;
                 /**
+                 * Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.
+                 */
+                if?: string;
+                /**
                  * Timeout in seconds for agent execution (default 60)
                  */
                 timeout?: number;
@@ -2834,6 +2983,10 @@ export declare interface Settings {
                  * URL to POST the hook input JSON to
                  */
                 url: string;
+                /**
+                 * Permission rule syntax to filter when this hook runs (e.g., "Bash(git *)"). Only runs if the tool call matches the pattern. Avoids spawning hooks for non-matching commands.
+                 */
+                if?: string;
                 /**
                  * Timeout in seconds for this specific request
                  */
@@ -3885,7 +4038,7 @@ export declare interface SpawnOptions {
     signal: AbortSignal;
 }
 
-declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKStreamlinedTextMessage | coreTypes.SDKStreamlinedToolUseSummaryMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
+declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKStreamlinedTextMessage | coreTypes.SDKStreamlinedToolUseSummaryMessage | coreTypes.SDKPostTurnSummaryMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
 
 export declare type StopFailureHookInput = BaseHookInput & {
     hook_event_name: 'StopFailure';
@@ -3999,6 +4152,7 @@ export declare type ThinkingEnabled = {
 export declare function tool<Schema extends AnyZodRawShape>(_name: string, _description: string, _inputSchema: Schema, _handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>, _extras?: {
     annotations?: ToolAnnotations;
     searchHint?: string;
+    alwaysLoad?: boolean;
 }): SdkMcpToolDefinition<Schema>;
 
 /**
