@@ -51,10 +51,11 @@ import type {
 	WorkflowChannel,
 	WorkflowNode,
 } from '@neokai/shared';
-import { resolveNodeAgents } from '@neokai/shared';
+import { resolveNodeAgents, isChannelCyclic } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { ChannelGateEvaluator, ChannelGateBlockedError } from './channel-gate-evaluator';
@@ -147,8 +148,13 @@ export interface ChannelRouterConfig {
 	 */
 	gateDataRepo?: GateDataRepository;
 	/**
+	 * Channel cycle repository for per-channel iteration tracking.
+	 * Required when workflows contain cyclic (backward) channels.
+	 */
+	channelCycleRepo?: ChannelCycleRepository;
+	/**
 	 * Raw SQLite database handle.
-	 * When provided, gate data resets and iteration counter increments on cyclic
+	 * When provided, gate data resets and cycle counter increments on cyclic
 	 * channels are performed in a single atomic transaction (`db.transaction()`).
 	 * When omitted, operations are performed sequentially (still safe for most
 	 * single-process use cases but not ACID-atomic on crash).
@@ -303,18 +309,22 @@ export class ChannelRouter {
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 
-		const channel = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
-		if (!channel) {
+		const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
+		if (!match) {
 			// Open topology — no declared channel for this pair; delivery is unrestricted
 			return { allowed: true };
 		}
+		const { channel, index } = match;
 
-		// ── Iteration cap check ──────────────────────────────────────────────
-		if (channel.isCyclic && run.iterationCount >= run.maxIterations) {
-			return {
-				allowed: false,
-				reason: `Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum iteration count (${run.iterationCount}/${run.maxIterations}). Increase maxIterations to allow more cycles.`,
-			};
+		// ── Per-channel cycle cap check ──────────────────────────────────────
+		if (this.isChannelCyclicByIndex(index, workflow)) {
+			const maxCycles = channel.maxCycles ?? 5;
+			if (this.isCycleCapReached(runId, index, maxCycles)) {
+				return {
+					allowed: false,
+					reason: `Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`,
+				};
+			}
 		}
 
 		// ── Gate condition evaluation ────────────────────────────────────────
@@ -384,15 +394,21 @@ export class ChannelRouter {
 			throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 		}
 
-		// ── 2. Gate evaluation and iteration cap ───────────────────────────────
-		const channel = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
+		// ── 2. Gate evaluation and per-channel cycle cap ────────────────────────
+		const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
+		const channel = match?.channel;
+		const channelIndex = match?.index ?? -1;
+		const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
 
 		if (channel) {
-			// Always enforce the iteration cap for cyclic channels (even without context)
-			if (channel.isCyclic && run.iterationCount >= run.maxIterations) {
-				throw new ActivationError(
-					`Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum iteration count (${run.iterationCount}/${run.maxIterations}). Increase maxIterations to allow more cycles.`
-				);
+			// Enforce per-channel cycle cap for cyclic channels (even without context)
+			if (channelIsCyclic) {
+				const maxCycles = channel.maxCycles ?? 5;
+				if (this.isCycleCapReached(runId, channelIndex, maxCycles)) {
+					throw new ActivationError(
+						`Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
+					);
+				}
 			}
 
 			// New separated architecture: gateId takes precedence over legacy inline gate
@@ -442,14 +458,9 @@ export class ChannelRouter {
 			activatedTasks = await this.activateNode(runId, targetNode.id);
 		}
 
-		// ── 5. Increment iteration count and reset cyclic gates ───────────────
-		// For cyclic channels: atomically increment the iteration counter and
-		// reset gate data for gates with `resetOnCycle: true` in the workflow.
-		//
-		// When `db` is in config: both operations run in a single SQLite transaction.
-		// When `db` is absent: operations run sequentially (safe in single-process JS).
-		if (channel?.isCyclic) {
-			this.incrementAndResetCyclicGates(runId, workflow);
+		// ── 5. Increment per-channel cycle count and reset cyclic gates ──────
+		if (channelIsCyclic && channel) {
+			this.incrementAndResetCyclicChannel(runId, channelIndex, channel.maxCycles ?? 5, workflow);
 		}
 
 		return {
@@ -501,13 +512,21 @@ export class ChannelRouter {
 		const gateResult = this.evaluateGateById(runId, gateId, workflow);
 		if (!gateResult.open) return [];
 
-		// Determine if any of these channels are cyclic — if so, enforce the iteration cap
+		// Determine if any of these channels are cyclic — if so, enforce the per-channel cap
 		// before activating any node (mirrors the guard in deliverMessage).
-		const hasCyclicChannel = channels.some((ch) => ch.isCyclic);
-		if (hasCyclicChannel && run.iterationCount >= run.maxIterations) {
-			throw new ActivationError(
-				`Cyclic channel via gate "${gateId}" has reached the maximum iteration count (${run.iterationCount}/${run.maxIterations}). Increase maxIterations to allow more cycles.`
-			);
+		const allChannels = workflow.channels ?? [];
+		let cyclicChannelMatch: { index: number; maxCycles: number } | null = null;
+		for (const ch of channels) {
+			const chIdx = allChannels.indexOf(ch);
+			if (chIdx >= 0 && this.isChannelCyclicByIndex(chIdx, workflow)) {
+				const maxCycles = ch.maxCycles ?? 5;
+				if (this.isCycleCapReached(runId, chIdx, maxCycles)) {
+					throw new ActivationError(
+						`Cyclic channel via gate "${gateId}" (index ${chIdx}) has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
+					);
+				}
+				cyclicChannelMatch = { index: chIdx, maxCycles };
+			}
 		}
 
 		// Gate is open → collect all unique node IDs that need activation.
@@ -550,12 +569,12 @@ export class ChannelRouter {
 			// nodeIdsToActivate check above and the activation attempt — silently skip.
 		}
 
-		// For cyclic channels: atomically increment the iteration counter and reset
+		// For cyclic channels: increment the per-channel cycle counter and reset
 		// gates with `resetOnCycle: true`. This mirrors the logic in deliverMessage and
 		// ensures the QA→Coding feedback path (triggered via write_gate MCP tool →
 		// onGateDataChanged) correctly resets reviewer votes and advances the cycle counter.
-		if (hasCyclicChannel && activatedTasks.length > 0) {
-			this.incrementAndResetCyclicGates(runId, workflow);
+		if (cyclicChannelMatch && activatedTasks.length > 0) {
+			this.incrementAndResetCyclicChannel(runId, cyclicChannelMatch.index, cyclicChannelMatch.maxCycles, workflow);
 		}
 
 		return activatedTasks;
@@ -601,50 +620,7 @@ export class ChannelRouter {
 		return evaluateGate(gateWithData);
 	}
 
-	/**
-	 * Atomically increments the workflow run's iteration counter and resets gate
-	 * data for all gates with `resetOnCycle: true` in the workflow.
-	 *
-	 * When `db` is in config: runs both operations in a single SQLite transaction.
-	 * When `db` is absent: runs operations sequentially (safe for single-process).
-	 *
-	 * Throws `ActivationError` if the iteration cap was already reached at the time
-	 * of the atomic increment (concurrent TOCTOU race).
-	 */
-	private incrementAndResetCyclicGates(runId: string, workflow: SpaceWorkflow): void {
-		const cyclicGates = (workflow.gates ?? []).filter((g) => g.resetOnCycle);
-
-		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {
-			// Atomic path: wrap both reset and increment in one transaction.
-			// db.transaction() preserves the return type of the wrapped function,
-			// so the call returns boolean directly (no cast needed).
-			const transaction = this.config.db.transaction(() => {
-				for (const gate of cyclicGates) {
-					this.config.gateDataRepo!.reset(runId, gate.id, gate.data);
-				}
-				return this.config.workflowRunRepo.incrementIterationCount(runId);
-			});
-			const incremented = transaction();
-			if (!incremented) {
-				throw new ActivationError(
-					`Cyclic channel reached the maximum iteration count during delivery (cap enforced atomically). Message was delivered but the cycle was not counted.`
-				);
-			}
-		} else {
-			// Sequential path: reset gates first, then increment
-			if (this.config.gateDataRepo) {
-				for (const gate of cyclicGates) {
-					this.config.gateDataRepo.reset(runId, gate.id, gate.data);
-				}
-			}
-			const incremented = this.config.workflowRunRepo.incrementIterationCount(runId);
-			if (!incremented) {
-				throw new ActivationError(
-					`Cyclic channel reached the maximum iteration count during delivery (cap enforced atomically). Message was delivered but the cycle was not counted.`
-				);
-			}
-		}
-	}
+	// incrementAndResetCyclicChannel is defined alongside findMatchingWorkflowChannel above
 
 	/**
 	 * Returns all in-flight tasks for a given (runId, nodeId) pair.
@@ -713,13 +689,13 @@ export class ChannelRouter {
 		workflow: SpaceWorkflow,
 		fromRole: string,
 		toTarget: string
-	): WorkflowChannel | undefined {
+	): { channel: WorkflowChannel; index: number } | undefined {
 		const fromNodeName = this.findNodeByAgentRole(workflow, fromRole)?.name;
 		const toNodeName =
 			this.findNodeByAgentRole(workflow, toTarget)?.name ??
 			workflow.nodes.find((node) => node.name === toTarget)?.name;
 		const channels = workflow.channels ?? [];
-		return channels.find((ch) => {
+		const index = channels.findIndex((ch) => {
 			// Match the from side
 			if (ch.from !== '*' && ch.from !== fromRole && ch.from !== fromNodeName) return false;
 			// Match the to side
@@ -729,6 +705,76 @@ export class ChannelRouter {
 			}
 			return false;
 		});
+		return index >= 0 ? { channel: channels[index], index } : undefined;
+	}
+
+	/**
+	 * Determines if a channel at the given index is cyclic (backward in graph topology).
+	 */
+	private isChannelCyclicByIndex(channelIndex: number, workflow: SpaceWorkflow): boolean {
+		const channels = workflow.channels ?? [];
+		return isChannelCyclic(channelIndex, channels, workflow.nodes);
+	}
+
+	/**
+	 * Checks whether a cyclic channel has reached its per-channel cycle cap.
+	 */
+	private isCycleCapReached(
+		runId: string,
+		channelIndex: number,
+		maxCycles: number
+	): boolean {
+		if (!this.config.channelCycleRepo) return false;
+		const record = this.config.channelCycleRepo.get(runId, channelIndex);
+		return record ? record.count >= maxCycles : false;
+	}
+
+	/**
+	 * Atomically increments the per-channel cycle counter and resets gates
+	 * with `resetOnCycle: true`.
+	 *
+	 * When `db` is in config: runs both operations in a single SQLite transaction.
+	 * When `db` is absent: runs operations sequentially (safe for single-process).
+	 *
+	 * Throws `ActivationError` if the cycle cap was already reached at the time
+	 * of the atomic increment (concurrent TOCTOU race).
+	 */
+	private incrementAndResetCyclicChannel(
+		runId: string,
+		channelIndex: number,
+		maxCycles: number,
+		workflow: SpaceWorkflow
+	): void {
+		if (!this.config.channelCycleRepo) return;
+
+		const cyclicGates = (workflow.gates ?? []).filter((g) => g.resetOnCycle);
+
+		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {
+			const transaction = this.config.db.transaction(() => {
+				for (const gate of cyclicGates) {
+					this.config.gateDataRepo!.reset(runId, gate.id, gate.data);
+				}
+				return this.config.channelCycleRepo!.incrementCycleCount(runId, channelIndex, maxCycles);
+			});
+			const incremented = transaction();
+			if (!incremented) {
+				throw new ActivationError(
+					`Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`
+				);
+			}
+		} else {
+			if (this.config.gateDataRepo) {
+				for (const gate of cyclicGates) {
+					this.config.gateDataRepo.reset(runId, gate.id, gate.data);
+				}
+			}
+			const incremented = this.config.channelCycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);
+			if (!incremented) {
+				throw new ActivationError(
+					`Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`
+				);
+			}
+		}
 	}
 
 	/**

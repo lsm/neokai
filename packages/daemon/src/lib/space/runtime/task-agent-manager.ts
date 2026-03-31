@@ -65,6 +65,7 @@ import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type {
 	SubSessionFactory,
@@ -148,6 +149,8 @@ export interface TaskAgentManagerConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
 	gateDataRepo: GateDataRepository;
+	/** Channel cycle repository — for per-channel cycle tracking in cyclic workflows */
+	channelCycleRepo: ChannelCycleRepository;
 	/** DaemonHub — event bus for session state change subscriptions */
 	daemonHub: DaemonHub;
 	/** MessageHub — used to write SDK messages */
@@ -1440,6 +1443,7 @@ export class TaskAgentManager {
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
 			gateDataRepo: this.config.gateDataRepo,
+			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
 		});
 		const rehydrateCompletionDetector = new CompletionDetector(this.config.taskRepo);
@@ -1754,6 +1758,7 @@ export class TaskAgentManager {
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
 			gateDataRepo: this.config.gateDataRepo,
+			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
 		});
 
