@@ -28,7 +28,7 @@
  * - canDeliver(): gate 'always' — always allowed
  * - canDeliver(): gate 'human' — blocked without approval, allowed with approval
  * - canDeliver(): gate 'task_result' — blocked on mismatch, allowed on match
- * - canDeliver(): cyclic channel — blocked when iterationCount >= maxIterations
+ * - canDeliver(): cyclic channel — blocked when cycle count >= maxCycles
  * - canDeliver(): cyclic channel — allowed when below cap
  * - canDeliver(): no gate on channel — allowed
  */
@@ -43,6 +43,7 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
+import { ChannelCycleRepository } from '../../../src/storage/repositories/channel-cycle-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
@@ -187,6 +188,7 @@ describe('ChannelRouter', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let agentManager: SpaceAgentManager;
 	let gateDataRepo: GateDataRepository;
+	let channelCycleRepo: ChannelCycleRepository;
 	let router: ChannelRouter;
 
 	const SPACE_ID = 'space-cr-1';
@@ -208,6 +210,7 @@ describe('ChannelRouter', () => {
 		taskRepo = new SpaceTaskRepository(db);
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		gateDataRepo = new GateDataRepository(db);
+		channelCycleRepo = new ChannelCycleRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
 		agentManager = new SpaceAgentManager(agentRepo);
@@ -221,6 +224,7 @@ describe('ChannelRouter', () => {
 			workflowManager,
 			agentManager,
 			gateDataRepo,
+			channelCycleRepo,
 			db,
 		});
 	});
@@ -960,14 +964,11 @@ describe('ChannelRouter', () => {
 		// Cyclic channels — iteration tracking
 		// -----------------------------------------------------------------------
 
-		test('cyclic channel: increments iterationCount on successful delivery', async () => {
+		test('cyclic channel: increments cycle count on successful delivery', async () => {
+			// Two channels form a cycle: forward coder→planner, backward planner→coder
 			const channels: WorkflowChannel[] = [
-				{
-					from: 'coder',
-					to: 'planner',
-					direction: 'one-way',
-					isCyclic: true,
-				},
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 5 },
 			];
 			const workflow = buildWorkflow(
 				SPACE_ID,
@@ -983,14 +984,13 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Cyclic Run',
-				maxIterations: 5,
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// First delivery
-			await router.deliverMessage(run.id, 'coder', 'planner', 'message 1');
-			let freshRun = workflowRunRepo.getRun(run.id)!;
-			expect(freshRun.iterationCount).toBe(1);
+			// First delivery on the backward (cyclic) channel: planner → coder
+			await router.deliverMessage(run.id, 'planner', 'coder', 'message 1');
+			// Channel index 1 is the backward channel
+			expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
 
 			// Cancel existing tasks to allow re-activation
 			for (const t of taskRepo.listByWorkflowRun(run.id)) {
@@ -998,19 +998,14 @@ describe('ChannelRouter', () => {
 			}
 
 			// Second delivery
-			await router.deliverMessage(run.id, 'coder', 'planner', 'message 2');
-			freshRun = workflowRunRepo.getRun(run.id)!;
-			expect(freshRun.iterationCount).toBe(2);
+			await router.deliverMessage(run.id, 'planner', 'coder', 'message 2');
+			expect(channelCycleRepo.get(run.id, 1)!.count).toBe(2);
 		});
 
-		test('cyclic channel: throws ActivationError when iteration cap is reached', async () => {
+		test('cyclic channel: throws ActivationError when cycle cap is reached', async () => {
 			const channels: WorkflowChannel[] = [
-				{
-					from: 'coder',
-					to: 'planner',
-					direction: 'one-way',
-					isCyclic: true,
-				},
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 2 },
 			];
 			const workflow = buildWorkflow(
 				SPACE_ID,
@@ -1025,29 +1020,29 @@ describe('ChannelRouter', () => {
 			const run = workflowRunRepo.createRun({
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
-				title: 'Iteration Cap Run',
-				maxIterations: 2,
+				title: 'Cycle Cap Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Manually set iterationCount to the cap
-			workflowRunRepo.updateRun(run.id, { iterationCount: 2 });
+			// Pre-fill cycle count to the cap via the repo
+			channelCycleRepo.incrementCycleCount(run.id, 1, 2);
+			channelCycleRepo.incrementCycleCount(run.id, 1, 2);
 
 			await expect(
-				router.deliverMessage(run.id, 'coder', 'planner', 'over the limit')
+				router.deliverMessage(run.id, 'planner', 'coder', 'over the limit')
 			).rejects.toBeInstanceOf(ActivationError);
 			await expect(
-				router.deliverMessage(run.id, 'coder', 'planner', 'over the limit')
-			).rejects.toThrow(/maximum iteration count/);
+				router.deliverMessage(run.id, 'planner', 'coder', 'over the limit')
+			).rejects.toThrow(/maximum cycle count/);
 		});
 
-		test('non-cyclic channel: iterationCount stays unchanged', async () => {
+		test('non-cyclic channel: cycle count stays unchanged', async () => {
 			const channels: WorkflowChannel[] = [
 				{
 					from: 'coder',
 					to: 'planner',
 					direction: 'one-way',
-					// isCyclic is NOT set
+					// Forward channel — not cyclic
 				},
 			];
 			const workflow = buildWorkflow(
@@ -1069,8 +1064,8 @@ describe('ChannelRouter', () => {
 
 			await router.deliverMessage(run.id, 'coder', 'planner', 'non-cyclic message');
 
-			const freshRun = workflowRunRepo.getRun(run.id)!;
-			expect(freshRun.iterationCount).toBe(0);
+			// No cycle records should exist for this forward-only channel
+			expect(channelCycleRepo.get(run.id, 0)).toBeNull();
 		});
 	});
 
@@ -1289,14 +1284,11 @@ describe('ChannelRouter', () => {
 			expect(allowed.allowed).toBe(true);
 		});
 
-		test('cyclic channel: blocked when iterationCount >= maxIterations', async () => {
+		test('cyclic channel: blocked when cycle count >= maxCycles', async () => {
+			// Backward channel planner→coder forms a cycle with forward coder→planner
 			const channels: WorkflowChannel[] = [
-				{
-					from: 'coder',
-					to: 'planner',
-					direction: 'one-way',
-					isCyclic: true,
-				},
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 3 },
 			];
 			const workflow = buildWorkflow(
 				SPACE_ID,
@@ -1311,27 +1303,25 @@ describe('ChannelRouter', () => {
 			const run = workflowRunRepo.createRun({
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
-				title: 'Iteration Cap Run',
-				maxIterations: 3,
+				title: 'Cycle Cap Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			workflowRunRepo.updateRun(run.id, { iterationCount: 3 });
+			// Pre-fill cycle count to the cap (channel index 1 is the backward channel)
+			channelCycleRepo.incrementCycleCount(run.id, 1, 3);
+			channelCycleRepo.incrementCycleCount(run.id, 1, 3);
+			channelCycleRepo.incrementCycleCount(run.id, 1, 3);
 
-			const result = await router.canDeliver(run.id, 'coder', 'planner', {
+			const result = await router.canDeliver(run.id, 'planner', 'coder', {
 				workspacePath: '/tmp/ws',
 			});
 			expect(result.allowed).toBe(false);
-			expect(result.reason).toMatch(/maximum iteration count/);
+			expect(result.reason).toMatch(/maximum cycle count/);
 		});
 
 		test('cyclic channel: allowed when below the cap', async () => {
 			const channels: WorkflowChannel[] = [
-				{
-					from: 'coder',
-					to: 'planner',
-					direction: 'one-way',
-					isCyclic: true,
-				},
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 5 },
 			];
 			const workflow = buildWorkflow(
 				SPACE_ID,
@@ -1347,24 +1337,24 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Below Cap Run',
-				maxIterations: 5,
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			workflowRunRepo.updateRun(run.id, { iterationCount: 2 });
+			channelCycleRepo.incrementCycleCount(run.id, 1, 5);
+			channelCycleRepo.incrementCycleCount(run.id, 1, 5);
 
-			const result = await router.canDeliver(run.id, 'coder', 'planner', {
+			const result = await router.canDeliver(run.id, 'planner', 'coder', {
 				workspacePath: '/tmp/ws',
 			});
 			expect(result.allowed).toBe(true);
 		});
 
-		test('non-cyclic channel: iteration count does not block delivery', async () => {
+		test('non-cyclic channel: cycle count does not block delivery', async () => {
 			const channels: WorkflowChannel[] = [
 				{
 					from: 'coder',
 					to: 'planner',
 					direction: 'one-way',
-					// isCyclic NOT set
+					// Forward channel — not cyclic
 				},
 			];
 			const workflow = buildWorkflow(
@@ -1381,16 +1371,13 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Non-cyclic Cap Run',
-				maxIterations: 1,
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			// Set iterationCount above maxIterations
-			workflowRunRepo.updateRun(run.id, { iterationCount: 100 });
 
 			const result = await router.canDeliver(run.id, 'coder', 'planner', {
 				workspacePath: '/tmp/ws',
 			});
-			// Non-cyclic channel is not affected by iteration count
+			// Non-cyclic (forward) channel is not affected by cycle count
 			expect(result.allowed).toBe(true);
 		});
 
@@ -2143,7 +2130,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', isCyclic: true },
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -2164,7 +2152,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Reset On Cycle Run',
-				maxIterations: 10,
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
@@ -2173,17 +2160,16 @@ describe('ChannelRouter', () => {
 				votes: { alice: 'approved', bob: 'approved' },
 			});
 
-			// Traverse the cyclic channel — should reset gate data atomically
-			await router.deliverMessage(run.id, 'coder', 'planner', 'iterating');
+			// Traverse the cyclic (backward) channel: planner → coder
+			await router.deliverMessage(run.id, 'planner', 'coder', 'iterating');
 
 			// Gate data should have been reset to default (empty votes map)
 			const afterReset = gateDataRepo.get(run.id, 'review-votes-gate');
 			expect(afterReset).not.toBeNull();
 			expect(afterReset!.data).toEqual({ votes: {} });
 
-			// Iteration count should have been incremented
-			const updatedRun = workflowRunRepo.getRun(run.id);
-			expect(updatedRun!.iterationCount).toBe(1);
+			// Cycle count should have been incremented (channel index 1 is the backward channel)
+			expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
 		});
 
 		test('resetOnCycle: gates with resetOnCycle=false are preserved on cyclic traversal', async () => {
@@ -2202,7 +2188,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', isCyclic: true },
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -2223,7 +2210,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Selective Reset Run',
-				maxIterations: 10,
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
@@ -2231,8 +2217,8 @@ describe('ChannelRouter', () => {
 			gateDataRepo.set(run.id, 'review-reject-gate', { rejected: 'needs work' });
 			gateDataRepo.set(run.id, 'code-pr-gate', { pr: 'https://github.com/org/repo/pull/42' });
 
-			// Traverse cyclic channel
-			await router.deliverMessage(run.id, 'coder', 'planner', 'back to planning');
+			// Traverse cyclic (backward) channel: planner → coder
+			await router.deliverMessage(run.id, 'planner', 'coder', 'back to coding');
 
 			// resetOnCycle: true gate should be reset to defaults
 			const resetRecord = gateDataRepo.get(run.id, 'review-reject-gate');
@@ -2259,7 +2245,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', isCyclic: true },
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -2280,7 +2267,6 @@ describe('ChannelRouter', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Multi Reset Atomic Run',
-				maxIterations: 10,
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
@@ -2288,8 +2274,8 @@ describe('ChannelRouter', () => {
 			gateDataRepo.set(run.id, 'review-votes-gate', { votes: { alice: 'ok' } });
 			gateDataRepo.set(run.id, 'qa-result-gate', { result: 'passed' });
 
-			// Traverse cyclic channel
-			await router.deliverMessage(run.id, 'coder', 'planner', 'cycle');
+			// Traverse cyclic (backward) channel: planner → coder
+			await router.deliverMessage(run.id, 'planner', 'coder', 'cycle');
 
 			// Both should be reset to their defaults
 			const votes = gateDataRepo.get(run.id, 'review-votes-gate');
@@ -2732,7 +2718,7 @@ describe('ChannelRouter', () => {
 			};
 			const allGates = [gateCodePr, gateReviewVotes, gateReviewReject, gateQaResult, gateQaFail];
 
-			function buildQaWorkflow() {
+			function buildQaWorkflow(qaMaxCycles = 5) {
 				const channels: WorkflowChannel[] = [
 					// Coding → Code Review node
 					{ from: 'Coding', to: 'Code Review', direction: 'one-way', gateId: 'code-pr-gate' },
@@ -2745,13 +2731,13 @@ describe('ChannelRouter', () => {
 					},
 					// QA → Done (success)
 					{ from: 'QA', to: 'Done', direction: 'one-way', gateId: 'qa-result-gate' },
-					// QA → Coding (cyclic, fail)
+					// QA → Coding (backward/cyclic channel — topologically backward since QA is after Coding in nodes array)
 					{
 						from: 'QA',
 						to: 'Coding',
 						direction: 'one-way',
 						gateId: 'qa-fail-gate',
-						isCyclic: true,
+						maxCycles: qaMaxCycles,
 					},
 				];
 				return buildWorkflowWithGates(
@@ -2792,7 +2778,6 @@ describe('ChannelRouter', () => {
 					spaceId: SPACE_ID,
 					workflowId: workflow.id,
 					title: 'QA Fail Loop Run',
-					maxIterations: 5,
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
 				gateDataRepo.initializeForRun(run.id, allGates);
@@ -2816,8 +2801,8 @@ describe('ChannelRouter', () => {
 				expect(activated).toHaveLength(1);
 				expect(activated[0].workflowNodeId).toBe(NODE_CODING);
 
-				// Iteration counter must increment
-				expect(workflowRunRepo.getRun(run.id)!.iterationCount).toBe(1);
+				// Per-channel cycle counter must increment (QA→Coding is channel index 3)
+				expect(channelCycleRepo.get(run.id, 3)!.count).toBe(1);
 
 				// Cyclic-reset gates must be wiped
 				expect(gateDataRepo.get(run.id, 'review-votes-gate')!.data).toEqual({ votes: {} });
@@ -2837,7 +2822,6 @@ describe('ChannelRouter', () => {
 					spaceId: SPACE_ID,
 					workflowId: workflow.id,
 					title: 'Gate Reset On QA Fail',
-					maxIterations: 5,
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
 				gateDataRepo.initializeForRun(run.id, allGates);
@@ -2877,24 +2861,25 @@ describe('ChannelRouter', () => {
 				expect(qaFail!.data).toEqual({});
 			});
 
-			test('QA→Coding cycle increments iteration counter', async () => {
+			test('QA→Coding cycle increments per-channel cycle counter', async () => {
 				const workflow = buildQaWorkflow();
 				const run = workflowRunRepo.createRun({
 					spaceId: SPACE_ID,
 					workflowId: workflow.id,
-					title: 'Iteration Counter Run',
-					maxIterations: 5,
+					title: 'Cycle Counter Run',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
 				gateDataRepo.initializeForRun(run.id, allGates);
 
-				expect(workflowRunRepo.getRun(run.id)!.iterationCount).toBe(0);
+				// No cycle record yet
+				expect(channelCycleRepo.get(run.id, 3)).toBeNull();
 
 				// Must satisfy qa-fail-gate before delivering on cyclic QA→Coding channel
 				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
 				await router.deliverMessage(run.id, 'QA', 'Coding', 'QA cycle 1');
 
-				expect(workflowRunRepo.getRun(run.id)!.iterationCount).toBe(1);
+				// Channel index 3 is QA→Coding
+				expect(channelCycleRepo.get(run.id, 3)!.count).toBe(1);
 			});
 
 			test('after QA fail cycle, reviewers must re-vote from scratch (votes reset to empty)', async () => {
@@ -2903,7 +2888,6 @@ describe('ChannelRouter', () => {
 					spaceId: SPACE_ID,
 					workflowId: workflow.id,
 					title: 'Re-vote From Scratch',
-					maxIterations: 5,
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
 				gateDataRepo.initializeForRun(run.id, allGates);
@@ -2926,18 +2910,17 @@ describe('ChannelRouter', () => {
 				expect(canDeliver.allowed).toBe(false);
 			});
 
-			test('QA→Coding cycle throws ActivationError when max iterations reached', async () => {
-				const workflow = buildQaWorkflow();
+			test('QA→Coding cycle throws ActivationError when max cycles reached', async () => {
+				const workflow = buildQaWorkflow(2); // maxCycles: 2
 				const run = workflowRunRepo.createRun({
 					spaceId: SPACE_ID,
 					workflowId: workflow.id,
-					title: 'Max Iterations QA',
-					maxIterations: 2,
+					title: 'Max Cycles QA',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
 				gateDataRepo.initializeForRun(run.id, allGates);
 
-				// Use up 2 iterations (must satisfy qa-fail-gate before each delivery; gate resets on each cycle)
+				// Use up 2 cycles (must satisfy qa-fail-gate before each delivery; gate resets on each cycle)
 				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
 				await router.deliverMessage(run.id, 'QA', 'Coding', 'QA cycle 1');
 				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
@@ -2950,21 +2933,20 @@ describe('ChannelRouter', () => {
 				).rejects.toBeInstanceOf(ActivationError);
 			});
 
-			test('onGateDataChanged throws ActivationError when cyclic channel at max iterations', async () => {
-				const workflow = buildQaWorkflow();
+			test('onGateDataChanged throws ActivationError when cyclic channel at max cycles', async () => {
+				const workflow = buildQaWorkflow(1); // maxCycles: 1
 				const run = workflowRunRepo.createRun({
 					spaceId: SPACE_ID,
 					workflowId: workflow.id,
-					title: 'Max Iterations via onGateDataChanged',
-					maxIterations: 1,
+					title: 'Max Cycles via onGateDataChanged',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
 				gateDataRepo.initializeForRun(run.id, allGates);
 
-				// Use up the 1 iteration via onGateDataChanged
+				// Use up the 1 cycle via onGateDataChanged
 				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
 				await router.onGateDataChanged(run.id, 'qa-fail-gate');
-				expect(workflowRunRepo.getRun(run.id)!.iterationCount).toBe(1);
+				expect(channelCycleRepo.get(run.id, 3)!.count).toBe(1);
 
 				// Second attempt must throw before any activation
 				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
@@ -2979,7 +2961,6 @@ describe('ChannelRouter', () => {
 					spaceId: SPACE_ID,
 					workflowId: workflow.id,
 					title: 'QA Pass Run',
-					maxIterations: 5,
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
 				gateDataRepo.initializeForRun(run.id, allGates);

@@ -1039,7 +1039,7 @@ describe('VisualWorkflowEditor', () => {
 			expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(2);
 		});
 
-		it('converting to bidirectional auto-marks the reverse link as cyclic', async () => {
+		it('converting to bidirectional shows cyclic info on the reverse link', async () => {
 			const workflow = makeWorkflow({
 				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
 			});
@@ -1054,10 +1054,8 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(firstChannelHitbox!);
 			fireEvent.click(getByTestId('convert-channel-relation-button'));
 
-			await waitFor(() => expect(getAllByTestId('channel-cyclic-checkbox')).toHaveLength(2));
-			const cyclicCheckboxes = getAllByTestId('channel-cyclic-checkbox') as HTMLInputElement[];
-			expect(cyclicCheckboxes[0].checked).toBe(false);
-			expect(cyclicCheckboxes[1].checked).toBe(true);
+			// The reverse link (Code→Plan) closes a loop and should show cyclic info
+			await waitFor(() => expect(getAllByTestId('channel-cyclic-info')).toHaveLength(1));
 		});
 
 		it('deleting the reverse link downgrades a converted relation back to one-way', async () => {
@@ -1086,7 +1084,7 @@ describe('VisualWorkflowEditor', () => {
 			});
 		});
 
-		it('warns when a backward link closes a loop but is not marked cyclic', async () => {
+		it('shows cyclic info for backward links that close a loop', async () => {
 			const workflow = makeWorkflow({
 				channels: [
 					{ from: 'Plan', to: 'Code', direction: 'one-way' },
@@ -1104,7 +1102,8 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(firstChannelHitbox!);
 
 			await waitFor(() => expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(2));
-			expect(getAllByTestId('channel-cyclic-warning')).toHaveLength(1);
+			// The backward link (Code→Plan) should show cyclic info
+			expect(getAllByTestId('channel-cyclic-info')).toHaveLength(1);
 		});
 
 		it('edits a vote-count gate backed by workflow.gates', async () => {

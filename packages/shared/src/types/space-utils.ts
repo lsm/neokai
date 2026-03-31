@@ -91,8 +91,10 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 	if (node.agents && node.agents.length > 0) {
 		return node.agents.map((agent) => ({
 			...agent,
-			systemPrompt: node.systemPrompt,
-			instructions: node.instructions,
+			// Node-level overrides take precedence only when defined;
+			// otherwise preserve the agent-level values.
+			systemPrompt: node.systemPrompt ?? agent.systemPrompt,
+			instructions: node.instructions ?? agent.instructions,
 		}));
 	}
 
