@@ -205,19 +205,19 @@ describe('resolveChannels', () => {
 		expect(result).toHaveLength(0);
 	});
 
-	test('isCyclic is propagated from source WorkflowChannel', () => {
+	test('maxCycles is propagated from source WorkflowChannel', () => {
 		const node = makeNode('n1', 'Node1', [
 			{ name: 'coder', agentId: 'agent-coder' },
 			{ name: 'reviewer', agentId: 'agent-reviewer' },
 		]);
 		const wf = makeWorkflow(
 			[node],
-			[{ from: 'coder', to: 'reviewer', direction: 'one-way', isCyclic: true }]
+			[{ from: 'coder', to: 'reviewer', direction: 'one-way', maxCycles: 3 }]
 		);
 		const result = resolveChannels(wf);
 
 		expect(result).toHaveLength(1);
-		expect(result[0].isCyclic).toBe(true);
+		expect(result[0].maxCycles).toBe(3);
 	});
 });
 

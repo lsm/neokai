@@ -1759,7 +1759,7 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 					from: 'coder',
 					to: 'reviewer',
 					direction: 'one-way',
-					isCyclic: true,
+					maxCycles: 3,
 				},
 			],
 			createdAt: 1000,
@@ -1769,7 +1769,7 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 
 		const ch = exported.channels![0] as Record<string, unknown>;
 		expect('id' in ch).toBe(false);
-		expect(ch.isCyclic).toBe(true);
+		expect(ch.maxCycles).toBe(3);
 	});
 
 	test('channel id does not appear in exported JSON', () => {

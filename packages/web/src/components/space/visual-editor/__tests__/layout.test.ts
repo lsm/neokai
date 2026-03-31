@@ -52,7 +52,7 @@ describe('autoLayout', () => {
 			{ from: 'Coding', to: 'Code Review', direction: 'one-way' },
 			{ from: 'Code Review', to: 'QA', direction: 'one-way' },
 			{ from: 'QA', to: 'Done', direction: 'one-way' },
-			{ from: 'QA', to: 'Coding', direction: 'one-way', isCyclic: true },
+			{ from: 'QA', to: 'Coding', direction: 'one-way', maxCycles: 5 },
 		];
 
 		const result = autoLayout(steps, [], 'planning', channels);

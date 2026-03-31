@@ -296,21 +296,6 @@ function ChannelEntry({
 						testId={`channel-gate-select-${index}`}
 					/>
 
-					{/* Cyclic flag */}
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							data-testid="channel-cyclic-checkbox"
-							checked={!!channel.isCyclic}
-							onChange={(e) =>
-								updateField('isCyclic', (e.currentTarget as HTMLInputElement).checked || undefined)
-							}
-							class="rounded border-dark-600 text-teal-500 focus:ring-teal-500"
-						/>
-						<span class="text-xs text-gray-400">
-							Cyclic (increments iteration counter on delivery)
-						</span>
-					</label>
 				</div>
 			)}
 		</div>
