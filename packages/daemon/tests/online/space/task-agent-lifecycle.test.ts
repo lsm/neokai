@@ -320,18 +320,22 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 2: Initial message delivery and processing
+	// Test 2: Task Agent starts idle (no automatic kickoff) when spawned via RPC
 	// -------------------------------------------------------------------------
 	test(
-		'Task Agent processes its initial context message after spawning',
+		'Task Agent session starts idle without automatic kickoff when spawned via direct RPC',
 		async () => {
+			// With kickoff: false (the default for RPC-spawned workflow runs), the
+			// SpaceRuntime spawns the task agent session but does NOT inject an initial
+			// context message. The explicit kickoff is the Space Agent's responsibility
+			// when it orchestrates a run via the start_workflow_run MCP tool.
 			const { space, workflow } = await createTestFixtures(daemon);
 
 			const { task } = await startWorkflowRunAndGetTask(
 				daemon,
 				space.id,
 				workflow.id,
-				'Lifecycle test run — initial message'
+				'Lifecycle test run — idle kickoff check'
 			);
 
 			const taskAgentSessionId = await waitForTaskAgentSpawned(
@@ -342,25 +346,14 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			);
 			daemon.trackSession(taskAgentSessionId);
 
-			// Wait for the Task Agent to finish processing its initial message
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
-
-			// There must be at least 2 SDK messages: the initial user message + assistant response
+			// Agent starts idle — no automatic initial message injected.
+			// waitForSdkMessages resolves immediately when there are no messages to wait for.
 			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
-				minCount: 2,
-				timeout: 5_000,
-			});
-			expect(sdkMessages.length).toBeGreaterThanOrEqual(2);
+				minCount: 1,
+				timeout: 2_000,
+			}).catch(() => ({ sdkMessages: [] as Array<Record<string, unknown>> }));
 
-			// The first message in the thread must be a user message (the injected context)
-			const userMessages = sdkMessages.filter((m) => m.type === 'user');
-			expect(userMessages.length).toBeGreaterThan(0);
-
-			// The initial context must reference the workflow/task
-			const msgContent = JSON.stringify(
-				(userMessages[0] as { message?: { content?: unknown } }).message?.content ?? ''
-			);
-			expect(msgContent).toMatch(/workflow|step|task/i);
+			expect(sdkMessages.length).toBe(0);
 		},
 		TEST_TIMEOUT
 	);

@@ -563,18 +563,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		setSteps((prev) => prev.map((s, i) => (i === index ? step : s)));
 	}
 
-	function updateEntryCondition(index: number, cond: ConditionDraft) {
-		// entry condition of step[i] = transitions[i-1]
-		if (index === 0) return;
-		setTransitions((prev) => prev.map((t, i) => (i === index - 1 ? cond : t)));
-	}
-
-	function updateExitCondition(index: number, cond: ConditionDraft) {
-		// exit condition of step[i] = transitions[i]
-		if (index === steps.length - 1) return;
-		setTransitions((prev) => prev.map((t, i) => (i === index ? cond : t)));
-	}
-
 	// ---- Tags ----
 
 	function addTag(value: string) {

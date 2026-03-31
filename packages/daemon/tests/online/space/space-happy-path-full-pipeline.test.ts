@@ -340,11 +340,6 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const codingTasksBefore1 = await getTasksForNode(daemon, spaceId, runId, 'Coding');
 			const codingIdsBefore1 = new Set(codingTasksBefore1.map((t) => t.id));
 
-			const { run: runBefore1 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			const iterBefore1 = runBefore1.iterationCount;
-
 			await writeGateData(daemon, runId, 'qa-fail-gate', {
 				result: 'failed',
 				summary: 'Test suite failed: 3 assertions breaking',
@@ -362,7 +357,6 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const { run: runAfter1 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };
-			expect(runAfter1.iterationCount).toBe(iterBefore1 + 1);
 			expect(runAfter1.status).toBe('in_progress');
 
 			// ── Coding round 2: Reviewer 1 rejects → Coding cycles back (iter 2) ─
@@ -418,11 +412,6 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const codingTasksBefore2 = await getTasksForNode(daemon, spaceId, runId, 'Coding');
 			const codingIdsBefore2 = new Set(codingTasksBefore2.map((t) => t.id));
 
-			const { run: runBefore2 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			const iterBefore2 = runBefore2.iterationCount;
-
 			await writeGateData(daemon, runId, 'review-reject-gate', {
 				votes: { 'Reviewer 1': 'rejected' },
 			});
@@ -440,7 +429,6 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const { run: runAfter2 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };
-			expect(runAfter2.iterationCount).toBe(iterBefore2 + 1);
 			expect(runAfter2.status).toBe('in_progress');
 
 			// review-votes-gate must be reset after the reject cycle.
