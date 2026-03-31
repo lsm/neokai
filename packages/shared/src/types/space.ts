@@ -390,10 +390,16 @@ export interface SpaceWorkflowRun {
 	status: WorkflowRunStatus;
 	/** Optional runtime configuration for this run */
 	config?: Record<string, unknown>;
-	/** Number of times the run has looped back to a previously visited node */
-	iterationCount: number;
-	/** Maximum iterations before escalating to needs_attention */
-	maxIterations: number;
+	/**
+	 * @deprecated Global iteration counter replaced by per-channel cycle tracking.
+	 * Retained for backward compatibility with existing DB rows; runtime ignores it.
+	 */
+	iterationCount?: number;
+	/**
+	 * @deprecated Global max iterations replaced by per-channel `maxCycles`.
+	 * Retained for backward compatibility with existing DB rows; runtime ignores it.
+	 */
+	maxIterations?: number;
 	/** Optional goal/mission ID this run is associated with */
 	goalId?: string;
 	/**
@@ -417,8 +423,6 @@ export interface CreateWorkflowRunParams {
 	workflowId: string;
 	title: string;
 	description?: string;
-	/** Maximum iterations before escalating to needs_attention (overrides workflow default) */
-	maxIterations?: number;
 	/** Optional goal/mission ID to associate with this run */
 	goalId?: string;
 }
@@ -704,10 +708,12 @@ export interface Channel {
 	 */
 	gateId?: string;
 	/**
-	 * When true, each delivery on this channel increments the run's iteration counter.
-	 * Used for cyclic workflows.
+	 * Maximum number of times this channel may be traversed in a single workflow run
+	 * before delivery is blocked. Only meaningful for backward (cyclic) channels —
+	 * cyclicity is inferred from graph topology, not stored.
+	 * Defaults to 5 at runtime when the channel is cyclic and this field is absent.
 	 */
-	isCyclic?: boolean;
+	maxCycles?: number;
 	/** Optional human-readable label for display in the visual editor. */
 	label?: string;
 }
@@ -805,10 +811,12 @@ export interface WorkflowChannel {
 	 */
 	direction: 'one-way' | 'bidirectional';
 	/**
-	 * When true, each delivery on this channel increments the run's iteration counter.
-	 * Used for cyclic workflows — channel-level analogue of WorkflowTransition.isCyclic.
+	 * Maximum number of times this channel may be traversed in a single workflow run
+	 * before delivery is blocked. Only meaningful for backward (cyclic) channels —
+	 * cyclicity is inferred from graph topology, not stored.
+	 * Defaults to 5 at runtime when the channel is cyclic and this field is absent.
 	 */
-	isCyclic?: boolean;
+	maxCycles?: number;
 	/** Optional human-readable label for display in the visual editor */
 	label?: string;
 	/**
@@ -967,7 +975,10 @@ export interface SpaceWorkflow {
 	tags: string[];
 	/** Additional runtime configuration (opaque bag for future extensibility) */
 	config?: Record<string, unknown>;
-	/** Maximum iterations for cyclic workflows before escalating to needs_attention */
+	/**
+	 * @deprecated Global max iterations replaced by per-channel `maxCycles` on WorkflowChannel.
+	 * Retained for backward compatibility; runtime ignores it.
+	 */
 	maxIterations?: number;
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
@@ -1011,8 +1022,6 @@ export interface CreateSpaceWorkflowParams {
 	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
 	tags?: string[];
 	config?: Record<string, unknown>;
-	/** Maximum iterations for cyclic workflows before escalating to needs_attention */
-	maxIterations?: number;
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
 }
@@ -1059,8 +1068,6 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	tags?: string[] | null;
 	config?: Record<string, unknown> | null;
-	/** Maximum iterations for cyclic workflows. Pass `null` to clear. */
-	maxIterations?: number | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
 }
@@ -1089,7 +1096,7 @@ export interface ExportedWorkflowChannel {
 	 */
 	to: string | string[];
 	direction: 'one-way' | 'bidirectional';
-	isCyclic?: boolean;
+	maxCycles?: number;
 	label?: string;
 	gate?: WorkflowCondition;
 }

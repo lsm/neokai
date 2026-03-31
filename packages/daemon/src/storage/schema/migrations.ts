@@ -280,6 +280,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 68: Add 'origin' column to sdk_messages for frontend display of message provenance.
 	// NULL (default) is treated as 'human' by the frontend. 'neo' marks Neo-injected messages.
 	runMigration68(db);
+	// Migration 69: Per-channel cycle tracking table.
+	// Replaces the global iteration_count/max_iterations on space_workflow_runs.
+	runMigration69(db);
 }
 
 /**
@@ -4463,6 +4466,31 @@ function runMigration67(db: BunDatabase): void {
  * 'neo' marks messages injected by the Neo global AI agent.
  * 'system' marks messages injected by the daemon system internally.
  */
+/**
+ * Migration 69: Per-channel cycle tracking.
+ *
+ * Creates a `channel_cycles` table that tracks how many times each backward
+ * (cyclic) channel has been traversed in a workflow run. This replaces the
+ * global `iteration_count` / `max_iterations` columns on `space_workflow_runs`
+ * (which are left in place as dead columns to avoid expensive table recreation).
+ */
+export function runMigration69(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflow_runs')) return;
+	if (tableExists(db, 'channel_cycles')) return;
+
+	db.exec(`
+		CREATE TABLE channel_cycles (
+			run_id TEXT NOT NULL,
+			channel_index INTEGER NOT NULL,
+			count INTEGER NOT NULL DEFAULT 0,
+			max_cycles INTEGER NOT NULL DEFAULT 5,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, channel_index),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+}
+
 export function runMigration68(db: BunDatabase): void {
 	if (!tableExists(db, 'sdk_messages')) {
 		return;
