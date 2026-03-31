@@ -12,8 +12,9 @@
 
 import { useState } from 'preact/hooks';
 import type { SpaceWorkflow, SpaceExportBundle } from '@neokai/shared';
-import type { WorkflowConditionType } from './visual-editor/legacy-condition-types';
 import { spaceStore } from '../../lib/space-store';
+
+type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
 import { ImportPreviewDialog } from './ImportPreviewDialog.tsx';

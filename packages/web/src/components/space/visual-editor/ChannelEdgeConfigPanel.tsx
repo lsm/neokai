@@ -4,7 +4,6 @@ import type { Gate, GateConditionCheck, WorkflowChannel } from '@neokai/shared';
 type ChannelGateMode =
 	| 'none'
 	| 'human'
-	| 'condition'
 	| 'task_result'
 	| 'check'
 	| 'count';
@@ -12,7 +11,6 @@ type ChannelGateMode =
 const GATE_MODE_LABELS: Record<ChannelGateMode, string> = {
 	none: 'None',
 	human: 'Human Approval',
-	condition: 'Shell Condition',
 	task_result: 'Task Result',
 	check: 'Field Check',
 	count: 'Vote Count',
@@ -188,11 +186,6 @@ export function ChannelEdgeConfigPanel({
 			case 'human':
 				upsertRealGate(buildHumanGate(gateId, channel, shouldBeCyclic));
 				return;
-			case 'condition':
-				upsertRealGate(
-					buildBaseGate(gateId, channel, { type: 'check', field: 'condition_result', op: 'exists' }, shouldBeCyclic)
-				);
-				return;
 			case 'task_result': {
 				const expected =
 					currentCheckGate?.field === 'result' && typeof currentCheckGate.value === 'string'
@@ -300,7 +293,7 @@ export function ChannelEdgeConfigPanel({
 			<div class="space-y-1.5">
 				<label class="text-xs font-medium text-gray-400">Gate condition</label>
 				<div class="grid grid-cols-2 gap-1.5">
-					{(['none', 'human', 'condition', 'task_result', 'check', 'count'] as const).map((mode) => (
+					{(['none', 'human', 'task_result', 'check', 'count'] as const).map((mode) => (
 						<button
 							key={mode}
 							type="button"
@@ -314,14 +307,6 @@ export function ChannelEdgeConfigPanel({
 						</button>
 					))}
 				</div>
-
-				{gateMode === 'condition' && (
-					<div class="space-y-1">
-						<p class="text-xs text-gray-600">
-							Gate is configured as a field check condition. Edit the gate details via the gate editor.
-						</p>
-					</div>
-				)}
 
 				{gateMode === 'task_result' && (
 					<div class="space-y-1">
