@@ -6,7 +6,7 @@
  */
 
 import { useCallback } from 'preact/hooks';
-import type { WorkflowCondition, WorkflowConditionType } from './legacy-condition-types';
+import type { WorkflowCondition, WorkflowConditionType } from './types';
 
 // ============================================================================
 // Types

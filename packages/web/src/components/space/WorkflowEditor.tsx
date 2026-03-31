@@ -846,15 +846,9 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 									isFirst={i === 0}
 									isLast={i === steps.length - 1}
 									expanded={expandedIndex === i}
-									entryCondition={i > 0 ? (transitions[i - 1] ?? { type: 'always' }) : null}
-									exitCondition={
-										i < steps.length - 1 ? (transitions[i] ?? { type: 'always' }) : null
-									}
 									agents={agents}
 									onToggleExpand={() => setExpandedIndex((prev) => (prev === i ? null : i))}
 									onUpdate={(s) => updateStep(i, s)}
-									onUpdateEntryCondition={(c) => updateEntryCondition(i, c)}
-									onUpdateExitCondition={(c) => updateExitCondition(i, c)}
 									onMoveUp={() => moveStep(i, 'up')}
 									onMoveDown={() => moveStep(i, 'down')}
 									onRemove={() => removeStep(i)}

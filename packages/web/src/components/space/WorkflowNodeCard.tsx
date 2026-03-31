@@ -15,10 +15,7 @@ import type {
 	WorkflowChannel,
 	SpaceTaskStatus,
 } from '@neokai/shared';
-import type { WorkflowConditionType } from './visual-editor/legacy-condition-types';
 import { cn } from '../../lib/utils';
-import { GateConfig, CONDITION_LABELS } from './visual-editor/GateConfig';
-import type { ConditionDraft } from './visual-editor/GateConfig';
 
 // ============================================================================
 // Draft Types (used by WorkflowEditor + WorkflowNodeCard)
@@ -52,8 +49,15 @@ export function isMultiAgentNode(node: NodeDraft): boolean {
 	return Array.isArray(node.agents) && node.agents.length > 0;
 }
 
-// Re-export ConditionDraft so existing importers don't break
-export type { ConditionDraft } from './visual-editor/GateConfig';
+/**
+ * Condition draft for workflow transitions (entry/exit gates).
+ * Kept here for backward compatibility with WorkflowEditor imports.
+ */
+export interface ConditionDraft {
+	type: 'always' | 'human' | 'condition' | 'task_result';
+	/** Expression: shell command for 'condition' type, match value for 'task_result' type */
+	expression?: string;
+}
 
 // ============================================================================
 // Agent Completion State
@@ -78,56 +82,6 @@ export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
 // ============================================================================
 // Icon Components
 // ============================================================================
-
-function GateIcon({ type }: { type: WorkflowConditionType }) {
-	if (type === 'human') {
-		return (
-			<svg
-				class="w-3 h-3"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-				title="Human Approval"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-				/>
-			</svg>
-		);
-	}
-	if (type === 'condition') {
-		return (
-			<svg
-				class="w-3 h-3"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-				title="Shell Condition"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-				/>
-			</svg>
-		);
-	}
-	// always
-	return (
-		<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" title="Automatic">
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width={2}
-				d="M13 5l7 7-7 7M5 5l7 7-7 7"
-			/>
-		</svg>
-	);
-}
 
 /** Animated spinner for in-progress agents */
 function SpinnerIcon({ title }: { title?: string }) {
@@ -696,18 +650,10 @@ interface WorkflowNodeCardProps {
 	isFirst: boolean;
 	isLast: boolean;
 	expanded: boolean;
-	/** Condition on the transition coming INTO this node. Null for the first node. */
-	entryCondition: ConditionDraft | null;
-	/** Condition on the transition going OUT from this node. Null for the last node. */
-	exitCondition: ConditionDraft | null;
 	/** All space agents, excluding 'leader' */
 	agents: SpaceAgent[];
 	onToggleExpand: () => void;
 	onUpdate: (node: NodeDraft) => void;
-	/** Called when entry condition changes — updates transition[nodeIndex-1] */
-	onUpdateEntryCondition: (cond: ConditionDraft) => void;
-	/** Called when exit condition changes — updates transition[nodeIndex] */
-	onUpdateExitCondition: (cond: ConditionDraft) => void;
 	onMoveUp: () => void;
 	onMoveDown: () => void;
 	onRemove: () => void;
@@ -727,13 +673,9 @@ export function WorkflowNodeCard({
 	isFirst,
 	isLast,
 	expanded,
-	entryCondition,
-	exitCondition,
 	agents,
 	onToggleExpand,
 	onUpdate,
-	onUpdateEntryCondition,
-	onUpdateExitCondition,
 	onMoveUp,
 	onMoveDown,
 	onRemove,
@@ -825,20 +767,6 @@ export function WorkflowNodeCard({
 						<p class="text-xs text-gray-500 truncate mt-0.5" data-testid="node-completion-summary">
 							{nodeTaskStates.find((s) => s.completionSummary)?.completionSummary}
 						</p>
-					)}
-				</div>
-
-				{/* Gate icons */}
-				<div class="flex items-center gap-1 text-gray-600 flex-shrink-0">
-					{entryCondition && entryCondition.type !== 'always' && (
-						<span title={`Entry: ${CONDITION_LABELS[entryCondition.type]}`}>
-							<GateIcon type={entryCondition.type} />
-						</span>
-					)}
-					{exitCondition && exitCondition.type !== 'always' && (
-						<span title={`Exit: ${CONDITION_LABELS[exitCondition.type]}`}>
-							<GateIcon type={exitCondition.type} />
-						</span>
 					)}
 				</div>
 
@@ -941,23 +869,6 @@ export function WorkflowNodeCard({
 							</select>
 						</div>
 					)}
-
-					{/* Entry Gate */}
-					<GateConfig
-						label="Entry Gate"
-						condition={entryCondition ?? { type: 'always' }}
-						onChange={onUpdateEntryCondition}
-						terminalMessage={isFirst ? 'Workflow starts here' : undefined}
-					/>
-
-					{/* Exit Gate */}
-					<GateConfig
-						label="Exit Gate"
-						condition={exitCondition ?? { type: 'always' }}
-						onChange={onUpdateExitCondition}
-						terminalMessage={isLast ? 'Workflow ends here' : undefined}
-						testId="exit-gate-select"
-					/>
 
 					{/* Instructions */}
 					<div class="space-y-1">

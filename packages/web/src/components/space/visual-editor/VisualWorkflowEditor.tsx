@@ -35,8 +35,7 @@ import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
-import type { WorkflowConditionType } from './legacy-condition-types';
-import type { ViewportState, Point, VisualTransition } from './types';
+import type { ViewportState, Point, VisualTransition, WorkflowConditionType } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
 import {
 	workflowToVisualState,

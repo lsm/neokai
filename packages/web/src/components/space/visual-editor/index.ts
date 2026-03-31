@@ -19,8 +19,6 @@ export type {
 	UseConnectionDragOptions,
 	UseConnectionDragReturn,
 } from './useConnectionDrag';
-export { GateConfig, CONDITION_LABELS } from './GateConfig';
-export type { ConditionDraft } from './GateConfig';
 export { NodeConfigPanel } from './NodeConfigPanel';
 export type { NodeConfigPanelProps } from './NodeConfigPanel';
 export {
