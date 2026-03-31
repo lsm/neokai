@@ -1112,9 +1112,7 @@ describe('VisualWorkflowEditor', () => {
 				gates: [
 					{
 						id: 'review-votes-gate',
-						condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
-						data: { votes: {} },
-						allowedWriterRoles: ['*'],
+						fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 3 } }],
 						resetOnCycle: true,
 					},
 				],

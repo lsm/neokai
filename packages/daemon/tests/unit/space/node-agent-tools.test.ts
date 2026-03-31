@@ -1108,9 +1108,7 @@ describe('node-agent-tools: list_gates', () => {
 	test('returns gate with default data when no runtime data exists', async () => {
 		const gate: Gate = {
 			id: 'gate-approval',
-			condition: { type: 'check', field: 'approved', op: '==', value: true },
-			data: { approved: undefined },
-			allowedWriterRoles: ['reviewer'],
+			fields: [{ name: 'approved', type: 'boolean', writers: ['reviewer'], check: { op: '==', value: true } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1133,22 +1131,16 @@ describe('node-agent-tools: list_gates', () => {
 		expect(data.success).toBe(true);
 		expect(data.gates).toHaveLength(1);
 		expect(data.gates[0].gateId).toBe('gate-approval');
-		expect(data.gates[0].currentData).toEqual({ approved: undefined });
-		expect(data.gates[0].allowedWriterRoles).toEqual(['reviewer']);
+		expect(data.gates[0].currentData).toEqual({});
+		expect(data.gates[0].fields).toHaveLength(1);
+		expect(data.gates[0].fields[0].name).toBe('approved');
 		expect(data.nodeId).toBe(ctx.nodeId);
 	});
 
 	test('returns gate with runtime data overriding defaults', async () => {
 		const gate: Gate = {
 			id: 'gate-vote',
-			condition: {
-				type: 'count',
-				field: 'votes',
-				matchValue: 'approved',
-				min: 2,
-			},
-			data: { votes: {} },
-			allowedWriterRoles: ['*'],
+			fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 2 } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1201,9 +1193,7 @@ describe('node-agent-tools: read_gate', () => {
 	test('returns error for non-existent gateId', async () => {
 		const gate: Gate = {
 			id: 'gate-real',
-			condition: { type: 'check', field: 'x', op: '==', value: 1 },
-			data: {},
-			allowedWriterRoles: [],
+			fields: [{ name: 'x', type: 'number', writers: [], check: { op: '==', value: 1 } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1231,9 +1221,7 @@ describe('node-agent-tools: read_gate', () => {
 	test('returns gate data and open status for existing gate (closed)', async () => {
 		const gate: Gate = {
 			id: 'gate-check',
-			condition: { type: 'check', field: 'ready', op: '==', value: true },
-			data: { ready: false },
-			allowedWriterRoles: ['coder'],
+			fields: [{ name: 'ready', type: 'boolean', writers: ['coder'], check: { op: '==', value: true } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1248,8 +1236,11 @@ describe('node-agent-tools: read_gate', () => {
 			channels: [],
 			gates: [gate],
 		};
-		const config = makeConfig(ctx, { workflow });
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		gateDataRepo.set(ctx.workflowRunId, 'gate-check', { ready: false });
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
 		const handlers = createNodeAgentToolHandlers(config);
+
 		const result = await handlers.read_gate({ gateId: 'gate-check' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -1262,9 +1253,7 @@ describe('node-agent-tools: read_gate', () => {
 	test('returns gate data and open status for existing gate (open)', async () => {
 		const gate: Gate = {
 			id: 'gate-open',
-			condition: { type: 'check', field: 'status', op: '==', value: 'go' },
-			data: { status: 'go' },
-			allowedWriterRoles: [],
+			fields: [{ name: 'status', type: 'string', writers: [], check: { op: '==', value: 'go' } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1279,8 +1268,11 @@ describe('node-agent-tools: read_gate', () => {
 			channels: [],
 			gates: [gate],
 		};
-		const config = makeConfig(ctx, { workflow });
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		gateDataRepo.set(ctx.workflowRunId, 'gate-open', { status: 'go' });
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
 		const handlers = createNodeAgentToolHandlers(config);
+
 		const result = await handlers.read_gate({ gateId: 'gate-open' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -1327,12 +1319,10 @@ describe('node-agent-tools: write_gate', () => {
 		expect(data.error).toContain('not found');
 	});
 
-	test('returns error when role is not in allowedWriterRoles', async () => {
+	test('returns error when role is not in field writers', async () => {
 		const gate: Gate = {
 			id: 'gate-restricted',
-			condition: { type: 'check', field: 'x', op: 'exists' },
-			data: {},
-			allowedWriterRoles: ['reviewer'], // only reviewer can write
+			fields: [{ name: 'x', type: 'string', writers: ['reviewer'], check: { op: 'exists' } }], // only reviewer can write
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1355,16 +1345,17 @@ describe('node-agent-tools: write_gate', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('not authorized');
-		expect(data.allowedWriterRoles).toEqual(['reviewer']);
+		expect(data.allowedWriters).toEqual(['reviewer']);
 		expect(data.myRole).toBe('coder');
 	});
 
-	test('succeeds when role is in allowedWriterRoles and merges data', async () => {
+	test('succeeds when role is in field writers and merges data', async () => {
 		const gate: Gate = {
 			id: 'gate-writable',
-			condition: { type: 'check', field: 'x', op: 'exists' },
-			data: { x: undefined, y: 'original' },
-			allowedWriterRoles: ['coder'],
+			fields: [
+				{ name: 'x', type: 'string', writers: ['coder'], check: { op: 'exists' } },
+				{ name: 'y', type: 'string', writers: ['coder'], check: { op: 'exists' } },
+			],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1389,22 +1380,21 @@ describe('node-agent-tools: write_gate', () => {
 		// Shallow merge: x=42 overwrites existing x, y is not in the partial so it's absent.
 		// Gate defaults are NOT merged in by write_gate — merge is only against stored data.
 		expect(data.updatedData).toEqual({ x: 42 });
-		expect(data.gateOpen).toBe(true); // x now exists
+		expect(data.gateOpen).toBe(false); // y field also needs to exist for gate to open
 		expect(data.nodeId).toBe(ctx.nodeId);
 
-		// Second write: merge adds 'y' alongside existing 'x'
+		// Second write: merge adds 'y' alongside existing 'x' — now both fields exist, gate opens
 		const result2 = await handlers.write_gate({ gateId: 'gate-writable', data: { y: 'original' } });
 		const data2 = JSON.parse(result2.content[0].text);
 		expect(data2.success).toBe(true);
 		expect(data2.updatedData).toEqual({ x: 42, y: 'original' });
+		expect(data2.gateOpen).toBe(true);
 	});
 
 	test('shallow merge: nested object is replaced wholesale', async () => {
 		const gate: Gate = {
 			id: 'gate-nested',
-			condition: { type: 'check', field: 'config', op: 'exists' },
-			data: { config: { a: 1, b: 2 } },
-			allowedWriterRoles: ['coder'],
+			fields: [{ name: 'config', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1437,9 +1427,7 @@ describe('node-agent-tools: write_gate', () => {
 	test('authorized role with wildcard (*) allows any role to write', async () => {
 		const gate: Gate = {
 			id: 'gate-open',
-			condition: { type: 'check', field: 'voted', op: 'exists' },
-			data: {},
-			allowedWriterRoles: ['*'],
+			fields: [{ name: 'voted', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1467,14 +1455,7 @@ describe('node-agent-tools: write_gate', () => {
 	test('count condition gate opens after sufficient votes', async () => {
 		const gate: Gate = {
 			id: 'gate-vote',
-			condition: {
-				type: 'count',
-				field: 'votes',
-				matchValue: 'approved',
-				min: 2,
-			},
-			data: { votes: {} },
-			allowedWriterRoles: ['*'],
+			fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 2 } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1524,9 +1505,7 @@ describe('node-agent-tools: write_gate', () => {
 	test('write_gate calls onGateDataChanged when provided', async () => {
 		const gate: Gate = {
 			id: 'trigger-gate',
-			condition: { type: 'check', field: 'ready', op: 'exists' },
-			data: {},
-			allowedWriterRoles: ['*'],
+			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1564,9 +1543,7 @@ describe('node-agent-tools: write_gate', () => {
 	test('write_gate does not fail when onGateDataChanged is absent', async () => {
 		const gate: Gate = {
 			id: 'no-callback-gate',
-			condition: { type: 'check', field: 'x', op: 'exists' },
-			data: {},
-			allowedWriterRoles: ['*'],
+			fields: [{ name: 'x', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 			resetOnCycle: false,
 		};
 		const workflow: SpaceWorkflow = {
@@ -1682,9 +1659,7 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			gates: [
 				{
 					id: 'approval-gate',
-					condition: { type: 'check', field: 'approved', op: '==', value: true },
-					data: {},
-					allowedWriterRoles: ['*'],
+					fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 					resetOnCycle: false,
 				},
 			],
@@ -1714,9 +1689,7 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			gates: [
 				{
 					id: 'vote-gate',
-					condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 2 },
-					data: {},
-					allowedWriterRoles: ['*'],
+					fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 2 } }],
 					resetOnCycle: false,
 				},
 			],
@@ -1770,9 +1743,7 @@ describe('node-agent-tools: list_reachable_agents', () => {
 				{
 					id: 'lead-gate',
 					description: 'Needs tech lead approval',
-					condition: { type: 'check', field: 'approved', op: '==', value: true },
-					data: {},
-					allowedWriterRoles: ['*'],
+					fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 					resetOnCycle: false,
 				},
 			],

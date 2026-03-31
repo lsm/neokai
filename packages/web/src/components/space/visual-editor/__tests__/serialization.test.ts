@@ -196,9 +196,7 @@ describe('workflowToVisualState', () => {
 			gates: [
 				{
 					id: 'review-votes-gate',
-					condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
-					data: { votes: {} },
-					allowedWriterRoles: ['*'],
+					fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 3 } }],
 					resetOnCycle: true,
 				},
 			],
@@ -206,10 +204,10 @@ describe('workflowToVisualState', () => {
 		const state = workflowToVisualState(wf);
 		expect(state.gates).toHaveLength(1);
 		expect(state.gates[0].id).toBe('review-votes-gate');
-		expect(state.gates[0].condition).toMatchObject({
-			type: 'count',
-			field: 'votes',
-			matchValue: 'approved',
+		expect(state.gates[0].fields[0].name).toBe('votes');
+		expect(state.gates[0].fields[0].check).toMatchObject({
+			op: 'count',
+			match: 'approved',
 			min: 3,
 		});
 	});
@@ -743,16 +741,12 @@ describe('multi-agent step serialization', () => {
 			gates: [
 				{
 					id: 'review-votes-gate',
-					condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
-					data: { votes: {} },
-					allowedWriterRoles: ['*'],
+					fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 3 } }],
 					resetOnCycle: true,
 				},
 				{
 					id: 'unused-gate',
-					condition: { type: 'check', field: 'approved', op: '==', value: true },
-					data: {},
-					allowedWriterRoles: ['*'],
+					fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 					resetOnCycle: false,
 				},
 			],

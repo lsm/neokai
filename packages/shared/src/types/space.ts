@@ -511,138 +511,98 @@ export interface UpdateSpaceAgentParams {
 // ============================================================================
 
 // ============================================================================
-// Gate System (M1.1) — separated from channels
+// Gate System — field-based schema
 // ============================================================================
 
+/** Field type determines what values are valid and what check ops are available. */
+export type GateFieldType = 'boolean' | 'string' | 'number' | 'map';
+
 /**
- * A `check` condition evaluates a named key in the gate's data store.
+ * Check operation for scalar fields (boolean, string, number).
  *
- * The `op` field determines the comparison:
- *   - `'exists'` — gate opens when the field is present (not `undefined`)
- *   - `'=='`     — gate opens when `data[field] === value` (default)
- *   - `'!='`     — gate opens when `data[field] !== value`
- *
- * Examples:
- *   - Human approval: `{ type: 'check', field: 'approved', op: '==', value: true }`
- *   - Field exists:   `{ type: 'check', field: 'plan', op: 'exists' }`
- *   - Not rejected:   `{ type: 'check', field: 'status', op: '!=', value: 'rejected' }`
- *   - Legacy compat:  `{ type: 'check', field: 'approved', value: true }` (op defaults to '==')
+ *   - `'=='`     — passes when `data[field] === value`
+ *   - `'!='`     — passes when `data[field] !== value`
+ *   - `'exists'` — passes when the field is present in data (not `undefined`)
  */
-export interface GateConditionCheck {
-	type: 'check';
-	/** Key in the gate's data store to evaluate. */
-	field: string;
-	/**
-	 * Comparison operator. Defaults to `'=='` when omitted (backward compatible).
-	 *   - `'exists'` — passes when the field is present in data (not `undefined`)
-	 *   - `'=='`     — passes when `data[field] === value`
-	 *   - `'!='`     — passes when `data[field] !== value`
-	 */
-	op?: 'exists' | '==' | '!=';
-	/** Expected value. Used by `==` and `!=` ops. Ignored by `exists`. */
+export interface GateFieldScalarCheck {
+	op: '==' | '!=' | 'exists';
 	value?: unknown;
 }
 
 /**
- * A `count` condition reads a map (Record) from the gate's data store, counts
- * entries whose value matches `matchValue`, and checks `>= min`.
+ * Check operation for map fields (counts matching entries).
  *
- * This is designed for multi-reviewer approval gates: each reviewer writes their
- * decision into a map keyed by their name, and the gate counts how many have
- * the expected value.
+ *   - `op: 'count'` — counts entries whose value equals `match`, passes when count >= `min`
  *
- * Examples:
- *   - Require 2 "approved" reviews:
- *     `{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 }`
- *     with data: `{ reviews: { alice: 'approved', bob: 'approved', carol: 'pending' } }`
- *     → count = 2 (alice + bob), 2 >= 2 → open
- *
- * Edge cases:
- *   - Missing field → count = 0
- *   - Field is not an object → count = 0
+ * Example: require 3 "approved" reviews in a votes map:
+ *   `{ op: 'count', match: 'approved', min: 3 }`
  */
-export interface GateConditionCount {
-	type: 'count';
-	/** Key in the gate's data store — expected to hold a Record/map. */
-	field: string;
-	/** Value to match against map entries. Count of entries where `value === matchValue`. */
-	matchValue: unknown;
-	/** Minimum number of matching entries required for the gate to open. */
+export interface GateFieldMapCheck {
+	op: 'count';
+	/** Value to match in map entries. */
+	match: unknown;
+	/** Minimum count required for this field to be satisfied. */
 	min: number;
 }
 
+/** Union of check operations — scalar or map. */
+export type GateFieldCheck = GateFieldScalarCheck | GateFieldMapCheck;
+
 /**
- * Composite `all` condition — logical AND. Gate opens when ALL nested conditions pass.
+ * A single declared field in the gate schema.
  *
- * Conditions are evaluated in order; short-circuits on first failure.
+ * Fields define what data the gate stores, who can write it, and what check
+ * must pass for the field to be satisfied. A gate opens when ALL fields pass.
  */
-export interface GateConditionAll {
-	type: 'all';
-	/** Nested conditions that must all pass. */
-	conditions: GateCondition[];
+export interface GateField {
+	/** Field name (key in the gate data store). */
+	name: string;
+	/** Field type. */
+	type: GateFieldType;
+	/** Who can write this field — agent role/slot names, node names, 'human', or '*'. */
+	writers: string[];
+	/** Check that must pass for this field to be satisfied. */
+	check: GateFieldCheck;
 }
 
 /**
- * Composite `any` condition — logical OR. Gate opens when ANY nested condition passes.
- *
- * Conditions are evaluated in order; short-circuits on first success.
- */
-export interface GateConditionAny {
-	type: 'any';
-	/** Nested conditions — at least one must pass. */
-	conditions: GateCondition[];
-}
-
-/**
- * Discriminated union of gate condition types.
- *
- * Four types cover all gate behaviors:
- * - `check`  — field check against gate data (exists / == / !=)
- * - `count`  — map-counting: count matching entries >= min
- * - `all`    — composite AND (recursive)
- * - `any`    — composite OR (recursive)
- *
- * No `always` type — a channel without a `gateId` is always open.
- */
-export type GateCondition =
-	| GateConditionCheck
-	| GateConditionCount
-	| GateConditionAll
-	| GateConditionAny;
-
-/**
- * A Gate — an independent entity that controls passage through channels.
+ * A Gate — a declared data store with typed fields. Opens when ALL fields pass.
  *
  * Gates are referenced by channels via `gateId`. A gate has no back-reference
  * to any channel — the same gate can guard multiple channels.
  *
- * Gate data is a key-value store persisted per `(run_id, gate_id)` in the
- * `gate_data` SQLite table. Agents write to gate data via `write_gate`;
- * the runtime evaluates the condition against current data to decide passage.
+ * Gate runtime data is a key-value store persisted per `(run_id, gate_id)` in
+ * the `gate_data` SQLite table. Default data is computed from the field
+ * declarations (empty map `{}` for 'map' type, nothing for others). Agents
+ * write to gate data via `write_gate`; the runtime evaluates field checks
+ * against current data to decide passage.
  */
 export interface Gate {
 	/** Unique identifier */
 	id: string;
-	/** Condition that must be satisfied for the gate to open. */
-	condition: GateCondition;
-	/**
-	 * Default data values for the gate. Populated into `gate_data` when a
-	 * workflow run starts. Keys not present here default to `undefined`.
-	 */
-	data: Record<string, unknown>;
-	/**
-	 * Roles allowed to write to this gate's data store.
-	 * An empty array means no role can write (effectively read-only).
-	 * Use `['*']` to allow all roles.
-	 */
-	allowedWriterRoles: string[];
 	/** Human-readable description of what this gate checks. */
 	description?: string;
+	/** Declared fields with schema, permissions, and checks. */
+	fields: GateField[];
 	/**
-	 * When true, gate data is reset to `data` (defaults) each time the workflow
-	 * cycles through a channel referencing this gate. Used for cyclic workflows.
+	 * When true, gate data is reset to defaults on cyclic channel traversal.
+	 * Used for cyclic workflows where gate state should be cleared each loop.
 	 */
 	resetOnCycle: boolean;
+}
+
+/**
+ * Compute default data for a gate from its field declarations.
+ * Map fields get `{}`, others get nothing (no key in defaults).
+ */
+export function computeGateDefaults(fields: GateField[]): Record<string, unknown> {
+	const defaults: Record<string, unknown> = {};
+	for (const field of fields) {
+		if (field.type === 'map') {
+			defaults[field.name] = {};
+		}
+	}
+	return defaults;
 }
 
 /**

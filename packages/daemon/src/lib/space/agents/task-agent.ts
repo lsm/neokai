@@ -135,13 +135,19 @@ function formatChannel(ch: WorkflowChannel, gates: Gate[]): string {
 
 function formatGate(gate: Gate): string {
 	const desc = gate.description ? ` — ${gate.description}` : '';
-	const writers =
-		gate.allowedWriterRoles.length > 0 ? gate.allowedWriterRoles.join(', ') : '(none)';
-	const condType = gate.condition.type;
+	const fieldSummaries = gate.fields.map((f) => {
+		const writers = f.writers.length > 0 ? f.writers.join(', ') : '(none)';
+		const checkDesc =
+			f.check.op === 'count'
+				? `count(${JSON.stringify(f.check.match)}) >= ${f.check.min}`
+				: f.check.op === 'exists'
+					? 'exists'
+					: `${f.check.op} ${JSON.stringify(f.check.value)}`;
+		return `    - \`${f.name}\` (${f.type}): ${checkDesc} — writers: ${writers}`;
+	});
 	return (
 		`- **Gate \`${gate.id}\`**${desc}\n` +
-		`  - Condition type: \`${condType}\`\n` +
-		`  - Allowed writer roles: ${writers}\n` +
+		`  - Fields:\n${fieldSummaries.join('\n')}\n` +
 		`  - Reset on cycle: ${gate.resetOnCycle}`
 	);
 }

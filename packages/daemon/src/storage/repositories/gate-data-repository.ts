@@ -108,6 +108,9 @@ export class GateDataRepository {
 	/**
 	 * Initialize gate data for all gates in a workflow run.
 	 * Populates each gate's default data. Skips gates that already have data.
+	 *
+	 * Callers pass pre-computed defaults (via `computeGateDefaults(gate.fields)`)
+	 * or a plain `{}` object. The repository is agnostic to how defaults are computed.
 	 */
 	initializeForRun(
 		runId: string,
