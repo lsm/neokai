@@ -718,9 +718,7 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 				{
 					id: 'approval-gate',
 					description: 'Approve before review',
-					condition: { type: 'check' as const, field: 'approved', op: '==' as const, value: true },
-					data: {},
-					allowedWriterRoles: ['*'],
+					fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 					resetOnCycle: false,
 				},
 			],
@@ -745,9 +743,7 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 			gates: [
 				{
 					id: 'ci-gate',
-					condition: { type: 'check' as const, field: 'ci_passed', op: 'exists' as const },
-					data: {},
-					allowedWriterRoles: ['coder'],
+					fields: [{ name: 'ci_passed', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
 					resetOnCycle: false,
 				},
 			],
@@ -772,9 +768,7 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 				{
 					id: 'result-gate',
 					description: 'Check passed',
-					condition: { type: 'check' as const, field: 'result', op: '==' as const, value: 'passed' },
-					data: {},
-					allowedWriterRoles: ['general'],
+					fields: [{ name: 'result', type: 'string', writers: ['general'], check: { op: '==', value: 'passed' } }],
 					resetOnCycle: true,
 				},
 			],

@@ -43,7 +43,7 @@ import type {
 	WorkflowChannel,
 	WorkflowNode,
 } from '@neokai/shared';
-import { resolveNodeAgents, isChannelCyclic } from '@neokai/shared';
+import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -589,12 +589,11 @@ export class ChannelRouter {
 			};
 		}
 
-		// Load runtime data from DB; fall back to gate's default data when no record exists
+		// Load runtime data from DB; fall back to computed defaults from fields
 		const record = this.config.gateDataRepo?.get(runId, gateId);
-		const runtimeData = record?.data ?? gateDef.data;
+		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields);
 
-		const gateWithData: Gate = { ...gateDef, data: runtimeData };
-		return evaluateGate(gateWithData);
+		return evaluateGate(gateDef, runtimeData);
 	}
 
 	// incrementAndResetCyclicChannel is defined alongside findMatchingWorkflowChannel above
@@ -729,7 +728,7 @@ export class ChannelRouter {
 		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {
 			const transaction = this.config.db.transaction(() => {
 				for (const gate of cyclicGates) {
-					this.config.gateDataRepo!.reset(runId, gate.id, gate.data);
+					this.config.gateDataRepo!.reset(runId, gate.id, computeGateDefaults(gate.fields));
 				}
 				return this.config.channelCycleRepo!.incrementCycleCount(runId, channelIndex, maxCycles);
 			});
@@ -742,7 +741,7 @@ export class ChannelRouter {
 		} else {
 			if (this.config.gateDataRepo) {
 				for (const gate of cyclicGates) {
-					this.config.gateDataRepo.reset(runId, gate.id, gate.data);
+					this.config.gateDataRepo.reset(runId, gate.id, computeGateDefaults(gate.fields));
 				}
 			}
 			const incremented = this.config.channelCycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);

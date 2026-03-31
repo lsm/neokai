@@ -20,7 +20,6 @@ import { SendMessageSchema } from '../../../src/lib/space/tools/node-agent-tool-
 import type {
 	Gate,
 	Channel,
-	GateCondition,
 	WorkflowRunFailureReason,
 	SpaceWorkflowRun,
 } from '@neokai/shared';
@@ -72,66 +71,37 @@ describe('Gate and Channel type validation', () => {
 		expect(channel.gateId).toBe('gate-approval');
 	});
 
-	test('Gate with check condition', () => {
+	test('Gate with scalar field (boolean check)', () => {
 		const gate: Gate = {
 			id: 'gate-1',
-			condition: { type: 'check', field: 'approved', value: true },
-			data: { approved: false },
-			allowedWriterRoles: ['reviewer'],
+			fields: [{ name: 'approved', type: 'boolean', writers: ['reviewer'], check: { op: '==', value: true } }],
 			resetOnCycle: false,
 			description: 'Approval gate',
 		};
-		expect(gate.condition.type).toBe('check');
+		expect(gate.fields).toHaveLength(1);
+		expect(gate.fields[0].name).toBe('approved');
 	});
 
-	test('Gate with count condition', () => {
+	test('Gate with map field (count check)', () => {
 		const gate: Gate = {
 			id: 'gate-2',
-			condition: { type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			data: { reviews: {} },
-			allowedWriterRoles: ['reviewer-1', 'reviewer-2'],
+			fields: [{ name: 'reviews', type: 'map', writers: ['reviewer-1', 'reviewer-2'], check: { op: 'count', match: 'approved', min: 2 } }],
 			resetOnCycle: true,
 		};
-		expect(gate.condition.type).toBe('count');
+		expect(gate.fields[0].type).toBe('map');
+		expect(gate.fields[0].check.op).toBe('count');
 	});
 
-	test('Gate with composite all condition', () => {
-		const condition: GateCondition = {
-			type: 'all',
-			conditions: [
-				{ type: 'check', field: 'approved', value: true },
-				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			],
-		};
+	test('Gate with multiple fields (all must pass)', () => {
 		const gate: Gate = {
 			id: 'gate-3',
-			condition,
-			data: { approved: false, reviews: 0 },
-			allowedWriterRoles: ['*'],
-			resetOnCycle: false,
-		};
-		expect(gate.condition.type).toBe('all');
-		if (gate.condition.type === 'all') {
-			expect(gate.condition.conditions).toHaveLength(2);
-		}
-	});
-
-	test('Gate with composite any condition', () => {
-		const condition: GateCondition = {
-			type: 'any',
-			conditions: [
-				{ type: 'check', field: 'fast_track', value: true },
-				{ type: 'count', field: 'approvals', matchValue: 'approved', min: 3 },
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				{ name: 'reviews', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 2 } },
 			],
-		};
-		const gate: Gate = {
-			id: 'gate-4',
-			condition,
-			data: {},
-			allowedWriterRoles: ['*'],
 			resetOnCycle: false,
 		};
-		expect(gate.condition.type).toBe('any');
+		expect(gate.fields).toHaveLength(2);
 	});
 
 	test('WorkflowRunFailureReason type accepts all valid values', () => {
@@ -156,17 +126,13 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 		const gates: Gate[] = [
 			{
 				id: 'gate-approval',
-				condition: { type: 'check', field: 'approved', value: true },
-				data: { approved: false },
-				allowedWriterRoles: ['reviewer'],
+				fields: [{ name: 'approved', type: 'boolean', writers: ['reviewer'], check: { op: '==', value: true } }],
 				resetOnCycle: false,
 				description: 'Plan approval gate',
 			},
 			{
 				id: 'gate-review-count',
-				condition: { type: 'count', field: 'approvals', matchValue: 'approved', min: 2 },
-				data: { approvals: {} },
-				allowedWriterRoles: ['reviewer-1', 'reviewer-2'],
+				fields: [{ name: 'approvals', type: 'map', writers: ['reviewer-1', 'reviewer-2'], check: { op: 'count', match: 'approved', min: 2 } }],
 				resetOnCycle: true,
 			},
 		];
@@ -180,9 +146,9 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 		expect(workflow.gates).toBeDefined();
 		expect(workflow.gates).toHaveLength(2);
 		expect(workflow.gates![0].id).toBe('gate-approval');
-		expect(workflow.gates![0].condition.type).toBe('check');
+		expect(workflow.gates![0].fields[0].name).toBe('approved');
 		expect(workflow.gates![1].id).toBe('gate-review-count');
-		expect(workflow.gates![1].condition.type).toBe('count');
+		expect(workflow.gates![1].fields[0].check.op).toBe('count');
 		expect(workflow.gates![1].resetOnCycle).toBe(true);
 	});
 
@@ -207,9 +173,7 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 			gates: [
 				{
 					id: 'gate-1',
-					condition: { type: 'check', field: 'ready', value: true },
-					data: { ready: false },
-					allowedWriterRoles: ['*'],
+					fields: [{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 					resetOnCycle: false,
 				},
 			],

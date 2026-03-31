@@ -303,65 +303,62 @@ describe('CODING_WORKFLOW_V2 template', () => {
 		expect(ids).toContain('qa-fail-gate');
 	});
 
-	test('plan-pr-gate has check condition and planner writer role', () => {
+	test('plan-pr-gate has boolean exists field with planner writer', () => {
 		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'plan-pr-gate')!;
-		expect(gate.condition.type).toBe('check');
-		expect((gate.condition as { field: string }).field).toBe('plan_submitted');
-		expect(gate.allowedWriterRoles).toContain('planner');
+		expect(gate.fields).toHaveLength(1);
+		expect(gate.fields[0].name).toBe('plan_submitted');
+		expect(gate.fields[0].check.op).toBe('exists');
+		expect(gate.fields[0].writers).toContain('planner');
 		expect(gate.resetOnCycle).toBe(false);
 	});
 
-	test('plan-approval-gate has check==true condition and reviewer writer role', () => {
+	test('plan-approval-gate has boolean == true field with reviewer writer', () => {
 		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'plan-approval-gate')!;
-		expect(gate.condition.type).toBe('check');
-		expect((gate.condition as { field: string; value: unknown }).value).toBe(true);
-		expect(gate.allowedWriterRoles).toContain('reviewer');
+		expect(gate.fields[0].name).toBe('approved');
+		expect(gate.fields[0].check).toMatchObject({ op: '==', value: true });
+		expect(gate.fields[0].writers).toContain('reviewer');
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('code-pr-gate has check-exists condition and coder writer role', () => {
+	test('code-pr-gate has boolean exists field with coder writer', () => {
 		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'code-pr-gate')!;
-		expect(gate.condition.type).toBe('check');
-		expect((gate.condition as { op: string }).op).toBe('exists');
-		expect(gate.allowedWriterRoles).toContain('coder');
-		// Preserved across fix cycles — coder updates the existing PR rather than opening a new one
+		expect(gate.fields[0].name).toBe('pr_created');
+		expect(gate.fields[0].check.op).toBe('exists');
+		expect(gate.fields[0].writers).toContain('coder');
+		// Preserved across fix cycles -- coder updates the existing PR rather than opening a new one
 		expect(gate.resetOnCycle).toBe(false);
 	});
 
-	test('review-votes-gate has count condition requiring min 3 approved', () => {
+	test('review-votes-gate has map count field requiring min 3 approved', () => {
 		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'review-votes-gate')!;
-		expect(gate.condition.type).toBe('count');
-		const cond = gate.condition as { matchValue: unknown; min: number };
-		expect(cond.matchValue).toBe('approved');
-		expect(cond.min).toBe(3);
-		expect(gate.allowedWriterRoles).toContain('reviewer');
+		expect(gate.fields[0].type).toBe('map');
+		expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'approved', min: 3 });
+		expect(gate.fields[0].writers).toContain('reviewer');
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('review-reject-gate has count condition requiring min 1 rejected', () => {
+	test('review-reject-gate has map count field requiring min 1 rejected', () => {
 		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'review-reject-gate')!;
-		expect(gate.condition.type).toBe('count');
-		const cond = gate.condition as { matchValue: unknown; min: number };
-		expect(cond.matchValue).toBe('rejected');
-		expect(cond.min).toBe(1);
-		expect(gate.allowedWriterRoles).toContain('reviewer');
+		expect(gate.fields[0].type).toBe('map');
+		expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'rejected', min: 1 });
+		expect(gate.fields[0].writers).toContain('reviewer');
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('qa-result-gate has check==passed condition and qa writer role', () => {
+	test('qa-result-gate has string == passed field with qa writer', () => {
 		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'qa-result-gate')!;
-		expect(gate.condition.type).toBe('check');
-		expect((gate.condition as { value: unknown }).value).toBe('passed');
-		expect(gate.allowedWriterRoles).toContain('qa');
-		// Resets on QA→Coding cycle so QA starts clean each time
+		expect(gate.fields[0].name).toBe('result');
+		expect(gate.fields[0].check).toMatchObject({ op: '==', value: 'passed' });
+		expect(gate.fields[0].writers).toContain('qa');
+		// Resets on QA->Coding cycle so QA starts clean each time
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('qa-fail-gate has check==failed condition and qa writer role', () => {
+	test('qa-fail-gate has string == failed field with qa writer', () => {
 		const gate = CODING_WORKFLOW_V2.gates!.find((g) => g.id === 'qa-fail-gate')!;
-		expect(gate.condition.type).toBe('check');
-		expect((gate.condition as { value: unknown }).value).toBe('failed');
-		expect(gate.allowedWriterRoles).toContain('qa');
+		expect(gate.fields[0].name).toBe('result');
+		expect(gate.fields[0].check).toMatchObject({ op: '==', value: 'failed' });
+		expect(gate.fields[0].writers).toContain('qa');
 		expect(gate.resetOnCycle).toBe(true);
 	});
 

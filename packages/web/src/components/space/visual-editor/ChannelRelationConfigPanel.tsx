@@ -20,6 +20,7 @@ export interface ChannelRelationConfigPanelProps {
 	onDelete: (index: number) => void;
 	gates: Gate[];
 	onGatesChange: (gates: Gate[]) => void;
+	onEditGate?: (gateId: string) => void;
 	onBack?: () => void;
 	onClose: () => void;
 	width?: number;
@@ -37,6 +38,7 @@ export function ChannelRelationConfigPanel({
 	onDelete,
 	gates,
 	onGatesChange,
+	onEditGate,
 	onBack,
 	onClose,
 	width = 360,
@@ -76,6 +78,7 @@ export function ChannelRelationConfigPanel({
 							onDelete={onDelete}
 							gates={gates}
 							onGatesChange={onGatesChange}
+							onEditGate={onEditGate}
 							showHeader={false}
 							showDirectionControls={false}
 						/>
@@ -98,6 +101,7 @@ export function ChannelRelationConfigPanel({
 							onDelete={onDelete}
 							gates={gates}
 							onGatesChange={onGatesChange}
+							onEditGate={onEditGate}
 							showHeader={false}
 							showDirectionControls={false}
 						/>

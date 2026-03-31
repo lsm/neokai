@@ -46,6 +46,7 @@ import {
 	ChannelGateBlockedError,
 } from '../../../src/lib/space/runtime/channel-router.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
+import { computeGateDefaults } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -1053,9 +1054,7 @@ describe('ChannelRouter', () => {
 		test('gated channel (check): blocks delivery when condition not satisfied', async () => {
 			const gate: Gate = {
 				id: 'plan-gate',
-				condition: { type: 'check', field: 'plan', op: 'exists' },
-				data: {},
-				allowedWriterRoles: ['planner'],
+				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1092,9 +1091,7 @@ describe('ChannelRouter', () => {
 		test('gated channel (check): allows delivery when condition satisfied', async () => {
 			const gate: Gate = {
 				id: 'plan-gate',
-				condition: { type: 'check', field: 'plan', op: 'exists' },
-				data: {},
-				allowedWriterRoles: ['planner'],
+				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1133,9 +1130,7 @@ describe('ChannelRouter', () => {
 		test('gated channel (check): canDeliver returns true when condition satisfied', async () => {
 			const gate: Gate = {
 				id: 'allow-gate',
-				condition: { type: 'check', field: 'approved', op: '==', value: true },
-				data: {},
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1173,9 +1168,7 @@ describe('ChannelRouter', () => {
 		test('gated channel (check): canDeliver returns false when blocked', async () => {
 			const gate: Gate = {
 				id: 'approval-gate',
-				condition: { type: 'check', field: 'approved', op: '==', value: true },
-				data: {},
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1252,9 +1245,7 @@ describe('ChannelRouter', () => {
 		test('onGateDataChanged: activates target node when gate opens', async () => {
 			const gate: Gate = {
 				id: 'plan-ready-gate',
-				condition: { type: 'check', field: 'ready', op: '==', value: true },
-				data: {},
-				allowedWriterRoles: ['planner'],
+				fields: [{ name: 'ready', type: 'boolean', writers: ['planner'], check: { op: '==', value: true } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1302,9 +1293,7 @@ describe('ChannelRouter', () => {
 		test('onGateDataChanged: does not re-activate if target node already active', async () => {
 			const gate: Gate = {
 				id: 'ready-gate',
-				condition: { type: 'check', field: 'ready', op: '==', value: true },
-				data: {},
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1346,9 +1335,7 @@ describe('ChannelRouter', () => {
 		test('onGateDataChanged: returns empty array when gate is still closed', async () => {
 			const gate: Gate = {
 				id: 'still-closed-gate',
-				condition: { type: 'check', field: 'done', op: '==', value: true },
-				data: {},
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1386,9 +1373,7 @@ describe('ChannelRouter', () => {
 		test('onGateDataChanged: returns empty array for completed run', async () => {
 			const gate: Gate = {
 				id: 'done-gate',
-				condition: { type: 'check', field: 'done', op: 'exists' },
-				data: {},
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1428,9 +1413,7 @@ describe('ChannelRouter', () => {
 		test('vote-counting gate: each write triggers re-evaluation; activates on quorum', async () => {
 			const gate: Gate = {
 				id: 'review-votes-gate',
-				condition: { type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-				data: { reviews: {} },
-				allowedWriterRoles: ['reviewer'],
+				fields: [{ name: 'reviews', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'approved', min: 2 } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1463,7 +1446,7 @@ describe('ChannelRouter', () => {
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// Initial: no votes
-			gateDataRepo.initializeForRun(run.id, [gate]);
+			gateDataRepo.initializeForRun(run.id, [{ id: gate.id, data: computeGateDefaults(gate.fields) }]);
 			let activated = await router.onGateDataChanged(run.id, 'review-votes-gate');
 			expect(activated).toHaveLength(0);
 
@@ -1488,9 +1471,7 @@ describe('ChannelRouter', () => {
 		test('resetOnCycle: gate data reset when cyclic channel is traversed', async () => {
 			const gate: Gate = {
 				id: 'review-votes-gate',
-				condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 2 },
-				data: { votes: {} },
-				allowedWriterRoles: ['reviewer'],
+				fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'approved', min: 2 } }],
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1539,16 +1520,12 @@ describe('ChannelRouter', () => {
 		test('resetOnCycle: gates with resetOnCycle=false are preserved on cyclic traversal', async () => {
 			const resetGate: Gate = {
 				id: 'review-reject-gate',
-				condition: { type: 'check', field: 'rejected', op: 'exists' },
-				data: {},
-				allowedWriterRoles: ['reviewer'],
+				fields: [{ name: 'rejected', type: 'string', writers: ['reviewer'], check: { op: 'exists' } }],
 				resetOnCycle: true,
 			};
 			const preservedGate: Gate = {
 				id: 'code-pr-gate',
-				condition: { type: 'check', field: 'pr', op: 'exists' },
-				data: {},
-				allowedWriterRoles: ['coder'],
+				fields: [{ name: 'pr', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1596,16 +1573,12 @@ describe('ChannelRouter', () => {
 		test('resetOnCycle: multiple cycle-reset gates reset together (atomic)', async () => {
 			const gate1: Gate = {
 				id: 'review-votes-gate',
-				condition: { type: 'count', field: 'votes', matchValue: 'ok', min: 1 },
-				data: { votes: {} },
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'ok', min: 1 } }],
 				resetOnCycle: true,
 			};
 			const gate2: Gate = {
 				id: 'qa-result-gate',
-				condition: { type: 'check', field: 'result', op: 'exists' },
-				data: {},
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'result', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1661,9 +1634,7 @@ describe('ChannelRouter', () => {
 			// would lose votes due to the shallow merge semantics.
 			const gate: Gate = {
 				id: 'accumulate-gate',
-				condition: { type: 'count', field: 'approvals', matchValue: 'approved', min: 3 },
-				data: { approvals: {} },
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'approvals', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 3 } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
@@ -1690,7 +1661,7 @@ describe('ChannelRouter', () => {
 				title: 'Accumulate Votes Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			gateDataRepo.initializeForRun(run.id, [gate]);
+			gateDataRepo.initializeForRun(run.id, [{ id: gate.id, data: computeGateDefaults(gate.fields) }]);
 
 			// Voter 1: write only their vote (gate still closed, min=3)
 			gateDataRepo.merge(run.id, 'accumulate-gate', {
@@ -1732,9 +1703,7 @@ describe('ChannelRouter', () => {
 			// each pointing to a different reviewer node.
 			const gate: Gate = {
 				id: 'code-pr-gate',
-				condition: { type: 'check', field: 'pr_url', op: '!=', value: undefined },
-				data: {},
-				allowedWriterRoles: ['coder'],
+				fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: '!=', value: undefined } }],
 				resetOnCycle: false,
 			};
 
@@ -1794,7 +1763,7 @@ describe('ChannelRouter', () => {
 				title: 'Parallel Reviewer Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			gateDataRepo.initializeForRun(run.id, [gate]);
+			gateDataRepo.initializeForRun(run.id, [{ id: gate.id, data: computeGateDefaults(gate.fields) }]);
 
 			// Gate closed — no nodes activated
 			const noneYet = await router.onGateDataChanged(run.id, 'code-pr-gate');
@@ -1816,9 +1785,7 @@ describe('ChannelRouter', () => {
 		test('parallel activation: second call is idempotent — already-active nodes not re-activated', async () => {
 			const gate: Gate = {
 				id: 'shared-gate',
-				condition: { type: 'check', field: 'ready', op: '==', value: true },
-				data: {},
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 				resetOnCycle: false,
 			};
 
@@ -1858,7 +1825,7 @@ describe('ChannelRouter', () => {
 				title: 'Idempotent Parallel Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			gateDataRepo.initializeForRun(run.id, [gate]);
+			gateDataRepo.initializeForRun(run.id, [{ id: gate.id, data: computeGateDefaults(gate.fields) }]);
 			gateDataRepo.merge(run.id, 'shared-gate', { ready: true });
 
 			// First call: both nodes activated
@@ -1880,9 +1847,7 @@ describe('ChannelRouter', () => {
 			// QA only activates when vote count reaches 3.
 			const gate: Gate = {
 				id: 'review-votes-gate',
-				condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
-				data: { votes: {} },
-				allowedWriterRoles: ['reviewer'],
+				fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'approved', min: 3 } }],
 				resetOnCycle: false,
 			};
 
@@ -1934,7 +1899,7 @@ describe('ChannelRouter', () => {
 				title: '3-Reviewer Vote Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			gateDataRepo.initializeForRun(run.id, [gate]);
+			gateDataRepo.initializeForRun(run.id, [{ id: gate.id, data: computeGateDefaults(gate.fields) }]);
 
 			// Reviewer 1 votes — gate still closed (1/3)
 			gateDataRepo.merge(run.id, 'review-votes-gate', { votes: { 'reviewer-1': 'approved' } });
@@ -1972,9 +1937,7 @@ describe('ChannelRouter', () => {
 			// min: 3 means 2 votes are insufficient to unblock downstream QA.
 			const gate: Gate = {
 				id: 'review-votes-gate',
-				condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
-				data: { votes: {} },
-				allowedWriterRoles: ['reviewer'],
+				fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'approved', min: 3 } }],
 				resetOnCycle: false,
 			};
 
@@ -2008,7 +1971,7 @@ describe('ChannelRouter', () => {
 				title: 'Partial Completion Run',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			gateDataRepo.initializeForRun(run.id, [gate]);
+			gateDataRepo.initializeForRun(run.id, [{ id: gate.id, data: computeGateDefaults(gate.fields) }]);
 
 			// Write 2 approvals — gate needs 3, so QA stays blocked
 			gateDataRepo.set(run.id, 'review-votes-gate', {
@@ -2047,37 +2010,27 @@ describe('ChannelRouter', () => {
 			// Gates matching CODING_WORKFLOW_V2 design
 			const gateCodePr: Gate = {
 				id: 'code-pr-gate',
-				condition: { type: 'check', field: 'pr_url', op: 'exists' },
-				data: {},
-				allowedWriterRoles: ['coder'],
+				fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
 				resetOnCycle: false, // preserved across fix cycles
 			};
 			const gateReviewVotes: Gate = {
 				id: 'review-votes-gate',
-				condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
-				data: { votes: {} },
-				allowedWriterRoles: ['reviewer'],
+				fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'approved', min: 3 } }],
 				resetOnCycle: true,
 			};
 			const gateReviewReject: Gate = {
 				id: 'review-reject-gate',
-				condition: { type: 'count', field: 'votes', matchValue: 'rejected', min: 1 },
-				data: {},
-				allowedWriterRoles: ['reviewer'],
+				fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'rejected', min: 1 } }],
 				resetOnCycle: true,
 			};
 			const gateQaResult: Gate = {
 				id: 'qa-result-gate',
-				condition: { type: 'check', field: 'result', op: '==', value: 'passed' },
-				data: {},
-				allowedWriterRoles: ['qa'],
+				fields: [{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } }],
 				resetOnCycle: true, // resets on each QA→Coding cycle
 			};
 			const gateQaFail: Gate = {
 				id: 'qa-fail-gate',
-				condition: { type: 'check', field: 'result', op: '==', value: 'failed' },
-				data: {},
-				allowedWriterRoles: ['qa'],
+				fields: [{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } }],
 				resetOnCycle: true,
 			};
 			const allGates = [gateCodePr, gateReviewVotes, gateReviewReject, gateQaResult, gateQaFail];
@@ -2144,7 +2097,7 @@ describe('ChannelRouter', () => {
 					title: 'QA Fail Loop Run',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
-				gateDataRepo.initializeForRun(run.id, allGates);
+				gateDataRepo.initializeForRun(run.id, allGates.map(g => ({ id: g.id, data: computeGateDefaults(g.fields) })));
 
 				// Simulate pre-existing state from a completed review cycle
 				gateDataRepo.set(run.id, 'code-pr-gate', { pr_url: 'https://github.com/org/repo/pull/42' });
@@ -2168,9 +2121,9 @@ describe('ChannelRouter', () => {
 				// Per-channel cycle counter must increment (QA→Coding is channel index 3)
 				expect(channelCycleRepo.get(run.id, 3)!.count).toBe(1);
 
-				// Cyclic-reset gates must be wiped
+				// Cyclic-reset gates must be wiped to computed defaults
 				expect(gateDataRepo.get(run.id, 'review-votes-gate')!.data).toEqual({ votes: {} });
-				expect(gateDataRepo.get(run.id, 'review-reject-gate')!.data).toEqual({});
+				expect(gateDataRepo.get(run.id, 'review-reject-gate')!.data).toEqual({ votes: {} });
 				expect(gateDataRepo.get(run.id, 'qa-result-gate')!.data).toEqual({});
 				expect(gateDataRepo.get(run.id, 'qa-fail-gate')!.data).toEqual({});
 
@@ -2188,7 +2141,7 @@ describe('ChannelRouter', () => {
 					title: 'Gate Reset On QA Fail',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
-				gateDataRepo.initializeForRun(run.id, allGates);
+				gateDataRepo.initializeForRun(run.id, allGates.map(g => ({ id: g.id, data: computeGateDefaults(g.fields) })));
 
 				// Simulate pre-existing gate state from a completed review cycle;
 				// qa-fail-gate must be set to satisfy the gated channel before delivery
@@ -2216,7 +2169,7 @@ describe('ChannelRouter', () => {
 				expect(reviewVotes!.data).toEqual({ votes: {} });
 
 				const reviewReject = gateDataRepo.get(run.id, 'review-reject-gate');
-				expect(reviewReject!.data).toEqual({});
+				expect(reviewReject!.data).toEqual({ votes: {} });
 
 				const qaResult = gateDataRepo.get(run.id, 'qa-result-gate');
 				expect(qaResult!.data).toEqual({});
@@ -2233,7 +2186,7 @@ describe('ChannelRouter', () => {
 					title: 'Cycle Counter Run',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
-				gateDataRepo.initializeForRun(run.id, allGates);
+				gateDataRepo.initializeForRun(run.id, allGates.map(g => ({ id: g.id, data: computeGateDefaults(g.fields) })));
 
 				// No cycle record yet
 				expect(channelCycleRepo.get(run.id, 3)).toBeNull();
@@ -2254,7 +2207,7 @@ describe('ChannelRouter', () => {
 					title: 'Re-vote From Scratch',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
-				gateDataRepo.initializeForRun(run.id, allGates);
+				gateDataRepo.initializeForRun(run.id, allGates.map(g => ({ id: g.id, data: computeGateDefaults(g.fields) })));
 
 				// Populate existing votes and satisfy qa-fail-gate
 				gateDataRepo.set(run.id, 'review-votes-gate', {
@@ -2282,7 +2235,7 @@ describe('ChannelRouter', () => {
 					title: 'Max Cycles QA',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
-				gateDataRepo.initializeForRun(run.id, allGates);
+				gateDataRepo.initializeForRun(run.id, allGates.map(g => ({ id: g.id, data: computeGateDefaults(g.fields) })));
 
 				// Use up 2 cycles (must satisfy qa-fail-gate before each delivery; gate resets on each cycle)
 				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
@@ -2305,7 +2258,7 @@ describe('ChannelRouter', () => {
 					title: 'Max Cycles via onGateDataChanged',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
-				gateDataRepo.initializeForRun(run.id, allGates);
+				gateDataRepo.initializeForRun(run.id, allGates.map(g => ({ id: g.id, data: computeGateDefaults(g.fields) })));
 
 				// Use up the 1 cycle via onGateDataChanged
 				gateDataRepo.set(run.id, 'qa-fail-gate', { result: 'failed' });
@@ -2327,7 +2280,7 @@ describe('ChannelRouter', () => {
 					title: 'QA Pass Run',
 				});
 				workflowRunRepo.transitionStatus(run.id, 'in_progress');
-				gateDataRepo.initializeForRun(run.id, allGates);
+				gateDataRepo.initializeForRun(run.id, allGates.map(g => ({ id: g.id, data: computeGateDefaults(g.fields) })));
 
 				// QA writes passed result
 				gateDataRepo.set(run.id, 'qa-result-gate', { result: 'passed' });
@@ -2341,9 +2294,7 @@ describe('ChannelRouter', () => {
 		test('gateId takes precedence over legacy inline gate when both are set', async () => {
 			const gate: Gate = {
 				id: 'new-gate',
-				condition: { type: 'check', field: 'approved', op: '==', value: true },
-				data: {},
-				allowedWriterRoles: ['*'],
+				fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [

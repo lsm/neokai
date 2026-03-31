@@ -41,17 +41,30 @@ function resolveSemanticGateType(
 	if (channel.gateId) {
 		const gate = gateLookup.get(channel.gateId);
 		if (!gate) return 'check';
-		if (gate.condition.type === 'count') return 'count';
-		if (gate.condition.type === 'check') {
-			const op = gate.condition.op ?? '==';
-			if (gate.condition.field === 'approved' && op === '==' && gate.condition.value === true) {
-				return 'human';
-			}
-			if (gate.condition.field === 'result' && op === '==' && typeof gate.condition.value === 'string') {
-				return 'task_result';
-			}
-			return 'check';
+
+		// Derive gate type from field declarations
+		const fields = gate.fields;
+		if (fields.length === 0) return 'check';
+
+		// If any field is a map with count check -> 'count' (votes)
+		if (fields.some((f) => f.type === 'map' && f.check.op === 'count')) {
+			return 'count';
 		}
+
+		// If the gate has a field named 'approved' with boolean == true -> 'human'
+		const approvedField = fields.find((f) => f.name === 'approved' && f.type === 'boolean');
+		if (approvedField && approvedField.check.op === '==' && approvedField.check.value === true) {
+			// Check if writers include 'human'
+			if (approvedField.writers.includes('human')) return 'human';
+			return 'human';
+		}
+
+		// If the gate has a field named 'result' with string == check -> 'task_result'
+		const resultField = fields.find((f) => f.name === 'result' && f.type === 'string');
+		if (resultField && resultField.check.op === '==' && typeof resultField.check.value === 'string') {
+			return 'task_result';
+		}
+
 		return 'check';
 	}
 

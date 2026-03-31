@@ -27,7 +27,7 @@ import type {
 	SpaceWorkflowRun,
 	SpaceTask,
 	Gate,
-	GateCondition,
+	GateField,
 	WorkflowNode,
 } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
@@ -82,94 +82,88 @@ interface RenderedChannel {
 
 /**
  * Determine whether a human approval gate is involved — checks for a
- * `check` condition on the `approved` field anywhere in the condition tree.
+ * field named 'approved' with 'human' in writers.
  */
-function isHumanApprovalGate(condition: GateCondition): boolean {
-	if (condition.type === 'check') {
-		return condition.field === 'approved';
-	}
-	if (condition.type === 'all' || condition.type === 'any') {
-		return condition.conditions.some(isHumanApprovalGate);
-	}
-	return false;
+function isHumanApprovalGate(fields: GateField[]): boolean {
+	return fields.some(
+		(f) => f.name === 'approved' && f.writers.includes('human')
+	);
 }
 
 /**
- * Compute the current matching vote count for a count-type gate condition.
+ * Compute the current matching vote count for a map-type field with count check.
  * Returns `{ current, min }` so the UI can render "N/M" progress.
- * Returns `undefined` for non-count conditions.
+ * Returns `undefined` when no map count field exists.
  */
 function computeVoteCount(
-	condition: GateCondition,
+	fields: GateField[],
 	data: Record<string, unknown>
 ): { current: number; min: number } | undefined {
-	if (condition.type !== 'count') return undefined;
-	const map = data[condition.field];
+	const mapField = fields.find((f) => f.type === 'map' && f.check.op === 'count');
+	if (!mapField || mapField.check.op !== 'count') return undefined;
+	const check = mapField.check;
+	const map = data[mapField.name];
 	if (!map || typeof map !== 'object' || Array.isArray(map)) {
-		return { current: 0, min: condition.min };
+		return { current: 0, min: check.min };
 	}
 	const current = Object.values(map as Record<string, unknown>).filter(
-		(v) => v === condition.matchValue
+		(v) => v === check.match
 	).length;
-	return { current, min: condition.min };
+	return { current, min: check.min };
 }
 
 /**
- * Evaluate gate status from current gate data.
+ * Evaluate gate status from current gate data (field-based).
  *
- * Simplified frontend evaluation (no recursion needed for most gates):
- *   - Human approval gate (check on 'approved'):
- *       data.approved === true  → open
- *       data.approved === false → blocked
- *       otherwise               → waiting_human
- *   - Count gate:
- *       count matching entries ≥ min → open, else blocked
- *   - check / all / any (non-approval):
- *       if any data present → open optimistically, else blocked
+ * Simplified frontend evaluation:
+ *   - Human approval gate (field 'approved' with human writers):
+ *       data.approved === true  -> open
+ *       data.approved === false -> blocked
+ *       otherwise               -> waiting_human
+ *   - All fields must pass their checks for the gate to be open.
  */
 function evaluateGateStatus(gate: Gate, data: Record<string, unknown>): GateStatus {
-	return evalConditionStatus(gate.condition, data);
+	if (gate.fields.length === 0) return 'open';
+
+	// Check for human approval field first
+	if (isHumanApprovalGate(gate.fields)) {
+		const val = data['approved'];
+		if (val === true) {
+			// Check remaining fields too
+			const othersPassed = gate.fields.every((f) => {
+				if (f.name === 'approved') return true;
+				return evalFieldStatus(f, data) === 'open';
+			});
+			return othersPassed ? 'open' : 'blocked';
+		}
+		if (val === false) return 'blocked';
+		return 'waiting_human';
+	}
+
+	// All fields must pass
+	for (const field of gate.fields) {
+		const status = evalFieldStatus(field, data);
+		if (status !== 'open') return status;
+	}
+	return 'open';
 }
 
-function evalConditionStatus(condition: GateCondition, data: Record<string, unknown>): GateStatus {
-	switch (condition.type) {
-		case 'check': {
-			const val = data[condition.field];
-			if (condition.field === 'approved') {
-				if (val === true) return 'open';
-				if (val === false) return 'blocked';
-				return 'waiting_human';
-			}
-			const op = condition.op ?? '==';
-			if (op === 'exists') return val !== undefined ? 'open' : 'blocked';
-			if (op === '==') return val === condition.value ? 'open' : 'blocked';
-			if (op === '!=') return val !== condition.value ? 'open' : 'blocked';
-			return 'blocked';
-		}
-		case 'count': {
-			const map = data[condition.field];
-			if (!map || typeof map !== 'object' || Array.isArray(map)) return 'blocked';
-			const count = Object.values(map as Record<string, unknown>).filter(
-				(v) => v === condition.matchValue
-			).length;
-			return count >= condition.min ? 'open' : 'blocked';
-		}
-		case 'all': {
-			// All must be open
-			const allStatuses = condition.conditions.map((c) => evalConditionStatus(c, data));
-			if (allStatuses.every((s) => s === 'open')) return 'open';
-			if (allStatuses.some((s) => s === 'waiting_human')) return 'waiting_human';
-			return 'blocked';
-		}
-		case 'any': {
-			// Any must be open
-			const anyStatuses = condition.conditions.map((c) => evalConditionStatus(c, data));
-			if (anyStatuses.some((s) => s === 'open')) return 'open';
-			if (anyStatuses.some((s) => s === 'waiting_human')) return 'waiting_human';
-			return 'blocked';
-		}
+function evalFieldStatus(field: GateField, data: Record<string, unknown>): GateStatus {
+	const check = field.check;
+	if (check.op === 'count') {
+		// Map count check
+		const map = data[field.name];
+		if (!map || typeof map !== 'object' || Array.isArray(map)) return 'blocked';
+		const count = Object.values(map as Record<string, unknown>).filter(
+			(v) => v === check.match
+		).length;
+		return count >= check.min ? 'open' : 'blocked';
 	}
-	// Exhaustive fallback — guards against new GateCondition types added in the future.
+	// Scalar check
+	const val = data[field.name];
+	if (check.op === 'exists') return val !== undefined ? 'open' : 'blocked';
+	if (check.op === '==') return val === check.value ? 'open' : 'blocked';
+	if (check.op === '!=') return val !== check.value ? 'open' : 'blocked';
 	return 'blocked';
 }
 
@@ -1197,7 +1191,7 @@ export function WorkflowCanvas({
 					const hasGate = !!ch.gateId;
 
 					const gate = ch.gateId ? gatesById.get(ch.gateId) : undefined;
-					const gateData = ch.gateId ? (gateDataMap.get(ch.gateId) ?? gate?.data ?? {}) : {};
+					const gateData = ch.gateId ? (gateDataMap.get(ch.gateId) ?? {}) : {};
 					const gateStatus: GateStatus = gate ? evaluateGateStatus(gate, gateData) : 'open';
 
 					// Channel color based on gate status in runtime mode
@@ -1215,9 +1209,9 @@ export function WorkflowCanvas({
 					}
 
 					// Channels without gates are always available (plain arrows)
-					const isHumanGate = gate ? isHumanApprovalGate(gate.condition) : false;
+					const isHumanGate = gate ? isHumanApprovalGate(gate.fields) : false;
 					const voteCount =
-						gate && isRuntimeMode ? computeVoteCount(gate.condition, gateData) : undefined;
+						gate && isRuntimeMode ? computeVoteCount(gate.fields, gateData) : undefined;
 
 					return (
 						<g key={`ch-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>
