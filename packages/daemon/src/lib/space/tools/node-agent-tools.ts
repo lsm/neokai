@@ -495,9 +495,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					const gateId = channelGateMap.get(`${ch.fromRole}→${ch.toRole}`);
 					const gateEntity = gateId ? gatesById.get(gateId) : undefined;
 					const gateType = gateEntity
-						? (gateEntity.fields.some((f) => f.type === 'map' && f.check.op === 'count')
+						? gateEntity.fields.some((f) => f.type === 'map' && f.check.op === 'count')
 							? 'count'
-							: 'check')
+							: 'check'
 						: 'none';
 					const isGated = gateEntity !== undefined;
 					const entry: CrossNodeTarget = {

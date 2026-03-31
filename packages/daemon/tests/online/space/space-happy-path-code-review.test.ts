@@ -40,7 +40,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { SpaceWorkflowRun } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
 import {
 	createTestSpace,
 	startWorkflowRun,
@@ -74,7 +74,7 @@ const TEST_TIMEOUT = IS_MOCK ? 25_000 : 90_000;
  * three reviewer nodes should be activating.
  *
  * Mirrors real agent behavior:
- *   1. Create space + start run  (optionally set maxIterations on the workflow first)
+ *   1. Create space + start run  (optionally set maxCycles on the Code Review channel first)
  *   2. Open plan-pr-gate (simulate planner done)
  *   3. Wait for Plan Review to activate, then complete it
  *   4. Approve plan-approval-gate (simulate reviewer approved)
@@ -82,15 +82,12 @@ const TEST_TIMEOUT = IS_MOCK ? 25_000 : 90_000;
  *   6. Complete the Coding task (simulate coder finishing — agent completes before writing gate)
  *   7. Write code-pr-gate (simulate coder writing PR URL after completing work)
  *
- * Completing the Coding task in step 6 is essential: `onGateDataChanged` only increments
- * the iteration counter when a node is *newly* activated (activatedTasks.length > 0).
- * If the Coding task is still pending when a reject cycle fires, the node already has
- * an active task and no new activation occurs — so the counter would not increment.
+ * Completing the Coding task in step 6 is essential: without it the cyclic channel sees
+ * an active node and skips activation — so no new Coding task would be created on rejection.
  * Completing the task first lets the cyclic channel create a fresh Coding task on rejection.
  *
- * @param maxIterationsOverride  When set, patches the workflow's maxIterations via
- *   `spaceWorkflow.update` before starting the run. This is the only supported way
- *   to override the cap since `spaceWorkflowRun.start` does not accept maxIterations.
+ * @param maxIterationsOverride  When set, patches the `maxCycles` on the `Code Review → Coding`
+ *   channel (the one with `gateId: 'review-reject-gate'`) via `spaceWorkflow.update`.
  */
 async function setupToCodePrGate(
 	daemon: DaemonServerContext,
@@ -98,13 +95,19 @@ async function setupToCodePrGate(
 ): Promise<{ spaceId: string; runId: string }> {
 	const { space, workflow } = await createTestSpace(daemon);
 
-	// Optionally cap iterations before starting the run.
-	// spaceWorkflowRun.start reads maxIterations from the workflow definition;
-	// there is no per-run override in the RPC. We patch the workflow first.
+	// Optionally cap cycles on the Code Review → Coding channel before starting the run.
+	// We fetch the current workflow, find the channel with gateId 'review-reject-gate',
+	// and set maxCycles on it via spaceWorkflow.update.
 	if (options?.maxIterationsOverride !== undefined) {
+		const { workflow: currentWorkflow } = (await daemon.messageHub.request('spaceWorkflow.get', {
+			id: workflow.id,
+		})) as { workflow: SpaceWorkflow };
+		const updatedChannels = (currentWorkflow.channels ?? []).map((ch) =>
+			ch.gateId === 'review-reject-gate' ? { ...ch, maxCycles: options.maxIterationsOverride! } : ch
+		);
 		await daemon.messageHub.request('spaceWorkflow.update', {
 			id: workflow.id,
-			maxIterations: options.maxIterationsOverride,
+			channels: updatedChannels,
 		});
 	}
 
@@ -145,9 +148,7 @@ async function setupToCodePrGate(
 
 	// Coder writes code-pr-gate (triggers Reviewer 1/2/3 activation in parallel)
 	await writeGateData(daemon, runId, 'code-pr-gate', {
-		pr_url: 'https://github.com/example/repo/pull/99',
-		pr_number: 99,
-		branch: 'feat/test-feature',
+		pr_created: true,
 	});
 
 	return { spaceId: space.id, runId };
@@ -254,7 +255,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 2: code-pr-gate data is readable and contains the PR fields
+	// Test 2: code-pr-gate data is readable and contains the pr_created field
 	// -------------------------------------------------------------------------
 	test(
 		'code-pr-gate data is readable after coder writes it',
@@ -264,9 +265,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			const gate = await readGateData(daemon, runId, 'code-pr-gate');
 			expect(gate).not.toBeNull();
 			expect(gate!.gateId).toBe('code-pr-gate');
-			expect(gate!.data.pr_url).toBe('https://github.com/example/repo/pull/99');
-			expect(gate!.data.pr_number).toBe(99);
-			expect(gate!.data.branch).toBe('feat/test-feature');
+			expect(gate!.data.pr_created).toBe(true);
 		},
 		TEST_TIMEOUT
 	);
@@ -407,18 +406,12 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 6: Iteration counter increments after a reject cycle
+	// Test 6: A reject cycle creates a new Coding task
 	// -------------------------------------------------------------------------
 	test(
-		'Iteration counter increments by 1 when a reject cycle fires via review-reject-gate',
+		'A reject cycle via review-reject-gate creates a new Coding task',
 		async () => {
 			const { spaceId, runId } = await setupToCodePrGate(daemon);
-
-			// Capture iteration count before the cycle
-			const { run: runBefore } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			const beforeCount = runBefore.iterationCount;
 
 			await Promise.all([
 				waitForNodeActivated(daemon, spaceId, runId, 'Reviewer 1', NODE_ACTIVATION_TIMEOUT),
@@ -429,13 +422,18 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			const existingCodingTasks = await getTasksForNode(daemon, spaceId, runId, 'Coding');
 			const preCycleIds = new Set(existingCodingTasks.map((t) => t.id));
 
-			await triggerRejectCycle(daemon, spaceId, runId, preCycleIds, 'Reviewer 2');
+			const newCodingTask = await triggerRejectCycle(
+				daemon,
+				spaceId,
+				runId,
+				preCycleIds,
+				'Reviewer 2'
+			);
 
-			// Iteration counter must be exactly one more than before
-			const { run: runAfter } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(runAfter.iterationCount).toBe(beforeCount + 1);
+			// A fresh Coding task must have been created by the reject cycle
+			expect(newCodingTask).toBeDefined();
+			expect(newCodingTask.title).toBe('Coding');
+			expect(['pending', 'in_progress']).toContain(newCodingTask.status);
 		},
 		TEST_TIMEOUT
 	);
@@ -485,22 +483,15 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 	// Test 8: Max iterations cap prevents further reject cycles
 	// -------------------------------------------------------------------------
 	test(
-		'Reject cycles stop being accepted once the run reaches maxIterations',
+		'Reject cycles stop being accepted once the channel maxCycles cap is reached',
 		async () => {
-			// Set maxIterations=1 on the workflow before starting the run.
-			// spaceWorkflowRun.start reads this from the workflow definition;
-			// there is no per-run override param in the RPC.
+			// Set maxCycles=1 on the Code Review → Coding channel before starting the run.
+			// The cap is enforced per-channel via WorkflowChannel.maxCycles.
 			const { spaceId, runId } = await setupToCodePrGate(daemon, {
 				maxIterationsOverride: 1,
 			});
 
-			// Verify the run was created with the correct cap
-			const { run: initialRun } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(initialRun.maxIterations).toBe(1);
-
-			// ── First reject cycle: should succeed (iterationCount 0 → 1) ────────
+			// ── First reject cycle: should succeed (cycles 0 → 1) ────────────────
 			await Promise.all([
 				waitForNodeActivated(daemon, spaceId, runId, 'Reviewer 1', NODE_ACTIVATION_TIMEOUT),
 				waitForNodeActivated(daemon, spaceId, runId, 'Reviewer 2', NODE_ACTIVATION_TIMEOUT),
@@ -523,23 +514,16 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 				'Reviewer 1'
 			);
 
-			const { run: afterFirstCycle } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(afterFirstCycle.iterationCount).toBe(1);
-
-			// ── Second reject cycle: must be blocked (iterationCount = maxIterations) ──
+			// ── Second reject cycle: must be blocked (channel maxCycles reached) ──
 			// Complete the new Coding task so the node has no active tasks.
-			// This ensures the router can check the iteration cap (not hide behind the
+			// This ensures the router can check the cycle cap (not hide behind the
 			// node-idempotency guard). With the cap enforced, onGateDataChanged throws
 			// ActivationError which is caught internally by fireGateChanged and logged.
 			await mockAgentDone(daemon, spaceId, newCodingTask.id, 'PR updated');
 
 			// Write code-pr-gate again so reviewers re-activate for the second round
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_url: 'https://github.com/example/repo/pull/100',
-				pr_number: 100,
-				branch: 'feat/test-feature-v2',
+				pr_created: true,
 			});
 
 			// Complete the new reviewer tasks so they're not blocking activation
@@ -580,12 +564,6 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			}
 
 			expect(unexpectedTask).toBeUndefined();
-
-			// iterationCount must not have incremented beyond 1
-			const { run: finalRun } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(finalRun.iterationCount).toBe(1);
 		},
 		TEST_TIMEOUT
 	);

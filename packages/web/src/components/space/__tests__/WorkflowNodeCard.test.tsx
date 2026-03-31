@@ -145,7 +145,6 @@ describe('WorkflowNodeCard', () => {
 			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ disableRemove: false })} />);
 			expect((getByTitle('Remove node') as HTMLButtonElement).disabled).toBe(false);
 		});
-
 	});
 
 	describe('expanded view', () => {
@@ -212,7 +211,6 @@ describe('WorkflowNodeCard', () => {
 				expect.objectContaining({ instructions: 'Do the thing.' })
 			);
 		});
-
 	});
 });
 

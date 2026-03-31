@@ -293,11 +293,7 @@ export class ChannelRouter {
 	 * @returns GateResult — `{ allowed: true }` or `{ allowed: false, reason }` when blocked
 	 * @throws ActivationError when the run or workflow is not found
 	 */
-	async canDeliver(
-		runId: string,
-		fromRole: string,
-		toTarget: string
-	): Promise<GateResult> {
+	async canDeliver(runId: string, fromRole: string, toTarget: string): Promise<GateResult> {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) throw new ActivationError(`Run not found: ${runId}`);
 
@@ -550,7 +546,12 @@ export class ChannelRouter {
 		// ensures the QA→Coding feedback path (triggered via write_gate MCP tool →
 		// onGateDataChanged) correctly resets reviewer votes and advances the cycle counter.
 		if (cyclicChannelMatch && activatedTasks.length > 0) {
-			this.incrementAndResetCyclicChannel(runId, cyclicChannelMatch.index, cyclicChannelMatch.maxCycles, workflow);
+			this.incrementAndResetCyclicChannel(
+				runId,
+				cyclicChannelMatch.index,
+				cyclicChannelMatch.maxCycles,
+				workflow
+			);
 		}
 
 		return activatedTasks;
@@ -674,7 +675,8 @@ export class ChannelRouter {
 			// Match the from side
 			if (ch.from !== '*' && ch.from !== fromRole && ch.from !== fromNodeName) return false;
 			// Match the to side
-			if (ch.to === '*' || ch.to === toTarget || (!!toNodeName && ch.to === toNodeName)) return true;
+			if (ch.to === '*' || ch.to === toTarget || (!!toNodeName && ch.to === toNodeName))
+				return true;
 			if (Array.isArray(ch.to)) {
 				return ch.to.includes(toTarget) || (!!toNodeName && ch.to.includes(toNodeName));
 			}
@@ -694,11 +696,7 @@ export class ChannelRouter {
 	/**
 	 * Checks whether a cyclic channel has reached its per-channel cycle cap.
 	 */
-	private isCycleCapReached(
-		runId: string,
-		channelIndex: number,
-		maxCycles: number
-	): boolean {
+	private isCycleCapReached(runId: string, channelIndex: number, maxCycles: number): boolean {
 		if (!this.config.channelCycleRepo) return false;
 		const record = this.config.channelCycleRepo.get(runId, channelIndex);
 		return record ? record.count >= maxCycles : false;
@@ -743,7 +741,11 @@ export class ChannelRouter {
 					this.config.gateDataRepo.reset(runId, gate.id, computeGateDefaults(gate.fields));
 				}
 			}
-			const incremented = this.config.channelCycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);
+			const incremented = this.config.channelCycleRepo.incrementCycleCount(
+				runId,
+				channelIndex,
+				maxCycles
+			);
 			if (!incremented) {
 				throw new ActivationError(
 					`Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`

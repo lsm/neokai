@@ -757,9 +757,7 @@ describe('WorkflowCanvas — explicit channels prop', () => {
 
 		const { container } = render(<Wrapper />);
 		// Explicit channels should win, so only the explicitly passed edge renders.
-		const taskAgentEdge = container.querySelector(
-			'[data-testid="channel-edge-task-agent-step-1"]'
-		);
+		const taskAgentEdge = container.querySelector('[data-testid="channel-edge-task-agent-step-1"]');
 		expect(taskAgentEdge).toBeTruthy();
 		expect(container.querySelectorAll('[data-channel-edge]').length).toBe(1);
 		cleanup();

@@ -304,7 +304,9 @@ export class TaskAgentManager {
 			throw new Error(`Space not found: ${task.spaceId}`);
 		}
 
-		let workflowRun = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
+		let workflowRun = task.workflowRunId
+			? this.config.workflowRunRepo.getRun(task.workflowRunId)
+			: null;
 		let workflow = workflowRun
 			? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
 			: null;
@@ -452,9 +454,7 @@ export class TaskAgentManager {
 				.join(' ')
 				.toLowerCase();
 			const hits =
-				keywords.length === 0
-					? 0
-					: keywords.filter((kw) => haystack.includes(kw)).length;
+				keywords.length === 0 ? 0 : keywords.filter((kw) => haystack.includes(kw)).length;
 			const tags = workflow.tags ?? [];
 			return {
 				workflow,

@@ -979,7 +979,11 @@ class SpaceStore {
 		const nextTask = response.task;
 		const idx = this.tasks.value.findIndex((t) => t.id === nextTask.id);
 		if (idx >= 0) {
-			this.tasks.value = [...this.tasks.value.slice(0, idx), nextTask, ...this.tasks.value.slice(idx + 1)];
+			this.tasks.value = [
+				...this.tasks.value.slice(0, idx),
+				nextTask,
+				...this.tasks.value.slice(idx + 1),
+			];
 		} else {
 			this.tasks.value = [...this.tasks.value, nextTask];
 		}
@@ -1017,15 +1021,16 @@ class SpaceStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		const result = await hub.request<{ messages: SDKMessage[]; hasMore: boolean; sessionId: string }>(
-			'space.task.getMessages',
-			{
-				taskId,
-				spaceId,
-				cursor: options?.cursor,
-				limit: options?.limit,
-			}
-		);
+		const result = await hub.request<{
+			messages: SDKMessage[];
+			hasMore: boolean;
+			sessionId: string;
+		}>('space.task.getMessages', {
+			taskId,
+			spaceId,
+			cursor: options?.cursor,
+			limit: options?.limit,
+		});
 		return {
 			messages: result?.messages ?? [],
 			hasMore: result?.hasMore ?? false,

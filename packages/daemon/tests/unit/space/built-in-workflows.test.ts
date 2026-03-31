@@ -651,16 +651,12 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(codeToVerify).toBeDefined();
 		expect(codeToVerify!.gateId).toBeUndefined();
 
-		const verifyToPlan = wf.channels!.find(
-			(c) => c.from === 'Verify & Test' && c.to === 'Plan'
-		);
+		const verifyToPlan = wf.channels!.find((c) => c.from === 'Verify & Test' && c.to === 'Plan');
 		expect(verifyToPlan).toBeDefined();
 		expect(verifyToPlan!.gateId).toBe('verify-fail-gate');
 		expect(verifyToPlan!.maxCycles).toBe(3);
 
-		const verifyToDone = wf.channels!.find(
-			(c) => c.from === 'Verify & Test' && c.to === 'Done'
-		);
+		const verifyToDone = wf.channels!.find((c) => c.from === 'Verify & Test' && c.to === 'Done');
 		expect(verifyToDone).toBeDefined();
 		expect(verifyToDone!.gateId).toBe('verify-pass-gate');
 		expect(verifyToDone!.maxCycles).toBeUndefined();

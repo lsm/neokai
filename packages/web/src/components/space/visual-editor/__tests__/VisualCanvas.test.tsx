@@ -180,7 +180,11 @@ describe('VisualCanvas', () => {
 		};
 
 		const { getByTestId } = render(
-			<VisualCanvas viewportState={{ offsetX: 0, offsetY: 0, scale: 1 }} onViewportChange={() => {}} nodes={nodes}>
+			<VisualCanvas
+				viewportState={{ offsetX: 0, offsetY: 0, scale: 1 }}
+				onViewportChange={() => {}}
+				nodes={nodes}
+			>
 				<div data-testid="child-node">Hello</div>
 			</VisualCanvas>
 		);

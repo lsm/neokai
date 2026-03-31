@@ -59,7 +59,9 @@ function ActionButton({
 					<Icon />
 				</div>
 				<div class="min-w-0">
-					<p class={cn('text-sm font-medium', tone === 'primary' ? 'text-blue-50' : 'text-gray-100')}>
+					<p
+						class={cn('text-sm font-medium', tone === 'primary' ? 'text-blue-50' : 'text-gray-100')}
+					>
 						{title}
 					</p>
 					<p class="mt-1 text-xs leading-5 text-gray-500">{description}</p>
@@ -245,9 +247,12 @@ export function SpaceDashboard({
 			task.status === 'rate_limited' ||
 			task.status === 'usage_limited'
 	);
-	const reviewTasks = tasks.filter((task) => task.status === 'review' || task.status === 'needs_attention');
+	const reviewTasks = tasks.filter(
+		(task) => task.status === 'review' || task.status === 'needs_attention'
+	);
 	const completedTasks = tasks.filter(
-		(task) => task.status === 'completed' || task.status === 'cancelled' || task.status === 'archived'
+		(task) =>
+			task.status === 'completed' || task.status === 'cancelled' || task.status === 'archived'
 	);
 	const recentCompleted = [...completedTasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6);
 	const activeQueue = [...activeTasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6);
@@ -298,7 +303,9 @@ export function SpaceDashboard({
 						label="Needs Attention"
 						value={String(reviewTasks.length)}
 						helper={
-							reviewTasks.length === 0 ? 'Nothing is waiting on you.' : 'Review or unblock these tasks next.'
+							reviewTasks.length === 0
+								? 'Nothing is waiting on you.'
+								: 'Review or unblock these tasks next.'
 						}
 						accent="bg-amber-400"
 					/>
@@ -306,7 +313,9 @@ export function SpaceDashboard({
 						label="Completed"
 						value={String(completedTasks.length)}
 						helper={
-							completedTasks.length === 0 ? 'No finished work yet.' : 'Completed work in this space.'
+							completedTasks.length === 0
+								? 'No finished work yet.'
+								: 'Completed work in this space.'
 						}
 						accent="bg-green-400"
 					/>

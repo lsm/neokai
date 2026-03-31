@@ -478,4 +478,3 @@ describe('resolveChannels edge cases', () => {
 		expect(result[0].isFanOut).toBeFalsy();
 	});
 });
-

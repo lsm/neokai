@@ -1106,7 +1106,9 @@ describe('TaskAgentManager', () => {
 				return restored as unknown as AgentSession;
 			});
 
-			await expect(ctx.manager.injectTaskAgentMessage(task.id, 'resume work')).resolves.toBeUndefined();
+			await expect(
+				ctx.manager.injectTaskAgentMessage(task.id, 'resume work')
+			).resolves.toBeUndefined();
 
 			const session = ctx.createdSessions.get(persistedSessionId);
 			expect(session?._startCalled).toBe(true);

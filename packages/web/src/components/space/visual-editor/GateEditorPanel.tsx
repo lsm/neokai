@@ -25,7 +25,12 @@ function modeButtonClass(active: boolean): string {
 		: 'border-dark-600 bg-dark-800 text-gray-400 hover:border-dark-500 hover:text-gray-200';
 }
 
-export function GateEditorPanel({ gate, onChange, onBack, embedded = false }: GateEditorPanelProps) {
+export function GateEditorPanel({
+	gate,
+	onChange,
+	onBack,
+	embedded = false,
+}: GateEditorPanelProps) {
 	const [expandedField, setExpandedField] = useState<number | null>(null);
 
 	function updateGate(partial: Partial<Gate>) {
@@ -117,7 +122,9 @@ export function GateEditorPanel({ gate, onChange, onBack, embedded = false }: Ga
 					data-testid="gate-editor-description"
 					value={gate.description ?? ''}
 					placeholder="What does this gate check?"
-					onInput={(e) => updateGate({ description: (e.currentTarget as HTMLInputElement).value || undefined })}
+					onInput={(e) =>
+						updateGate({ description: (e.currentTarget as HTMLInputElement).value || undefined })
+					}
 					class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700"
 				/>
 			</div>
@@ -128,7 +135,9 @@ export function GateEditorPanel({ gate, onChange, onBack, embedded = false }: Ga
 					type="checkbox"
 					data-testid="gate-editor-reset-on-cycle"
 					checked={gate.resetOnCycle}
-					onChange={(e) => updateGate({ resetOnCycle: (e.currentTarget as HTMLInputElement).checked })}
+					onChange={(e) =>
+						updateGate({ resetOnCycle: (e.currentTarget as HTMLInputElement).checked })
+					}
 					class="rounded border-dark-600 text-blue-500 focus:ring-blue-500"
 				/>
 				<span class="text-xs text-gray-400">Reset on cycle</span>
@@ -256,7 +265,9 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
 						<select
 							data-testid={`gate-field-type-${index}`}
 							value={field.type}
-							onChange={(e) => handleTypeChange((e.currentTarget as HTMLSelectElement).value as GateFieldType)}
+							onChange={(e) =>
+								handleTypeChange((e.currentTarget as HTMLSelectElement).value as GateFieldType)
+							}
 							class="w-full text-xs bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
 						>
 							{FIELD_TYPES.map((t) => (
@@ -269,7 +280,9 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
 
 					{/* Writers */}
 					<div class="space-y-0.5">
-						<label class="text-[10px] uppercase tracking-wider text-gray-600">Writers (comma-separated)</label>
+						<label class="text-[10px] uppercase tracking-wider text-gray-600">
+							Writers (comma-separated)
+						</label>
 						<input
 							type="text"
 							data-testid={`gate-field-writers-${index}`}
@@ -327,7 +340,11 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
 								<select
 									data-testid={`gate-field-op-${index}`}
 									value={field.check.op === 'count' ? '==' : field.check.op}
-									onChange={(e) => handleScalarOpChange((e.currentTarget as HTMLSelectElement).value as '==' | '!=' | 'exists')}
+									onChange={(e) =>
+										handleScalarOpChange(
+											(e.currentTarget as HTMLSelectElement).value as '==' | '!=' | 'exists'
+										)
+									}
 									class="w-full text-xs bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
 								>
 									{SCALAR_OPS.map((op) => (
@@ -340,7 +357,13 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
 									<input
 										type="text"
 										data-testid={`gate-field-value-${index}`}
-										value={field.check.value === true ? 'true' : field.check.value === false ? 'false' : String(field.check.value ?? '')}
+										value={
+											field.check.value === true
+												? 'true'
+												: field.check.value === false
+													? 'false'
+													: String(field.check.value ?? '')
+										}
 										placeholder="expected value"
 										onInput={(e) => {
 											const raw = (e.currentTarget as HTMLInputElement).value;

@@ -365,7 +365,6 @@ describe('Space Export/Import RPC Handlers', () => {
 			});
 			expect(bundle.agents).toHaveLength(0);
 		});
-
 	});
 
 	// ─── spaceExport.workflows ────────────────────────────────────────────────
@@ -1055,7 +1054,6 @@ describe('Space Export/Import RPC Handlers', () => {
 				const agent = agentRepo.getById(existing.id)!;
 				expect(agent.systemPrompt).toBeUndefined();
 			});
-
 		});
 	});
 

@@ -3,11 +3,7 @@ import type { WorkflowChannel, WorkflowNode } from '@neokai/shared';
 import type { VisualTransition } from '../types';
 import { autoLayout } from '../layout';
 
-function makeStep(
-	id: string,
-	name = id,
-	options: Partial<WorkflowNode> = {}
-): WorkflowNode {
+function makeStep(id: string, name = id, options: Partial<WorkflowNode> = {}): WorkflowNode {
 	return {
 		id,
 		name,

@@ -1112,7 +1112,14 @@ describe('VisualWorkflowEditor', () => {
 				gates: [
 					{
 						id: 'review-votes-gate',
-						fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 3 } }],
+						fields: [
+							{
+								name: 'votes',
+								type: 'map',
+								writers: ['*'],
+								check: { op: 'count', match: 'approved', min: 3 },
+							},
+						],
 						resetOnCycle: true,
 					},
 				],
@@ -1127,9 +1134,7 @@ describe('VisualWorkflowEditor', () => {
 			expect(firstChannelHitbox).toBeTruthy();
 			fireEvent.click(firstChannelHitbox!);
 
-			const minInput = getByTestId(
-				'channel-edge-gate-select-0-count-min'
-			) as HTMLInputElement;
+			const minInput = getByTestId('channel-edge-gate-select-0-count-min') as HTMLInputElement;
 			expect(minInput.value).toBe('3');
 			fireEvent.input(minInput, { target: { value: '2' } });
 

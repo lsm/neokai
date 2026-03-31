@@ -27,33 +27,58 @@ import type { Gate, GateField, Channel } from '@neokai/shared';
 
 describe('GateEvaluator — scalar field (== op)', () => {
 	test('opens when field matches expected value (boolean)', () => {
-		const field: GateField = { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } };
+		const field: GateField = {
+			name: 'approved',
+			type: 'boolean',
+			writers: ['*'],
+			check: { op: '==', value: true },
+		};
 		const result = evaluateFieldCheck(field, { approved: true });
 		expect(result.open).toBe(true);
 		expect(result.reason).toBeUndefined();
 	});
 
 	test('closed when field does not match expected value', () => {
-		const field: GateField = { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } };
+		const field: GateField = {
+			name: 'approved',
+			type: 'boolean',
+			writers: ['*'],
+			check: { op: '==', value: true },
+		};
 		const result = evaluateFieldCheck(field, { approved: false });
 		expect(result.open).toBe(false);
 		expect(result.reason).toContain('expected true');
 	});
 
 	test('closed when field is missing (undefined !== true)', () => {
-		const field: GateField = { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } };
+		const field: GateField = {
+			name: 'approved',
+			type: 'boolean',
+			writers: ['*'],
+			check: { op: '==', value: true },
+		};
 		const result = evaluateFieldCheck(field, {});
 		expect(result.open).toBe(false);
 	});
 
 	test('matches string values', () => {
-		const field: GateField = { name: 'result', type: 'string', writers: ['*'], check: { op: '==', value: 'passed' } };
+		const field: GateField = {
+			name: 'result',
+			type: 'string',
+			writers: ['*'],
+			check: { op: '==', value: 'passed' },
+		};
 		expect(evaluateFieldCheck(field, { result: 'passed' }).open).toBe(true);
 		expect(evaluateFieldCheck(field, { result: 'failed' }).open).toBe(false);
 	});
 
 	test('matches number values', () => {
-		const field: GateField = { name: 'count', type: 'number', writers: ['*'], check: { op: '==', value: 42 } };
+		const field: GateField = {
+			name: 'count',
+			type: 'number',
+			writers: ['*'],
+			check: { op: '==', value: 42 },
+		};
 		expect(evaluateFieldCheck(field, { count: 42 }).open).toBe(true);
 		expect(evaluateFieldCheck(field, { count: 43 }).open).toBe(false);
 	});
@@ -65,37 +90,72 @@ describe('GateEvaluator — scalar field (== op)', () => {
 
 describe('GateEvaluator — scalar field (exists op)', () => {
 	test('opens when field is present (any truthy value)', () => {
-		const field: GateField = { name: 'plan', type: 'string', writers: ['*'], check: { op: 'exists' } };
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
 		expect(evaluateFieldCheck(field, { plan: 'some plan' }).open).toBe(true);
 	});
 
 	test('opens when field is present with false value', () => {
-		const field: GateField = { name: 'plan', type: 'boolean', writers: ['*'], check: { op: 'exists' } };
+		const field: GateField = {
+			name: 'plan',
+			type: 'boolean',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
 		expect(evaluateFieldCheck(field, { plan: false }).open).toBe(true);
 	});
 
 	test('opens when field is present with null value', () => {
-		const field: GateField = { name: 'plan', type: 'string', writers: ['*'], check: { op: 'exists' } };
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
 		expect(evaluateFieldCheck(field, { plan: null }).open).toBe(true);
 	});
 
 	test('opens when field is present with zero value', () => {
-		const field: GateField = { name: 'count', type: 'number', writers: ['*'], check: { op: 'exists' } };
+		const field: GateField = {
+			name: 'count',
+			type: 'number',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
 		expect(evaluateFieldCheck(field, { count: 0 }).open).toBe(true);
 	});
 
 	test('opens when field is empty string', () => {
-		const field: GateField = { name: 'plan', type: 'string', writers: ['*'], check: { op: 'exists' } };
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
 		expect(evaluateFieldCheck(field, { plan: '' }).open).toBe(true);
 	});
 
 	test('closed when field is undefined', () => {
-		const field: GateField = { name: 'plan', type: 'string', writers: ['*'], check: { op: 'exists' } };
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
 		expect(evaluateFieldCheck(field, {}).open).toBe(false);
 	});
 
 	test('closed when field is explicitly undefined', () => {
-		const field: GateField = { name: 'plan', type: 'string', writers: ['*'], check: { op: 'exists' } };
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
 		expect(evaluateFieldCheck(field, { plan: undefined }).open).toBe(false);
 	});
 });
@@ -106,17 +166,32 @@ describe('GateEvaluator — scalar field (exists op)', () => {
 
 describe('GateEvaluator — scalar field (!= op)', () => {
 	test('opens when field does not match', () => {
-		const field: GateField = { name: 'x', type: 'number', writers: ['*'], check: { op: '!=', value: 42 } };
+		const field: GateField = {
+			name: 'x',
+			type: 'number',
+			writers: ['*'],
+			check: { op: '!=', value: 42 },
+		};
 		expect(evaluateFieldCheck(field, { x: 43 }).open).toBe(true);
 	});
 
 	test('closed when field matches', () => {
-		const field: GateField = { name: 'x', type: 'number', writers: ['*'], check: { op: '!=', value: 42 } };
+		const field: GateField = {
+			name: 'x',
+			type: 'number',
+			writers: ['*'],
+			check: { op: '!=', value: 42 },
+		};
 		expect(evaluateFieldCheck(field, { x: 42 }).open).toBe(false);
 	});
 
 	test('opens when field is missing (undefined !== 42)', () => {
-		const field: GateField = { name: 'x', type: 'number', writers: ['*'], check: { op: '!=', value: 42 } };
+		const field: GateField = {
+			name: 'x',
+			type: 'number',
+			writers: ['*'],
+			check: { op: '!=', value: 42 },
+		};
 		expect(evaluateFieldCheck(field, {}).open).toBe(true);
 	});
 });
@@ -269,7 +344,9 @@ describe('GateEvaluator — isChannelOpen', () => {
 	test('channel with gate delegates to evaluateGate', () => {
 		const gate: Gate = {
 			id: 'g1',
-			fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
 			resetOnCycle: false,
 		};
 		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'g1' };
@@ -320,7 +397,12 @@ describe('validateGateFields', () => {
 
 	test('valid map field with count check', () => {
 		const errors = validateGateFields([
-			{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'approved', min: 3 } },
+			{
+				name: 'votes',
+				type: 'map',
+				writers: ['reviewer'],
+				check: { op: 'count', match: 'approved', min: 3 },
+			},
 		]);
 		expect(errors).toHaveLength(0);
 	});

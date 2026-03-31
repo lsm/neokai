@@ -84,10 +84,8 @@ const V2_TEMPLATE_PROMPTS = {
 		'You are the Coding node for this workflow. Implement the approved plan in the workspace, keep the changes reviewable, and leave the branch in a state that reviewers and QA can validate directly.',
 	codeReview:
 		'You are part of the Code Review node for this workflow. Review the implementation independently for correctness, regressions, maintainability, and test coverage. Record a clear approve or reject vote with concise reasoning.',
-	qa:
-		'You are the QA node for this workflow. Validate the implementation from an execution and release-readiness perspective. Run the relevant checks, confirm the reported state, and fail the handoff when issues remain.',
-	done:
-		'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce a concise final outcome summary without reopening work unless a blocking issue is discovered.',
+	qa: 'You are the QA node for this workflow. Validate the implementation from an execution and release-readiness perspective. Run the relevant checks, confirm the reported state, and fail the handoff when issues remain.',
+	done: 'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce a concise final outcome summary without reopening work unless a blocking issue is discovered.',
 } as const;
 
 export const TEMPLATES: WorkflowTemplate[] = [
@@ -224,43 +222,77 @@ export const TEMPLATES: WorkflowTemplate[] = [
 			{
 				id: 'plan-pr-gate',
 				description: 'Planning node has submitted a plan for review.',
-				fields: [{ name: 'plan_submitted', type: 'boolean', writers: ['planner'], check: { op: 'exists' } }],
+				fields: [
+					{
+						name: 'plan_submitted',
+						type: 'boolean',
+						writers: ['planner'],
+						check: { op: 'exists' },
+					},
+				],
 				resetOnCycle: false,
 			},
 			{
 				id: 'plan-approval-gate',
 				description: 'Plan has been reviewed and approved.',
-				fields: [{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } }],
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['human'],
+						check: { op: '==', value: true },
+					},
+				],
 				resetOnCycle: true,
 			},
 			{
 				id: 'code-pr-gate',
 				description: 'Coding node has opened or updated a pull request.',
-				fields: [{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } }],
+				fields: [
+					{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
+				],
 				resetOnCycle: false,
 			},
 			{
 				id: 'review-votes-gate',
 				description: 'All three reviewers have approved the code review node.',
-				fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'approved', min: 3 } }],
+				fields: [
+					{
+						name: 'votes',
+						type: 'map',
+						writers: ['reviewer'],
+						check: { op: 'count', match: 'approved', min: 3 },
+					},
+				],
 				resetOnCycle: true,
 			},
 			{
 				id: 'review-reject-gate',
 				description: 'Any reviewer has rejected the current changes.',
-				fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'rejected', min: 1 } }],
+				fields: [
+					{
+						name: 'votes',
+						type: 'map',
+						writers: ['reviewer'],
+						check: { op: 'count', match: 'rejected', min: 1 },
+					},
+				],
 				resetOnCycle: true,
 			},
 			{
 				id: 'qa-result-gate',
 				description: 'QA marked the current cycle as passed.',
-				fields: [{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } }],
+				fields: [
+					{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } },
+				],
 				resetOnCycle: true,
 			},
 			{
 				id: 'qa-fail-gate',
 				description: 'QA marked the current cycle as failed.',
-				fields: [{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } }],
+				fields: [
+					{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } },
+				],
 				resetOnCycle: true,
 			},
 		],
@@ -306,7 +338,9 @@ function resolveTemplateAgent(
 ): SpaceAgent | undefined {
 	const key = roleOrName.trim().toLowerCase();
 	if (!key) return undefined;
-	const matches = agents.filter((a) => a.name.toLowerCase() === key || a.role.toLowerCase() === key);
+	const matches = agents.filter(
+		(a) => a.name.toLowerCase() === key || a.role.toLowerCase() === key
+	);
 	if (matches.length === 0) return undefined;
 
 	// Prefer distinct matches for repeated slots of the same role, then fall back

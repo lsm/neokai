@@ -196,7 +196,14 @@ describe('workflowToVisualState', () => {
 			gates: [
 				{
 					id: 'review-votes-gate',
-					fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 3 } }],
+					fields: [
+						{
+							name: 'votes',
+							type: 'map',
+							writers: ['*'],
+							check: { op: 'count', match: 'approved', min: 3 },
+						},
+					],
 					resetOnCycle: true,
 				},
 			],
@@ -741,12 +748,21 @@ describe('multi-agent step serialization', () => {
 			gates: [
 				{
 					id: 'review-votes-gate',
-					fields: [{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 3 } }],
+					fields: [
+						{
+							name: 'votes',
+							type: 'map',
+							writers: ['*'],
+							check: { op: 'count', match: 'approved', min: 3 },
+						},
+					],
 					resetOnCycle: true,
 				},
 				{
 					id: 'unused-gate',
-					fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
+					fields: [
+						{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+					],
 					resetOnCycle: false,
 				},
 			],

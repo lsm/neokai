@@ -429,7 +429,8 @@ function formatTaskActivityLabel(value: unknown, fallback: string): string {
 
 function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, unknown> {
 	const kind = row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
-	const rawRole = typeof row.role === 'string' ? row.role : kind === 'task_agent' ? 'task-agent' : 'agent';
+	const rawRole =
+		typeof row.role === 'string' ? row.role : kind === 'task_agent' ? 'task-agent' : 'agent';
 	const rawLabel = typeof row.label === 'string' ? row.label : rawRole;
 
 	return {
@@ -899,13 +900,16 @@ export function setupLiveQueryHandlers(
 			// not directly reachable by client-supplied IDs without prior knowledge.
 			// If new group types with finer-grained access control are introduced, extend
 			// this block with the appropriate chain validation.
-		} else if (queryName === 'spaceTaskActivity.byTask' || queryName === 'spaceTaskMessages.byTask') {
+		} else if (
+			queryName === 'spaceTaskActivity.byTask' ||
+			queryName === 'spaceTaskMessages.byTask'
+		) {
 			const taskId = params[0] as string;
 			let spaceTask: { space_id: string } | null = null;
 			try {
-				spaceTask = db
-					.prepare('SELECT space_id FROM space_tasks WHERE id = ?')
-					.get(taskId) as { space_id: string } | null;
+				spaceTask = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
+					space_id: string;
+				} | null;
 			} catch {
 				spaceTask = null;
 			}

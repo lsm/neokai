@@ -126,19 +126,35 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			id: 'plan-approval-gate',
 			description: 'Review and approve the plan before coding begins',
-			fields: [{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } }],
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+			],
 			resetOnCycle: false,
 		},
 		{
 			id: 'verify-fail-gate',
 			description: 'Loop back to planning when verification fails',
-			fields: [{ name: 'result', type: 'string', writers: ['general'], check: { op: '==', value: 'failed' } }],
+			fields: [
+				{
+					name: 'result',
+					type: 'string',
+					writers: ['general'],
+					check: { op: '==', value: 'failed' },
+				},
+			],
 			resetOnCycle: true,
 		},
 		{
 			id: 'verify-pass-gate',
 			description: 'Complete workflow when verification passes',
-			fields: [{ name: 'result', type: 'string', writers: ['general'], check: { op: '==', value: 'passed' } }],
+			fields: [
+				{
+					name: 'result',
+					type: 'string',
+					writers: ['general'],
+					check: { op: '==', value: 'passed' },
+				},
+			],
 			resetOnCycle: true,
 		},
 	],
@@ -363,13 +379,22 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		{
 			id: 'plan-pr-gate',
 			description: 'Planning agent has submitted a plan for review',
-			fields: [{ name: 'plan_submitted', type: 'boolean', writers: ['planner'], check: { op: 'exists' } }],
+			fields: [
+				{ name: 'plan_submitted', type: 'boolean', writers: ['planner'], check: { op: 'exists' } },
+			],
 			resetOnCycle: false,
 		},
 		{
 			id: 'plan-approval-gate',
 			description: 'Plan has been reviewed and approved by the plan reviewer',
-			fields: [{ name: 'approved', type: 'boolean', writers: ['reviewer'], check: { op: '==', value: true } }],
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
 			resetOnCycle: true,
 		},
 		{
@@ -378,7 +403,9 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 				'Code has been implemented and a pull request has been opened. ' +
 				'resetOnCycle is false: the same PR is updated across fix cycles — coder pushes ' +
 				'new commits to the existing branch rather than opening a new PR each time.',
-			fields: [{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } }],
+			fields: [
+				{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
+			],
 			resetOnCycle: false,
 		},
 		{
@@ -388,7 +415,14 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 				'Agents must read the current votes map first, add their entry, then write the full map back ' +
 				'(read-merge-write) — write_gate performs a shallow merge so writing only your own entry ' +
 				"would overwrite all other reviewers' votes.",
-			fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'approved', min: 3 } }],
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['reviewer'],
+					check: { op: 'count', match: 'approved', min: 3 },
+				},
+			],
 			resetOnCycle: true,
 		},
 		{
@@ -398,7 +432,14 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 				'Agents must read the current votes map first, add their entry, then write the full map back ' +
 				'(read-merge-write) — write_gate performs a shallow merge so writing only your own entry ' +
 				"would overwrite all other reviewers' votes.",
-			fields: [{ name: 'votes', type: 'map', writers: ['reviewer'], check: { op: 'count', match: 'rejected', min: 1 } }],
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['reviewer'],
+					check: { op: 'count', match: 'rejected', min: 1 },
+				},
+			],
 			resetOnCycle: true,
 		},
 		{
@@ -406,13 +447,17 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			description:
 				'QA verification has passed — tests, CI, and PR are green. ' +
 				'Resets on each QA→Coding cycle so QA always starts from a clean state.',
-			fields: [{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } }],
+			fields: [
+				{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } },
+			],
 			resetOnCycle: true,
 		},
 		{
 			id: 'qa-fail-gate',
 			description: 'QA found issues — needs another coding and review cycle',
-			fields: [{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } }],
+			fields: [
+				{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } },
+			],
 			resetOnCycle: true,
 		},
 	],

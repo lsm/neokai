@@ -17,12 +17,7 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
 import { SendMessageSchema } from '../../../src/lib/space/tools/node-agent-tool-schemas.ts';
-import type {
-	Gate,
-	Channel,
-	WorkflowRunFailureReason,
-	SpaceWorkflowRun,
-} from '@neokai/shared';
+import type { Gate, Channel, WorkflowRunFailureReason, SpaceWorkflowRun } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB setup
@@ -74,7 +69,14 @@ describe('Gate and Channel type validation', () => {
 	test('Gate with scalar field (boolean check)', () => {
 		const gate: Gate = {
 			id: 'gate-1',
-			fields: [{ name: 'approved', type: 'boolean', writers: ['reviewer'], check: { op: '==', value: true } }],
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
 			resetOnCycle: false,
 			description: 'Approval gate',
 		};
@@ -85,7 +87,14 @@ describe('Gate and Channel type validation', () => {
 	test('Gate with map field (count check)', () => {
 		const gate: Gate = {
 			id: 'gate-2',
-			fields: [{ name: 'reviews', type: 'map', writers: ['reviewer-1', 'reviewer-2'], check: { op: 'count', match: 'approved', min: 2 } }],
+			fields: [
+				{
+					name: 'reviews',
+					type: 'map',
+					writers: ['reviewer-1', 'reviewer-2'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
+			],
 			resetOnCycle: true,
 		};
 		expect(gate.fields[0].type).toBe('map');
@@ -97,7 +106,12 @@ describe('Gate and Channel type validation', () => {
 			id: 'gate-3',
 			fields: [
 				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
-				{ name: 'reviews', type: 'map', writers: ['*'], check: { op: 'count', match: 'approved', min: 2 } },
+				{
+					name: 'reviews',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
 			],
 			resetOnCycle: false,
 		};
@@ -126,13 +140,27 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 		const gates: Gate[] = [
 			{
 				id: 'gate-approval',
-				fields: [{ name: 'approved', type: 'boolean', writers: ['reviewer'], check: { op: '==', value: true } }],
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['reviewer'],
+						check: { op: '==', value: true },
+					},
+				],
 				resetOnCycle: false,
 				description: 'Plan approval gate',
 			},
 			{
 				id: 'gate-review-count',
-				fields: [{ name: 'approvals', type: 'map', writers: ['reviewer-1', 'reviewer-2'], check: { op: 'count', match: 'approved', min: 2 } }],
+				fields: [
+					{
+						name: 'approvals',
+						type: 'map',
+						writers: ['reviewer-1', 'reviewer-2'],
+						check: { op: 'count', match: 'approved', min: 2 },
+					},
+				],
 				resetOnCycle: true,
 			},
 		];
@@ -173,7 +201,9 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 			gates: [
 				{
 					id: 'gate-1',
-					fields: [{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
+					fields: [
+						{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+					],
 					resetOnCycle: false,
 				},
 			],

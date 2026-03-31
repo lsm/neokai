@@ -80,7 +80,9 @@ export function validateGateFields(fields: unknown, path = 'fields'): string[] {
 			const check = f.check as Record<string, unknown>;
 			if (f.type === 'map') {
 				if (check.op !== 'count') {
-					errors.push(`${fp}.check.op: expected "count" for map field, got ${JSON.stringify(check.op)}`);
+					errors.push(
+						`${fp}.check.op: expected "count" for map field, got ${JSON.stringify(check.op)}`
+					);
 				}
 				if (typeof check.min !== 'number') {
 					errors.push(`${fp}.check.min: expected number, got ${typeof check.min}`);
