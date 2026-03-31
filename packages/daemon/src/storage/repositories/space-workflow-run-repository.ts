@@ -20,8 +20,6 @@ export interface UpdateWorkflowRunParams {
 	description?: string;
 	status?: WorkflowRunStatus;
 	config?: Record<string, unknown>;
-	iterationCount?: number;
-	maxIterations?: number;
 	failureReason?: WorkflowRunFailureReason | null;
 }
 
@@ -48,8 +46,8 @@ export class SpaceWorkflowRunRepository {
 			params.description ?? '',
 			'pending',
 			null,
-			0,
-			params.maxIterations ?? 5,
+			0, // iteration_count (dead column, kept for backward compat)
+			5, // max_iterations (dead column, kept for backward compat)
 			params.goalId ?? null,
 			now,
 			now
@@ -143,14 +141,6 @@ export class SpaceWorkflowRunRepository {
 			fields.push('config = ?');
 			values.push(JSON.stringify(params.config));
 		}
-		if (params.iterationCount !== undefined) {
-			fields.push('iteration_count = ?');
-			values.push(params.iterationCount);
-		}
-		if (params.maxIterations !== undefined) {
-			fields.push('max_iterations = ?');
-			values.push(params.maxIterations);
-		}
 		if (params.failureReason !== undefined) {
 			fields.push('failure_reason = ?');
 			values.push(params.failureReason);
@@ -195,26 +185,6 @@ export class SpaceWorkflowRunRepository {
 		if (!run) throw new Error(`WorkflowRun not found: ${id}`);
 		assertValidTransition(run.status, to, id);
 		return this.updateRun(id, { status: to })!;
-	}
-
-	/**
-	 * Atomically increment the iteration counter for a run, respecting the cap.
-	 *
-	 * Uses a single SQL UPDATE with a WHERE guard so the read-check-write is atomic:
-	 *   UPDATE ... SET iteration_count = iteration_count + 1
-	 *   WHERE id = ? AND iteration_count < max_iterations
-	 *
-	 * @returns true when the counter was incremented (below cap),
-	 *          false when the cap was already reached (no change applied)
-	 */
-	incrementIterationCount(id: string): boolean {
-		const stmt = this.db.prepare(
-			`UPDATE space_workflow_runs
-			 SET iteration_count = iteration_count + 1, updated_at = ?
-			 WHERE id = ? AND iteration_count < max_iterations`
-		);
-		const result = stmt.run(Date.now(), id);
-		return result.changes > 0;
 	}
 
 	/**

@@ -193,7 +193,7 @@ export class SpaceWorkflowRepository {
 				channelsJson,
 				gatesJson,
 				layoutJson,
-				params.maxIterations ?? null,
+				null, // max_iterations (dead column, kept for backward compat)
 				now,
 				now
 			);
@@ -287,11 +287,6 @@ export class SpaceWorkflowRepository {
 		if (params.gates !== undefined) {
 			fields.push('gates = ?');
 			values.push(params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null);
-		}
-
-		if (params.maxIterations !== undefined) {
-			fields.push('max_iterations = ?');
-			values.push(params.maxIterations);
 		}
 
 		if (params.layout !== undefined) {

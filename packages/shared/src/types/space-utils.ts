@@ -50,8 +50,8 @@ export interface ResolvedChannel {
 	isFanOut?: boolean;
 	/** Optional label inherited from the source WorkflowChannel */
 	label?: string;
-	/** Inherited from the source WorkflowChannel */
-	isCyclic?: boolean;
+	/** Inherited from the source WorkflowChannel — per-channel cycle limit */
+	maxCycles?: number;
 	/**
 	 * True when this channel belongs to a hub-spoke topology
 	 * (bidirectional source with an array `to` containing more than one name).
@@ -411,7 +411,7 @@ function expandUnifiedChannel(
 	nodeNameToAgents: Map<string, Array<{ name: string; agentId: string }>>,
 	out: ResolvedChannel[]
 ): void {
-	const { from, to, direction, label, gate, isCyclic } = channel;
+	const { from, to, direction, label, gate, maxCycles } = channel;
 
 	// Resolve from-agents
 	const fromAgents = resolveAgentRef(from, allAgentNames, nameToAgent, nodeNameToAgents);
@@ -456,7 +456,7 @@ function expandUnifiedChannel(
 				label,
 				gate,
 				isFanOut,
-				isCyclic,
+				maxCycles,
 				isHubSpoke,
 			});
 
@@ -470,7 +470,7 @@ function expandUnifiedChannel(
 					label,
 					gate,
 					isFanOut,
-					isCyclic,
+					maxCycles,
 					isHubSpoke,
 				});
 			}
