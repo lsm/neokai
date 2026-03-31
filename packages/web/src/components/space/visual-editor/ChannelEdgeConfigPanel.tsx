@@ -1,5 +1,5 @@
 import { generateUUID } from '@neokai/shared';
-import type { Gate, GateConditionCheck, GateConditionCount, WorkflowChannel } from '@neokai/shared';
+import type { Gate, GateConditionCheck, WorkflowChannel } from '@neokai/shared';
 
 type ChannelGateMode =
 	| 'none'
@@ -51,10 +51,7 @@ function resolveGateMode(channel: WorkflowChannel, gate: Gate | undefined): Chan
 		return 'check';
 	}
 
-	if (!channel.gate || channel.gate.type === 'always') return 'none';
-	if (channel.gate.type === 'human') return 'human';
-	if (channel.gate.type === 'condition') return 'condition';
-	return 'task_result';
+	return 'none';
 }
 
 function buildBaseGate(id: string, channel: WorkflowChannel, condition: Gate['condition'], resetOnCycle = false): Gate {
@@ -166,10 +163,9 @@ export function ChannelEdgeConfigPanel({
 		onChange(index, nextChannel);
 	}
 
-	function setLegacyGate(nextGate: WorkflowChannel['gate']) {
+	function clearGate() {
 		updateChannel({
 			...channel,
-			gate: nextGate,
 			gateId: undefined,
 		});
 	}
@@ -178,7 +174,6 @@ export function ChannelEdgeConfigPanel({
 		onGatesChange(replaceGate(gates, nextGate));
 		updateChannel({
 			...channel,
-			gate: undefined,
 			gateId: nextGate.id,
 		});
 	}
@@ -188,37 +183,24 @@ export function ChannelEdgeConfigPanel({
 
 		switch (nextMode) {
 			case 'none':
-				setLegacyGate(undefined);
+				clearGate();
 				return;
 			case 'human':
-				if (currentGate) {
-					upsertRealGate(buildHumanGate(gateId, channel, shouldBeCyclic));
-				} else {
-					setLegacyGate({ type: 'human' });
-				}
+				upsertRealGate(buildHumanGate(gateId, channel, shouldBeCyclic));
 				return;
 			case 'condition':
-				setLegacyGate({
-					type: 'condition',
-					expression: channel.gate?.type === 'condition' ? (channel.gate.expression ?? '') : '',
-				});
+				upsertRealGate(
+					buildBaseGate(gateId, channel, { type: 'check', field: 'condition_result', op: 'exists' }, shouldBeCyclic)
+				);
 				return;
-			case 'task_result':
-				if (currentGate) {
-					const expected =
-						currentCheckGate?.field === 'result' && typeof currentCheckGate.value === 'string'
-							? currentCheckGate.value
-							: channel.gate?.type === 'task_result'
-								? (channel.gate.expression ?? 'passed')
-								: 'passed';
-					upsertRealGate(buildTaskResultGate(gateId, channel, expected, shouldBeCyclic));
-				} else {
-					setLegacyGate({
-						type: 'task_result',
-						expression: channel.gate?.type === 'task_result' ? (channel.gate.expression ?? '') : '',
-					});
-				}
+			case 'task_result': {
+				const expected =
+					currentCheckGate?.field === 'result' && typeof currentCheckGate.value === 'string'
+						? currentCheckGate.value
+						: 'passed';
+				upsertRealGate(buildTaskResultGate(gateId, channel, expected, shouldBeCyclic));
 				return;
+			}
 			case 'check': {
 				const field =
 					currentCheckGate && currentCheckGate.field !== 'approved' && currentCheckGate.field !== 'result'
@@ -335,21 +317,8 @@ export function ChannelEdgeConfigPanel({
 
 				{gateMode === 'condition' && (
 					<div class="space-y-1">
-						<input
-							type="text"
-							data-testid={`channel-edge-gate-select-${index}-condition-input`}
-							placeholder="e.g. bun test && git diff --quiet"
-							value={channel.gate?.type === 'condition' ? (channel.gate.expression ?? '') : ''}
-							onInput={(e) =>
-								setLegacyGate({
-									type: 'condition',
-									expression: (e.currentTarget as HTMLInputElement).value,
-								})
-							}
-							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700"
-						/>
 						<p class="text-xs text-gray-600">
-							Transition fires when the shell command exits with code 0.
+							Gate is configured as a field check condition. Edit the gate details via the gate editor.
 						</p>
 					</div>
 				)}
@@ -363,17 +332,12 @@ export function ChannelEdgeConfigPanel({
 							value={
 								currentCheckGate?.field === 'result' && typeof currentCheckGate.value === 'string'
 									? currentCheckGate.value
-									: channel.gate?.type === 'task_result'
-										? (channel.gate.expression ?? '')
-										: ''
+									: ''
 							}
 							onInput={(e) => {
 								const value = (e.currentTarget as HTMLInputElement).value;
-								if (currentGate) {
-									upsertRealGate(buildTaskResultGate(currentGate.id, channel, value, shouldBeCyclic));
-									return;
-								}
-								setLegacyGate({ type: 'task_result', expression: value });
+								const gateId = currentGate?.id ?? `gate-${generateUUID()}`;
+								upsertRealGate(buildTaskResultGate(gateId, channel, value, shouldBeCyclic));
 							}}
 							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700"
 						/>

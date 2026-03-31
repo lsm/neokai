@@ -2,7 +2,7 @@
  * Shared types for the visual editor canvas and nodes.
  */
 
-import type { WorkflowCondition } from '@neokai/shared';
+import type { WorkflowCondition } from './legacy-condition-types';
 
 /**
  * A directed edge used internally by the visual editor canvas.

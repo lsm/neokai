@@ -109,31 +109,29 @@ describe('CODING_WORKFLOW template', () => {
 		expect(verifyStep?.instructions).toContain('failed');
 	});
 
-	test('has four channels with correct gate conditions', () => {
+	test('has four channels with correct gateId references', () => {
 		expect(CODING_WORKFLOW.channels).toHaveLength(4);
 
 		const planToCode = CODING_WORKFLOW.channels!.find((c) => c.from === 'Plan' && c.to === 'Code');
-		expect(planToCode?.gate?.type).toBe('human');
+		expect(planToCode?.gateId).toBe('plan-approval-gate');
 		expect(planToCode?.direction).toBe('one-way');
 
 		const codeToVerify = CODING_WORKFLOW.channels!.find(
 			(c) => c.from === 'Code' && c.to === 'Verify & Test'
 		);
-		expect(codeToVerify?.gate?.type).toBe('always');
+		expect(codeToVerify?.gateId).toBeUndefined();
 		expect(codeToVerify?.direction).toBe('one-way');
 
 		const verifyToPlan = CODING_WORKFLOW.channels!.find(
 			(c) => c.from === 'Verify & Test' && c.to === 'Plan'
 		);
-		expect(verifyToPlan?.gate?.type).toBe('task_result');
-		expect((verifyToPlan?.gate as { expression?: string })?.expression).toBe('failed');
+		expect(verifyToPlan?.gateId).toBe('verify-fail-gate');
 		expect(verifyToPlan?.maxCycles).toBe(3);
 
 		const verifyToDone = CODING_WORKFLOW.channels!.find(
 			(c) => c.from === 'Verify & Test' && c.to === 'Done'
 		);
-		expect(verifyToDone?.gate?.type).toBe('task_result');
-		expect((verifyToDone?.gate as { expression?: string })?.expression).toBe('passed');
+		expect(verifyToDone?.gateId).toBe('verify-pass-gate');
 		expect(verifyToDone?.maxCycles).toBeUndefined();
 	});
 
@@ -151,9 +149,9 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('all channels have gate descriptions', () => {
-		for (const ch of CODING_WORKFLOW.channels!) {
-			expect(ch.gate?.description).toBeTruthy();
+	test('all gates have descriptions', () => {
+		for (const gate of CODING_WORKFLOW.gates!) {
+			expect(gate.description).toBeTruthy();
 		}
 	});
 
@@ -187,13 +185,13 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.nodes[1].agentId).toBe('general');
 	});
 
-	test('has one channel (Plan Research → Research) with always gate', () => {
+	test('has one channel (Plan Research → Research) with no gate (always open)', () => {
 		expect(RESEARCH_WORKFLOW.channels).toHaveLength(1);
 		const ch = RESEARCH_WORKFLOW.channels![0];
 		expect(ch.from).toBe('Plan Research');
 		expect(ch.to).toBe('Research');
 		expect(ch.direction).toBe('one-way');
-		expect(ch.gate?.type).toBe('always');
+		expect(ch.gateId).toBeUndefined();
 	});
 
 	test('channel from/to references match node names', () => {
@@ -203,9 +201,9 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(nodeNames.has(ch.to as string)).toBe(true);
 	});
 
-	test('channel has a gate description', () => {
+	test('channel has a label', () => {
 		const ch = RESEARCH_WORKFLOW.channels![0];
-		expect(ch.gate?.description).toBeTruthy();
+		expect(ch.label).toBeTruthy();
 	});
 
 	test('startNodeId points to the planner step', () => {
@@ -643,36 +641,32 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[3].agentId).toBe(GENERAL_ID);
 	});
 
-	test('CODING_WORKFLOW seeded with four channels and correct gate types', async () => {
+	test('CODING_WORKFLOW seeded with four channels and correct gateId references', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		expect(wf.channels).toHaveLength(4);
 
-		const humanChannel = wf.channels!.find((c) => c.gate?.type === 'human');
-		expect(humanChannel).toBeDefined();
-		expect(humanChannel!.from).toBe('Plan');
-		expect(humanChannel!.to).toBe('Code');
+		const planToCode = wf.channels!.find((c) => c.from === 'Plan' && c.to === 'Code');
+		expect(planToCode).toBeDefined();
+		expect(planToCode!.gateId).toBe('plan-approval-gate');
 
-		const alwaysChannel = wf.channels!.find((c) => c.gate?.type === 'always');
-		expect(alwaysChannel).toBeDefined();
-		expect(alwaysChannel!.from).toBe('Code');
-		expect(alwaysChannel!.to).toBe('Verify & Test');
+		const codeToVerify = wf.channels!.find((c) => c.from === 'Code' && c.to === 'Verify & Test');
+		expect(codeToVerify).toBeDefined();
+		expect(codeToVerify!.gateId).toBeUndefined();
 
-		const failedChannel = wf.channels!.find(
-			(c) =>
-				c.gate?.type === 'task_result' &&
-				(c.gate as { expression?: string }).expression === 'failed'
+		const verifyToPlan = wf.channels!.find(
+			(c) => c.from === 'Verify & Test' && c.to === 'Plan'
 		);
-		expect(failedChannel).toBeDefined();
-		expect(failedChannel!.maxCycles).toBe(3);
+		expect(verifyToPlan).toBeDefined();
+		expect(verifyToPlan!.gateId).toBe('verify-fail-gate');
+		expect(verifyToPlan!.maxCycles).toBe(3);
 
-		const passedChannel = wf.channels!.find(
-			(c) =>
-				c.gate?.type === 'task_result' &&
-				(c.gate as { expression?: string }).expression === 'passed'
+		const verifyToDone = wf.channels!.find(
+			(c) => c.from === 'Verify & Test' && c.to === 'Done'
 		);
-		expect(passedChannel).toBeDefined();
-		expect(passedChannel!.maxCycles).toBeUndefined();
+		expect(verifyToDone).toBeDefined();
+		expect(verifyToDone!.gateId).toBe('verify-pass-gate');
+		expect(verifyToDone!.maxCycles).toBeUndefined();
 	});
 
 	test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
@@ -704,14 +698,14 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(verifyStep!.instructions).toContain('Run tests');
 	});
 
-	test('RESEARCH_WORKFLOW seeded with one channel (Plan Research → Research, always gate)', async () => {
+	test('RESEARCH_WORKFLOW seeded with one channel (Plan Research → Research, no gate)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
 		expect(wf.channels).toHaveLength(1);
 		const ch = wf.channels![0];
 		expect(ch.from).toBe('Plan Research');
 		expect(ch.to).toBe('Research');
-		expect(ch.gate?.type).toBe('always');
+		expect(ch.gateId).toBeUndefined();
 	});
 
 	test('RESEARCH_WORKFLOW seeded correctly — planner + general', async () => {
@@ -1038,29 +1032,19 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(verifyToDone!.maxCycles).toBeUndefined();
 	});
 
-	test('exported Coding Workflow preserves task_result gate conditions on channels', () => {
+	test('exported Coding Workflow channels do not include gate field (gates are separate entities)', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
 		const exported = exportWorkflow(wf, mockAgents);
 
-		const taskResultChannels = (exported.channels ?? []).filter(
-			(c) => c.gate?.type === 'task_result'
-		);
-		expect(taskResultChannels).toHaveLength(2);
-
-		const failedChannel = taskResultChannels.find(
-			(c) => (c.gate as { expression?: string }).expression === 'failed'
-		);
-		expect(failedChannel).toBeDefined();
-
-		const passedChannel = taskResultChannels.find(
-			(c) => (c.gate as { expression?: string }).expression === 'passed'
-		);
-		expect(passedChannel).toBeDefined();
+		// Exported channels should not have a gate field (gates are separate entities not included in export)
+		for (const ch of exported.channels ?? []) {
+			expect((ch as Record<string, unknown>).gate).toBeUndefined();
+		}
 	});
 
-	test('re-imported Coding Workflow preserves channels with isCyclic and task_result gates', () => {
+	test('re-imported Coding Workflow preserves channels with maxCycles', () => {
 		// Seed → export → re-import → verify round-trip fidelity
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -1101,18 +1085,14 @@ describe('Coding Workflow export/import round-trip', () => {
 
 		// maxCycles preserved on Verify→Plan channel
 		const verifyToPlan = reimported.channels!.find(
-			(c) =>
-				c.gate?.type === 'task_result' &&
-				(c.gate as { expression?: string }).expression === 'failed'
+			(c) => c.from === 'Verify & Test' && c.to === 'Plan'
 		);
 		expect(verifyToPlan).toBeDefined();
 		expect(verifyToPlan!.maxCycles).toBe(3);
 
 		// Non-cyclic channel should not have maxCycles
 		const verifyToDone = reimported.channels!.find(
-			(c) =>
-				c.gate?.type === 'task_result' &&
-				(c.gate as { expression?: string }).expression === 'passed'
+			(c) => c.from === 'Verify & Test' && c.to === 'Done'
 		);
 		expect(verifyToDone).toBeDefined();
 		expect(verifyToDone!.maxCycles).toBeUndefined();

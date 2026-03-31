@@ -11,7 +11,8 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { SpaceWorkflow, SpaceExportBundle, WorkflowConditionType } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceExportBundle } from '@neokai/shared';
+import type { WorkflowConditionType } from './visual-editor/legacy-condition-types';
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';

@@ -301,7 +301,6 @@ export function exportWorkflow(
 			};
 			if (ch.maxCycles !== undefined) exported.maxCycles = ch.maxCycles;
 			if (ch.label !== undefined) exported.label = ch.label;
-			if (ch.gate !== undefined) exported.gate = ch.gate;
 			return exported;
 		});
 		result.channels = exportedChannels;

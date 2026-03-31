@@ -472,24 +472,36 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
 			if (reachabilityDeclared) {
 				const seen = new Set<string>();
+				// Build a lookup from (from, to) → gateId from original workflow channels
+				const channelGateMap = new Map<string, string>();
+				for (const wCh of workflow?.channels ?? []) {
+					if (wCh.gateId) {
+						const tos = Array.isArray(wCh.to) ? wCh.to : [wCh.to];
+						for (const t of tos) {
+							channelGateMap.set(`${wCh.from}→${t}`, wCh.gateId);
+						}
+					}
+				}
+				const gatesById = new Map((workflow?.gates ?? []).map((g) => [g.id, g]));
+
 				for (const ch of resolver.getResolvedChannels()) {
 					if (ch.fromRole !== myRole) continue;
 					if (withinNodeRoles.has(ch.toRole)) continue; // within-node — already listed above
 					if (seen.has(ch.toRole)) continue; // deduplicate (e.g. bidirectional split)
 					seen.add(ch.toRole);
 
-					const gate = ch.gate;
-					const gateType = gate?.type ?? 'none';
-					// A gate is "blocking" (isGated) when a condition must be evaluated at delivery
-					// time — i.e. anything other than no gate at all or an 'always' gate.
-					const isGated = gate !== undefined && gate.type !== 'always' && gate.type !== undefined;
+					// Look up gate from the original workflow channels via gateId
+					const gateId = channelGateMap.get(`${ch.fromRole}→${ch.toRole}`);
+					const gateEntity = gateId ? gatesById.get(gateId) : undefined;
+					const gateType = gateEntity ? gateEntity.condition.type : 'none';
+					const isGated = gateEntity !== undefined;
 					const entry: CrossNodeTarget = {
 						agentName: ch.toRole,
 						isFanOut: ch.isFanOut ?? false,
 						gate: { type: gateType, isGated },
 					};
-					if (gate?.description) {
-						entry.gate.description = gate.description;
+					if (gateEntity?.description) {
+						entry.gate.description = gateEntity.description;
 					}
 					crossNodeTargets.push(entry);
 				}
@@ -522,11 +534,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * guards the channel. Use this to understand the full channel map
 		 * before calling list_reachable_agents or send_message.
 		 *
-		 * A channel can be gated via:
-		 * - `gateId` (new separated architecture, M1.1): references a Gate entity
-		 *   in `workflow.gates`; use `list_gates` to see current gate data and status.
-		 * - `gate` (legacy inline condition): an inline WorkflowCondition object.
-		 * `hasGate` is true when either path is set.
+		 * A channel can be gated via `gateId`, which references a Gate entity
+		 * in `workflow.gates`; use `list_gates` to see current gate data and status.
+		 * `hasGate` is true when a gateId is set.
 		 */
 		async list_channels(_args: ListChannelsInput): Promise<ToolResult> {
 			const channels = workflow?.channels ?? [];
@@ -537,10 +547,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				direction: ch.direction,
 				maxCycles: ch.maxCycles ?? null,
 				label: ch.label ?? null,
-				// True when the channel is gated via either the new gateId reference
-				// or the legacy inline gate condition.
-				hasGate: ch.gate !== undefined || ch.gateId !== undefined,
-				// Gate ID for new-architecture channels; null for legacy inline gates.
+				hasGate: ch.gateId !== undefined,
 				gateId: ch.gateId ?? null,
 			}));
 			return jsonResult({

@@ -28,7 +28,6 @@ import type {
 	SpaceWorkflow,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
-	WorkflowCondition,
 	WorkflowNodeAgent,
 	WorkflowChannel,
 	Gate,
@@ -36,6 +35,7 @@ import type {
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import { rulesToDrafts } from '../WorkflowRulesEditor';
+import type { WorkflowCondition } from './legacy-condition-types';
 import type { Point } from './types';
 import { autoLayout } from './layout';
 

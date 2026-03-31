@@ -15,7 +15,7 @@ import type {
 	WorkflowChannel,
 	SpaceTaskStatus,
 } from '@neokai/shared';
-import type { WorkflowConditionType } from '@neokai/shared';
+import type { WorkflowConditionType } from './visual-editor/legacy-condition-types';
 import { cn } from '../../lib/utils';
 import { GateConfig, CONDITION_LABELS } from './visual-editor/GateConfig';
 import type { ConditionDraft } from './visual-editor/GateConfig';

@@ -15,7 +15,21 @@
  * and condition evaluation utilities used by the runtime and channel layer.
  */
 
-import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// Legacy condition types (removed from @neokai/shared, kept locally for
+// backward-compatible evaluateCondition API)
+// ---------------------------------------------------------------------------
+
+type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
+
+interface WorkflowCondition {
+	type: WorkflowConditionType;
+	expression?: string;
+	description?: string;
+	timeoutMs?: number;
+}
 
 // ---------------------------------------------------------------------------
 // Public types

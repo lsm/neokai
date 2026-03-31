@@ -95,7 +95,7 @@ describe('buildSemanticWorkflowEdges', () => {
 		const channels: WorkflowChannel[] = [
 			{ from: 'task-agent', to: 'Planning', direction: 'one-way' },
 			{ from: 'Reviewer 1', to: 'Reviewer 2', direction: 'one-way' },
-			{ from: 'Reviewer 1', to: 'QA', direction: 'one-way', gate: { type: 'condition', expression: 'true' } },
+			{ from: 'Reviewer 1', to: 'QA', direction: 'one-way', gateId: 'test-gate' },
 		];
 
 		expect(buildSemanticWorkflowEdges(NODES, channels)).toEqual([

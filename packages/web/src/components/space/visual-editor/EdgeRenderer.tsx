@@ -31,7 +31,7 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks';
-import type { WorkflowConditionType } from '@neokai/shared';
+import type { WorkflowConditionType } from './legacy-condition-types';
 import type { NodePosition, VisualTransition } from './types';
 import type { AnchorSide } from './semanticWorkflowGraph';
 
