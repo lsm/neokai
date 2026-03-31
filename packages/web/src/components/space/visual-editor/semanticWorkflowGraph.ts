@@ -90,7 +90,8 @@ function buildEndpointNodeLookup(nodes: VisualNode[]): Map<string, string> {
 export function buildSemanticWorkflowEdges(
 	nodes: VisualNode[],
 	channels: WorkflowChannel[],
-	gates: Gate[] = []
+	gates: Gate[] = [],
+	cyclicChannelIndexes?: Set<number>
 ): SemanticWorkflowEdge[] {
 	const endpointLookup = buildEndpointNodeLookup(nodes);
 	const nodeOrder = new Map(nodes.map((node, index) => [node.step.localId, index]));
@@ -136,7 +137,7 @@ export function buildSemanticWorkflowEdges(
 				aggregate.hasGate = true;
 				aggregate.gateType ??= gateType;
 			}
-			if (channel.isCyclic) {
+			if (cyclicChannelIndexes?.has(channelIndex)) {
 				aggregate.hasCyclic = true;
 			}
 			aggregate.channelIndexes.add(channelIndex);

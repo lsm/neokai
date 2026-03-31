@@ -535,7 +535,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				from: ch.from,
 				to: ch.to,
 				direction: ch.direction,
-				isCyclic: ch.isCyclic ?? false,
+				maxCycles: ch.maxCycles ?? null,
 				label: ch.label ?? null,
 				// True when the channel is gated via either the new gateId reference
 				// or the legacy inline gate condition.

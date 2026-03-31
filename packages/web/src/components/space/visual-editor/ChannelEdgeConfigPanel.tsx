@@ -57,7 +57,7 @@ function resolveGateMode(channel: WorkflowChannel, gate: Gate | undefined): Chan
 	return 'task_result';
 }
 
-function buildBaseGate(id: string, channel: WorkflowChannel, condition: Gate['condition']): Gate {
+function buildBaseGate(id: string, channel: WorkflowChannel, condition: Gate['condition'], resetOnCycle = false): Gate {
 	return {
 		id,
 		condition,
@@ -65,25 +65,25 @@ function buildBaseGate(id: string, channel: WorkflowChannel, condition: Gate['co
 		allowedWriterRoles: ['*'],
 		description:
 			channel.label ?? `${channel.from} ${channel.direction === 'bidirectional' ? '↔' : '→'} ${formatTo(channel.to)}`,
-		resetOnCycle: !!channel.isCyclic,
+		resetOnCycle,
 	};
 }
 
-function buildHumanGate(id: string, channel: WorkflowChannel): Gate {
+function buildHumanGate(id: string, channel: WorkflowChannel, resetOnCycle = false): Gate {
 	return {
-		...buildBaseGate(id, channel, { type: 'check', field: 'approved', op: '==', value: true }),
+		...buildBaseGate(id, channel, { type: 'check', field: 'approved', op: '==', value: true }, resetOnCycle),
 		data: { approved: false },
 	};
 }
 
-function buildTaskResultGate(id: string, channel: WorkflowChannel, expectedValue: string): Gate {
+function buildTaskResultGate(id: string, channel: WorkflowChannel, expectedValue: string, resetOnCycle = false): Gate {
 	return {
 		...buildBaseGate(id, channel, {
 			type: 'check',
 			field: 'result',
 			op: '==',
 			value: expectedValue || 'passed',
-		}),
+		}, resetOnCycle),
 		data: {},
 	};
 }
@@ -93,7 +93,8 @@ function buildFieldCheckGate(
 	channel: WorkflowChannel,
 	field: string,
 	op: GateConditionCheck['op'],
-	value: unknown
+	value: unknown,
+	resetOnCycle = false
 ): Gate {
 	return {
 		...buildBaseGate(id, channel, {
@@ -101,7 +102,7 @@ function buildFieldCheckGate(
 			field: field || 'status',
 			op: op ?? 'exists',
 			value: op === 'exists' ? undefined : value,
-		}),
+		}, resetOnCycle),
 		data: {},
 	};
 }
@@ -191,7 +192,7 @@ export function ChannelEdgeConfigPanel({
 				return;
 			case 'human':
 				if (currentGate) {
-					upsertRealGate(buildHumanGate(gateId, channel));
+					upsertRealGate(buildHumanGate(gateId, channel, shouldBeCyclic));
 				} else {
 					setLegacyGate({ type: 'human' });
 				}
@@ -210,7 +211,7 @@ export function ChannelEdgeConfigPanel({
 							: channel.gate?.type === 'task_result'
 								? (channel.gate.expression ?? 'passed')
 								: 'passed';
-					upsertRealGate(buildTaskResultGate(gateId, channel, expected));
+					upsertRealGate(buildTaskResultGate(gateId, channel, expected, shouldBeCyclic));
 				} else {
 					setLegacyGate({
 						type: 'task_result',
@@ -231,7 +232,7 @@ export function ChannelEdgeConfigPanel({
 					currentCheckGate && currentCheckGate.field !== 'approved' && currentCheckGate.field !== 'result'
 						? currentCheckGate.value
 						: undefined;
-				upsertRealGate(buildFieldCheckGate(gateId, channel, field, op, value));
+				upsertRealGate(buildFieldCheckGate(gateId, channel, field, op, value, shouldBeCyclic));
 				return;
 			}
 			case 'count': {
@@ -369,7 +370,7 @@ export function ChannelEdgeConfigPanel({
 							onInput={(e) => {
 								const value = (e.currentTarget as HTMLInputElement).value;
 								if (currentGate) {
-									upsertRealGate(buildTaskResultGate(currentGate.id, channel, value));
+									upsertRealGate(buildTaskResultGate(currentGate.id, channel, value, shouldBeCyclic));
 									return;
 								}
 								setLegacyGate({ type: 'task_result', expression: value });
@@ -563,27 +564,12 @@ export function ChannelEdgeConfigPanel({
 				)}
 			</div>
 
-			<label class="flex items-center gap-2 cursor-pointer">
-				<input
-					type="checkbox"
-					data-testid="channel-cyclic-checkbox"
-					checked={!!channel.isCyclic}
-					onChange={(e) =>
-						updateChannel({
-							...channel,
-							isCyclic: (e.currentTarget as HTMLInputElement).checked || undefined,
-						})
-					}
-					class="rounded border-dark-600 text-blue-500 focus:ring-blue-500"
-				/>
-				<span class="text-xs text-gray-400">Cyclic channel</span>
-			</label>
-			{shouldBeCyclic && !channel.isCyclic && (
+			{shouldBeCyclic && (
 				<div
-					data-testid="channel-cyclic-warning"
-					class="rounded border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-200"
+					data-testid="channel-cyclic-info"
+					class="rounded border border-blue-700/60 bg-blue-950/30 px-3 py-2 text-[11px] text-blue-200"
 				>
-					This link closes a workflow loop. Mark it as cyclic so iteration limits and cycle gate resets work correctly.
+					This link closes a workflow loop. Cycle limit: {channel.maxCycles ?? 5}.
 				</div>
 			)}
 

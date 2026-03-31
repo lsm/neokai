@@ -127,14 +127,14 @@ describe('CODING_WORKFLOW template', () => {
 		);
 		expect(verifyToPlan?.gate?.type).toBe('task_result');
 		expect((verifyToPlan?.gate as { expression?: string })?.expression).toBe('failed');
-		expect(verifyToPlan?.isCyclic).toBe(true);
+		expect(verifyToPlan?.maxCycles).toBe(3);
 
 		const verifyToDone = CODING_WORKFLOW.channels!.find(
 			(c) => c.from === 'Verify & Test' && c.to === 'Done'
 		);
 		expect(verifyToDone?.gate?.type).toBe('task_result');
 		expect((verifyToDone?.gate as { expression?: string })?.expression).toBe('passed');
-		expect(verifyToDone?.isCyclic).toBeUndefined();
+		expect(verifyToDone?.maxCycles).toBeUndefined();
 	});
 
 	test('all channels have direction one-way', () => {
@@ -395,27 +395,27 @@ describe('CODING_WORKFLOW_V2 template', () => {
 	test('QA-to-Done uses qa-result-gate', () => {
 		const ch = CODING_WORKFLOW_V2.channels!.find((c) => c.from === 'QA' && c.to === 'Done');
 		expect(ch?.gateId).toBe('qa-result-gate');
-		expect(ch?.isCyclic).toBeUndefined();
+		expect(ch?.maxCycles).toBeUndefined();
 	});
 
-	test('cyclic channels are marked isCyclic', () => {
+	test('cyclic channels have maxCycles set', () => {
 		const ch = CODING_WORKFLOW_V2.channels!;
 
 		const qaToCoding = ch.find((c) => c.from === 'QA' && c.to === 'Coding');
 		expect(qaToCoding?.gateId).toBe('qa-fail-gate');
-		expect(qaToCoding?.isCyclic).toBe(true);
+		expect(qaToCoding?.maxCycles).toBe(5);
 
 		const reviewToCoding = ch.find((c) => c.from === 'Code Review' && c.to === 'Coding');
 		expect(reviewToCoding?.gateId).toBe('review-reject-gate');
-		expect(reviewToCoding?.isCyclic).toBe(true);
+		expect(reviewToCoding?.maxCycles).toBe(5);
 
 		const reviewToPlanning = ch.find((c) => c.from === 'Plan Review' && c.to === 'Planning');
 		expect(reviewToPlanning?.gateId).toBeUndefined();
-		expect(reviewToPlanning?.isCyclic).toBe(true);
+		expect(reviewToPlanning?.maxCycles).toBe(5);
 
 		const codingToPlanning = ch.find((c) => c.from === 'Coding' && c.to === 'Planning');
 		expect(codingToPlanning?.gateId).toBeUndefined();
-		expect(codingToPlanning?.isCyclic).toBe(true);
+		expect(codingToPlanning?.maxCycles).toBe(5);
 	});
 
 	test('ungated feedback channels have no gateId', () => {
@@ -668,7 +668,7 @@ describe('seedBuiltInWorkflows()', () => {
 				(c.gate as { expression?: string }).expression === 'failed'
 		);
 		expect(failedChannel).toBeDefined();
-		expect(failedChannel!.isCyclic).toBe(true);
+		expect(failedChannel!.maxCycles).toBe(3);
 
 		const passedChannel = wf.channels!.find(
 			(c) =>
@@ -676,7 +676,7 @@ describe('seedBuiltInWorkflows()', () => {
 				(c.gate as { expression?: string }).expression === 'passed'
 		);
 		expect(passedChannel).toBeDefined();
-		expect(passedChannel!.isCyclic).toBeUndefined();
+		expect(passedChannel!.maxCycles).toBeUndefined();
 	});
 
 	test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
@@ -807,10 +807,10 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(gatedChannels).toHaveLength(7);
 	});
 
-	test('CODING_WORKFLOW_V2 seeded cyclic channels are marked isCyclic', async () => {
+	test('CODING_WORKFLOW_V2 seeded cyclic channels have maxCycles set', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW_V2.name)!;
-		const cyclicChannels = wf.channels!.filter((c) => c.isCyclic === true);
+		const cyclicChannels = wf.channels!.filter((c) => c.maxCycles !== undefined);
 		// 4 cyclic: Plan Review→Planning, Coding→Planning, QA→Coding, Code Review→Coding
 		expect(cyclicChannels).toHaveLength(4);
 	});
@@ -1037,13 +1037,13 @@ describe('Coding Workflow export/import round-trip', () => {
 			(c) => c.from === 'Verify & Test' && c.to === 'Plan'
 		);
 		expect(verifyToPlan).toBeDefined();
-		expect(verifyToPlan!.isCyclic).toBe(true);
+		expect(verifyToPlan!.maxCycles).toBe(3);
 
 		const verifyToDone = exported.channels!.find(
 			(c) => c.from === 'Verify & Test' && c.to === 'Done'
 		);
 		expect(verifyToDone).toBeDefined();
-		expect(verifyToDone!.isCyclic).toBeUndefined();
+		expect(verifyToDone!.maxCycles).toBeUndefined();
 	});
 
 	test('exported Coding Workflow preserves task_result gate conditions on channels', () => {
@@ -1107,22 +1107,22 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(reimported.nodes).toHaveLength(4);
 		expect(reimported.channels).toHaveLength(4);
 
-		// isCyclic preserved on Verify→Plan channel
+		// maxCycles preserved on Verify→Plan channel
 		const verifyToPlan = reimported.channels!.find(
 			(c) =>
 				c.gate?.type === 'task_result' &&
 				(c.gate as { expression?: string }).expression === 'failed'
 		);
 		expect(verifyToPlan).toBeDefined();
-		expect(verifyToPlan!.isCyclic).toBe(true);
+		expect(verifyToPlan!.maxCycles).toBe(3);
 
-		// Non-cyclic channel should not have isCyclic
+		// Non-cyclic channel should not have maxCycles
 		const verifyToDone = reimported.channels!.find(
 			(c) =>
 				c.gate?.type === 'task_result' &&
 				(c.gate as { expression?: string }).expression === 'passed'
 		);
 		expect(verifyToDone).toBeDefined();
-		expect(verifyToDone!.isCyclic).toBeUndefined();
+		expect(verifyToDone!.maxCycles).toBeUndefined();
 	});
 });

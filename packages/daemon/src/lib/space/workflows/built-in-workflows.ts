@@ -84,7 +84,7 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
  * - Code → Verify: `always` gate — automatically verify after coding.
  * - Verify → Plan: `task_result` gate on 'failed' — loops back (cyclic).
  * - Verify → Done: `task_result` gate on 'passed' — completes the workflow.
- * - `maxIterations: 3` caps the number of Plan→Code→Verify cycles.
+ * - Per-channel `maxCycles: 3` caps the number of Plan→Code→Verify cycles.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -92,7 +92,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	name: 'Coding Workflow',
 	description:
 		'Plan-first coding workflow with verification. A human reviews the plan, code is implemented, then verified. Loops back on failure.',
-	maxIterations: 3,
 	nodes: [
 		{
 			id: CODING_PLANNER_STEP,
@@ -148,7 +147,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			from: 'Verify & Test',
 			to: 'Plan',
 			direction: 'one-way',
-			isCyclic: true,
+			maxCycles: 3,
 			gate: {
 				type: 'task_result',
 				expression: 'failed',
@@ -270,7 +269,6 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 	description:
 		'Full-cycle coding workflow with plan review, parallel code reviewers, and QA gate. ' +
 		'Supports rejection cycles at both review and QA stages.',
-	maxIterations: 5,
 	nodes: [
 		{
 			id: V2_PLANNING_STEP,
@@ -478,7 +476,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			to: 'Coding',
 			direction: 'one-way',
 			gateId: 'qa-fail-gate',
-			isCyclic: true,
+			maxCycles: 5,
 			label: 'QA → Coding (on fail)',
 		},
 		// Cyclic: Code Review → Coding (reviewer rejected changes)
@@ -487,7 +485,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			to: 'Coding',
 			direction: 'one-way',
 			gateId: 'review-reject-gate',
-			isCyclic: true,
+			maxCycles: 5,
 			label: 'Code Review → Coding (on reject)',
 		},
 		// Ungated feedback: Plan Review ↔ Planning, Coding → Planning
@@ -495,14 +493,14 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			from: 'Plan Review',
 			to: 'Planning',
 			direction: 'one-way',
-			isCyclic: true,
+			maxCycles: 5,
 			label: 'Plan Review → Planning (feedback)',
 		},
 		{
 			from: 'Coding',
 			to: 'Planning',
 			direction: 'one-way',
-			isCyclic: true,
+			maxCycles: 5,
 			label: 'Coding → Planning (feedback)',
 		},
 	],
@@ -617,7 +615,6 @@ export function seedBuiltInWorkflows(
 			startNodeId,
 			rules: [],
 			tags: [...template.tags],
-			maxIterations: template.maxIterations,
 			channels: template.channels ? [...template.channels] : undefined,
 			gates: template.gates ? [...template.gates] : undefined,
 		});

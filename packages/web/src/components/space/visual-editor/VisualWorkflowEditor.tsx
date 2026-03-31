@@ -118,7 +118,7 @@ function buildTemplateCanvasSignature(
 			direction: channel.direction,
 			gate: channel.gate ? { ...channel.gate } : undefined,
 			gateId: channel.gateId ?? null,
-			isCyclic: channel.isCyclic ?? false,
+			maxCycles: channel.maxCycles ?? null,
 		}))
 		.sort((a, b) => `${a.from}:${String(a.to)}`.localeCompare(`${b.from}:${String(b.to)}`));
 
@@ -334,9 +334,19 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// can render the edges. Includes gate type and ID for visual distinction + selection.
 	// ------------------------------------------------------------------
 
+	const cyclicChannelIndexes = useMemo(() => {
+		const set = new Set<number>();
+		for (let i = 0; i < channels.length; i++) {
+			if (isChannelCyclic(i, channels, [], endpointNodeIdLookup, nodeOrderByLocalId)) {
+				set.add(i);
+			}
+		}
+		return set;
+	}, [channels, endpointNodeIdLookup, nodeOrderByLocalId]);
+
 	const semanticEdges = useMemo(
-		() => buildSemanticWorkflowEdges(nodes, channels, gates),
-		[nodes, channels, gates]
+		() => buildSemanticWorkflowEdges(nodes, channels, gates, cyclicChannelIndexes),
+		[nodes, channels, gates, cyclicChannelIndexes]
 	);
 
 	const routedSemanticEdges = useMemo(
@@ -574,7 +584,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						from: target,
 						to: current.from,
 						direction: 'one-way',
-						isCyclic: current.isCyclic,
+						maxCycles: current.maxCycles,
 						gate: current.gate ? { ...current.gate } : undefined,
 					});
 				}
@@ -764,7 +774,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				}
 
 				if (inferChannelIsCyclic(newChannel, prev, endpointNodeIdLookup, nodeOrderByLocalId)) {
-					newChannel.isCyclic = true;
+					newChannel.maxCycles = 5;
 				}
 
 				return [
@@ -834,7 +844,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					nodeOrderByLocalId
 				)
 			) {
-				reverseChannel.isCyclic = true;
+				reverseChannel.maxCycles = 5;
 			}
 			next.push(reverseChannel);
 

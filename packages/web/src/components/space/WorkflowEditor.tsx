@@ -193,7 +193,7 @@ export const TEMPLATES: WorkflowTemplate[] = [
 				from: 'QA',
 				to: 'Coding',
 				direction: 'one-way',
-				isCyclic: true,
+
 				label: 'QA -> Coding (on fail)',
 				gateId: 'qa-fail-gate',
 			},
@@ -201,7 +201,7 @@ export const TEMPLATES: WorkflowTemplate[] = [
 				from: 'Code Review',
 				to: 'Coding',
 				direction: 'one-way',
-				isCyclic: true,
+
 				label: 'Code Review -> Coding (on reject)',
 				gateId: 'review-reject-gate',
 			},
@@ -209,14 +209,14 @@ export const TEMPLATES: WorkflowTemplate[] = [
 				from: 'Plan Review',
 				to: 'Planning',
 				direction: 'one-way',
-				isCyclic: true,
+
 				label: 'Plan Review -> Planning (feedback)',
 			},
 			{
 				from: 'Coding',
 				to: 'Planning',
 				direction: 'one-way',
-				isCyclic: true,
+
 				label: 'Coding -> Planning (feedback)',
 			},
 		],

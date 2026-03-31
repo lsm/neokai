@@ -275,21 +275,6 @@ describe('ChannelEditor', () => {
 		expect(result[0].label).toBe('PR ready');
 	});
 
-	it('cyclic checkbox updates isCyclic on channel', () => {
-		const onChange = vi.fn();
-		const channels = [makeChannel()];
-		const { getAllByTestId, getByTestId } = render(
-			<ChannelEditor channels={channels} onChange={onChange} />
-		);
-		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
-		fireEvent.change(getByTestId('channel-cyclic-checkbox'), {
-			target: { checked: true },
-		});
-		expect(onChange).toHaveBeenCalledOnce();
-		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
-		expect(result[0].isCyclic).toBe(true);
-	});
-
 	// -------------------------------------------------------------------------
 	// Multi-channel add appends to existing list
 	// -------------------------------------------------------------------------
