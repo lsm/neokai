@@ -36,7 +36,6 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
-	Gate,
 	SpaceTask,
 	SpaceTaskType,
 	SpaceWorkflow,

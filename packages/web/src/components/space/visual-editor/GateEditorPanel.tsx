@@ -5,6 +5,8 @@ export interface GateEditorPanelProps {
 	gate: Gate;
 	onChange: (gate: Gate) => void;
 	onBack: () => void;
+	/** When true, renders just the content without the outer panel chrome (header is handled by parent). */
+	embedded?: boolean;
 }
 
 const FIELD_TYPES: GateFieldType[] = ['boolean', 'string', 'number', 'map'];
@@ -23,7 +25,7 @@ function modeButtonClass(active: boolean): string {
 		: 'border-dark-600 bg-dark-800 text-gray-400 hover:border-dark-500 hover:text-gray-200';
 }
 
-export function GateEditorPanel({ gate, onChange, onBack }: GateEditorPanelProps) {
+export function GateEditorPanel({ gate, onChange, onBack, embedded = false }: GateEditorPanelProps) {
 	const [expandedField, setExpandedField] = useState<number | null>(null);
 
 	function updateGate(partial: Partial<Gate>) {
@@ -77,21 +79,27 @@ export function GateEditorPanel({ gate, onChange, onBack }: GateEditorPanelProps
 	return (
 		<div
 			data-testid="gate-editor-panel"
-			class="flex flex-col gap-3 p-4 bg-dark-850 border border-dark-700 rounded-lg text-sm text-white max-h-full overflow-y-auto"
+			class={
+				embedded
+					? 'flex-1 overflow-y-auto px-4 py-4 space-y-3 text-sm text-white'
+					: 'flex flex-col gap-3 p-4 bg-dark-850 border border-dark-700 rounded-lg text-sm text-white max-h-full overflow-y-auto'
+			}
 		>
-			{/* Header */}
-			<div class="flex items-center gap-2">
-				<button
-					type="button"
-					data-testid="gate-editor-back"
-					onClick={onBack}
-					class="text-gray-400 hover:text-white transition-colors text-xs"
-					aria-label="Back"
-				>
-					&larr;
-				</button>
-				<span class="font-semibold text-white text-sm">Gate Editor</span>
-			</div>
+			{/* Header — only shown in standalone mode; embedded mode uses parent's header */}
+			{!embedded && (
+				<div class="flex items-center gap-2">
+					<button
+						type="button"
+						data-testid="gate-editor-back"
+						onClick={onBack}
+						class="text-gray-400 hover:text-white transition-colors text-xs"
+						aria-label="Back"
+					>
+						&larr;
+					</button>
+					<span class="font-semibold text-white text-sm">Gate Editor</span>
+				</div>
+			)}
 
 			{/* Gate ID */}
 			<div class="space-y-1">
