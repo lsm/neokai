@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { ModelInfo, Provider } from '@neokai/shared';
+import type { ModelInfo, Provider, CreateRoomParams } from '@neokai/shared';
 import { lobbyStore } from '../lib/lobby-store';
 import { globalStore } from '../lib/global-store';
 import { navigateToRoom, navigateToSession } from '../lib/router';
@@ -267,9 +267,10 @@ export default function Lobby() {
 				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
 					// TODO(Milestone 2, task 2.2): CreateRoomModal does not yet collect a
-					// workspace path. Empty string is a placeholder; the server falls back
-					// to workspaceRoot when defaultPath is absent or empty.
-					const room = await lobbyStore.createRoom({ ...params, defaultPath: '' });
+					// workspace path. Casting to CreateRoomParams means defaultPath is absent
+					// in the wire payload (undefined), so the server's || workspaceRoot
+					// fallback fires correctly.
+					const room = await lobbyStore.createRoom(params as unknown as CreateRoomParams);
 					if (room) {
 						createRoomModalSignal.value = false;
 						navigateToRoom(room.id);
@@ -285,13 +286,11 @@ export default function Lobby() {
 				recentPaths={recentPaths}
 				rooms={rooms}
 				onCreateRoom={async (params) => {
-					// TODO(Milestone 2, task 2.2): Propagate the workspace path chosen in
-					// NewSessionModal directly as defaultPath once the field is required
-					// end-to-end. For now, fall back to empty string when absent.
-					const room = await lobbyStore.createRoom({
-						...params,
-						defaultPath: params.defaultPath ?? '',
-					});
+					// TODO(Milestone 2, task 2.2): NewSessionModal already provides
+					// defaultPath when the user selects a workspace path. Casting to
+					// CreateRoomParams passes it through as-is; when absent it arrives as
+					// undefined so the server's || workspaceRoot fallback fires correctly.
+					const room = await lobbyStore.createRoom(params as unknown as CreateRoomParams);
 					return room;
 				}}
 			/>

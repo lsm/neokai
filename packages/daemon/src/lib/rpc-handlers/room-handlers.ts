@@ -50,16 +50,18 @@ export function setupRoomHandlers(
 		const allowedPaths = params.allowedPaths ?? (workspaceRoot ? [{ path: workspaceRoot }] : []);
 
 		// TODO(Milestone 2, task 2.1): Remove workspaceRoot fallback; require defaultPath
-		// from the client. Using undefined (not '') preserves downstream `room.defaultPath ??
-		// ctx.defaultWorkspacePath` fallback chains until enforcement is added.
-		const defaultPath = (params.defaultPath ?? workspaceRoot) as string;
+		// from the client. Using || (not ??) also catches empty-string placeholders sent
+		// by callers that have not yet been updated. When both are absent, defaultPath is
+		// omitted from the params object so downstream `room.defaultPath ?? fallback`
+		// chains in room-runtime-service still work correctly.
+		const defaultPath = params.defaultPath || workspaceRoot;
 
 		const room = roomManager.createRoom({
 			name: params.name,
 			background: params.background,
 			allowedPaths,
-			defaultPath,
-		});
+			...(defaultPath ? { defaultPath } : {}),
+		} as CreateRoomParams);
 
 		// Create the room's user-facing chat session
 		// Session ID format: room:chat:${roomId}
