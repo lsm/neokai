@@ -64,8 +64,15 @@ describe('CreateRoomModal', () => {
 			expect(getPathInput().value).toBe('/home/user/projects');
 		});
 
-		it('pre-fills empty string when systemState has no workspaceRoot', () => {
+		it('pre-fills empty string when systemState is null', () => {
 			mockSystemStateSignal.value = null;
+			render(<CreateRoomModal {...DEFAULT_PROPS} />);
+			expect(getPathInput().value).toBe('');
+		});
+
+		it('pre-fills empty string when systemState.workspaceRoot is undefined', () => {
+			// workspaceRoot is optional on SystemState — daemon may omit it
+			mockSystemStateSignal.value = {} as SystemState;
 			render(<CreateRoomModal {...DEFAULT_PROPS} />);
 			expect(getPathInput().value).toBe('');
 		});
@@ -97,6 +104,19 @@ describe('CreateRoomModal', () => {
 			});
 
 			expect(getPathInput().value).toBe('/late/arrival');
+		});
+
+		it('leaves path empty when late-arriving systemState has no workspaceRoot', async () => {
+			mockSystemStateSignal.value = null;
+			render(<CreateRoomModal {...DEFAULT_PROPS} />);
+			expect(getPathInput().value).toBe('');
+
+			// State arrives but without workspaceRoot
+			await act(async () => {
+				mockSystemStateSignal.value = {} as SystemState;
+			});
+
+			expect(getPathInput().value).toBe('');
 		});
 
 		it('does not overwrite user-edited path when systemState changes', async () => {

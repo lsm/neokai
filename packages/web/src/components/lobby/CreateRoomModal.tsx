@@ -3,7 +3,7 @@
  *
  * Modal form for creating a new room with:
  * - Room name (required)
- * - Workspace path (required, pre-filled from daemon workspaceRoot)
+ * - Workspace path (required, pre-filled from daemon workspaceRoot when set; empty otherwise)
  * - Background context (optional)
  * - Form validation and error handling
  */
