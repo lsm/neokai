@@ -90,6 +90,36 @@ export class SessionLifecycle {
 		const sessionId = params.sessionId || generateUUID();
 		const sessionType = params.sessionType ?? 'worker';
 
+		// Room-scoped session types must always provide an explicit workspacePath.
+		// These sessions are bound to a specific room/space and must not silently fall back
+		// to the daemon's global workspaceRoot. Guard by sessionType (not sessionId prefix)
+		// because worker/leader/planner/coder IDs don't start with 'room:'.
+		//
+		// Non-room sessions (worker, lobby, spaces_global, neo, and the default 'worker')
+		// fall back to this.config.workspaceRoot with a warning.
+		const ROOM_SCOPED_SESSION_TYPES = [
+			'room_chat',
+			'planner',
+			'coder',
+			'leader',
+			'general',
+			'space_chat',
+		] as const;
+		if (
+			(ROOM_SCOPED_SESSION_TYPES as readonly string[]).includes(sessionType) &&
+			!params.workspacePath
+		) {
+			throw new Error(
+				`Room-scoped session (type: '${sessionType}') must have explicit workspacePath`
+			);
+		}
+
+		// For non-room sessions, fall back to daemon workspaceRoot with a warning.
+		if (!params.workspacePath) {
+			this.logger.warn(
+				`No workspacePath provided for session type '${sessionType}'; falling back to workspaceRoot: ${this.config.workspaceRoot}`
+			);
+		}
 		const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 
 		// Detect git support before creating worktree

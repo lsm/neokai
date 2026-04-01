@@ -208,6 +208,82 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
+		// --- Workspace path guard tests ---
+
+		it('explicit workspacePath is used as-is and does NOT fall back to config.workspaceRoot', async () => {
+			await lifecycle.create({ workspacePath: '/explicit/path' });
+
+			expect(mockDb.createSession).toHaveBeenCalledWith(
+				expect.objectContaining({
+					workspacePath: '/explicit/path',
+				})
+			);
+		});
+
+		it('room_chat session without workspacePath throws', async () => {
+			await expect(lifecycle.create({ sessionType: 'room_chat' })).rejects.toThrow(
+				"Room-scoped session (type: 'room_chat') must have explicit workspacePath"
+			);
+		});
+
+		it('planner session without workspacePath throws', async () => {
+			await expect(lifecycle.create({ sessionType: 'planner' })).rejects.toThrow(
+				"Room-scoped session (type: 'planner') must have explicit workspacePath"
+			);
+		});
+
+		it('coder session without workspacePath throws', async () => {
+			await expect(lifecycle.create({ sessionType: 'coder' })).rejects.toThrow(
+				"Room-scoped session (type: 'coder') must have explicit workspacePath"
+			);
+		});
+
+		it('leader session without workspacePath throws', async () => {
+			await expect(lifecycle.create({ sessionType: 'leader' })).rejects.toThrow(
+				"Room-scoped session (type: 'leader') must have explicit workspacePath"
+			);
+		});
+
+		it('general session without workspacePath throws', async () => {
+			await expect(lifecycle.create({ sessionType: 'general' })).rejects.toThrow(
+				"Room-scoped session (type: 'general') must have explicit workspacePath"
+			);
+		});
+
+		it('space_chat session without workspacePath throws', async () => {
+			await expect(lifecycle.create({ sessionType: 'space_chat' })).rejects.toThrow(
+				"Room-scoped session (type: 'space_chat') must have explicit workspacePath"
+			);
+		});
+
+		it('worker session without workspacePath falls back to config.workspaceRoot with warning', async () => {
+			const warnSpy = mock(() => {});
+			// Patch the logger on the lifecycle instance
+			(lifecycle as unknown as { logger: { warn: typeof warnSpy } }).logger.warn = warnSpy;
+
+			await lifecycle.create({ sessionType: 'worker' });
+
+			expect(mockDb.createSession).toHaveBeenCalledWith(
+				expect.objectContaining({
+					workspacePath: '/default/workspace',
+				})
+			);
+			expect(warnSpy).toHaveBeenCalledWith(
+				expect.stringContaining('falling back to workspaceRoot')
+			);
+		});
+
+		it('default (undefined sessionType) session without workspacePath falls back to config.workspaceRoot', async () => {
+			// sessionType defaults to 'worker' per line 91 — should NOT throw
+			await lifecycle.create({});
+
+			expect(mockDb.createSession).toHaveBeenCalledWith(
+				expect.objectContaining({
+					workspacePath: '/default/workspace',
+				})
+			);
+		});
+
 		it('should create session with pending_worktree_choice status for git repos', async () => {
 			(mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
 				isGitRepo: true,
@@ -247,7 +323,7 @@ describe('SessionLifecycle', () => {
 				gitRoot: '/test/repo',
 			});
 
-			await lifecycle.create({ sessionType: 'room_chat' });
+			await lifecycle.create({ sessionType: 'room_chat', workspacePath: '/room/workspace' });
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
