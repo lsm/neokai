@@ -16,6 +16,8 @@
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { MessageHub } from '@neokai/shared';
 import { setupRoomHandlers } from '../../../src/lib/rpc-handlers/room-handlers';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
@@ -136,6 +138,9 @@ function createMockRoomManager(): {
 	};
 }
 
+// A real temporary directory used for tests that need a valid defaultPath on disk
+const tempDir = mkdtempSync(`${tmpdir()}/room-handlers-test-`);
+
 describe('Room RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
@@ -155,19 +160,21 @@ describe('Room RPC Handlers', () => {
 	});
 
 	describe('room.create', () => {
-		it('creates a room with required name', async () => {
+		it('creates a room with required name and defaultPath', async () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
-			const result = (await handler!({ name: 'New Room' }, {})) as { room: Room };
+			const result = (await handler!({ name: 'New Room', defaultPath: tempDir }, {})) as {
+				room: Room;
+			};
 
 			expect(result.room).toBeDefined();
 			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
-				expect.objectContaining({ name: 'New Room' })
+				expect.objectContaining({ name: 'New Room', defaultPath: tempDir })
 			);
 		});
 
-		it('creates a room with background (no defaultPath — omitted when absent)', async () => {
+		it('creates a room with background and defaultPath', async () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
@@ -175,56 +182,46 @@ describe('Room RPC Handlers', () => {
 				{
 					name: 'Full Room',
 					background: 'A full featured room',
+					defaultPath: tempDir,
 				},
 				{}
 			);
 
-			// No workspaceRoot in this test setup and no defaultPath from the client, so
-			// defaultPath is omitted from the createRoom call entirely. Downstream ??
-			// chains in room-runtime-service then fall through to their own fallbacks.
-			// TODO(Milestone 2, task 2.1): Once the server enforces defaultPath from the
-			// client, this test should pass an explicit path.
-			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
-				expect.not.objectContaining({ defaultPath: expect.anything() })
-			);
 			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
 				expect.objectContaining({
 					name: 'Full Room',
 					background: 'A full featured room',
-					allowedPaths: [],
+					defaultPath: tempDir,
 				})
 			);
 		});
 
-		it('omits defaultPath key when client sends empty string', async () => {
-			// '' should be treated the same as absent because we use || not ??
+		it('derives allowedPaths from defaultPath when not explicitly provided', async () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
-			await handler!({ name: 'Empty Path Room', defaultPath: '' }, {});
+			await handler!({ name: 'Path Room', defaultPath: tempDir }, {});
 
-			// No workspaceRoot in this test setup so defaultPath is still omitted
 			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
-				expect.not.objectContaining({ defaultPath: expect.anything() })
+				expect.objectContaining({
+					allowedPaths: [{ path: tempDir }],
+				})
 			);
 		});
 
-		it('creates a room with an explicit defaultPath', async () => {
+		it('uses explicit allowedPaths when provided', async () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
+			const customPaths = [{ path: tempDir }, { path: '/other/path' }];
 			await handler!(
-				{
-					name: 'Path Room',
-					defaultPath: '/workspace/my-project',
-				},
+				{ name: 'Custom Paths Room', defaultPath: tempDir, allowedPaths: customPaths },
 				{}
 			);
 
 			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
 				expect.objectContaining({
-					name: 'Path Room',
-					defaultPath: '/workspace/my-project',
+					allowedPaths: customPaths,
 				})
 			);
 		});
@@ -233,16 +230,52 @@ describe('Room RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
-			await expect(handler!({ description: 'No name' }, {})).rejects.toThrow(
+			await expect(handler!({ description: 'No name', defaultPath: tempDir }, {})).rejects.toThrow(
 				'Room name is required'
 			);
+		});
+
+		it('throws error when defaultPath is missing', async () => {
+			const handler = messageHubData.handlers.get('room.create');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ name: 'No Path Room' }, {})).rejects.toThrow(
+				'defaultPath is required when creating a room'
+			);
+		});
+
+		it('throws error when defaultPath is empty string', async () => {
+			const handler = messageHubData.handlers.get('room.create');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ name: 'Empty Path Room', defaultPath: '' }, {})).rejects.toThrow(
+				'defaultPath is required when creating a room'
+			);
+		});
+
+		it('throws error when defaultPath is not an absolute path', async () => {
+			const handler = messageHubData.handlers.get('room.create');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ name: 'Relative Path Room', defaultPath: 'relative/path' }, {})
+			).rejects.toThrow('Invalid defaultPath');
+		});
+
+		it('throws error when defaultPath does not exist on disk', async () => {
+			const handler = messageHubData.handlers.get('room.create');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ name: 'Bad Path Room', defaultPath: '/nonexistent/path/xyz-12345' }, {})
+			).rejects.toThrow('defaultPath does not exist: /nonexistent/path/xyz-12345');
 		});
 
 		it('broadcasts room.created event', async () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
-			await handler!({ name: 'New Room' }, {});
+			await handler!({ name: 'New Room', defaultPath: tempDir }, {});
 
 			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
 				'room.created',

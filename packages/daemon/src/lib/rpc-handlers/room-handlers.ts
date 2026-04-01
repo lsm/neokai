@@ -20,10 +20,12 @@ import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import type { SessionManager } from '../session-manager';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { Database } from '../../storage/database';
+import { existsSync } from 'node:fs';
 import { getCliAgents, refresh as refreshCliAgents } from '../room/agents/cli-agent-registry';
 import { inferProviderForModel } from '../providers/registry';
 import { Logger } from '../logger';
 import { cancelPendingTickJobs, enqueueRoomTick } from '../job-handlers/room-tick.handler';
+import { validateWorkspacePath } from '@neokai/shared';
 
 const log = new Logger('room-handlers');
 
@@ -38,29 +40,38 @@ export function setupRoomHandlers(
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
-		// Wire type: defaultPath is still optional at the RPC boundary for backward
-		// compatibility until Milestone 2 (task 2.1) enforces it from the client.
 		const params = data as Omit<CreateRoomParams, 'defaultPath'> & { defaultPath?: string };
 
 		if (!params.name) {
 			throw new Error('Room name is required');
 		}
 
-		// Auto-populate workspace paths from workspaceRoot if not provided
-		const allowedPaths = params.allowedPaths ?? (workspaceRoot ? [{ path: workspaceRoot }] : []);
+		// Require defaultPath from the client (Milestone 2, task 2.1)
+		if (!params.defaultPath) {
+			throw new Error('defaultPath is required when creating a room');
+		}
 
-		// TODO(Milestone 2, task 2.1): Remove workspaceRoot fallback; require defaultPath
-		// from the client. Using || (not ??) also catches empty-string placeholders sent
-		// by callers that have not yet been updated. When both are absent, defaultPath is
-		// omitted from the params object so downstream `room.defaultPath ?? fallback`
-		// chains in room-runtime-service still work correctly.
-		const defaultPath = params.defaultPath || workspaceRoot;
+		// Validate path format (non-empty, absolute POSIX path)
+		const pathValidation = validateWorkspacePath(params.defaultPath);
+		if (!pathValidation.valid) {
+			throw new Error(`Invalid defaultPath: ${pathValidation.error}`);
+		}
+
+		// Validate path exists on filesystem
+		if (!existsSync(params.defaultPath)) {
+			throw new Error(`defaultPath does not exist: ${params.defaultPath}`);
+		}
+
+		const defaultPath = params.defaultPath;
+
+		// Derive allowedPaths from defaultPath if not explicitly provided
+		const allowedPaths = params.allowedPaths ?? [{ path: defaultPath }];
 
 		const room = roomManager.createRoom({
 			name: params.name,
 			background: params.background,
 			allowedPaths,
-			...(defaultPath ? { defaultPath } : {}),
+			defaultPath,
 		} as CreateRoomParams);
 
 		// Create the room's user-facing chat session
@@ -71,7 +82,7 @@ export function setupRoomHandlers(
 				await sessionManager.createSession({
 					sessionId: roomChatSessionId,
 					title: room.name,
-					workspacePath: defaultPath ?? allowedPaths[0]?.path,
+					workspacePath: defaultPath,
 					config: {
 						model: room.defaultModel,
 						provider: room.defaultModel ? inferProviderForModel(room.defaultModel) : undefined,
