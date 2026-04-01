@@ -3334,7 +3334,10 @@ export class RoomRuntime {
 			if (validTasks.length === 0) continue;
 
 			const isTerminal = (status: string) =>
-				status === 'completed' || status === 'needs_attention' || status === 'cancelled';
+				status === 'completed' ||
+				status === 'needs_attention' ||
+				status === 'cancelled' ||
+				status === 'archived';
 			const allTerminal = validTasks.every((t) => isTerminal(t.status));
 			if (!allTerminal) continue;
 
@@ -3541,7 +3544,7 @@ export class RoomRuntime {
 				);
 				const executionTasks = validTasks.filter((t) => t.taskType !== 'planning');
 				const isTerminal = (status: string) =>
-					status === 'needs_attention' || status === 'cancelled';
+					status === 'needs_attention' || status === 'cancelled' || status === 'archived';
 				const allExecutionFailed =
 					executionTasks.length > 0 && executionTasks.every((t) => isTerminal(t.status));
 				const allFailed = validTasks.length > 0 && validTasks.every((t) => isTerminal(t.status));

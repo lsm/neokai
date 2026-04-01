@@ -755,3 +755,138 @@ describe('Autonomy gate: planner exclusion edge cases', () => {
 		expect(escalated.status).toBe('needs_human');
 	});
 });
+
+// ─── 8. isTerminal fix: archived tasks in getNextGoalForPlanning ──────────────
+
+describe('isTerminal fix: archived tasks trigger replanning in getNextGoalForPlanning', () => {
+	let ctx: RuntimeTestContext;
+
+	beforeEach(() => {
+		ctx = createRuntimeTestContext();
+	});
+
+	afterEach(() => {
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	test('goal with all-archived linked tasks is eligible for replanning', async () => {
+		// Create a one-shot goal
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Archived tasks goal',
+			description: 'Should replan when all tasks are archived',
+		});
+
+		// Create a task and immediately archive it (simulate a task that was cancelled/archived)
+		const task = await ctx.taskManager.createTask({ title: 'Archived Task', description: '' });
+		await ctx.taskManager.archiveTask(task.id, { mode: 'manual' });
+
+		// Link the archived task to the goal
+		await ctx.goalManager.linkTaskToGoal(goal.id, task.id);
+
+		// Verify task is archived
+		const archivedTask = await ctx.taskManager.getTask(task.id);
+		expect(archivedTask?.status).toBe('archived');
+
+		// Tick — the runtime should detect all linked tasks are terminal (archived)
+		// and spawn a new planning session
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// A planning session should have been spawned, proving isTerminal includes 'archived'
+		const planningCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession'
+		);
+		expect(planningCalls.length).toBeGreaterThan(0);
+	});
+
+	test('goal with mixed archived and active tasks does NOT add a new planning task', async () => {
+		// Create a one-shot goal
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Mixed tasks goal',
+			description: 'Should NOT replan while active tasks remain',
+		});
+
+		// Create one archived task and one task in_progress (active)
+		const archivedTask = await ctx.taskManager.createTask({
+			title: 'Archived Task',
+			description: '',
+		});
+		await ctx.taskManager.archiveTask(archivedTask.id, { mode: 'manual' });
+
+		const activeTask = await ctx.taskManager.createTask({
+			title: 'Active Task',
+			description: '',
+		});
+		// Set it to in_progress so it counts as active but won't be picked up for execution
+		await ctx.taskManager.updateTaskStatus(activeTask.id, 'in_progress');
+
+		await ctx.goalManager.linkTaskToGoal(goal.id, archivedTask.id);
+		await ctx.goalManager.linkTaskToGoal(goal.id, activeTask.id);
+
+		const beforeGoal = await ctx.goalManager.getGoal(goal.id);
+		const linkedCountBefore = beforeGoal?.linkedTaskIds.length ?? 0;
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// A new planning task should NOT have been added to the goal
+		const afterGoal = await ctx.goalManager.getGoal(goal.id);
+		expect(afterGoal?.linkedTaskIds.length).toBe(linkedCountBefore);
+	});
+});
+
+// ─── 9. isTerminal fix: archived tasks in _doTickRecurringMissions ────────────
+
+describe('isTerminal fix: archived tasks complete recurring executions', () => {
+	let ctx: RuntimeTestContext;
+
+	beforeEach(() => {
+		ctx = createRuntimeTestContext();
+	});
+
+	afterEach(() => {
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	test('recurring execution with all-archived tasks is marked failed (not hung)', async () => {
+		// Create a recurring goal
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Recurring with archived tasks',
+			description: 'Execution should complete when all tasks are archived',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+
+		// Start an execution manually
+		// Pass a future nextRunAt so Phase 2 won't re-trigger immediately
+		const futureTime = Math.floor(Date.now() / 1000) + 86400; // 1 day ahead
+		const execution = ctx.goalManager.startExecution(goal.id, futureTime);
+		expect(execution).toBeDefined();
+
+		// Create a task and archive it
+		const task = await ctx.taskManager.createTask({
+			title: 'Archived execution task',
+			description: '',
+		});
+		await ctx.taskManager.archiveTask(task.id, { mode: 'manual' });
+
+		// Link the archived task to both the execution and the goal
+		await ctx.goalManager.linkTaskToExecution(goal.id, execution.id, task.id);
+
+		// Verify execution is active and has the task
+		const activeBefore = ctx.goalManager.getActiveExecution(goal.id);
+		expect(activeBefore).not.toBeNull();
+		expect(activeBefore?.taskIds).toContain(task.id);
+
+		// Tick — Phase 1 should detect all tasks are archived (terminal) and complete/fail
+		// the execution. Without the isTerminal fix, it would hang indefinitely.
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// The execution should be completed/failed (no longer active)
+		const activeAfter = ctx.goalManager.getActiveExecution(goal.id);
+		expect(activeAfter).toBeNull();
+	});
+});

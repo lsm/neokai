@@ -187,6 +187,31 @@ export class GoalManager {
 	}
 
 	/**
+	 * Reset a goal to its initial state so it can be re-planned from scratch.
+	 * Clears linked tasks, resets all counters, and sets status back to active.
+	 */
+	async resetGoal(goalId: string): Promise<RoomGoal> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+
+		const updatedGoal = this.goalRepo.updateGoal(goalId, {
+			linkedTaskIds: [],
+			planning_attempts: 0,
+			consecutiveFailures: 0,
+			replanCount: 0,
+			status: 'active',
+		});
+
+		if (!updatedGoal) {
+			throw new Error(`Failed to reset goal: ${goalId}`);
+		}
+
+		return updatedGoal;
+	}
+
+	/**
 	 * Link a task to a goal
 	 */
 	async linkTaskToGoal(goalId: string, taskId: string): Promise<RoomGoal> {
