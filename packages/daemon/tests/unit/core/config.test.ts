@@ -25,7 +25,7 @@ describe('getConfig', () => {
 
 	test('returns default values when no overrides or env vars', () => {
 		// Clear relevant env vars
-		delete process.env.PORT;
+		delete process.env.NEOKAI_PORT;
 		delete process.env.HOST;
 		delete process.env.DB_PATH;
 		delete process.env.DEFAULT_MODEL;
@@ -52,7 +52,7 @@ describe('getConfig', () => {
 	});
 
 	test('uses environment variables when set', () => {
-		process.env.PORT = '8080';
+		process.env.NEOKAI_PORT = '8080';
 		process.env.HOST = '127.0.0.1';
 		process.env.DB_PATH = '/custom/path/db.sqlite';
 		process.env.DEFAULT_MODEL = 'claude-opus-4-20250514';
@@ -74,19 +74,8 @@ describe('getConfig', () => {
 		expect(config.workspaceRoot).toBe('/env/workspace');
 	});
 
-	test('NEOKAI_PORT takes priority over PORT', () => {
-		process.env.NEOKAI_PORT = '7777';
-		process.env.PORT = '8080';
-		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
-
-		const config = getConfig();
-
-		expect(config.port).toBe(7777);
-	});
-
-	test('NEOKAI_PORT works when PORT is absent', () => {
+	test('NEOKAI_PORT sets the port', () => {
 		process.env.NEOKAI_PORT = '9983';
-		delete process.env.PORT;
 		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig();
@@ -94,22 +83,26 @@ describe('getConfig', () => {
 		expect(config.port).toBe(9983);
 	});
 
-	test('CLI port override takes precedence over env var', () => {
+	test('PORT env var is ignored (no longer a fallback)', () => {
+		// PORT is reserved for make targets and must not be read by the daemon config.
+		// Clearing it is how saveClearDaemonPortEnvVars protects subprocesses.
+		delete process.env.NEOKAI_PORT;
 		process.env.PORT = '8080';
 		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
-		const config = getConfig({ port: 3000 });
+		const config = getConfig();
 
-		expect(config.port).toBe(3000);
+		// Falls back to the default, not PORT=8080
+		expect(config.port).toBe(9283);
 	});
 
 	test('CLI port override takes precedence over NEOKAI_PORT', () => {
 		process.env.NEOKAI_PORT = '7777';
 		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
-		const config = getConfig({ port: 5555 });
+		const config = getConfig({ port: 3000 });
 
-		expect(config.port).toBe(5555);
+		expect(config.port).toBe(3000);
 	});
 
 	test('CLI host override takes precedence over env var', () => {
