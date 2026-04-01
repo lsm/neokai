@@ -768,9 +768,13 @@ describe('Room Agent Tools - reset_goal and planning_attempts', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/active session group/i);
 
-			// Planning task and goal should be unchanged
+			// Planning task should be unchanged
 			const planTask = await taskManager.getTask(planTaskId);
 			expect(planTask?.status).toBe('in_progress');
+
+			// Goal title must NOT have been mutated — the update was rejected before any DB write
+			const goalAfter = await goalManager.getGoal(goalId);
+			expect(goalAfter?.title).toBe('Goal');
 		});
 	});
 });

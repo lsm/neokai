@@ -180,6 +180,34 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 			let updated = goal;
 
+			// Pre-scan: if title/description is changing and runtime is unavailable, check for
+			// blocked planning tasks BEFORE any DB writes so we fail atomically.
+			if (args.title !== undefined || args.description !== undefined) {
+				const runtime = runtimeService?.getRuntime(roomId) ?? null;
+				if (!runtime) {
+					for (const taskId of goal.linkedTaskIds) {
+						const task = await taskManager.getTask(taskId);
+						if (
+							!task ||
+							task.taskType !== 'planning' ||
+							!NON_TERMINAL_TASK_STATUSES.has(task.status)
+						)
+							continue;
+						if (task.status === 'in_progress' || task.status === 'review') {
+							const activeGroup = groupRepo.getGroupByTaskId(taskId);
+							if (activeGroup && activeGroup.completedAt === null) {
+								return jsonResult({
+									success: false,
+									error:
+										`Cannot invalidate planning for goal ${args.goal_id}: planning task ${taskId} (status '${task.status}') has an active session group but no runtime service is available to stop it. ` +
+										`The active planner session would not be stopped.`,
+								});
+							}
+						}
+					}
+				}
+			}
+
 			// Collect patch fields: title, description, priority, missionType, autonomyLevel, planning_attempts, structuredMetrics
 			const hasPatchFields =
 				args.title !== undefined ||
@@ -230,21 +258,8 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						await runtime.cancelTask(taskId);
 					} else {
 						// Fallback path: no runtime available.
-						// Guard: if the task has an active session group we cannot safely cancel it
-						// without the runtime — the DB row would be updated but the agent sessions
-						// would keep running (same guard as reset_goal / cancel_task).
-						if (task.status === 'in_progress' || task.status === 'review') {
-							const activeGroup = groupRepo.getGroupByTaskId(taskId);
-							if (activeGroup && activeGroup.completedAt === null) {
-								return jsonResult({
-									success: false,
-									error:
-										`Cannot invalidate planning for goal ${args.goal_id}: planning task ${taskId} (status '${task.status}') has an active session group but no runtime service is available to stop it. ` +
-										`The active planner session would not be stopped.`,
-								});
-							}
-						}
-
+						// The pre-scan above already rejected any blocked in_progress/review tasks,
+						// so it is safe to cancel here without an additional session-group check.
 						await taskManager.cancelTaskCascade(taskId);
 						if (daemonHub) {
 							const cancelledTask = await taskManager.getTask(taskId);
