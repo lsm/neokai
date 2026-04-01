@@ -1023,20 +1023,36 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				'usage_limited',
 			]);
 
+			// Hoist the runtime lookup so it isn't repeated on every loop iteration
+			const runtime = runtimeService?.getRuntime(roomId) ?? null;
+
 			// Cancel all in-progress linked tasks
 			for (const taskId of goal.linkedTaskIds) {
 				const task = await taskManager.getTask(taskId);
 				if (!task || !nonTerminalStatuses.has(task.status)) continue;
 
-				if (runtimeService) {
-					const runtime = runtimeService.getRuntime(roomId);
-					if (runtime) {
-						await runtime.cancelTask(taskId);
-						continue;
+				if (runtime) {
+					await runtime.cancelTask(taskId);
+					continue;
+				}
+
+				// Fallback path: no runtime available.
+				// Guard: if the task has an active session group we cannot safely cancel it
+				// without the runtime — the DB row would be updated but the agent sessions
+				// would keep running (same guard as `cancel_task`).
+				if (task.status === 'in_progress' || task.status === 'review') {
+					const activeGroup = groupRepo.getGroupByTaskId(taskId);
+					if (activeGroup && activeGroup.completedAt === null) {
+						return jsonResult({
+							success: false,
+							error:
+								`Cannot reset goal ${args.goal_id}: task ${taskId} (status '${task.status}') has an active session group but no runtime service is available to stop it. ` +
+								`The active worker session would not be stopped.`,
+						});
 					}
 				}
 
-				// Fallback: cancel via taskManager and emit update event
+				// No active session group — safe to cancel via taskManager
 				await taskManager.cancelTaskCascade(taskId);
 				if (daemonHub) {
 					const cancelledTask = await taskManager.getTask(taskId);
@@ -1054,11 +1070,8 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			const resetGoal = await goalManager.resetGoal(args.goal_id);
 
 			// Trigger a fresh planning tick if runtime is available
-			if (runtimeService) {
-				const runtime = runtimeService.getRuntime(roomId);
-				if (runtime) {
-					runtime.onGoalCreated(args.goal_id);
-				}
+			if (runtime) {
+				runtime.onGoalCreated(args.goal_id);
 			}
 
 			return jsonResult({ success: true, goal: resetGoal });

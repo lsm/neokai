@@ -187,6 +187,34 @@ describe('Room Agent Tools - reset_goal and planning_attempts', () => {
 		return JSON.parse(result.content[0].text) as Record<string, unknown>;
 	}
 
+	/** Insert an active (not completed) session group for a task, simulating an in-progress agent session. */
+	function insertActiveGroup(taskId: string) {
+		const groupId = `group-${taskId}`;
+		const metadata = JSON.stringify({
+			feedbackIteration: 0,
+			leaderContractViolations: 0,
+			leaderCalledTool: false,
+			lastProcessedLeaderTurnId: null,
+			lastForwardedMessageId: null,
+			activeWorkStartedAt: null,
+			activeWorkElapsed: 0,
+			hibernatedAt: null,
+			tokensUsed: 0,
+			workerRole: 'coder',
+			submittedForReview: false,
+			approved: false,
+		});
+		db.run(
+			'INSERT INTO session_groups (id, group_type, ref_id, state, version, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+			[groupId, 'task', taskId, 'active_work', 0, metadata, Date.now()]
+		);
+		db.run(
+			'INSERT INTO session_group_members (group_id, session_id, role, joined_at) VALUES (?, ?, ?, ?)',
+			[groupId, 'worker-session-1', 'worker', Date.now()]
+		);
+		return groupId;
+	}
+
 	// -------------------------------------------------------------------------
 	// reset_goal tests
 	// -------------------------------------------------------------------------
@@ -354,6 +382,52 @@ describe('Room Agent Tools - reset_goal and planning_attempts', () => {
 
 			// Hub should have received room.task.update event
 			expect(emittedEvents.some((e) => e.event === 'room.task.update')).toBe(true);
+		});
+
+		it('should return error when in_progress task has active session group and no runtime', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Blocked Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			const t1 = parseResult(
+				await handlers.create_task({ title: 'Active Task', description: 'desc', goal_id: goalId })
+			);
+			const taskId = t1.taskId as string;
+
+			// Move task to in_progress (pending → in_progress is a valid transition)
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+
+			// Insert an active (not completed) session group — simulates a running agent session
+			insertActiveGroup(taskId);
+
+			// Without runtimeService, reset_goal should refuse to cancel an in_progress task
+			// with an active session group (same guard as cancel_task)
+			const result = parseResult(await handlers.reset_goal({ goal_id: goalId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/active session group/i);
+
+			// Goal and task should be unchanged
+			const task = await taskManager.getTask(taskId);
+			expect(task?.status).toBe('in_progress');
+		});
+
+		it('should cancel in_progress task without active session group in fallback path', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'No-Session Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			const t1 = parseResult(
+				await handlers.create_task({ title: 'Task', description: 'desc', goal_id: goalId })
+			);
+			const taskId = t1.taskId as string;
+
+			// Move to in_progress but do NOT create a session group
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+
+			// Without runtime but also without an active session group — should succeed
+			const result = parseResult(await handlers.reset_goal({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+
+			const task = await taskManager.getTask(taskId);
+			expect(task?.status).toBe('cancelled');
 		});
 	});
 
