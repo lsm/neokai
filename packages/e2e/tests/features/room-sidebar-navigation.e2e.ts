@@ -11,20 +11,7 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<string> {
-	return page.evaluate(async () => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', {
-			name: 'E2E Navigation Test Room',
-		});
-		return (res as { room: { id: string } }).room.id;
-	});
-}
+import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +25,7 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		roomId = await createRoom(page);
+		roomId = await createRoom(page, 'E2E Navigation Test Room');
 
 		// Create a task for the Task URL test (infrastructure — not a UI action)
 		orphanTaskId = await page.evaluate(async (rId) => {

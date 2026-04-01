@@ -15,8 +15,8 @@
  * - room.removePath - Remove an allowed path from a room
  */
 
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { describe, expect, it, beforeEach, mock, afterEach, afterAll } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { MessageHub } from '@neokai/shared';
 import { setupRoomHandlers } from '../../../src/lib/rpc-handlers/room-handlers';
@@ -140,6 +140,10 @@ function createMockRoomManager(): {
 
 // A real temporary directory used for tests that need a valid defaultPath on disk
 const tempDir = mkdtempSync(`${tmpdir()}/room-handlers-test-`);
+
+afterAll(() => {
+	rmSync(tempDir, { recursive: true, force: true });
+});
 
 describe('Room RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
@@ -423,13 +427,7 @@ describe('Room RPC Handlers', () => {
 			} as unknown as SessionManager;
 
 			const { hub, handlers } = createMockMessageHub();
-			setupRoomHandlers(
-				hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				undefined,
-				sessionManager
-			);
+			setupRoomHandlers(hub, roomManagerData.roomManager, daemonHubData.daemonHub, sessionManager);
 
 			const handler = handlers.get('room.update');
 			expect(handler).toBeDefined();

@@ -33,14 +33,13 @@ export function setupRoomHandlers(
 	messageHub: MessageHub,
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
-	workspaceRoot?: string,
 	sessionManager?: SessionManager,
 	jobQueue?: JobQueueRepository,
 	db?: Database
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
-		const params = data as Omit<CreateRoomParams, 'defaultPath'> & { defaultPath?: string };
+		const params = data as CreateRoomParams;
 
 		if (!params.name) {
 			throw new Error('Room name is required');
@@ -72,7 +71,7 @@ export function setupRoomHandlers(
 			background: params.background,
 			allowedPaths,
 			defaultPath,
-		} as CreateRoomParams);
+		});
 
 		// Create the room's user-facing chat session
 		// Session ID format: room:chat:${roomId}
