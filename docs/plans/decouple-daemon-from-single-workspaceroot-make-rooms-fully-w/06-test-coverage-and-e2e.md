@@ -46,7 +46,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. Test flow: navigate to lobby, click "Create Room", verify the workspace path field is visible and pre-populated (or empty if no daemon workspace), fill in room name and workspace path, submit, verify room appears in the lobby.
 3. Verify the created room's workspace path is displayed correctly in the room overview/settings (if visible in the UI).
 4. Test validation: try to submit without workspace path, verify error is shown.
-5. Use `beforeEach`/`afterEach` for room cleanup via RPC (allowed per E2E conventions).
+5. Use `beforeEach`/`afterEach` for room cleanup via RPC (allowed per E2E conventions). **Important**: The workspace path used in the test must exist on disk at the time `room.create` is called (Task 2.1 adds `existsSync` enforcement). The simplest approach is to read the daemon's `workspaceRoot` from `SystemState` (available via the pre-populated field after Task 5.2) and use that path, which is guaranteed to exist on both dev machines and CI runners. Alternatively, create a temp directory in `beforeEach` and clean it up in `afterEach`.
 6. Run with `make run-e2e TEST=tests/features/room-creation-workspace.e2e.ts`.
 
 **Acceptance Criteria**:

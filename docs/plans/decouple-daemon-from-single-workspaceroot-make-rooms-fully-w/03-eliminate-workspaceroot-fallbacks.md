@@ -74,12 +74,18 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Description**: In `session-lifecycle.ts` line 93, `const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot` falls back to the daemon's workspace root. For room-scoped sessions (room chat, workers, leaders), the caller already passes `workspacePath` from the room's `defaultPath`. However, the fallback should only apply to non-room sessions. Add clarity and a defensive check.
 
 **Subtasks**:
-1. In `session-lifecycle.ts`, split the fallback logic based on session type:
-   - For sessions whose ID matches a room pattern (`room:*`): **throw an error** (`'Room-scoped session must have explicit workspacePath'`). This is consistent with the "hard breaking change" philosophy — room sessions must never silently fall back to daemon `workspaceRoot`. When `workspaceRoot` becomes `undefined` in Milestone 5, a soft warning would cause `baseWorkspacePath = undefined`, leading to a downstream crash anyway. Failing early is safer.
+1. In `session-lifecycle.ts`, split the fallback logic based on **session type** (not session ID prefix). At line 91, `sessionType` is available as `params.sessionType ?? 'worker'`. The room-scoped session types are: `'room_chat'`, `'planner'`, `'coder'`, `'leader'`, `'general'`. Guard using a set:
+   ```ts
+   const ROOM_SESSION_TYPES = ['room_chat', 'planner', 'coder', 'leader', 'general'] as const;
+   if (ROOM_SESSION_TYPES.includes(sessionType) && !params.workspacePath) {
+     throw new Error('Room-scoped session must have explicit workspacePath');
+   }
+   ```
+   **Why session type, not ID prefix**: Worker/leader/planner/coder sessions have IDs like `planner:{roomId}:{taskId}:{uuid}`, `coder:{roomId}:...` — they do NOT start with `room:`. Only `room:chat:{roomId}` does. Guarding by `sessionId.startsWith('room:')` would miss all non-chat room sessions. Guarding by `sessionType` is accurate, self-documenting, and resilient to new session ID formats.
    - For non-room standalone sessions: keep the existing fallback to `this.config.workspaceRoot` with a log warning.
-2. Add a comment clarifying the split: room sessions throw, non-room sessions fall back.
+2. Add a comment clarifying the split: room-scoped session types throw, non-room sessions fall back.
 3. Verify that all room-scoped session creation paths (room chat in `room-handlers.ts`, workers in `room-runtime.ts`) already pass `workspacePath` explicitly. Trace the code paths and document in the PR description.
-4. Add a unit test in `packages/daemon/tests/unit/session/` that verifies: (a) a session created with explicit `workspacePath` does NOT fall back to `config.workspaceRoot`, (b) a room-scoped session created without explicit `workspacePath` **throws**, and (c) a non-room session without explicit `workspacePath` falls back to `config.workspaceRoot` with a warning.
+4. Add a unit test in `packages/daemon/tests/unit/session/` that verifies: (a) a session created with explicit `workspacePath` does NOT fall back to `config.workspaceRoot`, (b) a `room_chat` session created without explicit `workspacePath` **throws**, (c) a `planner`/`coder`/`leader`/`general` session created without explicit `workspacePath` **also throws**, and (d) a non-room session (e.g., `'worker'` standalone) without explicit `workspacePath` falls back to `config.workspaceRoot` with a warning.
 5. Run `make test-daemon`.
 
 **Acceptance Criteria**:
