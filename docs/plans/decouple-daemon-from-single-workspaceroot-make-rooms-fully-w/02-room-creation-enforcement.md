@@ -106,8 +106,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 3. **Add a sentinel replacement startup hook** in `packages/daemon/src/app.ts`, immediately after the `runMigrations()` call. This hook:
    - Queries for rooms where `default_path = '__NEEDS_WORKSPACE_PATH__'`.
    - Replaces the sentinel with `config.workspaceRoot` (which is available at this point in the boot sequence).
-   - If `config.workspaceRoot` is also undefined (Milestone 5), logs an error listing the affected room IDs — these rooms need manual intervention.
-   - This must run before any room operations to prevent Milestone 3 guards from throwing on sentinel paths.
+   - If `config.workspaceRoot` is also undefined (Milestone 5), logs an error listing the affected room IDs. These rooms can be fixed via the existing `room.update` RPC — the user (or Neo tools) can set `defaultPath` explicitly after startup. The sentinel value is deliberately invalid (not a real path), so Milestone 3 guards (`if (!room.defaultPath) throw` and `existsSync` checks) will fail loudly on any operation against these rooms, surfacing the issue to the user rather than silently misbehaving.
+   - This must run before any room operations to prevent Milestone 3 guards from throwing on sentinel paths (for rooms where `workspaceRoot` IS available).
 4. Add a unit test that creates rooms with `defaultPath = null` (via direct DB insert), runs the migration, and verifies `defaultPath` is backfilled correctly for both cases (has allowedPaths, and has neither — sentinel case).
 5. Add a unit test for the startup hook that verifies sentinel replacement with `workspaceRoot`.
 6. Run `make test-daemon` to verify.

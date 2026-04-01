@@ -82,8 +82,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    }
    ```
    **Why session type, not ID prefix**: Worker/leader/planner/coder sessions have IDs like `planner:{roomId}:{taskId}:{uuid}`, `coder:{roomId}:...` — they do NOT start with `room:`. Only `room:chat:{roomId}` does. Guarding by `sessionId.startsWith('room:')` would miss all non-chat room sessions. Guarding by `sessionType` is accurate, self-documenting, and resilient to new session ID formats.
-   - For non-room standalone sessions: keep the existing fallback to `this.config.workspaceRoot` with a log warning.
-2. Add a comment clarifying the split: room-scoped session types throw, non-room sessions fall back.
+   - For non-room standalone sessions (including `sessionType === undefined` which defaults to `'worker'` per line 91): keep the existing fallback to `this.config.workspaceRoot` with a log warning.
+2. Add a comment clarifying the split: room-scoped session types throw, non-room sessions (including default `worker` type) fall back.
 3. Verify that all room-scoped session creation paths (room chat in `room-handlers.ts`, workers in `room-runtime.ts`) already pass `workspacePath` explicitly. Trace the code paths and document in the PR description.
 4. Add a unit test in `packages/daemon/tests/unit/session/` that verifies: (a) a session created with explicit `workspacePath` does NOT fall back to `config.workspaceRoot`, (b) a `room_chat` session created without explicit `workspacePath` **throws**, (c) a `planner`/`coder`/`leader`/`general` session created without explicit `workspacePath` **also throws**, and (d) a non-room session (e.g., `'worker'` standalone) without explicit `workspacePath` falls back to `config.workspaceRoot` with a warning.
 5. Run `make test-daemon`.
@@ -109,10 +109,16 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Subtasks**:
 1. In `session-manager.ts`, update `cleanupOrphanedWorktrees` to require `workspacePath` as a mandatory parameter (remove the fallback). The method signature changes from `cleanupOrphanedWorktrees(workspacePath?: string)` to `cleanupOrphanedWorktrees(workspacePath: string)`.
-2. Audit all callers of `cleanupOrphanedWorktrees` in the codebase and ensure they pass an explicit `workspacePath`. Room-scoped callers should pass `room.defaultPath`.
-3. If there are callers that currently rely on the fallback (no explicit path), update them to pass `this.config.workspaceRoot` explicitly (preserving current behavior for non-room contexts).
+2. Update the `worktree.cleanup` RPC handler in `session-handlers.ts` (line 661-662) — this is the **only known public call site**. The handler currently extracts `workspacePath` from the request payload (optional) and passes it through. Apply the fallback **at the RPC handler layer**: when the caller omits `workspacePath`, use `deps.config.workspaceRoot` as the default. This pushes the fallback to the edge (the RPC boundary) while keeping the internal method clean. Example: `const path = params.workspacePath ?? deps.config.workspaceRoot;`.
+3. If there are other callers that currently rely on the fallback (no explicit path), update them to pass `this.config.workspaceRoot` explicitly.
 4. Add a unit test verifying `cleanupOrphanedWorktrees` uses the provided path, not a global fallback.
 5. Run `make test-daemon`.
+
+**Acceptance Criteria**:
+- `cleanupOrphanedWorktrees` requires an explicit `workspacePath` parameter.
+- The `worktree.cleanup` RPC handler applies the fallback at the RPC boundary (not inside the method).
+- All callers pass an explicit path.
+- Unit test passes.
 
 **Acceptance Criteria**:
 - `cleanupOrphanedWorktrees` requires an explicit `workspacePath` parameter.

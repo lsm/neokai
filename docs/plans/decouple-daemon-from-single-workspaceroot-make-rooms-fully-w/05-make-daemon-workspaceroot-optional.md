@@ -29,11 +29,12 @@ Change `Config.workspaceRoot` from required to optional. The daemon can now star
    - `packages/daemon/src/app.ts:293`: `new FileIndex(config.workspaceRoot)` — update to pass `config.workspaceRoot` (now `string | undefined`).
    - `packages/daemon/src/lib/rpc-handlers/index.ts:294`: `new FileIndex(config.workspaceRoot)` — same update.
    Both must compile and work correctly when `workspaceRoot` is `undefined`. Missing either site will cause a runtime crash when the daemon starts without `--workspace`.
-6. In `state-manager.ts`, broadcast `workspaceRoot: config.workspaceRoot ?? ''` (or make the `SystemState.workspaceRoot` field optional).
-7. In `packages/shared/src/state-types.ts`, change `workspaceRoot: string` to `workspaceRoot?: string`.
-8. Update `neo-query-tools.ts` `get_system_info` to handle optional `workspaceRoot`.
-9. Update all daemon tests that mock `Config` with `workspaceRoot` to continue working. No test should break -- they all provide explicit values.
-10. Run `bun run typecheck && make test-daemon`.
+6. In `packages/shared/src/state-types.ts`, change `workspaceRoot: string` to `workspaceRoot?: string`. **Do this before subtask 7** so the type is optional before the broadcast is updated.
+7. In `state-manager.ts`, broadcast `workspaceRoot: config.workspaceRoot` directly (let it be `undefined` — the type is now optional from subtask 6). Do NOT use `?? ''` — an empty string would cause the frontend to show an empty field instead of hiding it.
+8. Update CLI entry points: `packages/cli/main.ts:53` and `packages/cli/prod-entry.ts:63` both log `config.workspaceRoot` at startup. Update to handle undefined gracefully (e.g., `config.workspaceRoot ?? '(none)'`).
+9. Update `neo-query-tools.ts` `get_system_info` to handle optional `workspaceRoot`.
+10. Update all daemon tests that mock `Config` with `workspaceRoot` to continue working. No test should break -- they all provide explicit values.
+11. Run `bun run typecheck && make test-daemon`.
 
 **Acceptance Criteria**:
 - Daemon can start without `--workspace` flag (using default DB path).
@@ -41,6 +42,7 @@ Change `Config.workspaceRoot` from required to optional. The daemon can now star
 - `SystemState.workspaceRoot` is optional.
 - `FileIndex` gracefully degrades when no `workspaceRoot`.
 - `SettingsManager` is constructed with `config.workspaceRoot ?? homedir()` and this fallback behavior is documented in a code comment explaining MCP config implications.
+- CLI entry points (`main.ts`, `prod-entry.ts`) handle undefined `workspaceRoot` gracefully in startup logs.
 - All daemon tests pass.
 - Type check passes across all packages.
 
