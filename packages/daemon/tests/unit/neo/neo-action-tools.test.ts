@@ -180,6 +180,7 @@ function makeRoomManager(
 				id: `room-${Date.now()}`,
 				name: params.name,
 				allowedPaths: params.allowedPaths ?? [],
+				defaultPath: params.defaultPath,
 			});
 			store.set(room.id, room);
 			return room;
@@ -585,7 +586,9 @@ describe('create_room', () => {
 	it('auto-executes in autonomous mode', async () => {
 		const config = makeConfig({ securityMode: 'autonomous' });
 		const { create_room } = createNeoActionToolHandlers(config);
-		const result = parseResult(await create_room({ name: 'My Room' }));
+		const result = parseResult(
+			await create_room({ name: 'My Room', workspace_path: '/home/user/project' })
+		);
 		expect(result.success).toBe(true);
 		expect(result.room.name).toBe('My Room');
 	});
@@ -594,7 +597,9 @@ describe('create_room', () => {
 		// create_room is 'low' risk — balanced auto-executes low
 		const config = makeConfig({ securityMode: 'balanced' });
 		const { create_room } = createNeoActionToolHandlers(config);
-		const result = parseResult(await create_room({ name: 'My Room' }));
+		const result = parseResult(
+			await create_room({ name: 'My Room', workspace_path: '/home/user/project' })
+		);
 		// low risk → auto-executes in balanced
 		expect(result.success).toBe(true);
 		expect(result.room.name).toBe('My Room');
@@ -603,21 +608,31 @@ describe('create_room', () => {
 	it('returns confirmationRequired in conservative mode', async () => {
 		const config = makeConfig({ securityMode: 'conservative' });
 		const { create_room } = createNeoActionToolHandlers(config);
-		const result = parseResult(await create_room({ name: 'My Room' }));
+		const result = parseResult(
+			await create_room({ name: 'My Room', workspace_path: '/home/user/project' })
+		);
 		expect(result.confirmationRequired).toBe(true);
 		expect(result.pendingActionId).toBeTruthy();
 		expect(result.riskLevel).toBe('low');
 	});
 
-	it('uses workspace root as allowedPaths when no path provided', async () => {
-		const config = makeConfig({ workspaceRoot: '/home/user/ws' });
+	it('returns error when workspace_path is not provided', async () => {
+		const config = makeConfig({ workspaceRoot: '/home/user/ws', securityMode: 'autonomous' });
 		const { create_room } = createNeoActionToolHandlers(config);
 		const result = parseResult(await create_room({ name: 'WS Room' }));
-		expect(result.success).toBe(true);
-		expect(result.room.allowedPaths[0].path).toBe('/home/user/ws');
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('workspace_path is required when creating a room');
 	});
 
-	it('workspace_path takes precedence over workspaceRoot', async () => {
+	it('returns error when workspace_path is missing even in conservative mode', async () => {
+		const config = makeConfig({ securityMode: 'conservative' });
+		const { create_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await create_room({ name: 'No Path Room' }));
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('workspace_path is required when creating a room');
+	});
+
+	it('sets allowedPaths and defaultPath from workspace_path', async () => {
 		const config = makeConfig({ workspaceRoot: '/default/ws' });
 		const { create_room } = createNeoActionToolHandlers(config);
 		const result = parseResult(
@@ -625,12 +640,22 @@ describe('create_room', () => {
 		);
 		expect(result.success).toBe(true);
 		expect(result.room.allowedPaths[0].path).toBe('/custom/path');
+		expect(result.room.defaultPath).toBe('/custom/path');
+	});
+
+	it('does not fall back to workspaceRoot when workspace_path is absent', async () => {
+		const config = makeConfig({ workspaceRoot: '/default/ws', securityMode: 'autonomous' });
+		const { create_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await create_room({ name: 'No Path Room' }));
+		expect(result.success).toBe(false);
 	});
 
 	it('stores pending action so it can be confirmed later', async () => {
 		const config = makeConfig({ securityMode: 'conservative' });
 		const { create_room } = createNeoActionToolHandlers(config);
-		const result = parseResult(await create_room({ name: 'Pending Room' }));
+		const result = parseResult(
+			await create_room({ name: 'Pending Room', workspace_path: '/home/user/project' })
+		);
 		const pendingAction = config.pendingStore.retrieve(result.pendingActionId);
 		expect(pendingAction?.toolName).toBe('create_room');
 		expect((pendingAction?.input as { name: string }).name).toBe('Pending Room');
