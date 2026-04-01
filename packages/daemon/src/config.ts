@@ -42,7 +42,7 @@ export interface Config {
 	temperature: number;
 	maxSessions: number;
 	nodeEnv: string;
-	workspaceRoot: string;
+	workspaceRoot?: string;
 	disableWorktrees?: boolean; // For testing - disables git worktree creation
 	// GitHub integration
 	githubWebhookSecret?: string; // Secret for verifying webhook signatures
@@ -63,8 +63,8 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 	// Workspace root priority:
 	// 1. CLI --workspace flag (overrides parameter)
 	// 2. NEOKAI_WORKSPACE_PATH environment variable
-	// Note: No default fallback - caller (CLI package) must provide workspace path
-	let workspaceRoot: string;
+	// 3. undefined — daemon can start without a workspace (e.g. headless/API-only mode)
+	let workspaceRoot: string | undefined;
 	if (overrides?.workspace) {
 		// CLI override has highest priority
 		workspaceRoot = overrides.workspace;
@@ -72,23 +72,28 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		// Environment variable
 		workspaceRoot = process.env.NEOKAI_WORKSPACE_PATH;
 	} else {
-		// No workspace provided - this is an error
-		throw new Error(
-			'Workspace path must be explicitly provided via --workspace flag or NEOKAI_WORKSPACE_PATH environment variable. ' +
-				'The daemon does not provide default workspace paths.'
-		);
+		// No workspace provided — this is intentionally allowed.
+		// The daemon can operate without a global workspace root; rooms provide
+		// their own defaultPath for all room-scoped operations.
+		workspaceRoot = undefined;
 	}
 
-	// Default database path: ~/.neokai/projects/{encoded-workspace-path}/database/daemon.db
-	// This ensures each workspace/project gets its own isolated database
-	const defaultDbPath = join(
-		homedir(),
-		'.neokai',
-		'projects',
-		encodeRepoPath(workspaceRoot),
-		'database',
-		'daemon.db'
-	);
+	// Default database path:
+	//   - With workspace: ~/.neokai/projects/{encoded-workspace-path}/database/daemon.db
+	//     (each workspace gets its own isolated database)
+	//   - Without workspace: ~/.neokai/data/daemon.db
+	//     (global fallback that does not collide with any workspace-derived path)
+	const defaultDbPath =
+		workspaceRoot !== undefined
+			? join(
+					homedir(),
+					'.neokai',
+					'projects',
+					encodeRepoPath(workspaceRoot),
+					'database',
+					'daemon.db'
+				)
+			: join(homedir(), '.neokai', 'data', 'daemon.db');
 
 	return {
 		port: overrides?.port ?? parseInt(process.env.NEOKAI_PORT || '9283'),

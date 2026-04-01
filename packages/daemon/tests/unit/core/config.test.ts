@@ -4,9 +4,10 @@
  * Tests for the configuration module.
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { getConfig, logCredentialDiscovery } from '../../../src/config';
-import type { DiscoveryResult } from '../../../src/lib/credential-discovery';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { getConfig } from '../../../src/config';
+import { homedir } from 'os';
+import { join } from 'path';
 
 describe('getConfig', () => {
 	let originalEnv: NodeJS.ProcessEnv;
@@ -141,13 +142,24 @@ describe('getConfig', () => {
 		expect(config.workspaceRoot).toBe('/env/workspace');
 	});
 
-	test('throws error when no workspace is provided', () => {
+	test('returns workspaceRoot: undefined when no workspace is provided', () => {
 		process.env.NODE_ENV = 'production';
-		// No NEOKAI_WORKSPACE_PATH env var set
+		// No NEOKAI_WORKSPACE_PATH env var set, no --workspace flag
 
-		expect(() => getConfig()).toThrow(
-			'Workspace path must be explicitly provided via --workspace flag or NEOKAI_WORKSPACE_PATH environment variable'
-		);
+		const config = getConfig();
+
+		expect(config.workspaceRoot).toBeUndefined();
+	});
+
+	test('falls back to ~/.neokai/data/daemon.db when no workspace is provided', () => {
+		process.env.NODE_ENV = 'production';
+		delete process.env.DB_PATH;
+		// No NEOKAI_WORKSPACE_PATH env var set, no --workspace flag
+
+		const config = getConfig();
+
+		expect(config.workspaceRoot).toBeUndefined();
+		expect(config.dbPath).toBe(join(homedir(), '.neokai', 'data', 'daemon.db'));
 	});
 
 	test('reads API key from env var', () => {

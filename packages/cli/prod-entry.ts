@@ -60,7 +60,7 @@ if (!cliOptions.workspace && !process.env.NEOKAI_WORKSPACE_PATH) {
 const config = getConfig(cliOptions);
 
 console.log(`\nNeoKai Server`);
-console.log(`   Workspace: ${config.workspaceRoot}\n`);
+console.log(`   Workspace: ${config.workspaceRoot ?? '(none)'}\n`);
 
 try {
 	await startProdServer(config);

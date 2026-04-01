@@ -150,8 +150,8 @@ export interface NeoToolsConfig {
 	authManager: NeoQueryAuthManager;
 	mcpServerRepository: NeoQueryMcpServerRepository;
 	skillsManager: NeoQuerySkillsManager;
-	/** Absolute path to the workspace root */
-	workspaceRoot: string;
+	/** Absolute path to the workspace root (optional — daemon can run without a global workspace) */
+	workspaceRoot?: string;
 	/** Human-readable app version string, e.g. "0.1.1" */
 	appVersion: string;
 	/** Unix timestamp (ms) when the daemon process started */

@@ -49,8 +49,8 @@ export interface SystemState {
 	maxSessions: number;
 	storageLocation: string;
 
-	// Workspace
-	workspaceRoot: string;
+	// Workspace (optional — daemon can run without a global workspace root)
+	workspaceRoot?: string;
 
 	// Authentication
 	auth: AuthStatus;

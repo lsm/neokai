@@ -1,4 +1,5 @@
 import type { Server } from 'bun';
+import { homedir } from 'os';
 import type { Config } from './config';
 import type { WebSocketData } from './types/websocket';
 import { Database } from './storage/database';
@@ -194,8 +195,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const authManager = new AuthManager(db, config);
 	await authManager.initialize();
 
-	// Initialize settings manager
-	const settingsManager = new SettingsManager(db, config.workspaceRoot);
+	// Initialize settings manager.
+	// When no workspace is set, fall back to homedir() so SettingsManager reads global
+	// MCP config from ~/.claude/.mcp.json. This means MCP servers configured in a
+	// project-level .mcp.json won't be discovered for the global instance — but that
+	// is acceptable because room-scoped sessions use their own defaultPath for MCP
+	// resolution, not the global settings manager workspace path.
+	const settingsManager = new SettingsManager(db, config.workspaceRoot ?? homedir());
 
 	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
