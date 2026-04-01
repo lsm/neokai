@@ -74,7 +74,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Subtasks:**
 1. Refactor `CompletionDetector.isComplete()` signature (in `packages/daemon/src/lib/space/runtime/completion-detector.ts`) to accept an options object instead of growing positional parameters. The new signature: `isComplete(options: { workflowRunId: string, channels?: WorkflowChannel[], nodes?: WorkflowNode[], endNodeId?: string }): boolean`. Update the existing call site accordingly.
-2. Add end-node completion logic: after the "no tasks" early return and before the all-agents-done check, if `endNodeId` is provided, find any task in the run whose `workflowNodeId === endNodeId` and check if it has a terminal status. If yes, return `true` immediately. This means the workflow completes as soon as the end node finishes, even if other nodes are still running (they will be cleaned up by the runtime).
+2. Add end-node completion logic: after the "no tasks" early return and before the all-agents-done check, if `endNodeId` is provided, find any task in the run whose `workflowNodeId === endNodeId` and check if it has a terminal status. If yes, return `true` immediately. This means the workflow completes as soon as the end node finishes, even if other nodes are still running (they will be cleaned up by the runtime). **Semantic note:** Any terminal status (`completed`, `needs_attention`, `failed`) on the end node triggers workflow run completion. The workflow run always transitions to `completed` status regardless of the end node's specific terminal status — this mirrors the existing `report_workflow_done` behavior which always sets the run to `completed`. If the end node `needs_attention`, that status is preserved on the task itself for visibility, but the run is still considered complete.
 3. Update the call site in `packages/daemon/src/lib/space/runtime/space-runtime.ts` (line ~798) to pass the options object including `meta.workflow.endNodeId`.
 4. **Critical: Orchestration task completion on auto-complete.** Currently `report_workflow_done` does three things: (a) transitions the run to `completed`, (b) marks the Task Agent's orchestration task as `completed`, and (c) emits `space.task.completed`. When the runtime auto-completes a run via CompletionDetector, it only does (a). Add post-completion logic in the runtime's run completion path (after `transitionStatus(runId, 'completed')`) to also: find the orchestration task (task with `workflowNodeId == null` in the run), set its status to `completed`, and emit the `space.task.completed` event. This prevents the orchestration task from dangling as `in_progress` forever.
 5. Add unit tests in `packages/daemon/tests/unit/space/completion-detector.test.ts`:
@@ -115,7 +115,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. In `packages/daemon/src/lib/space/tools/task-agent-tools.ts`:
    - Remove the `report_workflow_done` handler function (lines 648-730).
    - Remove the tool registration at line 1042-1049.
-   - Remove the `completionDetector` parameter from the function signature if it was only used by `report_workflow_done`. Check if `completionDetector` is used elsewhere -- if not, remove the parameter and its import.
+   - Remove the `completionDetector` parameter from the function signature — it is only used by the `report_workflow_done` handler. Also remove: the `completionDetector` field from `TaskAgentToolsConfig` interface (in the same file or its types), and its propagation from `TaskAgentManager` (in `packages/daemon/src/lib/space/agents/task-agent-manager.ts` or wherever `TaskAgentToolsConfig` is constructed). Clean up the import of `CompletionDetector` if no longer referenced.
 3. In `packages/daemon/src/lib/space/agents/task-agent.ts` (`buildTaskAgentSystemPrompt`):
    - Remove the `report_workflow_done` tool documentation section (lines 217-223).
    - Update step 6 "Detect completion" (lines 277-280) to say: "The workflow runtime automatically detects completion when the end node finishes. You do not need to detect or signal workflow completion. When the runtime completes the workflow, your orchestration task will be auto-completed."
@@ -129,11 +129,12 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Acceptance criteria:**
 - `report_workflow_done` is completely removed from tool schemas, handlers, and registrations.
+- `completionDetector` is removed from `TaskAgentToolsConfig` and its propagation chain (`TaskAgentManager` → tools config construction).
 - Task Agent system prompt no longer mentions `report_workflow_done`.
-- Task Agent system prompt instructs the agent to use `report_result` for its own task completion.
+- Task Agent system prompt does NOT instruct the agent to call `report_result` for self-termination — the runtime auto-completes the orchestration task (Task 3).
 - All modified test files pass.
 - `bun run typecheck` passes.
-- `bun run lint` passes (no unused exports).
+- `bun run lint` passes (no unused exports from `completionDetector` removal).
 
 **Dependencies:** Task 3 (CompletionDetector must handle end-node completion before removing the manual trigger)
 
@@ -152,12 +153,13 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `CODING_WORKFLOW`: add `endNodeId: CODING_DONE_STEP` (the "Done" node).
    - `CODING_WORKFLOW_V2`: add `endNodeId: V2_DONE_STEP` (the "Done" node).
    - `RESEARCH_WORKFLOW`: add `endNodeId: RESEARCH_GENERAL_STEP` (the "Research" node -- it is the terminal node in this 2-node graph). Add a code comment: `// Terminal node in this topology — update if downstream nodes are added`.
-   - `REVIEW_ONLY_WORKFLOW`: add `endNodeId: REVIEW_CODER_STEP` (single-node workflow; start and end are the same). Add a code comment: `// Single-node workflow — start and end are the same node`.
+   - `REVIEW_ONLY_WORKFLOW`: add `endNodeId: REVIEW_CODER_STEP` (single-node workflow; start and end are the same node — this is intentional and valid). Add a code comment: `// Single-node workflow — start and end are the same node`.
 2. In `seedBuiltInWorkflows()` (line ~578), add `endNodeId` mapping through `nodeIdMap`, same as `startNodeId` is mapped on line 640: `const endNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId)! : undefined;`. Pass `endNodeId` in the `createWorkflow()` call.
 3. Update tests in `packages/daemon/tests/unit/space/built-in-workflows.test.ts`:
    - Assert each built-in template has `endNodeId` set.
    - Assert `endNodeId` references a valid node ID in the template.
    - Assert seeded workflows have `endNodeId` mapped through `nodeIdMap` (not the template placeholder).
+   - Assert `REVIEW_ONLY_WORKFLOW` has `startNodeId === endNodeId` (intentional for single-node workflows).
 
 **Acceptance criteria:**
 - All four built-in templates define `endNodeId`.
@@ -222,9 +224,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Disable when the node is already the end node. Show an "END" badge on end nodes.
 4. **WorkflowEditor (form-based)** (`packages/web/src/components/space/WorkflowEditor.tsx`):
    - In the create/update params building (lines ~686, ~704), pass `endNodeId` if applicable.
+   - **Note:** The form-based editor currently does not expose a `startNodeId` selector either (it hardcodes `startNodeId: stepIds[0]`). Follow the same pattern for `endNodeId` — default to the last step in the list (`stepIds[stepIds.length - 1]`). The "Set as End Node" interactive UI is only available in the visual editor; this asymmetry is acceptable since the visual editor is the primary editing mode for workflow topology.
 5. **Tests:**
-   - Update `packages/web/src/components/space/visual-editor/__tests__/serialization.test.ts` (if it exists) or add tests covering endNodeId serialization.
-   - Update `packages/web/src/components/space/visual-editor/__tests__/NodeConfigPanel.test.ts` with "Set as End Node" button tests.
+   - For serialization tests: check if `packages/web/src/components/space/visual-editor/__tests__/serialization.test.ts` exists. If yes, update it; if not, create it with tests covering endNodeId serialization round-trip.
+   - Update `packages/web/src/components/space/visual-editor/__tests__/NodeConfigPanel.test.ts` (verify path exists) with "Set as End Node" button tests.
 
 **Acceptance criteria:**
 - Visual editor state includes `endNodeId`; serialization round-trips it.
@@ -238,9 +241,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 7: Workflow manager validation
+## Task 7: Workflow manager validation and RPC handler passthrough
 
-**Description:** Add validation for `endNodeId` in the workflow manager, ensuring it references a valid node.
+**Description:** Add validation for `endNodeId` in the workflow manager, and ensure RPC handlers pass `endNodeId` through from frontend requests to the manager/repository layer.
 
 **Agent type:** coder
 
@@ -248,7 +251,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 1. In `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`:
    - In `createWorkflow()`: after existing validation (line ~66), if `params.endNodeId` is provided, validate it references a node in `params.nodes`. Throw `WorkflowValidationError` if not found.
    - In `updateWorkflow()`: if `params.endNodeId` is provided (and not `null`), validate it references a node in the effective node list (either `params.nodes` if being updated, or `existing.nodes`).
-2. Add unit tests in `packages/daemon/tests/unit/space/space-workflow.test.ts`:
+2. In `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts`:
+   - Verify that the RPC handlers for `workflow.create` and `workflow.update` pass `endNodeId` from the request params through to the manager. If the handlers destructure or whitelist specific fields, add `endNodeId` to the passthrough. Without this, the visual editor's "Set as End Node" button would silently fail because `endNodeId` would be stripped before reaching the repository.
+3. Add unit tests in `packages/daemon/tests/unit/space/space-workflow.test.ts`:
    - Test: creating a workflow with valid `endNodeId` succeeds.
    - Test: creating a workflow with invalid `endNodeId` (not in nodes list) throws `WorkflowValidationError`.
    - Test: updating `endNodeId` to a valid node succeeds.
@@ -258,6 +263,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Acceptance criteria:**
 - Invalid `endNodeId` references are rejected at create/update time.
 - `null` clears the field without validation error.
+- RPC handlers pass `endNodeId` through to the manager layer (no silent drops).
 - All existing workflow manager tests pass.
 
 **Dependencies:** Task 1, Task 2
@@ -285,6 +291,6 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Backward compatibility: workflows without `endNodeId` still complete via all-agents-done.
 - All existing runtime completion tests pass.
 
-**Dependencies:** Task 2, Task 3, Task 4, Task 5, Task 6a
+**Dependencies:** Task 2, Task 3, Task 4, Task 5, Task 6a, Task 7
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
