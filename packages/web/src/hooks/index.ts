@@ -68,3 +68,4 @@ export {
 	type UseReferenceAutocompleteOptions,
 	type UseReferenceAutocompleteResult,
 } from './useReferenceAutocomplete';
+export { useViewportSafety } from './useViewportSafety';

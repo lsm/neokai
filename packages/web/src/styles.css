@@ -51,6 +51,13 @@
 	--duration-quick: 150ms;
 	--duration-smooth: 250ms;
 	--duration-deliberate: 400ms;
+
+	/* Viewport safety custom properties.
+	   --safe-height: set by useViewportSafety hook on iPad Safari to
+	   window.visualViewport.height (px). On other browsers the CSS fallback
+	   (100svh) applies via the .h-safe-screen utility class.
+	   --bottom-bar-height: overridden by JS when BottomTabBar is visible. */
+	--bottom-bar-height: 0px;
 }
 
 /*
@@ -71,9 +78,11 @@ body {
 	-moz-osx-font-smoothing: grayscale;
 	/* Prevent page-level scrolling - only message container should scroll */
 	overflow: hidden;
-	/* Use dynamic viewport height for mobile Safari (accounts for address bar) */
-	height: 100dvh;
-	/* Fallback for browsers that don't support dvh */
+	/* Use static small viewport height — dvh causes layout recalculation jank
+	   when the browser toolbar animates in/out. svh is stable; the root
+	   container height is managed via .h-safe-screen on iPad Safari. */
+	height: 100svh;
+	/* Fallback for browsers that don't support svh */
 	height: 100vh;
 	/* Prevent overscroll bounce on body - scrollable children handle their own */
 	overscroll-behavior: none;
@@ -561,4 +570,19 @@ a:focus-visible {
 
 .pt-safe {
 	padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Safe viewport height.
+   On iPad Safari, useViewportSafety sets --safe-height = visualViewport.height.
+   On all other browsers, falls back to 100svh. */
+.h-safe-screen {
+	height: var(--safe-height, 100svh);
+}
+
+/* Bottom bar padding utility.
+   Uses --bottom-bar-height custom property (default 0px).
+   Downstream components that need bottom padding matching the BottomTabBar
+   height should use this class instead of hardcoded pb-16. */
+.pb-bottom-bar {
+	padding-bottom: var(--bottom-bar-height, 0px);
 }
