@@ -167,7 +167,10 @@ export class SessionLifecycle {
 		let worktreeMetadata: WorktreeMetadata | undefined;
 		// When no workspace is available (daemon started without --workspace and no explicit
 		// workspacePath), fall back to process.cwd() so Session.workspacePath always has a value.
-		// Global sessions (neo, spaces_global) don't use the workspace path for file operations.
+		// Global sessions (neo, spaces_global) don't use the workspace path for file operations,
+		// so the value stored here is benign for those session types.
+		// TODO: make Session.workspacePath optional (string | undefined) as part of the larger
+		// workspace decoupling effort, so this process.cwd() fallback can be removed.
 		let sessionWorkspacePath: string = baseWorkspacePath ?? process.cwd();
 		const initialBranchName = shouldSkipAutoTitle
 			? generateBranchName(providedTitle!, sessionId) // Title is defined when shouldSkipAutoTitle is true

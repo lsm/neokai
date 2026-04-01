@@ -338,6 +338,10 @@ export class FileIndex {
 
 	/** Run a full incremental refresh scan. */
 	private async runRefresh(): Promise<void> {
+		// Guard: no-op when workspacePath is not set (mirrors the init() guard).
+		// Prevents non-null assertions below from firing if this method is ever
+		// called before init() completes or via an unexpected code path.
+		if (this.workspacePath === undefined) return;
 		if (this.scanning) return; // Skip if previous scan is still running
 		this.scanning = true;
 
