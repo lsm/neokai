@@ -25,7 +25,7 @@ import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
 import { createRoomAgentToolHandlers } from '../../../src/lib/room/tools/room-agent-tools';
-import { setupGitEnvironment, createRoom, getGoal } from './room-test-helpers';
+import { setupGitEnvironment, createRoom, createGoal, getGoal } from './room-test-helpers';
 
 type InProcessDaemon = DaemonServerContext & { daemonContext: DaemonAppContext };
 
@@ -64,20 +64,6 @@ function makeAgentToolHandlers(daemon: InProcessDaemon, roomId: string) {
 	const groupRepo = new SessionGroupRepository(db, reactiveDb);
 
 	return createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
-}
-
-async function createGoalViaRpc(
-	daemon: DaemonServerContext,
-	roomId: string,
-	title: string,
-	description: string
-): Promise<RoomGoal> {
-	const result = (await daemon.messageHub.request('goal.create', {
-		roomId,
-		title,
-		description,
-	})) as { goal: RoomGoal };
-	return result.goal;
 }
 
 function parseToolResult(result: { content: Array<{ type: string; text: string }> }): {
@@ -121,7 +107,7 @@ describe('Goal Lifecycle Reset Integration Tests', () => {
 
 	test('reset_goal clears linkedTaskIds, planning_attempts, consecutiveFailures, and restores active status', async () => {
 		const roomId = await createRoom(daemon, 'Reset Goal Test');
-		const goal = await createGoalViaRpc(daemon, roomId, 'Reset test goal', 'Initial description');
+		const goal = await createGoal(daemon, roomId, 'Reset test goal', 'Initial description');
 
 		const goalManager = makeGoalManager(daemon, roomId);
 
@@ -130,6 +116,7 @@ describe('Goal Lifecycle Reset Integration Tests', () => {
 			linkedTaskIds: ['fake-task-1', 'fake-task-2'],
 			planning_attempts: 3,
 			consecutiveFailures: 2,
+			replanCount: 1,
 		});
 
 		// Also transition to needs_human to verify full reset
@@ -140,6 +127,7 @@ describe('Goal Lifecycle Reset Integration Tests', () => {
 		expect(staleGoal.linkedTaskIds).toHaveLength(2);
 		expect(staleGoal.planning_attempts).toBe(3);
 		expect(staleGoal.consecutiveFailures).toBe(2);
+		expect(staleGoal.replanCount ?? 0).toBe(1);
 		expect(staleGoal.status).toBe('needs_human');
 
 		// Call reset_goal MCP tool handler
@@ -153,6 +141,7 @@ describe('Goal Lifecycle Reset Integration Tests', () => {
 		expect(resetGoal.linkedTaskIds).toHaveLength(0);
 		expect(resetGoal.planning_attempts ?? 0).toBe(0);
 		expect(resetGoal.consecutiveFailures ?? 0).toBe(0);
+		expect(resetGoal.replanCount ?? 0).toBe(0);
 		expect(resetGoal.status).toBe('active');
 	}, 30_000);
 
@@ -160,12 +149,7 @@ describe('Goal Lifecycle Reset Integration Tests', () => {
 
 	test('description update via update_goal resets planning_attempts to 0', async () => {
 		const roomId = await createRoom(daemon, 'Description Invalidation Test');
-		const goal = await createGoalViaRpc(
-			daemon,
-			roomId,
-			'Invalidation test goal',
-			'Original description'
-		);
+		const goal = await createGoal(daemon, roomId, 'Invalidation test goal', 'Original description');
 
 		const handlers = makeAgentToolHandlers(daemon, roomId);
 
@@ -193,7 +177,7 @@ describe('Goal Lifecycle Reset Integration Tests', () => {
 
 	test('planning_attempts is writable via update_goal', async () => {
 		const roomId = await createRoom(daemon, 'Planning Attempts Write Test');
-		const goal = await createGoalViaRpc(daemon, roomId, 'Write test goal', 'Test description');
+		const goal = await createGoal(daemon, roomId, 'Write test goal', 'Test description');
 
 		// Initial state: planning_attempts defaults to 0
 		const initial = await getGoal(daemon, roomId, goal.id);
@@ -215,12 +199,7 @@ describe('Goal Lifecycle Reset Integration Tests', () => {
 
 	test('description update via update_goal transitions needs_human to active', async () => {
 		const roomId = await createRoom(daemon, 'Needs Human Recovery Test');
-		const goal = await createGoalViaRpc(
-			daemon,
-			roomId,
-			'Recovery test goal',
-			'Initial description'
-		);
+		const goal = await createGoal(daemon, roomId, 'Recovery test goal', 'Initial description');
 
 		// Transition to needs_human via goal.needsHuman RPC
 		const needsHumanResult = (await daemon.messageHub.request('goal.needsHuman', {
