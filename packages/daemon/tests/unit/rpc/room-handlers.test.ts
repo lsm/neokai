@@ -196,7 +196,7 @@ describe('Room RPC Handlers', () => {
 			);
 		});
 
-		it('treats empty-string defaultPath as absent (falls back when workspaceRoot available)', async () => {
+		it('omits defaultPath key when client sends empty string', async () => {
 			// '' should be treated the same as absent because we use || not ??
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
