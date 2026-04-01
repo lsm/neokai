@@ -167,7 +167,7 @@ describe('Room RPC Handlers', () => {
 			);
 		});
 
-		it('creates a room with background', async () => {
+		it('creates a room with background (no defaultPath — falls back to undefined)', async () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
@@ -179,12 +179,37 @@ describe('Room RPC Handlers', () => {
 				{}
 			);
 
+			// No workspaceRoot configured in this test setup, so defaultPath falls back
+			// to undefined (cast as string). The ?? chain in room-runtime-service still
+			// works correctly because null-coalescing passes through undefined.
+			// TODO(Milestone 2, task 2.1): Once the server enforces defaultPath, this
+			// test should pass an explicit path and this assertion should use it.
 			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith({
 				name: 'Full Room',
 				background: 'A full featured room',
 				allowedPaths: [],
-				defaultPath: '',
+				defaultPath: undefined,
 			});
+		});
+
+		it('creates a room with an explicit defaultPath', async () => {
+			const handler = messageHubData.handlers.get('room.create');
+			expect(handler).toBeDefined();
+
+			await handler!(
+				{
+					name: 'Path Room',
+					defaultPath: '/workspace/my-project',
+				},
+				{}
+			);
+
+			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
+				expect.objectContaining({
+					name: 'Path Room',
+					defaultPath: '/workspace/my-project',
+				})
+			);
 		});
 
 		it('throws error when name is missing', async () => {

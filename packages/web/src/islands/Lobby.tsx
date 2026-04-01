@@ -266,6 +266,9 @@ export default function Lobby() {
 				isOpen={isCreateRoomModalOpen}
 				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
+					// TODO(Milestone 2, task 2.2): CreateRoomModal does not yet collect a
+					// workspace path. Empty string is a placeholder; the server falls back
+					// to workspaceRoot when defaultPath is absent or empty.
 					const room = await lobbyStore.createRoom({ ...params, defaultPath: '' });
 					if (room) {
 						createRoomModalSignal.value = false;
@@ -282,6 +285,9 @@ export default function Lobby() {
 				recentPaths={recentPaths}
 				rooms={rooms}
 				onCreateRoom={async (params) => {
+					// TODO(Milestone 2, task 2.2): Propagate the workspace path chosen in
+					// NewSessionModal directly as defaultPath once the field is required
+					// end-to-end. For now, fall back to empty string when absent.
 					const room = await lobbyStore.createRoom({
 						...params,
 						defaultPath: params.defaultPath ?? '',
