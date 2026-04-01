@@ -283,6 +283,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 69: Per-channel cycle tracking table.
 	// Replaces the global iteration_count/max_iterations on space_workflow_runs.
 	runMigration69(db);
+	// Migration 70: Backfill default_path for existing rooms where it is NULL.
+	// Sets default_path from allowed_paths[0].path, or '__NEEDS_WORKSPACE_PATH__' sentinel
+	// when allowed_paths is also empty. Sentinel is replaced at startup with config.workspaceRoot.
+	runMigration70(db);
 }
 
 /**
@@ -4502,5 +4506,60 @@ export function runMigration68(db: BunDatabase): void {
 		db.exec(
 			`ALTER TABLE sdk_messages ADD COLUMN origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system'))`
 		);
+	}
+}
+
+/**
+ * Migration 70: Backfill default_path for existing rooms where it is NULL.
+ *
+ * For each room with default_path IS NULL:
+ *   - Parses the allowed_paths JSON column and sets default_path to the first entry's `path`.
+ *   - If allowed_paths is also null/empty, sets default_path to the sentinel value
+ *     '__NEEDS_WORKSPACE_PATH__'. This sentinel is replaced at startup in app.ts using
+ *     config.workspaceRoot, so rooms get a real path as soon as the daemon boots.
+ *
+ * Idempotency: if no rooms have default_path IS NULL, the function returns early.
+ */
+export function runMigration70(db: BunDatabase): void {
+	if (!tableExists(db, 'rooms')) return;
+
+	// Ensure the default_path and allowed_paths columns exist — they were added in the base schema
+	// but older DBs created before these columns were part of the schema may lack them.
+	const roomColumns = db.prepare(`PRAGMA table_info(rooms)`).all() as Array<{ name: string }>;
+	const hasDefaultPath = roomColumns.some((col) => col.name === 'default_path');
+	if (!hasDefaultPath) {
+		db.exec(`ALTER TABLE rooms ADD COLUMN default_path TEXT`);
+	}
+	const hasAllowedPaths = roomColumns.some((col) => col.name === 'allowed_paths');
+	if (!hasAllowedPaths) {
+		db.exec(`ALTER TABLE rooms ADD COLUMN allowed_paths TEXT DEFAULT '[]'`);
+	}
+
+	// Check if any rooms still need backfill — idempotency guard
+	const nullCount = (
+		db.prepare(`SELECT COUNT(*) as cnt FROM rooms WHERE default_path IS NULL`).get() as {
+			cnt: number;
+		}
+	).cnt;
+	if (nullCount === 0) return;
+
+	// Fetch all rooms that need backfill
+	const rows = db
+		.prepare(`SELECT id, allowed_paths FROM rooms WHERE default_path IS NULL`)
+		.all() as Array<{ id: string; allowed_paths: string | null }>;
+
+	const update = db.prepare(`UPDATE rooms SET default_path = ? WHERE id = ?`);
+
+	for (const row of rows) {
+		let newPath: string = '__NEEDS_WORKSPACE_PATH__';
+		try {
+			const parsed = JSON.parse(row.allowed_paths ?? '[]');
+			if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.path) {
+				newPath = parsed[0].path as string;
+			}
+		} catch {
+			// JSON parse failed — fall through to sentinel
+		}
+		update.run(newPath, row.id);
 	}
 }
