@@ -49,6 +49,16 @@ function jsonResult(data: Record<string, unknown>): ToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
+/** Task statuses that are not yet terminal and should be cancelled when resetting/invalidating goals. */
+const NON_TERMINAL_TASK_STATUSES = new Set([
+	'pending',
+	'in_progress',
+	'draft',
+	'review',
+	'rate_limited',
+	'usage_limited',
+]);
+
 /**
  * Create tool handler functions that can be tested directly.
  * Returns a map of tool name -> handler function.
@@ -170,6 +180,34 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 			let updated = goal;
 
+			// Pre-scan: if title/description is changing and runtime is unavailable, check for
+			// blocked planning tasks BEFORE any DB writes so we fail atomically.
+			if (args.title !== undefined || args.description !== undefined) {
+				const runtime = runtimeService?.getRuntime(roomId) ?? null;
+				if (!runtime) {
+					for (const taskId of goal.linkedTaskIds) {
+						const task = await taskManager.getTask(taskId);
+						if (
+							!task ||
+							task.taskType !== 'planning' ||
+							!NON_TERMINAL_TASK_STATUSES.has(task.status)
+						)
+							continue;
+						if (task.status === 'in_progress' || task.status === 'review') {
+							const activeGroup = groupRepo.getGroupByTaskId(taskId);
+							if (activeGroup && activeGroup.completedAt === null) {
+								return jsonResult({
+									success: false,
+									error:
+										`Cannot invalidate planning for goal ${args.goal_id}: planning task ${taskId} (status '${task.status}') has an active session group but no runtime service is available to stop it. ` +
+										`The active planner session would not be stopped.`,
+								});
+							}
+						}
+					}
+				}
+			}
+
 			// Collect patch fields: title, description, priority, missionType, autonomyLevel, planning_attempts, structuredMetrics
 			const hasPatchFields =
 				args.title !== undefined ||
@@ -204,6 +242,56 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			// Status update is a distinct operation from patch (changes state + timestamps)
 			if (args.status) {
 				updated = await goalManager.updateGoalStatus(args.goal_id, args.status);
+			}
+
+			// Invalidate in-progress planning when title or description changes
+			if (args.title !== undefined || args.description !== undefined) {
+				const runtime = runtimeService?.getRuntime(roomId) ?? null;
+
+				// Find and cancel any in-progress planning tasks linked to this goal
+				for (const taskId of goal.linkedTaskIds) {
+					const task = await taskManager.getTask(taskId);
+					if (!task || task.taskType !== 'planning' || !NON_TERMINAL_TASK_STATUSES.has(task.status))
+						continue;
+
+					if (runtime) {
+						await runtime.cancelTask(taskId);
+					} else {
+						// Fallback path: no runtime available.
+						// The pre-scan above already rejected any blocked in_progress/review tasks,
+						// so it is safe to cancel here without an additional session-group check.
+						await taskManager.cancelTaskCascade(taskId);
+						if (daemonHub) {
+							const cancelledTask = await taskManager.getTask(taskId);
+							if (cancelledTask) {
+								void daemonHub.emit('room.task.update', {
+									sessionId: `room:${roomId}`,
+									roomId,
+									task: cancelledTask,
+								});
+							}
+						}
+					}
+				}
+
+				// Reset planning_attempts so a fresh planner picks up the updated context.
+				// Skip if the caller explicitly provided planning_attempts — their value takes precedence.
+				if (args.planning_attempts === undefined) {
+					updated = await goalManager.patchGoal(args.goal_id, { planning_attempts: 0 });
+				}
+
+				// If the goal is stuck in needs_human, transition it back to active so it's
+				// eligible for replanning (getNextGoalForPlanning only iterates 'active' goals).
+				// Only auto-transition when the caller did not explicitly set a status in this
+				// same call — an explicit status instruction takes precedence.
+				if (args.status === undefined && updated.status === 'needs_human') {
+					updated = await goalManager.updateGoalStatus(args.goal_id, 'active');
+				}
+
+				// Trigger a fresh planning tick if runtime is available
+				if (runtime) {
+					runtime.onGoalCreated(args.goal_id);
+				}
 			}
 
 			return jsonResult({ success: true, goal: updated });
@@ -1013,23 +1101,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
 			}
 
-			// Non-terminal task statuses — tasks in these states should be cancelled before reset
-			const nonTerminalStatuses = new Set([
-				'pending',
-				'in_progress',
-				'draft',
-				'review',
-				'rate_limited',
-				'usage_limited',
-			]);
-
 			// Hoist the runtime lookup so it isn't repeated on every loop iteration
 			const runtime = runtimeService?.getRuntime(roomId) ?? null;
 
 			// Cancel all in-progress linked tasks
 			for (const taskId of goal.linkedTaskIds) {
 				const task = await taskManager.getTask(taskId);
-				if (!task || !nonTerminalStatuses.has(task.status)) continue;
+				if (!task || !NON_TERMINAL_TASK_STATUSES.has(task.status)) continue;
 
 				if (runtime) {
 					await runtime.cancelTask(taskId);

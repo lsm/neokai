@@ -510,4 +510,271 @@ describe('Room Agent Tools - reset_goal and planning_attempts', () => {
 			expect(Object.keys(registeredTools)).not.toContain('reset_goal');
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// update_goal: title/description change invalidates in-progress planning
+	// -------------------------------------------------------------------------
+
+	describe('update_goal: invalidate in-progress planning on title/description change', () => {
+		/** Helper: create a planning task and link it to a goal via DB (task_type = 'planning'). */
+		async function createPlanningTask(goalId: string, status: string = 'pending') {
+			// Insert a planning task directly (task_type 'planning' is blocked via handler,
+			// but can be created directly in the DB for test purposes)
+			const taskId = `planning-task-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			db.run(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, task_type, assigned_agent, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					taskId,
+					roomId,
+					'Planning Task',
+					'auto-generated planning',
+					status,
+					'normal',
+					'planning',
+					'planner',
+					Date.now(),
+					Date.now(),
+				]
+			);
+			// Link to goal
+			await goalManager.linkTaskToGoal(goalId, taskId);
+			return taskId;
+		}
+
+		it('should cancel in-progress planning task and reset planning_attempts when title changes', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Original Title' }));
+			const goalId = goalResult.goalId as string;
+
+			// Set planning_attempts to a non-zero value
+			db.run('UPDATE goals SET planning_attempts = 3 WHERE id = ?', [goalId]);
+
+			// Create a pending planning task
+			const planTaskId = await createPlanningTask(goalId, 'pending');
+
+			// Update the title
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, title: 'Updated Title' })
+			);
+			expect(result.success).toBe(true);
+
+			// Planning task should be cancelled
+			const planTask = await taskManager.getTask(planTaskId);
+			expect(planTask?.status).toBe('cancelled');
+
+			// planning_attempts should be reset to 0
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.planning_attempts).toBe(0);
+		});
+
+		it('should cancel in-progress planning task and reset planning_attempts when description changes', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			db.run('UPDATE goals SET planning_attempts = 2 WHERE id = ?', [goalId]);
+
+			const planTaskId = await createPlanningTask(goalId, 'in_progress');
+
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, description: 'New description' })
+			);
+			expect(result.success).toBe(true);
+
+			const planTask = await taskManager.getTask(planTaskId);
+			expect(planTask?.status).toBe('cancelled');
+
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.planning_attempts).toBe(0);
+		});
+
+		it('should NOT cancel planning tasks when only priority is updated', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			db.run('UPDATE goals SET planning_attempts = 2 WHERE id = ?', [goalId]);
+
+			const planTaskId = await createPlanningTask(goalId, 'pending');
+
+			const result = parseResult(await handlers.update_goal({ goal_id: goalId, priority: 'high' }));
+			expect(result.success).toBe(true);
+
+			// Planning task should still be pending (not cancelled)
+			const planTask = await taskManager.getTask(planTaskId);
+			expect(planTask?.status).toBe('pending');
+
+			// planning_attempts should remain unchanged
+			const rawGoal = db.query('SELECT planning_attempts FROM goals WHERE id = ?').get(goalId) as {
+				planning_attempts: number;
+			};
+			expect(rawGoal.planning_attempts).toBe(2);
+		});
+
+		it('should do nothing when no planning tasks are in progress', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			db.run('UPDATE goals SET planning_attempts = 1 WHERE id = ?', [goalId]);
+
+			// No planning tasks linked — just update title
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, title: 'New Title' })
+			);
+			expect(result.success).toBe(true);
+
+			// planning_attempts should still be reset to 0
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.planning_attempts).toBe(0);
+		});
+
+		it('should transition needs_human goal to active when title/description changes', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Stuck Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			// Move goal to needs_human status (simulates planner hitting max attempts)
+			await goalManager.updateGoalStatus(goalId, 'needs_human');
+
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, description: 'Clarified description' })
+			);
+			expect(result.success).toBe(true);
+
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.status).toBe('active');
+			expect(goal.planning_attempts).toBe(0);
+		});
+
+		it('should leave an active goal as active when title/description changes', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Active Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			// Goal is active by default
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, title: 'New Title' })
+			);
+			expect(result.success).toBe(true);
+
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.status).toBe('active');
+		});
+
+		it('should call runtime.cancelTask and runtime.onGoalCreated when runtime is available', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Runtime Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			const planTaskId = await createPlanningTask(goalId, 'pending');
+
+			const cancelledIds: string[] = [];
+			const onGoalCreatedIds: string[] = [];
+			const mockRuntime = {
+				cancelTask: async (taskId: string) => {
+					cancelledIds.push(taskId);
+					await taskManager.setTaskStatus(taskId, 'cancelled');
+					return { success: true, cancelledTaskIds: [taskId] };
+				},
+				onGoalCreated: (gId: string) => {
+					onGoalCreatedIds.push(gId);
+				},
+			};
+			const runtimeService = { getRuntime: (_roomId: string) => mockRuntime as never };
+
+			const handlersWithRuntime = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService,
+			});
+
+			const result = parseResult(
+				await handlersWithRuntime.update_goal({ goal_id: goalId, title: 'Updated' })
+			);
+			expect(result.success).toBe(true);
+
+			// runtime.cancelTask should have been called for the planning task
+			expect(cancelledIds).toContain(planTaskId);
+
+			// runtime.onGoalCreated should have been triggered
+			expect(onGoalCreatedIds).toContain(goalId);
+		});
+
+		it('should NOT cancel terminal-status planning tasks', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			// Create a completed planning task (terminal — should not be cancelled again)
+			const planTaskId = await createPlanningTask(goalId, 'completed');
+
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, title: 'New Title' })
+			);
+			expect(result.success).toBe(true);
+
+			const planTask = await taskManager.getTask(planTaskId);
+			expect(planTask?.status).toBe('completed');
+		});
+
+		it('should respect explicit planning_attempts when provided alongside title change', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			db.run('UPDATE goals SET planning_attempts = 3 WHERE id = ?', [goalId]);
+
+			// Caller explicitly sets planning_attempts = 5 alongside a title change
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, title: 'New Title', planning_attempts: 5 })
+			);
+			expect(result.success).toBe(true);
+
+			// The explicit value (5) should win — the auto-reset to 0 is skipped
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.planning_attempts).toBe(5);
+		});
+
+		it('should respect explicit status:needs_human when title/description also changes', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			// Caller explicitly sets status to needs_human AND changes the title in the same call.
+			// The explicit status instruction takes precedence — invalidation should NOT override it.
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					title: 'Updated Title',
+					status: 'needs_human',
+				})
+			);
+			expect(result.success).toBe(true);
+
+			// Explicit status wins — should remain needs_human
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.status).toBe('needs_human');
+			// planning_attempts still reset since no explicit planning_attempts was provided
+			expect(goal.planning_attempts).toBe(0);
+		});
+
+		it('should return error when in_progress planning task has active session group and no runtime', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			const planTaskId = await createPlanningTask(goalId, 'in_progress');
+
+			// Insert an active session group for the planning task (simulates running planner)
+			insertActiveGroup(planTaskId);
+
+			// Without runtime, should refuse to cancel a planning task with an active session group
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, title: 'New Title' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/active session group/i);
+
+			// Planning task should be unchanged
+			const planTask = await taskManager.getTask(planTaskId);
+			expect(planTask?.status).toBe('in_progress');
+
+			// Goal title must NOT have been mutated — the update was rejected before any DB write
+			const goalAfter = await goalManager.getGoal(goalId);
+			expect(goalAfter?.title).toBe('Goal');
+		});
+	});
 });
