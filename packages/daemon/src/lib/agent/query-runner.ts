@@ -51,6 +51,8 @@ export interface OriginalEnvVars {
 	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
 	CLAUDE_AGENT_SDK_CLIENT_APP?: string;
+	/** Daemon's listening PORT — cleared from subprocess env to prevent kill-chain via lsof */
+	PORT?: string;
 }
 
 /**
@@ -223,6 +225,13 @@ export class QueryRunner {
 			this.ctx.originalEnvVars.CLAUDE_AGENT_SDK_CLIENT_APP =
 				process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
 			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'neokai/0.5.0';
+
+			// Remove PORT from the SDK subprocess environment to prevent the kill-chain bug:
+			// If the daemon was started with PORT=<n>, that env var propagates to SDK subprocesses.
+			// When a subprocess encounters EADDRINUSE and runs `lsof -i :<n>`, it finds the daemon
+			// and kills it. Clearing PORT before the SDK query prevents this inheritance.
+			this.ctx.originalEnvVars.PORT = process.env.PORT;
+			delete process.env.PORT;
 
 			// Create query with AsyncGenerator
 			const queryObject = query({

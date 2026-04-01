@@ -91,7 +91,7 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 	);
 
 	return {
-		port: overrides?.port ?? parseInt(process.env.PORT || '9283'),
+		port: overrides?.port ?? parseInt(process.env.NEOKAI_PORT || process.env.PORT || '9283'),
 		host: overrides?.host ?? (process.env.HOST || '0.0.0.0'),
 		dbPath: overrides?.dbPath ?? (process.env.DB_PATH || defaultDbPath),
 		anthropicApiKey: process.env.ANTHROPIC_API_KEY,

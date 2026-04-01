@@ -96,6 +96,8 @@ interface OriginalEnvVars {
 	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
 	CLAUDE_AGENT_SDK_CLIENT_APP?: string;
+	/** Daemon's listening PORT — cleared from subprocess env to prevent kill-chain via lsof */
+	PORT?: string;
 }
 
 /**
@@ -691,6 +693,13 @@ export class ProviderService {
 				process.env.CLAUDE_AGENT_SDK_CLIENT_APP = original.CLAUDE_AGENT_SDK_CLIENT_APP;
 			} else {
 				delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+			}
+		}
+		if (Object.prototype.hasOwnProperty.call(original, 'PORT')) {
+			if (original.PORT !== undefined) {
+				process.env.PORT = original.PORT;
+			} else {
+				delete process.env.PORT;
 			}
 		}
 	}
