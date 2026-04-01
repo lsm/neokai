@@ -71,7 +71,44 @@ Removed: `agentId` shorthand (always use `agents[]`), `model`/`systemPrompt` ove
 
 ### `space_agents` — Cleaned Up
 
-Removed: `role`, `toolConfig`, `injectWorkflowContext`.
+Added: `instructions: string | null` (default operating procedure — separate from `systemPrompt` which is persona/constraints). Removed: `role`, `toolConfig`, `injectWorkflowContext`.
+
+### Two-Layer Override Design for `systemPrompt` and `instructions`
+
+**Design decision:** Remove the three-level `WorkflowNode → WorkflowNodeAgent → SpaceAgent` override chain. Use two levels only:
+
+| Level | `systemPrompt` | `instructions` |
+|---|---|---|
+| `SpaceAgent` | ✅ who the agent is (persona, constraints) | ✅ what the agent does by default (operating procedure) |
+| `WorkflowNodeAgent` | ✅ optional slot override with explicit mode | ✅ optional slot override with explicit mode |
+| `WorkflowNode` | ❌ removed (was artifact of `agentId` shorthand) | ❌ removed (was artifact of `agentId` shorthand) |
+
+**`WorkflowNodeAgent` override shape** — both fields use an explicit mode object:
+
+```typescript
+systemPrompt?: {
+  mode: 'override' | 'expand'   // expand = append after agent's systemPrompt
+  value: string
+}
+instructions?: {
+  mode: 'override' | 'expand'   // expand = append after agent's instructions
+  value: string
+}
+```
+
+Default mode is `'override'` (full control). `'expand'` appends after the agent's base value with `"\n\n"` separator.
+
+**Runtime composition:**
+```
+Final systemPrompt:
+  slot.systemPrompt.mode == 'override' → slot.systemPrompt.value
+  slot.systemPrompt.mode == 'expand'   → agent.systemPrompt + "\n\n" + slot.systemPrompt.value
+  slot.systemPrompt absent             → agent.systemPrompt
+
+Final instructions: same logic
+```
+
+This replaces the old `resolveNodeAgents()` spreading behavior where `WorkflowNode.systemPrompt` overrode all slot-level prompts.
 
 ---
 
@@ -116,7 +153,17 @@ Removed: `role`, `toolConfig`, `injectWorkflowContext`.
 
 6. **`SpaceAgent`:**
    - Remove `role`, `toolConfig`, `injectWorkflowContext` from `SpaceAgent` interface.
+   - Add `instructions: string | null` — the agent's default operating procedure (injected into the initial task message alongside `systemPrompt`).
    - Keep `id`, `spaceId`, `name`, `description`, `model`, `provider`, `systemPrompt`, `tools`, `createdAt`, `updatedAt`.
+   - Update `CreateSpaceAgentParams` and `UpdateSpaceAgentParams` to include `instructions`.
+
+7. **`WorkflowNodeAgent` override shape:**
+   - Change `systemPrompt?: string` to `systemPrompt?: { mode: 'override' | 'expand'; value: string }`.
+   - Change `instructions?: string` to `instructions?: { mode: 'override' | 'expand'; value: string }`.
+   - This replaces the old three-level `WorkflowNode.systemPrompt → WorkflowNodeAgent.systemPrompt → SpaceAgent.systemPrompt` chain with a clean two-level design.
+   - Old `WorkflowNode.systemPrompt` and `WorkflowNode.instructions` are removed from `WorkflowNode` type (they were artifacts of the `agentId` shorthand, not intentional design).
+
+> **Note:** The old subtask 7 (`SpaceTaskActivityMember type update`) is now subtask 8, and old subtask 8 (`ExportedSpaceWorkflow cleanup`) is now subtask 9, etc.
 
 7. **`SpaceTaskActivityMember` type update:**
    - `SpaceTaskActivityMember` (in `packages/shared/src/types/space.ts`, lines 246–285) references `workflowNodeId`, `agentName`, `currentStep`, `error`, `completionSummary`, and old `SpaceTaskStatus` values.
@@ -179,6 +226,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 6. **`space_agents` migration:**
    - Recreate table dropping: `role`, `config` (which stores `toolConfig`), `inject_workflow_context`.
+   - Add: `instructions TEXT DEFAULT NULL` column.
+   - Also update the `space_workflow_nodes` node config JSON: the `config` blob currently stores `{ systemPrompt, instructions, agents[] }` where `instructions` on the node and `systemPrompt`/`instructions` on each `WorkflowNodeAgent` entry are plain strings. Migrate to the new `WorkflowNodeAgent` shape: `systemPrompt?: { mode: 'override' | 'expand', value: string }` and `instructions?: { mode: 'override' | 'expand', value: string }`. For existing data where these are plain strings, migrate to `{ mode: 'override', value: existingString }` (preserve existing behavior — override was implicit). The node-level `instructions` and `systemPrompt` fields on `WorkflowNode` are dropped entirely.
 
 **Acceptance criteria:**
 - All migrations run without errors on existing databases with data.
@@ -448,18 +497,28 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Update all callers of `resolveNodeAgents()` (20+ call sites) to not reference `node.agentId` directly — always go through `resolveNodeAgents()`.
    - Update `space_workflow_nodes` DB handling to not write `agent_id` on new records.
 
-3. **Remove `SpaceAgent.injectWorkflowContext`:**
+3. **Implement override/expand composition in `custom-agent.ts`:**
+   - In `createCustomAgentInit()` and `buildCustomAgentSystemPrompt()` in `packages/daemon/src/lib/space/agents/custom-agent.ts`, implement the two-layer composition logic for both `systemPrompt` and `instructions`:
+     - If `slot.systemPrompt` is absent → use `agent.systemPrompt` as-is.
+     - If `slot.systemPrompt.mode === 'override'` → use `slot.systemPrompt.value` (replaces agent's value entirely).
+     - If `slot.systemPrompt.mode === 'expand'` → concatenate `agent.systemPrompt + "\n\n" + slot.systemPrompt.value`.
+     - Apply identical logic for `instructions`.
+   - Update `resolveNodeAgents()` in `space-utils.ts` to pass through the structured override objects without flattening them. The old behavior of spreading `WorkflowNode.systemPrompt` onto all slot agents is removed.
+
+4. **Remove `SpaceAgent.injectWorkflowContext`:**
    - Remove from `neo-query-tools` display logic.
    - Remove from repository mapping.
 
-4. **Unit tests:**
+5. **Unit tests:**
    - Update `seed-agents.test.ts`, `custom-agent.test.ts` for role removal.
    - Update any tests that use `resolveNodeAgents()` with `agentId` shorthand.
+   - Add tests for override/expand composition logic (override replaces, expand concatenates, absent uses base).
 
 **Acceptance criteria:**
 - `SpaceAgent.role`, `toolConfig`, `injectWorkflowContext` fully removed.
 - `WorkflowNode.agentId` shorthand fully removed — only `agents[]` accepted.
 - `resolveNodeAgents()` simplified.
+- Override/expand composition implemented and tested for both `systemPrompt` and `instructions`.
 - All tests pass, lint passes (no dead exports via knip check).
 
 **Dependencies:** Task 1, Task 3
@@ -511,14 +570,19 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Add `endNode` mapping (UUID → name), optional.
    - Remove export of `rules`, `config`, `maxIterations`, `isDefault` from workflow export.
    - Remove `role`, `toolConfig`, `injectWorkflowContext` from agent export.
+   - Export `SpaceAgent.instructions` field (nullable string) for each agent in the export.
    - Ensure node export uses `agents[]` not `agentId`.
+   - Export `WorkflowNodeAgent.systemPrompt` and `.instructions` using the new structured shape `{ mode, value }` — these are already the in-memory representation after Task 1, so no special mapping is needed for new data.
 2. **Import handling** (`space-export-import-handlers.ts`):
    - Resolve `endNode` name → UUID on import.
    - Handle importing legacy exports that have `agentId` on nodes: convert to `agents[]` during import.
    - Handle importing legacy exports with old status values: map to new values.
+   - When importing legacy exports where `WorkflowNodeAgent.systemPrompt` or `.instructions` is a plain string (not `{ mode, value }`), convert to `{ mode: 'override', value: existingString }` at import time. This matches the DB migration behavior (Task 2.6).
+   - When importing `SpaceAgent`, handle missing `instructions` field gracefully (set to `null`).
 3. **Tests:**
    - Update `export-format.test.ts` and `export-import-round-trip.test.ts`.
    - Add test for legacy export import (backward compat).
+   - Test for legacy export with plain-string `WorkflowNodeAgent.systemPrompt` — verifies it imports as `{ mode: 'override', value }`.
 
 **Acceptance criteria:**
 - Export includes `endNode` when set; omits deprecated fields.
@@ -551,6 +615,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Add "Set as End Node" button (parallel to "Set as Start Node").
    - Show "END" badge on end nodes.
    - Line 286: remove `{' (${agent.role})'}` display — replace with agent description or omit.
+   - For each agent slot in the node config (`WorkflowNodeAgent`), replace plain text inputs for `systemPrompt` and `instructions` with a compound field: a mode selector (`<select>` with `override` / `expand` options) paired with a textarea for `value`. When the field is absent/cleared, the select and textarea should be hidden (no override). This gives authors explicit control over whether the slot overrides or expands the agent's base values.
 4. **Visual editor canvas** (`packages/web/src/components/space/visual-editor/WorkflowCanvas.tsx`):
    - Lines 155–165: remove `agentRoleToNodeId` map that uses `agent.role`. Replace role-based slot labeling with `agent.name` or `agent.description`.
    - Line 160: remove `agent.role` reference in node rendering.
@@ -596,6 +661,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - **`space-workflow-run-handlers.ts`:** Update all 19 hardcoded `'needs_attention'` references to `'blocked'`. Update `'completed'` to `'done'`. The `markFailed` handler assigns `needs_attention` as a transition target — this will break the CHECK constraint if not updated. Remove references to `goalId`, `config` params. **Keep `failureReason`** references as-is (gate rejection flow preserved).
    - **`space-task-message-handlers.ts`:** Update references to removed task fields (`workflowNodeId`, `agentName`) used for routing. Note: `taskAgentSessionId` is **kept** — the handlers' usage of it for orchestration task session management is correct and should remain.
    - Remove references to `goalId`, `config` from all run-related handlers.
+   - **`space-agent-handlers.ts`:** Verify `spaceAgent.create` and `spaceAgent.update` handlers pass through the new `instructions` field. Since these handlers likely use a cast/spread pattern (like `spaceWorkflow`), confirm `instructions` is not silently dropped. Add explicit passthrough if needed.
 3. **`nodeExecution.list` RPC handler (required):**
    - Add `nodeExecution.list` RPC handler that returns `NodeExecution[]` filtered by `workflowRunId`. This is **mandatory** — the frontend canvas (`WorkflowCanvas.tsx`, `VisualWorkflowEditor.tsx`) needs per-node execution data to display node status after `workflowNodeId` is removed from `space_tasks`.
    - Add corresponding LiveQuery named query (`nodeExecutions.byRun`) for reactive frontend updates.
@@ -638,6 +704,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Workflow with `endNodeId`: end node execution `done` → `processRunTick` → run `done`.
    - Non-end node completes but end node still running → run stays `in_progress`.
    - Workflow without `endNodeId` → all-executions-done behavior (backward compat).
+   - `WorkflowNodeAgent.systemPrompt = { mode: 'override', value: 'X' }` → composed system prompt equals `'X'` (agent's base `systemPrompt` is discarded).
+   - `WorkflowNodeAgent.systemPrompt = { mode: 'expand', value: 'X' }` → composed system prompt equals `agent.systemPrompt + '\n\nX'`.
+   - Same two scenarios for `instructions`.
+   - `WorkflowNodeAgent` with no `systemPrompt`/`instructions` → composed values equal agent base values (no-override passthrough).
    - End node execution `blocked` → run escalates to `blocked`.
    - End node execution not yet created → run stays `in_progress`.
    - Orchestration task auto-completed when run completes (if `in_progress`).
