@@ -143,8 +143,11 @@ export function BottomTabBar() {
 		// window resize listener handles breakpoint transitions (md:hidden causes
 		// display:none, which ResizeObserver does not fire for).
 		// requestAnimationFrame ensures the browser applies the new display value first.
+		// The cancelled-rAF guard prevents queuing multiple callbacks during rapid resize.
+		let rafId = 0;
 		const onResize = () => {
-			requestAnimationFrame(updateHeight);
+			cancelAnimationFrame(rafId);
+			rafId = requestAnimationFrame(updateHeight);
 		};
 		window.addEventListener('resize', onResize);
 
