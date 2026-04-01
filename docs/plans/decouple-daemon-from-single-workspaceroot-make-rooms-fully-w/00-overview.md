@@ -19,7 +19,7 @@ The work is split into six milestones, executed in dependency order:
 
 1. **Shared types and validation** -- Update `CreateRoomParams.defaultPath` to required, add path validation utility, expose `workspaceRoot` in `SystemState` (already done -- verify).
 2. **Room creation enforcement** -- Backend `room.create` rejects missing `defaultPath`, frontend `CreateRoomModal` adds workspace path field, Neo action tools pass explicit paths, backfill migration for existing rooms.
-3. **Eliminate workspaceRoot fallbacks** -- Fix `resolveSessionContext` in `reference-handlers.ts` to look up room `defaultPath`, fix `room-runtime-service.ts:638` fallback, fix `session-lifecycle.ts:93` fallback for room sessions, make `setupRoomAgentSession` resolve MCP from room path.
+3. **Eliminate workspaceRoot fallbacks** -- Fix `resolveSessionContext` in `reference-handlers.ts` to look up room `defaultPath`, fix `room-runtime-service.ts:638` fallback, fix `session-lifecycle.ts:93` fallback for room sessions, fix `session-manager.ts:437` `cleanupOrphanedWorktrees` fallback, verify `settings-handlers.ts` (confirm no room-scoped fallback exists — document as no-op).
 4. **Room.update defaultPath propagation** -- Guard `defaultPath` changes against active task groups, propagate to room chat session `workspacePath`, propagate to runtime (recreate `TaskGroupManager` or add mutable setter), update `room.updated` event handler in `RoomRuntimeService`.
 5. **Make daemon workspaceRoot optional** -- Change `Config.workspaceRoot` to `string | undefined`, update `setupRoomHandlers` signature, update `FileIndex` to handle per-room paths or gracefully degrade, update `StateManager` and Neo query tools.
 6. **Test coverage and E2E** -- Unit tests for required `defaultPath` validation, tests for fallback removal, tests for `room.update` propagation guards, E2E test for room creation with workspace path.
@@ -34,11 +34,14 @@ The work is split into six milestones, executed in dependency order:
 
 ## Key Sequencing Decisions
 
-- **Backfill before removing fallbacks**: Existing rooms with `defaultPath = null` must be backfilled (using the daemon's current `workspaceRoot`) before fallback removal in Milestone 3. This happens in Milestone 2.
-- **Runtime recreation over mutable setter**: When `defaultPath` changes on a room, the runtime's `TaskGroupManager` is readonly. The plan opts to stop the runtime and recreate it rather than adding a mutable setter, which is safer and simpler.
+- **Backfill before removing fallbacks**: Existing rooms with `defaultPath = null` must be backfilled before fallback removal in Milestone 3. The migration (Task 2.4) uses the daemon's current `workspaceRoot` as the fallback value for rooms where both `defaultPath` and `allowedPaths` are null/empty — this is safe because the daemon currently provides it anyway.
+- **Runtime recreation over mutable setter**: When `defaultPath` changes on a room, the runtime's `TaskGroupManager` is readonly. The plan opts to stop the runtime and recreate it rather than adding a mutable setter, which is safer and simpler. This is the committed approach — Task 4.2 must implement recreation, not a setter.
+- **Hard breaking change for room.create**: Making `defaultPath` required is a hard break for any callers not providing it. This is intentional — all known callers (CreateRoomModal, Neo tools, tests) are updated in Milestone 2 before enforcement goes live. No deprecation window is needed since NeoKai controls all clients.
 - **FileIndex stays global for now**: Per-room file indexing is out of scope. `FileIndex` will continue using the daemon `workspaceRoot` (or become a no-op when it is unset). Room-scoped file search can be a follow-up.
 - **SettingsManager stays singleton**: Rather than creating per-room `SettingsManager` instances, MCP config resolution for room chat sessions will read from the room's `defaultPath` directly using the existing filesystem utilities. The singleton `SettingsManager` remains for global/non-room settings.
+- **DB path when workspaceRoot is undefined**: When `workspaceRoot` is not provided, the DB path defaults to `~/.neokai/data/daemon.db`. This is a dedicated default path (not shared with any workspace-derived path) so there is no collision risk. This only applies when the daemon is started without `--workspace`.
+- **Cross-platform note**: `validateWorkspacePath` checks for absolute paths starting with `/` (POSIX only). NeoKai currently targets macOS and Linux. Windows support is explicitly out of scope; the validation function documents this.
 
 ## Estimated Task Count
 
-~18 tasks across 6 milestones.
+~20 tasks across 6 milestones.

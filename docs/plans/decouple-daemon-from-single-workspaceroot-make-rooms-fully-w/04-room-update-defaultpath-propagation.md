@@ -20,7 +20,7 @@ Allow changing `defaultPath` via `room.update` with safety guards, and propagate
 
 **Subtasks**:
 1. In `room-handlers.ts` `room.update` handler, before calling `roomManager.updateRoom()`, check if `params.defaultPath` differs from the current room's `defaultPath`.
-2. If it differs, query the room's runtime service (or task manager) for active task groups. The `RoomRuntimeService` is not directly available in `room-handlers.ts` -- add it as an optional dependency, or use a callback `hasActiveTaskGroups(roomId): boolean`.
+2. If it differs, query the room's runtime service (or task manager) for active task groups. The `RoomRuntimeService` is not directly available in `room-handlers.ts` -- add it as an optional dependency, or use a callback `hasActiveTaskGroups(roomId): boolean`. **Note**: If the runtime hasn't been created yet for a room (lazy initialization), the callback should return `false` (no active tasks) rather than throwing.
 3. Wire the dependency from `setupAllHandlers` in `index.ts` -- pass `roomRuntimeService` to `setupRoomHandlers`.
 4. If active task groups exist, throw: `Error('Cannot change defaultPath while tasks are active. Stop or complete all tasks first.')`.
 5. Also validate the new `defaultPath`: must be absolute and exist on disk (`existsSync`).
@@ -46,20 +46,23 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Description**: When `defaultPath` changes successfully via `room.update`, propagate the change to: (a) the room chat session's `workspacePath`, (b) the `RoomRuntime`'s internal workspace path (via `TaskGroupManager`). Since `TaskGroupManager.workspacePath` is readonly, the runtime must be stopped and recreated.
 
+**Starting state**: Task 3.2 does NOT touch the `room.updated` event handler — all propagation logic is consolidated here.
+
 **Subtasks**:
 1. In `room-handlers.ts` `room.update` handler, after a successful `defaultPath` change, update the room chat session's `workspacePath` via `sessionManager.updateSession(roomChatSessionId, { workspacePath: newDefaultPath })`. Add this alongside the existing `defaultModel` sync logic.
-2. In `room-runtime-service.ts`, in the `room.updated` event handler (line 807+), detect when `room.defaultPath` differs from the runtime's stored `workspacePath`. When it does:
+2. In `room-runtime-service.ts`, in the `room.updated` event handler (line 807+), detect when `room.defaultPath` differs from the runtime's stored `workspacePath`. When it does, **stop and recreate the runtime** (do NOT add a mutable setter to `TaskGroupManager` — this was decided in the overview):
    a. Stop the existing runtime via `runtime.stop()`.
    b. Remove it from `this.runtimes` map.
    c. Call `this.createOrGetRuntime(room)` to create a new runtime with the updated `workspacePath`.
-3. Alternatively (simpler approach): add a `updateWorkspacePath(newPath: string)` method to `TaskGroupManager` that updates the readonly field. This avoids runtime recreation. Evaluate which approach is safer and implement accordingly. If adding a setter, also update `RoomRuntime.updateRoom()` to call it.
-4. Add unit tests verifying: (a) room chat session `workspacePath` is updated, (b) runtime workspace path is updated after `defaultPath` change.
-5. Run `make test-daemon`.
+   d. Ensure `runtime.stop()` cleanly terminates any sessions that were started before the path change — no orphaned sessions.
+3. Add unit tests verifying: (a) room chat session `workspacePath` is updated, (b) runtime workspace path reflects the new `defaultPath` after recreation, (c) **no orphaned sessions remain** after runtime stop/recreate — verify that sessions started before the path change are cleanly terminated.
+4. Run `make test-daemon`.
 
 **Acceptance Criteria**:
 - Room chat session's `workspacePath` is updated when `defaultPath` changes.
-- The runtime's effective `workspacePath` reflects the new `defaultPath`.
+- The runtime is stopped and recreated (not mutated) when `defaultPath` changes.
 - No orphaned runtimes or sessions after the change.
+- Unit tests cover the stop/recreate sequence including session cleanup.
 - Unit tests pass.
 
 **Dependencies**: Task 4.1

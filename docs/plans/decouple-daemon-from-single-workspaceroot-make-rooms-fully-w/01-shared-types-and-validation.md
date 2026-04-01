@@ -19,17 +19,18 @@ Update shared type definitions so `defaultPath` is required on `CreateRoomParams
 
 **Subtasks**:
 1. In `packages/shared/src/types/neo.ts`, change `CreateRoomParams.defaultPath` from `defaultPath?: string` to `defaultPath: string`.
-2. In `packages/shared/src/types/neo.ts`, change `CreateRoomParams.allowedPaths` from `allowedPaths?: WorkspacePath[]` to `allowedPaths?: WorkspacePath[]` (keep optional -- backend will derive from `defaultPath` if not provided).
-3. Create `packages/shared/src/validation/workspace-path.ts` with `validateWorkspacePath()` that checks the path is a non-empty absolute path (starts with `/`).
+2. In `packages/shared/src/types/neo.ts`, keep `CreateRoomParams.allowedPaths` as optional (backend will derive from `defaultPath` if not provided).
+3. Create `packages/shared/src/validation/workspace-path.ts` with `validateWorkspacePath()` that checks the path is a non-empty absolute path (starts with `/`). Add a doc comment noting this is POSIX-only (Windows is out of scope).
 4. Export the validation utility from `packages/shared/src/mod.ts`.
 5. Add unit tests in `packages/shared/src/validation/__tests__/workspace-path.test.ts` covering: valid absolute path, empty string, relative path, path with trailing slash (valid).
-6. Run `bun run typecheck` to identify all callers that now fail due to the required `defaultPath` -- do NOT fix them yet (that is Milestone 2), but document the list of files that need updating.
+6. Run `bun run typecheck` to identify all callers that now fail due to the required `defaultPath`. **Fix all type errors in the same PR** by adding placeholder `defaultPath` values to call sites (in daemon test fixtures, use `/tmp/test-workspace`; in frontend, pass `defaultPath` from state). This ensures the PR does not break CI. The behavioral enforcement (runtime validation) is Milestone 2.
+7. Run `bun run typecheck && make test-daemon && make test-web` to verify everything passes.
 
 **Acceptance Criteria**:
 - `CreateRoomParams.defaultPath` is required (not optional).
 - `validateWorkspacePath` is exported from `@neokai/shared` and has passing tests.
 - `SystemState.workspaceRoot` already exists in `packages/shared/src/state-types.ts` (verified, no change needed).
-- Type check identifies broken callers but this task does NOT fix them.
+- All type errors from the change are fixed — CI passes cleanly (typecheck, daemon tests, web tests).
 
 **Dependencies**: None.
 

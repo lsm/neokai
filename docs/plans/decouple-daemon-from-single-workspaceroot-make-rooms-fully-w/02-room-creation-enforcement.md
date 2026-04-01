@@ -98,19 +98,20 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Description**: Add a database migration that backfills `defaultPath` for existing rooms where it is `NULL`. The migration should set `defaultPath` to the first entry in `allowedPaths` (parsed from the JSON column). If `allowedPaths` is also empty, the migration cannot auto-fix -- log a warning. This ensures all existing rooms have a `defaultPath` before fallback removal in Milestone 3.
 
 **Subtasks**:
-1. Create a new migration file in `packages/daemon/src/storage/migrations/` that:
+1. Add a new `runMigration70(db: BunDatabase)` function in `packages/daemon/src/storage/schema/migrations.ts` (the project uses a single monolithic migrations file with numbered functions — there is NO `migrations/` directory). The migration:
    - Selects all rooms where `default_path IS NULL`.
-   - For each, parses `allowed_paths` JSON and sets `default_path` to the first entry's `path`.
-   - Logs a warning for rooms where both are empty/null.
-2. Add the migration to the migration runner's ordered list.
-3. Add a unit test that creates a room with `defaultPath = null` (via direct DB insert), runs the migration, and verifies `defaultPath` is backfilled.
+   - For each, parses the `allowed_paths` JSON column and sets `default_path` to the first entry's `path`.
+   - For rooms where both `default_path` and `allowed_paths` are null/empty, set `default_path` to the daemon's `workspaceRoot` (passed as parameter or read from config). This ensures ALL rooms have a non-null `defaultPath` after migration — no room is left orphaned.
+2. Wire `runMigration70` into the `runMigrations()` function's version-check chain, following the existing pattern (check `user_version < 70`, call `runMigration70(db)`, set `user_version = 70`).
+3. Add a unit test that creates rooms with `defaultPath = null` (via direct DB insert), runs the migration, and verifies `defaultPath` is backfilled correctly for both cases (has allowedPaths, and has neither).
 4. Run `make test-daemon` to verify.
 
 **Acceptance Criteria**:
-- Migration backfills `defaultPath` from `allowedPaths[0].path` for all rooms with null `defaultPath`.
-- Rooms with empty `allowedPaths` are logged as warnings (not crashed).
+- Migration backfills `defaultPath` from `allowedPaths[0].path` for rooms with null `defaultPath` but non-empty `allowedPaths`.
+- Rooms with empty `allowedPaths` AND null `defaultPath` are backfilled with the daemon's `workspaceRoot` (no room is left with null `defaultPath`).
 - Migration is idempotent (safe to run multiple times).
-- Unit test covers the backfill logic.
+- Migration follows the existing monolithic pattern in `migrations.ts` (numbered function, wired into `runMigrations()`).
+- Unit test covers both backfill cases.
 
 **Dependencies**: Task 2.1
 

@@ -19,7 +19,7 @@ Add comprehensive test coverage for the new behavior: required `defaultPath` val
 **Subtasks**:
 1. Create `packages/daemon/tests/online/room/room-workspace-isolation.test.ts`.
 2. Test: create a room with `defaultPath` pointing to a temp directory. Verify the room chat session's `workspacePath` matches `defaultPath`, not the daemon's `workspaceRoot`.
-3. Test: send a reference resolution request (`@file` or `@folder`) in the room chat session. Verify it searches within the room's `defaultPath`, not the daemon's workspace.
+3. Test: send a reference resolution request (`@file` or `@folder`) in the room chat session. Verify it searches within the room's `defaultPath`, not the daemon's workspace. **Important**: Create temp directories with known fixture files (e.g., `test-file.txt` in the room's temp dir, a different file in the daemon's workspace dir) so the test can assert which directory was searched. Clean up temp dirs in `afterEach`.
 4. Test: update `defaultPath` to a new temp directory (with no active tasks). Verify the room chat session's `workspacePath` is updated.
 5. Test: attempt to update `defaultPath` while a task is active. Verify it is rejected with the expected error.
 6. Run with `NEOKAI_USE_DEV_PROXY=1 bun test` to verify.
