@@ -164,6 +164,7 @@ export function setupRoomHandlers(
 
 		// Guard: validate new defaultPath and check for active task groups
 		let updatedAllowedPaths = params.allowedPaths;
+		let defaultPathChanged = false;
 		if (params.defaultPath !== undefined) {
 			const currentRoom = roomManager.getRoom(params.roomId);
 			if (!currentRoom) {
@@ -171,6 +172,7 @@ export function setupRoomHandlers(
 			}
 
 			if (params.defaultPath !== currentRoom.defaultPath) {
+				defaultPathChanged = true;
 				// Validate the new path (only the incoming path — current path may be a sentinel value)
 				const pathValidation = validateWorkspacePath(params.defaultPath);
 				if (!pathValidation.valid) {
@@ -230,6 +232,25 @@ export function setupRoomHandlers(
 				}
 			} catch (err) {
 				log.warn(`Could not sync room chat session model for room ${room.id}:`, err);
+			}
+		}
+
+		// When defaultPath changes, sync the room chat session's workspacePath so the
+		// next SDK invocation uses the updated path. The session record is updated in
+		// both the DB and the in-memory AgentSession metadata via updateSession(), so
+		// resolveSessionContext (which re-fetches from DB on cache miss) is always
+		// consistent — no additional cache invalidation is needed.
+		if (defaultPathChanged && room.defaultPath && sessionManager) {
+			const roomChatSessionId = `room:chat:${room.id}`;
+			try {
+				const existingSession = sessionManager.getSessionFromDB(roomChatSessionId);
+				if (existingSession) {
+					await sessionManager.updateSession(roomChatSessionId, {
+						workspacePath: room.defaultPath,
+					});
+				}
+			} catch (err) {
+				log.warn(`Could not sync room chat session workspacePath for room ${room.id}:`, err);
 			}
 		}
 

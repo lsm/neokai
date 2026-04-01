@@ -595,6 +595,151 @@ describe('Room RPC Handlers', () => {
 		});
 	});
 
+	describe('room.update defaultPath workspacePath sync', () => {
+		it('syncs room chat session workspacePath when defaultPath changes', async () => {
+			const updateSessionMock = mock(async () => {});
+			const existingSession: Partial<Session> = {
+				id: 'room:chat:room-123',
+				workspacePath: tempDir,
+			};
+			const sessionManager = {
+				getSessionFromDB: mock(() => existingSession as Session),
+				updateSession: updateSessionMock,
+			} as unknown as SessionManager;
+
+			const { hub, handlers } = createMockMessageHub();
+			const { roomManager, mocks } = createMockRoomManager();
+
+			const { mkdtempSync: mktemp } = await import('node:fs');
+			const { tmpdir: getTmpdir } = await import('node:os');
+			const newPath = mktemp(`${getTmpdir()}/room-handlers-wspath-test-`);
+			try {
+				// Make updateRoom return a room with the new defaultPath (simulates DB update)
+				const updatedRoom: Room = {
+					id: 'room-123',
+					name: 'Test Room',
+					allowedPaths: [{ path: newPath }],
+					defaultPath: newPath,
+					sessionIds: [],
+					status: 'active' as const,
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+				};
+				mocks.updateRoom.mockReturnValueOnce(updatedRoom);
+
+				setupRoomHandlers(
+					hub,
+					roomManager,
+					daemonHubData.daemonHub,
+					sessionManager,
+					undefined,
+					undefined,
+					{
+						hasActiveTaskGroups: () => false,
+					}
+				);
+
+				const handler = handlers.get('room.update');
+				expect(handler).toBeDefined();
+
+				await handler!({ roomId: 'room-123', defaultPath: newPath }, {});
+
+				expect(updateSessionMock).toHaveBeenCalledWith(
+					'room:chat:room-123',
+					expect.objectContaining({ workspacePath: newPath })
+				);
+			} finally {
+				const { rmSync } = await import('node:fs');
+				rmSync(newPath, { recursive: true, force: true });
+			}
+		});
+
+		it('does not sync workspacePath when defaultPath is not provided', async () => {
+			const updateSessionMock = mock(async () => {});
+			const sessionManager = {
+				getSessionFromDB: mock(() => null),
+				updateSession: updateSessionMock,
+			} as unknown as SessionManager;
+
+			const { hub, handlers } = createMockMessageHub();
+			const { roomManager } = createMockRoomManager();
+			setupRoomHandlers(hub, roomManager, daemonHubData.daemonHub, sessionManager);
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			// Update only the name — no defaultPath
+			await handler!({ roomId: 'room-123', name: 'Updated Name' }, {});
+
+			// workspacePath sync should NOT be called
+			expect(updateSessionMock).not.toHaveBeenCalled();
+		});
+
+		it('does not sync workspacePath when defaultPath is unchanged', async () => {
+			// mockRoom has defaultPath: tempDir — sending the same value should be a no-op
+			const updateSessionMock = mock(async () => {});
+			const existingSession: Partial<Session> = {
+				id: 'room:chat:room-123',
+				workspacePath: tempDir,
+			};
+			const sessionManager = {
+				getSessionFromDB: mock(() => existingSession as Session),
+				updateSession: updateSessionMock,
+			} as unknown as SessionManager;
+
+			const { hub, handlers } = createMockMessageHub();
+			const { roomManager } = createMockRoomManager();
+			setupRoomHandlers(hub, roomManager, daemonHubData.daemonHub, sessionManager);
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			// Send the same defaultPath that the room already has
+			await handler!({ roomId: 'room-123', defaultPath: tempDir }, {});
+
+			// defaultPath did not change — no workspacePath sync needed
+			expect(updateSessionMock).not.toHaveBeenCalled();
+		});
+
+		it('does not sync workspacePath when room chat session does not exist', async () => {
+			const updateSessionMock = mock(async () => {});
+			const sessionManager = {
+				// Returns null — session not in DB yet
+				getSessionFromDB: mock(() => null),
+				updateSession: updateSessionMock,
+			} as unknown as SessionManager;
+
+			const { hub, handlers } = createMockMessageHub();
+			const { roomManager } = createMockRoomManager();
+			setupRoomHandlers(
+				hub,
+				roomManager,
+				daemonHubData.daemonHub,
+				sessionManager,
+				undefined,
+				undefined,
+				{
+					hasActiveTaskGroups: () => false,
+				}
+			);
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			const { mkdtempSync: mktemp } = await import('node:fs');
+			const { tmpdir: getTmpdir } = await import('node:os');
+			const newPath = mktemp(`${getTmpdir()}/room-handlers-nosession-test-`);
+			try {
+				await handler!({ roomId: 'room-123', defaultPath: newPath }, {});
+				// updateSession must NOT be called when session does not exist
+				expect(updateSessionMock).not.toHaveBeenCalled();
+			} finally {
+				const { rmSync } = await import('node:fs');
+				rmSync(newPath, { recursive: true, force: true });
+			}
+		});
+	});
+
 	describe('room.archive', () => {
 		it('archives a room', async () => {
 			const handler = messageHubData.handlers.get('room.archive');
