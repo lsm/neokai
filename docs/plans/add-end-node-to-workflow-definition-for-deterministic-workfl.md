@@ -61,7 +61,7 @@ Added: `endNodeId`. Removed: `rules`, `config`, `maxIterations`, `isDefault`.
 
 ### `space_workflow_runs` — Cleaned Up
 
-Status values: `pending` `in_progress` `done` `blocked` `cancelled`. Removed: `config`, `goalId`, `failureReason`, `iterationCount`, `maxIterations`.
+Status values: `pending` `in_progress` `done` `blocked` `cancelled`. Kept: `failureReason` (gate rejection state discriminator). Removed: `config`, `goalId`, `iterationCount`, `maxIterations`.
 
 ### `workflow_nodes` — Cleaned Up
 
@@ -100,7 +100,7 @@ Removed: `role`, `toolConfig`, `injectWorkflowContext`.
 
 4. **`SpaceWorkflowRun`:**
    - Change `WorkflowRunStatus` to `'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled'`.
-   - Remove `config`, `goalId`, `failureReason`, `iterationCount`, `maxIterations` from `SpaceWorkflowRun` and its create/update params.
+   - Remove `config`, `goalId`, `iterationCount`, `maxIterations` from `SpaceWorkflowRun` and its create/update params. **Keep `failureReason`** — it is the gate rejection state discriminator.
    - Add `startedAt: number | null`, `completedAt: number | null` if not already present.
 
 5. **`WorkflowNode`:**
@@ -159,10 +159,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 3. **`space_workflows` migration:**
    - Add column: `ALTER TABLE space_workflows ADD COLUMN end_node_id TEXT`.
    - Drop columns by table recreation: remove `config` JSON blob (which contains `rules`, `maxIterations`), `is_default`. Note: `is_default` may be a separate column or part of config — verify at implementation time.
-   - **Note:** The next migration number is 70 (after the current latest, migration 69); always verify at implementation time in case a concurrent migration is merged first. These migrations will span multiple migration numbers (70, 71, 72, …) — one per logical table change, or batched where appropriate.
+   - **Note:** As of this writing, migration 70 is taken by the rooms `default_path` backfill (PR #1177); start at **71**. Always verify at implementation time in case a concurrent migration is merged first. These migrations will span multiple migration numbers (71, 72, 73, …) — one per logical table change, or batched where appropriate.
 
 4. **`space_workflow_runs` migration:**
-   - Recreate table dropping: `config`, `goal_id`, `failure_reason`, `iteration_count`, `max_iterations`.
+   - Recreate table dropping: `config`, `goal_id`, `iteration_count`, `max_iterations`. **Keep `failure_reason`** — it is the state discriminator for the gate approval/rejection flow (`approve_gate` checks `run.failureReason === 'humanRejected'`; `reject_gate` sets it). Moving rejection state into gate data is a separate future effort.
    - Add `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable) if not present.
    - Update `status` CHECK constraint to new values: `pending`, `in_progress`, `done`, `blocked`, `cancelled`.
 
@@ -213,7 +213,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Remove reading/writing of `config` JSON blob fields (`rules`, `maxIterations`), `isDefault`.
 
 4. **`SpaceWorkflowRunRepository` updates:**
-   - Remove `config`, `goalId`, `failureReason`, `iterationCount`, `maxIterations` from row mapping and CRUD.
+   - Remove `config`, `goalId`, `iterationCount`, `maxIterations` from row mapping and CRUD.
+   - **Keep `failureReason`** — it is the state discriminator for the gate approval/rejection flow (see Task 2 note). Do not remove from row mapping.
    - Add `startedAt`, `completedAt` if not present.
    - Update status values in transition logic.
 
@@ -327,7 +328,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 7. **`NotificationSink` and `SessionNotificationSink` updates:**
    - `packages/daemon/src/lib/space/runtime/notification-sink.ts`: update `WorkflowRunCompleted.status` union from `'completed' | 'cancelled' | 'needs_attention'` to `'done' | 'cancelled' | 'blocked'`. Rename event kinds: `task_needs_attention` → `task_blocked`, `workflow_run_needs_attention` → `workflow_run_blocked`.
-   - `packages/daemon/src/lib/space/runtime/session-notification-sink.ts` (line 191): update mirrored status references to match.
+   - `packages/daemon/src/lib/space/runtime/session-notification-sink.ts` (line 191): update mirrored status references to match. Line 260 includes `failureReason: 'agentCrash'` in a notification payload — this is a notification payload field (not the DB column) and should be kept as-is since `failureReason` is preserved.
 
 8. **`WorkflowExecutor` updates (`packages/daemon/src/lib/space/runtime/workflow-executor.ts`):**
    - Line 143: update `this.run.status === 'completed'` → `this.run.status === 'done'`. Keep `cancelled` as-is.
@@ -371,6 +372,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Remove handler from `task-agent-tools.ts`.
    - Remove `completionDetector` from `TaskAgentToolsConfig` (defined at ~line 195 in `task-agent-tools.ts`). Remove the `CompletionDetector` import.
    - Remove both `new CompletionDetector()` instantiations in `task-agent-manager.ts` (~lines 630 and 1449).
+   - Update `TaskResultStatusSchema` in `task-agent-tool-schemas.ts` from `z.enum(['completed', 'needs_attention', 'cancelled'])` to `z.enum(['done', 'blocked', 'cancelled'])`. Update `ReportResultSchema` description strings. Update `report_result` event name in `task-agent-tools.ts` from `space.task.completed` to `space.task.done`.
 
 2. **Update `node-agent-tools.ts`:**
    - `report_done`: update to set `NodeExecution.status = 'done'` via `nodeExecutionRepo` instead of `taskManager.setTaskStatus(stepTaskId, 'completed')`.
@@ -569,17 +571,17 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Remove validation of deprecated fields.
 2. **RPC handler updates:**
    - **Verification:** Confirm `spaceWorkflow.create` and `spaceWorkflow.update` handlers pass `endNodeId` through (current handlers use cast/spread — no whitelist).
-   - **`space-workflow-run-handlers.ts`:** Update all 19 hardcoded `'needs_attention'` references to `'blocked'`. Update `'completed'` to `'done'`. The `markFailed` handler assigns `needs_attention` as a transition target — this will break the CHECK constraint if not updated. Remove references to `failureReason`, `goalId`, `config` params.
+   - **`space-workflow-run-handlers.ts`:** Update all 19 hardcoded `'needs_attention'` references to `'blocked'`. Update `'completed'` to `'done'`. The `markFailed` handler assigns `needs_attention` as a transition target — this will break the CHECK constraint if not updated. Remove references to `goalId`, `config` params. **Keep `failureReason`** references as-is (gate rejection flow preserved).
    - **`space-task-message-handlers.ts`:** Update references to removed task fields (`workflowNodeId`, `agentName`, `taskAgentSessionId`) used for routing.
    - Remove references to `goalId`, `config`, `failureReason` from all run-related handlers.
 3. **`nodeExecution.list` RPC handler (required):**
    - Add `nodeExecution.list` RPC handler that returns `NodeExecution[]` filtered by `workflowRunId`. This is **mandatory** — the frontend canvas (`WorkflowCanvas.tsx`, `VisualWorkflowEditor.tsx`) needs per-node execution data to display node status after `workflowNodeId` is removed from `space_tasks`.
    - Add corresponding LiveQuery named query (`nodeExecutions.byRun`) for reactive frontend updates.
 4. **Tool file updates:**
-   - **`space-agent-tools.ts`** (lines 606, 679, 705): update old status values (`completed` → `done`, `needs_attention` → `blocked`, etc.).
-   - **`global-spaces-tools.ts`** (lines 638, 734, 765): update old status values similarly. Remove references to `goalId`, `taskType`, `assignedAgent`.
+   - **`space-agent-tools.ts`:** grep for all `completed`, `needs_attention` status references and update (`completed` → `done`, `needs_attention` → `blocked`, etc.).
+   - **`global-spaces-tools.ts`:** grep for all old status value references and update similarly. Remove references to `goalId`, `taskType`, `assignedAgent`.
    - **`neo-query-tools.ts`:** Remove references to `taskType`, `assignedAgent` (14 occurrences), `completionSummary`, `progress`, and other removed fields in display logic.
-   - **`neo-action-tools.ts`:** Update 4 references to `needs_attention` (lines 1092, 1569, 1570, 2210) → `blocked`, 3 references to `completed` (lines 1025, 1068, 1549) → `done`, and remove `failureReason` reference (line 1092).
+   - **`neo-action-tools.ts`:** Update all `needs_attention` references → `blocked`, all `completed` references → `done` (grep for exact counts — distributed across status checks, gate handlers, and Zod enums). **Keep `failureReason`** references as-is (gate rejection flow preserved). Update the `set_task_status` `z.enum` (lines ~2204–2214) from the 8 old `SpaceTaskStatus` values (`draft`, `pending`, `in_progress`, `review`, `completed`, `needs_attention`, `cancelled`, `archived`) to the 6 new values (`open`, `in_progress`, `done`, `blocked`, `cancelled`, `archived`); update description strings accordingly. Confirm `set_goal_status` `z.enum` at line ~2125 (`['active', 'completed', 'needs_human', 'archived']`) is room-level `GoalStatus` — out of scope, do not change.
    - **`provision-global-agent.ts`** and **`reference-resolver.ts`:** Verify and update any usage of removed `SpaceTask` fields.
 5. **Tests:**
    - Validation tests: valid/invalid `endNodeId`, `null` to clear.
