@@ -103,6 +103,8 @@ const CHANNEL_GATE_ARROW_WIDTH = 8;
 const CHANNEL_GATE_ARROW_GAP = 4;
 /** Total horizontal space the arrow indicator + gap occupies */
 const CHANNEL_GATE_ARROW_TOTAL = CHANNEL_GATE_ARROW_WIDTH + CHANNEL_GATE_ARROW_GAP;
+/** Extra horizontal padding added to badge width to give the arrow room to breathe */
+const CHANNEL_GATE_ARROW_EXTRA_PADDING = 2;
 const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
 const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
@@ -321,55 +323,14 @@ function trimOrthogonalPathPoints(
 	return normalizeOrthogonalPoints(trimmed);
 }
 
-function getOrthogonalPathMidpoint(points: Point2D[]): Point2D {
-	const normalized = normalizeOrthogonalPoints(points);
-	if (normalized.length === 0) return { x: 0, y: 0 };
-	if (normalized.length === 1) return normalized[0];
-
-	let totalLength = 0;
-	for (let index = 1; index < normalized.length; index += 1) {
-		totalLength +=
-			Math.abs(normalized[index].x - normalized[index - 1].x) +
-			Math.abs(normalized[index].y - normalized[index - 1].y);
-	}
-
-	const midpointDistance = totalLength / 2;
-	let traversed = 0;
-
-	for (let index = 1; index < normalized.length; index += 1) {
-		const start = normalized[index - 1];
-		const end = normalized[index];
-		const segmentLength = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
-		if (traversed + segmentLength < midpointDistance) {
-			traversed += segmentLength;
-			continue;
-		}
-
-		const distanceIntoSegment = midpointDistance - traversed;
-		if (start.x === end.x) {
-			return {
-				x: start.x,
-				y: start.y + Math.sign(end.y - start.y) * distanceIntoSegment,
-			};
-		}
-
-		return {
-			x: start.x + Math.sign(end.x - start.x) * distanceIntoSegment,
-			y: start.y,
-		};
-	}
-
-	return normalized[normalized.length - 1];
-}
-
 export interface OrthogonalMidpointWithAngle extends Point2D {
 	/** Direction angle in degrees: 0 = right, 90 = down, 180 = left, 270 = up */
 	angle: number;
 }
 
 /**
- * Like `getOrthogonalPathMidpoint` but also returns the direction angle (in
- * degrees, clockwise) of the path segment that the midpoint falls on.
+ * Returns the midpoint of an orthogonal path together with the direction angle
+ * (in degrees, clockwise) of the segment the midpoint falls on.
  * Because orthogonal paths are always axis-aligned the angle is always one of
  * 0, 90, 180, or 270.
  */
@@ -418,6 +379,11 @@ export function getOrthogonalPathMidpointWithAngle(points: Point2D[]): Orthogona
 	}
 
 	return { ...normalized[normalized.length - 1], angle: 0 };
+}
+
+/** Returns the midpoint of an orthogonal path. Delegates to `getOrthogonalPathMidpointWithAngle`. */
+function getOrthogonalPathMidpoint(points: Point2D[]): Point2D {
+	return getOrthogonalPathMidpointWithAngle(points);
 }
 
 function roundedOrthogonalPath(points: Point2D[], cornerRadius = 14): string {
@@ -779,7 +745,9 @@ export function EdgeRenderer({
 				const gateBadgeWidth =
 					gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
 					CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2 +
-					(!isBidirectional && isGated ? CHANNEL_GATE_ARROW_TOTAL + 2 : 0);
+					(!isBidirectional && isGated
+						? CHANNEL_GATE_ARROW_TOTAL + CHANNEL_GATE_ARROW_EXTRA_PADDING
+						: 0);
 				const loopBadgeWidth =
 					'Loop'.length * CHANNEL_GATE_BADGE_CHAR_WIDTH + CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
 
@@ -869,9 +837,14 @@ export function EdgeRenderer({
 								{!isBidirectional && (
 									// Directional arrow triangle for one-way channels.
 									// Layout: [arrow(8px) | gap(4px) | text] all centered at x=0.
-									// textX = ARROW_TOTAL/2 = 6, arrowCenterX = -(textWidth/2 + ARROW_GAP/2).
-									// The triangle points right by default (angle=0) and is rotated
-									// to match the path direction via the data-gate-angle attribute.
+									//   textX         = ARROW_TOTAL / 2 = 6
+									//   arrowCenterX  = -(textWidth/2 + ARROW_GAP/2)
+									//
+									// SVG applies transforms right-to-left to points:
+									//   rotate(angle)  — pivots the right-pointing triangle around origin (0,0)
+									//   translate(tx)  — shifts the already-rotated arrow to arrowCenterX
+									// This order is deliberate: rotating around origin first ensures the
+									// arrow stays centered at arrowCenterX for all four cardinal angles.
 									<polygon
 										points="-4,-5 4,0 -4,5"
 										fill={isSelected ? 'white' : gateColor}
