@@ -157,6 +157,7 @@ export function BottomTabBar() {
 		return () => {
 			ro.disconnect();
 			window.removeEventListener('resize', onResize);
+			cancelAnimationFrame(rafId);
 			document.documentElement.style.setProperty('--bottom-bar-height', '0px');
 		};
 	}, []);
