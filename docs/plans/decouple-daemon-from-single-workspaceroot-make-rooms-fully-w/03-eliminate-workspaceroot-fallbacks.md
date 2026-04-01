@@ -85,7 +85,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    **Session type coverage**: The full `sessionType` union at `session-lifecycle.ts:53-62` includes: `room_chat`, `planner`, `coder`, `leader`, `general`, `worker`, `lobby`, `spaces_global`, `space_chat`, `neo`. Of these:
    - `room_chat`, `planner`, `coder`, `leader`, `general`, `space_chat` — room/space-scoped, must have explicit `workspacePath`. Included in the guard.
    - `lobby` — instance-level agent session, not bound to a specific room workspace. Intentionally excluded; uses daemon `workspaceRoot` fallback.
-   - `worker`, `spaces_global`, `neo`, `undefined` (default) — non-room sessions. Use fallback.
+   - `worker`, `neo`, `undefined` (default) — non-room sessions. Use fallback.
+   - `spaces_global` — daemon-level singleton created in `provision-global-agent.ts` with no `workspacePath` (intentional). Uses fallback. **Milestone 5 note**: When `workspaceRoot` becomes `undefined`, `baseWorkspacePath` will be `undefined` for `spaces_global` sessions. Task 5.1 must add a guard in `session-lifecycle.ts` to skip git-support detection and worktree creation when `baseWorkspacePath` is `undefined` (return early or use a no-op path). Without this, `detectGitSupport(undefined)` may crash. This guard also protects any future non-room session types that omit `workspacePath`.
    - For non-room standalone sessions (including `sessionType === undefined` which defaults to `'worker'` per line 91): keep the existing fallback to `this.config.workspaceRoot` with a log warning.
 2. Add a comment clarifying the split: room-scoped session types throw, non-room sessions (including default `worker` type) fall back.
 3. Verify that all room-scoped session creation paths (room chat in `room-handlers.ts`, workers in `room-runtime.ts`) already pass `workspacePath` explicitly. Trace the code paths and document in the PR description.
