@@ -1,6 +1,7 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
 import { useNeoKeyboardShortcut } from './hooks/useNeoKeyboardShortcut.ts';
+import { useViewportSafety } from './hooks/useViewportSafety.ts';
 import { NeoPanel } from './components/neo/NeoPanel.tsx';
 import { NavRail } from './islands/NavRail.tsx';
 import { BottomTabBar } from './islands/BottomTabBar.tsx';
@@ -50,6 +51,8 @@ import {
 export function App() {
 	// Global Cmd+J / Ctrl+J shortcut to toggle the Neo panel
 	useNeoKeyboardShortcut();
+	// Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
+	useViewportSafety();
 
 	useEffect(() => {
 		// STEP 1: Initialize URL-based router BEFORE any state management

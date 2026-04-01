@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for useViewportSafety Hook
  *
@@ -9,15 +8,41 @@
 import { renderHook } from '@testing-library/preact';
 import { useViewportSafety } from '../useViewportSafety.ts';
 
-// Store original navigator/window properties so we can restore them.
-const originalNavigator = {
-	maxTouchPoints: navigator.maxTouchPoints,
-	userAgent: navigator.userAgent,
-};
+// ---------------------------------------------------------------------------
+// Mock helpers
+// ---------------------------------------------------------------------------
 
-const originalVisualViewport = window.visualViewport;
+/** Partial VisualViewport mock with trackable event listeners. */
+interface MockVisualViewport {
+	height: number;
+	addEventListener: ReturnType<typeof vi.fn>;
+	removeEventListener: ReturnType<typeof vi.fn>;
+	/** Fire all registered listeners for an event (test helper). */
+	_trigger(event: string): void;
+}
 
-function setNavigator(maxTouchPoints: number, userAgent: string) {
+function createMockVisualViewport(height: number): MockVisualViewport {
+	const listeners: Record<string, Array<EventListenerOrEventListenerObject>> = {};
+	return {
+		height,
+		addEventListener: vi.fn((event: string, cb: EventListenerOrEventListenerObject) => {
+			listeners[event] = listeners[event] ?? [];
+			listeners[event].push(cb);
+		}),
+		removeEventListener: vi.fn((event: string, cb: EventListenerOrEventListenerObject) => {
+			if (listeners[event]) {
+				listeners[event] = listeners[event].filter((l) => l !== cb);
+			}
+		}),
+		_trigger(event: string) {
+			(listeners[event] ?? []).forEach((cb) => {
+				if (typeof cb === 'function') cb(new Event(event));
+			});
+		},
+	};
+}
+
+function setNavigator(maxTouchPoints: number, userAgent: string): void {
 	Object.defineProperty(navigator, 'maxTouchPoints', {
 		configurable: true,
 		get: () => maxTouchPoints,
@@ -28,83 +53,75 @@ function setNavigator(maxTouchPoints: number, userAgent: string) {
 	});
 }
 
-function restoreNavigator() {
+function restoreNavigator(): void {
+	// Restore to jsdom defaults
 	Object.defineProperty(navigator, 'maxTouchPoints', {
 		configurable: true,
-		get: () => originalNavigator.maxTouchPoints,
+		get: () => 0,
 	});
 	Object.defineProperty(navigator, 'userAgent', {
 		configurable: true,
-		get: () => originalNavigator.userAgent,
+		// Keep the existing value from jsdom
+		get: () => 'Mozilla/5.0 (linux) AppleWebKit/537.36 (KHTML, like Gecko) jsdom/20.0.3',
 	});
 }
 
-function setVisualViewport(vv: VisualViewport | null) {
+function setVisualViewport(vv: MockVisualViewport | null): void {
 	Object.defineProperty(window, 'visualViewport', {
 		configurable: true,
 		get: () => vv,
 	});
 }
 
-function restoreVisualViewport() {
+function restoreVisualViewport(): void {
 	Object.defineProperty(window, 'visualViewport', {
 		configurable: true,
-		get: () => originalVisualViewport,
+		get: () => null,
 	});
 }
 
-function createMockVisualViewport(height: number) {
-	const listeners: Record<string, Array<() => void>> = {};
-	const vv = {
-		height,
-		addEventListener: vi.fn((event: string, cb: () => void) => {
-			listeners[event] = listeners[event] ?? [];
-			listeners[event].push(cb);
-		}),
-		removeEventListener: vi.fn((event: string, cb: () => void) => {
-			if (listeners[event]) {
-				listeners[event] = listeners[event].filter((l) => l !== cb);
-			}
-		}),
-		_trigger: (event: string) => {
-			(listeners[event] ?? []).forEach((cb) => cb());
-		},
-	};
-	return vv;
-}
+// ---------------------------------------------------------------------------
+// UA fixtures
+// ---------------------------------------------------------------------------
 
-// iPad Safari UA string (iPadOS 16 masquerades as macOS Safari)
+/** iPadOS 16 — masquerades as macOS Safari */
 const IPAD_SAFARI_UA =
 	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15';
 
-// Desktop macOS Safari UA
+/** Desktop macOS Safari (no touch) */
 const DESKTOP_SAFARI_UA =
 	'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15';
 
-// Desktop Chrome UA
+/** Desktop Chrome */
 const DESKTOP_CHROME_UA =
 	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-// Chrome on iOS (CriOS)
+/** Chrome on iOS */
 const CRIOS_UA =
 	'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.0.0 Mobile/15E148 Safari/604.1';
 
-// Firefox on iOS (FxiOS)
+/** Firefox on iOS */
 const FXIOS_UA =
 	'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/120.0 Mobile/15E148 Safari/605.1.15';
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
 
 afterEach(() => {
 	restoreNavigator();
 	restoreVisualViewport();
-	// Clear any --safe-height set during tests
 	document.documentElement.style.removeProperty('--safe-height');
 });
+
+// ---------------------------------------------------------------------------
+// iPad Safari detection
+// ---------------------------------------------------------------------------
 
 describe('useViewportSafety — iPad Safari detection', () => {
 	it('detects iPad Safari: maxTouchPoints > 1 + Safari UA without Chrome/CriOS/FxiOS', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
-		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(createMockVisualViewport(900));
 
 		renderHook(() => useViewportSafety());
 
@@ -113,8 +130,7 @@ describe('useViewportSafety — iPad Safari detection', () => {
 
 	it('does NOT detect iPad Safari when maxTouchPoints is 0 (desktop Mac)', () => {
 		setNavigator(0, DESKTOP_SAFARI_UA);
-		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(createMockVisualViewport(900));
 
 		renderHook(() => useViewportSafety());
 
@@ -123,8 +139,7 @@ describe('useViewportSafety — iPad Safari detection', () => {
 
 	it('does NOT detect iPad Safari for desktop Chrome (UA contains Chrome)', () => {
 		setNavigator(5, DESKTOP_CHROME_UA);
-		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(createMockVisualViewport(900));
 
 		renderHook(() => useViewportSafety());
 
@@ -133,8 +148,7 @@ describe('useViewportSafety — iPad Safari detection', () => {
 
 	it('does NOT detect iPad Safari for CriOS (Chrome on iOS)', () => {
 		setNavigator(5, CRIOS_UA);
-		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(createMockVisualViewport(900));
 
 		renderHook(() => useViewportSafety());
 
@@ -143,8 +157,7 @@ describe('useViewportSafety — iPad Safari detection', () => {
 
 	it('does NOT detect iPad Safari for FxiOS (Firefox on iOS)', () => {
 		setNavigator(5, FXIOS_UA);
-		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(createMockVisualViewport(900));
 
 		renderHook(() => useViewportSafety());
 
@@ -152,25 +165,26 @@ describe('useViewportSafety — iPad Safari detection', () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// --safe-height property
+// ---------------------------------------------------------------------------
+
 describe('useViewportSafety — --safe-height property', () => {
 	it('sets --safe-height to visualViewport.height on iPad Safari', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
-		const mockVV = createMockVisualViewport(768);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(createMockVisualViewport(768));
 
 		renderHook(() => useViewportSafety());
 
 		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('768px');
 	});
 
-	it('does NOT set --safe-height on non-iPad-Safari browsers', () => {
+	it('does NOT set --safe-height on non-iPad-Safari (CSS 100svh fallback applies)', () => {
 		setNavigator(0, DESKTOP_SAFARI_UA);
-		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(createMockVisualViewport(900));
 
 		renderHook(() => useViewportSafety());
 
-		// --safe-height must be absent so the CSS fallback (100svh) takes effect
 		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 	});
 
@@ -178,17 +192,20 @@ describe('useViewportSafety — --safe-height property', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		setVisualViewport(null);
 
-		// Should not throw
 		expect(() => renderHook(() => useViewportSafety())).not.toThrow();
 		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 	});
 });
 
+// ---------------------------------------------------------------------------
+// Event listeners
+// ---------------------------------------------------------------------------
+
 describe('useViewportSafety — event listeners', () => {
 	it('attaches resize listeners on iPad Safari', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(mockVV);
 		const windowAddSpy = vi.spyOn(window, 'addEventListener');
 
 		renderHook(() => useViewportSafety());
@@ -202,7 +219,7 @@ describe('useViewportSafety — event listeners', () => {
 	it('does NOT attach listeners on non-iPad-Safari', () => {
 		setNavigator(0, DESKTOP_SAFARI_UA);
 		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(mockVV);
 
 		renderHook(() => useViewportSafety());
 
@@ -212,7 +229,7 @@ describe('useViewportSafety — event listeners', () => {
 	it('removes event listeners on unmount', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(mockVV);
 		const windowRemoveSpy = vi.spyOn(window, 'removeEventListener');
 
 		const { unmount } = renderHook(() => useViewportSafety());
@@ -227,11 +244,10 @@ describe('useViewportSafety — event listeners', () => {
 	it('updates --safe-height when visualViewport resize fires', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(mockVV);
 
 		renderHook(() => useViewportSafety());
 
-		// Simulate height change then fire resize
 		mockVV.height = 700;
 		mockVV._trigger('resize');
 
@@ -241,7 +257,7 @@ describe('useViewportSafety — event listeners', () => {
 	it('updates --safe-height when window resize fires', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		const mockVV = createMockVisualViewport(900);
-		setVisualViewport(mockVV as unknown as VisualViewport);
+		setVisualViewport(mockVV);
 
 		renderHook(() => useViewportSafety());
 

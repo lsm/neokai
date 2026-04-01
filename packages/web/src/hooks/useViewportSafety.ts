@@ -78,6 +78,11 @@ export function useViewportSafety(): void {
 
 		const handleResize = () => updateSafeHeight(vv);
 
+		// `visualViewport.resize` fires whenever the visible area changes
+		// (address bar show/hide, keyboard appearance, etc.).
+		// `window.resize` fires on device rotation — iPadOS also fires
+		// `orientationchange`, but `resize` subsumes it so no separate
+		// `orientationchange` listener is needed.
 		vv.addEventListener('resize', handleResize);
 		window.addEventListener('resize', handleResize);
 
