@@ -61,7 +61,7 @@ There is no CSS-only way to detect Safari's tab bar overlay. `env(safe-area-inse
    - Add CSS custom property defaults on `:root`: `--bottom-bar-height: 0px` (no `--safe-top` needed)
    - Add a new utility class `.h-safe-screen` that uses `height: var(--safe-height, 100svh)` — JS sets `--safe-height` on iPad Safari; on other browsers the `100svh` fallback applies
    - Add a new utility class `.pb-bottom-bar` that uses `padding-bottom: var(--bottom-bar-height, 0px)` — Tailwind-consistent custom utility instead of inline styles
-   - Change body height from `100dvh` (with `100vh` fallback) to `100svh` (with `100vh` fallback) to reduce jank
+   - Change body height from `100dvh` (with `100vh` fallback) to `100svh` (with `100vh` fallback). **Rationale**: `dvh` causes layout recalculation every time the browser toolbar animates in/out (e.g., scrolling on mobile Safari/Chrome), leading to visible jank. `svh` is static — it uses the smallest viewport (all browser chrome visible) — so no recalculations occur. **Tradeoff**: on all mobile browsers (not just iPad Safari), when the address bar collapses, there may be a small gap at the bottom rather than the page expanding to fill the full screen. This is intentional — the root container's height is managed by `.h-safe-screen` (which uses `--safe-height` from JS on iPad Safari, or `100svh` as fallback), so the body `svh` simply provides a consistent non-janky baseline.
 
 3. Create `packages/web/src/hooks/__tests__/useViewportSafety.test.ts`:
    - Test that on non-iPad-Safari, `--safe-height` is NOT set on document root (CSS fallback applies)
@@ -129,7 +129,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Add a `ref` to the root `div` element
    - Use `useEffect` + `ResizeObserver` to measure the actual height of the tab bar
    - Set `document.documentElement.style.setProperty('--bottom-bar-height', height + 'px')` whenever the height changes
-   - **Important**: `ResizeObserver` does NOT fire when an element transitions from `display: none` to visible (e.g., resizing from desktop to mobile via the `md:hidden` breakpoint). Add a supplementary `window.resize` event listener that re-measures the ref element's `offsetHeight` after breakpoint transitions to ensure `--bottom-bar-height` is updated correctly.
+   - **Important**: `ResizeObserver` does NOT fire when an element transitions from `display: none` to visible (e.g., resizing from desktop to mobile via the `md:hidden` breakpoint). Add a supplementary `window.resize` event listener that re-measures the ref element's `offsetHeight` after breakpoint transitions. Use `requestAnimationFrame` inside the resize handler to ensure the browser has applied the new display property before reading `offsetHeight`.
    - On unmount, set `--bottom-bar-height` to `0px` and clean up both ResizeObserver and window resize listener.
 
 2. Update `packages/web/src/App.tsx`:
@@ -153,7 +153,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - On desktop (md+ breakpoint), BottomTabBar is hidden and `--bottom-bar-height` is 0
 - On iPad Mini in portrait (744px), the bottom padding correctly matches the visible tab bar
 - ResizeObserver + window resize listener cleanup on unmount
-- Breakpoint transitions (desktop ↔ mobile) correctly update `--bottom-bar-height`
+- Breakpoint transitions (desktop ↔ mobile) correctly update `--bottom-bar-height` (verified by Task 4 e2e test, not unit-testable in jsdom since CSS media queries don't apply)
 
 **Dependencies**: Task 1
 
@@ -174,10 +174,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 1. Create `packages/e2e/tests/features/ipad-safari-layout.e2e.ts`:
    - Test at iPad portrait viewport (820x1180 for standard iPad, 744x1133 for iPad Mini)
    - Verify the header element is visible in the viewport (check its bounding box)
-   - Verify the root container uses the `h-safe-screen` class
-   - Verify at iPad Mini portrait (744px width) that bottom tab bar is visible and `--bottom-bar-height` CSS custom property is set to a non-zero value
-   - Verify at desktop width (1280px) that bottom tab bar is hidden and `--bottom-bar-height` is `0px`
-   - Verify the main content area does not have hardcoded `pb-16` padding at any viewport size
+   - Verify the root container uses the `h-safe-screen` class (DOM class check — visible DOM state)
+   - Verify at iPad Mini portrait (744px width) that bottom tab bar is visible and the main content area has a non-zero computed `padding-bottom` (use `getComputedStyle().paddingBottom` — this checks visible layout behavior, not internal custom property state)
+   - Verify at desktop width (1280px) that bottom tab bar is hidden and the main content area has `0px` computed `padding-bottom`
+   - All assertions must verify visible DOM state per CLAUDE.md e2e rules: element visibility, bounding boxes, CSS classes, computed styles — not raw JS-set custom property values
 
 2. Add unit tests for CSS custom property behavior:
    - In the `useViewportSafety` test file (from Task 1), add tests verifying that `--safe-height` is set to `visualViewport.height` value when iPad Safari is detected (mocked `maxTouchPoints` + UA)
@@ -189,8 +189,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Acceptance criteria**:
 - E2E test covers iPad portrait, iPad Mini portrait, and desktop viewports
-- CSS class usage (`h-safe-screen`, `pb-bottom-bar`) verified at each viewport size
-- Bottom padding behavior verified via `--bottom-bar-height` custom property values
+- CSS class usage (`h-safe-screen`) verified via DOM class checks at each viewport size
+- Bottom padding behavior verified via computed `padding-bottom` values (visible layout state, not raw custom property reads)
 - All existing unit tests continue to pass
 - New e2e test passes
 - Test file includes a comment noting that manual iPad Safari testing is required for full verification
