@@ -182,8 +182,8 @@ export function App() {
 				{/* Context Panel - always visible */}
 				<ContextPanel />
 
-				{/* Main Content — add bottom padding on mobile to avoid tab bar overlap */}
-				<div class="flex-1 flex flex-col overflow-hidden pb-16 md:pb-0 min-w-0">
+				{/* Main Content — bottom padding matches actual BottomTabBar height via --bottom-bar-height */}
+				<div class="flex-1 flex flex-col overflow-hidden pb-bottom-bar min-w-0">
 					<MainContent />
 				</div>
 			</div>

@@ -1,4 +1,5 @@
 import type { JSX } from 'preact';
+import { useEffect, useRef } from 'preact/hooks';
 import {
 	navSectionSignal,
 	currentRoomIdSignal,
@@ -124,6 +125,39 @@ const ROOM_BOTTOM_TABS: TabItem[] = [
 ];
 
 export function BottomTabBar() {
+	const rootRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const el = rootRef.current;
+		if (!el) return;
+
+		const updateHeight = () => {
+			const h = el.offsetHeight;
+			document.documentElement.style.setProperty('--bottom-bar-height', h + 'px');
+		};
+
+		// ResizeObserver fires when the element itself resizes
+		const ro = new ResizeObserver(updateHeight);
+		ro.observe(el);
+
+		// window resize listener handles breakpoint transitions (md:hidden causes
+		// display:none, which ResizeObserver does not fire for).
+		// requestAnimationFrame ensures the browser applies the new display value first.
+		const onResize = () => {
+			requestAnimationFrame(updateHeight);
+		};
+		window.addEventListener('resize', onResize);
+
+		// Initial measurement
+		updateHeight();
+
+		return () => {
+			ro.disconnect();
+			window.removeEventListener('resize', onResize);
+			document.documentElement.style.setProperty('--bottom-bar-height', '0px');
+		};
+	}, []);
+
 	const navSection = navSectionSignal.value;
 	const roomId = currentRoomIdSignal.value;
 	const roomSessionId = currentRoomSessionIdSignal.value;
@@ -186,6 +220,7 @@ export function BottomTabBar() {
 
 	return (
 		<div
+			ref={rootRef}
 			class="flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md border-t border-dark-700 pb-safe"
 			role="tablist"
 			aria-label="Main navigation"
