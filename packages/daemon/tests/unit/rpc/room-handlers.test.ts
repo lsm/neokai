@@ -97,7 +97,8 @@ function createMockRoomManager(): {
 		id: 'room-123',
 		name: 'Test Room',
 		background: 'A test room',
-		allowedPaths: [],
+		allowedPaths: [{ path: tempDir }],
+		defaultPath: tempDir,
 		sessionIds: [],
 		status: 'active',
 		createdAt: Date.now(),
@@ -352,7 +353,7 @@ describe('Room RPC Handlers', () => {
 	});
 
 	describe('room.update', () => {
-		it('updates room with all parameters', async () => {
+		it('updates room with all parameters (no defaultPath change)', async () => {
 			const handler = messageHubData.handlers.get('room.update');
 			expect(handler).toBeDefined();
 
@@ -361,20 +362,21 @@ describe('Room RPC Handlers', () => {
 					roomId: 'room-123',
 					name: 'Updated Name',
 					background: 'Updated background',
-					allowedPaths: [{ path: '/new-path' }],
-					defaultPath: '/new-default',
+					allowedPaths: [{ path: tempDir }],
 					defaultModel: 'claude-opus',
 				},
 				{}
 			);
 
-			expect(roomManagerData.mocks.updateRoom).toHaveBeenCalledWith('room-123', {
-				name: 'Updated Name',
-				background: 'Updated background',
-				allowedPaths: [{ path: '/new-path' }],
-				defaultPath: '/new-default',
-				defaultModel: 'claude-opus',
-			});
+			expect(roomManagerData.mocks.updateRoom).toHaveBeenCalledWith(
+				'room-123',
+				expect.objectContaining({
+					name: 'Updated Name',
+					background: 'Updated background',
+					allowedPaths: [{ path: tempDir }],
+					defaultModel: 'claude-opus',
+				})
+			);
 		});
 
 		it('throws error when roomId is missing', async () => {
@@ -443,6 +445,153 @@ describe('Room RPC Handlers', () => {
 					}),
 				})
 			);
+		});
+	});
+
+	describe('room.update defaultPath guard', () => {
+		it('rejects defaultPath change when active task groups exist', async () => {
+			const { hub, handlers } = createMockMessageHub();
+			const { daemonHub } = createMockDaemonHub();
+			const { roomManager } = createMockRoomManager();
+
+			// hasActiveTaskGroups returns true → tasks are running
+			const hasActiveTaskGroups = mock(() => true);
+			setupRoomHandlers(hub, roomManager, daemonHub, undefined, undefined, undefined, {
+				hasActiveTaskGroups,
+			});
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			// Create a second tempDir to represent the new path
+			const { mkdtempSync: mktemp } = await import('node:fs');
+			const { tmpdir } = await import('node:os');
+			const newPath = mktemp(`${tmpdir()}/room-handlers-guard-test-`);
+			try {
+				await expect(handler!({ roomId: 'room-123', defaultPath: newPath }, {})).rejects.toThrow(
+					'Cannot change defaultPath while tasks are active. Stop or complete all tasks first.'
+				);
+				expect(hasActiveTaskGroups).toHaveBeenCalledWith('room-123');
+			} finally {
+				const { rmSync } = await import('node:fs');
+				rmSync(newPath, { recursive: true, force: true });
+			}
+		});
+
+		it('allows defaultPath change when no active task groups exist', async () => {
+			const { hub, handlers } = createMockMessageHub();
+			const { daemonHub } = createMockDaemonHub();
+			const { roomManager, mocks } = createMockRoomManager();
+
+			// hasActiveTaskGroups returns false → no tasks running
+			const hasActiveTaskGroups = mock(() => false);
+			setupRoomHandlers(hub, roomManager, daemonHub, undefined, undefined, undefined, {
+				hasActiveTaskGroups,
+			});
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			const { mkdtempSync: mktemp } = await import('node:fs');
+			const { tmpdir } = await import('node:os');
+			const newPath = mktemp(`${tmpdir()}/room-handlers-allow-test-`);
+			try {
+				await handler!({ roomId: 'room-123', defaultPath: newPath }, {});
+				expect(hasActiveTaskGroups).toHaveBeenCalledWith('room-123');
+				expect(mocks.updateRoom).toHaveBeenCalledWith(
+					'room-123',
+					expect.objectContaining({ defaultPath: newPath })
+				);
+			} finally {
+				const { rmSync } = await import('node:fs');
+				rmSync(newPath, { recursive: true, force: true });
+			}
+		});
+
+		it('rejects defaultPath change when new path does not exist on disk', async () => {
+			const { hub, handlers } = createMockMessageHub();
+			const { daemonHub } = createMockDaemonHub();
+			const { roomManager } = createMockRoomManager();
+
+			setupRoomHandlers(hub, roomManager, daemonHub, undefined, undefined, undefined, {
+				hasActiveTaskGroups: () => false,
+			});
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ roomId: 'room-123', defaultPath: '/does/not/exist/ever' }, {})
+			).rejects.toThrow('defaultPath does not exist: /does/not/exist/ever');
+		});
+
+		it('rejects defaultPath change when new path is not absolute', async () => {
+			const { hub, handlers } = createMockMessageHub();
+			const { daemonHub } = createMockDaemonHub();
+			const { roomManager } = createMockRoomManager();
+
+			setupRoomHandlers(hub, roomManager, daemonHub, undefined, undefined, undefined, {
+				hasActiveTaskGroups: () => false,
+			});
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ roomId: 'room-123', defaultPath: 'relative/path' }, {})
+			).rejects.toThrow('Invalid defaultPath');
+		});
+
+		it('auto-adds new defaultPath to allowedPaths when not already present', async () => {
+			const { hub, handlers } = createMockMessageHub();
+			const { daemonHub } = createMockDaemonHub();
+			const { roomManager, mocks } = createMockRoomManager();
+
+			setupRoomHandlers(hub, roomManager, daemonHub, undefined, undefined, undefined, {
+				hasActiveTaskGroups: () => false,
+			});
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			const { mkdtempSync: mktemp } = await import('node:fs');
+			const { tmpdir } = await import('node:os');
+			const newPath = mktemp(`${tmpdir()}/room-handlers-autopaths-test-`);
+			try {
+				await handler!({ roomId: 'room-123', defaultPath: newPath }, {});
+				// newPath was not in the room's original allowedPaths — should be auto-added
+				expect(mocks.updateRoom).toHaveBeenCalledWith(
+					'room-123',
+					expect.objectContaining({
+						defaultPath: newPath,
+						allowedPaths: expect.arrayContaining([{ path: newPath }]),
+					})
+				);
+			} finally {
+				const { rmSync } = await import('node:fs');
+				rmSync(newPath, { recursive: true, force: true });
+			}
+		});
+
+		it('does not trigger guard when defaultPath is unchanged', async () => {
+			const { hub, handlers } = createMockMessageHub();
+			const { daemonHub } = createMockDaemonHub();
+			const { roomManager, mocks } = createMockRoomManager();
+
+			const hasActiveTaskGroups = mock(() => true); // would throw if called
+			setupRoomHandlers(hub, roomManager, daemonHub, undefined, undefined, undefined, {
+				hasActiveTaskGroups,
+			});
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			// mockRoom.defaultPath = tempDir, so passing the same tempDir is "no change"
+			await handler!({ roomId: 'room-123', name: 'New Name', defaultPath: tempDir }, {});
+
+			// guard callback must NOT be called when path is unchanged
+			expect(hasActiveTaskGroups).not.toHaveBeenCalled();
+			expect(mocks.updateRoom).toHaveBeenCalled();
 		});
 	});
 

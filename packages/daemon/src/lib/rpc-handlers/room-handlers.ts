@@ -29,13 +29,23 @@ import { validateWorkspacePath } from '@neokai/shared';
 
 const log = new Logger('room-handlers');
 
+export interface RoomHandlerOpts {
+	/**
+	 * Callback that returns true if the given room has active (non-completed) task groups.
+	 * Used to guard defaultPath changes — if tasks are running, the change is rejected.
+	 * Implementations MUST query the DB, not only in-memory state, to handle daemon restarts.
+	 */
+	hasActiveTaskGroups?: (roomId: string) => boolean;
+}
+
 export function setupRoomHandlers(
 	messageHub: MessageHub,
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	sessionManager?: SessionManager,
 	jobQueue?: JobQueueRepository,
-	db?: Database
+	db?: Database,
+	opts?: RoomHandlerOpts
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
@@ -152,9 +162,43 @@ export function setupRoomHandlers(
 			throw new Error('Room ID is required');
 		}
 
+		// Guard: validate new defaultPath and check for active task groups
+		let updatedAllowedPaths = params.allowedPaths;
+		if (params.defaultPath !== undefined) {
+			const currentRoom = roomManager.getRoom(params.roomId);
+			if (!currentRoom) {
+				throw new Error(`Room not found: ${params.roomId}`);
+			}
+
+			if (params.defaultPath !== currentRoom.defaultPath) {
+				// Validate the new path (only the incoming path — current path may be a sentinel value)
+				const pathValidation = validateWorkspacePath(params.defaultPath);
+				if (!pathValidation.valid) {
+					throw new Error(`Invalid defaultPath: ${pathValidation.error}`);
+				}
+				if (!existsSync(params.defaultPath)) {
+					throw new Error(`defaultPath does not exist: ${params.defaultPath}`);
+				}
+
+				// Reject if tasks are still running — workers hold worktrees based on the old path
+				if (opts?.hasActiveTaskGroups?.(params.roomId)) {
+					throw new Error(
+						'Cannot change defaultPath while tasks are active. Stop or complete all tasks first.'
+					);
+				}
+
+				// Auto-add the new defaultPath to allowedPaths if it is not already present
+				const existingAllowedPaths = updatedAllowedPaths ?? currentRoom.allowedPaths ?? [];
+				const alreadyAllowed = existingAllowedPaths.some((wp) => wp.path === params.defaultPath);
+				if (!alreadyAllowed) {
+					updatedAllowedPaths = [...existingAllowedPaths, { path: params.defaultPath }];
+				}
+			}
+		}
+
 		const room = roomManager.updateRoom(params.roomId, {
 			name: params.name,
-			allowedPaths: params.allowedPaths,
+			allowedPaths: updatedAllowedPaths,
 			defaultPath: params.defaultPath,
 			defaultModel: params.defaultModel,
 			allowedModels: params.allowedModels,
