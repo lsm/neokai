@@ -101,7 +101,7 @@ Removed: `role`, `toolConfig`, `injectWorkflowContext`.
 4. **`SpaceWorkflowRun`:**
    - Change `WorkflowRunStatus` to `'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled'`.
    - Remove `config`, `goalId`, `iterationCount`, `maxIterations` from `SpaceWorkflowRun` and its create/update params. **Keep `failureReason`** — it is the gate rejection state discriminator.
-   - Add `startedAt: number | null`, `completedAt: number | null` if not already present.
+   - Add `startedAt: number | null` (does not currently exist on this type). Keep `completedAt: number | null` (already present).
 
 5. **`WorkflowNode`:**
    - Remove `agentId` shorthand field — always use `agents: WorkflowNodeAgent[]`.
@@ -154,7 +154,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. **`node_executions` table (new):**
    - `CREATE TABLE node_executions (id TEXT PRIMARY KEY, workflow_run_id TEXT NOT NULL, workflow_node_id TEXT NOT NULL, agent_name TEXT NOT NULL, agent_id TEXT NOT NULL, agent_session_id TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','in_progress','done','blocked','cancelled')), result TEXT, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER, updated_at INTEGER NOT NULL)`.
    - Add indexes: `idx_node_executions_run` on `workflow_run_id`, `idx_node_executions_node` on `(workflow_run_id, workflow_node_id)`.
-   - **Data migration from `space_tasks`:** `INSERT INTO node_executions (...) SELECT ... FROM space_tasks WHERE workflow_node_id IS NOT NULL`. The `WHERE workflow_node_id IS NOT NULL` guard is **required** — omitting it would silently create orphaned rows for orchestration tasks and standalone tasks. Map fields: `workflow_node_id` → `workflow_node_id`, `agent_name` → `agent_name`, `custom_agent_id` → `agent_id`, `task_agent_session_id` → `agent_session_id`. Map status: `completed` → `done`, `needs_attention` → `blocked`, `rate_limited` → `blocked`, `usage_limited` → `blocked`, `draft` → `pending`, `pending` → `pending`, `review` → `in_progress`. The `workflow_run_id` column exists directly on `space_tasks` — use it. The `result` field can be populated from `space_tasks.description` or left null.
+   - **Data migration from `space_tasks`:** `INSERT INTO node_executions (...) SELECT ... FROM space_tasks WHERE workflow_node_id IS NOT NULL`. The `WHERE workflow_node_id IS NOT NULL` guard is **required** — omitting it would silently create orphaned rows for orchestration tasks and standalone tasks. Map fields: `workflow_node_id` → `workflow_node_id`, `agent_name` → `agent_name`, `custom_agent_id` → `agent_id`, `task_agent_session_id` → `agent_session_id`. Map status: `completed` → `done`, `needs_attention` → `blocked`, `rate_limited` → `blocked`, `usage_limited` → `blocked`, `draft` → `pending`, `pending` → `pending`, `review` → `in_progress`. The `workflow_run_id` column exists directly on `space_tasks` — use it. Leave `result` as null — `space_tasks.description` is the task description, not execution output, and should not be used as `result`.
 
 3. **`space_workflows` migration:**
    - Add column: `ALTER TABLE space_workflows ADD COLUMN end_node_id TEXT`.
@@ -163,7 +163,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 4. **`space_workflow_runs` migration:**
    - Recreate table dropping: `config`, `goal_id`, `iteration_count`, `max_iterations`. **Keep `failure_reason`** — it is the state discriminator for the gate approval/rejection flow (`approve_gate` checks `run.failureReason === 'humanRejected'`; `reject_gate` sets it). Moving rejection state into gate data is a separate future effort.
-   - Add `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable) if not present.
+   - Add `started_at` (INTEGER nullable) — does not currently exist. Keep `completed_at` (already present).
    - Update `status` CHECK constraint to new values: `pending`, `in_progress`, `done`, `blocked`, `cancelled`.
 
 5. **`space_workflow_nodes` migration:**
@@ -322,7 +322,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Message routing must resolve the correct `NodeExecution` for a given agent session.
 
 6. **Live query updates (`packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`):**
-   - `SPACE_TASK_ACTIVITY_BY_TASK_SQL` (lines 564–648) joins `space_tasks` to `sessions` using `task_agent_session_id` and pulls `workflow_node_id`, `agent_name`, `custom_agent_id`, `current_step`, `completion_summary`, `error` — all removed from `space_tasks`. Rewrite to JOIN `node_executions` for workflow-internal fields, or simplify the query to only return user-facing task fields.
+   - `SPACE_TASK_ACTIVITY_BY_TASK_SQL` (lines 564–648) joins `space_tasks` to `sessions` using `task_agent_session_id` and pulls `workflow_node_id`, `agent_name`, `custom_agent_id`, `current_step`, `completion_summary`, `error` — all removed from `space_tasks`. **Approach: simplify the query** to only return user-facing task fields (remove the workflow-internal columns from the SELECT). The `SpaceTaskActivityMember` optional `nodeExecution?` sub-object (Task 1.7) will be populated separately via the `nodeExecutions.byRun` LiveQuery (Task 11.3), not via this SQL join. This avoids a complex cross-table join (the join key would require matching `node_executions.agent_session_id` to `sessions.id`, which is indirect).
    - `SPACE_TASK_MESSAGES_BY_TASK_SQL` — similarly check for references to removed columns and update.
    - Remove references to `taskType` and `assignedAgent` (6 occurrences).
 
@@ -373,6 +373,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Remove `completionDetector` from `TaskAgentToolsConfig` (defined at ~line 195 in `task-agent-tools.ts`). Remove the `CompletionDetector` import.
    - Remove both `new CompletionDetector()` instantiations in `task-agent-manager.ts` (~lines 630 and 1449).
    - Update `TaskResultStatusSchema` in `task-agent-tool-schemas.ts` from `z.enum(['completed', 'needs_attention', 'cancelled'])` to `z.enum(['done', 'blocked', 'cancelled'])`. Update `ReportResultSchema` description strings. Update `report_result` event name in `task-agent-tools.ts` from `space.task.completed` to `space.task.done`.
+   - Update `daemon-hub.ts`: rename the typed event declaration from `'space.task.completed'` to `'space.task.done'` (line ~455).
+   - Update `provision-global-agent.ts`: update the event subscription from `'space.task.completed'` to `'space.task.done'` (line ~193), and update the log string (line ~223).
 
 2. **Update `node-agent-tools.ts`:**
    - `report_done`: update to set `NodeExecution.status = 'done'` via `nodeExecutionRepo` instead of `taskManager.setTaskStatus(stepTaskId, 'completed')`.
@@ -525,7 +527,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. **Visual editor UI** (`VisualWorkflowEditor.tsx`):
    - Add `endNodeId` state, wire to serialization.
    - Pass to `NodeConfigPanel`.
-   - Update `tasksByNodeId` usage (line 406) — see Task 13 for signal replacement.
+   - Update `tasksByNodeId` usage (line 406): add a temporary `computed(() => new Map())` shim for `tasksByNodeId` in this file (or import from `space-store.ts`) so the component compiles without the old signal. Task 13 replaces this shim with the real `nodeExecutionsByNodeId` signal.
 3. **NodeConfigPanel** (`NodeConfigPanel.tsx`):
    - Add "Set as End Node" button (parallel to "Set as Start Node").
    - Show "END" badge on end nodes.
@@ -573,17 +575,20 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - **Verification:** Confirm `spaceWorkflow.create` and `spaceWorkflow.update` handlers pass `endNodeId` through (current handlers use cast/spread — no whitelist).
    - **`space-workflow-run-handlers.ts`:** Update all 19 hardcoded `'needs_attention'` references to `'blocked'`. Update `'completed'` to `'done'`. The `markFailed` handler assigns `needs_attention` as a transition target — this will break the CHECK constraint if not updated. Remove references to `goalId`, `config` params. **Keep `failureReason`** references as-is (gate rejection flow preserved).
    - **`space-task-message-handlers.ts`:** Update references to removed task fields (`workflowNodeId`, `agentName`, `taskAgentSessionId`) used for routing.
-   - Remove references to `goalId`, `config`, `failureReason` from all run-related handlers.
+   - Remove references to `goalId`, `config` from all run-related handlers.
 3. **`nodeExecution.list` RPC handler (required):**
    - Add `nodeExecution.list` RPC handler that returns `NodeExecution[]` filtered by `workflowRunId`. This is **mandatory** — the frontend canvas (`WorkflowCanvas.tsx`, `VisualWorkflowEditor.tsx`) needs per-node execution data to display node status after `workflowNodeId` is removed from `space_tasks`.
    - Add corresponding LiveQuery named query (`nodeExecutions.byRun`) for reactive frontend updates.
 4. **Tool file updates:**
-   - **`space-agent-tools.ts`:** grep for all `completed`, `needs_attention` status references and update (`completed` → `done`, `needs_attention` → `blocked`, etc.).
-   - **`global-spaces-tools.ts`:** grep for all old status value references and update similarly. Remove references to `goalId`, `taskType`, `assignedAgent`.
+   - **`space-agent-tools.ts`:** grep for all `completed`, `needs_attention` status references and update (`completed` → `done`, `needs_attention` → `blocked`, etc.). Replace `taskRepo.listByWorkflowRun(run.id)` calls (lines ~142, ~308 in `get_workflow_run` and `change_plan`) with `nodeExecutionRepo.listByWorkflowRun(run.id)` — update the response shape from `{ run, tasks }` to `{ run, executions }` (see subtask 6 below for output contract).
+   - **`global-spaces-tools.ts`:** grep for all old status value references and update similarly. Remove references to `goalId`, `taskType`, `assignedAgent`. Replace `taskRepo.listByWorkflowRun()` calls (lines ~255, ~272) with `nodeExecutionRepo.listByWorkflowRun()`.
    - **`neo-query-tools.ts`:** Remove references to `taskType`, `assignedAgent` (14 occurrences), `completionSummary`, `progress`, and other removed fields in display logic.
    - **`neo-action-tools.ts`:** Update all `needs_attention` references → `blocked`, all `completed` references → `done` (grep for exact counts — distributed across status checks, gate handlers, and Zod enums). **Keep `failureReason`** references as-is (gate rejection flow preserved). Update the `set_task_status` `z.enum` (lines ~2204–2214) from the 8 old `SpaceTaskStatus` values (`draft`, `pending`, `in_progress`, `review`, `completed`, `needs_attention`, `cancelled`, `archived`) to the 6 new values (`open`, `in_progress`, `done`, `blocked`, `cancelled`, `archived`); update description strings accordingly. Confirm `set_goal_status` `z.enum` at line ~2125 (`['active', 'completed', 'needs_human', 'archived']`) is room-level `GoalStatus` — out of scope, do not change.
    - **`provision-global-agent.ts`** and **`reference-resolver.ts`:** Verify and update any usage of removed `SpaceTask` fields.
-5. **Tests:**
+6. **`get_workflow_run` output contract (post-migration):**
+   - Today `get_workflow_run` in `space-agent-tools.ts` returns `{ run, tasks }` where `tasks` is `SpaceTask[]` from `listByWorkflowRun`. After migration, workflow-node execution state lives in `node_executions`. The new response shape is `{ run, executions }` where `executions` is `NodeExecution[]` from `nodeExecutionRepo.listByWorkflowRun()`. The Task Agent system prompt (Task 6 subtask 4) must document this change so the agent knows execution status is in `executions`, not `tasks`.
+   - `global-spaces-tools.ts` `get_workflow_run` follows the same pattern.
+7. **Tests:**
    - Validation tests: valid/invalid `endNodeId`, `null` to clear.
    - RPC passthrough regression test for `spaceWorkflow.create` with `endNodeId`.
    - `nodeExecution.list` handler test: returns correct executions for a given run.
@@ -674,7 +679,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `RoomTasks.tsx`: update 40 occurrences of old status/field references.
    - `TaskView.tsx`, `TaskViewV2.tsx`: remove references to `completionSummary`, `prUrl`, `prNumber`, `progress`, `currentStep`, `inputDraft`; update status values.
    - `TaskActionDialogs.tsx`: update status-dependent actions.
-   - `TaskReviewBar.tsx`: **remove entirely** — `review` is no longer a `SpaceTaskStatus` value. Review-related state tracking (human approval, PR review) moves to `NodeExecution` blocked/done transitions. If a minimal "needs attention" bar is still needed for `blocked` tasks, repurpose with a new component name.
+   - `TaskReviewBar.tsx`: **out of scope** — this component operates on room-level `NeoTask` (from `neo.ts`) and uses `task.prUrl`/`task.prNumber`, which are room-level fields. It is used in `TaskViewV2.tsx` for room-level PR review. Since room-level `TaskStatus` is explicitly out of scope (see Scope Notes), this component does not need changes in this migration.
    - `HeaderReviewBar.tsx`: update review status references.
    - `useTaskViewData.ts`, `useTaskInputDraft.ts`: remove references to removed fields.
 
@@ -722,4 +727,4 @@ The room-level `TaskStatus` type (in `packages/shared/src/types/neo.ts`) uses th
 
 ### Cross-task file split: `VisualWorkflowEditor.tsx`
 
-Task 10 modifies `VisualWorkflowEditor.tsx` for `endNodeId` and `agents[]` changes. Task 13 replaces `tasksByNodeId` with `nodeExecutionsByNodeId` in the same file. To avoid an intermediate compile error between Task 10 and Task 13 landing, Task 10 should add a temporary `tasksByNodeId` shim (empty map returning `[]`) if the signal is removed from `space-store.ts` before Task 13 provides the replacement. Alternatively, Task 13 can be merged before Task 10's changes to this specific file.
+Task 10 modifies `VisualWorkflowEditor.tsx` for `endNodeId` and `agents[]` changes. Task 13 replaces `tasksByNodeId` with `nodeExecutionsByNodeId` in the same file. To avoid an intermediate compile error, Task 10 subtask 2 adds a temporary `computed(() => new Map())` shim for `tasksByNodeId`, which Task 13 then replaces with the real `nodeExecutionsByNodeId` signal.
