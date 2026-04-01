@@ -4,7 +4,8 @@
  * Verifies the CreateRoomModal flow:
  * - Opening the modal via "Create Room" button
  * - Workspace path field is visible and pre-populated from daemon workspaceRoot
- * - Validation: empty name, empty path, relative path, non-existent path all show errors
+ * - Validation: empty name, empty path, relative path show inline modal errors;
+ *   non-existent path shows a toast error (lobbyStore catches the RPC error)
  * - Successful creation navigates to /room/:id
  * - Created room appears in the lobby
  *
@@ -156,8 +157,11 @@ test.describe('Room Creation with Workspace Path', () => {
 		// resolves without throwing, so CreateRoomModal.handleSubmit's catch block never
 		// fires and neither setError() nor setPathError() is called. The error text is
 		// shown in a toast notification (role="alert"), not in the modal's error banner.
+		// Use 3000ms timeout — comfortably shorter than the toast's 5000ms auto-dismiss
+		// duration. The default 5000ms assertion timeout would race with dismissal on
+		// slow CI machines, potentially missing the toast entirely.
 		await expect(page.getByRole('alert')).toContainText('defaultPath does not exist', {
-			timeout: 5000,
+			timeout: 3000,
 		});
 	});
 
