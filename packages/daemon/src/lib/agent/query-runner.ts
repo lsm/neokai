@@ -23,8 +23,8 @@ import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
-// Import the canonical type from provider-service — do NOT duplicate this definition here.
 import type { OriginalEnvVars } from '../provider-service';
+// Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;

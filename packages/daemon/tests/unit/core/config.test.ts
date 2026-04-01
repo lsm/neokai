@@ -74,6 +74,26 @@ describe('getConfig', () => {
 		expect(config.workspaceRoot).toBe('/env/workspace');
 	});
 
+	test('NEOKAI_PORT takes priority over PORT', () => {
+		process.env.NEOKAI_PORT = '7777';
+		process.env.PORT = '8080';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
+
+		const config = getConfig();
+
+		expect(config.port).toBe(7777);
+	});
+
+	test('NEOKAI_PORT works when PORT is absent', () => {
+		process.env.NEOKAI_PORT = '9983';
+		delete process.env.PORT;
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
+
+		const config = getConfig();
+
+		expect(config.port).toBe(9983);
+	});
+
 	test('CLI port override takes precedence over env var', () => {
 		process.env.PORT = '8080';
 		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
@@ -81,6 +101,15 @@ describe('getConfig', () => {
 		const config = getConfig({ port: 3000 });
 
 		expect(config.port).toBe(3000);
+	});
+
+	test('CLI port override takes precedence over NEOKAI_PORT', () => {
+		process.env.NEOKAI_PORT = '7777';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
+
+		const config = getConfig({ port: 5555 });
+
+		expect(config.port).toBe(5555);
 	});
 
 	test('CLI host override takes precedence over env var', () => {

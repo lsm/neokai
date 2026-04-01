@@ -213,6 +213,10 @@ describe('ProviderService', () => {
 			ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
 			ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
 			ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+			// PORT and NEOKAI_PORT are cleared by saveClearDaemonPortEnvVars inside
+			// applyEnvVarsToProcess; save them here so they are properly restored.
+			PORT: process.env.PORT,
+			NEOKAI_PORT: process.env.NEOKAI_PORT,
 		};
 
 		// Clear env vars for clean tests
@@ -227,6 +231,8 @@ describe('ProviderService', () => {
 		delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
 		delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 		delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+		delete process.env.PORT;
+		delete process.env.NEOKAI_PORT;
 
 		// Reset singletons
 		resetProviderRegistry();
@@ -689,6 +695,48 @@ describe('ProviderService', () => {
 
 			// The leaked GLM URL should be cleared
 			expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+		});
+
+		it('clears PORT from process.env for Anthropic model and restores it afterward', () => {
+			// Security invariant: the daemon's PORT must not be visible to SDK subprocesses
+			process.env.PORT = '9283';
+
+			const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+
+			expect(process.env.PORT).toBeUndefined(); // cleared — subprocess cannot lsof this port
+			expect(original.PORT).toBe('9283'); // saved for restoration
+
+			service.restoreEnvVars(original);
+			expect(process.env.PORT).toBe('9283'); // restored for the daemon process itself
+		});
+
+		it('clears NEOKAI_PORT from process.env for Anthropic model and restores it afterward', () => {
+			process.env.NEOKAI_PORT = '9983';
+
+			const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+
+			expect(process.env.NEOKAI_PORT).toBeUndefined();
+			expect(original.NEOKAI_PORT).toBe('9983');
+
+			service.restoreEnvVars(original);
+			expect(process.env.NEOKAI_PORT).toBe('9983');
+		});
+
+		it('clears PORT and NEOKAI_PORT from process.env for GLM model and restores them', () => {
+			// The kill-chain protection must apply regardless of provider
+			process.env.PORT = '8399';
+			process.env.NEOKAI_PORT = '9983';
+
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
+
+			expect(process.env.PORT).toBeUndefined();
+			expect(process.env.NEOKAI_PORT).toBeUndefined();
+			expect(original.PORT).toBe('8399');
+			expect(original.NEOKAI_PORT).toBe('9983');
+
+			service.restoreEnvVars(original);
+			expect(process.env.PORT).toBe('8399');
+			expect(process.env.NEOKAI_PORT).toBe('9983');
 		});
 	});
 
