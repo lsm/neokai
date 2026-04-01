@@ -25,6 +25,10 @@ import {
 	setupReferenceHandlers,
 	type ReferenceHandlerDeps,
 } from '../../../src/lib/rpc-handlers/reference-handlers';
+import type { Database as BunDatabase } from 'bun:sqlite';
+import type { ReactiveDatabase } from '../../../src/storage/reactive-database';
+import type { ShortIdAllocator } from '../../../src/lib/short-id-allocator';
+import type { FileIndex } from '../../../src/lib/file-index';
 import { Database } from '../../../src/storage/database';
 import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
@@ -34,6 +38,18 @@ import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 // ---------------------------------------------------------------------------
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
+
+// ---------------------------------------------------------------------------
+// Helpers: stub values for ReferenceHandlerDeps fields not used by
+// reference.resolve (only consumed by reference.search). Providing
+// explicit stubs here prevents confusing `undefined` errors if the
+// implementation ever starts using these fields in resolve.
+// ---------------------------------------------------------------------------
+
+const stubDb = {} as unknown as BunDatabase;
+const stubReactiveDb = {} as unknown as ReactiveDatabase;
+const stubShortIdAllocator = {} as unknown as ShortIdAllocator;
+const stubFileIndex = {} as unknown as FileIndex;
 
 // ---------------------------------------------------------------------------
 // Helpers: mock MessageHub
@@ -236,6 +252,10 @@ describe('room workspace isolation', () => {
 			const sessionMgr = { getSessionAsync: mock(async () => null) };
 
 			const deps: ReferenceHandlerDeps = {
+				db: stubDb,
+				reactiveDb: stubReactiveDb,
+				shortIdAllocator: stubShortIdAllocator,
+				fileIndex: stubFileIndex,
 				sessionManager: sessionMgr as never,
 				taskRepo: { getTask: mock(() => null), getTaskByShortId: mock(() => null) },
 				goalRepo: { getGoal: mock(() => null), getGoalByShortId: mock(() => null) },
@@ -264,6 +284,10 @@ describe('room workspace isolation', () => {
 			const sessionMgr = { getSessionAsync: mock(async () => null) };
 
 			const deps: ReferenceHandlerDeps = {
+				db: stubDb,
+				reactiveDb: stubReactiveDb,
+				shortIdAllocator: stubShortIdAllocator,
+				fileIndex: stubFileIndex,
 				sessionManager: sessionMgr as never,
 				taskRepo: { getTask: mock(() => null), getTaskByShortId: mock(() => null) },
 				goalRepo: { getGoal: mock(() => null), getGoalByShortId: mock(() => null) },
@@ -295,6 +319,10 @@ describe('room workspace isolation', () => {
 			const sessionMgr = { getSessionAsync: mock(async () => null) };
 
 			const deps: ReferenceHandlerDeps = {
+				db: stubDb,
+				reactiveDb: stubReactiveDb,
+				shortIdAllocator: stubShortIdAllocator,
+				fileIndex: stubFileIndex,
 				sessionManager: sessionMgr as never,
 				taskRepo: { getTask: mock(() => null), getTaskByShortId: mock(() => null) },
 				goalRepo: { getGoal: mock(() => null), getGoalByShortId: mock(() => null) },
