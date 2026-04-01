@@ -160,9 +160,9 @@ test.describe('Room Creation with Workspace Path', () => {
 		// Use 3000ms timeout — comfortably shorter than the toast's 5000ms auto-dismiss
 		// duration. The default 5000ms assertion timeout would race with dismissal on
 		// slow CI machines, potentially missing the toast entirely.
-		await expect(page.getByRole('alert')).toContainText('defaultPath does not exist', {
-			timeout: 3000,
-		});
+		await expect(
+			page.getByRole('alert').filter({ hasText: 'defaultPath does not exist' })
+		).toBeVisible({ timeout: 3000 });
 	});
 
 	// ─── Successful Room Creation ─────────────────────────────────────────────────
