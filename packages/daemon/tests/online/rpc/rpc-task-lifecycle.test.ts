@@ -52,6 +52,7 @@ describe('Task Lifecycle RPC Integration', () => {
 	async function createRoom(label: string): Promise<string> {
 		const result = (await daemon.messageHub.request('room.create', {
 			name: `${label}-${Date.now()}`,
+			defaultPath: daemon.workspacePath ?? process.env.NEOKAI_WORKSPACE_PATH,
 		})) as { room: { id: string } };
 		return result.room.id;
 	}

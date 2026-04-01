@@ -18,11 +18,13 @@ export async function createRoom(page: Page, name: string): Promise<string> {
 	return page.evaluate(async (roomName) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
-		// TODO(Milestone 2, task 2.1): Replace '/tmp/test-workspace' with the actual
-		// E2E workspace path once defaultPath is enforced server-side.
+		// Resolve the actual workspace root from the server-side system state so the
+		// path is guaranteed to exist on disk regardless of the test environment.
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
 		const res = await hub.request('room.create', {
 			name: roomName,
-			defaultPath: '/tmp/test-workspace',
+			defaultPath: workspaceRoot,
 		});
 		return (res as { room: { id: string } }).room.id;
 	}, name);

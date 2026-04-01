@@ -100,8 +100,14 @@ async function setupRoomWithData(page: Page): Promise<SetupResult> {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+
 		// Create room
-		const roomRes = await hub.request('room.create', { name: 'E2E Sidebar Test Room' });
+		const roomRes = await hub.request('room.create', {
+			name: 'E2E Sidebar Test Room',
+			defaultPath: workspaceRoot,
+		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
 		// Stop the runtime and wait until it is actually stopped before creating goals.
@@ -483,8 +489,12 @@ test.describe('Room Sidebar Sections', () => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
+			const systemState2 = await hub.request('state.system', {});
+			const workspaceRoot2 = (systemState2 as { workspaceRoot: string }).workspaceRoot;
+
 			const roomRes = await hub.request('room.create', {
 				name: 'E2E Completed Tasks Toggle Room',
+				defaultPath: workspaceRoot2,
 			});
 			const roomId = (roomRes as { room: { id: string } }).room.id;
 
@@ -551,8 +561,12 @@ test.describe('Room Sidebar Sections', () => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
+			const systemState3 = await hub.request('state.system', {});
+			const workspaceRoot3 = (systemState3 as { workspaceRoot: string }).workspaceRoot;
+
 			const roomRes = await hub.request('room.create', {
 				name: 'E2E Show Completed Toggle Room',
+				defaultPath: workspaceRoot3,
 			});
 			const roomId = (roomRes as { room: { id: string } }).room.id;
 
@@ -616,8 +630,12 @@ test.describe('Room Sidebar Sections', () => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
+			const systemState4 = await hub.request('state.system', {});
+			const workspaceRoot4 = (systemState4 as { workspaceRoot: string }).workspaceRoot;
+
 			const roomRes = await hub.request('room.create', {
 				name: 'E2E Persistence Room',
+				defaultPath: workspaceRoot4,
 			});
 			const roomId = (roomRes as { room: { id: string } }).room.id;
 

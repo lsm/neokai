@@ -28,9 +28,13 @@ async function createRoomAndTask(
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+
 		// Create room
 		const roomRes = await hub.request('room.create', {
 			name: 'E2E Test Room — Action Dropdown',
+			defaultPath: workspaceRoot,
 		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 

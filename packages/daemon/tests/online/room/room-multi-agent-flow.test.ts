@@ -39,6 +39,7 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 
 		const result = (await daemon.messageHub.request('room.create', {
 			name: `Multi-Agent Flow ${Date.now()}`,
+			defaultPath: daemon.workspacePath ?? process.env.NEOKAI_WORKSPACE_PATH,
 		})) as { room: { id: string } };
 		roomId = result.room.id;
 	}, 30_000);

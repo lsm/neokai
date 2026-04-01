@@ -16,22 +16,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
+import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 // ─── Infrastructure Helpers ───────────────────────────────────────────────────
-
-async function createRoom(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	name: string
-): Promise<string> {
-	await waitForWebSocketConnected(page);
-	return page.evaluate(async (roomName) => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', { name: roomName });
-		return (res as { room: { id: string } }).room.id;
-	}, name);
-}
 
 async function createTask(
 	page: Parameters<typeof waitForWebSocketConnected>[0],

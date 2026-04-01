@@ -12,21 +12,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom, openMissionsTab } from '../helpers/room-helpers';
+import { createRoom, deleteRoom, openMissionsTab } from '../helpers/room-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<string> {
-	await waitForWebSocketConnected(page);
-	return page.evaluate(async () => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', {
-			name: 'E2E Mission Creation Test Room',
-		});
-		return (res as { room: { id: string } }).room.id;
-	});
-}
 
 async function openCreateMissionModal(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
@@ -62,7 +50,7 @@ test.describe('Mission Creation', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		roomId = await createRoom(page);
+		roomId = await createRoom(page, 'E2E Mission Creation Test Room');
 	});
 
 	test.afterEach(async ({ page }) => {

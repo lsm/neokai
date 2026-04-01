@@ -14,21 +14,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
+import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<string> {
-	await waitForWebSocketConnected(page);
-	return page.evaluate(async () => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', {
-			name: 'E2E Mission Terminology Test Room',
-		});
-		return (res as { room: { id: string } }).room.id;
-	});
-}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +25,7 @@ test.describe('Mission Terminology', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		roomId = await createRoom(page);
+		roomId = await createRoom(page, 'E2E Mission Terminology Test Room');
 	});
 
 	test.afterEach(async ({ page }) => {

@@ -196,7 +196,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		roomManager,
 		deps.daemonHub,
-		deps.config.workspaceRoot,
 		deps.sessionManager,
 		deps.jobQueue,
 		deps.db

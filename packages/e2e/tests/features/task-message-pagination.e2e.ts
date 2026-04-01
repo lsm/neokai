@@ -37,7 +37,13 @@ async function createRoomWithTask(
 		};
 		if (!hub?.request) throw new Error('MessageHub not available');
 
-		const roomRes = await hub.request('room.create', { name: 'E2E Pagination Test Room' });
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+
+		const roomRes = await hub.request('room.create', {
+			name: 'E2E Pagination Test Room',
+			defaultPath: workspaceRoot,
+		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
 		const taskRes = await hub.request('task.create', {

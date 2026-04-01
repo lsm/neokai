@@ -112,7 +112,10 @@ function acceleratePendingTick(daemonCtx: DaemonAppContext, roomId: string): voi
 
 /** Create a room and return its ID. */
 async function createRoom(daemon: DaemonServerContext, name: string): Promise<string> {
-	const result = (await daemon.messageHub.request('room.create', { name })) as {
+	const result = (await daemon.messageHub.request('room.create', {
+		name,
+		defaultPath: daemon.workspacePath ?? process.env.NEOKAI_WORKSPACE_PATH,
+	})) as {
 		room: { id: string };
 	};
 	return result.room.id;

@@ -157,8 +157,13 @@ async function createTestRoom(page: Page, name: string): Promise<string> {
 	const roomId = await page.evaluate(async (roomName) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
-		const response = await hub.request('room.create', { name: roomName });
-		return (response as { id: string }).id;
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+		const response = await hub.request('room.create', {
+			name: roomName,
+			defaultPath: workspaceRoot,
+		});
+		return (response as { room: { id: string } }).room.id;
 	}, name);
 	return roomId;
 }

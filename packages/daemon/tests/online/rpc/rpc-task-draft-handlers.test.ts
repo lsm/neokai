@@ -26,6 +26,7 @@ describe('Task Draft RPC Handlers', () => {
 	async function createRoom(name: string): Promise<string> {
 		const result = (await daemon.messageHub.request('room.create', {
 			name: `${name} ${Date.now()}`,
+			defaultPath: daemon.workspacePath ?? process.env.NEOKAI_WORKSPACE_PATH,
 		})) as { room: { id: string } };
 		return result.room.id;
 	}
