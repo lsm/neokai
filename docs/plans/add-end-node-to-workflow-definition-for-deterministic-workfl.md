@@ -34,9 +34,9 @@ In addition, the current schema has accumulated dead fields, leaked workflow-int
 | `updatedAt` | `number` | Every write |
 | `archivedAt` | `number \| null` | Stamped on `archived` |
 
-**Kept but not shown in table above (existing fields, unchanged):** `workflowRunId` (links orchestration task to its run — needed by `cancel_workflow_run`), `prUrl`, `prNumber`, `prCreatedAt` (PR tracking — user-facing), `activeSession` (current working session), `createdByTaskId` (task lineage).
+**Kept but not shown in table above (existing fields, unchanged):** `workflowRunId` (links orchestration task to its run — needed by `cancel_workflow_run`), `taskAgentSessionId` (orchestration task's Task Agent session ID — needed for activity panel display and session rehydration after daemon restart; node-level tasks no longer use this field, they use `node_executions.agentSessionId` instead), `prUrl`, `prNumber`, `prCreatedAt` (PR tracking — user-facing), `activeSession` (current working session), `createdByTaskId` (task lineage).
 
-**Removed from `space_tasks`:** `workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`, `inputDraft` (UI draft state — no longer stored server-side), `progress` (workflow-internal — moves to `NodeExecution`), `currentStep` (workflow-internal — moves to `NodeExecution`), `completionSummary` (workflow-internal — moves to `NodeExecution.result`), `draft`/`pending`/`review`/`needs_attention`/`rate_limited`/`usage_limited` statuses.
+**Removed from `space_tasks`:** `workflowNodeId`, `agentName`, `customAgentId`, `taskType`, `goalId`, `error`, `assignedAgent`, `inputDraft` (UI draft state — no longer stored server-side), `progress` (workflow-internal — moves to `NodeExecution`), `currentStep` (workflow-internal — moves to `NodeExecution`), `completionSummary` (workflow-internal — moves to `NodeExecution.result`), `draft`/`pending`/`review`/`needs_attention`/`rate_limited`/`usage_limited` statuses.
 
 **Status changes:** Old `SpaceTaskStatus` had 10 values: `draft`, `pending`, `in_progress`, `review`, `completed`, `needs_attention`, `cancelled`, `archived`, `rate_limited`, `usage_limited`. New `SpaceTaskStatus` has 6 values: `open`, `in_progress`, `done`, `blocked`, `cancelled`, `archived`. Mapping: `draft`/`pending` → `open`, `completed` → `done`, `review`/`needs_attention`/`rate_limited`/`usage_limited` → no equivalent (workflow-internal concerns move to `node_executions`).
 
@@ -86,9 +86,9 @@ Removed: `role`, `toolConfig`, `injectWorkflowContext`.
 1. **`SpaceTaskStatus` and `SpaceTask`:**
    - Change `SpaceTaskStatus` from `'draft' | 'pending' | 'in_progress' | 'review' | 'completed' | 'needs_attention' | 'cancelled' | 'archived' | 'rate_limited' | 'usage_limited'` to `'open' | 'in_progress' | 'done' | 'blocked' | 'cancelled' | 'archived'`.
    - Update `SpaceTask` interface:
-     - **Remove:** `workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`, `inputDraft`, `progress`, `currentStep`, `completionSummary`.
+     - **Remove:** `workflowNodeId`, `agentName`, `customAgentId`, `taskType`, `goalId`, `error`, `assignedAgent`, `inputDraft`, `progress`, `currentStep`, `completionSummary`.
      - **Add:** `taskNumber: number`, `labels: string[]`, `dependsOn: string[]`, `result: string | null`, `startedAt: number | null`, `completedAt: number | null`, `archivedAt: number | null`.
-     - **Keep:** `id`, `spaceId`, `title`, `description`, `status`, `priority`, `createdAt`, `updatedAt`, `workflowRunId` (orchestration task linkage), `prUrl`, `prNumber`, `prCreatedAt` (PR tracking), `activeSession`, `createdByTaskId`.
+     - **Keep:** `id`, `spaceId`, `title`, `description`, `status`, `priority`, `createdAt`, `updatedAt`, `workflowRunId` (orchestration task linkage), `taskAgentSessionId` (orchestration task's Task Agent session — needed for activity panel and rehydration; node-level tasks use `node_executions.agentSessionId` instead), `prUrl`, `prNumber`, `prCreatedAt` (PR tracking), `activeSession`, `createdByTaskId`.
    - Update `CreateSpaceTaskParams` and `UpdateSpaceTaskParams` accordingly.
 
 2. **`NodeExecution` type (new):**
@@ -151,7 +151,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Subtasks:**
 
 1. **`space_tasks` migration:**
-   - Recreate `space_tasks` table with the new column set. Drop: `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_agent_session_id`, `task_type`, `goal_id`, `error`, `assigned_agent`, `input_draft`, `progress`, `current_step`, `completion_summary`. Keep: `workflow_run_id` (orchestration task linkage), `pr_url`, `pr_number`, `pr_created_at`, `active_session`, `created_by_task_id`. Add: `task_number` (INTEGER, auto-increment per space), `labels` (TEXT, JSON array default `'[]'`), `depends_on` (TEXT, JSON array default `'[]'`), `result` (TEXT nullable), `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable), `archived_at` (INTEGER nullable).
+   - Recreate `space_tasks` table with the new column set. Drop: `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_type`, `goal_id`, `error`, `assigned_agent`, `input_draft`, `progress`, `current_step`, `completion_summary`. Keep: `workflow_run_id` (orchestration task linkage), `task_agent_session_id` (orchestration task's Task Agent session — needed for activity panel and rehydration after restart), `pr_url`, `pr_number`, `pr_created_at`, `active_session`, `created_by_task_id`. Add: `task_number` (INTEGER, auto-increment per space), `labels` (TEXT, JSON array default `'[]'`), `depends_on` (TEXT, JSON array default `'[]'`), `result` (TEXT nullable), `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable), `archived_at` (INTEGER nullable).
    - **`task_number` NULL handling:** If any legacy rows have null `task_number`, use `COALESCE(task_number, ROW_NUMBER() OVER (PARTITION BY space_id ORDER BY created_at))` in the `INSERT INTO ... SELECT` to guarantee non-null values.
    - **Status migration:** Map old values: `draft` → `open`, `pending` → `open`, `completed` → `done`, `review` → `in_progress` (tasks in `review` at migration time are treated as still in-progress work — the `review` concept moves to `node_executions`), `needs_attention` → `blocked`, `rate_limited` → `blocked`, `usage_limited` → `blocked`. Keep `in_progress`, `cancelled`, `archived` as-is.
    - Update CHECK constraint on `status` column to new values.
@@ -209,10 +209,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `listByWorkflowRun()` replaces the current `taskRepo.listByWorkflowRun()` for workflow-internal queries.
 
 2. **`SpaceTaskRepository` updates:**
-   - Update `TaskRow` interface to match new columns. Remove `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_agent_session_id`, `task_type`, `goal_id`, `error`, `assigned_agent`.
+   - Update `TaskRow` interface to match new columns. Remove `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_type`, `goal_id`, `error`, `assigned_agent`. **Keep** `task_agent_session_id` (orchestration task's session) and `workflow_run_id`.
    - Add `task_number`, `labels`, `depends_on`, `result`, `started_at`, `completed_at`, `archived_at`.
    - Update `rowToTask()` and `createTask()` / `updateTask()` methods.
-   - Remove `listByWorkflowRun()`, `listActiveWithTaskAgentSession()`, `findByGoalId()` — these are workflow-internal queries that move to `NodeExecutionRepository`.
+   - Remove `listByWorkflowRun()`, `findByGoalId()` — these are workflow-internal queries that move to `NodeExecutionRepository`. Keep `listActiveWithTaskAgentSession()` (still used for orchestration task rehydration).
 
 3. **`SpaceWorkflowRepository` updates:**
    - Add `end_node_id` to `WorkflowRow` and `rowToWorkflow()`.
@@ -318,7 +318,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Write `agentSessionId` to `NodeExecution` after spawning via `nodeExecutionRepo.updateSessionId()`.
    - `handleSubSessionComplete`/`handleSubSessionError`: match by `NodeExecution.agentSessionId` instead of `task.taskAgentSessionId`.
    - `listActiveWithTaskAgentSession()` equivalent: query `nodeExecutionRepo` for executions with non-null `agentSessionId` and non-terminal status.
-   - **Add `cancelBySessionId(agentSessionId: string): Promise<void>` public method.** The existing `cleanup(taskId, reason)` uses `taskId` to find sessions in an internal map, but after migration sibling cancellation needs to terminate sessions by `agentSessionId` (no `taskId` available). Implementation: look up the session in the internal map by `agentSessionId`, then call the private `stopAndDeleteSession()`. This method is called by Task 5.2's sibling cleanup logic.
+   - **Add `cancelBySessionId(agentSessionId: string): Promise<void>` public method.** The existing `cleanup(taskId, reason)` uses `taskId` to find sessions in an internal map (`taskAgentSessions: Map<taskId, AgentSession>`, `subSessions: Map<taskId, Map<sessionId, AgentSession>>`), but after migration sibling cancellation needs to terminate sessions by `agentSessionId` (no `taskId` available). Implementation: add a reverse index `Map<agentSessionId, AgentSession>` (similar to existing `sessionListeners` which already uses session IDs as keys), populated on session creation and cleared on removal. `cancelBySessionId` looks up the reverse index in O(1) and calls `stopAndDeleteSession()`. This method is called by Task 5.2's sibling cleanup logic.
+   - **Rehydration:** `TaskAgentManager.rehydrate()` currently queries `WHERE task_agent_session_id IS NOT NULL` on `space_tasks`. After migration, orchestration task sessions are still rehydrated via `space_tasks.task_agent_session_id` (kept). Node agent sessions are rehydrated via `nodeExecutionRepo` query for executions with non-null `agentSessionId` and non-terminal status. Update `rehydrate()` to query both sources.
 
 4. **`AgentLiveness` updates (`packages/daemon/src/lib/space/runtime/agent-liveness.ts`):**
    - Line 81 references `task.taskAgentSessionId` — update to query `NodeExecution.agentSessionId` via `nodeExecutionRepo`.
@@ -332,7 +333,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 6. **Live query updates (`packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`):**
    - `SPACE_TASK_ACTIVITY_BY_TASK_SQL` (lines 564–648): **fundamentally restructure the query.** The current query uses a CTE that filters `space_tasks.task_agent_session_id IS NOT NULL` to find sub-sessions, then joins to `sessions` and `sdk_messages`. After migration, `task_agent_session_id` moves to `node_executions`. The new query structure:
-     - **Join path:** `space_tasks` → `node_executions` (via `space_tasks.workflow_run_id = node_executions.workflow_run_id`) → `sessions` (via `node_executions.agent_session_id = sessions.id`) → `sdk_messages`.
+     - **Two-leg query structure:**
+       - **Leg 1 (orchestration task session):** `space_tasks` → `sessions` (via `space_tasks.task_agent_session_id = sessions.id`), rendered as `kind: 'task_agent'`. This uses the kept `task_agent_session_id` column on `space_tasks`.
+       - **Leg 2 (node agent sub-sessions):** `space_tasks` → `node_executions` (via `space_tasks.workflow_run_id = node_executions.workflow_run_id`) → `sessions` (via `node_executions.agent_session_id = sessions.id`) → `sdk_messages`, rendered as `kind: 'node_agent'`.
+       - Combine with UNION ALL.
      - **Remove** the workflow-internal columns from the SELECT (`workflow_node_id`, `agent_name`, `custom_agent_id`, `current_step`, `completion_summary`, `error`).
      - The `SpaceTaskActivityMember` optional `nodeExecution?` sub-object (Task 1.7) is populated separately via the `nodeExecutions.byRun` LiveQuery (Task 11.3) on the frontend — the daemon query does not need to inline it.
    - `SPACE_TASK_MESSAGES_BY_TASK_SQL` — similarly check for references to removed columns and update.
@@ -693,7 +697,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 6. **Task views and hooks:**
    - `RoomTasks.tsx`: update 40 occurrences of old status/field references.
-   - `TaskView.tsx`, `TaskViewV2.tsx`: remove references to `completionSummary`, `prUrl`, `prNumber`, `progress`, `currentStep`, `inputDraft`; update status values.
+   - `TaskView.tsx`, `TaskViewV2.tsx`: update old `SpaceTaskStatus` values. Note: these components primarily operate on room-level `NeoTask` — do NOT remove `prUrl`, `prNumber`, `inputDraft` (room-level fields, out of scope). Only remove references to `SpaceTask`-specific removed fields (`completionSummary`, `progress`, `currentStep`) if they appear in space-task rendering paths.
    - `TaskActionDialogs.tsx`: update status-dependent actions.
    - `TaskReviewBar.tsx`: **out of scope** — this component operates on room-level `NeoTask` (from `neo.ts`) and uses `task.prUrl`/`task.prNumber`, which are room-level fields. It is used in `TaskViewV2.tsx` for room-level PR review. Since room-level `TaskStatus` is explicitly out of scope (see Scope Notes), this component does not need changes in this migration.
    - `HeaderReviewBar.tsx`: update review status references.
