@@ -310,7 +310,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - End-node bypass: before the `needs_attention` (now `blocked`) early-return block, check if end node's execution is `done` — skip the block if so.
    - Pass `endNodeId` to `completionDetector.isComplete()`.
    - **Orchestration task completion on auto-complete:** When the runtime auto-completes a run, find the orchestration task (task with no corresponding node execution, or a designated orchestration task) and complete it. Use `this.getOrCreateTaskManager(meta.spaceId)` for status update. Guard: only if status is `in_progress`. **`daemonHub` injection:** Add `daemonHub` field to `SpaceRuntimeConfig` interface (it currently exists only on `SpaceRuntimeServiceConfig`). Update `SpaceRuntimeService` to pass `daemonHub` through when constructing `SpaceRuntime`. This is required for emitting `space.task.done` events from the runtime.
-   - **Sibling `NodeExecution` cleanup:** When the end-node completes and the run transitions to `done`, sibling `NodeExecution` records still `in_progress` are **cancelled** (set to `cancelled` status). For each cancelled execution with a non-null `agentSessionId`, call `TaskAgentManager.cancelSession()` (or equivalent) to terminate the backing sub-session. This prevents `AgentLiveness` from monitoring or re-activating stale sessions and ensures `nodeExecution.list` shows a clean final state on the frontend canvas. Add code comment documenting this behavior.
+   - **Sibling `NodeExecution` cleanup:** When the end-node completes and the run transitions to `done`, sibling `NodeExecution` records still `in_progress` are **cancelled** (set to `cancelled` status). For each cancelled execution with a non-null `agentSessionId`, call `TaskAgentManager.cancelBySessionId(agentSessionId)` to terminate the backing sub-session (see Task 5.3 for the new method). This prevents `AgentLiveness` from monitoring or re-activating stale sessions and ensures `nodeExecution.list` shows a clean final state on the frontend canvas. Add code comment documenting this behavior.
    - **Notification tradeoff:** When end-node bypass fires, `blocked` notifications for sibling executions are skipped. Add code comment.
 
 3. **`TaskAgentManager` updates (`packages/daemon/src/lib/space/runtime/task-agent-manager.ts`):**
@@ -318,6 +318,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Write `agentSessionId` to `NodeExecution` after spawning via `nodeExecutionRepo.updateSessionId()`.
    - `handleSubSessionComplete`/`handleSubSessionError`: match by `NodeExecution.agentSessionId` instead of `task.taskAgentSessionId`.
    - `listActiveWithTaskAgentSession()` equivalent: query `nodeExecutionRepo` for executions with non-null `agentSessionId` and non-terminal status.
+   - **Add `cancelBySessionId(agentSessionId: string): Promise<void>` public method.** The existing `cleanup(taskId, reason)` uses `taskId` to find sessions in an internal map, but after migration sibling cancellation needs to terminate sessions by `agentSessionId` (no `taskId` available). Implementation: look up the session in the internal map by `agentSessionId`, then call the private `stopAndDeleteSession()`. This method is called by Task 5.2's sibling cleanup logic.
 
 4. **`AgentLiveness` updates (`packages/daemon/src/lib/space/runtime/agent-liveness.ts`):**
    - Line 81 references `task.taskAgentSessionId` — update to query `NodeExecution.agentSessionId` via `nodeExecutionRepo`.
@@ -330,7 +331,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Message routing must resolve the correct `NodeExecution` for a given agent session.
 
 6. **Live query updates (`packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`):**
-   - `SPACE_TASK_ACTIVITY_BY_TASK_SQL` (lines 564–648) joins `space_tasks` to `sessions` using `task_agent_session_id` and pulls `workflow_node_id`, `agent_name`, `custom_agent_id`, `current_step`, `completion_summary`, `error` — all removed from `space_tasks`. **Approach: simplify the query** to only return user-facing task fields (remove the workflow-internal columns from the SELECT). The `SpaceTaskActivityMember` optional `nodeExecution?` sub-object (Task 1.7) will be populated separately via the `nodeExecutions.byRun` LiveQuery (Task 11.3), not via this SQL join. This avoids a complex cross-table join. The frontend resolves node execution context by cross-referencing the `nodeExecutions.byRun` LiveQuery data (keyed by `workflowRunId`) with the task's associated run — the `SpaceTaskActivityMember` does not need to carry node execution data inline.
+   - `SPACE_TASK_ACTIVITY_BY_TASK_SQL` (lines 564–648): **fundamentally restructure the query.** The current query uses a CTE that filters `space_tasks.task_agent_session_id IS NOT NULL` to find sub-sessions, then joins to `sessions` and `sdk_messages`. After migration, `task_agent_session_id` moves to `node_executions`. The new query structure:
+     - **Join path:** `space_tasks` → `node_executions` (via `space_tasks.workflow_run_id = node_executions.workflow_run_id`) → `sessions` (via `node_executions.agent_session_id = sessions.id`) → `sdk_messages`.
+     - **Remove** the workflow-internal columns from the SELECT (`workflow_node_id`, `agent_name`, `custom_agent_id`, `current_step`, `completion_summary`, `error`).
+     - The `SpaceTaskActivityMember` optional `nodeExecution?` sub-object (Task 1.7) is populated separately via the `nodeExecutions.byRun` LiveQuery (Task 11.3) on the frontend — the daemon query does not need to inline it.
    - `SPACE_TASK_MESSAGES_BY_TASK_SQL` — similarly check for references to removed columns and update.
    - Remove references to `taskType` and `assignedAgent` (6 occurrences).
 
@@ -693,7 +697,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `TaskActionDialogs.tsx`: update status-dependent actions.
    - `TaskReviewBar.tsx`: **out of scope** — this component operates on room-level `NeoTask` (from `neo.ts`) and uses `task.prUrl`/`task.prNumber`, which are room-level fields. It is used in `TaskViewV2.tsx` for room-level PR review. Since room-level `TaskStatus` is explicitly out of scope (see Scope Notes), this component does not need changes in this migration.
    - `HeaderReviewBar.tsx`: update review status references.
-   - `useTaskViewData.ts`, `useTaskInputDraft.ts`: remove references to removed fields.
+   - `useTaskViewData.ts`: remove references to removed `SpaceTask` fields.
+   - `useTaskInputDraft.ts`: **out of scope** — this hook operates on room-level `NeoTask` (calls `task.get` with `roomId`, reads `response.task?.inputDraft`), not `SpaceTask`. The `inputDraft` being removed is from `SpaceTask`; room-level `NeoTask.inputDraft` is unchanged.
 
 7. **Island components:**
    - `RoomContextPanel.tsx`: update old status references.
