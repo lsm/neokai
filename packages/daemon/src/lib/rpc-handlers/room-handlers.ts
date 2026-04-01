@@ -233,6 +233,25 @@ export function setupRoomHandlers(
 			}
 		}
 
+		// When defaultPath changes, sync the room chat session's workspacePath so the
+		// next SDK invocation uses the updated path. The session record is updated in
+		// both the DB and the in-memory AgentSession metadata via updateSession(), so
+		// resolveSessionContext (which re-fetches from DB on cache miss) is always
+		// consistent — no additional cache invalidation is needed.
+		if (params.defaultPath !== undefined && room.defaultPath && sessionManager) {
+			const roomChatSessionId = `room:chat:${room.id}`;
+			try {
+				const existingSession = sessionManager.getSessionFromDB(roomChatSessionId);
+				if (existingSession) {
+					await sessionManager.updateSession(roomChatSessionId, {
+						workspacePath: room.defaultPath,
+					});
+				}
+			} catch (err) {
+				log.warn(`Could not sync room chat session workspacePath for room ${room.id}:`, err);
+			}
+		}
+
 		// Broadcast room update event
 		daemonHub
 			.emit('room.updated', {

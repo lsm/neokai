@@ -847,6 +847,23 @@ export class RoomRuntimeService {
 				if (runtime) {
 					const room = this.ctx.roomManager.getRoom(event.roomId);
 					if (room) {
+						// When defaultPath changes, the runtime's TaskGroupManager.workspacePath
+						// is readonly and cannot be mutated. Stop the old runtime and recreate it
+						// so the new runtime uses the updated workspacePath for future task groups.
+						// Task 4.1's guard ensures no active task groups exist at this point, so
+						// runtime.stop() does not terminate any in-flight agent sessions.
+						if (room.defaultPath && room.defaultPath !== runtime.taskGroupManager.workspacePath) {
+							log.info(
+								`Room ${room.id} defaultPath changed from ` +
+									`"${runtime.taskGroupManager.workspacePath}" to "${room.defaultPath}" — ` +
+									`stopping and recreating runtime.`
+							);
+							runtime.stop();
+							this.runtimes.delete(event.roomId);
+							this.createOrGetRuntime(room);
+							return;
+						}
+
 						runtime.updateRoom(room);
 						// Re-apply the room chat system prompt so it reflects the latest
 						// room background/instructions (e.g. after room.update changes them).

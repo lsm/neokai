@@ -756,6 +756,257 @@ describe('SessionFactory.getCurrentModel', () => {
 	});
 });
 
+describe('room.updated — stop and recreate runtime when defaultPath changes', () => {
+	let rawDb: Database;
+
+	afterEach(() => {
+		rawDb?.close();
+	});
+
+	// Minimal DB schema needed for createOrGetRuntime
+	function createMinimalDb() {
+		const db = new Database(':memory:');
+		db.exec(`
+			CREATE TABLE goals (id TEXT PRIMARY KEY, room_id TEXT, title TEXT, description TEXT DEFAULT '',
+				status TEXT DEFAULT 'active', priority TEXT DEFAULT 'normal', progress INTEGER DEFAULT 0,
+				linked_task_ids TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}',
+				created_at INTEGER, updated_at INTEGER, completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT DEFAULT 'one_shot', autonomy_level TEXT DEFAULT 'supervised',
+				schedule TEXT, schedule_paused INTEGER DEFAULT 0, next_run_at INTEGER,
+				structured_metrics TEXT, max_consecutive_failures INTEGER DEFAULT 3,
+				max_planning_attempts INTEGER DEFAULT 5, consecutive_failures INTEGER DEFAULT 0,
+				replan_count INTEGER DEFAULT 0, short_id TEXT);
+			CREATE TABLE tasks (id TEXT PRIMARY KEY, room_id TEXT, title TEXT, description TEXT,
+				status TEXT DEFAULT 'pending', priority TEXT DEFAULT 'normal', progress INTEGER,
+				current_step TEXT, result TEXT, error TEXT, depends_on TEXT DEFAULT '[]',
+				task_type TEXT DEFAULT 'coding', created_by_task_id TEXT, assigned_agent TEXT DEFAULT 'coder',
+				created_at INTEGER, started_at INTEGER, completed_at INTEGER, archived_at INTEGER,
+				active_session TEXT, pr_url TEXT, pr_number INTEGER, pr_created_at INTEGER,
+				short_id TEXT, updated_at INTEGER);
+			CREATE TABLE session_groups (id TEXT PRIMARY KEY, group_type TEXT DEFAULT 'task',
+				ref_id TEXT, state TEXT DEFAULT 'awaiting_worker', version INTEGER DEFAULT 0,
+				metadata TEXT DEFAULT '{}', created_at INTEGER, completed_at INTEGER);
+			CREATE TABLE session_group_members (group_id TEXT, session_id TEXT, role TEXT, joined_at INTEGER,
+				PRIMARY KEY (group_id, session_id));
+			CREATE TABLE task_group_events (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id TEXT,
+				kind TEXT, payload_json TEXT, created_at INTEGER);
+			CREATE TABLE session_group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id TEXT,
+				session_id TEXT, role TEXT DEFAULT 'system', message_type TEXT DEFAULT 'status',
+				content TEXT DEFAULT '', created_at INTEGER);
+		`);
+		return db;
+	}
+
+	// Simple daemonHub that captures listeners per event:sessionId
+	function makeDaemonHub() {
+		const listeners = new Map<string, Array<(data: unknown) => void>>();
+		return {
+			on(event: string, handler: (data: unknown) => void, options?: { sessionId?: string }) {
+				const key = `${event}:${options?.sessionId ?? '*'}`;
+				const arr = listeners.get(key) ?? [];
+				arr.push(handler);
+				listeners.set(key, arr);
+				return () => {
+					const next = (listeners.get(key) ?? []).filter((fn) => fn !== handler);
+					if (next.length === 0) listeners.delete(key);
+					else listeners.set(key, next);
+				};
+			},
+			emit(event: string, data: Record<string, unknown> & { sessionId?: string }) {
+				for (const key of [`${event}:*`, `${event}:${data.sessionId ?? '*'}`]) {
+					for (const handler of listeners.get(key) ?? []) {
+						handler(data);
+					}
+				}
+			},
+		};
+	}
+
+	function makeRoom(overrides: Partial<Room> = {}): Room {
+		return {
+			id: 'room-1',
+			name: 'Test Room',
+			allowedPaths: [{ path: '/old/workspace' }],
+			defaultPath: '/old/workspace',
+			sessionIds: [],
+			status: 'active',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			...overrides,
+		};
+	}
+
+	it('stops the old runtime and creates a new one when defaultPath changes', async () => {
+		rawDb = createMinimalDb();
+		const daemonHub = makeDaemonHub();
+
+		const roomUpdatedHandlers: Array<(event: { roomId: string; room: Room }) => void> = [];
+		const roomCreatedHandlers: Array<(event: { room: Room }) => void> = [];
+		const originalOn = daemonHub.on.bind(daemonHub);
+		const capturedOn = (
+			event: string,
+			handler: (data: unknown) => void,
+			options?: { sessionId?: string }
+		) => {
+			if (event === 'room.updated') {
+				roomUpdatedHandlers.push(handler as (event: { roomId: string; room: Room }) => void);
+			}
+			if (event === 'room.created') {
+				roomCreatedHandlers.push(handler as (event: { room: Room }) => void);
+			}
+			return originalOn(event, handler, options);
+		};
+
+		const sessionManager = {
+			getSessionAsync: mock(async () => null),
+			registerSession: () => {},
+			unregisterSession: () => {},
+		};
+
+		const initialRoom = makeRoom();
+		const updatedRoom = makeRoom({ defaultPath: '/new/workspace' });
+
+		const mockRoomManager = {
+			listRooms: () => [],
+			getRoom: mock((id: string) => (id === 'room-1' ? updatedRoom : null)),
+		} as unknown as RoomManager;
+
+		const config: RoomRuntimeServiceConfig = {
+			db: {
+				getDatabase: () => rawDb,
+				getShortIdAllocator: () => undefined,
+				getSession: () => null,
+			} as never,
+			messageHub: { onRequest: () => {} } as never,
+			daemonHub: { ...daemonHub, on: capturedOn } as never,
+			getApiKey: async () => null,
+			roomManager: mockRoomManager,
+			sessionManager: sessionManager as never,
+			defaultWorkspacePath: '/old/workspace',
+			defaultModel: 'test-model',
+			getGlobalSettings: () => ({}) as never,
+			settingsManager: { getEnabledMcpServersConfig: mock(() => ({})) } as never,
+			reactiveDb: { onChange: () => () => {}, emit: async () => {} } as never,
+		};
+
+		const service = new RoomRuntimeService(config);
+		await service.start();
+
+		// Trigger runtime creation for room-1 via room.created
+		expect(roomCreatedHandlers.length).toBeGreaterThan(0);
+		roomCreatedHandlers[0]!({ room: initialRoom });
+		// Allow async setupRoomAgentSession to settle
+		await new Promise((r) => setTimeout(r, 0));
+
+		// Grab the created runtime and spy on stop()
+		const serviceAny = service as unknown as { runtimes: Map<string, RoomRuntime> };
+		const oldRuntime = serviceAny.runtimes.get('room-1');
+		expect(oldRuntime).toBeDefined();
+		expect(oldRuntime!.taskGroupManager.workspacePath).toBe('/old/workspace');
+
+		let stopCalled = false;
+		const originalStop = oldRuntime!.stop.bind(oldRuntime!);
+		oldRuntime!.stop = () => {
+			stopCalled = true;
+			originalStop();
+		};
+
+		// Emit room.updated with new defaultPath
+		expect(roomUpdatedHandlers.length).toBeGreaterThan(0);
+		roomUpdatedHandlers[0]!({ roomId: 'room-1', room: updatedRoom });
+
+		// Old runtime should be stopped
+		expect(stopCalled).toBe(true);
+
+		// A new runtime should be in the map with the new workspacePath
+		const newRuntime = serviceAny.runtimes.get('room-1');
+		expect(newRuntime).toBeDefined();
+		expect(newRuntime).not.toBe(oldRuntime);
+		expect(newRuntime!.taskGroupManager.workspacePath).toBe('/new/workspace');
+	});
+
+	it('does NOT stop/recreate runtime when defaultPath is unchanged', async () => {
+		rawDb = createMinimalDb();
+		const daemonHub = makeDaemonHub();
+
+		const roomUpdatedHandlers: Array<(event: { roomId: string; room: Room }) => void> = [];
+		const roomCreatedHandlers: Array<(event: { room: Room }) => void> = [];
+		const originalOn = daemonHub.on.bind(daemonHub);
+		const capturedOn = (
+			event: string,
+			handler: (data: unknown) => void,
+			options?: { sessionId?: string }
+		) => {
+			if (event === 'room.updated') {
+				roomUpdatedHandlers.push(handler as (event: { roomId: string; room: Room }) => void);
+			}
+			if (event === 'room.created') {
+				roomCreatedHandlers.push(handler as (event: { room: Room }) => void);
+			}
+			return originalOn(event, handler, options);
+		};
+
+		const sessionManager = {
+			getSessionAsync: mock(async () => null),
+			registerSession: () => {},
+			unregisterSession: () => {},
+		};
+
+		const room = makeRoom({ defaultPath: '/same/workspace' });
+
+		const mockRoomManager = {
+			listRooms: () => [],
+			getRoom: mock(() => room),
+		} as unknown as RoomManager;
+
+		const config: RoomRuntimeServiceConfig = {
+			db: {
+				getDatabase: () => rawDb,
+				getShortIdAllocator: () => undefined,
+				getSession: () => null,
+			} as never,
+			messageHub: { onRequest: () => {} } as never,
+			daemonHub: { ...daemonHub, on: capturedOn } as never,
+			getApiKey: async () => null,
+			roomManager: mockRoomManager,
+			sessionManager: sessionManager as never,
+			defaultWorkspacePath: '/same/workspace',
+			defaultModel: 'test-model',
+			getGlobalSettings: () => ({}) as never,
+			settingsManager: { getEnabledMcpServersConfig: mock(() => ({})) } as never,
+			reactiveDb: { onChange: () => () => {}, emit: async () => {} } as never,
+		};
+
+		const service = new RoomRuntimeService(config);
+		await service.start();
+
+		// Create runtime via room.created
+		roomCreatedHandlers[0]!({ room });
+		await new Promise((r) => setTimeout(r, 0));
+
+		const serviceAny = service as unknown as { runtimes: Map<string, RoomRuntime> };
+		const originalRuntime = serviceAny.runtimes.get('room-1');
+		expect(originalRuntime).toBeDefined();
+
+		let stopCalled = false;
+		originalRuntime!.stop = () => {
+			stopCalled = true;
+		};
+
+		// Emit room.updated with same defaultPath (only name changed)
+		const updatedRoom: Room = { ...room, name: 'Updated Name' };
+		(mockRoomManager.getRoom as ReturnType<typeof mock>).mockReturnValue(updatedRoom);
+		roomUpdatedHandlers[0]!({ roomId: 'room-1', room: updatedRoom });
+		await new Promise((r) => setTimeout(r, 0));
+
+		// stop() must NOT have been called
+		expect(stopCalled).toBe(false);
+		// Same runtime instance must still be in the map
+		expect(serviceAny.runtimes.get('room-1')).toBe(originalRuntime);
+	});
+});
+
 describe('SessionFactory.restoreSession — worker MCP injection and skills', () => {
 	type FactoryType = ReturnType<
 		typeof import('../../../src/lib/room/runtime/room-runtime-service').RoomRuntimeService.prototype.createSessionFactory
