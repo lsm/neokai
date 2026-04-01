@@ -34,7 +34,9 @@ In addition, the current schema has accumulated dead fields, leaked workflow-int
 | `updatedAt` | `number` | Every write |
 | `archivedAt` | `number \| null` | Stamped on `archived` |
 
-**Removed from `space_tasks`:** `workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`, `draft`/`pending`/`review`/`needs_attention`/`rate_limited`/`usage_limited` statuses.
+**Kept but not shown in table above (existing fields, unchanged):** `workflowRunId` (links orchestration task to its run — needed by `cancel_workflow_run`), `prUrl`, `prNumber`, `prCreatedAt` (PR tracking — user-facing), `activeSession` (current working session), `createdByTaskId` (task lineage).
+
+**Removed from `space_tasks`:** `workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`, `inputDraft` (UI draft state — no longer stored server-side), `progress` (workflow-internal — moves to `NodeExecution`), `currentStep` (workflow-internal — moves to `NodeExecution`), `completionSummary` (workflow-internal — moves to `NodeExecution.result`), `draft`/`pending`/`review`/`needs_attention`/`rate_limited`/`usage_limited` statuses.
 
 **Status changes:** Old `SpaceTaskStatus` had 10 values: `draft`, `pending`, `in_progress`, `review`, `completed`, `needs_attention`, `cancelled`, `archived`, `rate_limited`, `usage_limited`. New `SpaceTaskStatus` has 6 values: `open`, `in_progress`, `done`, `blocked`, `cancelled`, `archived`. Mapping: `draft`/`pending` → `open`, `completed` → `done`, `review`/`needs_attention`/`rate_limited`/`usage_limited` → no equivalent (workflow-internal concerns move to `node_executions`).
 
@@ -83,7 +85,10 @@ Removed: `role`, `toolConfig`, `injectWorkflowContext`.
 
 1. **`SpaceTaskStatus` and `SpaceTask`:**
    - Change `SpaceTaskStatus` from `'draft' | 'pending' | 'in_progress' | 'review' | 'completed' | 'needs_attention' | 'cancelled' | 'archived' | 'rate_limited' | 'usage_limited'` to `'open' | 'in_progress' | 'done' | 'blocked' | 'cancelled' | 'archived'`.
-   - Update `SpaceTask` interface: remove `workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`. Add `taskNumber: number`, `labels: string[]`, `dependsOn: string[]`, `result: string | null`, `startedAt: number | null`, `completedAt: number | null`, `archivedAt: number | null`. Keep `id`, `spaceId`, `title`, `description`, `status`, `priority`, `createdAt`, `updatedAt`.
+   - Update `SpaceTask` interface:
+     - **Remove:** `workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`, `inputDraft`, `progress`, `currentStep`, `completionSummary`.
+     - **Add:** `taskNumber: number`, `labels: string[]`, `dependsOn: string[]`, `result: string | null`, `startedAt: number | null`, `completedAt: number | null`, `archivedAt: number | null`.
+     - **Keep:** `id`, `spaceId`, `title`, `description`, `status`, `priority`, `createdAt`, `updatedAt`, `workflowRunId` (orchestration task linkage), `prUrl`, `prNumber`, `prCreatedAt` (PR tracking), `activeSession`, `createdByTaskId`.
    - Update `CreateSpaceTaskParams` and `UpdateSpaceTaskParams` accordingly.
 
 2. **`NodeExecution` type (new):**
@@ -107,7 +112,7 @@ Removed: `role`, `toolConfig`, `injectWorkflowContext`.
    - Remove `agentId` shorthand field — always use `agents: WorkflowNodeAgent[]`.
    - Remove `model`, `systemPrompt`, `orderIndex`, `config` from `WorkflowNode`. Note: `model` and `systemPrompt` are persisted inside the `config` JSON blob in `space_workflow_nodes`, not as top-level DB columns. They are being removed from the TypeScript interface and from the JSON blob serialization/deserialization.
    - Keep `id`, `name`, `agents`, `instructions`.
-   - Update `resolveNodeAgents()` in `space-utils.ts`: remove the `agentId` fallback path. The function should expect `agents[]` to always be present. If called with legacy data that has `agentId` instead, throw a descriptive error.
+   - Update `resolveNodeAgents()` in `space-utils.ts`: keep the `agentId` fallback as a **permanent compat shim** — if called with legacy data that has `agentId` instead of `agents[]`, silently convert to `agents: [{ agentId }]`. Do NOT throw — `resolveNodeAgents()` is called in the runtime tick loop and throwing would crash production workflows on pre-migration data.
 
 6. **`SpaceAgent`:**
    - Remove `role`, `toolConfig`, `injectWorkflowContext` from `SpaceAgent` interface.
@@ -146,7 +151,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Subtasks:**
 
 1. **`space_tasks` migration:**
-   - Recreate `space_tasks` table with the new column set. Drop: `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_agent_session_id`, `task_type`, `goal_id`, `error`, `assigned_agent`. Add: `task_number` (INTEGER, auto-increment per space), `labels` (TEXT, JSON array default `'[]'`), `depends_on` (TEXT, JSON array default `'[]'`), `result` (TEXT nullable), `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable), `archived_at` (INTEGER nullable).
+   - Recreate `space_tasks` table with the new column set. Drop: `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_agent_session_id`, `task_type`, `goal_id`, `error`, `assigned_agent`, `input_draft`, `progress`, `current_step`, `completion_summary`. Keep: `workflow_run_id` (orchestration task linkage), `pr_url`, `pr_number`, `pr_created_at`, `active_session`, `created_by_task_id`. Add: `task_number` (INTEGER, auto-increment per space), `labels` (TEXT, JSON array default `'[]'`), `depends_on` (TEXT, JSON array default `'[]'`), `result` (TEXT nullable), `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable), `archived_at` (INTEGER nullable).
+   - **`task_number` NULL handling:** If any legacy rows have null `task_number`, use `COALESCE(task_number, ROW_NUMBER() OVER (PARTITION BY space_id ORDER BY created_at))` in the `INSERT INTO ... SELECT` to guarantee non-null values.
    - **Status migration:** Map old values: `draft` → `open`, `pending` → `open`, `completed` → `done`, `review` → `in_progress` (tasks in `review` at migration time are treated as still in-progress work — the `review` concept moves to `node_executions`), `needs_attention` → `blocked`, `rate_limited` → `blocked`, `usage_limited` → `blocked`. Keep `in_progress`, `cancelled`, `archived` as-is.
    - Update CHECK constraint on `status` column to new values.
    - Copy existing data with status mapping during table recreation.
@@ -304,7 +310,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - End-node bypass: before the `needs_attention` (now `blocked`) early-return block, check if end node's execution is `done` — skip the block if so.
    - Pass `endNodeId` to `completionDetector.isComplete()`.
    - **Orchestration task completion on auto-complete:** When the runtime auto-completes a run, find the orchestration task (task with no corresponding node execution, or a designated orchestration task) and complete it. Use `this.getOrCreateTaskManager(meta.spaceId)` for status update. Guard: only if status is `in_progress`. **`daemonHub` injection:** Add `daemonHub` field to `SpaceRuntimeConfig` interface (it currently exists only on `SpaceRuntimeServiceConfig`). Update `SpaceRuntimeService` to pass `daemonHub` through when constructing `SpaceRuntime`. This is required for emitting `space.task.done` events from the runtime.
-   - **Sibling `NodeExecution` cleanup:** When the end-node completes and the run transitions to `done`, sibling `NodeExecution` records still `in_progress` are **cancelled** (set to `cancelled` status). This prevents `AgentLiveness` from monitoring stale sessions and ensures `nodeExecution.list` shows a clean final state on the frontend canvas. Add code comment documenting this behavior.
+   - **Sibling `NodeExecution` cleanup:** When the end-node completes and the run transitions to `done`, sibling `NodeExecution` records still `in_progress` are **cancelled** (set to `cancelled` status). For each cancelled execution with a non-null `agentSessionId`, call `TaskAgentManager.cancelSession()` (or equivalent) to terminate the backing sub-session. This prevents `AgentLiveness` from monitoring or re-activating stale sessions and ensures `nodeExecution.list` shows a clean final state on the frontend canvas. Add code comment documenting this behavior.
    - **Notification tradeoff:** When end-node bypass fires, `blocked` notifications for sibling executions are skipped. Add code comment.
 
 3. **`TaskAgentManager` updates (`packages/daemon/src/lib/space/runtime/task-agent-manager.ts`):**
@@ -429,9 +435,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Update `space-chat-agent.ts` (line 132): remove `role: ${agent.role}` from the context string, replace with agent `description` or omit.
 
 2. **Remove `WorkflowNode.agentId` shorthand:**
-   - Update `resolveNodeAgents()` in `space-utils.ts`: remove the `agentId` fallback path. Expect `agents[]` to always be present.
-   - Update all callers of `resolveNodeAgents()` (20+ call sites in daemon runtime).
-   - Update `space_workflow_nodes` DB handling to not read/write `agent_id` column.
+   - Update `resolveNodeAgents()` in `space-utils.ts`: **keep the `agentId` fallback as a permanent compat shim** — convert `agentId` to `agents: [{ agentId }]` silently. Do NOT throw. `resolveNodeAgents()` is called in the runtime tick loop (`space-runtime.ts`, `channel-router.ts`, `task-agent-tools.ts`) and throwing would crash production workflow runs on pre-migration workflows. The editor boundary (Task 10.5) handles normalization on save.
+   - Remove `agentId` from the `WorkflowNode` TypeScript type (Task 1.5) — the compat shim in `resolveNodeAgents()` handles persisted legacy data at runtime.
+   - Update all callers of `resolveNodeAgents()` (20+ call sites) to not reference `node.agentId` directly — always go through `resolveNodeAgents()`.
+   - Update `space_workflow_nodes` DB handling to not write `agent_id` on new records.
 
 3. **Remove `SpaceAgent.injectWorkflowContext`:**
    - Remove from `neo-query-tools` display logic.
@@ -733,3 +740,7 @@ The room-level `TaskStatus` type (in `packages/shared/src/types/neo.ts`) uses th
 ### Cross-task file split: `VisualWorkflowEditor.tsx`
 
 Task 10 modifies `VisualWorkflowEditor.tsx` for `endNodeId` and `agents[]` changes. Task 13 replaces `tasksByNodeId` with `nodeExecutionsByNodeId` in the same file. To avoid an intermediate compile error, Task 10 subtask 2 adds a temporary `computed(() => new Map())` shim for `tasksByNodeId`, which Task 13 then replaces with the real `nodeExecutionsByNodeId` signal.
+
+### Line numbers are approximate
+
+Line numbers referenced throughout this plan (e.g., "line ~455", "lines ~2204–2214") are based on the codebase at plan-writing time and will drift as concurrent changes land. Implementors should verify line numbers at implementation time using grep/search rather than relying on specific numbers.
