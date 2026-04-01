@@ -1,33 +1,124 @@
-# Plan: Add End Node to Workflow Definition for Deterministic Workflow Completion
+# Plan: End Node Completion + Schema Cleanup
 
 ## Goal
 
-The workflow graph currently has `startNodeId` but no `endNodeId`. Workflow completion relies on the Task Agent LLM calling `report_workflow_done`, which is fragile and architecturally incorrect -- task completion is a workflow concern, not a task concern.
+The workflow graph currently has `startNodeId` but no `endNodeId`. Workflow completion relies on the Task Agent LLM calling `report_workflow_done`, which is fragile and architecturally incorrect — task completion is a workflow concern, not a task concern.
+
+In addition, the current schema has accumulated dead fields, leaked workflow-internal columns on `space_tasks`, and a missing first-class `node_executions` table. This plan combines the `endNodeId` feature with a schema cleanup to produce a clean, well-separated data model.
 
 ## Approach
 
-Add an `endNodeId` field to `SpaceWorkflow` (mirroring `startNodeId`). When the end node's task calls `report_done`, the `CompletionDetector` auto-completes the workflow run. Remove `report_workflow_done` from the Task Agent tools and system prompt. The existing all-agents-done check remains as a safety net for workflows without `endNodeId`.
+1. **Clean schema design**: Separate workflow-internal state (`node_executions`) from user-facing tasks (`space_tasks`). Remove dead/deprecated columns from all tables.
+2. **`endNodeId` on `SpaceWorkflow`**: When the end node's execution calls `report_done`, `CompletionDetector` auto-completes the workflow run.
+3. **Remove `report_workflow_done`**: The Task Agent focuses on spawning/monitoring/gates; the runtime handles completion.
 
-The field is optional for backward compatibility with existing workflows.
+## New Schema Design
+
+### `space_tasks` — Cleaned Up
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` (UUID) | Primary key |
+| `spaceId` | `string` (UUID) | Scope |
+| `taskNumber` | `number` | Auto-incremented per space, human-friendly ID |
+| `title` | `string` | Displayed everywhere |
+| `description` | `string \| null` | Detail view |
+| `status` | `SpaceTaskStatus` | `open` `in_progress` `done` `blocked` `cancelled` `archived` |
+| `priority` | `0 \| 1 \| 2 \| 3` | P0–P3, default `2` |
+| `labels` | `string[]` | Filtering, categorisation |
+| `dependsOn` | `string[]` | Task IDs in same space (prerequisites) |
+| `result` | `string \| null` | Final output from agent |
+| `createdAt` | `number` | Unix ms, immutable |
+| `startedAt` | `number \| null` | Stamped on `in_progress` |
+| `completedAt` | `number \| null` | Stamped on `done` / `cancelled` |
+| `updatedAt` | `number` | Every write |
+| `archivedAt` | `number \| null` | Stamped on `archived` |
+
+**Removed from `space_tasks`:** `workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`, `draft`/`pending`/`review`/`needs_attention`/`rate_limited`/`usage_limited` statuses.
+
+**Status changes:** Old `SpaceTaskStatus` had 10 values: `draft`, `pending`, `in_progress`, `review`, `completed`, `needs_attention`, `cancelled`, `archived`, `rate_limited`, `usage_limited`. New `SpaceTaskStatus` has 6 values: `open`, `in_progress`, `done`, `blocked`, `cancelled`, `archived`. Mapping: `draft`/`pending` → `open`, `completed` → `done`, `review`/`needs_attention`/`rate_limited`/`usage_limited` → no equivalent (workflow-internal concerns move to `node_executions`).
+
+### `node_executions` — New Table
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` (UUID) | Primary key |
+| `workflowRunId` | `string` (UUID) | Links to `space_workflow_runs` |
+| `workflowNodeId` | `string` | Which node in workflow definition |
+| `agentName` | `string` | Channel routing address |
+| `agentId` | `string` | Which agent runs this slot |
+| `agentSessionId` | `string \| null` | Agent sub-session ID for liveness |
+| `status` | `NodeExecutionStatus` | `pending` `in_progress` `done` `blocked` `cancelled` |
+| `result` | `string \| null` | Output from `report_done(summary)` |
+| `createdAt` | `number` | Unix ms |
+| `startedAt` | `number \| null` | Stamped on `in_progress` |
+| `completedAt` | `number \| null` | Stamped on terminal |
+| `updatedAt` | `number` | Every write |
+
+### `space_workflows` — Cleaned Up
+
+Added: `endNodeId`. Removed: `rules`, `config`, `maxIterations`, `isDefault`.
+
+### `space_workflow_runs` — Cleaned Up
+
+Status values: `pending` `in_progress` `done` `blocked` `cancelled`. Removed: `config`, `goalId`, `failureReason`, `iterationCount`, `maxIterations`.
+
+### `workflow_nodes` — Cleaned Up
+
+Removed: `agentId` shorthand (always use `agents[]`), `model`/`systemPrompt` overrides on node, `orderIndex`, `config` blob.
+
+### `space_agents` — Cleaned Up
+
+Removed: `role`, `toolConfig`, `injectWorkflowContext`.
 
 ---
 
-## Task 1: Add `endNodeId` to shared types
+## Task 1: Schema type definitions
 
-**Description:** Add the `endNodeId` field to `SpaceWorkflow`, `CreateSpaceWorkflowParams`, `UpdateSpaceWorkflowParams`, and `ExportedSpaceWorkflow` interfaces in the shared types package.
+**Description:** Update all shared type definitions in `packages/shared/src/types/space.ts` and `packages/shared/src/types/space-utils.ts` to reflect the new schema design. This is the foundational task — all other tasks depend on it.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. In `packages/shared/src/types/space.ts`, add `endNodeId?: string` to `SpaceWorkflow` (after `startNodeId`, line ~869) with JSDoc: "ID of the node whose completion signals workflow done. Optional -- when absent, the all-agents-done detector is the sole completion mechanism."
-2. In `CreateSpaceWorkflowParams` (line ~925), add `endNodeId?: string` with JSDoc mirroring startNodeId pattern: "ID of the node whose completion signals workflow done. Defaults to undefined (no end node)."
-3. In `UpdateSpaceWorkflowParams` (line ~966), add `endNodeId?: string | null` with JSDoc: "Updates the workflow end node. Pass `null` to clear."
-4. In `ExportedSpaceWorkflow` (line ~1155), add `endNode?: string` (optional) with JSDoc: "Name of the node whose completion signals workflow done." **Note:** Unlike `startNode` which is required (`startNode: string`), `endNode` must be optional since existing exports won't have it and workflows can function without an end node.
+
+1. **`SpaceTaskStatus` and `SpaceTask`:**
+   - Change `SpaceTaskStatus` from `'draft' | 'pending' | 'in_progress' | 'review' | 'completed' | 'needs_attention' | 'cancelled' | 'archived' | 'rate_limited' | 'usage_limited'` to `'open' | 'in_progress' | 'done' | 'blocked' | 'cancelled' | 'archived'`.
+   - Update `SpaceTask` interface: remove `workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`. Add `taskNumber: number`, `labels: string[]`, `dependsOn: string[]`, `result: string | null`, `startedAt: number | null`, `completedAt: number | null`, `archivedAt: number | null`. Keep `id`, `spaceId`, `title`, `description`, `status`, `priority`, `createdAt`, `updatedAt`.
+   - Update `CreateSpaceTaskParams` and `UpdateSpaceTaskParams` accordingly.
+
+2. **`NodeExecution` type (new):**
+   - Add `NodeExecutionStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled'`.
+   - Add `NodeExecution` interface with all fields from the schema table above.
+   - Add `CreateNodeExecutionParams` and `UpdateNodeExecutionParams`.
+
+3. **`SpaceWorkflow`:**
+   - Add `endNodeId?: string` to `SpaceWorkflow` with JSDoc.
+   - Add `endNodeId?: string` to `CreateSpaceWorkflowParams`.
+   - Add `endNodeId?: string | null` to `UpdateSpaceWorkflowParams`.
+   - Remove `rules`, `config`, `maxIterations`, `isDefault` from all three interfaces.
+   - Add `endNode?: string` to `ExportedSpaceWorkflow` (optional, unlike required `startNode`).
+
+4. **`SpaceWorkflowRun`:**
+   - Change `WorkflowRunStatus` to `'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled'`.
+   - Remove `config`, `goalId`, `failureReason`, `iterationCount`, `maxIterations` from `SpaceWorkflowRun` and its create/update params.
+   - Add `startedAt: number | null`, `completedAt: number | null` if not already present.
+
+5. **`WorkflowNode`:**
+   - Remove `agentId` shorthand field — always use `agents: WorkflowNodeAgent[]`.
+   - Remove `model`, `systemPrompt`, `orderIndex`, `config` from `WorkflowNode`.
+   - Keep `id`, `name`, `agents`, `instructions`.
+   - Update `resolveNodeAgents()` in `space-utils.ts`: remove the `agentId` fallback path. The function should expect `agents[]` to always be present. If called with legacy data that has `agentId` instead, throw a descriptive error.
+
+6. **`SpaceAgent`:**
+   - Remove `role`, `toolConfig`, `injectWorkflowContext` from `SpaceAgent` interface.
+   - Keep `id`, `spaceId`, `name`, `description`, `model`, `provider`, `systemPrompt`, `tools`, `createdAt`, `updatedAt`.
+
+7. **Update `TERMINAL_TASK_STATUSES`** (in `completion-detector.ts` or shared types): update to match new `NodeExecutionStatus` terminal values: `done`, `cancelled`. The old set (`completed`, `needs_attention`, `cancelled`, `rate_limited`, `usage_limited`) is replaced.
 
 **Acceptance criteria:**
-- TypeScript compiles cleanly (`bun run typecheck`).
-- `endNodeId` is optional on all interfaces.
-- `ExportedSpaceWorkflow` uses `endNode` (name-based, not UUID) and is optional since existing exports won't have it.
+- `bun run typecheck` passes (expect many downstream errors initially — this task focuses on type definitions only; downstream fixes are in later tasks).
+- All new types are exported from `@neokai/shared`.
+- Old status values and removed fields are no longer in the type definitions.
 
 **Dependencies:** None
 
@@ -35,30 +126,49 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 2: DB migration and repository layer
+## Task 2: DB migrations
 
-**Description:** Add `end_node_id` column to `space_workflows` table and update the repository to read/write it.
+**Description:** Create SQLite migrations to transform all tables to the new schema. This is a large migration task covering multiple tables. SQLite requires table recreation for column removal (cannot `ALTER TABLE DROP COLUMN` in all cases). Use the existing recreation pattern from migrations 51, 55, 60, 62.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. In `packages/daemon/src/storage/schema/migrations.ts`, add the next migration: `ALTER TABLE space_workflows ADD COLUMN end_node_id TEXT`. Follow the pattern of existing migrations (e.g., migration 65). Add the migration call in the main migration function (after the latest existing call). The column is nullable with no default -- safe for SQLite. **Note:** The next migration number is 70 (after the current latest, migration 69); always verify at implementation time in case a concurrent migration is merged first.
-2. In `packages/daemon/src/storage/repositories/space-workflow-repository.ts`:
-   - Add `end_node_id: string | null` to `WorkflowRow` interface (line ~34).
-   - In `rowToWorkflow()` (line ~115), map `row.end_node_id` to `endNodeId` on the returned `SpaceWorkflow`, using the same pattern as `startNodeId` but keeping it optional: `endNodeId: row.end_node_id ?? undefined`.
-   - In `createWorkflow()` (line ~154), add `end_node_id` to the INSERT statement and pass `params.endNodeId ?? null`.
-   - In `updateWorkflow()` (line ~234), add handling for `endNodeId` using `params.endNodeId !== undefined` — the same pattern as `startNodeId` (line ~252). This correctly handles all three cases: `undefined` = not provided (skip), `null` = clear the field, `string` = set new value. Add an inline code comment: `// undefined = not provided (no change), null = clear the field, string = set new value`.
-3. Add unit tests in a new file `packages/daemon/tests/unit/space/space-workflow-end-node.test.ts`:
-   - Test that creating a workflow with `endNodeId` persists and reads it back.
-   - Test that creating a workflow without `endNodeId` returns `undefined` for the field.
-   - Test that updating `endNodeId` persists the change.
-   - Test that setting `endNodeId` to `null` clears it.
+
+1. **`space_tasks` migration:**
+   - Recreate `space_tasks` table with the new column set. Drop: `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_agent_session_id`, `task_type`, `goal_id`, `error`, `assigned_agent`. Add: `task_number` (INTEGER, auto-increment per space), `labels` (TEXT, JSON array default `'[]'`), `depends_on` (TEXT, JSON array default `'[]'`), `result` (TEXT nullable), `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable), `archived_at` (INTEGER nullable).
+   - **Status migration:** Map old values: `draft` → `open`, `pending` → `open`, `completed` → `done`, `review` → `in_progress`, `needs_attention` → `blocked`, `rate_limited` → `blocked`, `usage_limited` → `blocked`. Keep `in_progress`, `cancelled`, `archived` as-is.
+   - Update CHECK constraint on `status` column to new values.
+   - Copy existing data with status mapping during table recreation.
+
+2. **`node_executions` table (new):**
+   - `CREATE TABLE node_executions (id TEXT PRIMARY KEY, workflow_run_id TEXT NOT NULL, workflow_node_id TEXT NOT NULL, agent_name TEXT NOT NULL, agent_id TEXT NOT NULL, agent_session_id TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','in_progress','done','blocked','cancelled')), result TEXT, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER, updated_at INTEGER NOT NULL)`.
+   - Add indexes: `idx_node_executions_run` on `workflow_run_id`, `idx_node_executions_node` on `(workflow_run_id, workflow_node_id)`.
+   - **Data migration from `space_tasks`:** For each existing task with `workflow_node_id IS NOT NULL`, create a corresponding `node_executions` row. Map fields: `workflow_node_id` → `workflow_node_id`, `agent_name` → `agent_name`, `custom_agent_id` → `agent_id`, `task_agent_session_id` → `agent_session_id`. Map status: `completed` → `done`, `needs_attention` → `blocked`, `rate_limited` → `blocked`, `usage_limited` → `blocked`, `draft` → `pending`, `pending` → `pending`, `review` → `in_progress`. Use task's `workflow_run_id` (looked up via the run that references this task, or stored directly if available). The `result` field can be populated from `space_tasks.description` or left null.
+
+3. **`space_workflows` migration:**
+   - Add column: `ALTER TABLE space_workflows ADD COLUMN end_node_id TEXT`.
+   - Drop columns by table recreation: remove `config` JSON blob (which contains `rules`, `maxIterations`), `is_default`. Note: `is_default` may be a separate column or part of config — verify at implementation time.
+   - **Note:** The next migration number is 70 (after the current latest, migration 69); always verify at implementation time in case a concurrent migration is merged first.
+
+4. **`space_workflow_runs` migration:**
+   - Recreate table dropping: `config`, `goal_id`, `failure_reason`, `iteration_count`, `max_iterations`.
+   - Add `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable) if not present.
+   - Update `status` CHECK constraint to new values: `pending`, `in_progress`, `done`, `blocked`, `cancelled`.
+
+5. **`space_workflow_nodes` migration:**
+   - Drop `order_index` column.
+   - If `agent_id` is stored as a top-level column, remove it (agents are stored in node config JSON as `agents[]`).
+   - Remove `model`, `system_prompt` columns if they exist as top-level DB columns.
+
+6. **`space_agents` migration:**
+   - Recreate table dropping: `role`, `config` (which stores `toolConfig`), `inject_workflow_context`.
 
 **Acceptance criteria:**
-- Migration 70 runs without errors on existing databases.
-- Round-trip: create workflow with `endNodeId` -> read it back -> field matches.
-- Workflows without `endNodeId` return `undefined` (not `null`).
-- All existing tests in `space-workflow.test.ts` still pass.
+- All migrations run without errors on existing databases with data.
+- Data is preserved: existing tasks, workflows, workflow runs, agents are migrated to new schema.
+- Status values are correctly mapped (old → new).
+- Node execution data is migrated from `space_tasks` to `node_executions`.
+- Indexes exist on `node_executions` for query performance.
 
 **Dependencies:** Task 1
 
@@ -66,242 +176,395 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 3: CompletionDetector end-node check and orchestration task cleanup
+## Task 3: Repository layer updates
 
-**Description:** Extend `CompletionDetector` to detect workflow completion when the end node's task reaches a terminal status, and ensure the runtime properly completes the Task Agent's orchestration task when auto-completing a run.
+**Description:** Update all repository classes to read/write the new schema. Add the new `NodeExecutionRepository`.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. Refactor `CompletionDetector.isComplete()` signature (in `packages/daemon/src/lib/space/runtime/completion-detector.ts`) to accept an options object instead of growing positional parameters. The new signature: `isComplete(options: { workflowRunId: string, channels?: WorkflowChannel[], nodes?: WorkflowNode[], endNodeId?: string }): boolean`. **Update ALL call sites** to use the new options-object signature: both `space-runtime.ts` (~line 798) and `task-agent-tools.ts` (~line 677, inside `report_workflow_done`). The `task-agent-tools.ts` call site must be updated in this task to avoid a build break — Task 4 will later remove it entirely, but Task 3 must compile independently.
-2. Add end-node completion logic inside `isComplete()`: after the "no tasks" early return and before the all-agents-done check, if `endNodeId` is provided, find any task in the run whose `workflowNodeId === endNodeId` and check if it has a status in `TERMINAL_TASK_STATUSES` (`completed`, `needs_attention`, `cancelled`, `rate_limited`, `usage_limited`). If yes, return `true` immediately. This means the workflow completes as soon as the end node finishes, even if other nodes are still running (they will be cleaned up by the runtime). **Note:** `failed` is NOT a valid `SpaceTaskStatus` — always reference `TERMINAL_TASK_STATUSES` for the authoritative set.
-3. **Critical runtime ordering: end-node check must run before `needs_attention` early return.** In `processRunTick()` (in `space-runtime.ts`), the existing flow at lines ~656–685 checks if ANY task has `status === 'needs_attention'` and returns early — the `CompletionDetector.isComplete()` call at line ~798 is never reached. For end-node completion to work when the end node is `completed` but another node is `needs_attention`, the end-node check must be inserted **before** the `needs_attention` early-return block. Add a new check at the top of `processRunTick()` (after fetching tasks): if the workflow has `endNodeId`, look up the end node's task, and if it has a `completed` status, skip the `needs_attention` early-return block (i.e., allow `processRunTick` to continue executing past that block — do NOT call `transitionStatus` at the bypass point). Execution will continue through timeout/liveness checks and reach the `CompletionDetector.isComplete()` call, which will short-circuit on the end node's `completed` status and trigger the normal completion path (including orchestration task cleanup from subtask 5). If the end node itself is `needs_attention`, let the existing `needs_attention` block handle it (the run escalates to `needs_attention` — the end node's job isn't cleanly done). This preserves the semantic that a `completed` end node always produces a `completed` run. **Simplification:** The end-node bypass ONLY activates when the end node's task status is `completed`. For any other end-node status (including `needs_attention`), the bypass does not fire, and the existing `needs_attention` block proceeds normally — this applies identically to both single-task and multi-task runs. **Other terminal statuses (`cancelled`, `rate_limited`, `usage_limited`):** These are neither `completed` (no bypass) nor `needs_attention` (no early-return block trigger). In these cases, execution flows through to the `CompletionDetector.isComplete()` call at line ~798, which will detect the end node as terminal and complete the run via the normal path. This convergence is acceptable — these are rare edge cases that don't need the bypass optimization. The `allRunTasks.length > 1` guard in the existing `needs_attention` block is unaffected by the bypass logic. **Notification tradeoff:** When the bypass fires (end node `completed`), `task_needs_attention` notifications for sibling nodes in `needs_attention` are NOT emitted — the run completes and those tasks will be cleaned up. This is an accepted tradeoff: the workflow is done, so surfacing `needs_attention` for sibling nodes is moot. Add a code comment documenting this: `// When end node is completed, sibling needs_attention notifications are skipped — workflow is complete`.
-4. Update the call site in `packages/daemon/src/lib/space/runtime/space-runtime.ts` to pass the options object including `meta.workflow.endNodeId` to `completionDetector.isComplete()`.
-5. **Critical: Orchestration task completion on auto-complete.** Currently `report_workflow_done` does three things: (a) transitions the run to `completed`, (b) marks the Task Agent's orchestration task as `completed`, and (c) emits `space.task.completed`. When the runtime auto-completes a run via CompletionDetector, it only does (a). Add post-completion logic in the runtime's run completion path, **before** the `return` statement after `transitionStatus(runId, 'completed')`. The orchestration task completion must be `await`ed (since `setTaskStatus` is async and `processRunTick` is already async) — do NOT fire-and-forget. The logic:
-   - From the already-fetched `allRunTasks`, find the orchestration task via `task.workflowNodeId == null`. Expect exactly one match. If zero are found (e.g., run has no orchestration task), skip silently. If multiple are found, log a warning and complete the first one.
-   - **Status transition guard:** Only attempt to complete the orchestration task if its current status allows a transition to `completed`. Per `VALID_SPACE_TASK_TRANSITIONS`, both `in_progress → completed` and `review → completed` are valid. Use `if (['in_progress', 'review'].includes(task.status))`. The orchestration task may still be `pending` or `draft` if the Task Agent session was just spawned but hasn't started yet — `pending → completed` and `draft → completed` are not valid transitions and would throw. If the task status doesn't allow completion, skip silently (the task will be cleaned up by the existing `cleanupTerminalExecutors` path).
-   - Call `await this.getOrCreateTaskManager(meta.spaceId).setTaskStatus(orchestrationTask.id, 'completed', ...)`. Note: `SpaceRuntimeConfig` does NOT have a `taskManager` field — use `this.getOrCreateTaskManager(spaceId)` which is the existing per-space manager pattern in `SpaceRuntime`.
-   - Emit `this.config.daemonHub.emit('space.task.completed', ...)`.
-   - **`daemonHub` injection:** Add `daemonHub` to `SpaceRuntimeConfig` interface. `SpaceRuntimeServiceConfig` already has an optional `daemonHub` field (line ~71). Since `SpaceRuntimeService` passes its entire config object directly to `new SpaceRuntime(config)` at line ~83, the `daemonHub` field will flow through automatically once `SpaceRuntimeConfig` declares it — no manual wiring or config mutation is needed beyond adding the field declaration to `SpaceRuntimeConfig`.
-6. Update existing tests AND add new unit tests in `packages/daemon/tests/unit/space/completion-detector.test.ts`. All existing test call sites that use the old positional `isComplete(runId, channels, nodes)` signature must be updated to the new options-object signature in this same PR — otherwise the test suite will fail. New tests:
-   - Test: workflow with `endNodeId` completes when end node task is `completed`, even if other tasks are `in_progress`.
-   - Test: workflow with `endNodeId` does NOT complete when end node task is `in_progress`.
-   - Test: workflow with `endNodeId` completes for each status in `TERMINAL_TASK_STATUSES` (including `completed`, `needs_attention`, `cancelled`, `rate_limited`, `usage_limited`) — use a parameterized test over all values. Note: this is a unit test of `isComplete()` in isolation. At the runtime level, `needs_attention` takes the existing early-return path and never reaches `isComplete()` — that behavior is covered by Task 3 subtask 7's "end node needs_attention → run escalates" test and Task 8's integration tests.
-   - Test: workflow without `endNodeId` falls through to existing all-agents-done logic (backward compat).
-   - Test: workflow with `endNodeId` but no task for that node yet does NOT complete.
-7. Add unit tests in `packages/daemon/tests/unit/space/space-runtime-completion.test.ts` for the runtime ordering and orchestration task auto-completion:
-   - Test: when end node is `completed` but another node is `needs_attention`, the run completes (not escalated to `needs_attention`).
-   - Test: when end node itself is `needs_attention`, the run escalates to `needs_attention` (not auto-completed).
-   - Test: when runtime auto-completes a run, the orchestration task is also set to `completed`.
-   - Test: `space.task.completed` event is emitted for the orchestration task. The test must inject a mock `daemonHub` directly into `SpaceRuntimeConfig` (not through `TaskAgentManager`'s config) to validate the `SpaceRuntime`-level wiring.
-   - Test: when the orchestration task is `pending` (not yet `in_progress`) at end-node auto-completion time, the runtime does not throw, the run still transitions to `completed`, and the orchestration task's status remains `pending` (confirming the guard skips it rather than clearing it).
+
+1. **`NodeExecutionRepository` (new):**
+   - Create `packages/daemon/src/storage/repositories/node-execution-repository.ts`.
+   - Implement CRUD: `create()`, `getById()`, `listByWorkflowRun()`, `listByNode()`, `updateStatus()`, `updateSessionId()`.
+   - `listByWorkflowRun()` replaces the current `taskRepo.listByWorkflowRun()` for workflow-internal queries.
+
+2. **`SpaceTaskRepository` updates:**
+   - Update `TaskRow` interface to match new columns. Remove `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_agent_session_id`, `task_type`, `goal_id`, `error`, `assigned_agent`.
+   - Add `task_number`, `labels`, `depends_on`, `result`, `started_at`, `completed_at`, `archived_at`.
+   - Update `rowToTask()` and `createTask()` / `updateTask()` methods.
+   - Remove `listByWorkflowRun()`, `listActiveWithTaskAgentSession()`, `findByGoalId()` — these are workflow-internal queries that move to `NodeExecutionRepository`.
+
+3. **`SpaceWorkflowRepository` updates:**
+   - Add `end_node_id` to `WorkflowRow` and `rowToWorkflow()`.
+   - Add `endNodeId` to `createWorkflow()` and `updateWorkflow()`. Use `params.endNodeId !== undefined` pattern for updates (consistent with `startNodeId`). Add inline comment: `// undefined = not provided (no change), null = clear the field, string = set new value`.
+   - Remove reading/writing of `config` JSON blob fields (`rules`, `maxIterations`), `isDefault`.
+
+4. **`SpaceWorkflowRunRepository` updates:**
+   - Remove `config`, `goalId`, `failureReason`, `iterationCount`, `maxIterations` from row mapping and CRUD.
+   - Add `startedAt`, `completedAt` if not present.
+   - Update status values in transition logic.
+
+5. **`SpaceAgentRepository` updates:**
+   - Remove `role`, `config` (toolConfig), `inject_workflow_context` from row mapping and CRUD.
+
+6. **Unit tests:**
+   - New test file for `NodeExecutionRepository`: CRUD, status transitions, query by run/node.
+   - Update existing repository tests for changed fields/status values.
 
 **Acceptance criteria:**
-- End node completion is a priority check that short-circuits the all-agents-done logic.
-- `isComplete()` uses an options object (not positional params) for a clean interface.
-- When the runtime auto-completes a run, the orchestration task is also completed and its event emitted — no dangling tasks.
-- All existing completion-detector tests pass (updated to use new signature).
-- New tests cover the end-node-specific scenarios and orchestration task cleanup.
+- All repositories compile and pass their unit tests.
+- `NodeExecutionRepository` has full CRUD coverage.
+- Old fields are no longer read/written.
 - `bun run typecheck` passes.
 
-**Dependencies:** Task 1
+**Dependencies:** Task 1, Task 2
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 4: Remove `report_workflow_done` from Task Agent
+## Task 4: SpaceTaskManager and status transition updates
 
-**Description:** Remove the `report_workflow_done` tool from the Task Agent's toolset and update its system prompt to remove completion detection instructions. The Task Agent should focus on spawning, monitoring, and gate handling.
+**Description:** Update `SpaceTaskManager`, `VALID_SPACE_TASK_TRANSITIONS`, and `TERMINAL_TASK_STATUSES` to use new status values. Create `NodeExecutionManager` for workflow-internal execution state.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. In `packages/daemon/src/lib/space/tools/task-agent-tool-schemas.ts`:
-   - Remove `ReportWorkflowDoneSchema` (lines 132-146).
-   - Remove `report_workflow_done` from `TASK_AGENT_TOOL_SCHEMAS` (line 160).
-   - Remove the `ReportWorkflowDoneInput` type export.
-2. In `packages/daemon/src/lib/space/tools/task-agent-tools.ts`:
-   - Remove the `report_workflow_done` handler function (lines 648-730).
-   - Remove the tool registration at line 1042-1049.
-   - Remove the `completionDetector` parameter from the function signature — it is only used by the `report_workflow_done` handler. Also remove: the `completionDetector` field from `TaskAgentToolsConfig` interface (defined in `task-agent-tools.ts` at ~line 195). Remove the `CompletionDetector` import — it will be unused after this removal.
-   - In `packages/daemon/src/lib/space/agents/task-agent-manager.ts`: remove the two local `new CompletionDetector(this.config.taskRepo)` instantiations (~line 630 for initial MCP server construction and ~line 1449 for `rehydrateCompletionDetector`) and their associated variable references. After removing `report_workflow_done`, no remaining tool uses `completionDetector`, so these become dead code that will trigger the `no-unused-vars` lint rule.
-3. In `packages/daemon/src/lib/space/agents/task-agent.ts` (`buildTaskAgentSystemPrompt`):
-   - Remove the `report_workflow_done` tool documentation section (lines 217-223).
-   - Update step 6 "Detect completion" (lines 277-280) to say: "The workflow runtime automatically detects completion when the end node finishes. You do not need to detect or signal workflow completion. When the runtime completes the workflow, your orchestration task will be auto-completed."
-   - Update step 4 "Reporting the final result" in the role section (line 182) to: "Monitoring task progress — the workflow runtime handles completion automatically when the end node finishes".
-   - **Note on Task Agent lifecycle:** The Task Agent does NOT need to call `report_result` to self-terminate. The runtime will auto-complete the orchestration task when the run completes (handled by Task 3's orchestration cleanup). The Task Agent should focus on spawning, monitoring, and gate handling until the runtime terminates it.
-4. Update tests:
-   - In `packages/daemon/tests/unit/space/task-agent-tool-schemas.test.ts`: remove tests for `ReportWorkflowDoneSchema`.
-   - In `packages/daemon/tests/unit/space/task-agent-tools.test.ts`: remove `report_workflow_done` test cases.
-   - In `packages/daemon/tests/unit/space/task-agent-collaboration.test.ts`: update any references to `report_workflow_done`.
-   - In `packages/daemon/tests/unit/space/task-agent.test.ts`: update prompt assertion tests if they check for `report_workflow_done` text.
+
+1. **`SpaceTaskManager` updates:**
+   - Update `VALID_SPACE_TASK_TRANSITIONS` for new `SpaceTaskStatus` values: `open`, `in_progress`, `done`, `blocked`, `cancelled`, `archived`.
+   - Update `setTaskStatus()`, `retryTask()`, `reassignTask()` for new status names.
+   - Remove any workflow-specific logic (the manager now handles only user-facing tasks).
+
+2. **`NodeExecutionManager` (new or extend existing):**
+   - Create status transition logic for `NodeExecutionStatus`: `pending` → `in_progress`, `in_progress` → `done`/`blocked`/`cancelled`, `blocked` → `in_progress`/`cancelled`, etc.
+   - `TERMINAL_NODE_EXECUTION_STATUSES`: `done`, `cancelled`.
+   - This manager is used by the runtime, node-agent-tools, and CompletionDetector.
+
+3. **Update `CompletionDetector`:**
+   - Change from querying `taskRepo.listByWorkflowRun()` to `nodeExecutionRepo.listByWorkflowRun()`.
+   - Filter by `NodeExecution` instead of `SpaceTask`.
+   - Update `TERMINAL_TASK_STATUSES` reference to `TERMINAL_NODE_EXECUTION_STATUSES` (`done`, `cancelled`).
+   - Refactor `isComplete()` signature to options object: `isComplete(options: { workflowRunId: string, channels?: WorkflowChannel[], nodes?: WorkflowNode[], endNodeId?: string })`.
+   - Add end-node completion logic: if `endNodeId` is provided, find the `NodeExecution` with matching `workflowNodeId` and check for terminal status. Short-circuit on match.
+   - **Update ALL call sites** to new signature: `space-runtime.ts` and `task-agent-tools.ts` (the latter is removed in Task 6, but must compile in this task).
+
+4. **Unit tests:**
+   - Update `completion-detector.test.ts`: all existing tests updated for new types/repo, plus new end-node tests.
+   - New tests for `NodeExecutionManager` status transitions.
+   - Parameterized test over all `TERMINAL_NODE_EXECUTION_STATUSES`.
 
 **Acceptance criteria:**
-- `report_workflow_done` is completely removed from tool schemas, handlers, and registrations.
-- `completionDetector` is removed from `TaskAgentToolsConfig` and its propagation chain (`TaskAgentManager` → tools config construction).
-- Task Agent system prompt no longer mentions `report_workflow_done`.
-- Task Agent system prompt does NOT instruct the agent to call `report_result` for self-termination — the runtime auto-completes the orchestration task (Task 3).
-- All modified test files pass.
-- `bun run typecheck` passes.
-- `bun run lint` passes (no unused exports from `completionDetector` removal).
+- New status values used consistently.
+- CompletionDetector queries `node_executions` instead of `space_tasks`.
+- End-node completion logic works as specified in prior iterations (bypass, orchestration task cleanup, etc.).
+- All tests pass.
 
-**Dependencies:** Task 3 (CompletionDetector must handle end-node completion before removing the manual trigger)
+**Dependencies:** Task 1, Task 3
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 5: Update built-in workflow templates
+## Task 5: Runtime updates (ChannelRouter, SpaceRuntime, TaskAgentManager)
 
-**Description:** Add `endNodeId` to all built-in workflow templates, pointing to their logical terminal nodes.
+**Description:** Update the workflow runtime layer to use `node_executions` instead of `space_tasks` for workflow-internal state. This is the core behavioral change.
 
 **Agent type:** coder
 
 **Subtasks:**
+
+1. **`ChannelRouter` updates (`packages/daemon/src/lib/space/runtime/channel-router.ts`):**
+   - `activateNode()`: create `NodeExecution` records via `nodeExecutionRepo.create()` instead of creating `space_tasks` with `workflowNodeId`. Remove `taskType`, `goalId`, `customAgentId` from node activation.
+   - `getActiveExecutionsForNode()`: query `nodeExecutionRepo.listByNode()` instead of filtering tasks.
+   - Update channel routing to use `NodeExecution.agentName` for message delivery.
+
+2. **`SpaceRuntime` updates (`packages/daemon/src/lib/space/runtime/space-runtime.ts`):**
+   - `processRunTick()`: fetch `NodeExecution` records via `nodeExecutionRepo.listByWorkflowRun()` instead of tasks.
+   - End-node bypass: before the `needs_attention` (now `blocked`) early-return block, check if end node's execution is `done` — skip the block if so.
+   - Pass `endNodeId` to `completionDetector.isComplete()`.
+   - **Orchestration task completion on auto-complete:** When the runtime auto-completes a run, find the orchestration task (task with no corresponding node execution, or a designated orchestration task) and complete it. Use `this.getOrCreateTaskManager(meta.spaceId)` for status update. Guard: only if status is `in_progress` or `review` (now `in_progress`). Inject `daemonHub` into `SpaceRuntimeConfig` (flows through automatically from `SpaceRuntimeServiceConfig`).
+   - **Notification tradeoff:** When end-node bypass fires, `blocked` notifications for sibling executions are skipped. Add code comment.
+
+3. **`TaskAgentManager` updates (`packages/daemon/src/lib/space/runtime/task-agent-manager.ts`):**
+   - Read `NodeExecution.agentSessionId` instead of `task.taskAgentSessionId` for session lookup/restore.
+   - Write `agentSessionId` to `NodeExecution` after spawning via `nodeExecutionRepo.updateSessionId()`.
+   - `handleSubSessionComplete`/`handleSubSessionError`: match by `NodeExecution.agentSessionId` instead of `task.taskAgentSessionId`.
+   - `listActiveWithTaskAgentSession()` equivalent: query `nodeExecutionRepo` for executions with non-null `agentSessionId` and non-terminal status.
+
+4. **Unit tests:**
+   - Update `space-runtime-completion.test.ts` for new types.
+   - Update `channel-router.test.ts` for `NodeExecution` creation.
+   - Update `task-agent-manager.test.ts` for session tracking via `NodeExecution`.
+
+**Acceptance criteria:**
+- Runtime creates `NodeExecution` records, not task-level records for workflow nodes.
+- Session tracking uses `NodeExecution.agentSessionId`.
+- End-node completion flow works: end node `done` → bypass → CompletionDetector → run `done` → orchestration task completed.
+- All runtime tests pass.
+
+**Dependencies:** Task 3, Task 4
+
+Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+
+---
+
+## Task 6: Remove `report_workflow_done` and update agent tools
+
+**Description:** Remove `report_workflow_done` from Task Agent tools, update node-agent-tools to work with `NodeExecution`, and update system prompts.
+
+**Agent type:** coder
+
+**Subtasks:**
+
+1. **Remove `report_workflow_done`:**
+   - Remove `ReportWorkflowDoneSchema` from `task-agent-tool-schemas.ts`.
+   - Remove handler from `task-agent-tools.ts`.
+   - Remove `completionDetector` from `TaskAgentToolsConfig` (defined at ~line 195 in `task-agent-tools.ts`). Remove the `CompletionDetector` import.
+   - Remove both `new CompletionDetector()` instantiations in `task-agent-manager.ts` (~lines 630 and 1449).
+
+2. **Update `node-agent-tools.ts`:**
+   - `report_done`: update to set `NodeExecution.status = 'done'` via `nodeExecutionRepo` instead of `taskManager.setTaskStatus(stepTaskId, 'completed')`.
+   - `list_peers`: query `nodeExecutionRepo` by `workflowRunId` instead of filtering tasks by `workflowNodeId`.
+   - `send_message`: use `NodeExecution.agentName` for routing.
+
+3. **Update `task-agent-tools.ts`:**
+   - `spawn_node_agent`: read `NodeExecution.agentSessionId` for idempotency guard instead of `task.taskAgentSessionId`. Write `agentSessionId` to `NodeExecution` after session creation.
+   - `list_group_members`: query `nodeExecutionRepo` instead of filtering tasks.
+
+4. **Update Task Agent system prompt (`task-agent.ts`):**
+   - Remove `report_workflow_done` documentation section.
+   - Update step 6: "The workflow runtime automatically detects completion when the end node finishes. You do not need to detect or signal workflow completion."
+   - Update step 4: "Monitoring task progress — the workflow runtime handles completion automatically when the end node finishes."
+   - Note: Task Agent does NOT call `report_result` to self-terminate — runtime auto-completes.
+
+5. **Update tests:**
+   - Remove `report_workflow_done` tests from `task-agent-tool-schemas.test.ts`, `task-agent-tools.test.ts`, `task-agent-collaboration.test.ts`.
+   - Update `node-agent-tools.test.ts` for `NodeExecution` usage.
+   - Update prompt assertion tests in `task-agent.test.ts`.
+
+**Acceptance criteria:**
+- `report_workflow_done` completely removed.
+- Node agent tools use `NodeExecution` for state management.
+- Task agent tools use `NodeExecution` for session tracking.
+- All tests pass, lint passes (no dead imports/exports).
+
+**Dependencies:** Task 4, Task 5
+
+Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+
+---
+
+## Task 7: Agent and utility cleanup
+
+**Description:** Remove `SpaceAgent.role` and related utilities, remove `WorkflowNode.agentId` shorthand handling, clean up `resolveNodeAgents()`.
+
+**Agent type:** coder
+
+**Subtasks:**
+
+1. **Remove `SpaceAgent.role` usage:**
+   - Remove `getFeaturesForRole()` from `packages/daemon/src/lib/space/agents/seed-agents.ts` (or update to use `tools[]` array instead).
+   - Remove `resolveTaskTypeForAgent()` from `channel-router.ts` and `space-runtime.ts` — task type is no longer needed since `node_executions` don't have a `taskType` field.
+   - Remove `getRoleLabel()` usage.
+   - Update `custom-agent.ts` to not reference `role`.
+
+2. **Remove `WorkflowNode.agentId` shorthand:**
+   - Update `resolveNodeAgents()` in `space-utils.ts`: remove the `agentId` fallback path. Expect `agents[]` to always be present.
+   - Update all callers of `resolveNodeAgents()` (20+ call sites in daemon runtime).
+   - Update `space_workflow_nodes` DB handling to not read/write `agent_id` column.
+
+3. **Remove `SpaceAgent.injectWorkflowContext`:**
+   - Remove from `neo-query-tools` display logic.
+   - Remove from repository mapping.
+
+4. **Unit tests:**
+   - Update `seed-agents.test.ts`, `custom-agent.test.ts` for role removal.
+   - Update any tests that use `resolveNodeAgents()` with `agentId` shorthand.
+
+**Acceptance criteria:**
+- `SpaceAgent.role`, `toolConfig`, `injectWorkflowContext` fully removed.
+- `WorkflowNode.agentId` shorthand fully removed — only `agents[]` accepted.
+- `resolveNodeAgents()` simplified.
+- All tests pass, lint passes (no dead exports via knip check).
+
+**Dependencies:** Task 1, Task 3
+
+Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+
+---
+
+## Task 8: Built-in workflow templates
+
+**Description:** Update built-in workflow templates for new schema: add `endNodeId`, remove `agentId` shorthand, ensure `agents[]` array format.
+
+**Agent type:** coder
+
+**Subtasks:**
+
 1. In `packages/daemon/src/lib/space/workflows/built-in-workflows.ts`:
-   - `CODING_WORKFLOW`: add `endNodeId: CODING_DONE_STEP` (the "Done" node).
-   - `CODING_WORKFLOW_V2`: add `endNodeId: V2_DONE_STEP` (the "Done" node).
-   - `RESEARCH_WORKFLOW`: add `endNodeId: RESEARCH_GENERAL_STEP` (the "Research" node -- it is the terminal node in this 2-node graph). Add a code comment: `// Terminal in current 2-node topology; update endNodeId if topology changes`.
-   - `REVIEW_ONLY_WORKFLOW`: add `endNodeId: REVIEW_CODER_STEP` (single-node workflow; start and end are the same node — this is intentional and valid). Add a code comment: `// Single-node workflow — start and end are the same node`.
-2. In `seedBuiltInWorkflows()` (line ~578), add `endNodeId` mapping through `nodeIdMap`. Use a non-null assertion (`!`) consistent with the `startNodeId` pattern — if `template.endNodeId` is set but `nodeIdMap` doesn't contain it, that's a bug in the template definition and should throw at seed time rather than silently dropping the end node: `const endNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId)! : undefined;`. Pass `endNodeId` in the `createWorkflow()` call.
-3. Update tests in `packages/daemon/tests/unit/space/built-in-workflows.test.ts`:
-   - Assert each built-in template has `endNodeId` set.
-   - Assert `endNodeId` references a valid node ID in the template.
-   - Assert seeded workflows have `endNodeId` mapped through `nodeIdMap` (not the template placeholder).
-   - Assert `REVIEW_ONLY_WORKFLOW` has `startNodeId === endNodeId` (intentional for single-node workflows).
+   - `CODING_WORKFLOW`: add `endNodeId: CODING_DONE_STEP`. Ensure all nodes use `agents: [...]` not `agentId`.
+   - `CODING_WORKFLOW_V2`: add `endNodeId: V2_DONE_STEP`.
+   - `RESEARCH_WORKFLOW`: add `endNodeId: RESEARCH_GENERAL_STEP`. Add comment: `// Terminal in current 2-node topology; update endNodeId if topology changes`.
+   - `REVIEW_ONLY_WORKFLOW`: add `endNodeId: REVIEW_CODER_STEP`. Add comment: `// Single-node workflow — start and end are the same node`. This is intentional and valid.
+2. In `seedBuiltInWorkflows()`, add `endNodeId` mapping through `nodeIdMap`. Use non-null assertion (`!`) consistent with `startNodeId` — throws on mismatch.
+3. Remove any `config`, `rules`, `maxIterations`, `isDefault` from template definitions.
+4. Update tests in `built-in-workflows.test.ts`:
+   - Assert each template has `endNodeId` set and references a valid node.
+   - Assert `REVIEW_ONLY_WORKFLOW` has `startNodeId === endNodeId`.
+   - Assert all nodes use `agents[]` not `agentId`.
 
 **Acceptance criteria:**
-- All four built-in templates define `endNodeId`.
-- `seedBuiltInWorkflows()` maps `endNodeId` through `nodeIdMap` correctly.
-- Existing built-in-workflows tests pass.
-- New assertions verify `endNodeId` presence and validity.
+- All templates define `endNodeId` and use `agents[]` format.
+- Deprecated fields removed from templates.
+- All tests pass.
 
-**Dependencies:** Task 1, Task 2
+**Dependencies:** Task 1, Task 3, Task 7
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 6a: Export/import `endNode` support
+## Task 9: Export/import format updates
 
-**Description:** Add `endNodeId`/`endNode` support to the workflow export/import format (backend only).
+**Description:** Update export/import to handle new schema: `endNode`, removed fields, `agents[]` format, `NodeExecution` data.
 
 **Agent type:** coder
 
 **Subtasks:**
+
 1. **Export format** (`packages/daemon/src/lib/space/export-format.ts`):
-   - In `exportWorkflow()`: add `endNode` mapping parallel to `startNode` (line ~260). Map `workflow.endNodeId` UUID to node name via `nodeIdToName`. Only include `endNode` in the result if `endNodeId` is defined.
-   - In `exportedWorkflowBaseSchema`: add `endNode: z.string().min(1).optional()` (after `startNode`, line ~138).
-   - In `validateExportedWorkflow()`: add validation that `endNode` references a known node name (parallel to `startNode` check at line ~387), but only when `endNode` is present.
-2. **Import handling** (`packages/daemon/src/lib/rpc-handlers/space-export-import-handlers.ts`):
-   - In the workflow import logic, resolve `endNode` name back to the corresponding node UUID, parallel to `startNode` resolution. Pass as `endNodeId` in `createWorkflow()`.
+   - Add `endNode` mapping (UUID → name), optional.
+   - Remove export of `rules`, `config`, `maxIterations`, `isDefault` from workflow export.
+   - Remove `role`, `toolConfig`, `injectWorkflowContext` from agent export.
+   - Ensure node export uses `agents[]` not `agentId`.
+2. **Import handling** (`space-export-import-handlers.ts`):
+   - Resolve `endNode` name → UUID on import.
+   - Handle importing legacy exports that have `agentId` on nodes: convert to `agents[]` during import.
+   - Handle importing legacy exports with old status values: map to new values.
 3. **Tests:**
-   - Update `packages/daemon/tests/unit/space/export-format.test.ts` with endNode export/import tests.
-   - Update `packages/daemon/tests/unit/space/export-import-round-trip.test.ts` with endNode round-trip.
+   - Update `export-format.test.ts` and `export-import-round-trip.test.ts`.
+   - Add test for legacy export import (backward compat).
 
 **Acceptance criteria:**
-- Export includes `endNode` when `endNodeId` is set; omits it when not set.
-- Import resolves `endNode` name to UUID and persists as `endNodeId`.
-- Round-trip export-import preserves `endNodeId`.
-- All export/import tests pass.
+- Export includes `endNode` when set; omits deprecated fields.
+- Import handles both new and legacy export formats.
+- Round-trip preserves all data.
 
-**Dependencies:** Task 1, Task 2
+**Dependencies:** Task 1, Task 3
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 6b: Visual editor and form editor `endNodeId` support
+## Task 10: Visual editor and form editor updates
 
-**Description:** Add `endNodeId` support to the visual editor serialization, visual editor UI, and form-based workflow editor (frontend).
+**Description:** Update frontend editors for new schema: `endNodeId` support, removed fields.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. **Visual editor serialization** (`packages/web/src/components/space/visual-editor/serialization.ts`):
-   - Add `endNodeId: string` to `VisualEditorState` interface (line ~84, after `startNodeId`). Make it optional with empty string as default.
-   - In `workflowToVisualState()`: populate `endNodeId` from `workflow.endNodeId`, same pattern as `startNodeId` (line ~155).
-   - In `buildWorkflowFields()`: add `endNodeId` resolution parallel to `startNodeId` (lines ~280-290). Add to `BuiltWorkflowFields` interface.
-   - In `visualStateToCreateParams()`: pass `endNodeId` through to `CreateSpaceWorkflowParams`.
-   - In `visualStateToUpdateParams()`: pass `endNodeId` through to `UpdateSpaceWorkflowParams`.
-2. **Visual editor UI** (`packages/web/src/components/space/visual-editor/VisualWorkflowEditor.tsx`):
-   - Add `endNodeId` state (mirroring `startNodeId` state, line ~227).
-   - Wire it through to the serialization output (line ~1096).
-   - Pass `endNodeId` and `setEndNodeId` to `NodeConfigPanel`.
-3. **NodeConfigPanel** (`packages/web/src/components/space/visual-editor/NodeConfigPanel.tsx`):
-   - Add a "Set as End Node" button (parallel to "Set as Start Node", line ~600).
-   - Disable when the node is already the end node. Show an "END" badge on end nodes.
-4. **WorkflowEditor (form-based)** (`packages/web/src/components/space/WorkflowEditor.tsx`):
-   - In the create/update params building (lines ~686, ~704), pass `endNodeId` if applicable.
-   - **Note:** The form-based editor currently does not expose a `startNodeId` selector either (it hardcodes `startNodeId: stepIds[0]`). For NEW workflows, default `endNodeId` to the last node in the list (`stepIds[stepIds.length - 1]`). For UPDATES to existing workflows, preserve the existing workflow's `endNodeId` if already set (do not overwrite with the heuristic). Add a code comment: `// Heuristic for new workflows: defaults to last node — use the visual editor for explicit control`. The "Set as End Node" interactive UI is only available in the visual editor; this asymmetry is acceptable since the visual editor is the primary editing mode for workflow topology.
+
+1. **Visual editor serialization** (`serialization.ts`):
+   - Add `endNodeId` to `VisualEditorState`, `workflowToVisualState()`, `buildWorkflowFields()`, `visualStateToCreateParams()`, `visualStateToUpdateParams()`.
+   - Remove `agentId` shorthand handling — always use `agents[]`.
+   - Remove deprecated fields from serialization.
+2. **Visual editor UI** (`VisualWorkflowEditor.tsx`):
+   - Add `endNodeId` state, wire to serialization.
+   - Pass to `NodeConfigPanel`.
+3. **NodeConfigPanel** (`NodeConfigPanel.tsx`):
+   - Add "Set as End Node" button (parallel to "Set as Start Node").
+   - Show "END" badge on end nodes.
+4. **WorkflowEditor (form-based)** (`WorkflowEditor.tsx`):
+   - Pass `endNodeId` in create/update params. For new workflows, default to last node. For updates, preserve existing. Add comment: `// Heuristic for new workflows: defaults to last node — use the visual editor for explicit control`.
+   - Remove deprecated field inputs.
 5. **Tests:**
-   - For serialization tests: check if `packages/web/src/components/space/visual-editor/__tests__/serialization.test.ts` exists. If yes, update it; if not, create it with tests covering endNodeId serialization round-trip.
-   - Update `packages/web/src/components/space/visual-editor/__tests__/NodeConfigPanel.test.ts` (verify path exists) with "Set as End Node" button tests.
+   - Serialization test for `endNodeId` round-trip.
+   - NodeConfigPanel "Set as End Node" button test.
 
 **Acceptance criteria:**
-- Visual editor state includes `endNodeId`; serialization round-trips it.
-- "Set as End Node" button works in the visual editor.
-- Form-based editor passes `endNodeId` through to create/update params.
-- All serialization and component tests pass.
+- `endNodeId` supported in both editors.
+- Deprecated fields removed from UI.
+- All frontend tests pass.
 
-**Dependencies:** Task 1, Task 2
+**Dependencies:** Task 1, Task 3
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 7: Workflow manager validation and RPC handler passthrough
+## Task 11: Workflow manager validation and RPC handlers
 
-**Description:** Add validation for `endNodeId` in the workflow manager, and ensure RPC handlers pass `endNodeId` through from frontend requests to the manager/repository layer.
+**Description:** Add `endNodeId` validation, update RPC handlers for new schema.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. In `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`:
-   - In `createWorkflow()`: after existing validation (line ~66), if `params.endNodeId` is provided, validate it references a node in `params.nodes`. Throw `WorkflowValidationError` if not found.
-   - In `updateWorkflow()`: if `params.endNodeId` is provided (and not `null`), validate it references a node in the effective node list (either `params.nodes` if being updated, or `existing.nodes`).
-2. **Verification only (no code change expected):** In `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts`, confirm that the RPC handlers for `spaceWorkflow.create` and `spaceWorkflow.update` pass `endNodeId` through to the manager. The current create handler casts `data as CreateSpaceWorkflowParams` and passes it directly; the update handler uses rest-spread (`...updateParams`). Both pass all fields through automatically — no field whitelist exists today. Confirm this is still the case at implementation time. Only modify if a whitelist has been introduced since.
-3. Add unit tests in `packages/daemon/tests/unit/space/space-workflow.test.ts`:
-   - Test: creating a workflow with valid `endNodeId` succeeds.
-   - Test: creating a workflow with invalid `endNodeId` (not in nodes list) throws `WorkflowValidationError`.
-   - Test: updating `endNodeId` to a valid node succeeds.
-   - Test: updating `endNodeId` to an invalid node throws.
-   - Test: setting `endNodeId` to `null` clears it without error.
-   - Test: RPC `spaceWorkflow.create` request with `endNodeId` results in the manager receiving `endNodeId` (regression guard against future field whitelisting in the RPC handler).
+
+1. **Workflow manager validation** (`space-workflow-manager.ts`):
+   - Validate `endNodeId` references a valid node on create/update.
+   - Remove validation of deprecated fields.
+2. **RPC handler updates:**
+   - **Verification:** Confirm `spaceWorkflow.create` and `spaceWorkflow.update` handlers pass `endNodeId` through (current handlers use cast/spread — no whitelist).
+   - Update any RPC handlers that reference removed fields (`goalId`, `config`, `failureReason`, etc.).
+   - Add RPC handlers for `nodeExecution.list` (by run ID) if needed for frontend display.
+3. **Tests:**
+   - Validation tests: valid/invalid `endNodeId`, `null` to clear.
+   - RPC passthrough regression test for `spaceWorkflow.create` with `endNodeId`.
 
 **Acceptance criteria:**
-- Invalid `endNodeId` references are rejected at create/update time.
-- `null` clears the field without validation error.
-- RPC passthrough verified with a regression test.
-- All existing workflow manager tests pass.
+- `endNodeId` validated at create/update.
+- RPC handlers updated for new schema.
+- All tests pass.
 
-**Dependencies:** Task 1, Task 2
+**Dependencies:** Task 1, Task 3
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task 8: Integration tests for end-node workflow completion
+## Task 12: Integration tests
 
-**Description:** Add integration-level tests that verify the full end-node completion flow: end node finishes -> CompletionDetector detects -> runtime transitions run to completed.
+**Description:** End-to-end integration tests for the complete end-node completion flow and schema cleanup.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. **Extend** (not create) tests in `packages/daemon/tests/unit/space/space-runtime-completion.test.ts`. Task 3 already adds runtime ordering and orchestration tests to this file. Task 8 adds higher-level integration scenarios that exercise the full `report_done` → tick → completion lifecycle. These are distinct from Task 3's tests which focus on the bypass logic and orchestration cleanup in isolation. New tests for Task 8:
-   - Test: workflow with `endNodeId` -- when end node task calls `report_done`, the next `processRunTick` transitions the run to `completed`.
-   - Test: workflow with `endNodeId` -- when a non-end node completes but end node is still running, the run remains `in_progress`.
-   - Test: workflow without `endNodeId` -- existing all-agents-done behavior is unchanged (backward compat).
-   - Test: workflow with `endNodeId` where the end node task status is `needs_attention` -- run escalates to `needs_attention` (not auto-completed).
-   - Test: workflow with `endNodeId` where the end node task does not yet exist (not activated) -- run remains `in_progress`.
-2. Verify that removing `report_workflow_done` does not break any existing integration test scenarios. If any tests relied on it, update them to use the end-node completion path instead.
+
+1. **Extend** `space-runtime-completion.test.ts` with new integration scenarios:
+   - Workflow with `endNodeId`: end node execution `done` → `processRunTick` → run `done`.
+   - Non-end node completes but end node still running → run stays `in_progress`.
+   - Workflow without `endNodeId` → all-executions-done behavior (backward compat).
+   - End node execution `blocked` → run escalates to `blocked`.
+   - End node execution not yet created → run stays `in_progress`.
+   - Orchestration task auto-completed when run completes (if `in_progress`).
+   - Orchestration task in `open` state at completion → skipped, no throw.
+2. Verify no existing integration tests rely on `report_workflow_done`.
+3. Verify `NodeExecution` creation/completion flow works end-to-end through runtime.
 
 **Acceptance criteria:**
-- Integration tests prove the full lifecycle: end node `report_done` -> tick -> run completed.
-- Backward compatibility: workflows without `endNodeId` still complete via all-agents-done.
-- All existing runtime completion tests pass.
+- Full lifecycle proven: node `report_done` → execution `done` → tick → run `done`.
+- Backward compat: workflows without `endNodeId` still complete.
+- Schema cleanup doesn't break any existing test patterns.
 
-**Dependencies:** Task 2, Task 3, Task 4, Task 7 (Tasks 5, 6a, 6b are NOT prerequisites — UI/template/export changes are not needed for runtime completion verification)
+**Dependencies:** Task 4, Task 5, Task 6, Task 11
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+
+---
+
+## Dependency Graph
+
+```
+Task 1 (types)
+├── Task 2 (migrations) → Task 3 (repositories) → Task 4 (managers/CompletionDetector)
+│                                                  → Task 5 (runtime) → Task 6 (agent tools)
+│                                                  → Task 7 (agent/utility cleanup) → Task 8 (templates)
+│                                                  → Task 9 (export/import)
+│                                                  → Task 10 (frontend editors)
+│                                                  → Task 11 (validation/RPC)
+│                                                  └── Task 12 (integration tests) ← Tasks 4,5,6,11
+```
+
+Parallelizable after Task 3: Tasks 7, 9, 10, 11 can run concurrently. Tasks 4, 5 are sequential. Task 6 depends on 4+5. Task 8 depends on 7. Task 12 depends on 4+5+6+11.
