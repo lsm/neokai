@@ -8,7 +8,7 @@ In NeoKai, a skill is a configured capability that can be invoked by an agent du
 
 - **Plugin skills** — Local executable scripts or programs that extend agent functionality
 - **MCP server skills** — [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers that provide tools via the MCP standard
-- **Built-in skills** — Capabilities shipped with NeoKai that require no configuration (currently only the Web Search MCP skill)
+- **Built-in skills** — Capabilities shipped with NeoKai that require no configuration (Web Search MCP, Chrome DevTools MCP, Playwright, and Playwright Interactive)
 
 Skills are configured **globally** at the application level and then selectively **enabled per room**.
 
@@ -48,7 +48,7 @@ When enabled, all tools exposed by that MCP server become available to the agent
 
 #### Built-in
 
-Built-in skills are shipped with NeoKai and cannot be deleted. They require no configuration. Currently the only built-in skill is **Web Search (MCP)** — an opt-in skill providing Brave Search via an MCP server.
+Built-in skills are shipped with NeoKai and cannot be deleted. They require no additional configuration beyond what the underlying tool needs (e.g., an API key). NeoKai ships with four built-in skills: **Web Search (MCP)**, **Chrome DevTools (MCP)**, **Playwright**, and **Playwright Interactive**.
 
 To use the Web Search skill:
 1. Add a `BRAVE_API_KEY` environment variable (get one from [brave.com/search/api](https://brave.com/search/api/))
@@ -89,6 +89,36 @@ Provides real-time web search via Brave Search. Requires a `BRAVE_API_KEY` envir
 This skill is **opt-in**, not automatically enabled. You must enable it in both the global skills registry and in your room's settings.
 
 Note: This is separate from the SDK's built-in `WebSearch`/`WebFetch` tools, which are always available to agents.
+
+### Chrome DevTools (MCP)
+
+Provides browser automation and DevTools integration via the Chrome DevTools MCP server. Runs in isolated mode.
+
+- **Name**: `chrome-devtools-mcp`
+- **Type**: MCP Server (built-in, opt-in — disabled by default)
+- **Command**: `bunx chrome-devtools-mcp@latest --isolated`
+
+This skill is **opt-in**, not automatically enabled. Enable it in the global skills registry and in your room's settings when you need browser automation capabilities.
+
+### Playwright
+
+Enables Playwright browser automation as a built-in agent capability.
+
+- **Name**: `playwright`
+- **Type**: Built-in (enabled by default)
+- **Command**: `playwright`
+
+This skill is **enabled by default** and is available immediately without additional configuration.
+
+### Playwright Interactive
+
+Enables interactive Playwright browser automation with step-by-step control.
+
+- **Name**: `playwright-interactive`
+- **Type**: Built-in (enabled by default)
+- **Command**: `playwright-interactive`
+
+This skill is **enabled by default** and is available immediately without additional configuration.
 
 ## Skills Architecture
 

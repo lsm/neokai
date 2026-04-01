@@ -1,14 +1,16 @@
 /**
  * seedDefaultMcpEntries
  *
- * Seeds two useful default MCP entries into the application-level registry on
+ * Seeds three useful default MCP entries into the application-level registry on
  * daemon startup. The operation is idempotent — entries that already exist
  * (by name) are left untouched.
  *
  * Defaults:
- *   • fetch-mcp   — Fetch web pages and convert to Markdown (enabled).
- *   • brave-search — Web search via Brave Search API (disabled until the user
- *                    configures BRAVE_API_KEY).
+ *   • fetch-mcp      — Fetch web pages and convert to Markdown (enabled).
+ *   • brave-search   — Web search via Brave Search API (disabled until the user
+ *                      configures BRAVE_API_KEY).
+ *   • chrome-devtools — Browser automation via Chrome DevTools MCP (disabled,
+ *                      opt-in).
  */
 
 import type { Database } from '../../storage/database';

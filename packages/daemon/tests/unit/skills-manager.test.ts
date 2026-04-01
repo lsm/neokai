@@ -873,13 +873,105 @@ describe('SkillsManager', () => {
 		expect(skills).toHaveLength(1);
 	});
 
-	test('initializeBuiltins registers all three built-in skills total', () => {
+	// --- chrome-devtools-mcp built-in ---
+
+	test('initializeBuiltins registers chrome-devtools-mcp skill', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp');
+		expect(skill).toBeDefined();
+		expect(skill!.displayName).toBe('Chrome DevTools (MCP)');
+		expect(skill!.sourceType).toBe('mcp_server');
+		expect(skill!.builtIn).toBe(true);
+		expect(skill!.enabled).toBe(false);
+		expect(skill!.validationStatus).toBe('valid');
+	});
+
+	test('initializeBuiltins creates backing app_mcp_servers entry chrome-devtools if absent', () => {
+		mgr.initializeBuiltins();
+
+		const server = mcpRepo.getByName('chrome-devtools');
+		expect(server).not.toBeNull();
+		expect(server!.command).toBe('bunx');
+		expect(server!.sourceType).toBe('stdio');
+		expect(server!.args).toEqual(['chrome-devtools-mcp@latest', '--isolated']);
+	});
+
+	test('initializeBuiltins chrome-devtools-mcp skill config references the app_mcp_servers entry', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
+		const server = mcpRepo.getByName('chrome-devtools');
+		expect(skill).toBeDefined();
+		expect(server).not.toBeNull();
+
+		expect(skill.config.type).toBe('mcp_server');
+		if (skill.config.type === 'mcp_server') {
+			expect(skill.config.appMcpServerId).toBe(server!.id);
+		}
+	});
+
+	test('initializeBuiltins chrome-devtools-mcp is disabled by default', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
+		expect(skill.enabled).toBe(false);
+
+		const enabled = mgr.getEnabledSkills();
+		expect(enabled.some((s) => s.name === 'chrome-devtools-mcp')).toBe(false);
+	});
+
+	test('initializeBuiltins chrome-devtools-mcp cannot be deleted (builtIn guard)', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
+		expect(mgr.removeSkill(skill.id)).toBe(false);
+		expect(mgr.getSkill(skill.id)).not.toBeNull();
+	});
+
+	test('initializeBuiltins chrome-devtools-mcp is idempotent', () => {
+		mgr.initializeBuiltins();
+		mgr.initializeBuiltins();
+
+		const skills = mgr.listSkills().filter((s) => s.name === 'chrome-devtools-mcp');
+		expect(skills).toHaveLength(1);
+		const servers = mcpRepo.list().filter((s) => s.name === 'chrome-devtools');
+		expect(servers).toHaveLength(1);
+	});
+
+	test('initializeBuiltins reuses pre-existing chrome-devtools app_mcp_servers entry', () => {
+		const seeded = mcpRepo.create({
+			name: 'chrome-devtools',
+			description: 'Seeded by seed-defaults',
+			sourceType: 'stdio',
+			command: 'bunx',
+			args: ['chrome-devtools-mcp@latest', '--isolated'],
+			env: {},
+			enabled: false,
+		});
+
+		mgr.initializeBuiltins();
+
+		const servers = mcpRepo.list().filter((s) => s.name === 'chrome-devtools');
+		expect(servers).toHaveLength(1);
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
+		expect(skill.config.type).toBe('mcp_server');
+		if (skill.config.type === 'mcp_server') {
+			expect(skill.config.appMcpServerId).toBe(seeded.id);
+		}
+	});
+
+	// --- total built-in count ---
+
+	test('initializeBuiltins registers all four built-in skills total', () => {
 		mgr.initializeBuiltins();
 
 		const builtIns = mgr.listSkills().filter((s) => s.builtIn);
-		expect(builtIns).toHaveLength(3);
+		expect(builtIns).toHaveLength(4);
 		const names = builtIns.map((s) => s.name);
 		expect(names).toContain('web-search-mcp');
+		expect(names).toContain('chrome-devtools-mcp');
 		expect(names).toContain('playwright');
 		expect(names).toContain('playwright-interactive');
 	});

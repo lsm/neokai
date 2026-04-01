@@ -131,6 +131,7 @@ export class SkillsManager {
 	 */
 	initializeBuiltins(): void {
 		this.initWebSearchBraveMcp();
+		this.initChromeDevToolsMcp();
 		this.initPlaywrightSkill();
 		this.initPlaywrightInteractiveSkill();
 	}
@@ -164,6 +165,48 @@ export class SkillsManager {
 				name: 'web-search-mcp',
 				displayName: 'Web Search (MCP)',
 				description: 'Web search capability via Brave Search MCP. Requires BRAVE_API_KEY env var.',
+				sourceType: 'mcp_server',
+				config: { type: 'mcp_server', appMcpServerId: appMcpEntry.id },
+				enabled: false, // opt-in, not default
+				builtIn: true,
+				validationStatus: 'valid',
+				createdAt: Date.now(),
+			};
+			this.repo.insert(skill);
+		}
+	}
+
+	/**
+	 * Ensure the Chrome DevTools MCP built-in skill is registered.
+	 *
+	 * Reuses the existing `chrome-devtools` app_mcp_servers entry seeded by
+	 * seedDefaultMcpEntries() (which always runs before initializeBuiltins()).
+	 * If that entry is somehow absent, creates it as a fallback.
+	 */
+	private initChromeDevToolsMcp(): void {
+		// Step 1: resolve the backing app_mcp_servers entry (seeded by seed-defaults.ts)
+		const appMcpEntry =
+			this.appMcpServerRepo.getByName('chrome-devtools') ??
+			this.appMcpServerRepo.create({
+				name: 'chrome-devtools',
+				description:
+					'Browser automation and DevTools integration via Chrome DevTools MCP (isolated mode)',
+				sourceType: 'stdio',
+				command: 'bunx',
+				args: ['chrome-devtools-mcp@latest', '--isolated'],
+				env: {},
+				enabled: false,
+			});
+
+		// Step 2: upsert the skill referencing the app MCP entry
+		const existing = this.repo.getByName('chrome-devtools-mcp');
+		if (!existing) {
+			const skill: AppSkill = {
+				id: generateUUID(),
+				name: 'chrome-devtools-mcp',
+				displayName: 'Chrome DevTools (MCP)',
+				description:
+					'Browser automation and DevTools integration via Chrome DevTools MCP. Runs in isolated mode.',
 				sourceType: 'mcp_server',
 				config: { type: 'mcp_server', appMcpServerId: appMcpEntry.id },
 				enabled: false, // opt-in, not default

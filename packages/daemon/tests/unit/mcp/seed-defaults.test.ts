@@ -2,8 +2,8 @@
  * seedDefaultMcpEntries Unit Tests
  *
  * Verifies:
- * - fetch-mcp and brave-search are created on a fresh registry.
- * - fetch-mcp is enabled; brave-search is disabled.
+ * - fetch-mcp, brave-search, and chrome-devtools are created on a fresh registry.
+ * - fetch-mcp is enabled; brave-search and chrome-devtools are disabled.
  * - Calling seedDefaultMcpEntries a second time does not create duplicates.
  * - Pre-existing entries (same name) are not overwritten.
  */
