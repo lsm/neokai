@@ -712,5 +712,44 @@ describe('Room Agent Tools - reset_goal and planning_attempts', () => {
 			const planTask = await taskManager.getTask(planTaskId);
 			expect(planTask?.status).toBe('completed');
 		});
+
+		it('should respect explicit planning_attempts when provided alongside title change', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			db.run('UPDATE goals SET planning_attempts = 3 WHERE id = ?', [goalId]);
+
+			// Caller explicitly sets planning_attempts = 5 alongside a title change
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, title: 'New Title', planning_attempts: 5 })
+			);
+			expect(result.success).toBe(true);
+
+			// The explicit value (5) should win — the auto-reset to 0 is skipped
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.planning_attempts).toBe(5);
+		});
+
+		it('should transition status back to active even when explicit status: needs_human is also provided', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			// Caller sets status to needs_human AND changes the title in the same call.
+			// The invalidation block runs after the status update, so it should detect
+			// needs_human and transition back to active.
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					title: 'Updated Title',
+					status: 'needs_human',
+				})
+			);
+			expect(result.success).toBe(true);
+
+			// Invalidation should have overridden the needs_human status back to active
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.status).toBe('active');
+			expect(goal.planning_attempts).toBe(0);
+		});
 	});
 });

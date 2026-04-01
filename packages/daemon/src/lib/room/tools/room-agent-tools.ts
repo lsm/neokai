@@ -49,6 +49,16 @@ function jsonResult(data: Record<string, unknown>): ToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
+/** Task statuses that are not yet terminal and should be cancelled when resetting/invalidating goals. */
+const NON_TERMINAL_TASK_STATUSES = new Set([
+	'pending',
+	'in_progress',
+	'draft',
+	'review',
+	'rate_limited',
+	'usage_limited',
+]);
+
 /**
  * Create tool handler functions that can be tested directly.
  * Returns a map of tool name -> handler function.
@@ -208,21 +218,12 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 			// Invalidate in-progress planning when title or description changes
 			if (args.title !== undefined || args.description !== undefined) {
-				const nonTerminalStatuses = new Set([
-					'pending',
-					'in_progress',
-					'draft',
-					'review',
-					'rate_limited',
-					'usage_limited',
-				]);
-
 				const runtime = runtimeService?.getRuntime(roomId) ?? null;
 
 				// Find and cancel any in-progress planning tasks linked to this goal
 				for (const taskId of goal.linkedTaskIds) {
 					const task = await taskManager.getTask(taskId);
-					if (!task || task.taskType !== 'planning' || !nonTerminalStatuses.has(task.status))
+					if (!task || task.taskType !== 'planning' || !NON_TERMINAL_TASK_STATUSES.has(task.status))
 						continue;
 
 					if (runtime) {
@@ -242,8 +243,11 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					}
 				}
 
-				// Reset planning_attempts so a fresh planner picks up the updated context
-				updated = await goalManager.patchGoal(args.goal_id, { planning_attempts: 0 });
+				// Reset planning_attempts so a fresh planner picks up the updated context.
+				// Skip if the caller explicitly provided planning_attempts — their value takes precedence.
+				if (args.planning_attempts === undefined) {
+					updated = await goalManager.patchGoal(args.goal_id, { planning_attempts: 0 });
+				}
 
 				// If the goal is stuck in needs_human, transition it back to active so it's
 				// eligible for replanning (getNextGoalForPlanning only iterates 'active' goals)
@@ -1064,23 +1068,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
 			}
 
-			// Non-terminal task statuses — tasks in these states should be cancelled before reset
-			const nonTerminalStatuses = new Set([
-				'pending',
-				'in_progress',
-				'draft',
-				'review',
-				'rate_limited',
-				'usage_limited',
-			]);
-
 			// Hoist the runtime lookup so it isn't repeated on every loop iteration
 			const runtime = runtimeService?.getRuntime(roomId) ?? null;
 
 			// Cancel all in-progress linked tasks
 			for (const taskId of goal.linkedTaskIds) {
 				const task = await taskManager.getTask(taskId);
-				if (!task || !nonTerminalStatuses.has(task.status)) continue;
+				if (!task || !NON_TERMINAL_TASK_STATUSES.has(task.status)) continue;
 
 				if (runtime) {
 					await runtime.cancelTask(taskId);
