@@ -105,7 +105,7 @@ Removed: `role`, `toolConfig`, `injectWorkflowContext`.
 
 5. **`WorkflowNode`:**
    - Remove `agentId` shorthand field — always use `agents: WorkflowNodeAgent[]`.
-   - Remove `model`, `systemPrompt`, `orderIndex`, `config` from `WorkflowNode`.
+   - Remove `model`, `systemPrompt`, `orderIndex`, `config` from `WorkflowNode`. Note: `model` and `systemPrompt` are persisted inside the `config` JSON blob in `space_workflow_nodes`, not as top-level DB columns. They are being removed from the TypeScript interface and from the JSON blob serialization/deserialization.
    - Keep `id`, `name`, `agents`, `instructions`.
    - Update `resolveNodeAgents()` in `space-utils.ts`: remove the `agentId` fallback path. The function should expect `agents[]` to always be present. If called with legacy data that has `agentId` instead, throw a descriptive error.
 
@@ -147,7 +147,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 1. **`space_tasks` migration:**
    - Recreate `space_tasks` table with the new column set. Drop: `workflow_node_id`, `agent_name`, `custom_agent_id`, `task_agent_session_id`, `task_type`, `goal_id`, `error`, `assigned_agent`. Add: `task_number` (INTEGER, auto-increment per space), `labels` (TEXT, JSON array default `'[]'`), `depends_on` (TEXT, JSON array default `'[]'`), `result` (TEXT nullable), `started_at` (INTEGER nullable), `completed_at` (INTEGER nullable), `archived_at` (INTEGER nullable).
-   - **Status migration:** Map old values: `draft` → `open`, `pending` → `open`, `completed` → `done`, `review` → `in_progress`, `needs_attention` → `blocked`, `rate_limited` → `blocked`, `usage_limited` → `blocked`. Keep `in_progress`, `cancelled`, `archived` as-is.
+   - **Status migration:** Map old values: `draft` → `open`, `pending` → `open`, `completed` → `done`, `review` → `in_progress` (tasks in `review` at migration time are treated as still in-progress work — the `review` concept moves to `node_executions`), `needs_attention` → `blocked`, `rate_limited` → `blocked`, `usage_limited` → `blocked`. Keep `in_progress`, `cancelled`, `archived` as-is.
    - Update CHECK constraint on `status` column to new values.
    - Copy existing data with status mapping during table recreation.
 
@@ -167,9 +167,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Update `status` CHECK constraint to new values: `pending`, `in_progress`, `done`, `blocked`, `cancelled`.
 
 5. **`space_workflow_nodes` migration:**
-   - Drop `order_index` column.
+   - Drop `order_index` column if it exists as a top-level column.
    - If `agent_id` is stored as a top-level column, remove it (agents are stored in node config JSON as `agents[]`).
-   - Remove `model`, `system_prompt` columns if they exist as top-level DB columns.
+   - `model` and `system_prompt` are stored inside the `config` JSON blob, not as top-level DB columns — no column-level migration needed. The JSON blob serialization is updated in Task 3 (repository layer) to stop reading/writing these fields.
 
 6. **`space_agents` migration:**
    - Recreate table dropping: `role`, `config` (which stores `toolConfig`), `inject_workflow_context`.
@@ -181,6 +181,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Node execution data is migrated from `space_tasks` to `node_executions`.
 - Indexes exist on `node_executions` for query performance.
 - Each table recreation is wrapped in a transaction (BEGIN/COMMIT) to prevent inconsistent state if migration fails partway through. This is the standard pattern in this codebase (see migrations 51, 55, 60, 62).
+- Per-migration test files written (e.g., `migration-71.test.ts`, `migration-72.test.ts`) covering: status mapping correctness, `node_executions` backfill from `space_tasks` with `WHERE workflow_node_id IS NOT NULL`, column presence/absence after recreation, data preservation round-trip.
 
 **Dependencies:** Task 1
 
@@ -302,7 +303,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `processRunTick()`: fetch `NodeExecution` records via `nodeExecutionRepo.listByWorkflowRun()` instead of tasks.
    - End-node bypass: before the `needs_attention` (now `blocked`) early-return block, check if end node's execution is `done` — skip the block if so.
    - Pass `endNodeId` to `completionDetector.isComplete()`.
-   - **Orchestration task completion on auto-complete:** When the runtime auto-completes a run, find the orchestration task (task with no corresponding node execution, or a designated orchestration task) and complete it. Use `this.getOrCreateTaskManager(meta.spaceId)` for status update. Guard: only if status is `in_progress` or `review` (now `in_progress`). Inject `daemonHub` into `SpaceRuntimeConfig` (flows through automatically from `SpaceRuntimeServiceConfig`).
+   - **Orchestration task completion on auto-complete:** When the runtime auto-completes a run, find the orchestration task (task with no corresponding node execution, or a designated orchestration task) and complete it. Use `this.getOrCreateTaskManager(meta.spaceId)` for status update. Guard: only if status is `in_progress`. **`daemonHub` injection:** Add `daemonHub` field to `SpaceRuntimeConfig` interface (it currently exists only on `SpaceRuntimeServiceConfig`). Update `SpaceRuntimeService` to pass `daemonHub` through when constructing `SpaceRuntime`. This is required for emitting `space.task.done` events from the runtime.
+   - **Sibling `NodeExecution` cleanup:** When the end-node completes and the run transitions to `done`, sibling `NodeExecution` records still `in_progress` are **cancelled** (set to `cancelled` status). This prevents `AgentLiveness` from monitoring stale sessions and ensures `nodeExecution.list` shows a clean final state on the frontend canvas. Add code comment documenting this behavior.
    - **Notification tradeoff:** When end-node bypass fires, `blocked` notifications for sibling executions are skipped. Add code comment.
 
 3. **`TaskAgentManager` updates (`packages/daemon/src/lib/space/runtime/task-agent-manager.ts`):**
@@ -322,7 +324,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Message routing must resolve the correct `NodeExecution` for a given agent session.
 
 6. **Live query updates (`packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`):**
-   - `SPACE_TASK_ACTIVITY_BY_TASK_SQL` (lines 564–648) joins `space_tasks` to `sessions` using `task_agent_session_id` and pulls `workflow_node_id`, `agent_name`, `custom_agent_id`, `current_step`, `completion_summary`, `error` — all removed from `space_tasks`. **Approach: simplify the query** to only return user-facing task fields (remove the workflow-internal columns from the SELECT). The `SpaceTaskActivityMember` optional `nodeExecution?` sub-object (Task 1.7) will be populated separately via the `nodeExecutions.byRun` LiveQuery (Task 11.3), not via this SQL join. This avoids a complex cross-table join (the join key would require matching `node_executions.agent_session_id` to `sessions.id`, which is indirect).
+   - `SPACE_TASK_ACTIVITY_BY_TASK_SQL` (lines 564–648) joins `space_tasks` to `sessions` using `task_agent_session_id` and pulls `workflow_node_id`, `agent_name`, `custom_agent_id`, `current_step`, `completion_summary`, `error` — all removed from `space_tasks`. **Approach: simplify the query** to only return user-facing task fields (remove the workflow-internal columns from the SELECT). The `SpaceTaskActivityMember` optional `nodeExecution?` sub-object (Task 1.7) will be populated separately via the `nodeExecutions.byRun` LiveQuery (Task 11.3), not via this SQL join. This avoids a complex cross-table join. The frontend resolves node execution context by cross-referencing the `nodeExecutions.byRun` LiveQuery data (keyed by `workflowRunId`) with the task's associated run — the `SpaceTaskActivityMember` does not need to carry node execution data inline.
    - `SPACE_TASK_MESSAGES_BY_TASK_SQL` — similarly check for references to removed columns and update.
    - Remove references to `taskType` and `assignedAgent` (6 occurrences).
 
@@ -372,9 +374,11 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Remove handler from `task-agent-tools.ts`.
    - Remove `completionDetector` from `TaskAgentToolsConfig` (defined at ~line 195 in `task-agent-tools.ts`). Remove the `CompletionDetector` import.
    - Remove both `new CompletionDetector()` instantiations in `task-agent-manager.ts` (~lines 630 and 1449).
-   - Update `TaskResultStatusSchema` in `task-agent-tool-schemas.ts` from `z.enum(['completed', 'needs_attention', 'cancelled'])` to `z.enum(['done', 'blocked', 'cancelled'])`. Update `ReportResultSchema` description strings. Update `report_result` event name in `task-agent-tools.ts` from `space.task.completed` to `space.task.done`.
-   - Update `daemon-hub.ts`: rename the typed event declaration from `'space.task.completed'` to `'space.task.done'` (line ~455).
-   - Update `provision-global-agent.ts`: update the event subscription from `'space.task.completed'` to `'space.task.done'` (line ~193), and update the log string (line ~223).
+   - Update `TaskResultStatusSchema` in `task-agent-tool-schemas.ts` from `z.enum(['completed', 'needs_attention', 'cancelled'])` to `z.enum(['done', 'blocked', 'cancelled'])`. Update `ReportResultSchema` description strings.
+   - **Update `report_result` event conditional** in `task-agent-tools.ts`: change `status === 'completed' ? 'space.task.completed' : 'space.task.failed'` to `status === 'done' ? 'space.task.done' : 'space.task.failed'`. Without this, the `status === 'completed'` branch becomes dead code after the enum change, causing all completions to emit `space.task.failed`.
+   - **`space.task.failed` — keep as-is.** The `space.task.failed` event (declared in `daemon-hub.ts` line ~465, subscribed in `provision-global-agent.ts` line ~207) is not renamed. It fires when `report_result` status is `blocked` or `cancelled`. The `blocked` status is recoverable, but `space.task.failed` is the correct notification — the agent's work failed or was blocked, which requires attention.
+   - Update `daemon-hub.ts`: rename the typed event declaration from `'space.task.completed'` to `'space.task.done'` (line ~455). Keep `'space.task.failed'` as-is.
+   - Update `provision-global-agent.ts`: update the event subscription from `'space.task.completed'` to `'space.task.done'` (line ~193), and update the log string (line ~223). Keep `'space.task.failed'` subscription as-is.
 
 2. **Update `node-agent-tools.ts`:**
    - `report_done`: update to set `NodeExecution.status = 'done'` via `nodeExecutionRepo` instead of `taskManager.setTaskStatus(stepTaskId, 'completed')`.
@@ -418,7 +422,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 1. **Remove `SpaceAgent.role` usage:**
    - Remove `getFeaturesForRole()` from `packages/daemon/src/lib/space/agents/seed-agents.ts`. **Replacement:** `SessionFeatures` should be derived from `SpaceAgent.tools[]` array instead of the role string. If `tools` is empty, use sensible defaults (equivalent to current `DEFAULT_ROLE_FEATURES`).
-   - Remove `resolveTaskTypeForAgent()` from `channel-router.ts` and `space-runtime.ts` — task type is no longer needed since `node_executions` don't have a `taskType` field. Confirm `SpaceTaskType` type and all references are also removed.
+   - Remove `resolveTaskTypeForAgent()` from `channel-router.ts` and `space-runtime.ts` — task type is no longer needed since `node_executions` don't have a `taskType` field. Remove `SpaceTaskType` type definition from `space.ts` (it becomes a dead export once `resolveTaskTypeForAgent()` and `SpaceTask.taskType` are removed — knip will flag it).
    - Remove `getRoleLabel()` usage.
    - Update `custom-agent.ts` (lines 182, 201): replace `getFeaturesForRole(agent.role)` with the new tools-based feature resolution.
    - Update `task-agent.ts` (line 495): the agent iteration that prints `role:` in the system prompt — remove the `role` field from the printed output, replace with agent `description` or `name`.
@@ -461,7 +465,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `CODING_WORKFLOW`: add `endNodeId: CODING_DONE_STEP`. Ensure all nodes use `agents: [...]` not `agentId`.
    - `CODING_WORKFLOW_V2`: add `endNodeId: V2_DONE_STEP`.
    - `RESEARCH_WORKFLOW`: add `endNodeId: RESEARCH_GENERAL_STEP`. Add comment: `// Terminal in current 2-node topology; update endNodeId if topology changes`.
-   - `REVIEW_ONLY_WORKFLOW`: add `endNodeId: REVIEW_CODER_STEP`. Add comment: `// Single-node workflow — start and end are the same node`. This is intentional and valid.
+   - `REVIEW_ONLY_WORKFLOW`: add `endNodeId: REVIEW_CODER_STEP`. Add comment: `// Single-node workflow — start and end are the same node. CompletionDetector still requires the end-node execution to reach 'done' status; it does not short-circuit on first tick.` This is intentional and valid.
 2. In `seedBuiltInWorkflows()`, add `endNodeId` mapping through `nodeIdMap`. Use non-null assertion (`!`) consistent with `startNodeId` — throws on mismatch.
 3. Remove any `config`, `rules`, `maxIterations`, `isDefault` from template definitions.
 4. Update tests in `built-in-workflows.test.ts`:
@@ -537,8 +541,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Line 160: remove `agent.role` reference in node rendering.
 5. **WorkflowEditor (form-based)** (`WorkflowEditor.tsx`):
    - Pass `endNodeId` in create/update params. For new workflows, default to last node. For updates, preserve existing. Add comment: `// Heuristic for new workflows: defaults to last node — use the visual editor for explicit control`.
-   - Remove `NodeDraft.agentId` — the form must use `agents[]` format (lines 312, 377, 386, 398, 413, 440, 453, 631, 665, 951). Replace the single agent dropdown with the `agents[]` editor pattern.
-   - Remove deprecated field inputs.
+   - Remove `NodeDraft.agentId` — replace with `NodeDraft.agents: WorkflowNodeAgent[]`. Update `buildTemplateNodes()` (line ~366) to populate `agents[]` instead of `agentId`. Update `workflowToEditorState()` (lines ~429–453) to reconstruct drafts using `node.agents` (the DB migration in Task 2.5 does not rewrite node config JSON — `agentId` may still exist in persisted data). Add a compat guard: if a loaded node has only `agentId` in its config, convert to `agents: [{ agentId }]` at the editor boundary. Replace the single agent dropdown with the `agents[]` editor pattern.
+   - Remove `NodeDraft.model` and `NodeDraft.systemPrompt` fields (these are being removed from `WorkflowNode` — see Task 1.5). Remove corresponding form inputs.
+   - Remove other deprecated field inputs.
 6. **WorkflowNodeCard** (`WorkflowNodeCard.tsx`):
    - Remove `node.agentId` references (lines 31, 219, 241, 246, 292, 686, 730, 841, 846) — use `node.agents[0]` or the agents list.
    - Update `AgentTaskState` status checks: `state.status === 'completed'` (line 79) → `'done'`, `state.status === 'needs_attention'` (line 160) → `'blocked'`.
@@ -628,7 +633,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `space-happy-path-full-pipeline.test.ts`: update `run.status === 'completed'` → `'done'`, `waitForRunStatus(…, ['completed'])` → `['done']`.
    - `space-happy-path-plan-to-approve.test.ts`: update `'needs_attention'` → `'blocked'`.
    - `space-happy-path-code-review.test.ts`: update `'completed'` → `'done'`.
-   - `space-happy-path-qa-completion.test.ts`, `space-edge-cases.test.ts`, `space-agent-coordination.test.ts`, `task-agent-lifecycle.test.ts`, `task-agent-skills.test.ts`: update old status references.
+   - `space-happy-path-qa-completion.test.ts`, `space-edge-cases.test.ts`, `space-agent-coordination.test.ts`, `task-agent-lifecycle.test.ts`, `task-agent-skills.test.ts`, `space-chat-session.test.ts`: update old status references.
    - `helpers/space-test-helpers.ts`: update `waitForRunStatus`, `waitForNodeActivated` helpers for new status values.
 
 **Acceptance criteria:**
