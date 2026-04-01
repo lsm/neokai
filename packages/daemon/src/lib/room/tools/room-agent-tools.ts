@@ -5,7 +5,7 @@
  * the human user. The Room Agent session already exists (room:chat:${roomId}),
  * these tools are attached to it.
  *
- * Tools: create_goal, list_goals, update_goal, create_task, list_tasks,
+ * Tools: create_goal, list_goals, update_goal, reset_goal, create_task, list_tasks,
  *        update_task, cancel_task, stop_session, get_room_status, approve_task, reject_task,
  *        send_message_to_task, get_task_detail, set_schedule, pause_schedule, resume_schedule,
  *        record_metric, get_metrics, list_executions
@@ -140,6 +140,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
 			mission_type?: MissionType;
 			autonomy_level?: AutonomyLevel;
+			planning_attempts?: number;
 			structured_metrics?: Array<{
 				name: string;
 				target: number;
@@ -161,6 +162,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				args.priority === undefined &&
 				args.mission_type === undefined &&
 				args.autonomy_level === undefined &&
+				args.planning_attempts === undefined &&
 				args.structured_metrics === undefined
 			) {
 				return jsonResult({ success: false, error: 'No update fields provided.' });
@@ -168,13 +170,14 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 			let updated = goal;
 
-			// Collect patch fields: title, description, priority, missionType, autonomyLevel, structuredMetrics
+			// Collect patch fields: title, description, priority, missionType, autonomyLevel, planning_attempts, structuredMetrics
 			const hasPatchFields =
 				args.title !== undefined ||
 				args.description !== undefined ||
 				args.priority !== undefined ||
 				args.mission_type !== undefined ||
 				args.autonomy_level !== undefined ||
+				args.planning_attempts !== undefined ||
 				args.structured_metrics !== undefined;
 
 			if (hasPatchFields) {
@@ -184,6 +187,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				if (args.priority !== undefined) patch.priority = args.priority;
 				if (args.mission_type !== undefined) patch.missionType = args.mission_type;
 				if (args.autonomy_level !== undefined) patch.autonomyLevel = args.autonomy_level;
+				if (args.planning_attempts !== undefined) patch.planning_attempts = args.planning_attempts;
 				if (args.structured_metrics !== undefined) {
 					patch.structuredMetrics = args.structured_metrics.map((m) => ({
 						name: m.name,
@@ -1002,6 +1006,76 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				executions,
 			});
 		},
+
+		async reset_goal(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+
+			// Non-terminal task statuses — tasks in these states should be cancelled before reset
+			const nonTerminalStatuses = new Set([
+				'pending',
+				'in_progress',
+				'draft',
+				'review',
+				'rate_limited',
+				'usage_limited',
+			]);
+
+			// Hoist the runtime lookup so it isn't repeated on every loop iteration
+			const runtime = runtimeService?.getRuntime(roomId) ?? null;
+
+			// Cancel all in-progress linked tasks
+			for (const taskId of goal.linkedTaskIds) {
+				const task = await taskManager.getTask(taskId);
+				if (!task || !nonTerminalStatuses.has(task.status)) continue;
+
+				if (runtime) {
+					await runtime.cancelTask(taskId);
+					continue;
+				}
+
+				// Fallback path: no runtime available.
+				// Guard: if the task has an active session group we cannot safely cancel it
+				// without the runtime — the DB row would be updated but the agent sessions
+				// would keep running (same guard as `cancel_task`).
+				if (task.status === 'in_progress' || task.status === 'review') {
+					const activeGroup = groupRepo.getGroupByTaskId(taskId);
+					if (activeGroup && activeGroup.completedAt === null) {
+						return jsonResult({
+							success: false,
+							error:
+								`Cannot reset goal ${args.goal_id}: task ${taskId} (status '${task.status}') has an active session group but no runtime service is available to stop it. ` +
+								`The active worker session would not be stopped.`,
+						});
+					}
+				}
+
+				// No active session group — safe to cancel via taskManager
+				await taskManager.cancelTaskCascade(taskId);
+				if (daemonHub) {
+					const cancelledTask = await taskManager.getTask(taskId);
+					if (cancelledTask) {
+						void daemonHub.emit('room.task.update', {
+							sessionId: `room:${roomId}`,
+							roomId,
+							task: cancelledTask,
+						});
+					}
+				}
+			}
+
+			// Reset the goal state
+			const resetGoal = await goalManager.resetGoal(args.goal_id);
+
+			// Trigger a fresh planning tick if runtime is available
+			if (runtime) {
+				runtime.onGoalCreated(args.goal_id);
+			}
+
+			return jsonResult({ success: true, goal: resetGoal });
+		},
 	};
 }
 
@@ -1107,6 +1181,12 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.enum(['supervised', 'semi_autonomous'])
 					.optional()
 					.describe('Change autonomy level'),
+				planning_attempts: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.describe('Reset or set the planning attempts counter'),
 				structured_metrics: z
 					.array(
 						z.object({
@@ -1122,6 +1202,12 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.describe('Replace structured metrics for measurable missions'),
 			},
 			(args) => handlers.update_goal(args)
+		),
+		tool(
+			'reset_goal',
+			'Reset a goal to its initial state: cancels all linked tasks, clears linkedTaskIds, resets planning_attempts, consecutiveFailures, and replanCount to 0, and sets status to active. Use when a goal is stuck or needs a fresh start.',
+			{ goal_id: z.string().describe('ID of the goal to reset') },
+			(args) => handlers.reset_goal(args)
 		),
 		tool(
 			'create_task',
