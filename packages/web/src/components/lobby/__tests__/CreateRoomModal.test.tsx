@@ -1,20 +1,23 @@
-// @ts-nocheck
 /**
  * Tests for CreateRoomModal — workspace path collection and validation
  */
 
-import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
+import { render, cleanup, fireEvent, waitFor, act } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { signal } from '@preact/signals';
+import type { SystemState } from '@neokai/shared';
 import { CreateRoomModal } from '../CreateRoomModal';
 
 // Mock Portal to render inline
 vi.mock('../../ui/Portal.tsx', () => ({
-	Portal: ({ children }) => <div data-portal="true">{children}</div>,
+	Portal: ({ children }: { children: unknown }) => (
+		<div data-portal="true">{children as never}</div>
+	),
 }));
 
-// Mock systemState — controls what workspaceRoot is pre-filled with
-const mockSystemStateSignal = signal<{ workspaceRoot?: string } | null>(null);
+// Mock systemState — controls what workspaceRoot is pre-filled with.
+// Typed as a plain writable signal so tests can update it directly.
+const mockSystemStateSignal = signal<SystemState | null>(null);
 
 vi.mock('../../../lib/state', () => ({
 	get systemState() {
@@ -28,10 +31,19 @@ const DEFAULT_PROPS = {
 	onSubmit: vi.fn().mockResolvedValue(undefined),
 };
 
+/** Returns the workspace path input (second text input after the name field). */
+function getPathInput(): HTMLInputElement {
+	const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="text"]'));
+	// inputs[0] = Room Name, inputs[1] = Workspace Path
+	const pathInput = inputs[1];
+	if (!pathInput) throw new Error('Workspace path input not found');
+	return pathInput;
+}
+
 describe('CreateRoomModal', () => {
 	beforeEach(() => {
 		document.body.innerHTML = '';
-		mockSystemStateSignal.value = { workspaceRoot: '/home/user/projects' };
+		mockSystemStateSignal.value = { workspaceRoot: '/home/user/projects' } as SystemState;
 	});
 
 	afterEach(() => {
@@ -47,24 +59,61 @@ describe('CreateRoomModal', () => {
 		});
 
 		it('pre-fills workspace path from systemState workspaceRoot', () => {
-			mockSystemStateSignal.value = { workspaceRoot: '/home/user/projects' };
+			mockSystemStateSignal.value = { workspaceRoot: '/home/user/projects' } as SystemState;
 			render(<CreateRoomModal {...DEFAULT_PROPS} />);
-			const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-			const pathInput = inputs.find((i) => (i as HTMLInputElement).value === '/home/user/projects');
-			expect(pathInput).toBeTruthy();
+			expect(getPathInput().value).toBe('/home/user/projects');
 		});
 
 		it('pre-fills empty string when systemState has no workspaceRoot', () => {
 			mockSystemStateSignal.value = null;
 			render(<CreateRoomModal {...DEFAULT_PROPS} />);
-			const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-			// Should have a workspace path input (possibly empty)
-			expect(inputs.length).toBeGreaterThanOrEqual(2);
+			expect(getPathInput().value).toBe('');
 		});
 
 		it('shows helper text for workspace path', () => {
 			render(<CreateRoomModal {...DEFAULT_PROPS} />);
 			expect(document.body.textContent).toContain("Filesystem path for this room's workspace");
+		});
+
+		it('shows required asterisk on workspace path label', () => {
+			render(<CreateRoomModal {...DEFAULT_PROPS} />);
+			const labels = Array.from(document.querySelectorAll('label'));
+			const pathLabel = labels.find((l) => l.textContent?.includes('Workspace Path'));
+			expect(pathLabel).toBeTruthy();
+			expect(pathLabel?.querySelector('span')?.textContent).toBe('*');
+		});
+	});
+
+	describe('systemState late-arrival sync', () => {
+		it('updates workspace path when systemState arrives after mount', async () => {
+			mockSystemStateSignal.value = null;
+			render(<CreateRoomModal {...DEFAULT_PROPS} />);
+			// Initially empty
+			expect(getPathInput().value).toBe('');
+
+			// systemState arrives
+			await act(async () => {
+				mockSystemStateSignal.value = { workspaceRoot: '/late/arrival' } as SystemState;
+			});
+
+			expect(getPathInput().value).toBe('/late/arrival');
+		});
+
+		it('does not overwrite user-edited path when systemState changes', async () => {
+			mockSystemStateSignal.value = null;
+			render(<CreateRoomModal {...DEFAULT_PROPS} />);
+
+			// User types a custom path
+			const pathInput = getPathInput();
+			fireEvent.input(pathInput, { target: { value: '/my/custom/path' } });
+			expect(pathInput.value).toBe('/my/custom/path');
+
+			// systemState arrives — must not overwrite user's input
+			await act(async () => {
+				mockSystemStateSignal.value = { workspaceRoot: '/server/path' } as SystemState;
+			});
+
+			expect(getPathInput().value).toBe('/my/custom/path');
 		});
 	});
 
@@ -82,13 +131,11 @@ describe('CreateRoomModal', () => {
 			render(<CreateRoomModal {...DEFAULT_PROPS} />);
 
 			// Fill in room name
-			const nameInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+			const nameInput = document.querySelector<HTMLInputElement>('input[type="text"]')!;
 			fireEvent.input(nameInput, { target: { value: 'My Room' } });
 
 			// Clear workspace path
-			const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-			const pathInput = inputs[1] as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '' } });
+			fireEvent.input(getPathInput(), { target: { value: '' } });
 
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
@@ -101,12 +148,10 @@ describe('CreateRoomModal', () => {
 		it('shows inline error if workspace path is relative on submit', async () => {
 			render(<CreateRoomModal {...DEFAULT_PROPS} />);
 
-			const nameInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+			const nameInput = document.querySelector<HTMLInputElement>('input[type="text"]')!;
 			fireEvent.input(nameInput, { target: { value: 'My Room' } });
 
-			const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-			const pathInput = inputs[1] as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: 'relative/path' } });
+			fireEvent.input(getPathInput(), { target: { value: 'relative/path' } });
 
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
@@ -120,12 +165,10 @@ describe('CreateRoomModal', () => {
 			const onSubmit = vi.fn().mockResolvedValue(undefined);
 			render(<CreateRoomModal {...DEFAULT_PROPS} onSubmit={onSubmit} />);
 
-			const nameInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+			const nameInput = document.querySelector<HTMLInputElement>('input[type="text"]')!;
 			fireEvent.input(nameInput, { target: { value: 'My Room' } });
 
-			const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-			const pathInput = inputs[1] as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '' } });
+			fireEvent.input(getPathInput(), { target: { value: '' } });
 
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
@@ -142,7 +185,7 @@ describe('CreateRoomModal', () => {
 			render(<CreateRoomModal {...DEFAULT_PROPS} onSubmit={onSubmit} />);
 
 			// Fill name
-			const nameInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+			const nameInput = document.querySelector<HTMLInputElement>('input[type="text"]')!;
 			fireEvent.input(nameInput, { target: { value: 'My Room' } });
 
 			// Path is already pre-filled with /home/user/projects
@@ -167,7 +210,7 @@ describe('CreateRoomModal', () => {
 			const onSubmit = vi.fn().mockResolvedValue(undefined);
 			render(<CreateRoomModal {...DEFAULT_PROPS} onSubmit={onSubmit} />);
 
-			const nameInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+			const nameInput = document.querySelector<HTMLInputElement>('input[type="text"]')!;
 			fireEvent.input(nameInput, { target: { value: 'My Room' } });
 
 			const form = document.querySelector('form') as HTMLFormElement;
@@ -186,12 +229,10 @@ describe('CreateRoomModal', () => {
 			const onSubmit = vi.fn().mockResolvedValue(undefined);
 			render(<CreateRoomModal {...DEFAULT_PROPS} onSubmit={onSubmit} />);
 
-			const nameInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+			const nameInput = document.querySelector<HTMLInputElement>('input[type="text"]')!;
 			fireEvent.input(nameInput, { target: { value: 'My Room' } });
 
-			const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-			const pathInput = inputs[1] as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/custom/workspace' } });
+			fireEvent.input(getPathInput(), { target: { value: '/custom/workspace' } });
 
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
@@ -205,14 +246,10 @@ describe('CreateRoomModal', () => {
 	});
 
 	describe('form reset on close', () => {
-		it('resets all fields when closed', async () => {
+		it('calls onClose when cancel is clicked', () => {
 			const onClose = vi.fn();
 			render(<CreateRoomModal {...DEFAULT_PROPS} onClose={onClose} />);
 
-			const nameInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'My Room' } });
-
-			// Click cancel button
 			const cancelBtn = Array.from(document.querySelectorAll('button')).find(
 				(b) => b.textContent?.trim() === 'Cancel'
 			);

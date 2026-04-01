@@ -288,7 +288,8 @@ export default function Lobby() {
 				onCreateRoom={async (params) => {
 					const room = await lobbyStore.createRoom({
 						name: params.name,
-						defaultPath: params.defaultPath ?? '',
+						// NewSessionModal always provides defaultPath (selectedPath from the form)
+						defaultPath: params.defaultPath!,
 						...(params.background ? { background: params.background } : {}),
 						...(params.allowedPaths ? { allowedPaths: params.allowedPaths } : {}),
 					});

@@ -3,12 +3,12 @@
  *
  * Modal form for creating a new room with:
  * - Room name (required)
- * - Workspace path (required)
+ * - Workspace path (required, pre-filled from daemon workspaceRoot)
  * - Background context (optional)
  * - Form validation and error handling
  */
 
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { validateWorkspacePath } from '@neokai/shared';
 import { systemState } from '../../lib/state';
 import { Modal } from '../ui/Modal';
@@ -27,6 +27,21 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [pathError, setPathError] = useState<string | null>(null);
+
+	// Track whether the user has manually edited the path so we don't overwrite it
+	// when systemState arrives late (WebSocket delivers state after mount).
+	const userEditedPath = useRef(false);
+
+	// Sync workspacePath with daemon workspaceRoot when it first becomes available.
+	// Only updates the field if the user has not yet typed in it.
+	useEffect(() => {
+		const unsub = systemState.subscribe((state) => {
+			if (!userEditedPath.current) {
+				setWorkspacePath(state?.workspaceRoot ?? '');
+			}
+		});
+		return unsub;
+	}, []);
 
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
@@ -56,6 +71,7 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 			setName('');
 			setBackground('');
 			setWorkspacePath(systemState.value?.workspaceRoot ?? '');
+			userEditedPath.current = false;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create room');
 		} finally {
@@ -67,12 +83,14 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 		setName('');
 		setBackground('');
 		setWorkspacePath(systemState.value?.workspaceRoot ?? '');
+		userEditedPath.current = false;
 		setError(null);
 		setPathError(null);
 		onClose();
 	};
 
 	const handlePathInput = (value: string) => {
+		userEditedPath.current = true;
 		setWorkspacePath(value);
 		if (pathError) {
 			// Clear inline error as user types
@@ -106,7 +124,9 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 				</div>
 
 				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1.5">Workspace Path</label>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">
+						Workspace Path <span class="text-red-400">*</span>
+					</label>
 					<p class="text-xs text-gray-500 mb-2">Filesystem path for this room's workspace</p>
 					<input
 						type="text"
