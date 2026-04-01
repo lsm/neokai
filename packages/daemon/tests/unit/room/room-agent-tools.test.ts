@@ -2533,10 +2533,10 @@ describe('Room Agent Tools', () => {
 			expect(fullServer.name).toBe('room-agent');
 		});
 
-		it('full server exposes all 20 tools', () => {
+		it('full server exposes all 21 tools', () => {
 			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
 			const names = getRegisteredToolNames(fullServer as never);
-			expect(names).toHaveLength(20);
+			expect(names).toHaveLength(21);
 			expect(names).toContain('approve_task');
 			expect(names).toContain('reject_task');
 			expect(names).toContain('set_schedule');
@@ -2545,6 +2545,7 @@ describe('Room Agent Tools', () => {
 			expect(names).toContain('record_metric');
 			expect(names).toContain('get_metrics');
 			expect(names).toContain('list_executions');
+			expect(names).toContain('reset_goal');
 		});
 	});
 

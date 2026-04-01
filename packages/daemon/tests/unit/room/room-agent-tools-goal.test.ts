@@ -1,0 +1,439 @@
+import { mock } from 'bun:test';
+
+// Re-declare the SDK mock so it survives Bun's module isolation.
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+	query: mock(async () => ({ interrupt: () => {} })),
+	interrupt: mock(async () => {}),
+	supportedModels: mock(async () => {
+		throw new Error('SDK unavailable');
+	}),
+	createSdkMcpServer: mock((_opts: { name: string; tools: unknown[] }) => {
+		const registeredTools: Record<string, unknown> = {};
+		for (const t of _opts.tools ?? []) {
+			const name = (t as { name: string }).name;
+			if (name) registeredTools[name] = t;
+		}
+		return {
+			type: 'sdk' as const,
+			name: _opts.name,
+			version: '1.0.0',
+			tools: _opts.tools ?? [],
+			instance: {
+				connect() {},
+				disconnect() {},
+				_registeredTools: registeredTools,
+			},
+		};
+	}),
+	tool: mock((_name: string, _desc: string, _schema: unknown, _handler: unknown) => ({
+		name: _name,
+	})),
+}));
+
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
+import { TaskManager } from '../../../src/lib/room/managers/task-manager';
+import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
+import {
+	createRoomAgentToolHandlers,
+	createRoomAgentMcpServer,
+	createLeaderContextMcpServer,
+} from '../../../src/lib/room/tools/room-agent-tools';
+
+const SCHEMA_SQL = (roomId: string) => `
+	CREATE TABLE rooms (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE goals (
+		id TEXT PRIMARY KEY,
+		room_id TEXT NOT NULL,
+		title TEXT NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'active',
+		priority TEXT NOT NULL DEFAULT 'normal',
+		progress INTEGER DEFAULT 0,
+		linked_task_ids TEXT DEFAULT '[]',
+		metrics TEXT DEFAULT '{}',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		completed_at INTEGER,
+		planning_attempts INTEGER DEFAULT 0,
+		goal_review_attempts INTEGER DEFAULT 0,
+		mission_type TEXT NOT NULL DEFAULT 'one_shot'
+			CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+		autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+			CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+		schedule TEXT,
+		schedule_paused INTEGER NOT NULL DEFAULT 0,
+		next_run_at INTEGER,
+		structured_metrics TEXT,
+		max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+		max_planning_attempts INTEGER NOT NULL DEFAULT 5,
+		consecutive_failures INTEGER NOT NULL DEFAULT 0,
+		replan_count INTEGER NOT NULL DEFAULT 0,
+		short_id TEXT
+	);
+	CREATE TABLE tasks (
+		id TEXT PRIMARY KEY,
+		room_id TEXT NOT NULL,
+		title TEXT NOT NULL,
+		description TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		priority TEXT NOT NULL DEFAULT 'normal',
+		progress INTEGER,
+		current_step TEXT,
+		result TEXT,
+		error TEXT,
+		depends_on TEXT DEFAULT '[]',
+		task_type TEXT DEFAULT 'coding',
+		created_by_task_id TEXT,
+		assigned_agent TEXT DEFAULT 'coder',
+		created_at INTEGER NOT NULL,
+		started_at INTEGER,
+		completed_at INTEGER,
+		archived_at INTEGER,
+		active_session TEXT,
+		pr_url TEXT,
+		pr_number INTEGER,
+		pr_created_at INTEGER,
+		short_id TEXT,
+		updated_at INTEGER
+	);
+	CREATE TABLE session_groups (
+		id TEXT PRIMARY KEY,
+		group_type TEXT NOT NULL DEFAULT 'task',
+		ref_id TEXT NOT NULL,
+		state TEXT NOT NULL DEFAULT 'awaiting_worker',
+		version INTEGER NOT NULL DEFAULT 0,
+		metadata TEXT NOT NULL DEFAULT '{}',
+		created_at INTEGER NOT NULL,
+		completed_at INTEGER
+	);
+	CREATE TABLE session_group_members (
+		group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+		session_id TEXT NOT NULL,
+		role TEXT NOT NULL,
+		joined_at INTEGER NOT NULL,
+		PRIMARY KEY (group_id, session_id)
+	);
+	CREATE TABLE task_group_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+		kind TEXT NOT NULL,
+		payload_json TEXT,
+		created_at INTEGER NOT NULL
+	);
+	CREATE TABLE session_group_messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+		session_id TEXT,
+		role TEXT NOT NULL DEFAULT 'system',
+		message_type TEXT NOT NULL DEFAULT 'status',
+		content TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL
+	);
+	CREATE TABLE mission_metric_history (
+		id TEXT PRIMARY KEY,
+		goal_id TEXT NOT NULL,
+		metric_name TEXT NOT NULL,
+		value REAL NOT NULL,
+		recorded_at INTEGER NOT NULL,
+		FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
+	);
+	CREATE TABLE mission_executions (
+		id TEXT PRIMARY KEY,
+		goal_id TEXT NOT NULL,
+		execution_number INTEGER NOT NULL,
+		started_at INTEGER,
+		completed_at INTEGER,
+		status TEXT NOT NULL DEFAULT 'running',
+		result_summary TEXT,
+		task_ids TEXT NOT NULL DEFAULT '[]',
+		planning_attempts INTEGER NOT NULL DEFAULT 0,
+		FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+		UNIQUE(goal_id, execution_number)
+	);
+	INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test', ${Date.now()}, ${Date.now()});
+`;
+
+describe('Room Agent Tools - reset_goal and planning_attempts', () => {
+	let db: Database;
+	let goalManager: GoalManager;
+	let taskManager: TaskManager;
+	let groupRepo: SessionGroupRepository;
+	let handlers: ReturnType<typeof createRoomAgentToolHandlers>;
+	const roomId = 'room-1';
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		db.exec(SCHEMA_SQL(roomId));
+		goalManager = new GoalManager(db as never, roomId, noOpReactiveDb);
+		taskManager = new TaskManager(db as never, roomId, noOpReactiveDb);
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
+		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	function parseResult(result: { content: Array<{ type: string; text: string }> }) {
+		return JSON.parse(result.content[0].text) as Record<string, unknown>;
+	}
+
+	// -------------------------------------------------------------------------
+	// reset_goal tests
+	// -------------------------------------------------------------------------
+
+	describe('reset_goal', () => {
+		it('should return error for non-existent goal', async () => {
+			const result = parseResult(await handlers.reset_goal({ goal_id: 'nonexistent-id' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/not found/i);
+		});
+
+		it('should reset goal with linked tasks in non-terminal statuses', async () => {
+			// Create goal and link tasks with different statuses
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Test Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			// Create tasks with non-terminal and terminal statuses
+			const t1 = parseResult(
+				await handlers.create_task({ title: 'Task 1', description: 'desc', goal_id: goalId })
+			);
+			const t2 = parseResult(
+				await handlers.create_task({ title: 'Task 2', description: 'desc', goal_id: goalId })
+			);
+			const t3 = parseResult(
+				await handlers.create_task({ title: 'Task 3', description: 'desc', goal_id: goalId })
+			);
+
+			// Mark t2 as completed (terminal), t3 as cancelled (terminal), t1 remains pending
+			// Use 'manual' mode to bypass strict status transition validation in tests
+			await taskManager.setTaskStatus(t2.taskId as string, 'completed', { mode: 'manual' });
+			await taskManager.setTaskStatus(t3.taskId as string, 'cancelled', { mode: 'manual' });
+
+			// Set planning_attempts to non-zero
+			db.run('UPDATE goals SET planning_attempts = 3 WHERE id = ?', [goalId]);
+
+			// Reset the goal
+			const result = parseResult(await handlers.reset_goal({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			expect(result.goal).toBeDefined();
+
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.linkedTaskIds).toEqual([]);
+			expect(goal.planning_attempts).toBe(0);
+			expect(goal.consecutiveFailures).toBe(0);
+			expect(goal.replanCount).toBe(0);
+			expect(goal.status).toBe('active');
+
+			// Pending task (t1) should have been cancelled
+			const cancelledTask = await taskManager.getTask(t1.taskId as string);
+			expect(cancelledTask?.status).toBe('cancelled');
+		});
+
+		it('should cancel pending/in-progress tasks before resetting', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal With Tasks' }));
+			const goalId = goalResult.goalId as string;
+
+			// Create tasks in various non-terminal statuses
+			const t1 = parseResult(
+				await handlers.create_task({ title: 'Pending Task', description: 'desc', goal_id: goalId })
+			);
+
+			// Verify task is pending
+			const taskBefore = await taskManager.getTask(t1.taskId as string);
+			expect(taskBefore?.status).toBe('pending');
+
+			const result = parseResult(await handlers.reset_goal({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+
+			// Task should be cancelled
+			const taskAfter = await taskManager.getTask(t1.taskId as string);
+			expect(taskAfter?.status).toBe('cancelled');
+		});
+
+		it('should skip cancellation for terminal-status tasks', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			const t1 = parseResult(
+				await handlers.create_task({ title: 'Done Task', description: 'desc', goal_id: goalId })
+			);
+			await taskManager.setTaskStatus(t1.taskId as string, 'completed', { mode: 'manual' });
+
+			// Reset goal — completed task should remain completed (not be double-cancelled)
+			const result = parseResult(await handlers.reset_goal({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+
+			const task = await taskManager.getTask(t1.taskId as string);
+			expect(task?.status).toBe('completed');
+		});
+
+		it('should call runtime.cancelTask and runtime.onGoalCreated when runtime is available', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Runtime Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			const t1 = parseResult(
+				await handlers.create_task({ title: 'Task', description: 'desc', goal_id: goalId })
+			);
+
+			// Set up mock runtime
+			const cancelledIds: string[] = [];
+			const onGoalCreatedIds: string[] = [];
+			const mockRuntime = {
+				cancelTask: async (taskId: string) => {
+					cancelledIds.push(taskId);
+					await taskManager.setTaskStatus(taskId, 'cancelled');
+					return { success: true, cancelledTaskIds: [taskId] };
+				},
+				onGoalCreated: (gId: string) => {
+					onGoalCreatedIds.push(gId);
+				},
+			};
+			const runtimeService = {
+				getRuntime: (_roomId: string) => mockRuntime as never,
+			};
+
+			const handlersWithRuntime = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService,
+			});
+
+			const result = parseResult(await handlersWithRuntime.reset_goal({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+
+			// runtime.cancelTask should have been called for the pending task
+			expect(cancelledIds).toContain(t1.taskId);
+
+			// runtime.onGoalCreated should have been called after reset
+			expect(onGoalCreatedIds).toContain(goalId);
+		});
+
+		it('should fall back to taskManager.cancelTaskCascade and emit hub events when runtime is unavailable', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Fallback Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			const t1 = parseResult(
+				await handlers.create_task({ title: 'Task', description: 'desc', goal_id: goalId })
+			);
+
+			// Track hub events
+			const emittedEvents: Array<{ event: string; payload: unknown }> = [];
+			const mockDaemonHub = {
+				emit: async (event: string, payload: unknown) => {
+					emittedEvents.push({ event, payload });
+				},
+			};
+
+			const handlersWithHub = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				daemonHub: mockDaemonHub as never,
+				// no runtimeService → fallback path
+			});
+
+			const result = parseResult(await handlersWithHub.reset_goal({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+
+			// Task should be cancelled via cascade
+			const task = await taskManager.getTask(t1.taskId as string);
+			expect(task?.status).toBe('cancelled');
+
+			// Hub should have received room.task.update event
+			expect(emittedEvents.some((e) => e.event === 'room.task.update')).toBe(true);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// update_goal with planning_attempts
+	// -------------------------------------------------------------------------
+
+	describe('update_goal with planning_attempts', () => {
+		it('should persist planning_attempts when provided', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			// Set planning_attempts to a non-zero value
+			db.run('UPDATE goals SET planning_attempts = 4 WHERE id = ?', [goalId]);
+
+			// Reset via update_goal
+			const updateResult = parseResult(
+				await handlers.update_goal({ goal_id: goalId, planning_attempts: 0 })
+			);
+			expect(updateResult.success).toBe(true);
+			const goal = updateResult.goal as Record<string, unknown>;
+			expect(goal.planning_attempts).toBe(0);
+		});
+
+		it('should accept non-zero planning_attempts value', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal 2' }));
+			const goalId = goalResult.goalId as string;
+
+			const updateResult = parseResult(
+				await handlers.update_goal({ goal_id: goalId, planning_attempts: 2 })
+			);
+			expect(updateResult.success).toBe(true);
+			const goal = updateResult.goal as Record<string, unknown>;
+			expect(goal.planning_attempts).toBe(2);
+		});
+
+		it('should fail when no update fields are provided (planning_attempts absent)', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal 3' }));
+			const goalId = goalResult.goalId as string;
+
+			const result = parseResult(await handlers.update_goal({ goal_id: goalId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/no update fields/i);
+		});
+
+		it('should succeed with only planning_attempts as the update field', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal 4' }));
+			const goalId = goalResult.goalId as string;
+
+			// Only planning_attempts — no other fields
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, planning_attempts: 1 })
+			);
+			expect(result.success).toBe(true);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Negative test: reset_goal is NOT registered in createLeaderContextMcpServer
+	// -------------------------------------------------------------------------
+
+	describe('MCP server tool registration', () => {
+		it('reset_goal is registered in createRoomAgentMcpServer', () => {
+			const server = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const toolNames = (server.tools as Array<{ name: string }>).map((t) => t.name);
+			expect(toolNames).toContain('reset_goal');
+		});
+
+		it('reset_goal is NOT registered in createLeaderContextMcpServer', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const toolNames = (server.tools as Array<{ name: string }>).map((t) => t.name);
+			expect(toolNames).not.toContain('reset_goal');
+		});
+
+		it('createLeaderContextMcpServer tool list does not contain reset_goal via instance registry', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const registeredTools = (
+				server.instance as unknown as { _registeredTools: Record<string, unknown> }
+			)._registeredTools;
+			expect(Object.keys(registeredTools)).not.toContain('reset_goal');
+		});
+	});
+});
