@@ -28,9 +28,13 @@ async function createRoomWithLinkedGoalAndTask(
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+
 		// Create room
 		const roomRes = await hub.request('room.create', {
 			name: 'E2E Goal Indicator Test Room',
+			defaultPath: workspaceRoot,
 		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
@@ -70,8 +74,12 @@ async function createRoomWithUnlinkedTask(
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
+		const systemState2 = await hub.request('state.system', {});
+		const workspaceRoot2 = (systemState2 as { workspaceRoot: string }).workspaceRoot;
+
 		const roomRes = await hub.request('room.create', {
 			name: 'E2E Goal Indicator Unlinked Test Room',
+			defaultPath: workspaceRoot2,
 		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 

@@ -16,22 +16,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
+import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 // ─── RPC Infrastructure Helpers ───────────────────────────────────────────────
-
-/**
- * Create a room via RPC. For use in beforeEach setup only.
- */
-async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<string> {
-	await waitForWebSocketConnected(page);
-	return page.evaluate(async () => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', { name: 'E2E Short ID Display Test Room' });
-		return (res as { room: { id: string } }).room.id;
-	});
-}
 
 /**
  * Create a task via RPC and return both the UUID and the short ID.
@@ -75,7 +62,7 @@ test.describe('Short ID Display and Copy', () => {
 			.getByRole('button', { name: 'New Session', exact: true })
 			.waitFor({ timeout: 10000 });
 
-		roomId = await createRoom(page);
+		roomId = await createRoom(page, 'E2E Short ID Display Test Room');
 		({ taskId, shortId } = await createTask(page, roomId));
 	});
 
