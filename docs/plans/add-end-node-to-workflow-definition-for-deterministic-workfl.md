@@ -74,16 +74,19 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Subtasks:**
 1. Refactor `CompletionDetector.isComplete()` signature (in `packages/daemon/src/lib/space/runtime/completion-detector.ts`) to accept an options object instead of growing positional parameters. The new signature: `isComplete(options: { workflowRunId: string, channels?: WorkflowChannel[], nodes?: WorkflowNode[], endNodeId?: string }): boolean`. Update the existing call site accordingly.
-2. Add end-node completion logic: after the "no tasks" early return and before the all-agents-done check, if `endNodeId` is provided, find any task in the run whose `workflowNodeId === endNodeId` and check if it has a terminal status. If yes, return `true` immediately. This means the workflow completes as soon as the end node finishes, even if other nodes are still running (they will be cleaned up by the runtime). **Semantic note:** Any terminal status (`completed`, `needs_attention`, `failed`) on the end node triggers workflow run completion. The workflow run always transitions to `completed` status regardless of the end node's specific terminal status — this mirrors the existing `report_workflow_done` behavior which always sets the run to `completed`. If the end node `needs_attention`, that status is preserved on the task itself for visibility, but the run is still considered complete.
-3. Update the call site in `packages/daemon/src/lib/space/runtime/space-runtime.ts` (line ~798) to pass the options object including `meta.workflow.endNodeId`.
-4. **Critical: Orchestration task completion on auto-complete.** Currently `report_workflow_done` does three things: (a) transitions the run to `completed`, (b) marks the Task Agent's orchestration task as `completed`, and (c) emits `space.task.completed`. When the runtime auto-completes a run via CompletionDetector, it only does (a). Add post-completion logic in the runtime's run completion path (after `transitionStatus(runId, 'completed')`) to also: find the orchestration task (task with `workflowNodeId == null` in the run), set its status to `completed`, and emit the `space.task.completed` event. This prevents the orchestration task from dangling as `in_progress` forever.
-5. Add unit tests in `packages/daemon/tests/unit/space/completion-detector.test.ts`:
+2. Add end-node completion logic inside `isComplete()`: after the "no tasks" early return and before the all-agents-done check, if `endNodeId` is provided, find any task in the run whose `workflowNodeId === endNodeId` and check if it has a status in `TERMINAL_TASK_STATUSES` (`completed`, `needs_attention`, `cancelled`, `rate_limited`, `usage_limited`). If yes, return `true` immediately. This means the workflow completes as soon as the end node finishes, even if other nodes are still running (they will be cleaned up by the runtime). **Note:** `failed` is NOT a valid `SpaceTaskStatus` — always reference `TERMINAL_TASK_STATUSES` for the authoritative set.
+3. **Critical runtime ordering: end-node check must run before `needs_attention` early return.** In `processRunTick()` (in `space-runtime.ts`), the existing flow at lines ~656–685 checks if ANY task has `status === 'needs_attention'` and returns early — the `CompletionDetector.isComplete()` call at line ~798 is never reached. For end-node completion to work when the end node is `completed` but another node is `needs_attention`, the end-node check must be inserted **before** the `needs_attention` early-return block. Add a new check at the top of `processRunTick()` (after fetching tasks): if the workflow has `endNodeId`, look up the end node's task, and if it has a `completed` status, skip the `needs_attention` block and proceed directly to run completion. If the end node itself is `needs_attention`, let the existing `needs_attention` block handle it (the run escalates to `needs_attention` — the end node's job isn't cleanly done). This preserves the semantic that a `completed` end node always produces a `completed` run, while a `needs_attention` end node still surfaces as `needs_attention` on the run for human review.
+4. Update the call site in `packages/daemon/src/lib/space/runtime/space-runtime.ts` to pass the options object including `meta.workflow.endNodeId` to `completionDetector.isComplete()`.
+5. **Critical: Orchestration task completion on auto-complete.** Currently `report_workflow_done` does three things: (a) transitions the run to `completed`, (b) marks the Task Agent's orchestration task as `completed`, and (c) emits `space.task.completed`. When the runtime auto-completes a run via CompletionDetector, it only does (a). Add post-completion logic in the runtime's run completion path (after `transitionStatus(runId, 'completed')`) to also: find the orchestration task (task with `workflowNodeId == null` in the run), set its status to `completed`, and emit the `space.task.completed` event. This prevents the orchestration task from dangling as `in_progress` forever.
+6. Add unit tests in `packages/daemon/tests/unit/space/completion-detector.test.ts`:
    - Test: workflow with `endNodeId` completes when end node task is `completed`, even if other tasks are `in_progress`.
    - Test: workflow with `endNodeId` does NOT complete when end node task is `in_progress`.
-   - Test: workflow with `endNodeId` completes when end node task is `needs_attention` (still terminal).
+   - Test: workflow with `endNodeId` completes for each non-success terminal status (`needs_attention`, `cancelled`, `rate_limited`, `usage_limited`) — use a parameterized test over all `TERMINAL_TASK_STATUSES` values.
    - Test: workflow without `endNodeId` falls through to existing all-agents-done logic (backward compat).
    - Test: workflow with `endNodeId` but no task for that node yet does NOT complete.
-6. Add unit tests for the orchestration task auto-completion:
+7. Add unit tests for the runtime ordering and orchestration task auto-completion:
+   - Test: when end node is `completed` but another node is `needs_attention`, the run completes (not escalated to `needs_attention`).
+   - Test: when end node itself is `needs_attention`, the run escalates to `needs_attention` (not auto-completed).
    - Test: when runtime auto-completes a run, the orchestration task is also set to `completed`.
    - Test: `space.task.completed` event is emitted for the orchestration task.
 
@@ -251,8 +254,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 1. In `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`:
    - In `createWorkflow()`: after existing validation (line ~66), if `params.endNodeId` is provided, validate it references a node in `params.nodes`. Throw `WorkflowValidationError` if not found.
    - In `updateWorkflow()`: if `params.endNodeId` is provided (and not `null`), validate it references a node in the effective node list (either `params.nodes` if being updated, or `existing.nodes`).
-2. In `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts`:
-   - Verify that the RPC handlers for `workflow.create` and `workflow.update` pass `endNodeId` from the request params through to the manager. If the handlers destructure or whitelist specific fields, add `endNodeId` to the passthrough. Without this, the visual editor's "Set as End Node" button would silently fail because `endNodeId` would be stripped before reaching the repository.
+2. **Verification only (no code change expected):** In `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts`, confirm that the RPC handlers for `workflow.create` and `workflow.update` pass `endNodeId` through to the manager. The current create handler casts `data as CreateSpaceWorkflowParams` and passes it directly; the update handler uses rest-spread (`...updateParams`). Both pass all fields through automatically — no field whitelist exists today. Confirm this is still the case at implementation time. Only modify if a whitelist has been introduced since.
 3. Add unit tests in `packages/daemon/tests/unit/space/space-workflow.test.ts`:
    - Test: creating a workflow with valid `endNodeId` succeeds.
    - Test: creating a workflow with invalid `endNodeId` (not in nodes list) throws `WorkflowValidationError`.
@@ -263,7 +265,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Acceptance criteria:**
 - Invalid `endNodeId` references are rejected at create/update time.
 - `null` clears the field without validation error.
-- RPC handlers pass `endNodeId` through to the manager layer (no silent drops).
+- RPC handlers confirmed to pass `endNodeId` through automatically (no code change expected — verification only).
 - All existing workflow manager tests pass.
 
 **Dependencies:** Task 1, Task 2
