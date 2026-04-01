@@ -175,7 +175,7 @@ export function App() {
 
 	return (
 		<>
-			<div class="flex h-dvh overflow-hidden bg-dark-950 relative pt-safe">
+			<div class="flex h-safe-screen overflow-hidden bg-dark-950 relative pt-safe">
 				{/* Navigation Rail (desktop only) */}
 				<NavRail />
 
