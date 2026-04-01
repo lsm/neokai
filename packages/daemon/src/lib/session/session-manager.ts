@@ -430,12 +430,20 @@ export class SessionManager {
 	}
 
 	/**
-	 * Manually cleanup orphaned worktrees in a workspace
-	 * Returns array of cleaned up worktree paths
+	 * Manually cleanup orphaned worktrees in a workspace.
+	 * Callers must supply an explicit path — no global fallback here.
+	 * Returns array of cleaned up worktree paths.
 	 */
-	async cleanupOrphanedWorktrees(workspacePath?: string): Promise<string[]> {
-		const path = workspacePath || this.config.workspaceRoot;
-		return await this.worktreeManager.cleanupOrphanedWorktrees(path);
+	async cleanupOrphanedWorktrees(workspacePath: string): Promise<string[]> {
+		return await this.worktreeManager.cleanupOrphanedWorktrees(workspacePath);
+	}
+
+	/**
+	 * Get the daemon's global workspace root, if configured.
+	 * Used by RPC handlers to apply a fallback before calling cleanupOrphanedWorktrees.
+	 */
+	getWorkspaceRoot(): string | undefined {
+		return this.config.workspaceRoot;
 	}
 
 	/**
