@@ -21,13 +21,15 @@ describe('RoomRuntimeService', () => {
 	let mockRoomManager: RoomManager;
 	let mockSettingsManager: SettingsManager;
 
-	// Helper to create a room mock
+	// Helper to create a room mock.
+	// All rooms must have defaultPath set (post backfill-migration). Tests pass '/tmp' as the
+	// default so they don't exercise the legacy undefined path fallback.
 	function makeRoom(overrides: Partial<Room> = {}): Room {
 		return {
 			id: 'room-1',
 			name: 'Test Room',
-			allowedPaths: [],
-			defaultPath: undefined,
+			allowedPaths: [{ path: '/tmp' }],
+			defaultPath: '/tmp',
 			defaultModel: undefined,
 			allowedModels: undefined,
 			sessionIds: [],
@@ -164,11 +166,12 @@ describe('RoomRuntimeService', () => {
 		let setRuntimeMcpServersSpy: ReturnType<typeof mock>;
 		let roomCreatedHandler: ((event: { room: Room }) => void) | undefined;
 
+		// All rooms must have defaultPath set after the backfill migration.
 		const mockRoom = (): Room => ({
 			id: 'room-test',
 			name: 'Test Room',
-			allowedPaths: [],
-			defaultPath: undefined,
+			allowedPaths: [{ path: '/tmp/room-test' }],
+			defaultPath: '/tmp/room-test',
 			defaultModel: 'claude-3',
 			allowedModels: undefined,
 			sessionIds: [],
@@ -564,6 +567,131 @@ describe('RoomRuntimeService restart recovery', () => {
 		expect(mirrored.count).toBe(0);
 
 		runtime.stop();
+	});
+});
+
+describe('createOrGetRuntime — defaultPath guard', () => {
+	it('throws when room.defaultPath is undefined', () => {
+		const config: RoomRuntimeServiceConfig = {
+			db: {} as never,
+			messageHub: {} as never,
+			daemonHub: { on: () => () => {} } as never,
+			getApiKey: async () => null,
+			roomManager: { listRooms: () => [], getRoom: () => null } as never,
+			sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
+			defaultModel: 'test-model',
+			getGlobalSettings: () => ({}) as never,
+			settingsManager: { getEnabledMcpServersConfig: () => ({}) } as never,
+			reactiveDb: {} as never,
+		};
+
+		const service = new RoomRuntimeService(config);
+		const serviceAny = service as unknown as {
+			createOrGetRuntime: (room: Room) => RoomRuntime;
+		};
+
+		const roomWithoutPath: Room = {
+			id: 'room-no-path',
+			name: 'No Path Room',
+			allowedPaths: [],
+			defaultPath: undefined,
+			sessionIds: [],
+			status: 'active',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		};
+
+		// Guard fires before any DB access, so db: {} (no getDatabase) is fine here
+		expect(() => serviceAny.createOrGetRuntime(roomWithoutPath)).toThrow('missing defaultPath');
+	});
+
+	it('succeeds and returns a RoomRuntime when room.defaultPath is set (no defaultWorkspacePath needed)', async () => {
+		// This test verifies that:
+		// 1. A room with defaultPath creates a runtime without throwing.
+		// 2. defaultWorkspacePath is NOT required in RoomRuntimeServiceConfig —
+		//    rooms are fully self-contained with their own defaultPath.
+		const { Database: BunDatabase } = await import('bun:sqlite');
+		const rawDb = new BunDatabase(':memory:');
+
+		rawDb.exec(`
+			CREATE TABLE goals (id TEXT PRIMARY KEY, room_id TEXT, title TEXT, description TEXT DEFAULT '',
+				status TEXT DEFAULT 'active', priority TEXT DEFAULT 'normal', progress INTEGER DEFAULT 0,
+				linked_task_ids TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}',
+				created_at INTEGER, updated_at INTEGER, completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT DEFAULT 'one_shot', autonomy_level TEXT DEFAULT 'supervised',
+				schedule TEXT, schedule_paused INTEGER DEFAULT 0, next_run_at INTEGER,
+				structured_metrics TEXT, max_consecutive_failures INTEGER DEFAULT 3,
+				max_planning_attempts INTEGER DEFAULT 5, consecutive_failures INTEGER DEFAULT 0,
+				replan_count INTEGER DEFAULT 0, short_id TEXT);
+			CREATE TABLE tasks (id TEXT PRIMARY KEY, room_id TEXT, title TEXT, description TEXT,
+				status TEXT DEFAULT 'pending', priority TEXT DEFAULT 'normal', progress INTEGER,
+				current_step TEXT, result TEXT, error TEXT, depends_on TEXT DEFAULT '[]',
+				task_type TEXT DEFAULT 'coding', created_by_task_id TEXT, assigned_agent TEXT DEFAULT 'coder',
+				created_at INTEGER, started_at INTEGER, completed_at INTEGER, archived_at INTEGER,
+				active_session TEXT, pr_url TEXT, pr_number INTEGER, pr_created_at INTEGER,
+				short_id TEXT, updated_at INTEGER);
+			CREATE TABLE session_groups (id TEXT PRIMARY KEY, group_type TEXT DEFAULT 'task',
+				ref_id TEXT, state TEXT DEFAULT 'awaiting_worker', version INTEGER DEFAULT 0,
+				metadata TEXT DEFAULT '{}', created_at INTEGER, completed_at INTEGER);
+			CREATE TABLE session_group_members (group_id TEXT, session_id TEXT, role TEXT, joined_at INTEGER,
+				PRIMARY KEY (group_id, session_id));
+			CREATE TABLE task_group_events (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id TEXT,
+				kind TEXT, payload_json TEXT, created_at INTEGER);
+			CREATE TABLE session_group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id TEXT,
+				session_id TEXT, role TEXT DEFAULT 'system', message_type TEXT DEFAULT 'status',
+				content TEXT DEFAULT '', created_at INTEGER);
+		`);
+
+		const config: RoomRuntimeServiceConfig = {
+			db: {
+				getDatabase: () => rawDb,
+				getShortIdAllocator: () => undefined,
+				getSession: () => null,
+			} as never,
+			messageHub: {} as never,
+			daemonHub: { on: () => () => {} } as never,
+			getApiKey: async () => null,
+			roomManager: { listRooms: () => [], getRoom: () => null } as never,
+			sessionManager: {
+				getSessionAsync: async () => null,
+				registerSession: () => {},
+				unregisterSession: () => {},
+			} as never,
+			// defaultWorkspacePath intentionally omitted — it is now optional.
+			// createOrGetRuntime must work without it when room.defaultPath is set.
+			defaultModel: 'test-model',
+			getGlobalSettings: () => ({}) as never,
+			settingsManager: { getEnabledMcpServersConfig: () => ({}) } as never,
+			reactiveDb: { onChange: () => () => {}, emit: async () => {} } as never,
+		};
+
+		const service = new RoomRuntimeService(config);
+		const serviceAny = service as unknown as {
+			createOrGetRuntime: (room: Room, autoStart?: boolean) => RoomRuntime;
+		};
+
+		const room: Room = {
+			id: 'room-custom',
+			name: 'Custom Path Room',
+			allowedPaths: [{ path: '/custom/workspace' }],
+			defaultPath: '/custom/workspace',
+			sessionIds: [],
+			status: 'active',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		};
+
+		// Should not throw — room has defaultPath set and defaultWorkspacePath is absent
+		const runtime = serviceAny.createOrGetRuntime(room, false /* don't autoStart */);
+		expect(runtime).toBeDefined();
+		// Verify the returned value is a RoomRuntime instance
+		const { RoomRuntime: RoomRuntimeClass } = await import(
+			'../../../src/lib/room/runtime/room-runtime'
+		);
+		expect(runtime).toBeInstanceOf(RoomRuntimeClass);
+
+		rawDb.close();
 	});
 });
 

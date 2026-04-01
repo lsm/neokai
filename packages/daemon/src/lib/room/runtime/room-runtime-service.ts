@@ -57,7 +57,8 @@ export interface RoomRuntimeServiceConfig {
 	getApiKey: () => Promise<string | null>;
 	roomManager: RoomManager;
 	sessionManager: SessionManager;
-	defaultWorkspacePath: string;
+	/** @deprecated Will be removed in Milestone 5 once workspaceRoot is fully optional at daemon level. */
+	defaultWorkspacePath?: string;
 	defaultModel: string;
 	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
 	getGlobalSettings: () => GlobalSettings;
@@ -626,6 +627,21 @@ export class RoomRuntimeService {
 		const existing = this.runtimes.get(room.id);
 		if (existing) return existing;
 
+		// All rooms must have defaultPath after the backfill migration (migration 70).
+		// Guard early — before any DB access — so the error is clear and the stack is clean.
+		// If this is somehow missing, it is a data integrity bug — fail loudly rather than
+		// silently falling back to the daemon's global workspace root.
+		if (!room.defaultPath) {
+			log.error(
+				`Room ${room.id} has no defaultPath — this should never happen after backfill migration. ` +
+					`Refusing to create runtime with an implicit workspace path.`
+			);
+			throw new Error(
+				`Room ${room.id} is missing defaultPath. Run the backfill migration or set a defaultPath on the room.`
+			);
+		}
+		const workspacePath = room.defaultPath;
+
 		const rawDb = this.ctx.db.getDatabase();
 		const allocator = this.ctx.db.getShortIdAllocator();
 		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
@@ -634,8 +650,6 @@ export class RoomRuntimeService {
 		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
-
-		const workspacePath = room.defaultPath ?? this.ctx.defaultWorkspacePath;
 
 		const roomConfig = (room.config ?? {}) as Record<string, unknown>;
 		const rawRounds = roomConfig.maxReviewRounds;
@@ -768,6 +782,15 @@ export class RoomRuntimeService {
 				// Note: setRuntimeMcpServers() replaces the config used for the NEXT query; it does
 				// NOT restart any in-flight query. This is intentional — MCP server changes between
 				// queries are the expected use case, and disrupting an active query is not safe.
+				//
+				// Note: getEnabledMcpServersConfig() reads from the global workspace path that
+				// the SettingsManager was constructed with (i.e., the daemon's workspaceRoot), NOT
+				// from room.defaultPath. This is acceptable for now — per-room MCP configuration
+				// is out of scope for the current milestone. The room chat session's workspacePath
+				// is already set correctly from room.defaultPath via the room.create handler,
+				// which is what matters for session-scoped workspace isolation.
+				// TODO(Milestone 5): When workspaceRoot becomes optional, revisit this to create a
+				// room-scoped SettingsManager using room.defaultPath if needed.
 				const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
 				const registryMcpServers =
 					this.ctx.appMcpManager?.getEnabledMcpConfigsForRoom(room.id) ?? {};
