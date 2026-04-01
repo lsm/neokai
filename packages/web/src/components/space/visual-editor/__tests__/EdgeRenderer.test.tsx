@@ -42,6 +42,7 @@ import {
 	computeChannelEdgePoints,
 	buildChannelPathD,
 	buildVisibleChannelPathD,
+	getOrthogonalPathMidpointWithAngle,
 } from '../EdgeRenderer';
 import type { EdgeRendererProps } from '../EdgeRenderer';
 import type { NodePosition } from '../types';
@@ -715,7 +716,51 @@ describe('EdgeRenderer — channel edge rendering', () => {
 			},
 		];
 		const { getByTestId } = renderEdgesWithChannels({ channels });
+		// textContent includes only the <text> label (the polygon has no text content)
 		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Shell');
+	});
+
+	it('one-way gated badge renders a directional arrow polygon', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+			},
+		];
+		const { getByTestId, queryByTestId } = renderEdgesWithChannels({ channels });
+		// Arrow polygon should be present for one-way
+		expect(queryByTestId('channel-gate-arrow-step-1-step-2')).not.toBeNull();
+		// Badge group should expose the gate angle attribute
+		const badge = getByTestId('channel-gate-step-1-step-2');
+		expect(badge.getAttribute('data-gate-angle')).not.toBeNull();
+	});
+
+	it('bidirectional gated badge does not render a directional arrow polygon', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				gateType: 'check',
+			},
+		];
+		const { queryByTestId } = renderEdgesWithChannels({ channels });
+		expect(queryByTestId('channel-gate-arrow-step-1-step-2')).toBeNull();
+	});
+
+	it('bidirectional gated badge label is prefixed with ⇄', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				gateType: 'check',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('⇄ Check');
 	});
 
 	it('renders a loop badge when a channel is cyclic', () => {
@@ -775,5 +820,96 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		const channelEndMarker = defs!.querySelector('marker[id*="channel-end"]');
 		expect(channelEndMarker).not.toBeNull();
 		expect(channelEndMarker?.getAttribute('orient')).toBe('auto-start-reverse');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getOrthogonalPathMidpointWithAngle
+// ---------------------------------------------------------------------------
+
+describe('getOrthogonalPathMidpointWithAngle', () => {
+	it('returns angle=0 for a single horizontal rightward segment', () => {
+		const pts = [
+			{ x: 0, y: 0 },
+			{ x: 100, y: 0 },
+		];
+		const result = getOrthogonalPathMidpointWithAngle(pts);
+		expect(result.x).toBe(50);
+		expect(result.y).toBe(0);
+		expect(result.angle).toBe(0);
+	});
+
+	it('returns angle=180 for a leftward horizontal segment', () => {
+		const pts = [
+			{ x: 100, y: 0 },
+			{ x: 0, y: 0 },
+		];
+		const result = getOrthogonalPathMidpointWithAngle(pts);
+		expect(result.x).toBe(50);
+		expect(result.y).toBe(0);
+		expect(result.angle).toBe(180);
+	});
+
+	it('returns angle=90 for a downward vertical segment', () => {
+		const pts = [
+			{ x: 0, y: 0 },
+			{ x: 0, y: 100 },
+		];
+		const result = getOrthogonalPathMidpointWithAngle(pts);
+		expect(result.x).toBe(0);
+		expect(result.y).toBe(50);
+		expect(result.angle).toBe(90);
+	});
+
+	it('returns angle=270 for an upward vertical segment', () => {
+		const pts = [
+			{ x: 0, y: 100 },
+			{ x: 0, y: 0 },
+		];
+		const result = getOrthogonalPathMidpointWithAngle(pts);
+		expect(result.x).toBe(0);
+		expect(result.y).toBe(50);
+		expect(result.angle).toBe(270);
+	});
+
+	it('returns the angle of the segment the midpoint falls on in a multi-segment L-path', () => {
+		// Path: right 60px then down 60px  (total=120, midpoint=60px along)
+		// Midpoint is exactly at the end of the first segment (the corner).
+		// The loop condition is `traversed + segmentLength < midpointDistance` (strict <),
+		// so when traversed=0 and segmentLength=60 == midpointDistance=60, the strict <
+		// is false and the midpoint falls ON the first (rightward) segment.
+		const pts = [
+			{ x: 0, y: 0 },
+			{ x: 60, y: 0 },
+			{ x: 60, y: 60 },
+		];
+		const result = getOrthogonalPathMidpointWithAngle(pts);
+		expect(result.x).toBe(60);
+		expect(result.y).toBe(0);
+		expect(result.angle).toBe(0); // horizontal rightward segment
+	});
+
+	it('midpoint angle follows the segment with more path length', () => {
+		// Path: right 20px then down 100px (total=120, midpoint=60px)
+		// First segment ends at 20px, so midpoint (60px) is 40px into second segment.
+		const pts = [
+			{ x: 0, y: 0 },
+			{ x: 20, y: 0 },
+			{ x: 20, y: 100 },
+		];
+		const result = getOrthogonalPathMidpointWithAngle(pts);
+		expect(result.x).toBe(20);
+		expect(result.y).toBe(40);
+		expect(result.angle).toBe(90);
+	});
+
+	it('returns angle=0 and last point when all points are equal', () => {
+		const pts = [
+			{ x: 5, y: 5 },
+			{ x: 5, y: 5 },
+		];
+		const result = getOrthogonalPathMidpointWithAngle(pts);
+		// Normalizes to a single point
+		expect(result.angle).toBe(0);
 	});
 });

@@ -97,6 +97,12 @@ const CHANNEL_MARKER_SIZE = 7;
 const CHANNEL_GATE_BADGE_HEIGHT = 20;
 const CHANNEL_GATE_BADGE_HORIZONTAL_PADDING = 8;
 const CHANNEL_GATE_BADGE_CHAR_WIDTH = 7;
+/** Width of the directional arrow triangle rendered on one-way gate badges */
+const CHANNEL_GATE_ARROW_WIDTH = 8;
+/** Gap between the arrow indicator and the gate label text */
+const CHANNEL_GATE_ARROW_GAP = 4;
+/** Total horizontal space the arrow indicator + gap occupies */
+const CHANNEL_GATE_ARROW_TOTAL = CHANNEL_GATE_ARROW_WIDTH + CHANNEL_GATE_ARROW_GAP;
 const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
 const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
@@ -354,6 +360,64 @@ function getOrthogonalPathMidpoint(points: Point2D[]): Point2D {
 	}
 
 	return normalized[normalized.length - 1];
+}
+
+export interface OrthogonalMidpointWithAngle extends Point2D {
+	/** Direction angle in degrees: 0 = right, 90 = down, 180 = left, 270 = up */
+	angle: number;
+}
+
+/**
+ * Like `getOrthogonalPathMidpoint` but also returns the direction angle (in
+ * degrees, clockwise) of the path segment that the midpoint falls on.
+ * Because orthogonal paths are always axis-aligned the angle is always one of
+ * 0, 90, 180, or 270.
+ */
+export function getOrthogonalPathMidpointWithAngle(points: Point2D[]): OrthogonalMidpointWithAngle {
+	const normalized = normalizeOrthogonalPoints(points);
+	if (normalized.length === 0) return { x: 0, y: 0, angle: 0 };
+	if (normalized.length === 1) return { ...normalized[0], angle: 0 };
+
+	let totalLength = 0;
+	for (let index = 1; index < normalized.length; index += 1) {
+		totalLength +=
+			Math.abs(normalized[index].x - normalized[index - 1].x) +
+			Math.abs(normalized[index].y - normalized[index - 1].y);
+	}
+
+	const midpointDistance = totalLength / 2;
+	let traversed = 0;
+
+	for (let index = 1; index < normalized.length; index += 1) {
+		const start = normalized[index - 1];
+		const end = normalized[index];
+		const segmentLength = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+		if (traversed + segmentLength < midpointDistance) {
+			traversed += segmentLength;
+			continue;
+		}
+
+		const distanceIntoSegment = midpointDistance - traversed;
+		if (start.x === end.x) {
+			// Vertical segment
+			const angle = end.y > start.y ? 90 : 270;
+			return {
+				x: start.x,
+				y: start.y + Math.sign(end.y - start.y) * distanceIntoSegment,
+				angle,
+			};
+		}
+
+		// Horizontal segment
+		const angle = end.x > start.x ? 0 : 180;
+		return {
+			x: start.x + Math.sign(end.x - start.x) * distanceIntoSegment,
+			y: start.y,
+			angle,
+		};
+	}
+
+	return { ...normalized[normalized.length - 1], angle: 0 };
 }
 
 function roundedOrthogonalPath(points: Point2D[], cornerRadius = 14): string {
@@ -688,7 +752,14 @@ export function EdgeRenderer({
 				const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
 				const strokeDasharray = isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
 				const strokeOpacity = isSelected ? 1 : 0.85;
-				const gateBadgePosition = isGated ? getOrthogonalPathMidpoint(visiblePoints) : null;
+				// One-way gates compute the path direction angle for the arrow indicator.
+				// Bidirectional gates only need position (no angle required).
+				const gateBadgeMidpoint = isGated
+					? !isBidirectional
+						? getOrthogonalPathMidpointWithAngle(visiblePoints)
+						: { ...getOrthogonalPathMidpoint(visiblePoints), angle: 0 }
+					: null;
+				const gateBadgePosition = gateBadgeMidpoint;
 				const loopBadgePosition = isCyclic
 					? {
 							x: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).x,
@@ -700,10 +771,15 @@ export function EdgeRenderer({
 				const gateColor = channel.gateType
 					? CHANNEL_GATE_BADGE_COLORS[channel.gateType]
 					: CHANNEL_EDGE_COLOR;
-				const gateLabel = channel.gateType ? CHANNEL_GATE_BADGE_LABELS[channel.gateType] : 'Gate';
+				const gateLabelBase = channel.gateType
+					? CHANNEL_GATE_BADGE_LABELS[channel.gateType]
+					: 'Gate';
+				// Bidirectional badges prepend the ⇄ glyph; one-way badges render an SVG arrow.
+				const gateLabel = isBidirectional ? `⇄ ${gateLabelBase}` : gateLabelBase;
 				const gateBadgeWidth =
 					gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
-					CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
+					CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2 +
+					(!isBidirectional && isGated ? CHANNEL_GATE_ARROW_TOTAL + 2 : 0);
 				const loopBadgeWidth =
 					'Loop'.length * CHANNEL_GATE_BADGE_CHAR_WIDTH + CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
 
@@ -766,6 +842,7 @@ export function EdgeRenderer({
 							<g
 								transform={`translate(${gateBadgePosition.x}, ${gateBadgePosition.y})`}
 								data-testid={`channel-gate-${channel.fromStepId}-${channel.toStepId}`}
+								data-gate-angle={!isBidirectional ? String(gateBadgePosition.angle) : undefined}
 								style={{
 									pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
 									cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
@@ -789,8 +866,21 @@ export function EdgeRenderer({
 									stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
 									strokeWidth="1"
 								/>
+								{!isBidirectional && (
+									// Directional arrow triangle for one-way channels.
+									// Layout: [arrow(8px) | gap(4px) | text] all centered at x=0.
+									// textX = ARROW_TOTAL/2 = 6, arrowCenterX = -(textWidth/2 + ARROW_GAP/2).
+									// The triangle points right by default (angle=0) and is rotated
+									// to match the path direction via the data-gate-angle attribute.
+									<polygon
+										points="-4,-5 4,0 -4,5"
+										fill={isSelected ? 'white' : gateColor}
+										transform={`translate(${-(gateLabelBase.length * CHANNEL_GATE_BADGE_CHAR_WIDTH) / 2 - CHANNEL_GATE_ARROW_GAP / 2}, 0) rotate(${gateBadgePosition.angle})`}
+										data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
+									/>
+								)}
 								<text
-									x="0"
+									x={!isBidirectional ? CHANNEL_GATE_ARROW_TOTAL / 2 : 0}
 									y="4"
 									textAnchor="middle"
 									fontSize="11"
