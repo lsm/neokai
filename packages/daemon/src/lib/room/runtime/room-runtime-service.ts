@@ -860,6 +860,8 @@ export class RoomRuntimeService {
 							);
 							runtime.stop();
 							this.runtimes.delete(event.roomId);
+							this.observers.delete(event.roomId);
+							this.roomAgentMcpServers.delete(event.roomId);
 							this.createOrGetRuntime(room);
 							return;
 						}

@@ -164,6 +164,7 @@ export function setupRoomHandlers(
 
 		// Guard: validate new defaultPath and check for active task groups
 		let updatedAllowedPaths = params.allowedPaths;
+		let defaultPathChanged = false;
 		if (params.defaultPath !== undefined) {
 			const currentRoom = roomManager.getRoom(params.roomId);
 			if (!currentRoom) {
@@ -171,6 +172,7 @@ export function setupRoomHandlers(
 			}
 
 			if (params.defaultPath !== currentRoom.defaultPath) {
+				defaultPathChanged = true;
 				// Validate the new path (only the incoming path — current path may be a sentinel value)
 				const pathValidation = validateWorkspacePath(params.defaultPath);
 				if (!pathValidation.valid) {
@@ -238,7 +240,7 @@ export function setupRoomHandlers(
 		// both the DB and the in-memory AgentSession metadata via updateSession(), so
 		// resolveSessionContext (which re-fetches from DB on cache miss) is always
 		// consistent — no additional cache invalidation is needed.
-		if (params.defaultPath !== undefined && room.defaultPath && sessionManager) {
+		if (defaultPathChanged && room.defaultPath && sessionManager) {
 			const roomChatSessionId = `room:chat:${room.id}`;
 			try {
 				const existingSession = sessionManager.getSessionFromDB(roomChatSessionId);

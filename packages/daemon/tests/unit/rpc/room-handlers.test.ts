@@ -675,6 +675,32 @@ describe('Room RPC Handlers', () => {
 			expect(updateSessionMock).not.toHaveBeenCalled();
 		});
 
+		it('does not sync workspacePath when defaultPath is unchanged', async () => {
+			// mockRoom has defaultPath: tempDir — sending the same value should be a no-op
+			const updateSessionMock = mock(async () => {});
+			const existingSession: Partial<Session> = {
+				id: 'room:chat:room-123',
+				workspacePath: tempDir,
+			};
+			const sessionManager = {
+				getSessionFromDB: mock(() => existingSession as Session),
+				updateSession: updateSessionMock,
+			} as unknown as SessionManager;
+
+			const { hub, handlers } = createMockMessageHub();
+			const { roomManager } = createMockRoomManager();
+			setupRoomHandlers(hub, roomManager, daemonHubData.daemonHub, sessionManager);
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			// Send the same defaultPath that the room already has
+			await handler!({ roomId: 'room-123', defaultPath: tempDir }, {});
+
+			// defaultPath did not change — no workspacePath sync needed
+			expect(updateSessionMock).not.toHaveBeenCalled();
+		});
+
 		it('does not sync workspacePath when room chat session does not exist', async () => {
 			const updateSessionMock = mock(async () => {});
 			const sessionManager = {

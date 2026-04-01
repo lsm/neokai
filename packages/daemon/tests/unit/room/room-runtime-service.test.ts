@@ -900,10 +900,17 @@ describe('room.updated — stop and recreate runtime when defaultPath changes', 
 		await new Promise((r) => setTimeout(r, 0));
 
 		// Grab the created runtime and spy on stop()
-		const serviceAny = service as unknown as { runtimes: Map<string, RoomRuntime> };
+		const serviceAny = service as unknown as {
+			runtimes: Map<string, RoomRuntime>;
+			observers: Map<string, SessionObserver>;
+		};
 		const oldRuntime = serviceAny.runtimes.get('room-1');
 		expect(oldRuntime).toBeDefined();
 		expect(oldRuntime!.taskGroupManager.workspacePath).toBe('/old/workspace');
+
+		// Capture the observer that was registered for the old runtime
+		const oldObserver = serviceAny.observers.get('room-1');
+		expect(oldObserver).toBeDefined();
 
 		let stopCalled = false;
 		const originalStop = oldRuntime!.stop.bind(oldRuntime!);
@@ -915,6 +922,8 @@ describe('room.updated — stop and recreate runtime when defaultPath changes', 
 		// Emit room.updated with new defaultPath
 		expect(roomUpdatedHandlers.length).toBeGreaterThan(0);
 		roomUpdatedHandlers[0]!({ roomId: 'room-1', room: updatedRoom });
+		// Allow async setupRoomAgentSession in createOrGetRuntime to settle
+		await new Promise((r) => setTimeout(r, 0));
 
 		// Old runtime should be stopped
 		expect(stopCalled).toBe(true);
@@ -924,6 +933,12 @@ describe('room.updated — stop and recreate runtime when defaultPath changes', 
 		expect(newRuntime).toBeDefined();
 		expect(newRuntime).not.toBe(oldRuntime);
 		expect(newRuntime!.taskGroupManager.workspacePath).toBe('/new/workspace');
+
+		// The observer for the old runtime must have been evicted from the map
+		// so DaemonHub subscriptions (from old observer) don't dangle.
+		// The new entry is either absent (no session found) or a fresh observer.
+		const newObserver = serviceAny.observers.get('room-1');
+		expect(newObserver).not.toBe(oldObserver);
 	});
 
 	it('does NOT stop/recreate runtime when defaultPath is unchanged', async () => {
