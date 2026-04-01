@@ -470,6 +470,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Update step 6: "The workflow runtime automatically detects completion when the end node finishes. You do not need to detect or signal workflow completion."
    - Update step 4: "Monitoring task progress — the workflow runtime handles completion automatically when the end node finishes."
    - Note: Task Agent does NOT call `report_result` to self-terminate — runtime auto-completes.
+   - **Cross-ref Task 11.6:** Document the `get_workflow_run` output contract change in the system prompt — the tool now returns `{ run, executions }` (where `executions` is `NodeExecution[]`) instead of `{ run, tasks }`. The Task Agent must know execution status lives in `executions`, not `tasks`.
 
 5. **Update tests:**
    - Remove `report_workflow_done` tests from `task-agent-tool-schemas.test.ts`, `task-agent-tools.test.ts`, `task-agent-collaboration.test.ts`.
@@ -585,7 +586,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 1. **Zod schema updates** (`packages/daemon/src/lib/space/export-format.ts`):
    - **`exportedWorkflowNodeAgentSchema`** (line 62): Change `systemPrompt: z.string().optional()` to a union that accepts both legacy plain strings and new structured objects: `systemPrompt: z.union([z.string(), z.object({ mode: z.enum(['override', 'expand']), value: z.string() })]).optional()`. Same for `instructions`. This allows the Zod validator to accept both legacy exports (plain string) and new exports (`{ mode, value }`).
    - **`exportedWorkflowNodeSchema`** (line 84): Remove `systemPrompt: z.string().optional()`, `instructions: z.string().optional()`, and `model: z.string().optional()` — these node-level fields are removed (Task 1.10).
-   - **`exportedWorkflowBaseSchema`** (line 133): Add `endNode: z.string().min(1).optional()` — validates the optional `endNode` field on import. Remove `rules: z.array(exportedWorkflowRuleSchema)` (rules are removed).
+   - **`exportedWorkflowBaseSchema`** (line 133): Add `endNode: z.string().min(1).optional()` — validates the optional `endNode` field on import. For `rules`: do NOT hard-remove from the Zod schema — legacy exports will still contain `rules` arrays. Instead, keep `rules` as `z.array(exportedWorkflowRuleSchema).optional()` (change from required to optional) so legacy exports pass validation, then strip `rules` during import processing (do not persist). Alternatively, use `.passthrough()` on the schema so unknown fields are accepted and silently ignored. Either approach prevents legacy export bundles from being rejected at the Zod validation layer.
    - **`exportedAgentBaseSchema`** (line 121): Add `instructions: z.string().optional()`. Remove `role: z.string().min(1)` (role is removed). Remove `config: z.record(...)` (toolConfig is removed).
 2. **Export format** (`packages/daemon/src/lib/space/export-format.ts`):
    - Add `endNode` mapping (UUID → name), optional.
