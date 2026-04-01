@@ -183,7 +183,7 @@ describe('Room RPC Handlers', () => {
 				name: 'Full Room',
 				background: 'A full featured room',
 				allowedPaths: [],
-				defaultPath: undefined,
+				defaultPath: '',
 			});
 		});
 

@@ -266,7 +266,7 @@ export default function Lobby() {
 				isOpen={isCreateRoomModalOpen}
 				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
-					const room = await lobbyStore.createRoom(params);
+					const room = await lobbyStore.createRoom({ ...params, defaultPath: '' });
 					if (room) {
 						createRoomModalSignal.value = false;
 						navigateToRoom(room.id);
@@ -282,7 +282,10 @@ export default function Lobby() {
 				recentPaths={recentPaths}
 				rooms={rooms}
 				onCreateRoom={async (params) => {
-					const room = await lobbyStore.createRoom(params);
+					const room = await lobbyStore.createRoom({
+						...params,
+						defaultPath: params.defaultPath ?? '',
+					});
 					return room;
 				}}
 			/>

@@ -211,8 +211,8 @@ export interface CreateRoomParams {
 	background?: string;
 	/** Workspace paths that can be accessed in this room */
 	allowedPaths?: WorkspacePath[];
-	/** Default workspace path for new sessions */
-	defaultPath?: string;
+	/** Default workspace path for new sessions (required; must be an absolute path) */
+	defaultPath: string;
 	/** Default model for new sessions */
 	defaultModel?: string;
 	/** Allowed models for this room (empty/undefined = all models allowed) */

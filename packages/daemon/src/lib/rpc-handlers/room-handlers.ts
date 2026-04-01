@@ -51,7 +51,7 @@ export function setupRoomHandlers(
 
 		// Auto-populate workspace paths from workspaceRoot if not provided
 		const allowedPaths = params.allowedPaths ?? (workspaceRoot ? [{ path: workspaceRoot }] : []);
-		const defaultPath = params.defaultPath ?? (workspaceRoot ? workspaceRoot : undefined);
+		const defaultPath = params.defaultPath ?? workspaceRoot ?? '';
 
 		const room = roomManager.createRoom({
 			name: params.name,
