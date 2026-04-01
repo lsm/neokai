@@ -3,25 +3,30 @@
  *
  * Modal form for creating a new room with:
  * - Room name (required)
+ * - Workspace path (required)
  * - Background context (optional)
  * - Form validation and error handling
  */
 
 import { useState } from 'preact/hooks';
+import { validateWorkspacePath } from '@neokai/shared';
+import { systemState } from '../../lib/state';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 
 interface CreateRoomModalProps {
 	isOpen: boolean;
 	onClose: () => void;
-	onSubmit: (params: { name: string; background?: string }) => Promise<void>;
+	onSubmit: (params: { name: string; background?: string; defaultPath: string }) => Promise<void>;
 }
 
 export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalProps) {
 	const [name, setName] = useState('');
+	const [workspacePath, setWorkspacePath] = useState(() => systemState.value?.workspaceRoot ?? '');
 	const [background, setBackground] = useState('');
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [pathError, setPathError] = useState<string | null>(null);
 
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
@@ -30,18 +35,27 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 			return;
 		}
 
+		const pathValidation = validateWorkspacePath(workspacePath);
+		if (!pathValidation.valid) {
+			setPathError(pathValidation.error ?? 'Invalid workspace path');
+			return;
+		}
+
 		try {
 			setSubmitting(true);
 			setError(null);
+			setPathError(null);
 
 			await onSubmit({
 				name: name.trim(),
 				background: background.trim() || undefined,
+				defaultPath: workspacePath.trim(),
 			});
 
 			// Reset form on success
 			setName('');
 			setBackground('');
+			setWorkspacePath(systemState.value?.workspaceRoot ?? '');
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create room');
 		} finally {
@@ -52,8 +66,21 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 	const handleClose = () => {
 		setName('');
 		setBackground('');
+		setWorkspacePath(systemState.value?.workspaceRoot ?? '');
 		setError(null);
+		setPathError(null);
 		onClose();
+	};
+
+	const handlePathInput = (value: string) => {
+		setWorkspacePath(value);
+		if (pathError) {
+			// Clear inline error as user types
+			const result = validateWorkspacePath(value);
+			if (result.valid) {
+				setPathError(null);
+			}
+		}
 	};
 
 	return (
@@ -76,6 +103,22 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
               placeholder-gray-500 focus:outline-none focus:border-blue-500"
 						autoFocus
 					/>
+				</div>
+
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">Workspace Path</label>
+					<p class="text-xs text-gray-500 mb-2">Filesystem path for this room's workspace</p>
+					<input
+						type="text"
+						value={workspacePath}
+						onInput={(e) => handlePathInput((e.target as HTMLInputElement).value)}
+						placeholder="/path/to/workspace"
+						class={`w-full bg-dark-800 border rounded-lg px-4 py-2.5 text-gray-100
+              placeholder-gray-500 focus:outline-none focus:border-blue-500 ${
+								pathError ? 'border-red-700' : 'border-dark-700'
+							}`}
+					/>
+					{pathError && <p class="mt-1 text-xs text-red-400">{pathError}</p>}
 				</div>
 
 				<div>
