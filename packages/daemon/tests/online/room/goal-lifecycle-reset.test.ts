@@ -27,20 +27,33 @@ import { SessionGroupRepository } from '../../../src/lib/room/state/session-grou
 import { createRoomAgentToolHandlers } from '../../../src/lib/room/tools/room-agent-tools';
 import { setupGitEnvironment, createRoom, createGoal, getGoal } from './room-test-helpers';
 
-type InProcessDaemon = DaemonServerContext & { daemonContext: DaemonAppContext };
-
-const savedModel = process.env.DEFAULT_MODEL;
-process.env.DEFAULT_MODEL = 'sonnet';
+type InProcessDaemon = DaemonServerContext & { daemonContext?: DaemonAppContext };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Extract the DaemonAppContext from an in-process daemon.
+ * Fails fast with a clear message if running in spawned mode (DAEMON_TEST_SPAWN=true),
+ * since this test file requires direct DB access via daemonContext.
+ */
+function getDaemonCtx(daemon: DaemonServerContext): DaemonAppContext {
+	const ctx = daemon as InProcessDaemon;
+	if (!ctx.daemonContext) {
+		throw new Error(
+			'daemonContext not available — this test requires in-process mode. ' +
+				'Do not run with DAEMON_TEST_SPAWN=true.'
+		);
+	}
+	return ctx.daemonContext;
+}
 
 /**
  * Create a GoalManager instance backed by the running daemon's SQLite database.
  * Used to inject stale state for setup — the daemon and this manager share the same
  * underlying database file, so writes are visible to each other immediately.
  */
-function makeGoalManager(daemon: InProcessDaemon, roomId: string): GoalManager {
-	const ctx = daemon.daemonContext;
+function makeGoalManager(daemon: DaemonServerContext, roomId: string): GoalManager {
+	const ctx = getDaemonCtx(daemon);
 	return new GoalManager(
 		ctx.db.getDatabase(),
 		roomId,
@@ -53,8 +66,8 @@ function makeGoalManager(daemon: InProcessDaemon, roomId: string): GoalManager {
  * Create a set of room agent tool handlers backed by the running daemon's database.
  * These handlers call the same code paths as the actual MCP tools.
  */
-function makeAgentToolHandlers(daemon: InProcessDaemon, roomId: string) {
-	const ctx = daemon.daemonContext;
+function makeAgentToolHandlers(daemon: DaemonServerContext, roomId: string) {
+	const ctx = getDaemonCtx(daemon);
 	const db = ctx.db.getDatabase();
 	const reactiveDb = ctx.reactiveDb;
 	const shortIdAllocator = ctx.db.getShortIdAllocator();
@@ -81,10 +94,16 @@ function parseToolResult(result: { content: Array<{ type: string; text: string }
 // ─── Test suite ───────────────────────────────────────────────────────────────
 
 describe('Goal Lifecycle Reset Integration Tests', () => {
-	let daemon: InProcessDaemon;
+	let daemon: DaemonServerContext;
+	let savedModel: string | undefined;
 
 	beforeAll(async () => {
-		daemon = (await createDaemonServer()) as InProcessDaemon;
+		// Set DEFAULT_MODEL inside beforeAll so restoration is guaranteed even if
+		// the import is re-evaluated, and won't leak if beforeAll itself throws.
+		savedModel = process.env.DEFAULT_MODEL;
+		process.env.DEFAULT_MODEL = 'sonnet';
+
+		daemon = await createDaemonServer();
 		setupGitEnvironment(process.env.NEOKAI_WORKSPACE_PATH!);
 	}, 30_000);
 
@@ -111,7 +130,10 @@ describe('Goal Lifecycle Reset Integration Tests', () => {
 
 		const goalManager = makeGoalManager(daemon, roomId);
 
-		// Inject stale state: fake linked task IDs and elevated counters
+		// Inject stale state: fake linked task IDs and elevated counters.
+		// Fake task IDs are safe here: reset_goal iterates linkedTaskIds and calls
+		// taskManager.getTask() for each; unknown IDs return null and are skipped
+		// by the `!task` guard, so no error occurs during the reset.
 		await goalManager.patchGoal(goal.id, {
 			linkedTaskIds: ['fake-task-1', 'fake-task-2'],
 			planning_attempts: 3,
