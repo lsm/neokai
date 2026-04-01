@@ -700,7 +700,10 @@ describe('createNeoActionMcpServer — activity logging', () => {
 		config.activityLogger = spy;
 		const server = createNeoActionMcpServer(config);
 
-		await callTool(server, 'create_room', { name: 'My Room' });
+		await callTool(server, 'create_room', {
+			name: 'My Room',
+			workspace_path: '/home/user/project',
+		});
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0].toolName).toBe('create_room');
@@ -752,9 +755,9 @@ describe('createNeoActionMcpServer — activity logging', () => {
 		};
 		const server = createNeoActionMcpServer(config);
 
-		await expect(callTool(server, 'create_room', { name: 'Boom' })).rejects.toThrow(
-			'DB connection lost'
-		);
+		await expect(
+			callTool(server, 'create_room', { name: 'Boom', workspace_path: '/home/user/project' })
+		).rejects.toThrow('DB connection lost');
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0].toolName).toBe('create_room');

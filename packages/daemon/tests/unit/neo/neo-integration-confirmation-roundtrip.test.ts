@@ -118,7 +118,10 @@ describe('withSecurityCheck: returns confirmationRequired for medium-risk tools'
 	});
 
 	test('create_room (low risk) auto-executes in balanced mode — no pending action', async () => {
-		const result = await handlers.create_room({ name: 'My Room' });
+		const result = await handlers.create_room({
+			name: 'My Room',
+			workspace_path: '/home/user/project',
+		});
 		const data = JSON.parse(result.content[0].text) as Record<string, unknown>;
 		expect(data.confirmationRequired).toBeUndefined();
 		expect(data.success).toBe(true);
@@ -132,7 +135,7 @@ describe('withSecurityCheck: returns confirmationRequired for medium-risk tools'
 			getSecurityMode: () => 'conservative',
 		};
 		const h = createNeoActionToolHandlers(conservConfig);
-		const result = await h.create_room({ name: 'My Room' });
+		const result = await h.create_room({ name: 'My Room', workspace_path: '/home/user/project' });
 		const data = JSON.parse(result.content[0].text) as Record<string, unknown>;
 		expect(data.confirmationRequired).toBe(true);
 	});

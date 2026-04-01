@@ -386,7 +386,7 @@ export interface NeoActionToolsConfig {
 	managerFactory: NeoActionManagerFactory;
 	runtimeService?: NeoActionRuntimeService;
 	pendingStore: PendingActionStore;
-	/** Workspace root — auto-applied as allowedPaths when not provided */
+	/** Workspace root — used by query tools (e.g. get_status); not used by create_room */
 	workspaceRoot?: string;
 	/** Returns the current security mode (looked up at call time) */
 	getSecurityMode(): NeoSecurityMode;
@@ -529,7 +529,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 		roomManager,
 		managerFactory,
 		runtimeService,
-		workspaceRoot,
+		workspaceRoot: _workspaceRoot,
 		spaceHandlers,
 		workflowRunRepo,
 		spaceTaskManagerFactory,
@@ -552,13 +552,13 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 			workspace_path?: string;
 			default_model?: string;
 		}): Promise<ToolResult> {
+			if (!args.workspace_path) {
+				return errorResult('workspace_path is required when creating a room');
+			}
+			const workspacePath = args.workspace_path;
 			return withSecurityCheck('create_room', args as Record<string, unknown>, config, async () => {
-				const allowedPaths: WorkspacePath[] = args.workspace_path
-					? [{ path: args.workspace_path }]
-					: workspaceRoot
-						? [{ path: workspaceRoot }]
-						: [];
-				const defaultPath = args.workspace_path ?? workspaceRoot;
+				const allowedPaths: WorkspacePath[] = [{ path: workspacePath }];
+				const defaultPath = workspacePath;
 
 				const room = roomManager.createRoom({
 					name: args.name,
@@ -1980,14 +1980,13 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 		// ── Room ─────────────────────────────────────────────────────────────
 		tool(
 			'create_room',
-			'Create a new room with an optional description and workspace path. Low risk — auto-executes in balanced mode.',
+			'Create a new room with a description and workspace path. workspace_path is required. Low risk — auto-executes in balanced mode.',
 			{
 				name: z.string().describe('Room name'),
 				description: z.string().optional().describe('Background context for the room'),
 				workspace_path: z
 					.string()
-					.optional()
-					.describe('Absolute path to the workspace directory for this room'),
+					.describe('Absolute path to the workspace directory for this room (required)'),
 				default_model: z.string().optional().describe('Default model ID for new sessions'),
 			},
 			(args) =>
