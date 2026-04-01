@@ -13,7 +13,7 @@
  * - agents.cli.list - List detected CLI agents
  */
 
-import type { MessageHub, WorkspacePath } from '@neokai/shared';
+import type { MessageHub, WorkspacePath, CreateRoomParams } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
@@ -38,12 +38,9 @@ export function setupRoomHandlers(
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
-		const params = data as {
-			name: string;
-			background?: string;
-			allowedPaths?: WorkspacePath[];
-			defaultPath?: string;
-		};
+		// Wire type: defaultPath is still optional at the RPC boundary for backward
+		// compatibility until Milestone 2 (task 2.1) enforces it from the client.
+		const params = data as Omit<CreateRoomParams, 'defaultPath'> & { defaultPath?: string };
 
 		if (!params.name) {
 			throw new Error('Room name is required');
@@ -51,14 +48,20 @@ export function setupRoomHandlers(
 
 		// Auto-populate workspace paths from workspaceRoot if not provided
 		const allowedPaths = params.allowedPaths ?? (workspaceRoot ? [{ path: workspaceRoot }] : []);
-		const defaultPath = params.defaultPath ?? (workspaceRoot ? workspaceRoot : undefined);
+
+		// TODO(Milestone 2, task 2.1): Remove workspaceRoot fallback; require defaultPath
+		// from the client. Using || (not ??) also catches empty-string placeholders sent
+		// by callers that have not yet been updated. When both are absent, defaultPath is
+		// omitted from the params object so downstream `room.defaultPath ?? fallback`
+		// chains in room-runtime-service still work correctly.
+		const defaultPath = params.defaultPath || workspaceRoot;
 
 		const room = roomManager.createRoom({
 			name: params.name,
 			background: params.background,
 			allowedPaths,
-			defaultPath,
-		});
+			...(defaultPath ? { defaultPath } : {}),
+		} as CreateRoomParams);
 
 		// Create the room's user-facing chat session
 		// Session ID format: room:chat:${roomId}

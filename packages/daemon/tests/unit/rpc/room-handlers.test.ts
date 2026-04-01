@@ -167,7 +167,7 @@ describe('Room RPC Handlers', () => {
 			);
 		});
 
-		it('creates a room with background', async () => {
+		it('creates a room with background (no defaultPath — omitted when absent)', async () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
@@ -179,12 +179,54 @@ describe('Room RPC Handlers', () => {
 				{}
 			);
 
-			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith({
-				name: 'Full Room',
-				background: 'A full featured room',
-				allowedPaths: [],
-				defaultPath: undefined,
-			});
+			// No workspaceRoot in this test setup and no defaultPath from the client, so
+			// defaultPath is omitted from the createRoom call entirely. Downstream ??
+			// chains in room-runtime-service then fall through to their own fallbacks.
+			// TODO(Milestone 2, task 2.1): Once the server enforces defaultPath from the
+			// client, this test should pass an explicit path.
+			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
+				expect.not.objectContaining({ defaultPath: expect.anything() })
+			);
+			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
+				expect.objectContaining({
+					name: 'Full Room',
+					background: 'A full featured room',
+					allowedPaths: [],
+				})
+			);
+		});
+
+		it('omits defaultPath key when client sends empty string', async () => {
+			// '' should be treated the same as absent because we use || not ??
+			const handler = messageHubData.handlers.get('room.create');
+			expect(handler).toBeDefined();
+
+			await handler!({ name: 'Empty Path Room', defaultPath: '' }, {});
+
+			// No workspaceRoot in this test setup so defaultPath is still omitted
+			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
+				expect.not.objectContaining({ defaultPath: expect.anything() })
+			);
+		});
+
+		it('creates a room with an explicit defaultPath', async () => {
+			const handler = messageHubData.handlers.get('room.create');
+			expect(handler).toBeDefined();
+
+			await handler!(
+				{
+					name: 'Path Room',
+					defaultPath: '/workspace/my-project',
+				},
+				{}
+			);
+
+			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith(
+				expect.objectContaining({
+					name: 'Path Room',
+					defaultPath: '/workspace/my-project',
+				})
+			);
 		});
 
 		it('throws error when name is missing', async () => {

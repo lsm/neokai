@@ -18,7 +18,12 @@ export async function createRoom(page: Page, name: string): Promise<string> {
 	return page.evaluate(async (roomName) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', { name: roomName });
+		// TODO(Milestone 2, task 2.1): Replace '/tmp/test-workspace' with the actual
+		// E2E workspace path once defaultPath is enforced server-side.
+		const res = await hub.request('room.create', {
+			name: roomName,
+			defaultPath: '/tmp/test-workspace',
+		});
 		return (res as { room: { id: string } }).room.id;
 	}, name);
 }

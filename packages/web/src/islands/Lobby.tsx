@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { ModelInfo, Provider } from '@neokai/shared';
+import type { ModelInfo, Provider, CreateRoomParams } from '@neokai/shared';
 import { lobbyStore } from '../lib/lobby-store';
 import { globalStore } from '../lib/global-store';
 import { navigateToRoom, navigateToSession } from '../lib/router';
@@ -266,7 +266,11 @@ export default function Lobby() {
 				isOpen={isCreateRoomModalOpen}
 				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
-					const room = await lobbyStore.createRoom(params);
+					// TODO(Milestone 2, task 2.2): CreateRoomModal does not yet collect a
+					// workspace path. Casting to CreateRoomParams means defaultPath is absent
+					// in the wire payload (undefined), so the server's || workspaceRoot
+					// fallback fires correctly.
+					const room = await lobbyStore.createRoom(params as unknown as CreateRoomParams);
 					if (room) {
 						createRoomModalSignal.value = false;
 						navigateToRoom(room.id);
@@ -282,7 +286,11 @@ export default function Lobby() {
 				recentPaths={recentPaths}
 				rooms={rooms}
 				onCreateRoom={async (params) => {
-					const room = await lobbyStore.createRoom(params);
+					// TODO(Milestone 2, task 2.2): NewSessionModal already provides
+					// defaultPath when the user selects a workspace path. Casting to
+					// CreateRoomParams passes it through as-is; when absent it arrives as
+					// undefined so the server's || workspaceRoot fallback fires correctly.
+					const room = await lobbyStore.createRoom(params as unknown as CreateRoomParams);
 					return room;
 				}}
 			/>
