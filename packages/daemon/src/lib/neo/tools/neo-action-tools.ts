@@ -386,7 +386,7 @@ export interface NeoActionToolsConfig {
 	managerFactory: NeoActionManagerFactory;
 	runtimeService?: NeoActionRuntimeService;
 	pendingStore: PendingActionStore;
-	/** Workspace root — auto-applied as allowedPaths when not provided */
+	/** Workspace root — used by query tools (e.g. get_status); not used by create_room */
 	workspaceRoot?: string;
 	/** Returns the current security mode (looked up at call time) */
 	getSecurityMode(): NeoSecurityMode;
