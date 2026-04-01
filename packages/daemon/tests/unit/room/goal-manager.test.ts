@@ -1011,3 +1011,109 @@ describe('GoalManager.patchGoal — schedule nextRunAt auto-computation', () => 
 		expect(patched.nextRunAt).toBe(originalNextRunAt);
 	});
 });
+
+describe('GoalManager.resetGoal', () => {
+	let db: Database;
+	let goalManager: GoalManager;
+	let taskManager: TaskManager;
+	let roomManager: RoomManager;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createTables(db);
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS goals (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER DEFAULT 0,
+				linked_task_ids TEXT DEFAULT '[]',
+				metrics TEXT DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0,
+				goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT, autonomy_level TEXT, structured_metrics TEXT, schedule TEXT,
+				schedule_paused INTEGER DEFAULT 0, next_run_at INTEGER,
+				max_consecutive_failures INTEGER, max_planning_attempts INTEGER,
+				consecutive_failures INTEGER DEFAULT 0, replan_count INTEGER DEFAULT 0,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+		roomManager = new RoomManager(db, noOpReactiveDb);
+		const room = roomManager.createRoom({
+			name: 'Reset Test Room',
+			allowedPaths: [{ path: '/workspace/test' }],
+			defaultPath: '/workspace/test',
+		});
+		goalManager = new GoalManager(db, room.id, noOpReactiveDb);
+		taskManager = new TaskManager(db, room.id, { notifyChange: () => {} } as never);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it('resets linkedTaskIds, all counters, and sets status to active', async () => {
+		const goal = await goalManager.createGoal({
+			title: 'Reset Test',
+			description: 'Goal to be reset',
+		});
+
+		// Simulate some planning activity
+		const task = await taskManager.createTask({ title: 'Task 1', description: '' });
+		await goalManager.linkTaskToGoal(goal.id, task.id);
+		await goalManager.incrementPlanningAttempts(goal.id);
+		await goalManager.updateConsecutiveFailures(goal.id, 2);
+		// Set replanCount directly via patchGoal
+		await goalManager.patchGoal(goal.id, { replanCount: 3 });
+		// Transition to needs_human
+		await goalManager.needsHumanGoal(goal.id);
+
+		const before = await goalManager.getGoal(goal.id);
+		expect(before?.linkedTaskIds).toHaveLength(1);
+		expect(before?.planning_attempts).toBeGreaterThan(0);
+		expect(before?.consecutiveFailures).toBe(2);
+		expect(before?.replanCount).toBe(3);
+		expect(before?.status).toBe('needs_human');
+
+		const reset = await goalManager.resetGoal(goal.id);
+
+		expect(reset.linkedTaskIds).toEqual([]);
+		expect(reset.planning_attempts).toBe(0);
+		expect(reset.consecutiveFailures).toBe(0);
+		expect(reset.replanCount).toBe(0);
+		expect(reset.status).toBe('active');
+	});
+
+	it('resets a goal in needs_human status back to active', async () => {
+		const goal = await goalManager.createGoal({
+			title: 'Stuck Goal',
+			description: 'Goal stuck in needs_human',
+		});
+		await goalManager.needsHumanGoal(goal.id);
+
+		const stuck = await goalManager.getGoal(goal.id);
+		expect(stuck?.status).toBe('needs_human');
+
+		const reset = await goalManager.resetGoal(goal.id);
+
+		expect(reset.status).toBe('active');
+		expect(reset.linkedTaskIds).toEqual([]);
+		expect(reset.planning_attempts).toBe(0);
+		expect(reset.consecutiveFailures).toBe(0);
+		expect(reset.replanCount).toBe(0);
+	});
+
+	it('throws for non-existent goal ID', async () => {
+		await expect(goalManager.resetGoal('non-existent-id')).rejects.toThrow(
+			'Goal not found: non-existent-id'
+		);
+	});
+});
