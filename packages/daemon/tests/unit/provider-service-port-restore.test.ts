@@ -1,26 +1,27 @@
 /**
- * ProviderService.restoreEnvVars PORT restoration tests
+ * ProviderService.restoreEnvVars PORT / NEOKAI_PORT restoration tests
  *
- * Tests that restoreEnvVars correctly handles the PORT key added to OriginalEnvVars
- * as part of the fix that clears PORT before SDK query to prevent the kill-chain bug.
+ * Tests that restoreEnvVars correctly handles the PORT and NEOKAI_PORT keys in
+ * OriginalEnvVars as part of the fix that clears both before SDK query to prevent
+ * the kill-chain bug (daemon port leaked → lsof → kill parent process).
  *
  * Covers:
- * - OriginalEnvVars interface includes the PORT field
- * - restoreEnvVars restores PORT when the original value was defined
- * - restoreEnvVars deletes PORT when the original value was undefined (never set)
- * - restoreEnvVars does nothing to PORT when the key is absent from the original object
+ * - OriginalEnvVars interface includes PORT and NEOKAI_PORT fields
+ * - restoreEnvVars restores both when the original values were defined
+ * - restoreEnvVars deletes both when the original value was undefined (never set)
+ * - restoreEnvVars does nothing when the key is absent from the original object
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import type { OriginalEnvVars } from '../../src/lib/agent/query-runner';
 import { ProviderService } from '../../src/lib/provider-service';
 
-// Capture the original PORT value so tests can restore after themselves
+// Capture the original values so tests can restore after themselves
 const ORIGINAL_PORT = process.env.PORT;
+const ORIGINAL_NEOKAI_PORT = process.env.NEOKAI_PORT;
 
-describe('OriginalEnvVars interface — PORT field', () => {
+describe('OriginalEnvVars interface — PORT and NEOKAI_PORT fields', () => {
 	it('accepts PORT as an optional string field', () => {
-		// Compile-time check: assigning PORT should be valid in the interface
 		const vars: OriginalEnvVars = { PORT: '9283' };
 		expect(vars.PORT).toBe('9283');
 	});
@@ -30,9 +31,20 @@ describe('OriginalEnvVars interface — PORT field', () => {
 		expect(vars.PORT).toBeUndefined();
 	});
 
-	it('accepts an object with no PORT key', () => {
+	it('accepts NEOKAI_PORT as an optional string field', () => {
+		const vars: OriginalEnvVars = { NEOKAI_PORT: '9983' };
+		expect(vars.NEOKAI_PORT).toBe('9983');
+	});
+
+	it('accepts NEOKAI_PORT as undefined', () => {
+		const vars: OriginalEnvVars = { NEOKAI_PORT: undefined };
+		expect(vars.NEOKAI_PORT).toBeUndefined();
+	});
+
+	it('accepts an object with no PORT or NEOKAI_PORT key', () => {
 		const vars: OriginalEnvVars = {};
 		expect(Object.prototype.hasOwnProperty.call(vars, 'PORT')).toBe(false);
+		expect(Object.prototype.hasOwnProperty.call(vars, 'NEOKAI_PORT')).toBe(false);
 	});
 });
 
@@ -44,7 +56,6 @@ describe('ProviderService.restoreEnvVars — PORT restoration', () => {
 	});
 
 	afterEach(() => {
-		// Restore the real PORT to avoid polluting subsequent tests
 		if (ORIGINAL_PORT !== undefined) {
 			process.env.PORT = ORIGINAL_PORT;
 		} else {
@@ -53,8 +64,7 @@ describe('ProviderService.restoreEnvVars — PORT restoration', () => {
 	});
 
 	it('restores PORT to the original value when original.PORT was defined', () => {
-		// Simulate: daemon was started with PORT=9283, which was saved before clearing
-		process.env.PORT = 'mutated-during-query'; // current (wrong) value
+		process.env.PORT = 'mutated-during-query';
 
 		const original: OriginalEnvVars = { PORT: '9283' };
 		service.restoreEnvVars(original);
@@ -63,9 +73,7 @@ describe('ProviderService.restoreEnvVars — PORT restoration', () => {
 	});
 
 	it('deletes PORT when original.PORT was explicitly undefined (port was not set before query)', () => {
-		// Simulate: PORT was not in the environment before the query ran, so
-		// query-runner saved undefined and deleted it; after restore it must be absent again.
-		process.env.PORT = 'leaked-port'; // currently set due to some side-effect
+		process.env.PORT = 'leaked-port';
 
 		const original: OriginalEnvVars = { PORT: undefined };
 		service.restoreEnvVars(original);
@@ -74,10 +82,9 @@ describe('ProviderService.restoreEnvVars — PORT restoration', () => {
 	});
 
 	it('does NOT touch PORT when the PORT key is absent from the original object', () => {
-		// When PORT was never captured, restoreEnvVars must leave the current value alone
 		process.env.PORT = 'should-be-untouched';
 
-		const original: OriginalEnvVars = {}; // PORT key not present at all
+		const original: OriginalEnvVars = {};
 		service.restoreEnvVars(original);
 
 		expect(process.env.PORT).toBe('should-be-untouched');
@@ -101,7 +108,60 @@ describe('ProviderService.restoreEnvVars — PORT restoration', () => {
 		expect(process.env.PORT).toBe('8080');
 		expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
 
-		// Clean up ANTHROPIC_BASE_URL
 		delete process.env.ANTHROPIC_BASE_URL;
+	});
+});
+
+describe('ProviderService.restoreEnvVars — NEOKAI_PORT restoration', () => {
+	let service: ProviderService;
+
+	beforeEach(() => {
+		service = new ProviderService();
+	});
+
+	afterEach(() => {
+		if (ORIGINAL_NEOKAI_PORT !== undefined) {
+			process.env.NEOKAI_PORT = ORIGINAL_NEOKAI_PORT;
+		} else {
+			delete process.env.NEOKAI_PORT;
+		}
+	});
+
+	it('restores NEOKAI_PORT to the original value when original.NEOKAI_PORT was defined', () => {
+		process.env.NEOKAI_PORT = 'mutated-during-query';
+
+		const original: OriginalEnvVars = { NEOKAI_PORT: '9983' };
+		service.restoreEnvVars(original);
+
+		expect(process.env.NEOKAI_PORT).toBe('9983');
+	});
+
+	it('deletes NEOKAI_PORT when original.NEOKAI_PORT was explicitly undefined', () => {
+		process.env.NEOKAI_PORT = 'leaked-neokai-port';
+
+		const original: OriginalEnvVars = { NEOKAI_PORT: undefined };
+		service.restoreEnvVars(original);
+
+		expect(process.env.NEOKAI_PORT).toBeUndefined();
+	});
+
+	it('does NOT touch NEOKAI_PORT when the key is absent from the original object', () => {
+		process.env.NEOKAI_PORT = 'should-be-untouched';
+
+		const original: OriginalEnvVars = {};
+		service.restoreEnvVars(original);
+
+		expect(process.env.NEOKAI_PORT).toBe('should-be-untouched');
+	});
+
+	it('restores both PORT and NEOKAI_PORT together in one restoreEnvVars call', () => {
+		process.env.PORT = 'wrong-port';
+		process.env.NEOKAI_PORT = 'wrong-neokai-port';
+
+		const original: OriginalEnvVars = { PORT: '8399', NEOKAI_PORT: '9983' };
+		service.restoreEnvVars(original);
+
+		expect(process.env.PORT).toBe('8399');
+		expect(process.env.NEOKAI_PORT).toBe('9983');
 	});
 });

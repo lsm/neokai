@@ -84,9 +84,12 @@ export interface ProviderEnvVars {
 }
 
 /**
- * Stores original environment variable values for restoration
+ * Stores original environment variable values for restoration.
+ *
+ * Exported so callers (e.g. query-runner.ts) can use the same type
+ * rather than maintaining a parallel definition that diverges over time.
  */
-interface OriginalEnvVars {
+export interface OriginalEnvVars {
 	ANTHROPIC_API_KEY?: string;
 	ANTHROPIC_AUTH_TOKEN?: string;
 	ANTHROPIC_BASE_URL?: string;
@@ -98,6 +101,8 @@ interface OriginalEnvVars {
 	CLAUDE_AGENT_SDK_CLIENT_APP?: string;
 	/** Daemon's listening PORT — cleared from subprocess env to prevent kill-chain via lsof */
 	PORT?: string;
+	/** Daemon's NEOKAI_PORT — also cleared to prevent subprocess env leakage */
+	NEOKAI_PORT?: string;
 }
 
 /**
@@ -517,6 +522,10 @@ export class ProviderService {
 			process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
 		}
 
+		// Always clear PORT and NEOKAI_PORT so SDK subprocesses cannot inherit the
+		// daemon's listening port and trigger a kill-chain via `lsof -i :<port>`.
+		this.saveClearDaemonPortEnvVars(original);
+
 		return original;
 	}
 
@@ -614,7 +623,25 @@ export class ProviderService {
 			}
 		}
 
+		// Always clear PORT and NEOKAI_PORT so SDK subprocesses cannot inherit the
+		// daemon's listening port and trigger a kill-chain via `lsof -i :<port>`.
+		this.saveClearDaemonPortEnvVars(original);
+		changed = changed || original.PORT !== undefined || original.NEOKAI_PORT !== undefined;
+
 		return changed ? original : {};
+	}
+
+	/**
+	 * Save and delete PORT and NEOKAI_PORT from process.env.
+	 *
+	 * Called by every path that prepares env vars for an SDK subprocess so the
+	 * daemon's listening port is never visible to agent bash commands.
+	 */
+	private saveClearDaemonPortEnvVars(original: OriginalEnvVars): void {
+		original.PORT = process.env.PORT;
+		delete process.env.PORT;
+		original.NEOKAI_PORT = process.env.NEOKAI_PORT;
+		delete process.env.NEOKAI_PORT;
 	}
 
 	/**
@@ -700,6 +727,13 @@ export class ProviderService {
 				process.env.PORT = original.PORT;
 			} else {
 				delete process.env.PORT;
+			}
+		}
+		if (Object.prototype.hasOwnProperty.call(original, 'NEOKAI_PORT')) {
+			if (original.NEOKAI_PORT !== undefined) {
+				process.env.NEOKAI_PORT = original.NEOKAI_PORT;
+			} else {
+				delete process.env.NEOKAI_PORT;
 			}
 		}
 	}

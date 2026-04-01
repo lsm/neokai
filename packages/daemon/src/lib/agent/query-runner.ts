@@ -23,6 +23,9 @@ import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
+// Import the canonical type from provider-service — do NOT duplicate this definition here.
+import type { OriginalEnvVars } from '../provider-service';
+export type { OriginalEnvVars } from '../provider-service';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 
@@ -37,23 +40,6 @@ function getStartupTimeoutMs(): number {
 // Env vars set after the process starts will not be picked up; the values displayed
 // in user-facing error messages reflect these module-load-time snapshots.
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
-
-/**
- * Original environment variables for restoration after SDK query
- */
-export interface OriginalEnvVars {
-	ANTHROPIC_API_KEY?: string;
-	ANTHROPIC_AUTH_TOKEN?: string;
-	ANTHROPIC_BASE_URL?: string;
-	API_TIMEOUT_MS?: string;
-	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
-	ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
-	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
-	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
-	CLAUDE_AGENT_SDK_CLIENT_APP?: string;
-	/** Daemon's listening PORT — cleared from subprocess env to prevent kill-chain via lsof */
-	PORT?: string;
-}
 
 /**
  * Context interface - what QueryRunner needs from AgentSession
@@ -225,13 +211,8 @@ export class QueryRunner {
 			this.ctx.originalEnvVars.CLAUDE_AGENT_SDK_CLIENT_APP =
 				process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
 			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'neokai/0.5.0';
-
-			// Remove PORT from the SDK subprocess environment to prevent the kill-chain bug:
-			// If the daemon was started with PORT=<n>, that env var propagates to SDK subprocesses.
-			// When a subprocess encounters EADDRINUSE and runs `lsof -i :<n>`, it finds the daemon
-			// and kills it. Clearing PORT before the SDK query prevents this inheritance.
-			this.ctx.originalEnvVars.PORT = process.env.PORT;
-			delete process.env.PORT;
+			// Note: PORT and NEOKAI_PORT are cleared inside applyEnvVarsToProcess() above,
+			// so SDK subprocesses cannot inherit the daemon's listening port.
 
 			// Create query with AsyncGenerator
 			const queryObject = query({
