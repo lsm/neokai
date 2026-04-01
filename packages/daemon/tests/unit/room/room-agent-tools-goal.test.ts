@@ -730,13 +730,12 @@ describe('Room Agent Tools - reset_goal and planning_attempts', () => {
 			expect(goal.planning_attempts).toBe(5);
 		});
 
-		it('should transition status back to active even when explicit status: needs_human is also provided', async () => {
+		it('should respect explicit status:needs_human when title/description also changes', async () => {
 			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
 			const goalId = goalResult.goalId as string;
 
-			// Caller sets status to needs_human AND changes the title in the same call.
-			// The invalidation block runs after the status update, so it should detect
-			// needs_human and transition back to active.
+			// Caller explicitly sets status to needs_human AND changes the title in the same call.
+			// The explicit status instruction takes precedence — invalidation should NOT override it.
 			const result = parseResult(
 				await handlers.update_goal({
 					goal_id: goalId,
@@ -746,10 +745,32 @@ describe('Room Agent Tools - reset_goal and planning_attempts', () => {
 			);
 			expect(result.success).toBe(true);
 
-			// Invalidation should have overridden the needs_human status back to active
+			// Explicit status wins — should remain needs_human
 			const goal = result.goal as Record<string, unknown>;
-			expect(goal.status).toBe('active');
+			expect(goal.status).toBe('needs_human');
+			// planning_attempts still reset since no explicit planning_attempts was provided
 			expect(goal.planning_attempts).toBe(0);
+		});
+
+		it('should return error when in_progress planning task has active session group and no runtime', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = goalResult.goalId as string;
+
+			const planTaskId = await createPlanningTask(goalId, 'in_progress');
+
+			// Insert an active session group for the planning task (simulates running planner)
+			insertActiveGroup(planTaskId);
+
+			// Without runtime, should refuse to cancel a planning task with an active session group
+			const result = parseResult(
+				await handlers.update_goal({ goal_id: goalId, title: 'New Title' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/active session group/i);
+
+			// Planning task and goal should be unchanged
+			const planTask = await taskManager.getTask(planTaskId);
+			expect(planTask?.status).toBe('in_progress');
 		});
 	});
 });

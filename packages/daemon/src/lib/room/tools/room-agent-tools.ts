@@ -229,6 +229,22 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					if (runtime) {
 						await runtime.cancelTask(taskId);
 					} else {
+						// Fallback path: no runtime available.
+						// Guard: if the task has an active session group we cannot safely cancel it
+						// without the runtime — the DB row would be updated but the agent sessions
+						// would keep running (same guard as reset_goal / cancel_task).
+						if (task.status === 'in_progress' || task.status === 'review') {
+							const activeGroup = groupRepo.getGroupByTaskId(taskId);
+							if (activeGroup && activeGroup.completedAt === null) {
+								return jsonResult({
+									success: false,
+									error:
+										`Cannot invalidate planning for goal ${args.goal_id}: planning task ${taskId} (status '${task.status}') has an active session group but no runtime service is available to stop it. ` +
+										`The active planner session would not be stopped.`,
+								});
+							}
+						}
+
 						await taskManager.cancelTaskCascade(taskId);
 						if (daemonHub) {
 							const cancelledTask = await taskManager.getTask(taskId);
@@ -250,8 +266,10 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 
 				// If the goal is stuck in needs_human, transition it back to active so it's
-				// eligible for replanning (getNextGoalForPlanning only iterates 'active' goals)
-				if (updated.status === 'needs_human') {
+				// eligible for replanning (getNextGoalForPlanning only iterates 'active' goals).
+				// Only auto-transition when the caller did not explicitly set a status in this
+				// same call — an explicit status instruction takes precedence.
+				if (args.status === undefined && updated.status === 'needs_human') {
 					updated = await goalManager.updateGoalStatus(args.goal_id, 'active');
 				}
 
