@@ -729,4 +729,136 @@ describe('reference.resolve handler', () => {
 			expect(result.resolved!.data.content).toBe('fallback content');
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// room:chat:* session resolution
+	// -------------------------------------------------------------------------
+
+	describe('room:chat session resolution', () => {
+		it('resolves workspace from room defaultPath for room:chat:<roomId> sessions', async () => {
+			const roomWorkspace = join(
+				tmpdir(),
+				`room-ws-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			await mkdir(roomWorkspace, { recursive: true });
+			await writeFile(join(roomWorkspace, 'room-file.txt'), 'room content');
+
+			try {
+				const { hub, handlers } = createMockMessageHub();
+				const deps: ReferenceHandlerDeps = {
+					sessionManager: makeSessionManager({
+						workspacePath: testWorkspace,
+						exists: false,
+					}) as never,
+					taskRepo: makeTaskRepo(),
+					goalRepo: makeGoalRepo(),
+					workspaceRoot: testWorkspace,
+					getRoomDefaultPath: (roomId: string) =>
+						roomId === 'room-42' ? roomWorkspace : undefined,
+				};
+				setupReferenceHandlers(hub, deps);
+				const handler = handlers.get('reference.resolve')!;
+
+				const result = (await handler({
+					sessionId: 'room:chat:room-42',
+					type: 'file',
+					id: 'room-file.txt',
+				})) as {
+					resolved: { data: { content: string } } | null;
+				};
+
+				expect(result.resolved).not.toBeNull();
+				expect(result.resolved!.data.content).toBe('room content');
+			} finally {
+				await rm(roomWorkspace, { recursive: true, force: true });
+			}
+		});
+
+		it('falls back to workspaceRoot when room is not found (deleted room)', async () => {
+			await writeFile(join(testWorkspace, 'fallback.txt'), 'fallback content');
+
+			const { hub, handlers } = createMockMessageHub();
+			const deps: ReferenceHandlerDeps = {
+				sessionManager: makeSessionManager({
+					workspacePath: testWorkspace,
+					exists: false,
+				}) as never,
+				taskRepo: makeTaskRepo(),
+				goalRepo: makeGoalRepo(),
+				workspaceRoot: testWorkspace,
+				getRoomDefaultPath: (_roomId: string) => undefined, // room not found
+			};
+			setupReferenceHandlers(hub, deps);
+			const handler = handlers.get('reference.resolve')!;
+
+			const result = (await handler({
+				sessionId: 'room:chat:deleted-room',
+				type: 'file',
+				id: 'fallback.txt',
+			})) as {
+				resolved: { data: { content: string } } | null;
+			};
+
+			expect(result.resolved).not.toBeNull();
+			expect(result.resolved!.data.content).toBe('fallback content');
+		});
+
+		it('falls back to workspaceRoot when getRoomDefaultPath is not provided', async () => {
+			await writeFile(join(testWorkspace, 'fallback.txt'), 'fallback content');
+
+			const { hub, handlers } = createMockMessageHub();
+			// No getRoomDefaultPath in deps (omitted)
+			const deps: ReferenceHandlerDeps = {
+				sessionManager: makeSessionManager({
+					workspacePath: testWorkspace,
+					exists: false,
+				}) as never,
+				taskRepo: makeTaskRepo(),
+				goalRepo: makeGoalRepo(),
+				workspaceRoot: testWorkspace,
+			};
+			setupReferenceHandlers(hub, deps);
+			const handler = handlers.get('reference.resolve')!;
+
+			const result = (await handler({
+				sessionId: 'room:chat:some-room',
+				type: 'file',
+				id: 'fallback.txt',
+			})) as {
+				resolved: { data: { content: string } } | null;
+			};
+
+			expect(result.resolved).not.toBeNull();
+			expect(result.resolved!.data.content).toBe('fallback content');
+		});
+
+		it('extracts correct roomId from room:chat:<roomId> for task resolution', async () => {
+			const { hub, handlers } = createMockMessageHub();
+			const deps: ReferenceHandlerDeps = {
+				sessionManager: makeSessionManager({
+					workspacePath: testWorkspace,
+					exists: false,
+				}) as never,
+				taskRepo: makeTaskRepo(),
+				goalRepo: makeGoalRepo(),
+				workspaceRoot: testWorkspace,
+				getRoomDefaultPath: (roomId: string) => (roomId === 'room-1' ? testWorkspace : undefined),
+			};
+			setupReferenceHandlers(hub, deps);
+			const handler = handlers.get('reference.resolve')!;
+
+			const result = (await handler({
+				sessionId: 'room:chat:room-1',
+				type: 'task',
+				id: 'task-uuid-1',
+			})) as { resolved: unknown };
+
+			// Task belongs to room-1 — should resolve successfully
+			expect(result.resolved).toMatchObject({
+				type: 'task',
+				id: 'task-uuid-1',
+				data: { id: 'task-uuid-1', title: 'Fix bug' },
+			});
+		});
+	});
 });
