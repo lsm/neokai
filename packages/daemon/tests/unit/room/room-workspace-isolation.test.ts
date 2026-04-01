@@ -269,10 +269,14 @@ describe('room workspace isolation', () => {
 
 			// Resolving a file that exists ONLY in roomWorkspace should succeed.
 			// We assert `resolved !== null` (file was found) rather than checking byte
-			// content — FileManager uses existsSync() (sync, never mocked) for the
-			// existence gate, so null/not-null correctly proves which workspace was
-			// searched regardless of any mock.module('node:fs/promises') contamination
-			// from other test files in the same Bun process.
+			// content: the existence and metadata checks use stat() and existsSync(),
+			// neither of which is overridden by the readFile-only mock that
+			// mcp-handlers.test.ts leaves behind via mock.module('node:fs/promises').
+			// Bun's mock.module only overrides keys present in the factory's return
+			// value; stat, open, and readdir retain their real implementations, so
+			// null/not-null correctly proves which workspace was searched regardless
+			// of any mock.module('node:fs/promises') contamination from other test
+			// files in the same Bun process.
 			const result = (await resolveHandler({
 				sessionId: 'room:chat:room-42',
 				type: 'file',
