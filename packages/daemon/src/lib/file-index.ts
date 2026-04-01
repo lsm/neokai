@@ -213,7 +213,7 @@ export class FileIndex {
 	private readonly pollInterval: number;
 
 	constructor(
-		private readonly workspacePath: string,
+		private readonly workspacePath: string | undefined,
 		pollIntervalMs?: number
 	) {
 		this.pollInterval =
@@ -222,7 +222,7 @@ export class FileIndex {
 
 	/** Load .gitignore from workspace root if it exists. */
 	private async loadGitignore(): Promise<void> {
-		const gitignorePath = join(this.workspacePath, '.gitignore');
+		const gitignorePath = join(this.workspacePath!, '.gitignore');
 		try {
 			if (!existsSync(gitignorePath)) return;
 			const content = await readFile(gitignorePath, 'utf-8');
@@ -249,9 +249,9 @@ export class FileIndex {
 
 		for (const entry of entries) {
 			const absPath = join(absDir, entry.name);
-			const relPath = relative(this.workspacePath, absPath);
+			const relPath = relative(this.workspacePath!, absPath);
 
-			if (!isSafePath(this.workspacePath, relPath)) continue;
+			if (!isSafePath(this.workspacePath!, relPath)) continue;
 
 			// Resolve symlinks: stat() follows the link to get the target type.
 			// Symlinked directories are NOT recursed into to prevent infinite loops.
@@ -297,9 +297,9 @@ export class FileIndex {
 
 		for (const entry of entries) {
 			const absPath = join(absDir, entry.name);
-			const relPath = relative(this.workspacePath, absPath);
+			const relPath = relative(this.workspacePath!, absPath);
 
-			if (!isSafePath(this.workspacePath, relPath)) continue;
+			if (!isSafePath(this.workspacePath!, relPath)) continue;
 
 			// Resolve symlinks: stat() follows the link; do NOT recurse into symlinked dirs.
 			if (entry.isSymbolicLink()) {
@@ -343,7 +343,7 @@ export class FileIndex {
 
 		try {
 			const seen = new Set<string>();
-			await this.refreshDirectory(this.workspacePath, seen);
+			await this.refreshDirectory(this.workspacePath!, seen);
 
 			// Remove entries that no longer exist on disk
 			for (const key of this.cache.keys()) {
@@ -367,10 +367,18 @@ export class FileIndex {
 	/**
 	 * Perform the initial workspace scan.
 	 * Must be called before search(). Starts the background polling timer.
+	 *
+	 * When no workspace path was provided at construction time, this is a no-op:
+	 * the index remains empty and search() will return no results.
 	 */
 	async init(): Promise<void> {
+		// Guard: no-op when no workspace path is set (daemon started without --workspace).
+		// The index degrades gracefully — search() returns empty results.
+		if (this.workspacePath === undefined) {
+			return;
+		}
 		await this.loadGitignore();
-		await this.scanDirectory(this.workspacePath);
+		await this.scanDirectory(this.workspacePath!);
 		this.ready = true;
 
 		// Start background polling

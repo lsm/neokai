@@ -75,8 +75,8 @@ export interface ReferenceHandlerDeps {
 	taskRepo: TaskRepoForReference;
 	/** Goal repository (not scoped to room — uses global DB access) */
 	goalRepo: GoalRepoForReference;
-	/** Workspace root path — used as fallback when no session is provided */
-	workspaceRoot: string;
+	/** Workspace root path — used as fallback when no session is provided (optional) */
+	workspaceRoot?: string;
 	/** File index for fast file/folder search (reference.search) */
 	fileIndex: FileIndex;
 	/**
@@ -168,9 +168,11 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 						return { resolved: resolveGoal(params.id, roomId, deps) };
 
 					case 'file':
+						if (!workspacePath) return { resolved: null };
 						return { resolved: await resolveFile(params.id, workspacePath) };
 
 					case 'folder':
+						if (!workspacePath) return { resolved: null };
 						return { resolved: await resolveFolder(params.id, workspacePath) };
 
 					default: {
@@ -330,7 +332,7 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 async function resolveSessionContext(
 	sessionId: string,
 	deps: ReferenceHandlerDeps
-): Promise<{ workspacePath: string; roomId: string | null }> {
+): Promise<{ workspacePath: string | undefined; roomId: string | null }> {
 	const agentSession = await deps.sessionManager.getSessionAsync(sessionId);
 	if (!agentSession) {
 		// The room agent route uses a synthetic session ID "room:chat:<roomId>"

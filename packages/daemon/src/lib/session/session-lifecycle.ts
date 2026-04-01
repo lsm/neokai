@@ -25,7 +25,7 @@ export interface SessionLifecycleConfig {
 	defaultModel: string;
 	maxTokens: number;
 	temperature: number;
-	workspaceRoot: string;
+	workspaceRoot?: string;
 	disableWorktrees?: boolean;
 }
 
@@ -122,9 +122,17 @@ export class SessionLifecycle {
 		}
 		const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 
-		// Detect git support before creating worktree
-		const gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
-		const isGitRepo = gitSupport.isGitRepo;
+		// Guard: when no workspace path is available (daemon started without --workspace and
+		// session provides no explicit workspacePath), skip git-support detection and worktree
+		// creation. This protects non-room sessions (e.g., spaces_global, neo) that
+		// intentionally omit workspacePath and would otherwise cause detectGitSupport(undefined)
+		// to crash.
+		let gitSupport: Awaited<ReturnType<typeof this.worktreeManager.detectGitSupport>> | undefined;
+		let isGitRepo = false;
+		if (baseWorkspacePath !== undefined) {
+			gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
+			isGitRepo = gitSupport.isGitRepo;
+		}
 
 		// Worktree choice is only for worker sessions.
 		const supportsWorktreeChoice = sessionType === 'worker';
@@ -133,9 +141,12 @@ export class SessionLifecycle {
 		const shouldShowChoice = supportsWorktreeChoice && isGitRepo && !this.config.disableWorktrees;
 
 		// Determine if worktree should be created immediately
-		// Only for non-git repos (git repos go through choice flow)
+		// Only for non-git repos (git repos go through choice flow); requires a workspace path.
 		const shouldCreateWorktree =
-			supportsWorktreeChoice && !this.config.disableWorktrees && !isGitRepo;
+			baseWorkspacePath !== undefined &&
+			supportsWorktreeChoice &&
+			!this.config.disableWorktrees &&
+			!isGitRepo;
 
 		// Read global settings for defaults (model, thinkingLevel, autoScroll)
 		const globalSettings = this.db.getGlobalSettings();
@@ -154,7 +165,10 @@ export class SessionLifecycle {
 		// Create worktree with appropriate branch name
 		// If title provided, use meaningful branch name; otherwise use session/{uuid}
 		let worktreeMetadata: WorktreeMetadata | undefined;
-		let sessionWorkspacePath = baseWorkspacePath;
+		// When no workspace is available (daemon started without --workspace and no explicit
+		// workspacePath), fall back to process.cwd() so Session.workspacePath always has a value.
+		// Global sessions (neo, spaces_global) don't use the workspace path for file operations.
+		let sessionWorkspacePath: string = baseWorkspacePath ?? process.cwd();
 		const initialBranchName = shouldSkipAutoTitle
 			? generateBranchName(providedTitle!, sessionId) // Title is defined when shouldSkipAutoTitle is true
 			: `session/${sessionId}`;
@@ -190,9 +204,10 @@ export class SessionLifecycle {
 
 		// Detect current branch for non-worktree git repos
 		let currentBranch: string | undefined = worktreeMetadata?.branch;
-		if (!currentBranch && isGitRepo && gitSupport.gitRoot) {
+		if (!currentBranch && isGitRepo && gitSupport?.gitRoot) {
 			try {
-				const branch = await this.worktreeManager.getCurrentBranch(gitSupport.gitRoot);
+				// gitSupport and gitSupport.gitRoot are guaranteed non-null by the guard above
+				const branch = await this.worktreeManager.getCurrentBranch(gitSupport!.gitRoot!);
 				currentBranch = branch ?? undefined;
 			} catch (error) {
 				this.logger.debug('[SessionLifecycle] Failed to get current branch:', error);

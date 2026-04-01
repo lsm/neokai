@@ -50,7 +50,7 @@ const serverMode = isDev ? 'Development' : isTest ? 'Test' : 'Production';
 console.log(`\n🚀 NeoKai ${serverMode} Server`);
 console.log(`   Mode: ${config.nodeEnv}`);
 console.log(`   Model: ${config.defaultModel}`);
-console.log(`   Workspace: ${config.workspaceRoot}\n`);
+console.log(`   Workspace: ${config.workspaceRoot ?? '(none)'}\n`);
 
 if (isDev) {
 	// Development mode: Vite dev server + Daemon (for local development with HMR)
