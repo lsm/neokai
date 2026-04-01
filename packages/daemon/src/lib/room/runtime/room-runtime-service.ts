@@ -241,6 +241,18 @@ export class RoomRuntimeService {
 		return true;
 	}
 
+	/**
+	 * Returns true if there are any active (non-completed) task groups for the given room.
+	 * Queries the DB directly — does NOT rely on the in-memory runtimes map — so it works
+	 * correctly after a daemon restart when the in-memory map may be empty but DB-persisted
+	 * active groups still exist.
+	 */
+	hasActiveTaskGroups(roomId: string): boolean {
+		const rawDb = this.ctx.db.getDatabase();
+		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
+		return groupRepo.getActiveGroups(roomId).length > 0;
+	}
+
 	stop(): void {
 		for (const runtime of this.runtimes.values()) {
 			runtime.stop();

@@ -191,17 +191,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
-	// Room handlers
-	setupRoomHandlers(
-		deps.messageHub,
-		roomManager,
-		deps.daemonHub,
-		deps.sessionManager,
-		deps.jobQueue,
-		deps.db
-	);
-
 	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
+	// Also created before setupRoomHandlers so the hasActiveTaskGroups callback can reference it.
 	const roomRuntimeService = new RoomRuntimeService({
 		// Use reactiveDb.db (proxied Database facade) so sdk_messages writes from
 		// room worker/leader sessions trigger LiveQuery invalidation immediately.
@@ -247,6 +238,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			seedRoomTick(event.room.id);
 		},
 		{ sessionId: 'global' }
+	);
+
+	// Room handlers — registered after roomRuntimeService so hasActiveTaskGroups callback
+	// can reference the service (which queries the DB for active groups, not in-memory state).
+	setupRoomHandlers(
+		deps.messageHub,
+		roomManager,
+		deps.daemonHub,
+		deps.sessionManager,
+		deps.jobQueue,
+		deps.db,
+		{ hasActiveTaskGroups: (roomId) => roomRuntimeService.hasActiveTaskGroups(roomId) }
 	);
 
 	// Wire question handlers now that roomRuntimeService is available.
