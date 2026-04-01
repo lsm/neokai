@@ -151,15 +151,14 @@ test.describe('Room Creation with Workspace Path', () => {
 		await page.locator('button[type="submit"]').click();
 
 		// Server-side error from room-handlers.ts: "defaultPath does not exist: <path>"
-		// The error flows through setError() in the modal, rendering in the general
-		// red error banner — NOT in the path-specific inline <p> (which is only used
-		// for client-side validateWorkspacePath errors).
-		// Use the full error prefix "defaultPath does not exist" for a specific match
-		// that won't false-positive on any other "does not exist" text.
-		await expect(page.locator('text=defaultPath does not exist')).toBeVisible({ timeout: 5000 });
-		// Confirm the path-specific inline error paragraph is NOT shown, verifying
-		// the error went to the general banner (setError) not the inline field (setPathError).
-		await expect(page.locator('p.text-xs.text-red-400')).not.toBeVisible();
+		// The actual error flow: lobbyStore.createRoom() catches the RPC error and calls
+		// toast.error(err.message) — it does NOT re-throw. The onSubmit in Lobby.tsx
+		// resolves without throwing, so CreateRoomModal.handleSubmit's catch block never
+		// fires and neither setError() nor setPathError() is called. The error text is
+		// shown in a toast notification (role="alert"), not in the modal's error banner.
+		await expect(page.getByRole('alert')).toContainText('defaultPath does not exist', {
+			timeout: 5000,
+		});
 	});
 
 	// ─── Successful Room Creation ─────────────────────────────────────────────────
