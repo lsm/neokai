@@ -136,6 +136,19 @@ export type SpaceTaskStatus =
 export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 /**
+ * Runtime activity state for a live task-agent member.
+ * This is more user-facing than raw session processing states.
+ */
+export type SpaceTaskActivityState =
+	| 'active'
+	| 'queued'
+	| 'idle'
+	| 'waiting_for_input'
+	| 'completed'
+	| 'failed'
+	| 'interrupted';
+
+/**
  * Space task type — determines default execution approach
  */
 export type SpaceTaskType = 'planning' | 'coding' | 'research' | 'design' | 'review';
@@ -224,6 +237,51 @@ export interface SpaceTask {
 	completedAt?: number;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
+}
+
+/**
+ * One live participant in a task's execution.
+ * This can be the orchestration Task Agent or a spawned node agent sub-session.
+ */
+export interface SpaceTaskActivityMember {
+	/** Stable ID for rendering — usually the session ID */
+	id: string;
+	/** Session backing this activity row */
+	sessionId: string;
+	/** Whether this row represents the orchestration task agent or a node agent */
+	kind: 'task_agent' | 'node_agent';
+	/** Human-readable label for the activity row */
+	label: string;
+	/** Role or slot name (e.g. task-agent, reviewer, strict-reviewer) */
+	role: string;
+	/** Derived user-facing activity state */
+	state: SpaceTaskActivityState;
+	/** Raw session processing status when the session is live in memory */
+	processingStatus?: 'idle' | 'queued' | 'processing' | 'waiting_for_input' | 'interrupted' | null;
+	/** Raw processing phase when the session is actively processing */
+	processingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
+	/** Number of persisted SDK messages seen in the backing session */
+	messageCount: number;
+	/** Linked SpaceTask when this member corresponds to a persisted step task */
+	taskId?: string | null;
+	/** Human-readable task title associated with this member */
+	taskTitle?: string | null;
+	/** Status of the linked SpaceTask, if any */
+	taskStatus?: SpaceTaskStatus | null;
+	/** Workflow node ID for step tasks */
+	workflowNodeId?: string | null;
+	/** Human-readable workflow node / agent slot name */
+	agentName?: string | null;
+	/** Latest current-step string associated with the member */
+	currentStep?: string | null;
+	/** Latest error associated with the member */
+	error?: string | null;
+	/** Latest completion summary associated with the member */
+	completionSummary?: string | null;
+	/** Last update timestamp from the linked SpaceTask or backing session metadata */
+	updatedAt?: number | null;
+	/** Timestamp of the last persisted SDK message for this session */
+	lastMessageAt?: number | null;
 }
 
 /**
@@ -332,10 +390,16 @@ export interface SpaceWorkflowRun {
 	status: WorkflowRunStatus;
 	/** Optional runtime configuration for this run */
 	config?: Record<string, unknown>;
-	/** Number of times the run has looped back to a previously visited node */
-	iterationCount: number;
-	/** Maximum iterations before escalating to needs_attention */
-	maxIterations: number;
+	/**
+	 * @deprecated Global iteration counter replaced by per-channel cycle tracking.
+	 * Retained for backward compatibility with existing DB rows; runtime ignores it.
+	 */
+	iterationCount?: number;
+	/**
+	 * @deprecated Global max iterations replaced by per-channel `maxCycles`.
+	 * Retained for backward compatibility with existing DB rows; runtime ignores it.
+	 */
+	maxIterations?: number;
 	/** Optional goal/mission ID this run is associated with */
 	goalId?: string;
 	/**
@@ -359,8 +423,6 @@ export interface CreateWorkflowRunParams {
 	workflowId: string;
 	title: string;
 	description?: string;
-	/** Maximum iterations before escalating to needs_attention (overrides workflow default) */
-	maxIterations?: number;
 	/** Optional goal/mission ID to associate with this run */
 	goalId?: string;
 }
@@ -384,14 +446,14 @@ export interface SpaceAgent {
 	description?: string;
 	/**
 	 * Role label — a free-form string describing the agent's purpose (e.g. 'coder', 'general').
-	 * Used only for display and default system prompt labeling; has no runtime routing effect.
+	 * Used for display and default tool/feature profiles; has no runtime routing effect.
 	 */
 	role: string;
 	/** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
 	model?: string;
 	/** Provider name override (e.g., 'anthropic', 'openai') */
 	provider?: string;
-	/** Custom system prompt appended to the role preset */
+	/** Exact system prompt text for this agent */
 	systemPrompt?: string;
 	/**
 	 * Tool list override — which tools this agent may use.
@@ -401,14 +463,7 @@ export interface SpaceAgent {
 	tools?: string[];
 	/** Tool configuration overrides */
 	toolConfig?: Record<string, unknown>;
-	/**
-	 * When true, the agent's task message includes the full workflow structure
-	 * (nodes, current node marker, and rules) when the agent runs inside an active
-	 * workflow run. Set this on agents whose role involves planning or orchestration
-	 * so they can create tasks aligned with the current workflow node.
-	 *
-	 * Driven by data, not by hardcoded role checks — any agent can have this set.
-	 */
+	/** @deprecated Workflow runs always include factual workflow structure. */
 	injectWorkflowContext?: boolean;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
@@ -430,7 +485,7 @@ export interface CreateSpaceAgentParams {
 	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
 	tools?: string[];
 	toolConfig?: Record<string, unknown>;
-	/** When true, the agent receives workflow structure context in its task message. */
+	/** @deprecated Workflow runs always include factual workflow structure. */
 	injectWorkflowContext?: boolean;
 }
 
@@ -447,7 +502,7 @@ export interface UpdateSpaceAgentParams {
 	/** Tool list override — null clears (reverts to role defaults) */
 	tools?: string[] | null;
 	toolConfig?: Record<string, unknown> | null;
-	/** When true, the agent receives workflow structure context in its task message. */
+	/** @deprecated Workflow runs always include factual workflow structure. */
 	injectWorkflowContext?: boolean | null;
 }
 
@@ -455,172 +510,99 @@ export interface UpdateSpaceAgentParams {
 // Workflow Types (M3)
 // ============================================================================
 
-// ---- Legacy condition types (kept for backward compatibility) ----
-
-/**
- * @deprecated Use `GateCondition` instead. Will be removed in a future milestone.
- *
- * Primitive condition type for workflow channel gates.
- */
-export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
-
-/**
- * @deprecated Use `GateCondition` instead. Will be removed in a future milestone.
- *
- * A condition that guards a workflow channel gate.
- * Conditions determine whether a channel may deliver a message.
- */
-export interface WorkflowCondition {
-	/** Condition type. */
-	type: WorkflowConditionType;
-	/**
-	 * Expression to evaluate for the `condition` and `task_result` types.
-	 */
-	expression?: string;
-	/** Human-readable description of what this condition checks */
-	description?: string;
-	/**
-	 * Maximum number of times to retry condition evaluation on failure.
-	 * Defaults to 0 (no retries — fail immediately on first failure).
-	 */
-	maxRetries?: number;
-	/** Timeout for condition evaluation in milliseconds (0 = use default) */
-	timeoutMs?: number;
-}
-
 // ============================================================================
-// Gate System (M1.1) — separated from channels
+// Gate System — field-based schema
 // ============================================================================
 
+/** Field type determines what values are valid and what check ops are available. */
+export type GateFieldType = 'boolean' | 'string' | 'number' | 'map';
+
 /**
- * A `check` condition evaluates a named key in the gate's data store.
+ * Check operation for scalar fields (boolean, string, number).
  *
- * The `op` field determines the comparison:
- *   - `'exists'` — gate opens when the field is present (not `undefined`)
- *   - `'=='`     — gate opens when `data[field] === value` (default)
- *   - `'!='`     — gate opens when `data[field] !== value`
- *
- * Examples:
- *   - Human approval: `{ type: 'check', field: 'approved', op: '==', value: true }`
- *   - Field exists:   `{ type: 'check', field: 'plan', op: 'exists' }`
- *   - Not rejected:   `{ type: 'check', field: 'status', op: '!=', value: 'rejected' }`
- *   - Legacy compat:  `{ type: 'check', field: 'approved', value: true }` (op defaults to '==')
+ *   - `'=='`     — passes when `data[field] === value`
+ *   - `'!='`     — passes when `data[field] !== value`
+ *   - `'exists'` — passes when the field is present in data (not `undefined`)
  */
-export interface GateConditionCheck {
-	type: 'check';
-	/** Key in the gate's data store to evaluate. */
-	field: string;
-	/**
-	 * Comparison operator. Defaults to `'=='` when omitted (backward compatible).
-	 *   - `'exists'` — passes when the field is present in data (not `undefined`)
-	 *   - `'=='`     — passes when `data[field] === value`
-	 *   - `'!='`     — passes when `data[field] !== value`
-	 */
-	op?: 'exists' | '==' | '!=';
-	/** Expected value. Used by `==` and `!=` ops. Ignored by `exists`. */
+export interface GateFieldScalarCheck {
+	op: '==' | '!=' | 'exists';
 	value?: unknown;
 }
 
 /**
- * A `count` condition reads a map (Record) from the gate's data store, counts
- * entries whose value matches `matchValue`, and checks `>= min`.
+ * Check operation for map fields (counts matching entries).
  *
- * This is designed for multi-reviewer approval gates: each reviewer writes their
- * decision into a map keyed by their name, and the gate counts how many have
- * the expected value.
+ *   - `op: 'count'` — counts entries whose value equals `match`, passes when count >= `min`
  *
- * Examples:
- *   - Require 2 "approved" reviews:
- *     `{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 }`
- *     with data: `{ reviews: { alice: 'approved', bob: 'approved', carol: 'pending' } }`
- *     → count = 2 (alice + bob), 2 >= 2 → open
- *
- * Edge cases:
- *   - Missing field → count = 0
- *   - Field is not an object → count = 0
+ * Example: require 3 "approved" reviews in a votes map:
+ *   `{ op: 'count', match: 'approved', min: 3 }`
  */
-export interface GateConditionCount {
-	type: 'count';
-	/** Key in the gate's data store — expected to hold a Record/map. */
-	field: string;
-	/** Value to match against map entries. Count of entries where `value === matchValue`. */
-	matchValue: unknown;
-	/** Minimum number of matching entries required for the gate to open. */
+export interface GateFieldMapCheck {
+	op: 'count';
+	/** Value to match in map entries. */
+	match: unknown;
+	/** Minimum count required for this field to be satisfied. */
 	min: number;
 }
 
+/** Union of check operations — scalar or map. */
+export type GateFieldCheck = GateFieldScalarCheck | GateFieldMapCheck;
+
 /**
- * Composite `all` condition — logical AND. Gate opens when ALL nested conditions pass.
+ * A single declared field in the gate schema.
  *
- * Conditions are evaluated in order; short-circuits on first failure.
+ * Fields define what data the gate stores, who can write it, and what check
+ * must pass for the field to be satisfied. A gate opens when ALL fields pass.
  */
-export interface GateConditionAll {
-	type: 'all';
-	/** Nested conditions that must all pass. */
-	conditions: GateCondition[];
+export interface GateField {
+	/** Field name (key in the gate data store). */
+	name: string;
+	/** Field type. */
+	type: GateFieldType;
+	/** Who can write this field — agent role/slot names, node names, 'human', or '*'. */
+	writers: string[];
+	/** Check that must pass for this field to be satisfied. */
+	check: GateFieldCheck;
 }
 
 /**
- * Composite `any` condition — logical OR. Gate opens when ANY nested condition passes.
- *
- * Conditions are evaluated in order; short-circuits on first success.
- */
-export interface GateConditionAny {
-	type: 'any';
-	/** Nested conditions — at least one must pass. */
-	conditions: GateCondition[];
-}
-
-/**
- * Discriminated union of gate condition types.
- *
- * Four types cover all gate behaviors:
- * - `check`  — field check against gate data (exists / == / !=)
- * - `count`  — map-counting: count matching entries >= min
- * - `all`    — composite AND (recursive)
- * - `any`    — composite OR (recursive)
- *
- * No `always` type — a channel without a `gateId` is always open.
- */
-export type GateCondition =
-	| GateConditionCheck
-	| GateConditionCount
-	| GateConditionAll
-	| GateConditionAny;
-
-/**
- * A Gate — an independent entity that controls passage through channels.
+ * A Gate — a declared data store with typed fields. Opens when ALL fields pass.
  *
  * Gates are referenced by channels via `gateId`. A gate has no back-reference
  * to any channel — the same gate can guard multiple channels.
  *
- * Gate data is a key-value store persisted per `(run_id, gate_id)` in the
- * `gate_data` SQLite table. Agents write to gate data via `write_gate`;
- * the runtime evaluates the condition against current data to decide passage.
+ * Gate runtime data is a key-value store persisted per `(run_id, gate_id)` in
+ * the `gate_data` SQLite table. Default data is computed from the field
+ * declarations (empty map `{}` for 'map' type, nothing for others). Agents
+ * write to gate data via `write_gate`; the runtime evaluates field checks
+ * against current data to decide passage.
  */
 export interface Gate {
 	/** Unique identifier */
 	id: string;
-	/** Condition that must be satisfied for the gate to open. */
-	condition: GateCondition;
-	/**
-	 * Default data values for the gate. Populated into `gate_data` when a
-	 * workflow run starts. Keys not present here default to `undefined`.
-	 */
-	data: Record<string, unknown>;
-	/**
-	 * Roles allowed to write to this gate's data store.
-	 * An empty array means no role can write (effectively read-only).
-	 * Use `['*']` to allow all roles.
-	 */
-	allowedWriterRoles: string[];
 	/** Human-readable description of what this gate checks. */
 	description?: string;
+	/** Declared fields with schema, permissions, and checks. */
+	fields: GateField[];
 	/**
-	 * When true, gate data is reset to `data` (defaults) each time the workflow
-	 * cycles through a channel referencing this gate. Used for cyclic workflows.
+	 * When true, gate data is reset to defaults on cyclic channel traversal.
+	 * Used for cyclic workflows where gate state should be cleared each loop.
 	 */
 	resetOnCycle: boolean;
+}
+
+/**
+ * Compute default data for a gate from its field declarations.
+ * Map fields get `{}`, others get nothing (no key in defaults).
+ */
+export function computeGateDefaults(fields: GateField[]): Record<string, unknown> {
+	const defaults: Record<string, unknown> = {};
+	for (const field of fields) {
+		if (field.type === 'map') {
+			defaults[field.name] = {};
+		}
+	}
+	return defaults;
 }
 
 /**
@@ -630,9 +612,8 @@ export interface Gate {
  * When `gateId` is set, the channel is gated — messages are held until the
  * referenced Gate's condition passes.
  *
- * This is the separated Channel type (M1.1). The legacy `WorkflowChannel` type
- * with its inline `gate?: WorkflowCondition` is preserved for backward compatibility
- * but new code should use `Channel` + `Gate`.
+ * This is the separated Channel type (M1.1). Uses `gateId` to reference Gate
+ * entities rather than inlining gate conditions.
  */
 export interface Channel {
 	/** Unique identifier */
@@ -653,10 +634,12 @@ export interface Channel {
 	 */
 	gateId?: string;
 	/**
-	 * When true, each delivery on this channel increments the run's iteration counter.
-	 * Used for cyclic workflows.
+	 * Maximum number of times this channel may be traversed in a single workflow run
+	 * before delivery is blocked. Only meaningful for backward (cyclic) channels —
+	 * cyclicity is inferred from graph topology, not stored.
+	 * Defaults to 5 at runtime when the channel is cyclic and this field is absent.
 	 */
-	isCyclic?: boolean;
+	maxCycles?: number;
 	/** Optional human-readable label for display in the visual editor. */
 	label?: string;
 }
@@ -754,24 +737,18 @@ export interface WorkflowChannel {
 	 */
 	direction: 'one-way' | 'bidirectional';
 	/**
-	 * When true, each delivery on this channel increments the run's iteration counter.
-	 * Used for cyclic workflows — channel-level analogue of WorkflowTransition.isCyclic.
+	 * Maximum number of times this channel may be traversed in a single workflow run
+	 * before delivery is blocked. Only meaningful for backward (cyclic) channels —
+	 * cyclicity is inferred from graph topology, not stored.
+	 * Defaults to 5 at runtime when the channel is cyclic and this field is absent.
 	 */
-	isCyclic?: boolean;
+	maxCycles?: number;
 	/** Optional human-readable label for display in the visual editor */
 	label?: string;
-	/**
-	 * Optional gate condition evaluated before a message is delivered on this channel.
-	 * When present, the message is held until the condition passes.
-	 * Absent means the channel is always open (no gate).
-	 * @deprecated Use `gateId` to reference a `Gate` entity instead. Will be removed in a future milestone.
-	 */
-	gate?: WorkflowCondition;
 	/**
 	 * Optional reference to a Gate entity in `SpaceWorkflow.gates`.
 	 * When set, the channel is gated — delivery is blocked until the referenced gate's
 	 * condition passes against runtime data in `gate_data`.
-	 * Takes precedence over the legacy inline `gate` field when both are set.
 	 * Absent means the channel is always open (no gate).
 	 */
 	gateId?: string;
@@ -800,6 +777,10 @@ export interface WorkflowNode {
 	 * At least one of `agentId` or `agents` must be provided.
 	 */
 	agentId?: string;
+	/** Override the agent's default model for single-agent shorthand nodes. */
+	model?: string;
+	/** Override the agent's default system prompt for single-agent shorthand nodes. */
+	systemPrompt?: string;
 	/**
 	 * Multiple agents for parallel execution within this node.
 	 * When provided (non-empty), takes precedence over `agentId`.
@@ -849,6 +830,10 @@ export interface WorkflowNodeInput {
 	 * precedence. At least one of `agentId` or `agents` must be provided.
 	 */
 	agentId?: string;
+	/** Override the agent's default model for single-agent shorthand nodes. */
+	model?: string;
+	/** Override the agent's default system prompt for single-agent shorthand nodes. */
+	systemPrompt?: string;
 	/**
 	 * Multiple agents for parallel execution within this node.
 	 * When provided (non-empty), takes precedence over `agentId`.
@@ -908,7 +893,10 @@ export interface SpaceWorkflow {
 	tags: string[];
 	/** Additional runtime configuration (opaque bag for future extensibility) */
 	config?: Record<string, unknown>;
-	/** Maximum iterations for cyclic workflows before escalating to needs_attention */
+	/**
+	 * @deprecated Global max iterations replaced by per-channel `maxCycles` on WorkflowChannel.
+	 * Retained for backward compatibility; runtime ignores it.
+	 */
 	maxIterations?: number;
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
@@ -952,8 +940,6 @@ export interface CreateSpaceWorkflowParams {
 	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
 	tags?: string[];
 	config?: Record<string, unknown>;
-	/** Maximum iterations for cyclic workflows before escalating to needs_attention */
-	maxIterations?: number;
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
 }
@@ -1000,8 +986,6 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	tags?: string[] | null;
 	config?: Record<string, unknown> | null;
-	/** Maximum iterations for cyclic workflows. Pass `null` to clear. */
-	maxIterations?: number | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
 }
@@ -1030,9 +1014,8 @@ export interface ExportedWorkflowChannel {
 	 */
 	to: string | string[];
 	direction: 'one-way' | 'bidirectional';
-	isCyclic?: boolean;
+	maxCycles?: number;
 	label?: string;
-	gate?: WorkflowCondition;
 }
 
 /**
@@ -1083,6 +1066,10 @@ export interface ExportedWorkflowNode {
 	 * Used for single-agent nodes. Mutually exclusive with `agents`.
 	 */
 	agentRef?: string;
+	/** Override the single-agent node's default model. */
+	model?: string;
+	/** Override the single-agent node's default system prompt. */
+	systemPrompt?: string;
 	/**
 	 * Multiple agents for parallel execution.
 	 * Used for multi-agent nodes. Mutually exclusive with `agentRef`.
@@ -1134,7 +1121,7 @@ export interface ExportedSpaceAgent {
 	provider?: string;
 	/**
 	 * Role label — free-form string describing the agent's purpose (e.g. 'coder', 'reviewer').
-	 * Used for display and default system prompt labeling; has no runtime routing effect.
+	 * Used for display and default tool/feature profiles; has no runtime routing effect.
 	 * Mirrors `SpaceAgent.role`.
 	 */
 	role: string;
@@ -1146,10 +1133,7 @@ export interface ExportedSpaceAgent {
 	 * Mirrors `SpaceAgent.tools`.
 	 */
 	tools?: string[];
-	/**
-	 * When true, the agent receives full workflow structure in its task message when
-	 * running inside an active workflow run. Mirrors `SpaceAgent.injectWorkflowContext`.
-	 */
+	/** @deprecated Workflow runs always include factual workflow structure. */
 	injectWorkflowContext?: boolean;
 	/**
 	 * Additional agent configuration.

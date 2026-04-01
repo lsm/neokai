@@ -3,11 +3,10 @@
  *
  * Space-specific context panel for the three-column layout.
  * Mirrors RoomContextPanel's visual structure for a space:
- * 1. Task stats strip (active · review · done counts)
+ * 1. Space activity header (no status counters)
  * 2. Pinned items: Dashboard, Space Agent
- * 3. Workflow Runs section (active runs with expandable tasks)
- * 4. Tasks section (standalone tasks with active/review/done tab filter)
- * 5. Sessions section (collapsible, default collapsed)
+ * 3. Tasks section (single task list with active/review filters)
+ * 4. Sessions section (collapsible, default collapsed)
  */
 
 import { useMemo, useState } from 'preact/hooks';
@@ -22,7 +21,7 @@ import {
 import { currentSpaceSessionIdSignal, currentSpaceTaskIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
 
-type OrphanTab = 'active' | 'review' | 'done';
+type OrphanTab = 'active' | 'review';
 
 const taskStatusColors: Record<string, string> = {
 	draft: 'bg-gray-500',
@@ -37,30 +36,10 @@ const taskStatusColors: Record<string, string> = {
 	usage_limited: 'bg-orange-600',
 };
 
-const workflowRunStatusColors: Record<string, string> = {
-	pending: 'bg-yellow-500',
-	in_progress: 'bg-blue-500 animate-pulse',
-	completed: 'bg-green-500',
-	failed: 'bg-red-500',
-	cancelled: 'bg-gray-600',
-	needs_attention: 'bg-orange-500',
-};
-
 function TaskStatusDot({ status }: { status: string }) {
 	return (
 		<div
 			class={cn('w-2 h-2 rounded-full flex-shrink-0', taskStatusColors[status] ?? 'bg-gray-500')}
-		/>
-	);
-}
-
-function RunStatusDot({ status }: { status: string }) {
-	return (
-		<div
-			class={cn(
-				'w-2 h-2 rounded-full flex-shrink-0',
-				workflowRunStatusColors[status] ?? 'bg-gray-500'
-			)}
 		/>
 	);
 }
@@ -75,9 +54,6 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const isLoading = spaceStore.loading.value;
 	const loadedSpaceId = spaceStore.spaceId.value;
 	const tasks = spaceStore.tasks.value;
-	const activeRuns = spaceStore.activeRuns.value;
-	const tasksByRun = spaceStore.tasksByRun.value;
-	const standaloneTasks = spaceStore.standaloneTasks.value;
 	const space = spaceStore.space.value;
 
 	// Show a loading state when the store hasn't loaded data for this space yet.
@@ -93,62 +69,24 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		);
 	}
 
-	const [expandedRuns, setExpandedRuns] = useState<Set<string>>(() => new Set());
-	const [orphanTab, setOrphanTab] = useState<OrphanTab>('active');
-
-	// Task stats strip counts
-	// rate_limited/usage_limited are transient throttle states — counted as active (still running).
-	// archived is a terminal state — counted as done.
-	const activeCount = useMemo(
-		() =>
-			tasks.filter(
-				(t) =>
-					t.status === 'draft' ||
-					t.status === 'pending' ||
-					t.status === 'in_progress' ||
-					t.status === 'rate_limited' ||
-					t.status === 'usage_limited'
-			).length,
-		[tasks]
-	);
-	const reviewCount = useMemo(
-		() => tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention').length,
-		[tasks]
-	);
-	const doneCount = useMemo(
-		() =>
-			tasks.filter(
-				(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
-			).length,
-		[tasks]
-	);
+	const [taskTab, setTaskTab] = useState<OrphanTab>('active');
 
 	// Selection state
 	const selectedSessionId = currentSpaceSessionIdSignal.value;
 	const selectedTaskId = currentSpaceTaskIdSignal.value;
+	const selectedTask = selectedTaskId ? (tasks.find((t) => t.id === selectedTaskId) ?? null) : null;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
 	const isDashboardSelected = selectedSessionId === null && selectedTaskId === null;
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 
-	// Workflow run expand/collapse
-	const toggleRun = (runId: string) => {
-		setExpandedRuns((prev) => {
-			const next = new Set(prev);
-			if (next.has(runId)) {
-				next.delete(runId);
-			} else {
-				next.add(runId);
-			}
-			return next;
-		});
-	};
-
-	// Standalone tasks filtered by tab.
-	// rate_limited/usage_limited are grouped with active; archived with done.
-	const orphanTasksForTab = useMemo(() => {
-		if (orphanTab === 'active') {
-			return standaloneTasks.filter(
+	// Tasks filtered by tab.
+	// rate_limited/usage_limited are grouped with active.
+	const tasksForTab = useMemo(() => {
+		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
+		let filtered: typeof sorted;
+		if (taskTab === 'active') {
+			filtered = sorted.filter(
 				(t) =>
 					t.status === 'draft' ||
 					t.status === 'pending' ||
@@ -156,51 +94,45 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					t.status === 'rate_limited' ||
 					t.status === 'usage_limited'
 			);
+		} else {
+			filtered = sorted.filter((t) => t.status === 'review' || t.status === 'needs_attention');
 		}
-		if (orphanTab === 'review') {
-			return standaloneTasks.filter((t) => t.status === 'review' || t.status === 'needs_attention');
-		}
-		return standaloneTasks.filter(
-			(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
-		);
-	}, [standaloneTasks, orphanTab]);
 
-	// Build sessions list from available data sources
-	// (1) Space agent session — always listed
-	// (2) Task agent sessions linked via SpaceTask.taskAgentSessionId
-	// (3) Manually created sessions from space.sessionIds
-	const sessions = useMemo(() => {
-		const list: { id: string; title: string; isAgent: boolean }[] = [];
-		const seen = new Set<string>();
-
-		// Always include space agent session
-		list.push({ id: spaceAgentSessionId, title: 'Space Agent', isAgent: true });
-		seen.add(spaceAgentSessionId);
-
-		// Task agent sessions
-		for (const task of tasks) {
-			if (task.taskAgentSessionId && !seen.has(task.taskAgentSessionId)) {
-				list.push({
-					id: task.taskAgentSessionId,
-					title: `${task.title} (agent)`,
-					isAgent: true,
-				});
-				seen.add(task.taskAgentSessionId);
+		// Keep the currently open task visible even if the tab filter would hide it.
+		// This avoids "No tasks" in the list while the user is actively viewing a task.
+		if (selectedTaskId && !filtered.some((t) => t.id === selectedTaskId)) {
+			const selected = sorted.find((t) => t.id === selectedTaskId);
+			if (selected) {
+				filtered = [selected, ...filtered];
 			}
 		}
+		return filtered;
+	}, [tasks, taskTab, selectedTaskId]);
 
-		// Manually created sessions from space.sessionIds
+	// Sessions list: only manually created sessions from space.sessionIds.
+	// Excludes built-in Space Agent + task/workflow orchestration sessions.
+	const sessions = useMemo(() => {
+		const list: { id: string; title: string }[] = [];
+		const seen = new Set<string>();
+		const isSystemSpaceSession = (sid: string): boolean =>
+			sid === spaceAgentSessionId ||
+			sid.startsWith(`space:${spaceId}:task:`) ||
+			sid.startsWith(`space:${spaceId}:workflow:`);
+
 		if (space?.sessionIds) {
 			for (const sid of space.sessionIds) {
+				if (isSystemSpaceSession(sid)) {
+					continue;
+				}
 				if (!seen.has(sid)) {
-					list.push({ id: sid, title: sid.slice(0, 8), isAgent: false });
+					list.push({ id: sid, title: sid.slice(0, 8) });
 					seen.add(sid);
 				}
 			}
 		}
 
 		return list;
-	}, [tasks, space, spaceAgentSessionId]);
+	}, [space, spaceAgentSessionId, spaceId]);
 
 	// Navigation handlers
 	const handleDashboardClick = () => {
@@ -223,25 +155,20 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		onNavigate?.();
 	};
 
-	const hasTasks = activeCount > 0 || reviewCount > 0 || doneCount > 0;
-
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
-			{/* Task stats strip */}
-			<div class="px-3 py-2">
-				{hasTasks ? (
-					<span class="text-xs text-gray-500">
-						{activeCount > 0 && <span class="text-blue-500/80">{activeCount} active</span>}
-						{activeCount > 0 && reviewCount > 0 && <span class="text-gray-600"> · </span>}
-						{reviewCount > 0 && <span class="text-purple-500/80">{reviewCount} review</span>}
-						{(activeCount > 0 || reviewCount > 0) && doneCount > 0 && (
-							<span class="text-gray-600"> · </span>
-						)}
-						{doneCount > 0 && <span>{doneCount} done</span>}
-					</span>
-				) : (
-					<span class="text-xs text-gray-600">No tasks</span>
-				)}
+			<div class="px-3 pt-3 pb-2 space-y-3 border-b border-dark-800">
+				<div class="space-y-1 px-1 pb-1">
+					<p class="text-[11px] uppercase tracking-[0.18em] text-gray-600">Space Activity</p>
+					<p class="text-xs text-gray-500">
+						{tasks.length === 0
+							? 'No tasks yet.'
+							: 'Use Tasks and Space Agent to monitor and steer ongoing work.'}
+					</p>
+					{space?.workspacePath && (
+						<p class="truncate font-mono text-[11px] text-gray-600">{space.workspacePath}</p>
+					)}
+				</div>
 			</div>
 
 			{/* Pinned items */}
@@ -250,8 +177,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 				data-testid="space-detail-dashboard"
 				data-active={isDashboardSelected ? 'true' : 'false'}
 				class={cn(
-					'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors',
-					isDashboardSelected ? 'bg-dark-700' : 'hover:bg-dark-800'
+					'mx-3 mt-3 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
+					isDashboardSelected
+						? 'bg-dark-700 border-dark-600'
+						: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
 				)}
 			>
 				<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-blue-900/40 rounded">
@@ -277,8 +206,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 				data-testid="space-detail-agent"
 				data-active={isSpaceAgentSelected ? 'true' : 'false'}
 				class={cn(
-					'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors',
-					isSpaceAgentSelected ? 'bg-dark-700' : 'hover:bg-dark-800'
+					'mx-3 mt-2 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
+					isSpaceAgentSelected
+						? 'bg-dark-700 border-dark-600'
+						: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
 				)}
 			>
 				<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-purple-900/40 rounded">
@@ -300,68 +231,21 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 			</button>
 
 			{/* Visual divider after pinned items */}
-			<div class="border-t border-dark-700 mx-3 my-1" />
+			<div class="border-t border-dark-700 mx-3 my-3" />
 
 			{/* Scrollable sections */}
 			<div class="flex-1 overflow-y-auto">
-				{/* Workflow Runs section */}
-				<CollapsibleSection title="Workflow Runs" count={activeRuns.length}>
-					{activeRuns.length === 0 ? (
-						<div class="px-4 py-3 text-xs text-gray-600">No active runs</div>
-					) : (
-						activeRuns.map((run) => {
-							const isExpanded = expandedRuns.has(run.id);
-							const runTasks = tasksByRun.get(run.id) ?? [];
-							return (
-								<div key={run.id}>
-									<button
-										onClick={() => toggleRun(run.id)}
-										class="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-dark-800 transition-colors text-left"
-									>
-										<span class="text-gray-500 text-[10px] leading-none w-3 flex-shrink-0">
-											{isExpanded ? '▼' : '▶'}
-										</span>
-										<RunStatusDot status={run.status} />
-										<span class="flex-1 text-sm text-gray-300 truncate">{run.title}</span>
-									</button>
-									{isExpanded && (
-										<>
-											{runTasks.length === 0 ? (
-												<div class="pl-8 pr-3 py-1.5 text-xs text-gray-600">No tasks</div>
-											) : (
-												runTasks.map((task) => (
-													<button
-														key={task.id}
-														onClick={() => handleTaskClick(task.id)}
-														class={cn(
-															'w-full pl-8 pr-3 py-1.5 flex items-center gap-2 transition-colors text-left',
-															selectedTaskId === task.id ? 'bg-dark-700' : 'hover:bg-dark-800'
-														)}
-													>
-														<TaskStatusDot status={task.status} />
-														<span class="flex-1 text-sm text-gray-400 truncate">{task.title}</span>
-													</button>
-												))
-											)}
-										</>
-									)}
-								</div>
-							);
-						})
-					)}
-				</CollapsibleSection>
-
-				{/* Tasks section (standalone tasks without a workflow run) */}
+				{/* Tasks section */}
 				<CollapsibleSection title="Tasks">
 					{/* Tab bar */}
 					<div class="flex items-center gap-1 px-3 py-1.5">
-						{(['active', 'review', 'done'] as const).map((tab) => (
+						{(['active', 'review'] as const).map((tab) => (
 							<button
 								key={tab}
-								onClick={() => setOrphanTab(tab)}
+								onClick={() => setTaskTab(tab)}
 								class={cn(
 									'px-2 py-0.5 text-xs rounded transition-colors capitalize',
-									orphanTab === tab
+									taskTab === tab
 										? 'bg-dark-600 text-gray-200'
 										: 'text-gray-500 hover:text-gray-300'
 								)}
@@ -370,10 +254,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 							</button>
 						))}
 					</div>
-					{orphanTasksForTab.length === 0 ? (
+					{tasksForTab.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No tasks</div>
 					) : (
-						orphanTasksForTab.map((task) => (
+						tasksForTab.map((task) => (
 							<button
 								key={task.id}
 								onClick={() => handleTaskClick(task.id)}
@@ -383,7 +267,19 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 								)}
 							>
 								<TaskStatusDot status={task.status} />
-								<span class="flex-1 text-sm text-gray-400 truncate">{task.title}</span>
+								<div class="min-w-0 flex-1">
+									<span class="block text-sm text-gray-400 truncate">{task.title}</span>
+									<span class="block text-[11px] uppercase tracking-[0.14em] text-gray-600">
+										{task.workflowRunId ? 'Workflow task' : 'Standalone task'}
+										{selectedTask?.id === task.id &&
+											selectedTask.status !== 'draft' &&
+											selectedTask.status !== 'pending' &&
+											selectedTask.status !== 'in_progress' &&
+											selectedTask.status !== 'rate_limited' &&
+											selectedTask.status !== 'usage_limited' &&
+											` · ${selectedTask.status.replace('_', ' ')}`}
+									</span>
+								</div>
 							</button>
 						))
 					)}
@@ -427,12 +323,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 									selectedSessionId === session.id ? 'bg-dark-700' : 'hover:bg-dark-800'
 								)}
 							>
-								<div
-									class={cn(
-										'w-2 h-2 rounded-full flex-shrink-0',
-										session.isAgent ? 'bg-purple-500' : 'bg-gray-500'
-									)}
-								/>
+								<div class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-500" />
 								<span class="flex-1 text-sm text-gray-300 truncate text-left">{session.title}</span>
 							</button>
 						))

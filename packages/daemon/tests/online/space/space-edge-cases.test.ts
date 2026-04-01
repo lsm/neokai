@@ -106,23 +106,6 @@ describe('Space Workflow — Edge Cases', () => {
 
 			expect(runA).not.toBe(runB);
 
-			// Both runs start with iterationCount = 0.
-			// incrementIterationCount has no public RPC, so this verifies initial
-			// isolation: each run owns its own counter row, not a shared counter.
-			const runAObj = (
-				(await daemon.messageHub.request('spaceWorkflowRun.get', { id: runA })) as {
-					run: SpaceWorkflowRun;
-				}
-			).run;
-			const runBObj = (
-				(await daemon.messageHub.request('spaceWorkflowRun.get', { id: runB })) as {
-					run: SpaceWorkflowRun;
-				}
-			).run;
-
-			expect(runAObj.iterationCount).toBe(0);
-			expect(runBObj.iterationCount).toBe(0);
-
 			// Each run has its own Planning task
 			const tasksA = await getTasksForNode(daemon, space.id, runA, 'Planning');
 			const tasksB = await getTasksForNode(daemon, space.id, runB, 'Planning');
@@ -420,9 +403,7 @@ describe('Space Workflow — Edge Cases', () => {
 
 				// ── Step 2: open code-pr-gate to unblock Reviewer nodes ────────
 				await writeGateData(daemon, runId, 'code-pr-gate', {
-					pr_url: 'https://github.com/example/repo/pull/11',
-					pr_number: 11,
-					branch: 'feature/vote-gate-test',
+					pr_created: true,
 				});
 				// Wait for at least Reviewer 1 to activate (parallel fan-in pattern)
 				await waitForNodeActivated(daemon, space.id, runId, 'Reviewer 1', NODE_ACTIVATION_TIMEOUT);

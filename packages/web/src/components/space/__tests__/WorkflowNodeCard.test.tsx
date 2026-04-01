@@ -17,7 +17,7 @@ import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 import { WorkflowNodeCard } from '../WorkflowNodeCard';
-import type { NodeDraft, ConditionDraft, AgentTaskState } from '../WorkflowNodeCard';
+import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 
 vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -57,13 +57,9 @@ function makeProps(overrides: Partial<Parameters<typeof WorkflowNodeCard>[0]> = 
 		isFirst: false,
 		isLast: false,
 		expanded: false,
-		entryCondition: { type: 'always' } as ConditionDraft,
-		exitCondition: { type: 'always' } as ConditionDraft,
 		agents: defaultAgents,
 		onToggleExpand: vi.fn(),
 		onUpdate: vi.fn(),
-		onUpdateEntryCondition: vi.fn(),
-		onUpdateExitCondition: vi.fn(),
 		onMoveUp: vi.fn(),
 		onMoveDown: vi.fn(),
 		onRemove: vi.fn(),
@@ -149,48 +145,6 @@ describe('WorkflowNodeCard', () => {
 			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ disableRemove: false })} />);
 			expect((getByTitle('Remove node') as HTMLButtonElement).disabled).toBe(false);
 		});
-
-		it('shows human gate icon when entry condition is human', () => {
-			const { getByTitle } = render(
-				<WorkflowNodeCard {...makeProps({ entryCondition: { type: 'human' } })} />
-			);
-			expect(getByTitle('Entry: Human Approval')).toBeTruthy();
-		});
-
-		it('shows condition gate icon when exit condition is shell condition', () => {
-			const { getByTitle } = render(
-				<WorkflowNodeCard {...makeProps({ exitCondition: { type: 'condition' } })} />
-			);
-			expect(getByTitle('Exit: Shell Condition')).toBeTruthy();
-		});
-
-		it('shows task_result gate icon when entry condition is task_result', () => {
-			const { getByTitle } = render(
-				<WorkflowNodeCard {...makeProps({ entryCondition: { type: 'task_result' } })} />
-			);
-			expect(getByTitle('Entry: Task Result')).toBeTruthy();
-		});
-
-		it('shows task_result gate icon when exit condition is task_result', () => {
-			const { getByTitle } = render(
-				<WorkflowNodeCard {...makeProps({ exitCondition: { type: 'task_result' } })} />
-			);
-			expect(getByTitle('Exit: Task Result')).toBeTruthy();
-		});
-
-		it('does not show gate icons for always conditions', () => {
-			const { container } = render(
-				<WorkflowNodeCard
-					{...makeProps({
-						entryCondition: { type: 'always' },
-						exitCondition: { type: 'always' },
-					})}
-				/>
-			);
-			// No gate icons for 'always' type
-			expect(container.querySelector('[title*="Entry:"]')).toBeNull();
-			expect(container.querySelector('[title*="Exit:"]')).toBeNull();
-		});
 	});
 
 	describe('expanded view', () => {
@@ -210,7 +164,6 @@ describe('WorkflowNodeCard', () => {
 		it('renders agent dropdown with all passed agents', () => {
 			const { container } = render(<WorkflowNodeCard {...makeProps({ expanded: true })} />);
 			const selects = container.querySelectorAll('select');
-			// Agent select + entry gate select + exit gate select = 3 selects
 			const agentSelect = selects[0] as HTMLSelectElement;
 			const options = Array.from(agentSelect.querySelectorAll('option')).map((o) => o.textContent);
 			expect(options).toContain('planner (planner)');
@@ -257,153 +210,6 @@ describe('WorkflowNodeCard', () => {
 			expect(onUpdate).toHaveBeenCalledWith(
 				expect.objectContaining({ instructions: 'Do the thing.' })
 			);
-		});
-
-		it('renders "Workflow starts here" for first step entry gate', () => {
-			const { getByText } = render(
-				<WorkflowNodeCard {...makeProps({ expanded: true, isFirst: true, entryCondition: null })} />
-			);
-			expect(getByText('Workflow starts here')).toBeTruthy();
-		});
-
-		it('renders "Workflow ends here" for last step exit gate', () => {
-			const { getByText } = render(
-				<WorkflowNodeCard {...makeProps({ expanded: true, isLast: true, exitCondition: null })} />
-			);
-			expect(getByText('Workflow ends here')).toBeTruthy();
-		});
-
-		describe('gate config — condition type', () => {
-			it('shows shell expression input when condition type is "condition"', () => {
-				const { getByPlaceholderText } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							entryCondition: { type: 'condition', expression: '' },
-						})}
-					/>
-				);
-				expect(getByPlaceholderText('e.g. bun test && git diff --quiet')).toBeTruthy();
-			});
-
-			it('does not show shell expression input for "always" type', () => {
-				const { container } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							entryCondition: { type: 'always' },
-						})}
-					/>
-				);
-				const inputs = container.querySelectorAll('input[type="text"]');
-				// Only the step name input, no expression input
-				expect(inputs.length).toBe(1);
-			});
-
-			it('calls onUpdateEntryCondition when entry gate type changed', () => {
-				const onUpdateEntryCondition = vi.fn();
-				const { container } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							entryCondition: { type: 'always' },
-							onUpdateEntryCondition,
-						})}
-					/>
-				);
-				const selects = container.querySelectorAll('select');
-				// selects[0] = agent, selects[1] = entry gate, selects[2] = exit gate
-				fireEvent.change(selects[1], { target: { value: 'human' } });
-				expect(onUpdateEntryCondition).toHaveBeenCalledWith({
-					type: 'human',
-					expression: undefined,
-				});
-			});
-
-			it('calls onUpdateExitCondition when exit gate type changed', () => {
-				const onUpdateExitCondition = vi.fn();
-				const { container } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							exitCondition: { type: 'always' },
-							onUpdateExitCondition,
-						})}
-					/>
-				);
-				const selects = container.querySelectorAll('select');
-				// selects[2] = exit gate
-				fireEvent.change(selects[2], { target: { value: 'condition' } });
-				expect(onUpdateExitCondition).toHaveBeenCalledWith({ type: 'condition', expression: '' });
-			});
-
-			it('shows "Requires human approval" hint for human type', () => {
-				const { getByText } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							entryCondition: { type: 'human' },
-						})}
-					/>
-				);
-				expect(getByText('Transition requires explicit human approval.')).toBeTruthy();
-			});
-
-			it('shows "fires automatically" hint for always type', () => {
-				const { getAllByText } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							entryCondition: { type: 'always' },
-						})}
-					/>
-				);
-				expect(getAllByText('Transition fires automatically.').length).toBeGreaterThan(0);
-			});
-
-			it('shows task_result expression input when entry gate is "task_result"', () => {
-				const { getByPlaceholderText } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							entryCondition: { type: 'task_result', expression: '' },
-						})}
-					/>
-				);
-				expect(getByPlaceholderText('e.g. passed, failed')).toBeTruthy();
-			});
-
-			it('shows "fires when task result matches" hint for task_result type', () => {
-				const { getByText } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							entryCondition: { type: 'task_result', expression: '' },
-						})}
-					/>
-				);
-				expect(getByText('Fires when the task result matches this value.')).toBeTruthy();
-			});
-
-			it('calls onUpdateEntryCondition with task_result type when entry gate changed', () => {
-				const onUpdateEntryCondition = vi.fn();
-				const { container } = render(
-					<WorkflowNodeCard
-						{...makeProps({
-							expanded: true,
-							entryCondition: { type: 'always' },
-							onUpdateEntryCondition,
-						})}
-					/>
-				);
-				const selects = container.querySelectorAll('select');
-				// selects[1] = entry gate
-				fireEvent.change(selects[1], { target: { value: 'task_result' } });
-				expect(onUpdateEntryCondition).toHaveBeenCalledWith({
-					type: 'task_result',
-					expression: '',
-				});
-			});
 		});
 	});
 });

@@ -20,6 +20,7 @@ import {
 } from '../../../src/lib/rpc-handlers/space-task-message-handlers';
 import type { Database } from '../../../src/storage/database';
 import type { AgentSession } from '../../../src/lib/agent/agent-session';
+import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -105,9 +106,11 @@ function createMockAgentSession(messages = mockSDKMessages): Partial<AgentSessio
 }
 
 function createMockTaskAgentManager(
-	liveSession: Partial<AgentSession> | null = null
+	liveSession: Partial<AgentSession> | null = null,
+	ensuredTask: SpaceTask = mockTaskWithSession
 ): TaskAgentManagerInterface {
 	return {
+		ensureTaskAgentSession: mock(async (_taskId: string) => ensuredTask),
 		injectTaskAgentMessage: mock(async (_taskId: string, _message: string) => {}),
 		getTaskAgent: mock((_taskId: string) => (liveSession ?? undefined) as AgentSession | undefined),
 	};
@@ -157,6 +160,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 	let handlers: Map<string, RequestHandler>;
 	let taskAgentManager: TaskAgentManagerInterface;
 	let db: Database;
+	let daemonHub: DaemonHub;
 
 	/**
 	 * Sets up all mocks and registers handlers.
@@ -165,14 +169,18 @@ describe('setupSpaceTaskMessageHandlers', () => {
 	 */
 	function setup(
 		task: SpaceTask | null = mockTaskWithSession,
-		liveSession: Partial<AgentSession> | null = null
+		liveSession: Partial<AgentSession> | null = null,
+		ensuredTask: SpaceTask = mockTaskWithSession
 	) {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
-		taskAgentManager = createMockTaskAgentManager(liveSession);
+		taskAgentManager = createMockTaskAgentManager(liveSession, ensuredTask);
 		db = createMockDatabase(task);
-		setupSpaceTaskMessageHandlers(hub, taskAgentManager, db);
+		daemonHub = {
+			emit: mock(async () => {}),
+		} as unknown as DaemonHub;
+		setupSpaceTaskMessageHandlers(hub, taskAgentManager, db, daemonHub);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -193,6 +201,57 @@ describe('setupSpaceTaskMessageHandlers', () => {
 		it('registers space.task.getMessages handler', () => {
 			expect(handlers.has('space.task.getMessages')).toBe(true);
 		});
+
+		it('registers space.task.ensureAgentSession handler', () => {
+			expect(handlers.has('space.task.ensureAgentSession')).toBe(true);
+		});
+	});
+
+	// ─── space.task.ensureAgentSession ─────────────────────────────────────────
+
+	describe('space.task.ensureAgentSession', () => {
+		beforeEach(() => setup());
+
+		it('ensures a task session and returns session metadata', async () => {
+			const result = await call('space.task.ensureAgentSession', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+			});
+
+			expect(result).toMatchObject({
+				taskId: 'task-1',
+				sessionId: 'space:space-1:task:task-1',
+			});
+			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-1');
+			expect((daemonHub.emit as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
+				'space.task.updated'
+			);
+		});
+
+		it('throws when spaceId is missing', async () => {
+			await expect(call('space.task.ensureAgentSession', { taskId: 'task-1' })).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('throws when taskId is missing', async () => {
+			await expect(call('space.task.ensureAgentSession', { spaceId: 'space-1' })).rejects.toThrow(
+				'taskId is required'
+			);
+		});
+
+		it('throws when task is not found', async () => {
+			setup(null);
+			await expect(
+				call('space.task.ensureAgentSession', { spaceId: 'space-1', taskId: 'ghost' })
+			).rejects.toThrow('Task not found: ghost');
+		});
+
+		it('throws for cross-space task access', async () => {
+			await expect(
+				call('space.task.ensureAgentSession', { spaceId: 'space-other', taskId: 'task-1' })
+			).rejects.toThrow('Task not found: task-1');
+		});
 	});
 
 	// ─── space.task.sendMessage ────────────────────────────────────────────────
@@ -208,6 +267,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			});
 
 			expect(result).toEqual({ ok: true });
+			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-1');
 			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
 				'task-1',
 				'Please continue'
@@ -268,12 +328,25 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
 		});
 
-		it('throws when Task Agent session is not started (no taskAgentSessionId)', async () => {
-			setup(mockTaskWithoutSession);
-			await expect(
-				call('space.task.sendMessage', { spaceId: 'space-1', taskId: 'task-2', message: 'Hello' })
-			).rejects.toThrow('Task Agent session not started for task: task-2');
-			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
+		it('auto-ensures Task Agent session when task has no taskAgentSessionId yet', async () => {
+			setup(mockTaskWithoutSession, null, {
+				...mockTaskWithoutSession,
+				taskAgentSessionId: 'space:space-1:task:task-2',
+				status: 'in_progress',
+			});
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-2',
+				message: 'Hello',
+			});
+
+			expect(result).toEqual({ ok: true });
+			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-2');
+			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith('task-2', 'Hello');
+			expect((daemonHub.emit as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
+				'space.task.updated'
+			);
 		});
 
 		it('propagates errors from TaskAgentManager', async () => {

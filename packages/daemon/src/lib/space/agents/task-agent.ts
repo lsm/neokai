@@ -53,7 +53,6 @@ import type {
 	SpaceAgent,
 	WorkflowNode,
 	WorkflowChannel,
-	WorkflowCondition,
 	WorkflowRule,
 	SessionFeatures,
 	Gate,
@@ -119,32 +118,36 @@ function formatRule(rule: WorkflowRule): string {
 	return `- **${rule.name}**${scope}: ${rule.content}`;
 }
 
-function formatGateCondition(gate: WorkflowCondition): string {
-	if (gate.type === 'always') return '';
-	if (gate.type === 'human') return ' **[HUMAN GATE — call request_human_input]**';
-	if (gate.type === 'condition') return ` [condition gate: ${gate.expression ?? '?'}]`;
-	if (gate.type === 'task_result')
-		return ` [task_result gate: matches "${gate.expression ?? '?'}"]`;
-	return '';
+function formatChannelGateLabel(ch: WorkflowChannel, gates: Gate[]): string {
+	if (!ch.gateId) return '';
+	const gate = gates.find((g) => g.id === ch.gateId);
+	if (!gate) return ` [gate: ${ch.gateId}]`;
+	return ` [gate: ${gate.id}${gate.description ? ` — ${gate.description}` : ''}]`;
 }
 
-function formatChannel(ch: WorkflowChannel): string {
+function formatChannel(ch: WorkflowChannel, gates: Gate[]): string {
 	const to = Array.isArray(ch.to) ? ch.to.join(', ') : ch.to;
 	const dir = ch.direction === 'bidirectional' ? '↔' : '→';
-	const gateLabel = ch.gate ? formatGateCondition(ch.gate) : '';
+	const gateLabel = formatChannelGateLabel(ch, gates);
 	const label = ch.label ? ` (${ch.label})` : '';
 	return `- \`${ch.from}\` ${dir} \`${to}\`${label}${gateLabel}`;
 }
 
 function formatGate(gate: Gate): string {
 	const desc = gate.description ? ` — ${gate.description}` : '';
-	const writers =
-		gate.allowedWriterRoles.length > 0 ? gate.allowedWriterRoles.join(', ') : '(none)';
-	const condType = gate.condition.type;
+	const fieldSummaries = gate.fields.map((f) => {
+		const writers = f.writers.length > 0 ? f.writers.join(', ') : '(none)';
+		const checkDesc =
+			f.check.op === 'count'
+				? `count(${JSON.stringify(f.check.match)}) >= ${f.check.min}`
+				: f.check.op === 'exists'
+					? 'exists'
+					: `${f.check.op} ${JSON.stringify(f.check.value)}`;
+		return `    - \`${f.name}\` (${f.type}): ${checkDesc} — writers: ${writers}`;
+	});
 	return (
 		`- **Gate \`${gate.id}\`**${desc}\n` +
-		`  - Condition type: \`${condType}\`\n` +
-		`  - Allowed writer roles: ${writers}\n` +
+		`  - Fields:\n${fieldSummaries.join('\n')}\n` +
 		`  - Reset on cycle: ${gate.resetOnCycle}`
 	);
 }
@@ -202,10 +205,9 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`Call this when a new step task needs to be executed.`
 	);
 	sections.push(
-		`- **check_node_status** — Poll the status and output of a running node agent session. ` +
-			`Pass the \`session_id\` returned by \`spawn_node_agent\`. ` +
-			`Returns the session's current status (\`running\`, \`completed\`, \`error\`) and output. ` +
-			`Call this to determine when a step has finished.`
+		`- **check_node_status** — Inspect the status/output of a node agent session on demand. ` +
+			`Pass the \`step_id\` you want to inspect. ` +
+			`Use this for recovery or reconciliation when event messages are ambiguous — do not loop on it.`
 	);
 	sections.push(
 		`- **report_result** — Mark the task as completed or failed and record a result summary. ` +
@@ -229,8 +231,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 		`- **list_group_members** — List all members of the current task's session group. ` +
 			`Returns each member's \`sessionId\`, \`agentName\`, \`status\`, \`completionState\`, and ` +
 			`\`permittedTargets\`. Completion state is read from \`space_tasks\` — use this to monitor ` +
-			`when all agents have called \`report_done\`. Poll this after each check_node_status to detect ` +
-			`overall collaboration completion.`
+			`when all agents have called \`report_done\`. Use it after event messages and before finalizing.`
 	);
 	sections.push(
 		`- **send_message** — Send a message to a peer node agent using a plain string target. ` +
@@ -256,26 +257,28 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`via declared channels and signal completion via \`report_done\`. Your role is to spawn agents, ` +
 			`monitor the collaboration, and handle gate events — you do not manually route messages between agents.\n`
 	);
-	sections.push(`Follow this loop until all agents have completed:\n`);
+	sections.push(`Follow this event-driven loop until all agents have completed:\n`);
 	sections.push(
 		`1. **Spawn pending node agents** — Call \`spawn_node_agent\` for each pending step task ` +
 			`(visible in the task list). Multiple agents may run concurrently in the same node.\n` +
-			`2. **Monitor completion** — Call \`check_node_status\` periodically, then call ` +
-			`\`list_group_members\` to check each member's \`completionState\` (read from space_tasks). ` +
-			`A member is done when its \`completionState.status\` is \`completed\` or \`error\`.\n` +
-			`3. **Agents drive their own progression** — When a node agent sends a message to another ` +
+			`2. **Wait for events** — After spawning agents, stop polling and wait for inbound messages ` +
+			`(for example \`[STEP_COMPLETE]\` or \`[STEP_FAILED]\`) from node-agent activity.\n` +
+			`3. **React to events** — When an inbound event arrives, call \`list_group_members\` to ` +
+			`refresh state and spawn any newly pending node agents.\n` +
+			`4. **Use checks sparingly** — Call \`check_node_status\` only when you need to reconcile ` +
+			`uncertain state for a specific step.\n` +
+			`5. **Agents drive their own progression** — When a node agent sends a message to another ` +
 			`agent via \`send_message\` (using an agent name for DM or a node name for fan-out), ` +
 			`the target node is activated automatically. New pending tasks will appear — spawn their agents (return to step 1).\n` +
-			`4. **Handle gate-blocked messages** — Channels may have gate conditions that block delivery: ` +
+			`5. **Handle gate-blocked messages** — Channels may have gate conditions that block delivery: ` +
 			`a \`human\` gate requires explicit approval (call \`request_human_input\`); ` +
 			`\`condition\` and \`task_result\` gates are evaluated automatically by the system. ` +
 			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
-			`5. **Detect completion** — When \`list_group_members\` shows all members have completed, ` +
-			`collect the Done node agent's result summary via \`check_node_status\` (use the session ID ` +
-			`returned when you spawned the Done node agent). Then call \`report_workflow_done\` with that ` +
+			`6. **Detect completion** — When \`list_group_members\` shows all members have completed, ` +
+			`collect the Done node agent's result summary (via \`check_node_status\` only if needed). Then call \`report_workflow_done\` with that ` +
 			`summary to mark the workflow run and task as completed. ` +
 			`You may also use \`report_result\` directly for finer-grained status control.\n` +
-			`6. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
+			`7. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
 			`\`status: "cancelled"\` and the error details.`
 	);
 
@@ -454,8 +457,9 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 					`fan-out to all agents in that node. Node agents can call \`list_reachable_agents\` to ` +
 					`discover their full reachability graph.\n`
 			);
+			const workflowGates = context.workflow.gates ?? [];
 			for (const ch of channels) {
-				parts.push(formatChannel(ch));
+				parts.push(formatChannel(ch, workflowGates));
 			}
 		} else {
 			parts.push(`\n## Collaboration Channel Map\n`);

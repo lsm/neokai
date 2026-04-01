@@ -1,20 +1,11 @@
-/**
- * SpaceTaskPane Component
- *
- * Full-width task detail view for the Space layout.
- * Shows task details, status, and human input area when needed.
- * Displayed as the full content area (replacing the tab view) when a task is selected.
- */
-
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { navigateToSpaceSession } from '../../lib/router';
-import { cn } from '../../lib/utils';
-import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
+import type { SpaceTaskPriority, SpaceTaskStatus } from '@neokai/shared';
+import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
-	/** Space ID — required to enable "View Agent Session" navigation */
 	spaceId?: string;
 	onClose?: () => void;
 }
@@ -32,19 +23,6 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
 	usage_limited: 'Usage Limited',
 };
 
-const STATUS_CLASSES: Record<SpaceTaskStatus, string> = {
-	draft: 'bg-gray-800 text-gray-400 border-gray-700',
-	pending: 'bg-gray-800 text-gray-300 border-gray-600',
-	in_progress: 'bg-blue-900/30 text-blue-300 border-blue-700/50',
-	review: 'bg-purple-900/30 text-purple-300 border-purple-700/50',
-	completed: 'bg-green-900/30 text-green-300 border-green-700/50',
-	needs_attention: 'bg-yellow-900/30 text-yellow-300 border-yellow-700/50',
-	cancelled: 'bg-gray-800 text-gray-500 border-gray-700',
-	archived: 'bg-gray-900 text-gray-600 border-gray-800',
-	rate_limited: 'bg-orange-900/30 text-orange-300 border-orange-700/50',
-	usage_limited: 'bg-orange-900/30 text-orange-400 border-orange-700/50',
-};
-
 const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
 	low: 'Low',
 	normal: 'Normal',
@@ -52,92 +30,73 @@ const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
 	urgent: 'Urgent',
 };
 
-const PRIORITY_CLASSES: Record<SpaceTaskPriority, string> = {
-	low: 'text-gray-500',
-	normal: 'text-gray-400',
-	high: 'text-orange-400',
-	urgent: 'text-red-400',
-};
-
-function StatusBadge({ status }: { status: SpaceTaskStatus }) {
-	return (
-		<span
-			class={cn(
-				'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border',
-				STATUS_CLASSES[status]
-			)}
-		>
-			{STATUS_LABELS[status]}
-		</span>
-	);
-}
-
-// ============================================================================
-// Human Input
-// ============================================================================
-
-interface HumanInputAreaProps {
-	task: SpaceTask;
-}
-
-function HumanInputArea({ task }: HumanInputAreaProps) {
-	const [inputText, setInputText] = useState(task.inputDraft ?? '');
-	const [submitting, setSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const handleSubmit = async (e: Event) => {
-		e.preventDefault();
-		if (!inputText.trim()) return;
-
-		try {
-			setSubmitting(true);
-			setError(null);
-			// Persist the draft first so it is never lost even if the status transition fails
-			await spaceStore.updateTask(task.id, { inputDraft: inputText.trim() });
-			// Then attempt to resume the task — the server validates the transition
-			await spaceStore.updateTask(task.id, { status: 'in_progress' });
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to submit response');
-		} finally {
-			setSubmitting(false);
-		}
-	};
-
-	return (
-		<div class="mt-4 border border-yellow-800/50 rounded-lg p-4 bg-yellow-900/10">
-			<h3 class="text-sm font-medium text-yellow-300 mb-2">Human Input Required</h3>
-			<p class="text-xs text-gray-400 mb-3">
-				This task needs your attention before it can continue.
-			</p>
-			{error && (
-				<div class="mb-3 text-xs text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
-					{error}
-				</div>
-			)}
-			<form onSubmit={handleSubmit} class="space-y-3">
-				<textarea
-					value={inputText}
-					onInput={(e) => setInputText((e.target as HTMLTextAreaElement).value)}
-					placeholder="Type your response or approval..."
-					rows={3}
-					class="w-full bg-dark-800 border border-dark-600 rounded-md px-3 py-2 text-gray-100
-						placeholder-gray-600 focus:outline-none focus:border-yellow-600 resize-none text-sm"
-				/>
-				<button
-					type="submit"
-					disabled={submitting || !inputText.trim()}
-					class="px-4 py-1.5 text-xs font-medium bg-yellow-700 hover:bg-yellow-600
-						text-yellow-100 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-				>
-					{submitting ? 'Submitting...' : 'Submit Response'}
-				</button>
-			</form>
-		</div>
-	);
+function formatTaskThreadError(err: unknown): string {
+	const message = err instanceof Error ? err.message : String(err);
+	if (message.includes('No handler for method: space.task.ensureAgentSession')) {
+		return 'Task thread startup is unavailable on this daemon. Restart the app server to load the latest RPC handlers.';
+	}
+	if (message.includes('Task Agent session not started')) {
+		return 'Task thread is still starting. Try sending again in a moment.';
+	}
+	if (message.includes('Session not found')) {
+		return 'Task thread points to a stale session. Keep this pane open while it reconnects.';
+	}
+	return message || 'Failed to update task thread';
 }
 
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
+	const task = taskId ? (tasks.find((t) => t.id === taskId) ?? null) : null;
+	const runtimeSpaceIdCandidate = task?.spaceId ?? spaceId;
+
+	const [threadSessionId, setThreadSessionId] = useState<string | null>(null);
+	const [ensuringThread, setEnsuringThread] = useState(false);
+	const [threadDraft, setThreadDraft] = useState('');
+	const [threadSendError, setThreadSendError] = useState<string | null>(null);
+	const [sendingThread, setSendingThread] = useState(false);
+	const [reopeningTask, setReopeningTask] = useState(false);
+
+	useEffect(() => {
+		setThreadSendError(null);
+		setThreadDraft('');
+	}, [taskId]);
+
+	useEffect(() => {
+		if (!task) {
+			setThreadSessionId(null);
+			return;
+		}
+		setThreadSessionId(task.taskAgentSessionId ?? null);
+	}, [task?.id, task?.taskAgentSessionId]);
+
+	useEffect(() => {
+		if (!task || !runtimeSpaceIdCandidate) return;
+		if (task.status === 'archived' || task.status === 'cancelled' || task.status === 'completed')
+			return;
+
+		let cancelled = false;
+		const showSpawnLoading = !task.taskAgentSessionId;
+		if (showSpawnLoading) setEnsuringThread(true);
+		setThreadSendError(null);
+
+		spaceStore
+			.ensureTaskAgentSession(task.id)
+			.then((updatedTask) => {
+				if (cancelled) return;
+				setThreadSessionId(updatedTask.taskAgentSessionId ?? null);
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				setThreadSendError(formatTaskThreadError(err));
+			})
+			.finally(() => {
+				if (!cancelled && showSpawnLoading) setEnsuringThread(false);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [task?.id, task?.taskAgentSessionId, task?.status, runtimeSpaceIdCandidate]);
 
 	if (!taskId) {
 		return (
@@ -147,8 +106,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		);
 	}
 
-	const task = tasks.find((t) => t.id === taskId);
-
 	if (!task) {
 		return (
 			<div class="flex items-center justify-center h-full p-6">
@@ -157,163 +114,186 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		);
 	}
 
-	const agentSessionId = task.taskAgentSessionId;
-	const agentSessionLabel =
+	const runtimeSpaceId = spaceId ?? task.spaceId;
+	const agentSessionId = task.taskAgentSessionId ?? threadSessionId;
+	const isTerminalTask =
+		task.status === 'completed' || task.status === 'cancelled' || task.status === 'archived';
+	const showInlineComposer = !!agentSessionId && !isTerminalTask;
+	const canSendThreadMessage =
+		!!agentSessionId && !isTerminalTask && !ensuringThread && !sendingThread;
+	const showHeaderSessionAction = !!runtimeSpaceId && (!!agentSessionId || !isTerminalTask);
+	const activitySummary = STATUS_LABELS[task.status];
+	const agentActionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
 			: task.activeSession === 'worker'
 				? 'View Worker Session'
-				: 'View Agent Session';
+				: agentSessionId
+					? 'View Agent Session'
+					: 'Open Space Agent';
+
+	const handleThreadSend = async (e: Event) => {
+		e.preventDefault();
+		const nextMessage = threadDraft.trim();
+		if (!nextMessage) return;
+		if (!runtimeSpaceId || !task) return;
+
+		try {
+			setSendingThread(true);
+			setThreadSendError(null);
+
+			if (!agentSessionId) {
+				const ensured = await spaceStore.ensureTaskAgentSession(task.id);
+				setThreadSessionId(ensured.taskAgentSessionId ?? null);
+			}
+
+			await spaceStore.sendTaskMessage(task.id, nextMessage);
+			setThreadDraft('');
+		} catch (err) {
+			setThreadSendError(formatTaskThreadError(err));
+		} finally {
+			setSendingThread(false);
+		}
+	};
+
+	const handleReopenTask = async () => {
+		if (task.status !== 'completed') return;
+		try {
+			setReopeningTask(true);
+			setThreadSendError(null);
+			await spaceStore.updateTask(task.id, { status: 'in_progress' });
+		} catch (err) {
+			setThreadSendError(formatTaskThreadError(err));
+		} finally {
+			setReopeningTask(false);
+		}
+	};
 
 	return (
-		<div class="flex flex-col h-full overflow-hidden">
-			{/* Header */}
-			<div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0">
-				{onClose && (
-					<button
-						type="button"
-						onClick={onClose}
-						class="text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
-						aria-label="Back"
-						data-testid="task-back-button"
-					>
-						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M15 19l-7-7 7-7"
-							/>
-						</svg>
-					</button>
-				)}
-				<h2 class="text-sm font-semibold text-gray-100 flex-1 min-w-0 truncate">{task.title}</h2>
-				<StatusBadge status={task.status} />
-				{agentSessionId && spaceId && (
-					<button
-						type="button"
-						onClick={() => navigateToSpaceSession(spaceId, agentSessionId)}
-						class="flex-shrink-0 px-3 py-1 text-xs font-medium bg-dark-700 hover:bg-dark-600
-							text-gray-300 rounded border border-dark-600 transition-colors"
-						data-testid="view-agent-session-btn"
-					>
-						{agentSessionLabel}
-					</button>
-				)}
-			</div>
-
-			{/* Body */}
-			<div class="flex-1 overflow-y-auto">
-				<div class="max-w-3xl mx-auto px-4 py-4 space-y-4">
-					{/* Priority row */}
-					<div class="flex items-center gap-3 flex-wrap">
-						<span class={cn('text-xs font-medium', PRIORITY_CLASSES[task.priority])}>
-							{PRIORITY_LABELS[task.priority]} priority
-						</span>
-						{task.taskType && <span class="text-xs text-gray-600 capitalize">{task.taskType}</span>}
-					</div>
-
-					{/* Workflow step indicator */}
-					{task.workflowRunId && (
-						<div class="flex items-center gap-2 text-xs text-gray-500">
-							<svg
-								class="w-3.5 h-3.5 flex-shrink-0"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
+		<div class="flex flex-col h-full overflow-hidden bg-dark-900">
+			<div class="px-4 py-3 flex-shrink-0">
+				<div class="flex items-start gap-3 border-b border-dark-800 pb-3">
+					{onClose && (
+						<button
+							type="button"
+							onClick={onClose}
+							class="mt-1 text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
+							aria-label="Back"
+							data-testid="task-back-button"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
 									stroke-linecap="round"
 									stroke-linejoin="round"
 									stroke-width={2}
-									d="M4 6h16M4 10h16M4 14h16M4 18h16"
+									d="M15 19l-7-7 7-7"
 								/>
 							</svg>
-							<span>
-								Workflow Step
-								{task.workflowNodeId && (
-									<span class="ml-1 font-mono text-gray-600">
-										{task.workflowNodeId.slice(0, 8)}
-									</span>
-								)}
-							</span>
-						</div>
+						</button>
 					)}
-
-					{/* Description */}
-					{task.description && (
-						<div>
-							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-								Description
-							</h3>
-							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
-								{task.description}
-							</p>
+					<div class="min-w-0 flex-1">
+						<h2 class="text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
+						<div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-400">
+							<span>{activitySummary}</span>
+							{task.priority !== 'normal' && (
+								<span class="text-xs uppercase tracking-[0.12em] text-gray-500">
+									{PRIORITY_LABELS[task.priority]} Priority
+								</span>
+							)}
 						</div>
+					</div>
+					{showHeaderSessionAction && (
+						<button
+							type="button"
+							onClick={() =>
+								agentSessionId
+									? navigateToSpaceSession(runtimeSpaceId, agentSessionId)
+									: navigateToSpaceAgent(runtimeSpaceId)
+							}
+							class="flex-shrink-0 px-2 py-1 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors"
+							data-testid={agentSessionId ? 'view-agent-session-btn' : 'open-space-agent-btn'}
+						>
+							{agentActionLabel}
+						</button>
 					)}
+				</div>
+			</div>
 
-					{/* Current step */}
-					{task.currentStep && (
-						<div>
-							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-								Current Step
-							</h3>
-							<p class="text-xs text-gray-400">{task.currentStep}</p>
-						</div>
-					)}
-
-					{/* Progress */}
-					{task.progress != null && task.progress > 0 && (
-						<div>
-							<div class="flex items-center justify-between mb-1">
-								<span class="text-xs text-gray-500">Progress</span>
-								<span class="text-xs text-gray-500">{task.progress}%</span>
+			<div class="flex-1 min-h-0 overflow-hidden px-4">
+				<div class="h-full flex flex-col">
+					<div class="flex-1 min-h-0" data-testid="task-thread-panel">
+						{agentSessionId ? (
+							<SpaceTaskUnifiedThread taskId={task.id} />
+						) : (
+							<div class="h-full px-4 py-10 text-center">
+								<p class="text-sm text-gray-300">
+									{ensuringThread ? 'Starting task thread...' : 'Task thread is not available yet.'}
+								</p>
+								<p class="mt-2 text-xs text-gray-500">
+									{ensuringThread
+										? 'Connecting task and node-agent streams.'
+										: 'Keep this view open while the task thread starts.'}
+								</p>
 							</div>
-							<div class="w-full bg-dark-700 rounded-full h-1.5">
-								<div
-									class="bg-blue-500 h-1.5 rounded-full transition-all"
-									style={{ width: `${task.progress}%` }}
+						)}
+					</div>
+
+					<div class="py-3 space-y-3 border-t border-dark-800">
+						{showInlineComposer && (
+							<form onSubmit={handleThreadSend} class="space-y-3">
+								<textarea
+									value={threadDraft}
+									onInput={(e) => setThreadDraft((e.target as HTMLTextAreaElement).value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault();
+											(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+										}
+									}}
+									rows={3}
+									placeholder="Message the task agent (Enter to send, Shift+Enter for newline)"
+									disabled={sendingThread}
+									class="w-full bg-transparent border-0 rounded-none px-0 py-0 text-sm text-gray-100 placeholder-gray-600 focus:outline-none resize-none disabled:opacity-60"
 								/>
+								<div class="flex items-center justify-between gap-3">
+									<p class="text-xs text-gray-500">
+										Reply here to steer the task. Agent updates appear in the thread above.
+									</p>
+									<button
+										type="submit"
+										disabled={!canSendThreadMessage || !threadDraft.trim()}
+										class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										{sendingThread ? 'Sending...' : 'Send to Task Agent'}
+									</button>
+								</div>
+							</form>
+						)}
+
+						{!agentSessionId && (
+							<p class="text-xs text-gray-500">
+								Waiting for task thread before messages can be sent.
+							</p>
+						)}
+
+						{isTerminalTask && (
+							<div class="flex flex-wrap items-center gap-3">
+								<p class="text-xs text-gray-500">This task is read-only in its current state.</p>
+								{task.status === 'completed' && (
+									<button
+										type="button"
+										onClick={() => void handleReopenTask()}
+										disabled={reopeningTask}
+										class="px-2 py-1 text-xs font-medium text-gray-300 hover:text-gray-100 transition-colors disabled:opacity-50"
+									>
+										{reopeningTask ? 'Reopening...' : 'Reopen Task'}
+									</button>
+								)}
 							</div>
-						</div>
-					)}
+						)}
 
-					{/* Result */}
-					{task.result && (
-						<div>
-							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-								Result
-							</h3>
-							<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{task.result}</p>
-						</div>
-					)}
-
-					{/* Error */}
-					{task.error && (
-						<div>
-							<h3 class="text-xs font-semibold text-red-500 uppercase tracking-wider mb-1.5">
-								Error
-							</h3>
-							<p class="text-sm text-red-400 leading-relaxed whitespace-pre-wrap">{task.error}</p>
-						</div>
-					)}
-
-					{/* PR link */}
-					{task.prUrl && (
-						<div class="flex items-center gap-2">
-							<a
-								href={task.prUrl}
-								target="_blank"
-								rel="noopener noreferrer"
-								class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-							>
-								{task.prNumber ? `PR #${task.prNumber}` : 'Pull Request'}
-							</a>
-						</div>
-					)}
-
-					{/* Human input area */}
-					{task.status === 'needs_attention' && <HumanInputArea task={task} />}
+						{threadSendError && <p class="text-xs text-red-300">{threadSendError}</p>}
+					</div>
 				</div>
 			</div>
 		</div>

@@ -20,46 +20,8 @@ import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, isNodeFullyCompleted, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
-
-// ============================================================================
-// Channel topology visualization helpers
-// ============================================================================
-
-/** Renders a compact text representation of channel topology. */
-function ChannelTopologyBadge({
-	workflowChannels,
-	nodeAgentNames,
-}: {
-	workflowChannels?: WorkflowChannel[];
-	nodeAgentNames: string[];
-}) {
-	if (!workflowChannels || workflowChannels.length === 0) return null;
-
-	// Show only channels where the source agent is in this node's agent list
-	const visibleChannels = (workflowChannels ?? []).filter((ch) => nodeAgentNames.includes(ch.from));
-	if (visibleChannels.length === 0) return null;
-
-	/** Truncate a role string for compact display. Channels already use role strings as identifiers. */
-	const roleLabel = (role: string) => (role.length > 8 ? role.slice(0, 8) + '…' : role);
-
-	const formatTo = (to: string | string[]) => {
-		if (Array.isArray(to)) return `[${to.map(roleLabel).join(',')}]`;
-		return roleLabel(to);
-	};
-
-	return (
-		<div class="mt-1.5 space-y-0.5" data-testid="channel-topology-badge">
-			{visibleChannels.map((ch, i) => (
-				<div key={i} class="flex items-center gap-0.5 text-xs text-gray-500">
-					<span class="font-mono">{roleLabel(ch.from)}</span>
-					<span class="text-gray-600">{ch.direction === 'bidirectional' ? '↔' : '→'}</span>
-					<span class="font-mono">{formatTo(ch.to)}</span>
-					{ch.label && <span class="text-gray-700 ml-0.5">"{ch.label}"</span>}
-				</div>
-			))}
-		</div>
-	);
-}
+import type { AnchorSide } from './semanticWorkflowGraph';
+import { getVisualNodeDimensions } from './nodeMetrics';
 
 // ============================================================================
 // Props
@@ -75,7 +37,7 @@ export interface WorkflowNodeProps {
 	position: Point;
 	/** Full agents list — used to resolve the agent name from step.agentId */
 	agents: SpaceAgent[];
-	/** Workflow-level channels — shown filtered by this node's agent roles */
+	/** Workflow-level channels (kept for canvas compatibility; not rendered inside node cards). */
 	workflowChannels?: WorkflowChannel[];
 	isSelected?: boolean;
 	/** First step in the workflow — hides input port, adds green border + START badge */
@@ -99,6 +61,80 @@ export interface WorkflowNodeProps {
 	 * When provided, per-agent status indicators are shown inside the node card.
 	 */
 	nodeTaskStates?: AgentTaskState[];
+	/** Semantic edge anchor sides currently in use for this node. */
+	activeAnchorSides?: AnchorSide[];
+}
+
+function renderDock(side: AnchorSide, visible: boolean, highlighted = false) {
+	const commonStyle = {
+		position: 'absolute' as const,
+		width: 14,
+		height: 14,
+		borderRadius: '50%',
+		border: `2px solid ${highlighted ? '#16a34a' : '#374151'}`,
+		background: highlighted ? '#22c55e' : '#6b7280',
+		zIndex: highlighted ? 10 : 5,
+	};
+
+	if (side === 'top') {
+		return (
+			<div
+				data-testid="dock-top"
+				style={{
+					...commonStyle,
+					top: -7,
+					left: '50%',
+					transform: highlighted ? 'translateX(-50%) scale(1.4)' : 'translateX(-50%)',
+					transition: 'transform 0.1s, background 0.1s, opacity 0.15s',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0 transition-opacity group-hover:opacity-100'}
+			/>
+		);
+	}
+
+	if (side === 'bottom') {
+		return (
+			<div
+				data-testid="dock-bottom"
+				style={{
+					...commonStyle,
+					bottom: -7,
+					left: '50%',
+					transform: 'translateX(-50%)',
+					transition: 'opacity 0.15s',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0 transition-opacity group-hover:opacity-100'}
+			/>
+		);
+	}
+
+	if (side === 'left') {
+		return (
+			<div
+				data-testid="dock-left"
+				style={{
+					...commonStyle,
+					left: -7,
+					top: '50%',
+					transform: 'translateY(-50%)',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0'}
+			/>
+		);
+	}
+
+	return (
+		<div
+			data-testid="dock-right"
+			style={{
+				...commonStyle,
+				right: -7,
+				top: '50%',
+				transform: 'translateY(-50%)',
+			}}
+			class={visible ? 'opacity-100' : 'opacity-0'}
+		/>
+	);
 }
 
 // ============================================================================
@@ -110,7 +146,7 @@ export function WorkflowNode({
 	step,
 	position,
 	agents,
-	workflowChannels = [],
+	workflowChannels: _workflowChannels = [],
 	isSelected = false,
 	isStartNode = false,
 	isDropTarget = false,
@@ -121,21 +157,14 @@ export function WorkflowNode({
 	onPortMouseLeave,
 	onClick,
 	nodeTaskStates,
+	activeAnchorSides = [],
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
+	const dimensions = getVisualNodeDimensions(step);
 
 	const multi = isMultiAgentNode(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
-
-	// Derive agent slot names for this node (used to filter workflow-level channels)
-	const nodeAgentNames: string[] = isTaskAgent
-		? ['task-agent']
-		: multi
-			? step.agents!.map((a) => a.name)
-			: step.agentId
-				? [step.agentId]
-				: [];
 
 	// Build a lookup: agentName → AgentTaskState
 	const taskStateByAgent = new Map<string | null, AgentTaskState>(
@@ -299,6 +328,7 @@ export function WorkflowNode({
 	const inputPortScale = isDropTarget ? 'scale(1.4)' : '';
 
 	const ringClass = isSelected ? 'ring-2 ring-blue-500' : '';
+	const activeAnchorSideSet = new Set(activeAnchorSides);
 
 	// Task Agent: render a visually distinct pinned node with no ports
 	if (isTaskAgent) {
@@ -308,12 +338,14 @@ export function WorkflowNode({
 				data-testid={`workflow-node-${stepId}`}
 				data-step-id={stepId}
 				data-task-agent="true"
+				data-pan-canvas="true"
 				style={{
 					position: 'absolute',
 					left: position.x,
 					top: position.y,
-					minWidth: 160,
-					cursor: 'default',
+					width: dimensions.width,
+					minHeight: dimensions.height,
+					cursor: 'grab',
 					userSelect: 'none',
 					zIndex: 10,
 				}}
@@ -338,11 +370,6 @@ export function WorkflowNode({
 					>
 						{step.name || 'Task Agent'}
 					</p>
-					{/* Channel topology */}
-					<ChannelTopologyBadge
-						workflowChannels={workflowChannels}
-						nodeAgentNames={nodeAgentNames}
-					/>
 				</div>
 			</div>
 		);
@@ -357,16 +384,20 @@ export function WorkflowNode({
 				position: 'absolute',
 				left: position.x,
 				top: position.y,
-				minWidth: multi ? 200 : 160,
+				width: dimensions.width,
+				minHeight: dimensions.height,
 				cursor: 'grab',
 				userSelect: 'none',
 			}}
-			class={`rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}
+			class={`group rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}
 			onMouseDown={handleMouseDown}
 			onClick={handleClick}
 		>
+			{activeAnchorSideSet.has('left') && renderDock('left', true)}
+			{activeAnchorSideSet.has('right') && renderDock('right', true)}
+
 			{/* Top port */}
-			{!isStartNode && (
+			{(!isStartNode || activeAnchorSideSet.has('top')) && (
 				<div
 					data-testid="port-input"
 					style={{
@@ -380,12 +411,17 @@ export function WorkflowNode({
 						background: inputPortBg,
 						border: `2px solid ${inputPortBorder}`,
 						cursor: 'crosshair',
-						transition: 'transform 0.1s, background 0.1s',
-						zIndex: isDropTarget ? 10 : undefined,
+						transition: 'transform 0.1s, background 0.1s, opacity 0.15s',
+						zIndex: isDropTarget ? 10 : 6,
 					}}
-					onMouseDown={handleInputPortMouseDown}
-					onMouseEnter={handleInputPortMouseEnter}
-					onMouseLeave={handleInputPortMouseLeave}
+					class={
+						isDropTarget || activeAnchorSideSet.has('top')
+							? 'opacity-100'
+							: 'opacity-0 transition-opacity group-hover:opacity-100'
+					}
+					onMouseDown={!isStartNode ? handleInputPortMouseDown : undefined}
+					onMouseEnter={!isStartNode ? handleInputPortMouseEnter : undefined}
+					onMouseLeave={!isStartNode ? handleInputPortMouseLeave : undefined}
 					onClick={stopClickPropagation}
 				/>
 			)}
@@ -452,9 +488,6 @@ export function WorkflowNode({
 						{taskStateByAgent.get(null) && <AgentStatusIcon state={taskStateByAgent.get(null)!} />}
 					</div>
 				)}
-
-				{/* Channel topology */}
-				<ChannelTopologyBadge workflowChannels={workflowChannels} nodeAgentNames={nodeAgentNames} />
 			</div>
 
 			{/* Bottom port */}
@@ -471,7 +504,13 @@ export function WorkflowNode({
 					background: '#6b7280',
 					border: '2px solid #374151',
 					cursor: 'crosshair',
+					zIndex: 6,
 				}}
+				class={
+					activeAnchorSideSet.has('bottom')
+						? 'opacity-100'
+						: 'opacity-0 transition-opacity group-hover:opacity-100'
+				}
 				onMouseDown={handleOutputPortMouseDown}
 				onClick={stopClickPropagation}
 			/>

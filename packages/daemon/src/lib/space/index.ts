@@ -124,8 +124,6 @@ export type {
 	SpaceWorkflow,
 	WorkflowNode,
 	WorkflowRule,
-	WorkflowCondition,
-	WorkflowConditionType,
 	WorkflowNodeInput,
 	WorkflowRuleInput,
 	CreateSpaceWorkflowParams,

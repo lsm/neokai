@@ -7,6 +7,7 @@
  */
 
 import type { MessageHub } from '@neokai/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { AgentSession } from '../agent/agent-session';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -19,6 +20,8 @@ const log = new Logger('space-task-message-handlers');
  * Decouples RPC handlers from the concrete TaskAgentManager class.
  */
 export interface TaskAgentManagerInterface {
+	/** Ensure a Task Agent session exists for the given task and return latest task snapshot. */
+	ensureTaskAgentSession(taskId: string): Promise<import('@neokai/shared').SpaceTask>;
 	/** Inject a message into the Task Agent session for the given task. */
 	injectTaskAgentMessage(taskId: string, message: string): Promise<void>;
 	/** Returns the live AgentSession for the given task, or undefined if not spawned. */
@@ -38,9 +41,48 @@ export interface TaskAgentManagerInterface {
 export function setupSpaceTaskMessageHandlers(
 	messageHub: MessageHub,
 	taskAgentManager: TaskAgentManagerInterface,
-	db: Database
+	db: Database,
+	daemonHub: DaemonHub
 ): void {
 	const taskRepo = new SpaceTaskRepository(db.getDatabase());
+
+	// ─── space.task.ensureAgentSession ──────────────────────────────────────────
+	messageHub.onRequest('space.task.ensureAgentSession', async (data) => {
+		const params = data as { spaceId: string; taskId: string };
+
+		if (!params.spaceId) {
+			throw new Error('spaceId is required');
+		}
+		if (!params.taskId) {
+			throw new Error('taskId is required');
+		}
+
+		// Validate task exists and belongs to the given space
+		const task = taskRepo.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+		if (task.spaceId !== params.spaceId) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		const updatedTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
+
+		await daemonHub.emit('space.task.updated', {
+			sessionId: 'global',
+			spaceId: params.spaceId,
+			taskId: params.taskId,
+			task: updatedTask,
+		});
+
+		log.info(`space.task.ensureAgentSession: ensured session for task ${params.taskId}`);
+
+		return {
+			taskId: updatedTask.id,
+			sessionId: updatedTask.taskAgentSessionId ?? null,
+			task: updatedTask,
+		};
+	});
 
 	// ─── space.task.sendMessage ─────────────────────────────────────────────────
 	messageHub.onRequest('space.task.sendMessage', async (data) => {
@@ -67,8 +109,21 @@ export function setupSpaceTaskMessageHandlers(
 		if (task.spaceId !== params.spaceId) {
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
-		if (!task.taskAgentSessionId) {
-			throw new Error(`Task Agent session not started for task: ${params.taskId}`);
+
+		// Ensure a live Task Agent session exists before injecting. This recovers from:
+		// - first message on a task that has not spawned yet
+		// - persisted-but-not-live sessions after daemon restart
+		const sessionBefore = task.taskAgentSessionId ?? null;
+		const ensuredTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
+		const sessionAfter = ensuredTask.taskAgentSessionId ?? null;
+
+		if (sessionAfter !== sessionBefore) {
+			await daemonHub.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				taskId: params.taskId,
+				task: ensuredTask,
+			});
 		}
 
 		await taskAgentManager.injectTaskAgentMessage(params.taskId, params.message);

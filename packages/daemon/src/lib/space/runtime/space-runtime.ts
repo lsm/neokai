@@ -35,6 +35,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { TaskAgentManager } from './task-agent-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor } from './workflow-executor';
@@ -64,6 +65,8 @@ export interface SpaceRuntimeConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Task repository for querying tasks by run/step */
 	taskRepo: SpaceTaskRepository;
+	/** Optional reactive DB invalidation hooks for task LiveQuery surfaces */
+	reactiveDb?: ReactiveDatabase;
 	/**
 	 * Optional TaskAgentManager for Task Agent mode.
 	 *
@@ -353,7 +356,6 @@ export class SpaceRuntime {
 			title,
 			description,
 			goalId,
-			maxIterations: workflow.maxIterations,
 		});
 
 		const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
@@ -818,7 +820,9 @@ export class SpaceRuntime {
 						try {
 							// spawnTaskAgent writes taskAgentSessionId to the DB as a side effect.
 							// SpaceRuntime owns the status transition to 'in_progress' after spawn.
-							await tam.spawnTaskAgent(task, space, meta.workflow, run);
+							await tam.spawnTaskAgent(task, space, meta.workflow, run, {
+								kickoff: false,
+							});
 							this.config.taskRepo.updateTask(task.id, { status: 'in_progress' });
 						} catch (err) {
 							log.error(`SpaceRuntime: failed to spawn task agent for task ${task.id}:`, err);
@@ -1059,7 +1063,7 @@ export class SpaceRuntime {
 	private getOrCreateTaskManager(spaceId: string): SpaceTaskManager {
 		let manager = this.taskManagers.get(spaceId);
 		if (!manager) {
-			manager = new SpaceTaskManager(this.config.db, spaceId);
+			manager = new SpaceTaskManager(this.config.db, spaceId, this.config.reactiveDb);
 			this.taskManagers.set(spaceId, manager);
 		}
 		return manager;

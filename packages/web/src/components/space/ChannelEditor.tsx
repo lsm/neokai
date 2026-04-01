@@ -12,9 +12,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import type { WorkflowChannel, WorkflowConditionType } from '@neokai/shared';
-import { GateConfig, CONDITION_LABELS } from './visual-editor/GateConfig';
-import type { ConditionDraft } from './visual-editor/GateConfig';
+import type { WorkflowChannel } from '@neokai/shared';
 
 // ============================================================================
 // Types
@@ -34,16 +32,6 @@ export interface ChannelEditorProps {
 // Helpers
 // ============================================================================
 
-function conditionToGate(cond: ConditionDraft): WorkflowChannel['gate'] {
-	if (cond.type === 'always') return undefined;
-	return { type: cond.type as WorkflowConditionType, expression: cond.expression };
-}
-
-function gateToCondition(gate: WorkflowChannel['gate']): ConditionDraft {
-	if (!gate || gate.type === 'always') return { type: 'always' };
-	return { type: gate.type as WorkflowConditionType, expression: gate.expression };
-}
-
 function formatTo(to: string | string[]): string {
 	return Array.isArray(to) ? to.join(', ') : to;
 }
@@ -54,11 +42,6 @@ function parseToField(raw: string): string | string[] {
 		.map((s) => s.trim())
 		.filter(Boolean);
 	return parts.length > 1 ? parts : (parts[0] ?? '');
-}
-
-function gateLabel(gate: WorkflowChannel['gate']): string | null {
-	if (!gate || gate.type === 'always') return null;
-	return CONDITION_LABELS[gate.type as WorkflowConditionType] ?? gate.type;
 }
 
 // ============================================================================
@@ -86,18 +69,12 @@ function ChannelEntry({
 	onChange,
 	onDelete,
 }: ChannelEntryProps) {
-	const gate = gateToCondition(channel.gate);
-	const hasGate = !!channel.gate && channel.gate.type !== 'always';
+	const hasGate = !!channel.gateId;
 	const directionSymbol = channel.direction === 'bidirectional' ? '↔' : '→';
 	const toText = formatTo(channel.to);
-	const gateLbl = gateLabel(channel.gate);
 
 	function updateField<K extends keyof WorkflowChannel>(key: K, value: WorkflowChannel[K]) {
 		onChange(index, { ...channel, [key]: value });
-	}
-
-	function handleGateChange(cond: ConditionDraft) {
-		onChange(index, { ...channel, gate: conditionToGate(cond) });
 	}
 
 	const borderClass = highlighted
@@ -126,12 +103,12 @@ function ChannelEntry({
 						<span class="text-teal-500 mx-1">{directionSymbol}</span>
 						<span class="text-gray-400">{toText}</span>
 					</span>
-					{gateLbl && (
+					{hasGate && (
 						<span
 							class="text-xs text-teal-400 bg-teal-900/40 border border-teal-700/50 rounded px-1 py-0.5 flex-shrink-0"
 							data-testid="gate-badge"
 						>
-							{gateLbl}
+							Gated
 						</span>
 					)}
 					{channel.label && (
@@ -288,29 +265,20 @@ function ChannelEntry({
 						/>
 					</div>
 
-					{/* Gate — supports all 4 condition types */}
-					<GateConfig
-						label="Gate condition"
-						condition={gate}
-						onChange={handleGateChange}
-						testId={`channel-gate-select-${index}`}
-					/>
-
-					{/* Cyclic flag */}
-					<label class="flex items-center gap-2 cursor-pointer">
+					{/* Gate ID (read-only display; use visual editor for gate configuration) */}
+					<div class="space-y-0.5">
+						<label class="text-xs text-gray-500">Gate ID</label>
 						<input
-							type="checkbox"
-							data-testid="channel-cyclic-checkbox"
-							checked={!!channel.isCyclic}
-							onChange={(e) =>
-								updateField('isCyclic', (e.currentTarget as HTMLInputElement).checked || undefined)
+							type="text"
+							data-testid={`channel-gate-id-input-${index}`}
+							value={channel.gateId ?? ''}
+							onInput={(e) =>
+								updateField('gateId', (e.currentTarget as HTMLInputElement).value || undefined)
 							}
-							class="rounded border-dark-600 text-teal-500 focus:ring-teal-500"
+							placeholder="e.g. plan-approval-gate (references workflow gates)"
+							class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-teal-500"
 						/>
-						<span class="text-xs text-gray-400">
-							Cyclic (increments iteration counter on delivery)
-						</span>
-					</label>
+					</div>
 				</div>
 			)}
 		</div>

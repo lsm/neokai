@@ -17,11 +17,19 @@ import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { VisualCanvas, applyWheelEvent, MIN_SCALE, MAX_SCALE } from '../VisualCanvas';
 import { screenToCanvas, canvasToScreen } from '../types';
-import type { ViewportState } from '../types';
+import type { NodePosition, ViewportState } from '../types';
 
 afterEach(() => cleanup());
 
 // ---- Helper ----
+
+function windowMouseMove(clientX: number, clientY: number) {
+	window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX, clientY }));
+}
+
+function windowMouseUp() {
+	window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+}
 
 function renderCanvas(initial: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 }) {
 	const changes: ViewportState[] = [];
@@ -71,6 +79,21 @@ describe('VisualCanvas', () => {
 		const last = changes[changes.length - 1];
 		expect(last.offsetX).toBe(-30);
 		expect(last.offsetY).toBe(-10);
+		expect(last.scale).toBe(1);
+	});
+
+	it('pans via left-drag on empty canvas without needing spacebar', () => {
+		const { getByTestId, changes } = renderCanvas({ offsetX: 10, offsetY: 20, scale: 1 });
+		const container = getByTestId('visual-canvas');
+
+		fireEvent.mouseDown(container, { button: 0, clientX: 100, clientY: 80 });
+		windowMouseMove(140, 115);
+		windowMouseUp();
+
+		expect(changes.length).toBeGreaterThan(0);
+		const last = changes[changes.length - 1];
+		expect(last.offsetX).toBe(50);
+		expect(last.offsetY).toBe(55);
 		expect(last.scale).toBe(1);
 	});
 
@@ -149,6 +172,30 @@ describe('VisualCanvas', () => {
 		expect(last.offsetX).toBe(42);
 		expect(last.offsetY).toBe(-10);
 		expect(last.scale).toBe(1.5);
+	});
+
+	it('sizes the transform layer from node bounds so the SVG edge layer has canvas space', () => {
+		const nodes: NodePosition = {
+			a: { x: 500, y: 700, width: 160, height: 80 },
+		};
+
+		const { getByTestId } = render(
+			<VisualCanvas
+				viewportState={{ offsetX: 0, offsetY: 0, scale: 1 }}
+				onViewportChange={() => {}}
+				nodes={nodes}
+			>
+				<div data-testid="child-node">Hello</div>
+			</VisualCanvas>
+		);
+
+		const transformEl = getByTestId('visual-canvas-transform') as HTMLElement;
+		expect(transformEl.style.width).toBe('780px');
+		expect(transformEl.style.height).toBe('900px');
+
+		const svgEl = getByTestId('visual-canvas-svg') as HTMLElement;
+		expect(svgEl.style.width).toBe('100%');
+		expect(svgEl.style.height).toBe('100%');
 	});
 });
 

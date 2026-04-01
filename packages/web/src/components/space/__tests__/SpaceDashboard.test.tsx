@@ -7,26 +7,23 @@
  * - No space renders "Space not found"
  * - Space name and workspace path rendered
  * - Description shown when present
- * - Active runs banner shown when runs are active
- * - Active tasks count in banner
- * - Quick action cards rendered
- * - onStartWorkflow called from "Start Workflow Run" card
- * - onCreateTask called from "Create Task" card
- * - Recent activity section shown when data exists
+ * - Primary dashboard action renders
+ * - onOpenSpaceAgent callback fires
+ * - Overview stats render for active/review/completed tasks
+ * - Attention, in-progress, and recent sections render task rows
+ * - Empty state renders when there are no tasks
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
-import type { Space, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
+import type { Space, SpaceTask } from '@neokai/shared';
 
 // Mock signals
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
-let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
-let mockActiveRuns: ReturnType<typeof computed<SpaceWorkflowRun[]>>;
-let mockActiveTasks: ReturnType<typeof computed<SpaceTask[]>>;
+let mockActiveRuns: ReturnType<typeof computed<unknown[]>>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -34,9 +31,7 @@ vi.mock('../../../lib/space-store', () => ({
 			space: mockSpace,
 			loading: mockLoading,
 			tasks: mockTasks,
-			workflowRuns: mockWorkflowRuns,
 			activeRuns: mockActiveRuns,
-			activeTasks: mockActiveTasks,
 		};
 	},
 }));
@@ -45,11 +40,7 @@ vi.mock('../../../lib/space-store', () => ({
 mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
-mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
-mockActiveRuns = computed(() =>
-	mockWorkflowRuns.value.filter((r) => r.status === 'pending' || r.status === 'in_progress')
-);
-mockActiveTasks = computed(() => mockTasks.value.filter((t) => t.status === 'in_progress'));
+mockActiveRuns = computed(() => []);
 
 import { SpaceDashboard } from '../SpaceDashboard';
 
@@ -83,25 +74,12 @@ function makeTask(id: string, status: SpaceTask['status'] = 'pending'): SpaceTas
 	};
 }
 
-function makeRun(id: string, status: SpaceWorkflowRun['status'] = 'pending'): SpaceWorkflowRun {
-	return {
-		id,
-		spaceId: 'space-1',
-		workflowId: 'wf-1',
-		title: `Run ${id}`,
-		status,
-		createdAt: Date.now(),
-		updatedAt: Date.now(),
-	};
-}
-
 describe('SpaceDashboard', () => {
 	beforeEach(() => {
 		cleanup();
 		mockSpace.value = null;
 		mockLoading.value = false;
 		mockTasks.value = [];
-		mockWorkflowRuns.value = [];
 	});
 
 	afterEach(() => {
@@ -137,65 +115,63 @@ describe('SpaceDashboard', () => {
 		expect(getByText('A cool project description')).toBeTruthy();
 	});
 
-	it('does not show active banner when no active runs or tasks', () => {
+	it('renders the primary dashboard action', () => {
 		mockSpace.value = makeSpace();
-		const { container } = render(<SpaceDashboard spaceId="space-1" />);
-		// No blue animated dot
-		expect(container.querySelector('.bg-blue-400')).toBeNull();
+		const { getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByText('Ask Space Agent')).toBeTruthy();
+		expect(queryByText('Create Task')).toBeNull();
+		expect(queryByText('Run Workflow')).toBeNull();
 	});
 
-	it('shows active runs in banner', () => {
+	it('calls onOpenSpaceAgent when "Ask Space Agent" is clicked', () => {
 		mockSpace.value = makeSpace();
-		mockWorkflowRuns.value = [makeRun('r1', 'in_progress')];
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText(/1 active run/)).toBeTruthy();
-	});
-
-	it('shows active tasks count in banner', () => {
-		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'in_progress'), makeTask('t2', 'in_progress')];
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText(/2 tasks in progress/)).toBeTruthy();
-	});
-
-	it('renders quick action cards', () => {
-		mockSpace.value = makeSpace();
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('Start Workflow Run')).toBeTruthy();
-		expect(getByText('Create Task')).toBeTruthy();
-	});
-
-	it('calls onStartWorkflow when "Start Workflow Run" card is clicked', () => {
-		mockSpace.value = makeSpace();
-		const onStartWorkflow = vi.fn();
+		const onOpenSpaceAgent = vi.fn();
 		const { getByText } = render(
-			<SpaceDashboard spaceId="space-1" onStartWorkflow={onStartWorkflow} />
+			<SpaceDashboard spaceId="space-1" onOpenSpaceAgent={onOpenSpaceAgent} />
 		);
-		fireEvent.click(getByText('Start Workflow Run').closest('button')!);
-		expect(onStartWorkflow).toHaveBeenCalled();
+		fireEvent.click(getByText('Ask Space Agent').closest('button')!);
+		expect(onOpenSpaceAgent).toHaveBeenCalled();
 	});
 
-	it('calls onCreateTask when "Create Task" card is clicked', () => {
+	it('shows active, attention, and completed stats', () => {
 		mockSpace.value = makeSpace();
-		const onCreateTask = vi.fn();
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" onCreateTask={onCreateTask} />);
-		fireEvent.click(getByText('Create Task').closest('button')!);
-		expect(onCreateTask).toHaveBeenCalled();
+		mockTasks.value = [
+			makeTask('t1', 'in_progress'),
+			makeTask('t2', 'review'),
+			makeTask('t3', 'completed'),
+		];
+		const { getByText, getAllByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getAllByText('Active').length).toBeGreaterThanOrEqual(1);
+		expect(getAllByText('Needs Attention').length).toBeGreaterThanOrEqual(1);
+		expect(getAllByText('Completed').length).toBeGreaterThanOrEqual(1);
+		expect(getAllByText('1').length).toBeGreaterThanOrEqual(3);
 	});
 
-	it('shows recent activity section when runs exist', () => {
+	it('shows attention, in-progress, and recent sections for tasks', () => {
 		mockSpace.value = makeSpace();
-		mockWorkflowRuns.value = [makeRun('r1', 'completed')];
+		mockTasks.value = [
+			makeTask('attention', 'needs_attention'),
+			makeTask('active', 'in_progress'),
+			makeTask('done', 'completed'),
+		];
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByText('Attention Queue')).toBeTruthy();
+		expect(getByText('Active Queue')).toBeTruthy();
 		expect(getByText('Recent Activity')).toBeTruthy();
-		expect(getByText('Run r1')).toBeTruthy();
+		expect(getByText('Task attention')).toBeTruthy();
+		expect(getByText('Task active')).toBeTruthy();
+		expect(getByText('Task done')).toBeTruthy();
 	});
 
-	it('shows recent tasks in activity section', () => {
+	it('shows empty-state guidance when there are no tasks', () => {
 		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'completed')];
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('Task t1')).toBeTruthy();
+		expect(getByText('This space has no tasks yet.')).toBeTruthy();
+		expect(
+			getByText(
+				'Create the first task or ask the space agent to help you shape the work before reaching for a workflow.'
+			)
+		).toBeTruthy();
 	});
 
 	it('truncates long workspace paths', () => {

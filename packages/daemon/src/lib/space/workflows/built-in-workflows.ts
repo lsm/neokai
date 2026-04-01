@@ -37,11 +37,34 @@ const CODING_DONE_STEP = 'tpl-coding-done';
 const V2_PLANNING_STEP = 'tpl-v2-planning';
 const V2_PLAN_REVIEW_STEP = 'tpl-v2-plan-review';
 const V2_CODING_STEP = 'tpl-v2-coding';
-const V2_REVIEWER1_STEP = 'tpl-v2-reviewer1';
-const V2_REVIEWER2_STEP = 'tpl-v2-reviewer2';
-const V2_REVIEWER3_STEP = 'tpl-v2-reviewer3';
+const V2_REVIEW_STEP = 'tpl-v2-review';
 const V2_QA_STEP = 'tpl-v2-qa';
 const V2_DONE_STEP = 'tpl-v2-done';
+
+const V2_PLANNING_PROMPT =
+	'You are the Planning node for this workflow. Turn the task into a concrete implementation plan ' +
+	'that downstream nodes can execute without guessing. Surface assumptions, dependencies, sequencing, ' +
+	'and open questions explicitly.';
+
+const V2_PLAN_REVIEW_PROMPT =
+	'You are the Plan Review node for this workflow. Critically review the proposed plan for scope, ' +
+	'correctness, feasibility, testing strategy, and risk. Approve only when the plan is actionable and complete.';
+
+const V2_CODING_PROMPT =
+	'You are the Coding node for this workflow. Implement the approved plan in the workspace, keep the ' +
+	'changes reviewable, and leave the branch in a state that reviewers and QA can validate directly.';
+
+const V2_CODE_REVIEW_PROMPT =
+	'You are part of the Code Review node for this workflow. Review the implementation independently for ' +
+	'correctness, regressions, maintainability, and test coverage. Record a clear approve or reject vote with concise reasoning.';
+
+const V2_QA_PROMPT =
+	'You are the QA node for this workflow. Validate the implementation from an execution and release-readiness ' +
+	'perspective. Run the relevant checks, confirm the reported state, and fail the handoff when issues remain.';
+
+const V2_DONE_PROMPT =
+	'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce ' +
+	'a concise final outcome summary without reopening work unless a blocking issue is discovered.';
 
 const RESEARCH_PLANNER_STEP = 'tpl-research-planner';
 const RESEARCH_GENERAL_STEP = 'tpl-research-general';
@@ -56,12 +79,12 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
  * Coding Workflow
  *
  * Four-node graph: Plan → Code → Verify → Done (with cycle).
- * Routing is channel-based (agent-centric model); routing is channel-based.
- * - Plan → Code: `human` gate — a human must approve the plan.
- * - Code → Verify: `always` gate — automatically verify after coding.
- * - Verify → Plan: `task_result` gate on 'failed' — loops back (cyclic).
- * - Verify → Done: `task_result` gate on 'passed' — completes the workflow.
- * - `maxIterations: 3` caps the number of Plan→Code→Verify cycles.
+ * Routing is channel-based (agent-centric model).
+ * - Plan → Code: gated by `plan-approval-gate` — a human must approve the plan.
+ * - Code → Verify: no gate — automatically verify after coding.
+ * - Verify → Plan: gated by `verify-fail-gate` on 'failed' — loops back (cyclic).
+ * - Verify → Done: gated by `verify-pass-gate` on 'passed' — completes the workflow.
+ * - Per-channel `maxCycles: 3` caps the number of Plan→Code→Verify cycles.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -69,7 +92,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	name: 'Coding Workflow',
 	description:
 		'Plan-first coding workflow with verification. A human reviews the plan, code is implemented, then verified. Loops back on failure.',
-	maxIterations: 3,
 	nodes: [
 		{
 			id: CODING_PLANNER_STEP,
@@ -100,48 +122,69 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
+	gates: [
+		{
+			id: 'plan-approval-gate',
+			description: 'Review and approve the plan before coding begins',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		},
+		{
+			id: 'verify-fail-gate',
+			description: 'Loop back to planning when verification fails',
+			fields: [
+				{
+					name: 'result',
+					type: 'string',
+					writers: ['general'],
+					check: { op: '==', value: 'failed' },
+				},
+			],
+			resetOnCycle: true,
+		},
+		{
+			id: 'verify-pass-gate',
+			description: 'Complete workflow when verification passes',
+			fields: [
+				{
+					name: 'result',
+					type: 'string',
+					writers: ['general'],
+					check: { op: '==', value: 'passed' },
+				},
+			],
+			resetOnCycle: true,
+		},
+	],
 	channels: [
 		{
 			from: 'Plan',
 			to: 'Code',
 			direction: 'one-way',
-			gate: {
-				type: 'human',
-				description: 'Review and approve the plan before coding begins',
-			},
+			gateId: 'plan-approval-gate',
 			label: 'Plan → Code',
 		},
 		{
 			from: 'Code',
 			to: 'Verify & Test',
 			direction: 'one-way',
-			gate: {
-				type: 'always',
-				description: 'Automatically verify after coding is complete',
-			},
 			label: 'Code → Verify',
 		},
 		{
 			from: 'Verify & Test',
 			to: 'Plan',
 			direction: 'one-way',
-			isCyclic: true,
-			gate: {
-				type: 'task_result',
-				expression: 'failed',
-				description: 'Loop back to planning when verification fails',
-			},
+			maxCycles: 3,
+			gateId: 'verify-fail-gate',
 			label: 'Verify → Plan (on fail)',
 		},
 		{
 			from: 'Verify & Test',
 			to: 'Done',
 			direction: 'one-way',
-			gate: {
-				type: 'task_result',
-				expression: 'passed',
-				description: 'Complete workflow when verification passes',
-			},
+			gateId: 'verify-pass-gate',
 			label: 'Verify → Done (on pass)',
 		},
 	],
@@ -151,8 +194,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  * Research Workflow
  *
  * Two-node graph: Planner → General.
- * Routing is channel-based (agent-centric model); routing is channel-based.
- * - Plan Research → Research: `always` gate — advances without human intervention.
+ * Routing is channel-based (agent-centric model).
+ * - Plan Research → Research: no gate — advances without human intervention.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -182,10 +225,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 			from: 'Plan Research',
 			to: 'Research',
 			direction: 'one-way',
-			gate: {
-				type: 'always',
-				description: 'Automatically advance after planning is complete',
-			},
 			label: 'Plan → Research',
 		},
 	],
@@ -222,17 +261,18 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 /**
  * Coding Workflow V2
  *
- * Eight-node graph with parallel reviewers and QA verification.
+ * Six-node graph with a single code-review node that runs three reviewers
+ * in parallel (via `node.agents[]`) and a QA verification gate.
  *
  * Main progression:
  *   Planning → Plan Review (plan-pr-gate: planner submits plan)
  *   Plan Review → Coding (plan-approval-gate: reviewer approves)
- *   Coding → Reviewer 1/2/3 in parallel (code-pr-gate: PR opened)
- *   Reviewer 1/2/3 → QA (review-votes-gate: all 3 approve)
+ *   Coding → Code Review (code-pr-gate: PR opened; node contains Reviewer 1/2/3 slots)
+ *   Code Review → QA (review-votes-gate: all 3 approve)
  *   QA → Done (qa-result-gate: QA passes)
  *
  * Cyclic paths:
- *   Reviewer 1/2/3 → Coding (review-reject-gate: any reviewer rejects)
+ *   Code Review → Coding (review-reject-gate: any reviewer rejects)
  *   QA → Coding (qa-fail-gate: QA finds issues)
  *
  * Ungated feedback channels:
@@ -246,12 +286,12 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 	description:
 		'Full-cycle coding workflow with plan review, parallel code reviewers, and QA gate. ' +
 		'Supports rejection cycles at both review and QA stages.',
-	maxIterations: 5,
 	nodes: [
 		{
 			id: V2_PLANNING_STEP,
 			name: 'Planning',
 			agentId: 'planner',
+			systemPrompt: V2_PLANNING_PROMPT,
 			instructions:
 				'Break down the task into an actionable implementation plan. ' +
 				'When the plan is ready, write it to the plan-pr-gate (field: plan_submitted) to notify reviewers.',
@@ -260,6 +300,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			id: V2_PLAN_REVIEW_STEP,
 			name: 'Plan Review',
 			agentId: 'reviewer',
+			systemPrompt: V2_PLAN_REVIEW_PROMPT,
 			instructions:
 				'Review the implementation plan for feasibility and completeness. ' +
 				'Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
@@ -268,47 +309,53 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			id: V2_CODING_STEP,
 			name: 'Coding',
 			agentId: 'coder',
+			systemPrompt: V2_CODING_PROMPT,
 			instructions:
 				'Implement the approved plan. Open a pull request when done. ' +
 				'Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
 		},
 		{
-			id: V2_REVIEWER1_STEP,
-			name: 'Reviewer 1',
-			agentId: 'reviewer',
-			instructions:
-				'Review the pull request for correctness, style, and test coverage. ' +
-				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-				'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
-				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
-		},
-		{
-			id: V2_REVIEWER2_STEP,
-			name: 'Reviewer 2',
-			agentId: 'reviewer',
-			instructions:
-				'Review the pull request for correctness, style, and test coverage. ' +
-				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-				'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
-				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
-		},
-		{
-			id: V2_REVIEWER3_STEP,
-			name: 'Reviewer 3',
-			agentId: 'reviewer',
-			instructions:
-				'Review the pull request for correctness, style, and test coverage. ' +
-				'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-				'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
-				'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-				'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+			id: V2_REVIEW_STEP,
+			name: 'Code Review',
+			systemPrompt: V2_CODE_REVIEW_PROMPT,
+			agents: [
+				{
+					agentId: 'reviewer',
+					name: 'Reviewer 1',
+					instructions:
+						'Review the pull request for correctness, style, and test coverage. ' +
+						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+						'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
+						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+				},
+				{
+					agentId: 'reviewer',
+					name: 'Reviewer 2',
+					instructions:
+						'Review the pull request for correctness, style, and test coverage. ' +
+						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+						'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
+						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+				},
+				{
+					agentId: 'reviewer',
+					name: 'Reviewer 3',
+					instructions:
+						'Review the pull request for correctness, style, and test coverage. ' +
+						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+						'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
+						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+				},
+			],
 		},
 		{
 			id: V2_QA_STEP,
 			name: 'QA',
 			agentId: 'qa',
+			systemPrompt: V2_QA_PROMPT,
 			instructions:
 				'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. ' +
 				'Write "result: passed" to qa-result-gate if everything is green, or ' +
@@ -319,6 +366,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			id: V2_DONE_STEP,
 			name: 'Done',
 			agentId: 'general',
+			systemPrompt: V2_DONE_PROMPT,
 		},
 	],
 	startNodeId: V2_PLANNING_STEP,
@@ -331,17 +379,22 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		{
 			id: 'plan-pr-gate',
 			description: 'Planning agent has submitted a plan for review',
-			condition: { type: 'check', field: 'plan_submitted', op: 'exists' },
-			data: {},
-			allowedWriterRoles: ['planner'],
+			fields: [
+				{ name: 'plan_submitted', type: 'boolean', writers: ['planner'], check: { op: 'exists' } },
+			],
 			resetOnCycle: false,
 		},
 		{
 			id: 'plan-approval-gate',
 			description: 'Plan has been reviewed and approved by the plan reviewer',
-			condition: { type: 'check', field: 'approved', op: '==', value: true },
-			data: {},
-			allowedWriterRoles: ['reviewer'],
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
 			resetOnCycle: true,
 		},
 		{
@@ -350,9 +403,9 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 				'Code has been implemented and a pull request has been opened. ' +
 				'resetOnCycle is false: the same PR is updated across fix cycles — coder pushes ' +
 				'new commits to the existing branch rather than opening a new PR each time.',
-			condition: { type: 'check', field: 'pr_url', op: 'exists' },
-			data: {},
-			allowedWriterRoles: ['coder'],
+			fields: [
+				{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
+			],
 			resetOnCycle: false,
 		},
 		{
@@ -362,9 +415,14 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 				'Agents must read the current votes map first, add their entry, then write the full map back ' +
 				'(read-merge-write) — write_gate performs a shallow merge so writing only your own entry ' +
 				"would overwrite all other reviewers' votes.",
-			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
-			data: {},
-			allowedWriterRoles: ['reviewer'],
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['reviewer'],
+					check: { op: 'count', match: 'approved', min: 3 },
+				},
+			],
 			resetOnCycle: true,
 		},
 		{
@@ -374,9 +432,14 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 				'Agents must read the current votes map first, add their entry, then write the full map back ' +
 				'(read-merge-write) — write_gate performs a shallow merge so writing only your own entry ' +
 				"would overwrite all other reviewers' votes.",
-			condition: { type: 'count', field: 'votes', matchValue: 'rejected', min: 1 },
-			data: {},
-			allowedWriterRoles: ['reviewer'],
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['reviewer'],
+					check: { op: 'count', match: 'rejected', min: 1 },
+				},
+			],
 			resetOnCycle: true,
 		},
 		{
@@ -384,17 +447,17 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			description:
 				'QA verification has passed — tests, CI, and PR are green. ' +
 				'Resets on each QA→Coding cycle so QA always starts from a clean state.',
-			condition: { type: 'check', field: 'result', op: '==', value: 'passed' },
-			data: {},
-			allowedWriterRoles: ['qa'],
+			fields: [
+				{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } },
+			],
 			resetOnCycle: true,
 		},
 		{
 			id: 'qa-fail-gate',
 			description: 'QA found issues — needs another coding and review cycle',
-			condition: { type: 'check', field: 'result', op: '==', value: 'failed' },
-			data: {},
-			allowedWriterRoles: ['qa'],
+			fields: [
+				{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } },
+			],
 			resetOnCycle: true,
 		},
 	],
@@ -415,49 +478,21 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			gateId: 'plan-approval-gate',
 			label: 'Plan Review → Coding',
 		},
-		// Coding → Reviewers (fan-out, shared code-pr-gate)
+		// Coding → Code Review (fan-out to the 3 reviewer slots in the node)
 		{
 			from: 'Coding',
-			to: 'Reviewer 1',
+			to: 'Code Review',
 			direction: 'one-way',
 			gateId: 'code-pr-gate',
-			label: 'Coding → Reviewer 1',
+			label: 'Coding → Code Review',
 		},
+		// Code Review → QA (fan-in, shared review-votes-gate: all 3 must approve)
 		{
-			from: 'Coding',
-			to: 'Reviewer 2',
-			direction: 'one-way',
-			gateId: 'code-pr-gate',
-			label: 'Coding → Reviewer 2',
-		},
-		{
-			from: 'Coding',
-			to: 'Reviewer 3',
-			direction: 'one-way',
-			gateId: 'code-pr-gate',
-			label: 'Coding → Reviewer 3',
-		},
-		// Reviewers → QA (fan-in, shared review-votes-gate: all 3 must approve)
-		{
-			from: 'Reviewer 1',
+			from: 'Code Review',
 			to: 'QA',
 			direction: 'one-way',
 			gateId: 'review-votes-gate',
-			label: 'Reviewer 1 → QA',
-		},
-		{
-			from: 'Reviewer 2',
-			to: 'QA',
-			direction: 'one-way',
-			gateId: 'review-votes-gate',
-			label: 'Reviewer 2 → QA',
-		},
-		{
-			from: 'Reviewer 3',
-			to: 'QA',
-			direction: 'one-way',
-			gateId: 'review-votes-gate',
-			label: 'Reviewer 3 → QA',
+			label: 'Code Review → QA',
 		},
 		// QA → Done (success path)
 		{
@@ -473,45 +508,31 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 			to: 'Coding',
 			direction: 'one-way',
 			gateId: 'qa-fail-gate',
-			isCyclic: true,
+			maxCycles: 5,
 			label: 'QA → Coding (on fail)',
 		},
-		// Cyclic: Reviewer 1/2/3 → Coding (reviewer rejected changes)
+		// Cyclic: Code Review → Coding (reviewer rejected changes)
 		{
-			from: 'Reviewer 1',
+			from: 'Code Review',
 			to: 'Coding',
 			direction: 'one-way',
 			gateId: 'review-reject-gate',
-			isCyclic: true,
-			label: 'Reviewer 1 → Coding (on reject)',
-		},
-		{
-			from: 'Reviewer 2',
-			to: 'Coding',
-			direction: 'one-way',
-			gateId: 'review-reject-gate',
-			isCyclic: true,
-			label: 'Reviewer 2 → Coding (on reject)',
-		},
-		{
-			from: 'Reviewer 3',
-			to: 'Coding',
-			direction: 'one-way',
-			gateId: 'review-reject-gate',
-			isCyclic: true,
-			label: 'Reviewer 3 → Coding (on reject)',
+			maxCycles: 5,
+			label: 'Code Review → Coding (on reject)',
 		},
 		// Ungated feedback: Plan Review ↔ Planning, Coding → Planning
 		{
 			from: 'Plan Review',
 			to: 'Planning',
 			direction: 'one-way',
+			maxCycles: 5,
 			label: 'Plan Review → Planning (feedback)',
 		},
 		{
 			from: 'Coding',
 			to: 'Planning',
 			direction: 'one-way',
+			maxCycles: 5,
 			label: 'Coding → Planning (feedback)',
 		},
 	],
@@ -568,11 +589,15 @@ export function seedBuiltInWorkflows(
 	// Pre-validate: resolve every role needed across ALL templates before
 	// persisting anything. This guarantees all-or-nothing behaviour.
 	const templates = getBuiltInWorkflows();
-	const neededRoles = new Set<string>(
-		templates
-			.flatMap((t) => t.nodes.map((s) => s.agentId))
-			.filter((r): r is string => r !== undefined)
-	);
+	const neededRoles = new Set<string>();
+	for (const template of templates) {
+		for (const node of template.nodes) {
+			if (node.agentId) neededRoles.add(node.agentId);
+			for (const agent of node.agents ?? []) {
+				if (agent.agentId) neededRoles.add(agent.agentId);
+			}
+		}
+	}
 	const resolvedIds = new Map<string, string>();
 	for (const role of neededRoles) {
 		const agentId = resolveAgentId(role);
@@ -593,12 +618,24 @@ export function seedBuiltInWorkflows(
 			nodeIdMap.set(node.id, generateUUID());
 		}
 
-		const nodes = template.nodes.map((s) => ({
-			id: nodeIdMap.get(s.id)!,
-			name: s.name,
-			agentId: resolvedIds.get(s.agentId ?? '')!,
-			instructions: s.instructions,
-		}));
+		const nodes = template.nodes.map((s) => {
+			const hasAgents = Array.isArray(s.agents) && s.agents.length > 0;
+			const resolvedAgents = hasAgents
+				? s.agents!.map((a) => ({
+						...a,
+						agentId: resolvedIds.get(a.agentId)!,
+					}))
+				: undefined;
+
+			return {
+				id: nodeIdMap.get(s.id)!,
+				name: s.name,
+				agentId: hasAgents ? undefined : resolvedIds.get(s.agentId ?? '')!,
+				agents: resolvedAgents,
+				systemPrompt: s.systemPrompt,
+				instructions: s.instructions,
+			};
+		});
 
 		const startNodeId = nodeIdMap.get(template.startNodeId)!;
 
@@ -610,7 +647,6 @@ export function seedBuiltInWorkflows(
 			startNodeId,
 			rules: [],
 			tags: [...template.tags],
-			maxIterations: template.maxIterations,
 			channels: template.channels ? [...template.channels] : undefined,
 			gates: template.gates ? [...template.gates] : undefined,
 		});

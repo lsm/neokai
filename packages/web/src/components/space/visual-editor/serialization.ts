@@ -28,14 +28,14 @@ import type {
 	SpaceWorkflow,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
-	WorkflowCondition,
 	WorkflowNodeAgent,
 	WorkflowChannel,
+	Gate,
 } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import { rulesToDrafts } from '../WorkflowRulesEditor';
-import type { Point } from './types';
+import type { Point, WorkflowCondition } from './types';
 import { autoLayout } from './layout';
 
 // ============================================================================
@@ -86,6 +86,8 @@ export interface VisualEditorState {
 	tags: string[];
 	/** Directed messaging channels at the workflow level. */
 	channels: WorkflowChannel[];
+	/** First-class workflow gates referenced by channel.gateId. */
+	gates: Gate[];
 }
 
 // ============================================================================
@@ -99,8 +101,8 @@ export interface VisualEditorState {
  *   exactly from the stored layout. Steps missing from a partial layout fall back
  *   to `autoLayout` positions (autoLayout is only invoked when needed).
  * - All `WorkflowCondition` fields are preserved verbatim on the edges.
- * - The Task Agent virtual node is always injected as the first node, pinned at
- *   the top-center of the canvas. It is never stored in the backend.
+ * - The Task Agent virtual node is kept in editor state for compatibility, but
+ *   is rendered outside the transformed canvas and excluded from layout bounds.
  */
 export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorState {
 	// Determine whether auto-layout is needed (any step missing from layout)
@@ -109,7 +111,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 
 	// Lazily compute auto-layout only when at least one step lacks a stored position
 	const layoutFallback = needsAutoLayout
-		? autoLayout(workflow.nodes, [], workflow.startNodeId)
+		? autoLayout(workflow.nodes, [], workflow.startNodeId, workflow.channels ?? [])
 		: new Map<string, Point>();
 
 	const nodes: VisualNode[] = workflow.nodes.map((s) => {
@@ -124,6 +126,8 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			id: s.id,
 			name: s.name,
 			agentId: s.agentId ?? '',
+			model: s.model ?? undefined,
+			systemPrompt: s.systemPrompt ?? undefined,
 			agents: s.agents,
 			instructions: s.instructions ?? '',
 		};
@@ -132,7 +136,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 
 	// Always inject the Task Agent virtual node at the top-center of the canvas.
 	// Its position is computed relative to the layout so it sits above all other nodes.
-	const taskAgentPosition = computeTaskAgentPosition(layoutMap, layoutFallback, workflow.nodes);
 	const taskAgentNode: VisualNode = {
 		step: {
 			localId: TASK_AGENT_NODE_ID,
@@ -141,7 +144,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			agentId: '',
 			instructions: '',
 		},
-		position: taskAgentPosition,
+		position: { x: 0, y: 0 },
 	};
 
 	// Transitions have been removed from SpaceWorkflow; edges start empty.
@@ -160,57 +163,8 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		rules: rulesToDrafts(workflow.rules ?? []),
 		tags: workflow.tags ?? [],
 		channels: workflow.channels ?? [],
+		gates: workflow.gates ?? [],
 	};
-}
-
-/**
- * Compute the canvas position for the Task Agent virtual node.
- *
- * The Task Agent is placed above the topmost regular node in the layout,
- * centered horizontally. When no nodes exist yet, it defaults to the canvas origin.
- *
- * Uses a fixed minimum y of 20 (same as TASK_AGENT_Y in layout.ts) so that
- * stored layouts with nodes near y=0 don't cause the Task Agent to overlap.
- */
-function computeTaskAgentPosition(
-	layoutMap: SpaceWorkflow['layout'],
-	layoutFallback: Map<string, Point>,
-	workflowNodes: SpaceWorkflow['nodes']
-): Point {
-	const TASK_AGENT_Y_OFFSET = 120;
-	/** Minimum y position — matches TASK_AGENT_Y in layout.ts */
-	const TASK_AGENT_MIN_Y = 20;
-	const DEFAULT_CENTER_X = 400;
-
-	if (workflowNodes.length === 0) {
-		return { x: DEFAULT_CENTER_X, y: TASK_AGENT_MIN_Y };
-	}
-
-	// Collect all known x positions and the minimum y to place the Task Agent above them
-	let minY = Infinity;
-	let sumX = 0;
-	let count = 0;
-
-	for (const node of workflowNodes) {
-		let pos: Point | undefined;
-		if (layoutMap && layoutMap[node.id]) {
-			pos = { x: layoutMap[node.id].x, y: layoutMap[node.id].y };
-		} else {
-			pos = layoutFallback.get(node.id);
-		}
-		if (pos) {
-			sumX += pos.x;
-			count++;
-			if (pos.y < minY) minY = pos.y;
-		}
-	}
-
-	const centerX = count > 0 ? sumX / count : DEFAULT_CENTER_X;
-	// Clamp to TASK_AGENT_MIN_Y so the Task Agent never overlaps nodes at y≈0
-	const y =
-		minY === Infinity ? TASK_AGENT_MIN_Y : Math.max(TASK_AGENT_MIN_Y, minY - TASK_AGENT_Y_OFFSET);
-
-	return { x: centerX, y };
 }
 
 // ============================================================================
@@ -225,6 +179,8 @@ interface BuiltWorkflowFields {
 		id: string;
 		name: string;
 		agentId?: string;
+		model?: string;
+		systemPrompt?: string;
 		agents?: WorkflowNodeAgent[];
 		instructions?: string;
 	}>;
@@ -233,6 +189,7 @@ interface BuiltWorkflowFields {
 	layout: Record<string, { x: number; y: number }>;
 	tags: string[];
 	channels?: WorkflowChannel[];
+	gates?: Gate[];
 }
 
 /**
@@ -305,6 +262,8 @@ function buildWorkflowFields(state: VisualEditorState): {
 			// When agents array is provided and non-empty, omit agentId (agents takes precedence).
 			// Otherwise use the single agentId (may be empty string, serialized as undefined).
 			agentId: hasMultiAgent ? undefined : node.step.agentId || undefined,
+			model: hasMultiAgent ? undefined : node.step.model || undefined,
+			systemPrompt: hasMultiAgent ? undefined : node.step.systemPrompt || undefined,
 			agents: hasMultiAgent ? node.step.agents : undefined,
 			instructions: node.step.instructions || undefined,
 		};
@@ -340,6 +299,11 @@ function buildWorkflowFields(state: VisualEditorState): {
 			appliesTo: r.appliesTo.map((id) => keyToPersistedId.get(id) ?? id),
 		}));
 
+	const referencedGateIds = new Set(
+		state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
+	);
+	const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
+
 	return {
 		fields: {
 			nodes,
@@ -348,6 +312,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 			layout,
 			tags: state.tags,
 			channels: state.channels,
+			gates,
 		},
 		keyToPersistedId,
 	};
@@ -380,6 +345,7 @@ export function visualStateToCreateParams(
 		layout: fields.layout,
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
+		gates: fields.gates && fields.gates.length > 0 ? fields.gates : undefined,
 	};
 }
 
@@ -409,5 +375,6 @@ export function visualStateToUpdateParams(
 		layout: fields.layout,
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
+		gates: fields.gates && fields.gates.length > 0 ? fields.gates : null,
 	};
 }

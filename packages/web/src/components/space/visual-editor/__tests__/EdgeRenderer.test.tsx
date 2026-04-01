@@ -40,6 +40,8 @@ import {
 	CHANNEL_EDGE_DASH_ARRAY,
 	TASK_AGENT_X,
 	computeChannelEdgePoints,
+	buildChannelPathD,
+	buildVisibleChannelPathD,
 } from '../EdgeRenderer';
 import type { EdgeRendererProps } from '../EdgeRenderer';
 import type { NodePosition } from '../types';
@@ -439,7 +441,7 @@ describe('computeChannelEdgePoints', () => {
 		expect(computeChannelEdgePoints(channel, NODE_POSITIONS)).toBeNull();
 	});
 
-	it('source x is right edge of from-node for regular channel', () => {
+	it('source x is bottom-center of from-node for regular channel', () => {
 		const channel: ResolvedWorkflowChannel = {
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
@@ -447,11 +449,11 @@ describe('computeChannelEdgePoints', () => {
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
-		// step-1: x=50, width=160 → right edge = 210
-		expect(pts!.sx).toBe(50 + 160);
+		// step-1: x=50, width=160 → center x = 130
+		expect(pts!.sx).toBe(50 + 160 / 2);
 	});
 
-	it('source y is vertical center of from-node', () => {
+	it('source y is bottom edge of from-node', () => {
 		const channel: ResolvedWorkflowChannel = {
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
@@ -459,11 +461,11 @@ describe('computeChannelEdgePoints', () => {
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
-		// step-1: y=50, height=80 → center = 90
-		expect(pts!.sy).toBe(50 + 80 / 2);
+		// step-1: y=50, height=80 → bottom = 130
+		expect(pts!.sy).toBe(50 + 80);
 	});
 
-	it('target x is left edge of to-node', () => {
+	it('target x is top-center of to-node', () => {
 		const channel: ResolvedWorkflowChannel = {
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
@@ -471,11 +473,11 @@ describe('computeChannelEdgePoints', () => {
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
-		// step-2: x=300
-		expect(pts!.tx).toBe(300);
+		// step-2: x=300, width=160 → center x = 380
+		expect(pts!.tx).toBe(300 + 160 / 2);
 	});
 
-	it('target y is vertical center of to-node', () => {
+	it('target y is top edge of to-node', () => {
 		const channel: ResolvedWorkflowChannel = {
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
@@ -483,8 +485,8 @@ describe('computeChannelEdgePoints', () => {
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
-		// step-2: y=250, height=80 → center = 290
-		expect(pts!.ty).toBe(250 + 80 / 2);
+		// step-2: y=250
+		expect(pts!.ty).toBe(250);
 	});
 
 	it('task-agent channel uses TASK_AGENT_X as source x', () => {
@@ -510,6 +512,38 @@ describe('computeChannelEdgePoints', () => {
 		expect(pts!.tx).toBe(300 + 160 / 2);
 		expect(pts!.ty).toBe(250);
 	});
+
+	it('builds an orthogonal path for routed semantic channels', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'step-1',
+			toStepId: 'step-2',
+			direction: 'one-way',
+			sourceSide: 'right',
+			targetSide: 'left',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		const d = buildChannelPathD(channel, pts!);
+		expect(d).toContain('L');
+		expect(d).toContain('Q');
+		expect(d.startsWith(`M ${pts!.sx} ${pts!.sy}`)).toBe(true);
+		expect(d.endsWith(`${pts!.tx} ${pts!.ty}`)).toBe(true);
+	});
+
+	it('trims the visible bidirectional channel path so arrowheads are not buried in nodes', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'step-1',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+			sourceSide: 'right',
+			targetSide: 'left',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		const d = buildVisibleChannelPathD(channel, pts!);
+		expect(d.startsWith(`M ${pts!.sx} ${pts!.sy}`)).toBe(false);
+		expect(d.endsWith(`${pts!.tx} ${pts!.ty}`)).toBe(false);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -519,6 +553,7 @@ describe('computeChannelEdgePoints', () => {
 function renderEdgesWithChannels(props: Partial<EdgeRendererProps> = {}) {
 	const onEdgeSelect = vi.fn();
 	const onEdgeDelete = vi.fn();
+	const onChannelSelect = vi.fn();
 	const result = render(
 		<svg>
 			<EdgeRenderer
@@ -526,11 +561,12 @@ function renderEdgesWithChannels(props: Partial<EdgeRendererProps> = {}) {
 				nodePositions={NODE_POSITIONS}
 				onEdgeSelect={onEdgeSelect}
 				onEdgeDelete={onEdgeDelete}
+				onChannelSelect={onChannelSelect}
 				{...props}
 			/>
 		</svg>
 	);
-	return { ...result, onEdgeSelect, onEdgeDelete };
+	return { ...result, onEdgeSelect, onEdgeDelete, onChannelSelect };
 }
 
 describe('EdgeRenderer — channel edge rendering', () => {
@@ -575,7 +611,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(visiblePath).not.toBeNull();
 		const markerStart = visiblePath!.getAttribute('markerStart');
 		const markerEnd = visiblePath!.getAttribute('markerEnd');
-		expect(markerStart).toContain('channel-start');
+		expect(markerStart).toContain('channel-end');
 		expect(markerEnd).toContain('channel-end');
 	});
 
@@ -594,7 +630,70 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(markerEnd).toContain('channel-end');
 	});
 
-	it('channel edges use dashed stroke style', () => {
+	it('selected channel uses the white selected arrowhead marker', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ id: 'plan:review', fromStepId: 'step-1', toStepId: 'step-2', direction: 'bidirectional' },
+		];
+		const { container } = renderEdgesWithChannels({
+			channels,
+			selectedChannelId: 'plan:review',
+		});
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		expect(visiblePath!.getAttribute('stroke')).toBe('white');
+		expect(visiblePath!.getAttribute('markerStart')).toContain('channel-selected');
+		expect(visiblePath!.getAttribute('markerEnd')).toContain('channel-selected');
+		const selectedMarkerPath = container.querySelector('marker[id*="channel-selected"] path');
+		expect(selectedMarkerPath?.getAttribute('fill')).toBe('white');
+	});
+
+	it('clicking the gate badge selects the channel relation', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				id: 'plan:review',
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'condition',
+			},
+		];
+		const { getByTestId, onChannelSelect } = renderEdgesWithChannels({ channels });
+		fireEvent.click(getByTestId('channel-gate-step-1-step-2'));
+		expect(onChannelSelect).toHaveBeenCalledWith('plan:review');
+	});
+
+	it('one-way ungated channel edges use dashed stroke style', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		expect(visiblePath!.getAttribute('strokeDasharray')).toBe(CHANNEL_EDGE_DASH_ARRAY);
+	});
+
+	it('one-way gated channel edges still use dashed stroke style', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'human',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		expect(visiblePath!.getAttribute('strokeDasharray')).toBe(CHANNEL_EDGE_DASH_ARRAY);
+	});
+
+	it('bidirectional channel edges use solid stroke style', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
 		];
@@ -603,7 +702,41 @@ describe('EdgeRenderer — channel edge rendering', () => {
 			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
 		);
 		expect(visiblePath).not.toBeNull();
-		expect(visiblePath!.getAttribute('strokeDasharray')).toBe(CHANNEL_EDGE_DASH_ARRAY);
+		expect(visiblePath!.getAttribute('strokeDasharray')).toBeNull();
+	});
+
+	it('renders a midpoint gate badge when a channel is gated', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'condition',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Shell');
+	});
+
+	it('renders a loop badge when a channel is cyclic', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-2',
+				toStepId: 'step-1',
+				direction: 'one-way',
+				isCyclic: true,
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-loop-step-2-step-1').textContent).toBe('Loop');
+	});
+
+	it('does not render a midpoint gate badge when a channel is ungated', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
+		];
+		const { queryByTestId } = renderEdgesWithChannels({ channels });
+		expect(queryByTestId('channel-gate-step-1-step-2')).toBeNull();
 	});
 
 	it('channel edges use teal color (distinct from transition edge colors)', () => {
@@ -640,8 +773,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		const defs = container.querySelector('defs');
 		expect(defs).not.toBeNull();
 		const channelEndMarker = defs!.querySelector('marker[id*="channel-end"]');
-		const channelStartMarker = defs!.querySelector('marker[id*="channel-start"]');
 		expect(channelEndMarker).not.toBeNull();
-		expect(channelStartMarker).not.toBeNull();
+		expect(channelEndMarker?.getAttribute('orient')).toBe('auto-start-reverse');
 	});
 });

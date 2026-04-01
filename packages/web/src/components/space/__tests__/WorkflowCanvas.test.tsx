@@ -77,9 +77,9 @@ import { WorkflowCanvas } from '../WorkflowCanvas';
 function makeGate(overrides: Partial<Gate> = {}): Gate {
 	return {
 		id: 'gate-1',
-		condition: { type: 'check', field: 'approved', op: '==', value: true },
-		data: {},
-		allowedWriterRoles: ['*'],
+		fields: [
+			{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+		],
 		description: 'Human approval',
 		resetOnCycle: false,
 		...overrides,
@@ -202,6 +202,28 @@ describe('WorkflowCanvas', () => {
 		mockWorkflows.value = [makeWorkflow()];
 		const { getByTestId } = render(<WorkflowCanvas workflowId="wf-1" spaceId="sp-1" />);
 		expect(getByTestId('channel-ch-1')).toBeTruthy();
+	});
+
+	it('renders cyclic workflows without hanging the layout pass', () => {
+		mockWorkflows.value = [
+			makeWorkflow({
+				nodes: [
+					{ id: 'n1', name: 'Plan' },
+					{ id: 'n2', name: 'Code' },
+					{ id: 'n3', name: 'Verify' },
+				],
+				startNodeId: 'n1',
+				channels: [
+					{ id: 'ch-1', from: 'Plan', to: 'Code', direction: 'one-way' },
+					{ id: 'ch-2', from: 'Code', to: 'Verify', direction: 'one-way' },
+					{ id: 'ch-3', from: 'Verify', to: 'Plan', direction: 'one-way' },
+				],
+			}),
+		];
+		const { getByTestId } = render(<WorkflowCanvas workflowId="wf-1" spaceId="sp-1" />);
+		expect(getByTestId('node-n1')).toBeTruthy();
+		expect(getByTestId('node-n2')).toBeTruthy();
+		expect(getByTestId('node-n3')).toBeTruthy();
 	});
 
 	// ---- Gate rendering on channel lines ----
@@ -397,12 +419,14 @@ describe('WorkflowCanvas', () => {
 	it('evaluates count gate as open when min is met', async () => {
 		const gate = makeGate({
 			id: 'vote-gate',
-			condition: {
-				type: 'count',
-				field: 'reviews',
-				matchValue: 'approved',
-				min: 2,
-			},
+			fields: [
+				{
+					name: 'reviews',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
+			],
 		});
 		const wf = makeWorkflow({
 			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
@@ -429,12 +453,14 @@ describe('WorkflowCanvas', () => {
 	it('evaluates count gate as blocked when min not met', async () => {
 		const gate = makeGate({
 			id: 'vote-gate',
-			condition: {
-				type: 'count',
-				field: 'reviews',
-				matchValue: 'approved',
-				min: 2,
-			},
+			fields: [
+				{
+					name: 'reviews',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
+			],
 		});
 		const wf = makeWorkflow({
 			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
@@ -550,7 +576,14 @@ describe('WorkflowCanvas', () => {
 	it('shows vote count badge "N/M" for a count gate with partial votes in runtime mode', async () => {
 		const gate = makeGate({
 			id: 'vote-gate',
-			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 3 },
+				},
+			],
 		});
 		const wf = makeWorkflow({
 			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
@@ -579,7 +612,14 @@ describe('WorkflowCanvas', () => {
 	it('shows vote count badge "0/3" when no votes written yet', async () => {
 		const gate = makeGate({
 			id: 'vote-gate',
-			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 3 },
+				},
+			],
 		});
 		const wf = makeWorkflow({
 			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
@@ -599,7 +639,14 @@ describe('WorkflowCanvas', () => {
 	it('shows vote count badge "3/3" when all votes approve (gate open)', async () => {
 		const gate = makeGate({
 			id: 'vote-gate',
-			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 3 },
+				},
+			],
 		});
 		const wf = makeWorkflow({
 			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
@@ -635,7 +682,14 @@ describe('WorkflowCanvas', () => {
 	it('does NOT show vote count badge in template mode', () => {
 		const gate = makeGate({
 			id: 'vote-gate',
-			condition: { type: 'count', field: 'votes', matchValue: 'approved', min: 3 },
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 3 },
+				},
+			],
 		});
 		const wf = makeWorkflow({
 			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
@@ -651,7 +705,9 @@ describe('WorkflowCanvas', () => {
 	it('does NOT show vote count badge for non-count gate types', async () => {
 		const gate = makeGate({
 			id: 'check-gate',
-			condition: { type: 'check', field: 'approved', op: '==', value: true },
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+			],
 		});
 		const wf = makeWorkflow({
 			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'check-gate' }],

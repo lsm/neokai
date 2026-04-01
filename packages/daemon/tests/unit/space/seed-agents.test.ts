@@ -142,19 +142,10 @@ describe('seedPresetAgents', () => {
 		expect(result.errors[0].name).toBe('Coder');
 	});
 
-	it('Planner preset has injectWorkflowContext: true', async () => {
+	it('preset agents do not seed hidden workflow-context flags', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
-		const planner = seeded.find((a) => a.role === 'planner');
 
-		expect(planner).toBeDefined();
-		expect(planner?.injectWorkflowContext).toBe(true);
-	});
-
-	it('non-planner presets do not have injectWorkflowContext set', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-		const nonPlanners = seeded.filter((a) => a.role !== 'planner');
-
-		for (const agent of nonPlanners) {
+		for (const agent of seeded) {
 			expect(agent.injectWorkflowContext).toBeUndefined();
 		}
 	});
@@ -185,31 +176,19 @@ describe('seedPresetAgents', () => {
 		expect(qa?.tools).toContain('Glob');
 	});
 
-	it('QA agent has a system prompt set', async () => {
+	it('QA agent does not seed a hidden system prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const qa = seeded.find((a) => a.role === 'qa');
 
 		expect(qa).toBeDefined();
-		expect(typeof qa?.systemPrompt).toBe('string');
-		expect((qa?.systemPrompt?.length ?? 0) > 0).toBe(true);
+		expect(qa?.systemPrompt).toBeUndefined();
 	});
 
-	it('General agent has a system prompt set (Done node summarizer)', async () => {
+	it('General agent does not seed a hidden system prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.role === 'general');
 
 		expect(general).toBeDefined();
-		expect(typeof general?.systemPrompt).toBe('string');
-		expect((general?.systemPrompt?.length ?? 0) > 0).toBe(true);
-	});
-
-	it('General agent system prompt references done node summarization behavior', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-		const general = seeded.find((a) => a.role === 'general');
-
-		expect(general?.systemPrompt).toContain('Done Node Agent');
-		expect(general?.systemPrompt).toContain('code-pr-gate');
-		expect(general?.systemPrompt).toContain('qa-result-gate');
-		expect(general?.systemPrompt).toContain('ANALYSIS_COMPLETE:');
+		expect(general?.systemPrompt).toBeUndefined();
 	});
 });

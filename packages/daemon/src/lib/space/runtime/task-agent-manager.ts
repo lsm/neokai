@@ -55,6 +55,7 @@ import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
 import type { Database } from '../../../storage/database';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { DaemonHub } from '../../daemon-hub';
 import type { SessionManager } from '../../session-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -64,6 +65,7 @@ import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type {
 	SubSessionFactory,
@@ -81,6 +83,47 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 
 const log = new Logger('task-agent-manager');
 
+const WORKFLOW_SELECTION_STOP_WORDS = new Set([
+	'the',
+	'and',
+	'for',
+	'are',
+	'but',
+	'not',
+	'you',
+	'all',
+	'can',
+	'was',
+	'one',
+	'our',
+	'out',
+	'day',
+	'get',
+	'has',
+	'him',
+	'his',
+	'how',
+	'its',
+	'may',
+	'new',
+	'now',
+	'old',
+	'see',
+	'two',
+	'use',
+	'way',
+	'who',
+	'did',
+	'let',
+	'put',
+	'say',
+	'she',
+	'too',
+	'had',
+	'any',
+	'via',
+]);
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -90,6 +133,8 @@ export interface TaskAgentManagerConfig {
 	db: Database;
 	/** SessionManager — used to delete sessions during cleanup */
 	sessionManager: SessionManager;
+	/** Reactive DB invalidation hooks for LiveQuery-backed task activity */
+	reactiveDb?: ReactiveDatabase;
 	/** Space manager — used to look up spaces */
 	spaceManager: SpaceManager;
 	/** Space agent manager — used to look up agents for context */
@@ -104,6 +149,8 @@ export interface TaskAgentManagerConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
 	gateDataRepo: GateDataRepository;
+	/** Channel cycle repository — for per-channel cycle tracking in cyclic workflows */
+	channelCycleRepo: ChannelCycleRepository;
 	/** DaemonHub — event bus for session state change subscriptions */
 	daemonHub: DaemonHub;
 	/** MessageHub — used to write SDK messages */
@@ -147,6 +194,14 @@ export interface TaskAgentManagerConfig {
 
 /** Map of stepId → all registered completion callbacks for that session */
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;
+
+interface SpawnTaskAgentOptions {
+	/**
+	 * Whether to inject the initial orchestration message immediately after spawn.
+	 * `false` keeps the session idle until an explicit inbound message arrives.
+	 */
+	kickoff?: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // TaskAgentManager
@@ -200,6 +255,226 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
+	 * Ensure a task has an attached Task Agent session.
+	 *
+	 * For standalone tasks opened directly in the UI, this provides a deterministic
+	 * way to start the orchestration session on demand.
+	 *
+	 * Behavior:
+	 * - If the task already has `taskAgentSessionId`, return the current task.
+	 * - Otherwise spawn a Task Agent session and persist the session ID.
+	 * - If the task was `pending`, promote it to `in_progress` once the session starts.
+	 *
+	 * Returns the latest task snapshot from the repository.
+	 */
+	async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
+		const initialTask = this.config.taskRepo.getTask(taskId);
+		if (!initialTask) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		let task = initialTask;
+
+		if (task.taskAgentSessionId) {
+			const restored = await this.restoreTaskAgentFromPersistedSession(task);
+			if (restored) {
+				const refreshedTask = this.config.taskRepo.getTask(taskId);
+				if (!refreshedTask) {
+					throw new Error(`Task not found after restoring task agent session: ${taskId}`);
+				}
+				return refreshedTask;
+			}
+
+			log.warn(
+				`TaskAgentManager.ensureTaskAgentSession: stale taskAgentSessionId "${task.taskAgentSessionId}" on task ${taskId}; clearing and respawning`
+			);
+
+			this.taskAgentSessions.delete(taskId);
+			this.config.taskRepo.updateTask(taskId, { taskAgentSessionId: null });
+
+			const refreshedTask = this.config.taskRepo.getTask(taskId);
+			if (!refreshedTask) {
+				throw new Error(`Failed to reload task after clearing stale session: ${taskId}`);
+			}
+			task = refreshedTask;
+		}
+
+		const space = await this.config.spaceManager.getSpace(task.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${task.spaceId}`);
+		}
+
+		let workflowRun = task.workflowRunId
+			? this.config.workflowRunRepo.getRun(task.workflowRunId)
+			: null;
+		let workflow = workflowRun
+			? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
+			: null;
+
+		// Fallback path: standalone task without an assigned workflow.
+		// We auto-select a workflow, start a run, and attach this existing task to it
+		// so the Task Agent can use workflow-aware tools immediately.
+		if (!workflowRun) {
+			const autoAttached = await this.attachFallbackWorkflowRun(task, space);
+			if (autoAttached) {
+				task = autoAttached.task;
+				workflowRun = autoAttached.workflowRun;
+				workflow = autoAttached.workflow;
+			}
+		}
+
+		await this.spawnTaskAgent(task, space, workflow ?? null, workflowRun ?? null, {
+			kickoff: false,
+		});
+
+		if (task.status === 'pending') {
+			this.config.taskRepo.updateTask(taskId, { status: 'in_progress' });
+		}
+
+		const refreshed = this.config.taskRepo.getTask(taskId);
+		if (!refreshed) {
+			throw new Error(`Failed to reload task after starting Task Agent: ${taskId}`);
+		}
+		return refreshed;
+	}
+
+	/**
+	 * Restore an in-memory Task Agent from a persisted session ID on the task.
+	 *
+	 * Returns true when a live in-memory session is available after this call.
+	 */
+	private async restoreTaskAgentFromPersistedSession(task: SpaceTask): Promise<boolean> {
+		const sessionId = task.taskAgentSessionId;
+		if (!sessionId) return false;
+
+		// Already active in memory.
+		const live = this.taskAgentSessions.get(task.id);
+		if (live) return true;
+
+		// No persisted session metadata means we cannot restore.
+		const persisted = this.config.sessionManager.getSessionFromDB(sessionId);
+		if (!persisted) return false;
+
+		try {
+			await this.rehydrateTaskAgent(task, sessionId);
+		} catch (err) {
+			log.warn(
+				`TaskAgentManager: failed to restore persisted task-agent session ${sessionId} for task ${task.id}:`,
+				err
+			);
+			return false;
+		}
+
+		return this.taskAgentSessions.has(task.id);
+	}
+
+	/**
+	 * Attach a workflow run to a standalone task when no workflow was explicitly set.
+	 *
+	 * Strategy:
+	 * - Pick a workflow from this space using lightweight keyword ranking.
+	 * - Start a workflow run through SpaceRuntime.
+	 * - Rebind the existing task to the run as the orchestration task (workflowNodeId: null).
+	 * - Keep node-scoped tasks created by runtime for actual step execution.
+	 *
+	 * Returns null when no workflows exist in the space (task remains standalone).
+	 */
+	private async attachFallbackWorkflowRun(
+		task: SpaceTask,
+		space: Space
+	): Promise<{ task: SpaceTask; workflow: SpaceWorkflow; workflowRun: SpaceWorkflowRun } | null> {
+		const selectedWorkflow = this.selectFallbackWorkflow(task, space.id);
+		if (!selectedWorkflow) {
+			log.info(
+				`TaskAgentManager.ensureTaskAgentSession: task ${task.id} has no workflow and space ${space.id} has no workflows; continuing as standalone`
+			);
+			return null;
+		}
+
+		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(space.id);
+		const { run, tasks: startTasks } = await runtime.startWorkflowRun(
+			space.id,
+			selectedWorkflow.id,
+			task.title,
+			task.description,
+			task.goalId
+		);
+
+		const bootstrapTask = startTasks[0];
+		if (!bootstrapTask) {
+			throw new Error(
+				`Fallback workflow run "${run.id}" did not create any start tasks for workflow "${selectedWorkflow.id}"`
+			);
+		}
+
+		this.config.taskRepo.updateTask(task.id, {
+			workflowRunId: run.id,
+			// Keep orchestration tasks detached from concrete workflow nodes.
+			// Node-scoped tasks are created by the runtime as separate rows.
+			workflowNodeId: null,
+		});
+
+		const reboundTask = this.config.taskRepo.getTask(task.id);
+		if (!reboundTask) {
+			throw new Error(`Failed to reload task after fallback workflow attachment: ${task.id}`);
+		}
+
+		log.info(
+			`TaskAgentManager.ensureTaskAgentSession: auto-attached workflow "${selectedWorkflow.id}" (run ${run.id}) to task ${task.id}`
+		);
+
+		return {
+			task: reboundTask,
+			workflow: selectedWorkflow,
+			workflowRun: run,
+		};
+	}
+
+	/**
+	 * Deterministically select a fallback workflow for a standalone task.
+	 *
+	 * Preference order:
+	 * 1. Highest keyword overlap with task title/description.
+	 * 2. Workflows tagged `default`.
+	 * 3. Workflows tagged `v2`.
+	 * 4. Most recently updated workflow.
+	 */
+	private selectFallbackWorkflow(task: SpaceTask, spaceId: string): SpaceWorkflow | null {
+		const workflows = this.config.spaceWorkflowManager.listWorkflows(spaceId);
+		if (workflows.length === 0) return null;
+		if (workflows.length === 1) return workflows[0];
+
+		const keywords = `${task.title} ${task.description}`
+			.toLowerCase()
+			.split(/\W+/)
+			.filter((w) => w.length >= 3 && !WORKFLOW_SELECTION_STOP_WORDS.has(w));
+
+		const scored = workflows.map((workflow) => {
+			const haystack = [workflow.name, workflow.description ?? '', ...(workflow.tags ?? [])]
+				.join(' ')
+				.toLowerCase();
+			const hits =
+				keywords.length === 0 ? 0 : keywords.filter((kw) => haystack.includes(kw)).length;
+			const tags = workflow.tags ?? [];
+			return {
+				workflow,
+				hits,
+				isDefault: tags.includes('default') ? 1 : 0,
+				isV2: tags.includes('v2') ? 1 : 0,
+			};
+		});
+
+		scored.sort((a, b) => {
+			if (b.hits !== a.hits) return b.hits - a.hits;
+			if (b.isDefault !== a.isDefault) return b.isDefault - a.isDefault;
+			if (b.isV2 !== a.isV2) return b.isV2 - a.isV2;
+			return b.workflow.updatedAt - a.workflow.updatedAt;
+		});
+
+		return scored[0]?.workflow ?? null;
+	}
+
+	/**
 	 * Spawn a Task Agent session for a SpaceTask.
 	 *
 	 * Idempotent: if a Task Agent session already exists for this task (or is
@@ -222,7 +497,8 @@ export class TaskAgentManager {
 		task: SpaceTask,
 		space: Space,
 		workflow: SpaceWorkflow | null,
-		workflowRun: SpaceWorkflowRun | null
+		workflowRun: SpaceWorkflowRun | null,
+		options: SpawnTaskAgentOptions = {}
 	): Promise<string> {
 		const taskId = task.id;
 
@@ -330,7 +606,11 @@ export class TaskAgentManager {
 			);
 
 			// --- Build the SpaceTaskManager for this space (needed by tool handlers)
-			const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
+			const taskManager = new SpaceTaskManager(
+				this.config.db.getDatabase(),
+				spaceId,
+				this.config.reactiveDb
+			);
 
 			// --- Build and attach MCP server with live runtime dependencies
 			const subSessionFactory = this.createSubSessionFactory(taskId);
@@ -421,16 +701,21 @@ export class TaskAgentManager {
 			// --- Start streaming query
 			await agentSession.startStreamingQuery();
 
-			// --- Inject initial task context message
-			const availableAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
-			const initialMessage = buildTaskAgentInitialMessage({
-				task,
-				space,
-				workflow: workflow ?? undefined,
-				workflowRun: workflowRun ?? undefined,
-				availableAgents,
-			});
-			await this.injectMessageIntoSession(agentSession, initialMessage);
+			// --- Optional kickoff message
+			// Event-driven mode can spawn the session in an idle state and let
+			// explicit inbound messages (human/agent) wake orchestration.
+			const shouldKickoff = options.kickoff ?? true;
+			if (shouldKickoff) {
+				const availableAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
+				const initialMessage = buildTaskAgentInitialMessage({
+					task,
+					space,
+					workflow: workflow ?? undefined,
+					workflowRun: workflowRun ?? undefined,
+					availableAgents,
+				});
+				await this.injectMessageIntoSession(agentSession, initialMessage);
+			}
 
 			log.info(`TaskAgentManager: spawned task agent for task ${taskId}, session ${sessionId}`);
 			return sessionId;
@@ -511,7 +796,16 @@ export class TaskAgentManager {
 	 * Used by Space Agent's `send_message_to_task` tool.
 	 */
 	async injectTaskAgentMessage(taskId: string, message: string): Promise<void> {
-		const session = this.taskAgentSessions.get(taskId);
+		let session = this.taskAgentSessions.get(taskId);
+		if (!session) {
+			const task = this.config.taskRepo.getTask(taskId);
+			if (task?.taskAgentSessionId) {
+				const restored = await this.restoreTaskAgentFromPersistedSession(task);
+				if (restored) {
+					session = this.taskAgentSessions.get(taskId);
+				}
+			}
+		}
 		if (!session) {
 			throw new Error(`Task Agent session not found for task ${taskId}`);
 		}
@@ -869,9 +1163,19 @@ export class TaskAgentManager {
 		// Also self-unsubscribes both listeners to prevent multiple invocations.
 		const unsubscribeError = this.config.daemonHub.on(
 			'session.error',
-			(_event) => {
+			(event) => {
 				if (fired) return; // Already handled by completion path
 				fired = true;
+
+				// Push an explicit failure event back to the Task Agent so orchestration
+				// stays event-driven (no polling loop required to discover crashes).
+				void this.handleSubSessionError(subSessionId, event.error).catch((err) => {
+					log.warn(
+						`TaskAgentManager: failed to handle sub-session error for ${subSessionId}:`,
+						err
+					);
+				});
+
 				// Tear down both listeners now that the error terminal state is handled.
 				const unsub = this.sessionListeners.get(subSessionId);
 				if (unsub) {
@@ -917,7 +1221,11 @@ export class TaskAgentManager {
 			try {
 				const spaceId = this.getSpaceIdForTask(taskId);
 				if (spaceId) {
-					const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
+					const taskManager = new SpaceTaskManager(
+						this.config.db.getDatabase(),
+						spaceId,
+						this.config.reactiveDb
+					);
 					await taskManager.setTaskStatus(stepTask.id, 'completed');
 				}
 			} catch (err) {
@@ -938,7 +1246,7 @@ export class TaskAgentManager {
 					: '';
 				await this.injectMessageIntoSession(
 					taskAgentSession,
-					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_node_status to verify completion status.`,
+					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nUse this event to decide next actions (spawn newly pending agents, handle gates, or finalize).`,
 					'defer'
 				);
 			} catch (err) {
@@ -948,6 +1256,60 @@ export class TaskAgentManager {
 				);
 			}
 		}
+	}
+
+	/**
+	 * Handle a sub-session error event and notify the parent Task Agent.
+	 *
+	 * This enables event-driven orchestration: Task Agent can react to failures
+	 * without continuously polling check_node_status.
+	 */
+	private async handleSubSessionError(subSessionId: string, error: string): Promise<void> {
+		const parentTaskId = this.findParentTaskIdForSubSession(subSessionId);
+		if (!parentTaskId) return;
+
+		const workflowRunId = this.getWorkflowRunId(parentTaskId);
+		let failedStepTask: SpaceTask | null = null;
+
+		if (workflowRunId) {
+			const runTasks = this.config.taskRepo.listByWorkflowRun(workflowRunId);
+			for (let i = runTasks.length - 1; i >= 0; i--) {
+				const candidate = runTasks[i];
+				if (candidate.taskAgentSessionId === subSessionId) {
+					failedStepTask = candidate;
+					break;
+				}
+			}
+		}
+
+		if (failedStepTask) {
+			const spaceId = this.getSpaceIdForTask(parentTaskId);
+			if (spaceId) {
+				try {
+					const taskManager = new SpaceTaskManager(
+						this.config.db.getDatabase(),
+						spaceId,
+						this.config.reactiveDb
+					);
+					await taskManager.setTaskStatus(failedStepTask.id, 'needs_attention', { error });
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager: failed to mark step task ${failedStepTask.id} as needs_attention after session.error:`,
+						err
+					);
+				}
+			}
+		}
+
+		const taskAgentSession = this.taskAgentSessions.get(parentTaskId);
+		if (!taskAgentSession) return;
+
+		const stepId = failedStepTask?.workflowNodeId ?? 'unknown-step';
+		await this.injectMessageIntoSession(
+			taskAgentSession,
+			`[STEP_FAILED] Step "${stepId}" sub-session (${subSessionId}) reported an error: ${error}\nDecide whether to retry, request human input, or report_result.`,
+			'defer'
+		);
 	}
 
 	// -------------------------------------------------------------------------
@@ -1063,7 +1425,11 @@ export class TaskAgentManager {
 		})();
 
 		// --- Build the SpaceTaskManager for this space
-		const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
+		const taskManager = new SpaceTaskManager(
+			this.config.db.getDatabase(),
+			spaceId,
+			this.config.reactiveDb
+		);
 
 		// --- Build and attach MCP server (runtime-only, not persisted)
 		const subSessionFactory = this.createSubSessionFactory(taskId);
@@ -1077,6 +1443,7 @@ export class TaskAgentManager {
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
 			gateDataRepo: this.config.gateDataRepo,
+			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
 		});
 		const rehydrateCompletionDetector = new CompletionDetector(this.config.taskRepo);
@@ -1153,7 +1520,8 @@ export class TaskAgentManager {
 		// For standalone tasks (no workflowRunId): ask the agent to check status and continue.
 		const reorientMessage = task.workflowRunId
 			? 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
-				'Please use `check_node_status` to determine the current state of your workflow and continue from where you left off.'
+				'Please review pending tasks and recent [STEP_*] event messages, then continue orchestration in event-driven mode. ' +
+				'Use `check_node_status` only for specific reconciliation checks.'
 			: 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
 				'Please check the current task status and continue from where you left off.';
 		await this.injectMessageIntoSession(agentSession, reorientMessage);
@@ -1321,6 +1689,18 @@ export class TaskAgentManager {
 		return task?.workflowRunId ?? null;
 	}
 
+	/**
+	 * Resolve the parent task ID that owns a given sub-session ID.
+	 */
+	private findParentTaskIdForSubSession(subSessionId: string): string | null {
+		for (const [taskId, stepMap] of this.subSessions) {
+			if (stepMap.has(subSessionId)) {
+				return taskId;
+			}
+		}
+		return null;
+	}
+
 	/** Returns the space ID for a task by reading it from the task repository. */
 	private getSpaceIdForTask(taskId: string): string | null {
 		return this.config.taskRepo.getTask(taskId)?.spaceId ?? null;
@@ -1331,12 +1711,8 @@ export class TaskAgentManager {
 	 * Used when emitting events from the error handler where only subSessionId is available.
 	 */
 	private getSpaceIdForSubSession(subSessionId: string): string | null {
-		for (const [taskId, stepMap] of this.subSessions) {
-			if (stepMap.has(subSessionId)) {
-				return this.getSpaceIdForTask(taskId);
-			}
-		}
-		return null;
+		const taskId = this.findParentTaskIdForSubSession(subSessionId);
+		return taskId ? this.getSpaceIdForTask(taskId) : null;
 	}
 
 	/**
@@ -1382,6 +1758,7 @@ export class TaskAgentManager {
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
 			gateDataRepo: this.config.gateDataRepo,
+			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
 		});
 

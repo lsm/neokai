@@ -703,47 +703,90 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 		expect(msg).toContain('→');
 	});
 
-	test('shows HUMAN GATE label for human-gated channels', () => {
+	test('shows gate reference for gated channels', () => {
 		const channels: WorkflowChannel[] = [
 			{
 				from: 'coder',
 				to: 'reviewer',
 				direction: 'one-way',
-				gate: { type: 'human', description: 'Approve before review' },
+				gateId: 'approval-gate',
 			},
 		];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const wf = {
+			...makeWorkflowWithChannels(channels),
+			gates: [
+				{
+					id: 'approval-gate',
+					description: 'Approve before review',
+					fields: [
+						{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+					],
+					resetOnCycle: false,
+				},
+			],
+		};
+		const ctx = makeContext({ workflow: wf });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('HUMAN GATE');
-		expect(msg).toContain('request_human_input');
+		expect(msg).toContain('approval-gate');
+		expect(msg).toContain('Approve before review');
 	});
 
-	test('shows condition gate label for condition-gated channels', () => {
+	test('shows gate id for gated channel without description', () => {
 		const channels: WorkflowChannel[] = [
 			{
 				from: 'coder',
 				to: 'reviewer',
 				direction: 'one-way',
-				gate: { type: 'condition', expression: 'ci_passed' },
+				gateId: 'ci-gate',
 			},
 		];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const wf = {
+			...makeWorkflowWithChannels(channels),
+			gates: [
+				{
+					id: 'ci-gate',
+					fields: [
+						{ name: 'ci_passed', type: 'string', writers: ['coder'], check: { op: 'exists' } },
+					],
+					resetOnCycle: false,
+				},
+			],
+		};
+		const ctx = makeContext({ workflow: wf });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('ci_passed');
+		expect(msg).toContain('ci-gate');
 	});
 
-	test('shows task_result gate label for task_result-gated channels', () => {
+	test('shows gate info for gated channel with check condition', () => {
 		const channels: WorkflowChannel[] = [
 			{
 				from: 'coder',
 				to: 'reviewer',
 				direction: 'one-way',
-				gate: { type: 'task_result', expression: 'passed' },
+				gateId: 'result-gate',
 			},
 		];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const wf = {
+			...makeWorkflowWithChannels(channels),
+			gates: [
+				{
+					id: 'result-gate',
+					description: 'Check passed',
+					fields: [
+						{
+							name: 'result',
+							type: 'string',
+							writers: ['general'],
+							check: { op: '==', value: 'passed' },
+						},
+					],
+					resetOnCycle: true,
+				},
+			],
+		};
+		const ctx = makeContext({ workflow: wf });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('passed');
+		expect(msg).toContain('result-gate');
 	});
 
 	test('shows channel label when present', () => {

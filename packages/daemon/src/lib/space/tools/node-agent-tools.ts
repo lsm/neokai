@@ -35,6 +35,7 @@ import { evaluateGate } from '../runtime/gate-evaluator';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
+import { computeGateDefaults } from '@neokai/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -472,24 +473,40 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
 			if (reachabilityDeclared) {
 				const seen = new Set<string>();
+				// Build a lookup from (from, to) → gateId from original workflow channels
+				const channelGateMap = new Map<string, string>();
+				for (const wCh of workflow?.channels ?? []) {
+					if (wCh.gateId) {
+						const tos = Array.isArray(wCh.to) ? wCh.to : [wCh.to];
+						for (const t of tos) {
+							channelGateMap.set(`${wCh.from}→${t}`, wCh.gateId);
+						}
+					}
+				}
+				const gatesById = new Map((workflow?.gates ?? []).map((g) => [g.id, g]));
+
 				for (const ch of resolver.getResolvedChannels()) {
 					if (ch.fromRole !== myRole) continue;
 					if (withinNodeRoles.has(ch.toRole)) continue; // within-node — already listed above
 					if (seen.has(ch.toRole)) continue; // deduplicate (e.g. bidirectional split)
 					seen.add(ch.toRole);
 
-					const gate = ch.gate;
-					const gateType = gate?.type ?? 'none';
-					// A gate is "blocking" (isGated) when a condition must be evaluated at delivery
-					// time — i.e. anything other than no gate at all or an 'always' gate.
-					const isGated = gate !== undefined && gate.type !== 'always' && gate.type !== undefined;
+					// Look up gate from the original workflow channels via gateId
+					const gateId = channelGateMap.get(`${ch.fromRole}→${ch.toRole}`);
+					const gateEntity = gateId ? gatesById.get(gateId) : undefined;
+					const gateType = gateEntity
+						? gateEntity.fields.some((f) => f.type === 'map' && f.check.op === 'count')
+							? 'count'
+							: 'check'
+						: 'none';
+					const isGated = gateEntity !== undefined;
 					const entry: CrossNodeTarget = {
 						agentName: ch.toRole,
 						isFanOut: ch.isFanOut ?? false,
 						gate: { type: gateType, isGated },
 					};
-					if (gate?.description) {
-						entry.gate.description = gate.description;
+					if (gateEntity?.description) {
+						entry.gate.description = gateEntity.description;
 					}
 					crossNodeTargets.push(entry);
 				}
@@ -522,11 +539,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * guards the channel. Use this to understand the full channel map
 		 * before calling list_reachable_agents or send_message.
 		 *
-		 * A channel can be gated via:
-		 * - `gateId` (new separated architecture, M1.1): references a Gate entity
-		 *   in `workflow.gates`; use `list_gates` to see current gate data and status.
-		 * - `gate` (legacy inline condition): an inline WorkflowCondition object.
-		 * `hasGate` is true when either path is set.
+		 * A channel can be gated via `gateId`, which references a Gate entity
+		 * in `workflow.gates`; use `list_gates` to see current gate data and status.
+		 * `hasGate` is true when a gateId is set.
 		 */
 		async list_channels(_args: ListChannelsInput): Promise<ToolResult> {
 			const channels = workflow?.channels ?? [];
@@ -535,12 +550,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				from: ch.from,
 				to: ch.to,
 				direction: ch.direction,
-				isCyclic: ch.isCyclic ?? false,
+				maxCycles: ch.maxCycles ?? null,
 				label: ch.label ?? null,
-				// True when the channel is gated via either the new gateId reference
-				// or the legacy inline gate condition.
-				hasGate: ch.gate !== undefined || ch.gateId !== undefined,
-				// Gate ID for new-architecture channels; null for legacy inline gates.
+				hasGate: ch.gateId !== undefined,
 				gateId: ch.gateId ?? null,
 			}));
 			return jsonResult({
@@ -568,10 +580,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				const record = gateDataRepo.get(workflowRunId, gate.id);
 				return {
 					gateId: gate.id,
-					condition: gate.condition,
+					fields: gate.fields,
 					description: gate.description ?? null,
-					allowedWriterRoles: gate.allowedWriterRoles,
-					currentData: record?.data ?? gate.data,
+					currentData: record?.data ?? computeGateDefaults(gate.fields),
 				};
 			});
 			return jsonResult({
@@ -581,7 +592,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				nodeId: workflowNodeId,
 				message:
 					`Found ${gateResults.length} gate(s). ` +
-					`Your nodeId is "${workflowNodeId}" — use it as the map key for vote-counting (count condition) gates.`,
+					`Your nodeId is "${workflowNodeId}" — use it as the map key for vote-counting (map field) gates.`,
 			});
 		},
 
@@ -607,14 +618,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 
 			const record = gateDataRepo.get(workflowRunId, gateId);
-			const currentData = record?.data ?? gateDef.data;
+			const currentData = record?.data ?? computeGateDefaults(gateDef.fields);
 
 			// Evaluate current gate status
-			const evalResult = evaluateGate({ ...gateDef, data: currentData });
+			const evalResult = evaluateGate(gateDef, currentData);
 
 			return jsonResult({
 				success: true,
 				gateId,
+				fields: gateDef.fields,
 				data: currentData,
 				gateOpen: evalResult.open,
 				reason: evalResult.reason ?? null,
@@ -654,25 +666,37 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				});
 			}
 
-			// Authorization check
-			const allowed = gateDef.allowedWriterRoles;
-			const isAuthorized = allowed.includes('*') || allowed.includes(myRole);
-			if (!isAuthorized) {
-				return jsonResult({
-					success: false,
-					error:
-						`Role "${myRole}" is not authorized to write to gate "${gateId}". ` +
-						`Allowed writer roles: ${allowed.length > 0 ? allowed.join(', ') : '(none)'}.`,
-					allowedWriterRoles: allowed,
-					myRole,
-				});
+			// Field-level authorization: check each key in data against field declarations
+			const fieldMap = new Map(gateDef.fields.map((f) => [f.name, f]));
+			for (const key of Object.keys(data)) {
+				const fieldDef = fieldMap.get(key);
+				if (!fieldDef) {
+					return jsonResult({
+						success: false,
+						error:
+							`Field "${key}" is not declared in gate "${gateId}". ` +
+							`Declared fields: ${gateDef.fields.map((f) => f.name).join(', ') || '(none)'}.`,
+					});
+				}
+				const writers = fieldDef.writers;
+				const isAuthorized = writers.includes('*') || writers.includes(myRole);
+				if (!isAuthorized) {
+					return jsonResult({
+						success: false,
+						error:
+							`Role "${myRole}" is not authorized to write field "${key}" on gate "${gateId}". ` +
+							`Allowed writers: ${writers.length > 0 ? writers.join(', ') : '(none)'}.`,
+						allowedWriters: writers,
+						myRole,
+					});
+				}
 			}
 
 			// Merge data into gate_data table
 			const updated = gateDataRepo.merge(workflowRunId, gateId, data);
 
 			// Re-evaluate gate with updated data
-			const evalResult = evaluateGate({ ...gateDef, data: updated.data });
+			const evalResult = evaluateGate(gateDef, updated.data);
 
 			// Trigger re-evaluation and lazy node activation for channels referencing
 			// this gate (fire-and-forget — response is not delayed waiting for activation).
@@ -806,10 +830,10 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 		),
 		tool(
 			'list_gates',
-			'List all gates declared in this workflow with their current runtime data and condition. ' +
-				'Gates guard channels — a message on a gated channel is held until the gate condition passes. ' +
+			'List all gates declared in this workflow with their field schemas and current runtime data. ' +
+				'Gates guard channels — a message on a gated channel is held until all gate fields pass their checks. ' +
 				'Use this to see what data each gate currently holds and whether any gate is open. ' +
-				'Your nodeId is included — use it as the map key when writing to count-condition (vote) gates.',
+				'Your nodeId is included — use it as the map key when writing to map-type (vote) fields.',
 			ListGatesSchema.shape,
 			(args) => handlers.list_gates(args)
 		),
@@ -823,8 +847,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 		tool(
 			'write_gate',
 			"Write (merge) data into a gate's runtime data store. " +
-				"Your role must be in the gate's allowedWriterRoles. " +
-				'For vote-counting (count condition) gates, use your nodeId as the map key so each node votes once. ' +
+				'Each field you write must exist in the gate schema and your role must be in the field writers list. ' +
+				'For map-type (vote) fields, use your nodeId as the map key so each node votes once. ' +
 				'After writing, gate re-evaluation is triggered — the response tells you if the gate is now open. ' +
 				'When the gate opens, blocked target nodes are automatically activated by the workflow runtime.',
 			WriteGateSchema.shape,

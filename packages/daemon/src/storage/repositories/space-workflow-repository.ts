@@ -9,7 +9,7 @@
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
  * The `channels` column on space_workflows stores: WorkflowChannel[] JSON (unified channel topology)
- * The `config` column on space_workflow_nodes stores: { instructions? }
+ * The `config` column on space_workflow_nodes stores: { systemPrompt?, instructions?, agents? }
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -66,6 +66,7 @@ interface WorkflowConfigJson {
 
 // JSON stored inside space_workflow_nodes.config
 interface NodeConfigJson {
+	systemPrompt?: string;
 	instructions?: string;
 	/** Multi-agent array — present when the node uses the agents[] format */
 	agents?: WorkflowNodeAgent[];
@@ -96,6 +97,9 @@ function rowToNode(row: NodeRow): WorkflowNode {
 	}
 	if (cfg.instructions) {
 		node.instructions = cfg.instructions;
+	}
+	if (cfg.systemPrompt) {
+		node.systemPrompt = cfg.systemPrompt;
 	}
 	if (cfg.agents && cfg.agents.length > 0) {
 		// Backfill name = agentId for rows persisted before the name field was introduced.
@@ -189,7 +193,7 @@ export class SpaceWorkflowRepository {
 				channelsJson,
 				gatesJson,
 				layoutJson,
-				params.maxIterations ?? null,
+				null, // max_iterations (dead column, kept for backward compat)
 				now,
 				now
 			);
@@ -285,11 +289,6 @@ export class SpaceWorkflowRepository {
 			values.push(params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null);
 		}
 
-		if (params.maxIterations !== undefined) {
-			fields.push('max_iterations = ?');
-			values.push(params.maxIterations);
-		}
-
 		if (params.layout !== undefined) {
 			fields.push('layout = ?');
 			values.push(params.layout ? JSON.stringify(params.layout) : null);
@@ -381,6 +380,7 @@ export class SpaceWorkflowRepository {
 		now: number
 	): void {
 		const nodeCfg: NodeConfigJson = {
+			systemPrompt: input.systemPrompt,
 			instructions: input.instructions,
 		};
 		// Persist agents into the JSON config column so they survive round-trips.

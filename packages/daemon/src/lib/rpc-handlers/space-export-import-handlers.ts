@@ -140,7 +140,6 @@ function buildAgentCreateParams(
 	if (exported.provider !== undefined) params.provider = exported.provider;
 	if (exported.systemPrompt !== undefined) params.systemPrompt = exported.systemPrompt;
 	if (exported.tools !== undefined) params.tools = exported.tools;
-	if (exported.injectWorkflowContext === true) params.injectWorkflowContext = true;
 	return params;
 }
 
@@ -213,6 +212,8 @@ export function buildWorkflowCreateParams(
 				warnings.push(`node "${exportedNode.name}" references unknown agent "${agentRef}"`);
 			}
 			node.agentId = agentId ?? '';
+			if (exportedNode.model !== undefined) node.model = exportedNode.model;
+			if (exportedNode.systemPrompt !== undefined) node.systemPrompt = exportedNode.systemPrompt;
 		}
 
 		if (exportedNode.instructions !== undefined) node.instructions = exportedNode.instructions;
@@ -555,7 +556,6 @@ export function setupSpaceExportImportHandlers(
 							provider: exportedAgent.provider ?? null,
 							systemPrompt: exportedAgent.systemPrompt ?? null,
 							tools: exportedAgent.tools ?? null,
-							injectWorkflowContext: exportedAgent.injectWorkflowContext ?? null,
 						});
 						const id = updated?.id ?? existing.id;
 						importedAgentNameToId.set(exportedAgent.name, id);

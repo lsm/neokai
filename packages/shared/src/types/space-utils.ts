@@ -12,7 +12,6 @@ import type {
 	SpaceAgent,
 	SpaceWorkflow,
 	WorkflowChannel,
-	WorkflowCondition,
 	WorkflowNode,
 	WorkflowNodeAgent,
 } from './space.ts';
@@ -50,20 +49,14 @@ export interface ResolvedChannel {
 	isFanOut?: boolean;
 	/** Optional label inherited from the source WorkflowChannel */
 	label?: string;
-	/** Inherited from the source WorkflowChannel */
-	isCyclic?: boolean;
+	/** Inherited from the source WorkflowChannel — per-channel cycle limit */
+	maxCycles?: number;
 	/**
 	 * True when this channel belongs to a hub-spoke topology
 	 * (bidirectional source with an array `to` containing more than one name).
 	 * In hub-spoke, spokes may only reply to the hub — no spoke-to-spoke messaging.
 	 */
 	isHubSpoke: boolean;
-	/**
-	 * Optional gate condition inherited from the source WorkflowChannel.
-	 * When present, the message must pass this condition before delivery.
-	 * Absent means the channel is always open (no gate enforcement).
-	 */
-	gate?: WorkflowCondition;
 }
 
 // ============================================================================
@@ -89,11 +82,25 @@ export interface ResolvedChannel {
  */
 export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 	if (node.agents && node.agents.length > 0) {
-		return node.agents;
+		return node.agents.map((agent) => ({
+			...agent,
+			// Node-level overrides take precedence only when defined;
+			// otherwise preserve the agent-level values.
+			systemPrompt: node.systemPrompt ?? agent.systemPrompt,
+			instructions: node.instructions ?? agent.instructions,
+		}));
 	}
 
 	if (node.agentId) {
-		return [{ agentId: node.agentId, name: node.agentId, instructions: node.instructions }];
+		return [
+			{
+				agentId: node.agentId,
+				name: node.agentId,
+				model: node.model,
+				systemPrompt: node.systemPrompt,
+				instructions: node.instructions,
+			},
+		];
 	}
 
 	throw new Error(
@@ -172,7 +179,7 @@ function expandChannel(
 	nameToAgentId: Map<string, string>,
 	out: ResolvedChannel[]
 ): void {
-	const { from, to, direction, label, gate } = channel;
+	const { from, to, direction, label } = channel;
 
 	// Resolve concrete from-names.
 	const fromNames: string[] = from === '*' ? allNames : [from];
@@ -204,7 +211,6 @@ function expandChannel(
 				toAgentId,
 				direction: 'one-way',
 				label,
-				gate,
 				isHubSpoke,
 			});
 
@@ -219,7 +225,6 @@ function expandChannel(
 					toAgentId: fromAgentId,
 					direction: 'one-way',
 					label,
-					gate,
 					isHubSpoke,
 				});
 			}
@@ -399,7 +404,7 @@ function expandUnifiedChannel(
 	nodeNameToAgents: Map<string, Array<{ name: string; agentId: string }>>,
 	out: ResolvedChannel[]
 ): void {
-	const { from, to, direction, label, gate, isCyclic } = channel;
+	const { from, to, direction, label, maxCycles } = channel;
 
 	// Resolve from-agents
 	const fromAgents = resolveAgentRef(from, allAgentNames, nameToAgent, nodeNameToAgents);
@@ -442,9 +447,8 @@ function expandUnifiedChannel(
 				toAgentId: toAgent.agentId,
 				direction: 'one-way',
 				label,
-				gate,
 				isFanOut,
-				isCyclic,
+				maxCycles,
 				isHubSpoke,
 			});
 
@@ -456,9 +460,8 @@ function expandUnifiedChannel(
 					toAgentId: fromAgent.agentId,
 					direction: 'one-way',
 					label,
-					gate,
 					isFanOut,
-					isCyclic,
+					maxCycles,
 					isHubSpoke,
 				});
 			}

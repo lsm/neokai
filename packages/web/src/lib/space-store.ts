@@ -27,6 +27,9 @@ import type {
 	SpaceAgent,
 	SpaceWorkflow,
 	RuntimeState,
+	SpaceTaskActivityMember,
+	LiveQuerySnapshotEvent,
+	LiveQueryDeltaEvent,
 	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
 	CreateSpaceAgentParams,
@@ -36,6 +39,7 @@ import type {
 	CreateWorkflowRunParams,
 	UpdateSpaceParams,
 } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { Logger, isUUID } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 
@@ -83,6 +87,9 @@ class SpaceStore {
 
 	/** Runtime state for this space */
 	readonly runtimeState = signal<RuntimeState | null>(null);
+
+	/** Live task-agent activity rows keyed by task ID */
+	readonly taskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
 
 	/** Loading state */
 	readonly loading = signal<boolean>(false);
@@ -159,6 +166,15 @@ class SpaceStore {
 	 * before registering new ones on the same hub instance.
 	 */
 	private globalListCleanupFns: Array<() => void> = [];
+
+	/** Cleanup functions for the active task-activity LiveQuery subscription */
+	private taskActivityCleanupFns: Array<() => void> = [];
+
+	/** Active task ID for the current task-activity LiveQuery subscription */
+	private activeTaskActivityTaskId: string | null = null;
+
+	/** Stale-event guard for task-activity LiveQuery subscriptions */
+	private activeTaskActivitySubscriptionIds = new Set<string>();
 
 	// ========================================
 	// Global Space List
@@ -374,6 +390,7 @@ class SpaceStore {
 		this.agents.value = [];
 		this.workflows.value = [];
 		this.runtimeState.value = null;
+		this.taskActivity.value = new Map();
 		this.error.value = null;
 
 		// 3. Update active space (may be updated to real UUID after fetch)
@@ -707,6 +724,116 @@ class SpaceStore {
 			}
 		}
 		this.cleanupFunctions = [];
+		this.unsubscribeTaskActivity();
+	}
+
+	private applyTaskActivityDelta(
+		currentRows: SpaceTaskActivityMember[],
+		event: LiveQueryDeltaEvent
+	): SpaceTaskActivityMember[] {
+		const next = new Map(currentRows.map((row) => [row.id, row]));
+
+		for (const row of (event.removed ?? []) as SpaceTaskActivityMember[]) {
+			next.delete(row.id);
+		}
+		for (const row of (event.updated ?? []) as SpaceTaskActivityMember[]) {
+			next.set(row.id, row);
+		}
+		for (const row of (event.added ?? []) as SpaceTaskActivityMember[]) {
+			next.set(row.id, row);
+		}
+
+		return Array.from(next.values()).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+	}
+
+	async subscribeTaskActivity(taskId: string): Promise<void> {
+		if (!taskId) return;
+		if (this.activeTaskActivityTaskId === taskId) return;
+
+		this.unsubscribeTaskActivity();
+		this.activeTaskActivityTaskId = taskId;
+
+		const subscriptionId = `spaceTaskActivity-${taskId}`;
+
+		try {
+			const hub = await connectionManager.getHub();
+			if (this.activeTaskActivityTaskId !== taskId) return;
+
+			this.activeTaskActivitySubscriptionIds.add(subscriptionId);
+
+			const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+				if (event.subscriptionId !== subscriptionId) return;
+				if (!this.activeTaskActivitySubscriptionIds.has(subscriptionId)) return;
+				this.taskActivity.value = new Map(this.taskActivity.value).set(
+					taskId,
+					(event.rows as SpaceTaskActivityMember[]) ?? []
+				);
+			});
+			this.taskActivityCleanupFns.push(unsubSnapshot);
+			this.taskActivityCleanupFns.push(() =>
+				this.activeTaskActivitySubscriptionIds.delete(subscriptionId)
+			);
+
+			const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+				if (event.subscriptionId !== subscriptionId) return;
+				if (!this.activeTaskActivitySubscriptionIds.has(subscriptionId)) return;
+				const currentRows = this.taskActivity.value.get(taskId) ?? [];
+				const nextRows = this.applyTaskActivityDelta(currentRows, event);
+				this.taskActivity.value = new Map(this.taskActivity.value).set(taskId, nextRows);
+			});
+			this.taskActivityCleanupFns.push(unsubDelta);
+
+			const unsubReconnect = hub.onConnection((state) => {
+				if (state !== 'connected') return;
+				if (!this.activeTaskActivitySubscriptionIds.has(subscriptionId)) return;
+				hub
+					.request('liveQuery.subscribe', {
+						queryName: 'spaceTaskActivity.byTask',
+						params: [taskId],
+						subscriptionId,
+					})
+					.catch((err) => {
+						logger.warn('Task activity LiveQuery re-subscribe failed:', err);
+					});
+			});
+			this.taskActivityCleanupFns.push(unsubReconnect);
+
+			await hub.request('liveQuery.subscribe', {
+				queryName: 'spaceTaskActivity.byTask',
+				params: [taskId],
+				subscriptionId,
+			});
+
+			if (this.activeTaskActivityTaskId !== taskId) {
+				this.unsubscribeTaskActivity(taskId);
+			}
+		} catch (err) {
+			this.unsubscribeTaskActivity(taskId);
+			throw err;
+		}
+	}
+
+	unsubscribeTaskActivity(taskId?: string): void {
+		const activeTaskId = this.activeTaskActivityTaskId;
+		if (!activeTaskId || (taskId && activeTaskId !== taskId)) return;
+
+		const subscriptionId = `spaceTaskActivity-${activeTaskId}`;
+		this.activeTaskActivitySubscriptionIds.delete(subscriptionId);
+
+		for (const cleanup of this.taskActivityCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+		this.taskActivityCleanupFns = [];
+		this.activeTaskActivityTaskId = null;
+
+		const hub = connectionManager.getHubIfConnected();
+		if (hub) {
+			hub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
+		}
 	}
 
 	// ========================================
@@ -830,6 +957,85 @@ class SpaceStore {
 			...params,
 		});
 		return task;
+	}
+
+	/**
+	 * Ensure a Task Agent session exists for a task and return latest task state.
+	 */
+	async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const response = await hub.request<{ task: SpaceTask }>('space.task.ensureAgentSession', {
+			taskId,
+			spaceId,
+		});
+
+		if (!response?.task) throw new Error('Task session response missing task payload');
+
+		const nextTask = response.task;
+		const idx = this.tasks.value.findIndex((t) => t.id === nextTask.id);
+		if (idx >= 0) {
+			this.tasks.value = [
+				...this.tasks.value.slice(0, idx),
+				nextTask,
+				...this.tasks.value.slice(idx + 1),
+			];
+		} else {
+			this.tasks.value = [...this.tasks.value, nextTask];
+		}
+
+		return nextTask;
+	}
+
+	/**
+	 * Send a human message into a task's agent thread.
+	 */
+	async sendTaskMessage(taskId: string, message: string): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('space.task.sendMessage', {
+			taskId,
+			spaceId,
+			message,
+		});
+	}
+
+	/**
+	 * Fetch a paginated snapshot of task-thread messages.
+	 */
+	async getTaskMessages(
+		taskId: string,
+		options?: { cursor?: string; limit?: number }
+	): Promise<{ messages: SDKMessage[]; hasMore: boolean; sessionId: string }> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const result = await hub.request<{
+			messages: SDKMessage[];
+			hasMore: boolean;
+			sessionId: string;
+		}>('space.task.getMessages', {
+			taskId,
+			spaceId,
+			cursor: options?.cursor,
+			limit: options?.limit,
+		});
+		return {
+			messages: result?.messages ?? [],
+			hasMore: result?.hasMore ?? false,
+			sessionId: result?.sessionId ?? '',
+		};
 	}
 
 	// ========================================

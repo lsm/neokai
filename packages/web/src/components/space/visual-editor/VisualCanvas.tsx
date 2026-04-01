@@ -6,6 +6,7 @@
  * Pan methods:
  *  - Two-finger trackpad scroll (wheel event without ctrlKey)
  *  - Spacebar + left-click drag
+ *  - Left-click drag on empty canvas or a pan-enabled element (for example the pinned Task Agent)
  *
  * Zoom methods:
  *  - Trackpad pinch (wheel event with ctrlKey=true)
@@ -13,7 +14,7 @@
  *  - Scale is clamped to [0.25, 2.0] and zooms toward cursor position.
  */
 
-import { useEffect, useRef, useCallback, useState } from 'preact/hooks';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'preact/hooks';
 import type { ComponentChildren, RefObject } from 'preact';
 import type { NodePosition, ViewportState } from './types';
 import { CanvasToolbar } from './CanvasToolbar';
@@ -92,6 +93,29 @@ export function VisualCanvas({
 	const containerRef = externalContainerRef ?? internalContainerRef;
 	const transformRef = useRef<HTMLDivElement>(null);
 	const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
+
+	const contentBounds = useMemo(() => {
+		const entries = Object.values(nodes);
+		if (entries.length === 0) {
+			return {
+				width: containerSize.width,
+				height: containerSize.height,
+			};
+		}
+
+		let maxX = 0;
+		let maxY = 0;
+		for (const node of entries) {
+			maxX = Math.max(maxX, node.x + node.width);
+			maxY = Math.max(maxY, node.y + node.height);
+		}
+
+		const CONTENT_PADDING = 120;
+		return {
+			width: Math.max(containerSize.width, maxX + CONTENT_PADDING),
+			height: Math.max(containerSize.height, maxY + CONTENT_PADDING),
+		};
+	}, [nodes, containerSize.height, containerSize.width]);
 
 	// Track spacebar state for pan-drag mode
 	const spacebarDown = useRef(false);
@@ -177,7 +201,14 @@ export function VisualCanvas({
 
 	// ---- Mouse drag for spacebar+click pan ----
 	const handleMouseDown = useCallback((e: MouseEvent) => {
-		if (!spacebarDown.current || e.button !== 0) return;
+		if (e.button !== 0) return;
+
+		const target = e.target as HTMLElement | null;
+		const isBackgroundSurface = target === containerRef.current || target === transformRef.current;
+		const isPanSurface = !!target?.closest('[data-pan-canvas="true"]');
+		const shouldPan = spacebarDown.current || isBackgroundSurface || isPanSurface;
+		if (!shouldPan) return;
+
 		e.preventDefault();
 		didDrag.current = false;
 		dragState.current = {
@@ -264,6 +295,8 @@ export function VisualCanvas({
 					position: 'absolute',
 					top: 0,
 					left: 0,
+					width: `${contentBounds.width}px`,
+					height: `${contentBounds.height}px`,
 				}}
 				data-testid="visual-canvas-transform"
 			>

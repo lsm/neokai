@@ -14,7 +14,6 @@
 
 import type {
 	SpaceWorkflow,
-	WorkflowCondition,
 	WorkflowNodeInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
@@ -103,6 +102,7 @@ export class SpaceWorkflowManager {
 					name: n.name,
 					agentId: n.agentId,
 					agents: n.agents,
+					systemPrompt: n.systemPrompt,
 					instructions: n.instructions,
 				})
 			);
@@ -261,21 +261,6 @@ export class SpaceWorkflowManager {
 				if (!ch.to || !(ch.to as string).trim()) {
 					throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty agent name string`);
 				}
-			}
-
-			// Validate gate condition if present
-			if (ch.gate) {
-				this.validateCondition(ch.gate, `${loc}.gate`);
-			}
-		}
-	}
-
-	private validateCondition(condition: WorkflowCondition, location: string): void {
-		if (condition.type === 'condition') {
-			if (!condition.expression || !condition.expression.trim()) {
-				throw new WorkflowValidationError(
-					`${location}: 'condition' type requires a non-empty expression`
-				);
 			}
 		}
 	}

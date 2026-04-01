@@ -1,598 +1,325 @@
 /**
- * Unified Gate Evaluator Unit Tests (M1.2)
+ * Field-Based Gate Evaluator Unit Tests
  *
- * Covers all 4 GateCondition types:
- *   check — field check with operators: exists / == / !=
- *   count — map-counting: count entries matching matchValue, check >= min
- *   all   — composite AND (recursive, short-circuits on failure)
- *   any   — composite OR (recursive, short-circuits on success)
+ * Covers field-based evaluation:
+ *   scalar fields (boolean/string/number) — ops: exists / == / !=
+ *   map fields — op: count (count entries matching a value, check >= min)
  *
  * Also covers:
- *   - evaluateGate: reads from gate.data directly
+ *   - evaluateGate: walks gate.fields, gate opens when ALL fields pass
+ *   - evaluateFieldCheck: single field evaluation
  *   - isChannelOpen: gateless channels always open, gated channels delegate
- *   - Edge cases: missing fields, zero values, nested composites
- *   - Validation: validateGateCondition for all types and ops
+ *   - validateGateFields: runtime validation of field definitions
  */
 
 import { describe, test, expect } from 'bun:test';
 import {
 	evaluateGate,
-	evaluateCondition,
+	evaluateFieldCheck,
 	isChannelOpen,
-	validateGateCondition,
+	validateGateFields,
 } from '../../../src/lib/space/runtime/gate-evaluator.ts';
-import type { Gate, Channel, GateCondition } from '@neokai/shared';
+import type { Gate, GateField, Channel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
-// check condition — op: '==' (default)
+// Scalar field — op: '==' (default comparison)
 // ---------------------------------------------------------------------------
 
-describe('GateEvaluator — check condition (== op, default)', () => {
-	test('opens when field matches expected value', () => {
-		const condition: GateCondition = { type: 'check', field: 'approved', value: true };
-		const result = evaluateCondition(condition, { approved: true });
+describe('GateEvaluator — scalar field (== op)', () => {
+	test('opens when field matches expected value (boolean)', () => {
+		const field: GateField = {
+			name: 'approved',
+			type: 'boolean',
+			writers: ['*'],
+			check: { op: '==', value: true },
+		};
+		const result = evaluateFieldCheck(field, { approved: true });
 		expect(result.open).toBe(true);
 		expect(result.reason).toBeUndefined();
 	});
 
-	test('blocks when field does not match', () => {
-		const condition: GateCondition = { type: 'check', field: 'approved', value: true };
-		const result = evaluateCondition(condition, { approved: false });
+	test('closed when field does not match expected value', () => {
+		const field: GateField = {
+			name: 'approved',
+			type: 'boolean',
+			writers: ['*'],
+			check: { op: '==', value: true },
+		};
+		const result = evaluateFieldCheck(field, { approved: false });
 		expect(result.open).toBe(false);
-		expect(result.reason).toContain('approved');
-		expect(result.reason).toContain('false');
+		expect(result.reason).toContain('expected true');
 	});
 
-	test('blocks when field is missing from data', () => {
-		const condition: GateCondition = { type: 'check', field: 'approved', value: true };
-		const result = evaluateCondition(condition, {});
+	test('closed when field is missing (undefined !== true)', () => {
+		const field: GateField = {
+			name: 'approved',
+			type: 'boolean',
+			writers: ['*'],
+			check: { op: '==', value: true },
+		};
+		const result = evaluateFieldCheck(field, {});
 		expect(result.open).toBe(false);
-		expect(result.reason).toContain('undefined');
 	});
 
 	test('matches string values', () => {
-		const condition: GateCondition = { type: 'check', field: 'result', value: 'passed' };
-		const result = evaluateCondition(condition, { result: 'passed' });
-		expect(result.open).toBe(true);
+		const field: GateField = {
+			name: 'result',
+			type: 'string',
+			writers: ['*'],
+			check: { op: '==', value: 'passed' },
+		};
+		expect(evaluateFieldCheck(field, { result: 'passed' }).open).toBe(true);
+		expect(evaluateFieldCheck(field, { result: 'failed' }).open).toBe(false);
 	});
 
-	test('blocks on string mismatch', () => {
-		const condition: GateCondition = { type: 'check', field: 'result', value: 'passed' };
-		const result = evaluateCondition(condition, { result: 'failed' });
-		expect(result.open).toBe(false);
-	});
-
-	test('matches null value', () => {
-		const condition: GateCondition = { type: 'check', field: 'error', value: null };
-		const result = evaluateCondition(condition, { error: null });
-		expect(result.open).toBe(true);
-	});
-
-	test('matches numeric value', () => {
-		const condition: GateCondition = { type: 'check', field: 'count', value: 42 };
-		const result = evaluateCondition(condition, { count: 42 });
-		expect(result.open).toBe(true);
-	});
-
-	test('explicit op: "==" behaves same as default', () => {
-		const condition: GateCondition = { type: 'check', field: 'x', op: '==', value: 10 };
-		expect(evaluateCondition(condition, { x: 10 }).open).toBe(true);
-		expect(evaluateCondition(condition, { x: 20 }).open).toBe(false);
+	test('matches number values', () => {
+		const field: GateField = {
+			name: 'count',
+			type: 'number',
+			writers: ['*'],
+			check: { op: '==', value: 42 },
+		};
+		expect(evaluateFieldCheck(field, { count: 42 }).open).toBe(true);
+		expect(evaluateFieldCheck(field, { count: 43 }).open).toBe(false);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// check condition — op: 'exists'
+// Scalar field — op: 'exists'
 // ---------------------------------------------------------------------------
 
-describe('GateEvaluator — check condition (exists op)', () => {
-	test('opens when field is present', () => {
-		const condition: GateCondition = { type: 'check', field: 'plan', op: 'exists' };
-		const result = evaluateCondition(condition, { plan: 'some plan text' });
-		expect(result.open).toBe(true);
-	});
-
-	test('opens when field is present with null value', () => {
-		const condition: GateCondition = { type: 'check', field: 'plan', op: 'exists' };
-		const result = evaluateCondition(condition, { plan: null });
-		expect(result.open).toBe(true);
+describe('GateEvaluator — scalar field (exists op)', () => {
+	test('opens when field is present (any truthy value)', () => {
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
+		expect(evaluateFieldCheck(field, { plan: 'some plan' }).open).toBe(true);
 	});
 
 	test('opens when field is present with false value', () => {
-		const condition: GateCondition = { type: 'check', field: 'plan', op: 'exists' };
-		const result = evaluateCondition(condition, { plan: false });
-		expect(result.open).toBe(true);
+		const field: GateField = {
+			name: 'plan',
+			type: 'boolean',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
+		expect(evaluateFieldCheck(field, { plan: false }).open).toBe(true);
 	});
 
-	test('opens when field is present with empty string', () => {
-		const condition: GateCondition = { type: 'check', field: 'plan', op: 'exists' };
-		const result = evaluateCondition(condition, { plan: '' });
-		expect(result.open).toBe(true);
+	test('opens when field is present with null value', () => {
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
+		expect(evaluateFieldCheck(field, { plan: null }).open).toBe(true);
 	});
 
-	test('opens when field is present with zero', () => {
-		const condition: GateCondition = { type: 'check', field: 'count', op: 'exists' };
-		const result = evaluateCondition(condition, { count: 0 });
-		expect(result.open).toBe(true);
+	test('opens when field is present with zero value', () => {
+		const field: GateField = {
+			name: 'count',
+			type: 'number',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
+		expect(evaluateFieldCheck(field, { count: 0 }).open).toBe(true);
 	});
 
-	test('blocks when field is missing', () => {
-		const condition: GateCondition = { type: 'check', field: 'plan', op: 'exists' };
-		const result = evaluateCondition(condition, {});
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('does not exist');
+	test('opens when field is empty string', () => {
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
+		expect(evaluateFieldCheck(field, { plan: '' }).open).toBe(true);
 	});
 
-	test('blocks when field is explicitly undefined', () => {
-		const condition: GateCondition = { type: 'check', field: 'plan', op: 'exists' };
-		const result = evaluateCondition(condition, { plan: undefined });
-		expect(result.open).toBe(false);
+	test('closed when field is undefined', () => {
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
+		expect(evaluateFieldCheck(field, {}).open).toBe(false);
+	});
+
+	test('closed when field is explicitly undefined', () => {
+		const field: GateField = {
+			name: 'plan',
+			type: 'string',
+			writers: ['*'],
+			check: { op: 'exists' },
+		};
+		expect(evaluateFieldCheck(field, { plan: undefined }).open).toBe(false);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// check condition — op: '!='
+// Scalar field — op: '!='
 // ---------------------------------------------------------------------------
 
-describe('GateEvaluator — check condition (!= op)', () => {
-	test('opens when field does not equal value', () => {
-		const condition: GateCondition = {
-			type: 'check',
-			field: 'status',
-			op: '!=',
-			value: 'rejected',
+describe('GateEvaluator — scalar field (!= op)', () => {
+	test('opens when field does not match', () => {
+		const field: GateField = {
+			name: 'x',
+			type: 'number',
+			writers: ['*'],
+			check: { op: '!=', value: 42 },
 		};
-		const result = evaluateCondition(condition, { status: 'approved' });
-		expect(result.open).toBe(true);
+		expect(evaluateFieldCheck(field, { x: 43 }).open).toBe(true);
 	});
 
-	test('blocks when field equals value', () => {
-		const condition: GateCondition = {
-			type: 'check',
-			field: 'status',
-			op: '!=',
-			value: 'rejected',
+	test('closed when field matches', () => {
+		const field: GateField = {
+			name: 'x',
+			type: 'number',
+			writers: ['*'],
+			check: { op: '!=', value: 42 },
 		};
-		const result = evaluateCondition(condition, { status: 'rejected' });
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('!=');
+		expect(evaluateFieldCheck(field, { x: 42 }).open).toBe(false);
 	});
 
-	test('opens when field is missing (undefined != value)', () => {
-		const condition: GateCondition = {
-			type: 'check',
-			field: 'status',
-			op: '!=',
-			value: 'rejected',
+	test('opens when field is missing (undefined !== 42)', () => {
+		const field: GateField = {
+			name: 'x',
+			type: 'number',
+			writers: ['*'],
+			check: { op: '!=', value: 42 },
 		};
-		const result = evaluateCondition(condition, {});
-		expect(result.open).toBe(true);
-	});
-
-	test('opens when comparing different types', () => {
-		const condition: GateCondition = { type: 'check', field: 'x', op: '!=', value: 42 };
-		const result = evaluateCondition(condition, { x: '42' });
-		expect(result.open).toBe(true); // strict inequality: '42' !== 42
+		expect(evaluateFieldCheck(field, {}).open).toBe(true);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// count condition (map-counting)
+// Map field — op: 'count'
 // ---------------------------------------------------------------------------
 
-describe('GateEvaluator — count condition (map-counting)', () => {
-	test('opens when matching entries >= min', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 2,
+describe('GateEvaluator — map field (count op)', () => {
+	test('opens when enough entries match', () => {
+		const field: GateField = {
+			name: 'reviews',
+			type: 'map',
+			writers: ['*'],
+			check: { op: 'count', match: 'approved', min: 2 },
 		};
-		const result = evaluateCondition(condition, {
-			reviews: { alice: 'approved', bob: 'approved', carol: 'pending' },
-		});
-		expect(result.open).toBe(true);
+		const data = { reviews: { alice: 'approved', bob: 'approved', carol: 'pending' } };
+		expect(evaluateFieldCheck(field, data).open).toBe(true);
 	});
 
-	test('opens when matching entries equal min exactly', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 2,
+	test('closed when not enough entries match', () => {
+		const field: GateField = {
+			name: 'reviews',
+			type: 'map',
+			writers: ['*'],
+			check: { op: 'count', match: 'approved', min: 2 },
 		};
-		const result = evaluateCondition(condition, {
-			reviews: { alice: 'approved', bob: 'approved' },
-		});
-		expect(result.open).toBe(true);
+		const data = { reviews: { alice: 'approved', bob: 'pending' } };
+		expect(evaluateFieldCheck(field, data).open).toBe(false);
 	});
 
-	test('blocks when matching entries < min', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 2,
+	test('closed when field is missing', () => {
+		const field: GateField = {
+			name: 'reviews',
+			type: 'map',
+			writers: ['*'],
+			check: { op: 'count', match: 'approved', min: 1 },
 		};
-		const result = evaluateCondition(condition, {
-			reviews: { alice: 'approved', bob: 'pending' },
-		});
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('1');
-		expect(result.reason).toContain('>= 2');
+		expect(evaluateFieldCheck(field, {}).open).toBe(false);
 	});
 
-	test('treats missing field as 0 matching entries', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 1,
+	test('closed when field is not an object', () => {
+		const field: GateField = {
+			name: 'reviews',
+			type: 'map',
+			writers: ['*'],
+			check: { op: 'count', match: 'approved', min: 1 },
 		};
-		const result = evaluateCondition(condition, {});
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('0');
+		expect(evaluateFieldCheck(field, { reviews: 'not a map' }).open).toBe(false);
 	});
 
-	test('treats non-object field as 0 matching entries', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 1,
+	test('closed when field is an array', () => {
+		const field: GateField = {
+			name: 'reviews',
+			type: 'map',
+			writers: ['*'],
+			check: { op: 'count', match: 'approved', min: 1 },
 		};
-		const result = evaluateCondition(condition, { reviews: 'not an object' });
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('0');
+		expect(evaluateFieldCheck(field, { reviews: ['approved'] }).open).toBe(false);
 	});
 
-	test('treats null field as 0 matching entries', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 1,
+	test('opens with exact min count', () => {
+		const field: GateField = {
+			name: 'votes',
+			type: 'map',
+			writers: ['*'],
+			check: { op: 'count', match: 'ok', min: 1 },
 		};
-		const result = evaluateCondition(condition, { reviews: null });
-		expect(result.open).toBe(false);
+		expect(evaluateFieldCheck(field, { votes: { a: 'ok' } }).open).toBe(true);
 	});
 
-	test('treats array field as 0 matching entries (not a record)', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 1,
+	test('closed with empty map', () => {
+		const field: GateField = {
+			name: 'votes',
+			type: 'map',
+			writers: ['*'],
+			check: { op: 'count', match: 'ok', min: 1 },
 		};
-		const result = evaluateCondition(condition, { reviews: ['approved'] });
-		expect(result.open).toBe(false);
-	});
-
-	test('opens with min of 0 when field is empty map', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 0,
-		};
-		const result = evaluateCondition(condition, { reviews: {} });
-		expect(result.open).toBe(true);
-	});
-
-	test('opens with min of 0 when field is missing', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 0,
-		};
-		const result = evaluateCondition(condition, {});
-		expect(result.open).toBe(true);
-	});
-
-	test('counts boolean matchValue correctly', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'votes',
-			matchValue: true,
-			min: 2,
-		};
-		const result = evaluateCondition(condition, {
-			votes: { alice: true, bob: true, carol: false },
-		});
-		expect(result.open).toBe(true);
-	});
-
-	test('counts numeric matchValue correctly', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'scores',
-			matchValue: 100,
-			min: 2,
-		};
-		const result = evaluateCondition(condition, {
-			scores: { alice: 100, bob: 95, carol: 100 },
-		});
-		expect(result.open).toBe(true);
-	});
-
-	test('does not count entries that do not strictly equal matchValue', () => {
-		const condition: GateCondition = {
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 1,
-		};
-		const result = evaluateCondition(condition, {
-			reviews: { alice: 'Approved', bob: 'APPROVED' }, // case-sensitive
-		});
-		expect(result.open).toBe(false);
+		expect(evaluateFieldCheck(field, { votes: {} }).open).toBe(false);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// all condition (AND)
+// evaluateGate — multiple fields (ALL must pass)
 // ---------------------------------------------------------------------------
 
-describe('GateEvaluator — all condition (AND)', () => {
-	test('opens when all sub-conditions pass', () => {
-		const condition: GateCondition = {
-			type: 'all',
-			conditions: [
-				{ type: 'check', field: 'approved', value: true },
-				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			],
-		};
-		const result = evaluateCondition(condition, {
-			approved: true,
-			reviews: { a: 'approved', b: 'approved' },
-		});
-		expect(result.open).toBe(true);
-	});
-
-	test('blocks when first sub-condition fails (short-circuit)', () => {
-		const condition: GateCondition = {
-			type: 'all',
-			conditions: [
-				{ type: 'check', field: 'approved', value: true },
-				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			],
-		};
-		const result = evaluateCondition(condition, {
-			approved: false,
-			reviews: { a: 'approved', b: 'approved' },
-		});
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('approved');
-	});
-
-	test('blocks when second sub-condition fails', () => {
-		const condition: GateCondition = {
-			type: 'all',
-			conditions: [
-				{ type: 'check', field: 'approved', value: true },
-				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			],
-		};
-		const result = evaluateCondition(condition, {
-			approved: true,
-			reviews: { a: 'approved' },
-		});
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('reviews');
-	});
-
-	test('opens with empty conditions list', () => {
-		const condition: GateCondition = { type: 'all', conditions: [] };
-		const result = evaluateCondition(condition, {});
-		expect(result.open).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// any condition (OR)
-// ---------------------------------------------------------------------------
-
-describe('GateEvaluator — any condition (OR)', () => {
-	test('opens when first sub-condition passes (short-circuit)', () => {
-		const condition: GateCondition = {
-			type: 'any',
-			conditions: [
-				{ type: 'check', field: 'approved', value: true },
-				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			],
-		};
-		const result = evaluateCondition(condition, { approved: true, reviews: {} });
-		expect(result.open).toBe(true);
-	});
-
-	test('opens when second sub-condition passes', () => {
-		const condition: GateCondition = {
-			type: 'any',
-			conditions: [
-				{ type: 'check', field: 'approved', value: true },
-				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			],
-		};
-		const result = evaluateCondition(condition, {
-			approved: false,
-			reviews: { a: 'approved', b: 'approved', c: 'approved' },
-		});
-		expect(result.open).toBe(true);
-	});
-
-	test('blocks when all sub-conditions fail', () => {
-		const condition: GateCondition = {
-			type: 'any',
-			conditions: [
-				{ type: 'check', field: 'approved', value: true },
-				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			],
-		};
-		const result = evaluateCondition(condition, {
-			approved: false,
-			reviews: { a: 'pending' },
-		});
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('None of the conditions passed');
-	});
-
-	test('blocks with empty conditions list and provides reason', () => {
-		const condition: GateCondition = { type: 'any', conditions: [] };
-		const result = evaluateCondition(condition, {});
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('no sub-conditions');
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Nested composite conditions
-// ---------------------------------------------------------------------------
-
-describe('GateEvaluator — nested composites', () => {
-	test('all containing any: passes when inner any passes', () => {
-		const condition: GateCondition = {
-			type: 'all',
-			conditions: [
-				{
-					type: 'any',
-					conditions: [
-						{ type: 'check', field: 'fast_track', value: true },
-						{ type: 'count', field: 'approvals', matchValue: 'yes', min: 2 },
-					],
-				},
-				{ type: 'check', field: 'tests_passed', value: true },
-			],
-		};
-		const result = evaluateCondition(condition, {
-			fast_track: true,
-			approvals: {},
-			tests_passed: true,
-		});
-		expect(result.open).toBe(true);
-	});
-
-	test('any containing all: passes when inner all passes', () => {
-		const condition: GateCondition = {
-			type: 'any',
-			conditions: [
-				{ type: 'check', field: 'override', value: true },
-				{
-					type: 'all',
-					conditions: [
-						{ type: 'check', field: 'reviewed', value: true },
-						{ type: 'check', field: 'tested', value: true },
-					],
-				},
-			],
-		};
-		const result = evaluateCondition(condition, {
-			override: false,
-			reviewed: true,
-			tested: true,
-		});
-		expect(result.open).toBe(true);
-	});
-
-	test('deeply nested: all > any > all', () => {
-		const condition: GateCondition = {
-			type: 'all',
-			conditions: [
-				{
-					type: 'any',
-					conditions: [
-						{
-							type: 'all',
-							conditions: [
-								{ type: 'check', field: 'a', value: true },
-								{ type: 'check', field: 'b', value: true },
-							],
-						},
-						{ type: 'check', field: 'shortcut', value: true },
-					],
-				},
-				{ type: 'check', field: 'final', value: true },
-			],
-		};
-		// a=true, b=true satisfies inner all → any passes; final=true → outer all passes
-		expect(
-			evaluateCondition(condition, { a: true, b: true, shortcut: false, final: true }).open
-		).toBe(true);
-		// a=false → inner all fails; shortcut=false → any fails → outer all fails
-		expect(
-			evaluateCondition(condition, { a: false, b: true, shortcut: false, final: true }).open
-		).toBe(false);
-	});
-
-	test('mixed ops in composite: exists + count + !=', () => {
-		const condition: GateCondition = {
-			type: 'all',
-			conditions: [
-				{ type: 'check', field: 'plan', op: 'exists' },
-				{ type: 'check', field: 'status', op: '!=', value: 'rejected' },
-				{ type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			],
-		};
-		const result = evaluateCondition(condition, {
-			plan: 'my plan',
-			status: 'in_review',
-			reviews: { alice: 'approved', bob: 'approved' },
-		});
-		expect(result.open).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// evaluateGate (reads from gate.data)
-// ---------------------------------------------------------------------------
-
-describe('evaluateGate', () => {
-	test('evaluates gate condition against gate.data', () => {
+describe('GateEvaluator — evaluateGate (multiple fields)', () => {
+	test('opens when all fields pass', () => {
 		const gate: Gate = {
-			id: 'gate-1',
-			condition: { type: 'check', field: 'approved', value: true },
-			data: { approved: true },
-			allowedWriterRoles: ['reviewer'],
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				{ name: 'result', type: 'string', writers: ['*'], check: { op: '==', value: 'passed' } },
+			],
 			resetOnCycle: false,
 		};
-		const result = evaluateGate(gate);
-		expect(result.open).toBe(true);
+		expect(evaluateGate(gate, { approved: true, result: 'passed' }).open).toBe(true);
 	});
 
-	test('blocks when gate.data does not satisfy condition', () => {
+	test('closed when any field fails', () => {
 		const gate: Gate = {
-			id: 'gate-1',
-			condition: { type: 'count', field: 'reviews', matchValue: 'approved', min: 2 },
-			data: { reviews: { alice: 'approved' } },
-			allowedWriterRoles: ['*'],
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				{ name: 'result', type: 'string', writers: ['*'], check: { op: '==', value: 'passed' } },
+			],
 			resetOnCycle: false,
 		};
-		const result = evaluateGate(gate);
+		expect(evaluateGate(gate, { approved: true, result: 'failed' }).open).toBe(false);
+	});
+
+	test('opens with empty fields (no checks)', () => {
+		const gate: Gate = { id: 'g1', fields: [], resetOnCycle: false };
+		expect(evaluateGate(gate, {}).open).toBe(true);
+	});
+
+	test('short-circuits on first failed field', () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'x', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				{ name: 'y', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		};
+		const result = evaluateGate(gate, { x: false, y: true });
 		expect(result.open).toBe(false);
-	});
-
-	test('opens with exists op when field present in gate.data', () => {
-		const gate: Gate = {
-			id: 'gate-plan',
-			condition: { type: 'check', field: 'plan', op: 'exists' },
-			data: { plan: 'implement feature X' },
-			allowedWriterRoles: ['planner'],
-			resetOnCycle: false,
-		};
-		const result = evaluateGate(gate);
-		expect(result.open).toBe(true);
-	});
-
-	test('blocks with exists op when field missing from gate.data', () => {
-		const gate: Gate = {
-			id: 'gate-plan',
-			condition: { type: 'check', field: 'plan', op: 'exists' },
-			data: {},
-			allowedWriterRoles: ['planner'],
-			resetOnCycle: false,
-		};
-		const result = evaluateGate(gate);
-		expect(result.open).toBe(false);
+		expect(result.reason).toContain('x');
 	});
 });
 
@@ -600,241 +327,131 @@ describe('evaluateGate', () => {
 // isChannelOpen
 // ---------------------------------------------------------------------------
 
-describe('isChannelOpen', () => {
+describe('GateEvaluator — isChannelOpen', () => {
 	test('channel without gateId is always open', () => {
-		const channel: Channel = { id: 'ch-1', from: 'planner', to: 'coder' };
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b' };
 		const result = isChannelOpen(channel, new Map());
 		expect(result.open).toBe(true);
 	});
 
-	test('channel with gateId opens when gate passes', () => {
-		const gate: Gate = {
-			id: 'gate-1',
-			condition: { type: 'check', field: 'approved', value: true },
-			data: { approved: true },
-			allowedWriterRoles: ['*'],
-			resetOnCycle: false,
-		};
-		const channel: Channel = { id: 'ch-1', from: 'coder', to: 'reviewer', gateId: 'gate-1' };
-		const result = isChannelOpen(channel, new Map([['gate-1', gate]]));
-		expect(result.open).toBe(true);
-	});
-
-	test('channel with gateId blocks when gate fails', () => {
-		const gate: Gate = {
-			id: 'gate-1',
-			condition: { type: 'check', field: 'approved', value: true },
-			data: { approved: false },
-			allowedWriterRoles: ['*'],
-			resetOnCycle: false,
-		};
-		const channel: Channel = { id: 'ch-1', from: 'coder', to: 'reviewer', gateId: 'gate-1' };
-		const result = isChannelOpen(channel, new Map([['gate-1', gate]]));
-		expect(result.open).toBe(false);
-	});
-
-	test('channel blocks when referenced gate is not found (misconfiguration)', () => {
-		const channel: Channel = {
-			id: 'ch-1',
-			from: 'coder',
-			to: 'reviewer',
-			gateId: 'missing-gate',
-		};
+	test('channel with missing gate is closed', () => {
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'missing' };
 		const result = isChannelOpen(channel, new Map());
 		expect(result.open).toBe(false);
 		expect(result.reason).toContain('not found');
-		expect(result.reason).toContain('missing-gate');
 	});
 
-	test('works with Record<string, Gate> instead of Map', () => {
+	test('channel with gate delegates to evaluateGate', () => {
 		const gate: Gate = {
-			id: 'gate-1',
-			condition: { type: 'check', field: 'ready', value: true },
-			data: { ready: true },
-			allowedWriterRoles: ['*'],
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
 			resetOnCycle: false,
 		};
-		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'gate-1' };
-		const result = isChannelOpen(channel, { 'gate-1': gate });
-		expect(result.open).toBe(true);
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'g1' };
+		const gates = new Map<string, Gate>([['g1', gate]]);
+
+		// Without data — field not satisfied
+		const closed = isChannelOpen(channel, gates, new Map());
+		expect(closed.open).toBe(false);
+
+		// With data — field satisfied
+		const gateData = new Map<string, Record<string, unknown>>([['g1', { approved: true }]]);
+		const open = isChannelOpen(channel, gates, gateData);
+		expect(open.open).toBe(true);
 	});
 
-	test('works with Record<string, Gate> when gate missing', () => {
-		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'nope' };
-		const result = isChannelOpen(channel, {});
-		expect(result.open).toBe(false);
-	});
+	test('works with Record-based gate lookups', () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'g1' };
+		const gates: Record<string, Gate> = { g1: gate };
+		const gateData: Record<string, Record<string, unknown>> = { g1: { done: true } };
 
-	test('gateless channel with isCyclic flag is still open', () => {
-		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', isCyclic: true };
-		const result = isChannelOpen(channel, new Map());
-		expect(result.open).toBe(true);
+		expect(isChannelOpen(channel, gates, gateData).open).toBe(true);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Runtime validation — validateGateCondition
+// validateGateFields
 // ---------------------------------------------------------------------------
 
-describe('validateGateCondition', () => {
-	test('valid check condition (no op) passes', () => {
-		const errors = validateGateCondition({ type: 'check', field: 'approved', value: true });
-		expect(errors).toEqual([]);
+describe('validateGateFields', () => {
+	test('valid boolean field with == check', () => {
+		const errors = validateGateFields([
+			{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+		]);
+		expect(errors).toHaveLength(0);
 	});
 
-	test('valid check condition with op passes', () => {
-		const errors = validateGateCondition({ type: 'check', field: 'plan', op: 'exists' });
-		expect(errors).toEqual([]);
+	test('valid string field with exists check', () => {
+		const errors = validateGateFields([
+			{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } },
+		]);
+		expect(errors).toHaveLength(0);
 	});
 
-	test('valid check condition with == op passes', () => {
-		const errors = validateGateCondition({
-			type: 'check',
-			field: 'x',
-			op: '==',
-			value: 'hello',
-		});
-		expect(errors).toEqual([]);
+	test('valid map field with count check', () => {
+		const errors = validateGateFields([
+			{
+				name: 'votes',
+				type: 'map',
+				writers: ['reviewer'],
+				check: { op: 'count', match: 'approved', min: 3 },
+			},
+		]);
+		expect(errors).toHaveLength(0);
 	});
 
-	test('valid check condition with != op passes', () => {
-		const errors = validateGateCondition({
-			type: 'check',
-			field: 'x',
-			op: '!=',
-			value: 'bad',
-		});
-		expect(errors).toEqual([]);
-	});
-
-	test('rejects check with invalid op', () => {
-		const errors = validateGateCondition({
-			type: 'check',
-			field: 'x',
-			op: 'gt',
-		});
-		expect(errors.length).toBeGreaterThan(0);
-		expect(errors[0]).toContain('op');
-		expect(errors[0]).toContain('exists');
-	});
-
-	test('valid count condition passes', () => {
-		const errors = validateGateCondition({
-			type: 'count',
-			field: 'reviews',
-			matchValue: 'approved',
-			min: 2,
-		});
-		expect(errors).toEqual([]);
-	});
-
-	test('valid all condition passes', () => {
-		const errors = validateGateCondition({
-			type: 'all',
-			conditions: [{ type: 'check', field: 'ok', value: true }],
-		});
-		expect(errors).toEqual([]);
-	});
-
-	test('valid any condition passes', () => {
-		const errors = validateGateCondition({
-			type: 'any',
-			conditions: [{ type: 'count', field: 'x', matchValue: true, min: 1 }],
-		});
-		expect(errors).toEqual([]);
-	});
-
-	test('rejects null', () => {
-		const errors = validateGateCondition(null);
-		expect(errors.length).toBeGreaterThan(0);
-		expect(errors[0]).toContain('expected an object');
-	});
-
-	test('rejects non-object', () => {
-		const errors = validateGateCondition('not an object');
-		expect(errors.length).toBeGreaterThan(0);
-	});
-
-	test('rejects unknown type', () => {
-		const errors = validateGateCondition({ type: 'unknown_type' });
-		expect(errors.length).toBeGreaterThan(0);
-		expect(errors[0]).toContain('expected one of');
-	});
-
-	test('rejects check with missing field', () => {
-		const errors = validateGateCondition({ type: 'check', value: true });
-		expect(errors.length).toBeGreaterThan(0);
-		expect(errors[0]).toContain('field');
-	});
-
-	test('rejects count with non-numeric min', () => {
-		const errors = validateGateCondition({
-			type: 'count',
-			field: 'x',
-			matchValue: 'a',
-			min: 'not a number',
-		});
-		expect(errors.length).toBeGreaterThan(0);
-		expect(errors[0]).toContain('min');
-	});
-
-	test('rejects count with missing matchValue', () => {
-		const errors = validateGateCondition({
-			type: 'count',
-			field: 'reviews',
-			min: 2,
-		});
-		expect(errors.length).toBeGreaterThan(0);
-		expect(errors[0]).toContain('matchValue');
-	});
-
-	test('warns when check has value with exists op', () => {
-		const errors = validateGateCondition({
-			type: 'check',
-			field: 'plan',
-			op: 'exists',
-			value: 'something',
-		});
+	test('warns when value is set on exists op', () => {
+		const errors = validateGateFields([
+			{ name: 'x', type: 'string', writers: ['*'], check: { op: 'exists', value: 'ignored' } },
+		]);
 		expect(errors.length).toBeGreaterThan(0);
 		expect(errors[0]).toContain('ignored');
-		expect(errors[0]).toContain('exists');
 	});
 
-	test('no warning when check has exists op without value', () => {
-		const errors = validateGateCondition({
-			type: 'check',
-			field: 'plan',
-			op: 'exists',
-		});
-		expect(errors).toEqual([]);
-	});
-
-	test('rejects all with non-array conditions', () => {
-		const errors = validateGateCondition({ type: 'all', conditions: 'not an array' });
+	test('rejects non-array input', () => {
+		const errors = validateGateFields('not an array');
 		expect(errors.length).toBeGreaterThan(0);
-		expect(errors[0]).toContain('expected array');
 	});
 
-	test('validates nested conditions recursively', () => {
-		const errors = validateGateCondition({
-			type: 'all',
-			conditions: [{ type: 'check', value: true }], // missing field
-		});
+	test('rejects field with missing name', () => {
+		const errors = validateGateFields([
+			{ name: '', type: 'boolean', writers: ['*'], check: { op: 'exists' } },
+		]);
 		expect(errors.length).toBeGreaterThan(0);
-		expect(errors[0]).toContain('conditions[0].field');
 	});
-});
 
-// ---------------------------------------------------------------------------
-// Malformed JSON — runtime fallback for unknown condition type
-// ---------------------------------------------------------------------------
+	test('rejects field with invalid type', () => {
+		const errors = validateGateFields([
+			{ name: 'x', type: 'invalid', writers: ['*'], check: { op: 'exists' } },
+		]);
+		expect(errors.length).toBeGreaterThan(0);
+	});
 
-describe('evaluateCondition — malformed input', () => {
-	test('unknown condition type returns closed with descriptive reason', () => {
-		const malformed = { type: 'nonexistent' } as unknown as GateCondition;
-		const result = evaluateCondition(malformed, {});
-		expect(result.open).toBe(false);
-		expect(result.reason).toContain('unknown condition type');
-		expect(result.reason).toContain('nonexistent');
+	test('rejects map field with scalar op', () => {
+		const errors = validateGateFields([
+			{ name: 'votes', type: 'map', writers: ['*'], check: { op: '==' } },
+		]);
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('rejects count check missing min', () => {
+		const errors = validateGateFields([
+			{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', match: 'ok' } },
+		]);
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('rejects count check missing match', () => {
+		const errors = validateGateFields([
+			{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', min: 1 } },
+		]);
+		expect(errors.length).toBeGreaterThan(0);
 	});
 });

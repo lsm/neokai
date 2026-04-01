@@ -165,6 +165,21 @@ describe('WorkflowNode rendering', () => {
 		const { getByTestId } = render(<WorkflowNode {...props} />);
 		expect(getByTestId('step-name').textContent).toBe('(unnamed)');
 	});
+
+	it('does not render channel topology text inside the node card', () => {
+		const { queryByTestId, queryByText } = render(
+			<WorkflowNode
+				{...makeProps({
+					workflowChannels: [
+						{ from: 'agent-1', to: 'agent-2', direction: 'one-way', label: 'handoff' },
+					],
+				})}
+			/>
+		);
+
+		expect(queryByTestId('channel-topology-badge')).toBeNull();
+		expect(queryByText('handoff')).toBeNull();
+	});
 });
 
 // ============================================================================
@@ -344,13 +359,15 @@ describe('WorkflowNode multi-agent rendering', () => {
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		const node = getByTestId('workflow-node-step-local-1');
-		expect(node.style.minWidth).toBe('200px');
+		expect(node.style.width).toBe('200px');
+		expect(node.style.minHeight).toBe('112px');
 	});
 
 	it('uses default minWidth for single-agent steps', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps()} />);
 		const node = getByTestId('workflow-node-step-local-1');
-		expect(node.style.minWidth).toBe('160px');
+		expect(node.style.width).toBe('160px');
+		expect(node.style.minHeight).toBe('80px');
 	});
 });
 
@@ -641,7 +658,13 @@ describe('WorkflowNode Task Agent rendering', () => {
 	it('uses default cursor (not grab)', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
 		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
-		expect(node.style.cursor).toBe('default');
+		expect(node.style.cursor).toBe('grab');
+	});
+
+	it('marks Task Agent as a canvas pan surface', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-pan-canvas')).toBe('true');
 	});
 });
 

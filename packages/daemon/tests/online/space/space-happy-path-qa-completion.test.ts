@@ -14,7 +14,7 @@
  *   qa-result-gate     (QA writes result: passed)
  *     └─► Done node activates → workflow completes
  *   qa-fail-gate       (QA writes result: failed)
- *     └─► Coding re-activates (cyclic), iteration counter increments
+ *     └─► Coding re-activates (cyclic, per-channel maxCycles enforced)
  *         └─► code-pr-gate must be re-written → 3 Reviewers re-activate
  *             └─► review-votes-gate must be re-satisfied (all 3 re-vote)
  *                 └─► QA re-activates
@@ -24,14 +24,13 @@
  *  1. QA passes → qa-result-gate opens → Done node activates
  *  2. Done node does not activate before qa-result-gate is written
  *  3. QA failure → qa-fail-gate opens → Coding re-activates (cyclic)
- *  4. Iteration counter increments on QA → Coding cycle
- *  5. qa-result-gate resets after a QA fail cycle (resetOnCycle: true)
- *  6. qa-fail-gate resets after cycle (resetOnCycle: true)
- *  7. After QA fail cycle: Reviewers must re-activate (review-votes-gate reset)
- *  8. After QA fail cycle: All 3 reviewers must re-approve before QA re-activates
- *  9. Full QA fail → re-review → QA re-activates end-to-end
- * 10. Run remains in_progress throughout QA phase
- * 11. Max iterations cap prevents further QA fail cycles
+ *  4. qa-result-gate resets after a QA fail cycle (resetOnCycle: true)
+ *  5. qa-fail-gate resets after cycle (resetOnCycle: true)
+ *  6. After QA fail cycle: Reviewers must re-activate (review-votes-gate reset)
+ *  7. After QA fail cycle: All 3 reviewers must re-approve before QA re-activates
+ *  8. Full QA fail → re-review → QA re-activates end-to-end
+ *  9. Run remains in_progress throughout QA phase
+ * 10. Channel maxCycles cap prevents further QA fail cycles
  *
  * ## Running
  *
@@ -42,7 +41,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { SpaceWorkflowRun } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
 import {
 	createTestSpace,
 	startWorkflowRun,
@@ -93,19 +92,26 @@ type SpaceTask = Awaited<ReturnType<typeof getTasksForNode>>[number];
  * Advance a workflow run to the point where QA has been activated.
  * The QA task is returned but NOT completed — callers decide the next step.
  *
- * @param daemon              Running daemon instance.
- * @param maxIterationsOverride  When set, patches workflow.maxIterations before starting the run.
+ * @param daemon            Running daemon instance.
+ * @param maxCyclesOverride When set, patches the qa-fail-gate channel's maxCycles before
+ *                          starting the run (used by max-iterations cap tests).
  */
 async function setupToQaActivated(
 	daemon: DaemonServerContext,
-	options?: { maxIterationsOverride?: number }
+	options?: { maxCyclesOverride?: number }
 ): Promise<{ spaceId: string; runId: string; qaTask: SpaceTask }> {
 	const { space, workflow } = await createTestSpace(daemon);
 
-	if (options?.maxIterationsOverride !== undefined) {
+	if (options?.maxCyclesOverride !== undefined) {
+		const { workflow: currentWorkflow } = (await daemon.messageHub.request('spaceWorkflow.get', {
+			id: workflow.id,
+		})) as { workflow: SpaceWorkflow };
+		const updatedChannels = (currentWorkflow.channels ?? []).map((ch) =>
+			ch.gateId === 'qa-fail-gate' ? { ...ch, maxCycles: options.maxCyclesOverride! } : ch
+		);
 		await daemon.messageHub.request('spaceWorkflow.update', {
 			id: workflow.id,
-			maxIterations: options.maxIterationsOverride,
+			channels: updatedChannels,
 		});
 	}
 
@@ -139,9 +145,7 @@ async function setupToQaActivated(
 
 	// Step 3: code-pr-gate → Reviewers activate in parallel
 	await writeGateData(daemon, runId, 'code-pr-gate', {
-		pr_url: 'https://github.com/example/repo/pull/99',
-		pr_number: 99,
-		branch: 'feat/test-feature',
+		pr_created: true,
 	});
 
 	const [r1, r2, r3] = await Promise.all([
@@ -310,33 +314,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 4: Iteration counter increments on QA → Coding cycle
-	// -------------------------------------------------------------------------
-	test(
-		'Iteration counter increments by 1 when a QA fail cycle fires',
-		async () => {
-			const { spaceId, runId, qaTask } = await setupToQaActivated(daemon);
-
-			const { run: runBefore } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			const beforeCount = runBefore.iterationCount;
-
-			const existingCodingTasks = await getTasksForNode(daemon, spaceId, runId, 'Coding');
-			const preCycleIds = new Set(existingCodingTasks.map((t) => t.id));
-
-			await triggerQaFailCycle(daemon, spaceId, runId, qaTask.id, preCycleIds);
-
-			const { run: runAfter } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(runAfter.iterationCount).toBe(beforeCount + 1);
-		},
-		TEST_TIMEOUT
-	);
-
-	// -------------------------------------------------------------------------
-	// Test 5: qa-result-gate resets after a QA fail cycle
+	// Test 4: qa-result-gate resets after a QA fail cycle
 	// -------------------------------------------------------------------------
 	test(
 		'qa-result-gate is reset after a QA fail cycle (resetOnCycle: true)',
@@ -363,7 +341,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 6: qa-fail-gate resets after cycle (resetOnCycle: true)
+	// Test 5: qa-fail-gate resets after cycle (resetOnCycle: true)
 	// -------------------------------------------------------------------------
 	test(
 		'qa-fail-gate is reset after the QA fail cycle (resetOnCycle: true)',
@@ -385,7 +363,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 7: After QA fail cycle, review-votes-gate is reset so reviewers
+	// Test 6: After QA fail cycle, review-votes-gate is reset so reviewers
 	//         must re-activate (code-pr-gate triggers them again)
 	// -------------------------------------------------------------------------
 	test(
@@ -425,7 +403,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 8: After QA fail cycle, partial re-review (2/3) still blocks QA
+	// Test 7: After QA fail cycle, partial re-review (2/3) still blocks QA
 	// -------------------------------------------------------------------------
 	test(
 		'After QA fail cycle, partial re-review (2/3 votes) does not re-activate QA',
@@ -457,9 +435,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 			// Complete new Coding task and re-write code-pr-gate to trigger reviewers
 			await mockAgentDone(daemon, spaceId, newCodingTask.id, 'Fixed failing tests');
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_url: 'https://github.com/example/repo/pull/99',
-				pr_number: 99,
-				branch: 'feat/test-feature',
+				pr_created: true,
 			});
 
 			const [newR1, newR2, newR3] = await Promise.all([
@@ -513,7 +489,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 9: Full QA fail → re-review → QA re-activates end-to-end
+	// Test 8: Full QA fail → re-review → QA re-activates end-to-end
 	// -------------------------------------------------------------------------
 	test(
 		'Full QA fail cycle: QA fails → Coding → 3 reviewers re-vote → QA re-activates',
@@ -545,9 +521,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 
 			await mockAgentDone(daemon, spaceId, newCodingTask.id, 'Fixed failing tests');
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_url: 'https://github.com/example/repo/pull/99',
-				pr_number: 99,
-				branch: 'feat/test-feature',
+				pr_created: true,
 			});
 
 			// Wait for all 3 reviewers to re-activate with fresh tasks
@@ -578,9 +552,9 @@ describe('Space Happy Path — QA Completion Flow', () => {
 				),
 			]);
 
-			expect(newR1.title).toBe('Reviewer 1');
-			expect(newR2.title).toBe('Reviewer 2');
-			expect(newR3.title).toBe('Reviewer 3');
+			expect(newR1.agentName).toBe('Reviewer 1');
+			expect(newR2.agentName).toBe('Reviewer 2');
+			expect(newR3.agentName).toBe('Reviewer 3');
 
 			// Complete all reviewer tasks
 			await mockAgentDone(daemon, spaceId, newR1.id);
@@ -623,7 +597,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 10: Run remains in_progress throughout the QA phase
+	// Test 9: Run remains in_progress throughout the QA phase
 	// -------------------------------------------------------------------------
 	test(
 		'Run status remains in_progress throughout the QA phase',
@@ -637,22 +611,16 @@ describe('Space Happy Path — QA Completion Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 11: Max iterations cap prevents further QA fail cycles
+	// Test 10: Max cycles cap prevents further QA fail cycles
 	// -------------------------------------------------------------------------
 	test(
-		'QA fail cycles stop when the run reaches maxIterations',
+		'QA fail cycles stop when the channel maxCycles cap is reached',
 		async () => {
-			// Cap at 1 iteration so the first QA fail cycle exhausts the budget.
+			// Cap at 1 cycle so the first QA fail cycle exhausts the budget.
 			// After the cap, writing qa-fail-gate again must NOT create a new Coding task.
 			const { spaceId, runId, qaTask } = await setupToQaActivated(daemon, {
-				maxIterationsOverride: 1,
+				maxCyclesOverride: 1,
 			});
-
-			// Verify the cap is in place
-			const { run: initialRun } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(initialRun.maxIterations).toBe(1);
 
 			// ── First QA fail cycle: should succeed ────────────────────────────
 			const existingCodingTasks = await getTasksForNode(daemon, spaceId, runId, 'Coding');
@@ -666,11 +634,6 @@ describe('Space Happy Path — QA Completion Flow', () => {
 				preCycleIds
 			);
 
-			const { run: afterCycle1 } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(afterCycle1.iterationCount).toBe(1);
-
 			// ── Second QA fail cycle: must be blocked ──────────────────────────
 			// Re-drive Coding → reviewers → re-approve → QA for the second run.
 			// Collect reviewer task IDs BEFORE writing code-pr-gate (activation is synchronous).
@@ -683,9 +646,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 
 			await mockAgentDone(daemon, spaceId, newCodingTask.id, 'Fixed again');
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_url: 'https://github.com/example/repo/pull/99',
-				pr_number: 99,
-				branch: 'feat/test-feature',
+				pr_created: true,
 			});
 
 			const [newR1, newR2, newR3] = await Promise.all([
@@ -765,13 +726,8 @@ describe('Space Happy Path — QA Completion Flow', () => {
 				await new Promise((resolve) => setTimeout(resolve, 200));
 			}
 
+			// No new Coding task must appear — the cap was reached after 1 cycle
 			expect(unexpectedTask).toBeUndefined();
-
-			// iterationCount must remain at 1 (not incremented beyond cap)
-			const { run: finalRun } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-				id: runId,
-			})) as { run: SpaceWorkflowRun };
-			expect(finalRun.iterationCount).toBe(1);
 		},
 		TEST_TIMEOUT
 	);

@@ -17,6 +17,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
@@ -37,6 +39,7 @@ export interface SpaceRuntimeServiceConfig {
 	spaceWorkflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	reactiveDb?: ReactiveDatabase;
 	/**
 	 * Optional Task Agent Manager to wire into the underlying SpaceRuntime.
 	 *
@@ -53,6 +56,7 @@ export interface SpaceRuntimeServiceConfig {
 	 * activation after gate data is written externally (e.g. human approval via RPC).
 	 */
 	gateDataRepo?: GateDataRepository;
+	channelCycleRepo?: ChannelCycleRepository;
 	/**
 	 * Optional SessionManager for provisioning space:chat:${spaceId} sessions.
 	 * When provided, setupSpaceAgentSession() attaches MCP tools and system prompts
@@ -203,7 +207,7 @@ export class SpaceRuntimeService {
 			workflowManager: spaceWorkflowManager,
 			taskRepo,
 			workflowRunRepo,
-			taskManager: new SpaceTaskManager(db, space.id),
+			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,
 			taskAgentManager: this.taskAgentManager,
 		});
@@ -308,6 +312,7 @@ export class SpaceRuntimeService {
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
 			gateDataRepo: this.config.gateDataRepo,
+			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 		});
 		return router.onGateDataChanged(runId, gateId);

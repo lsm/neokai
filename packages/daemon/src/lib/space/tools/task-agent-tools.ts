@@ -1027,8 +1027,8 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 		),
 		tool(
 			'check_node_status',
-			'Poll the status of a running node agent sub-session. ' +
-				'Call this periodically after spawn_node_agent to detect when a step has completed.',
+			'Inspect the status of a node agent sub-session on demand. ' +
+				'Use this for reconciliation/recovery of a specific step instead of continuous polling.',
 			CheckNodeStatusSchema.shape,
 			(args) => handlers.check_node_status(args)
 		),

@@ -2,51 +2,61 @@
  * NodeConfigPanel
  *
  * A right-anchored slide-in panel that appears when a workflow node is selected
- * in the visual editor. Provides inline editing of all step properties using
+ * in the visual editor. Provides inline editing of all node properties using
  * the same field layout as the WorkflowNodeCard expanded view.
  *
  * Features:
- * - Step Name input
- * - "Set as Start" button (disabled when node is already the start node)
+ * - Node Name input
+ * - "Set as Start" button (disabled when the node is already the start node)
  * - Agent dropdown
- * - Entry Gate selector (GateConfig)
- * - Exit Gate selector (GateConfig)
+ * - Model dropdown for single-agent and multi-agent nodes
+ * - System prompt drill-in editor
  * - Instructions textarea
- * - Delete Step button with confirmation (disabled for start node)
+ * - Delete Node button with confirmation (disabled for start node)
  */
 
-import { useState, useEffect, useCallback } from 'preact/hooks';
-import type { SpaceAgent, WorkflowNodeAgent } from '@neokai/shared';
+import { useState, useEffect } from 'preact/hooks';
+import type { Gate, SpaceAgent, WorkflowChannel, WorkflowNodeAgent } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode } from '../WorkflowNodeCard';
-import { GateConfig } from './GateConfig';
-import type { ConditionDraft } from './GateConfig';
+import { WorkflowModelSelect } from './WorkflowModelSelect';
+import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
+import { GateEditorPanel } from './GateEditorPanel';
 
 // ============================================================================
 // Props
 // ============================================================================
 
+export interface NodeChannelLink {
+	id: string;
+	label: string;
+	direction: 'one-way' | 'bidirectional';
+	channelCount: number;
+	hasGate: boolean;
+}
+
 export interface NodeConfigPanelProps {
 	step: NodeDraft;
 	agents: SpaceAgent[];
-	entryCondition: ConditionDraft | null;
-	exitCondition: ConditionDraft | null;
 	isStartNode: boolean;
-	/**
-	 * When true, the entry gate shows "Workflow starts here" (no selector).
-	 * Mirrors the WorkflowNodeCard terminal message for the first step.
-	 */
-	isFirstStep?: boolean;
-	/**
-	 * When true, the exit gate shows "Workflow ends here" (no selector).
-	 * Mirrors the WorkflowNodeCard terminal message for the last step.
-	 */
-	isLastStep?: boolean;
 	onUpdate: (step: NodeDraft) => void;
-	onUpdateEntryCondition: (cond: ConditionDraft) => void;
-	onUpdateExitCondition: (cond: ConditionDraft) => void;
 	/** Designates this step as the workflow start node */
 	onSetAsStart: (stepId: string) => void;
+	channelLinks?: NodeChannelLink[];
+	onOpenChannelLink?: (channelLinkId: string) => void;
+	selectedChannelRelation?: {
+		title: string;
+		description: string;
+		forwardLinks: Array<{ index: number; channel: WorkflowChannel }>;
+		reverseLinks?: Array<{ index: number; channel: WorkflowChannel }>;
+		canConvertToBidirectional?: boolean;
+	};
+	channelRelationGates?: Gate[];
+	onUpdateChannelLink?: (index: number, channel: WorkflowChannel) => void;
+	onDeleteChannelLink?: (index: number) => void;
+	onUpdateChannelGates?: (gates: Gate[]) => void;
+	onConvertChannelRelationToBidirectional?: () => void;
+	onCloseChannelLink?: () => void;
 	onClose: () => void;
 	/** Called when the user confirms deletion of this step */
 	onDelete: (stepId: string) => void;
@@ -66,20 +76,8 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const multi = isMultiAgentNode(step);
 	const nodeAgents = step.agents ?? [];
 
-	// Track which slots have their override fields expanded (keyed by role)
-	const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
-
-	const toggleSlotExpanded = useCallback((role: string) => {
-		setExpandedSlots((prev) => {
-			const next = new Set(prev);
-			if (next.has(role)) next.delete(role);
-			else next.add(role);
-			return next;
-		});
-	}, []);
-
 	function updateAgents(next: WorkflowNodeAgent[]) {
-		onUpdate({ ...step, agents: next, agentId: '' });
+		onUpdate({ ...step, agents: next, agentId: '', model: undefined });
 	}
 
 	function addAgent(agentId: string) {
@@ -95,7 +93,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 			role = `${baseRole}-${i}`;
 		}
 		const next = [...nodeAgents, { agentId, name: role }];
-		onUpdate({ ...step, agents: next, agentId: '' });
+		onUpdate({ ...step, agents: next, agentId: '', model: undefined });
 	}
 
 	function removeAgent(role: string) {
@@ -108,6 +106,8 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 				...step,
 				agents: undefined,
 				agentId: removed?.agentId ?? '',
+				model: removed?.model,
+				systemPrompt: removed?.systemPrompt,
 				channels: undefined,
 			});
 		} else {
@@ -115,25 +115,13 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		}
 	}
 
-	function updateAgentInstructions(role: string, instructions: string) {
-		updateAgents(
-			nodeAgents.map((a) =>
-				a.name === role ? { ...a, instructions: instructions || undefined } : a
-			)
-		);
+	function updateAgentId(role: string, agentId: string) {
+		updateAgents(nodeAgents.map((a) => (a.name === role ? { ...a, agentId } : a)));
 	}
 
 	function updateAgentModel(role: string, model: string) {
 		updateAgents(
 			nodeAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
-		);
-	}
-
-	function updateAgentSystemPrompt(role: string, systemPrompt: string) {
-		updateAgents(
-			nodeAgents.map((a) =>
-				a.name === role ? { ...a, systemPrompt: systemPrompt || undefined } : a
-			)
 		);
 	}
 
@@ -157,7 +145,12 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 							const existing: WorkflowNodeAgent[] = firstId
 								? [{ agentId: firstId, name: firstAgentRole }]
 								: [];
-							onUpdate({ ...step, agents: existing, agentId: '' });
+							onUpdate({
+								...step,
+								agents: existing,
+								agentId: '',
+								model: undefined,
+							});
 						}}
 						class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
 					>
@@ -181,6 +174,16 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 						</option>
 					))}
 				</select>
+				<div class="space-y-1">
+					<label class="text-xs font-medium text-gray-400">
+						LLM Model <span class="font-normal text-gray-600">(optional override)</span>
+					</label>
+					<WorkflowModelSelect
+						testId="single-agent-model-input"
+						value={step.model}
+						onChange={(model) => onUpdate({ ...step, model })}
+					/>
+				</div>
 			</div>
 		);
 	}
@@ -201,6 +204,8 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 								...step,
 								agents: undefined,
 								agentId: nodeAgents[0]?.agentId ?? '',
+								model: nodeAgents[0]?.model,
+								systemPrompt: nodeAgents[0]?.systemPrompt,
 								channels: undefined,
 							})
 						}
@@ -214,8 +219,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 			<div class="space-y-1.5" data-testid="agents-list">
 				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
-					const hasOverrides = !!(sa.model || sa.systemPrompt);
-					const isExpanded = expandedSlots.has(sa.name);
+					const hasOverrides = !!sa.model;
 					return (
 						<div
 							key={sa.name}
@@ -230,21 +234,12 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 									data-testid="agent-role-input"
 									value={sa.name}
 									onInput={(e) => {
-										const oldRole = sa.name;
 										const newRole = (e.currentTarget as HTMLInputElement).value;
-										// Keep the override section expanded after a rename by migrating the key
-										setExpandedSlots((prev) => {
-											if (!prev.has(oldRole)) return prev;
-											const next = new Set(prev);
-											next.delete(oldRole);
-											next.add(newRole);
-											return next;
-										});
 										updateAgents(
-											nodeAgents.map((a) => (a.name === oldRole ? { ...a, name: newRole } : a))
+											nodeAgents.map((a) => (a.name === sa.name ? { ...a, name: newRole } : a))
 										);
 									}}
-									placeholder="slot role"
+									placeholder="node role"
 									class="flex-1 text-xs font-mono bg-dark-900 border border-dark-700 rounded px-1.5 py-0.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600 min-w-0"
 								/>
 								{hasOverrides && (
@@ -255,32 +250,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 										overrides
 									</span>
 								)}
-								<button
-									type="button"
-									data-testid="toggle-overrides-button"
-									onClick={() => toggleSlotExpanded(sa.name)}
-									class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
-									title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
-									aria-expanded={isExpanded}
-								>
-									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										{isExpanded ? (
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M5 15l7-7 7 7"
-											/>
-										) : (
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M19 9l-7 7-7-7"
-											/>
-										)}
-									</svg>
-								</button>
 								<button
 									type="button"
 									data-testid="remove-agent-button"
@@ -298,54 +267,39 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 									</svg>
 								</button>
 							</div>
-							{/* Agent name (readonly) */}
-							<p class="text-xs text-gray-500">{agentInfo?.name ?? sa.agentId}</p>
-							{/* Per-agent instructions */}
-							<input
-								type="text"
-								data-testid="agent-instructions-input"
-								value={sa.instructions ?? ''}
-								onInput={(e) =>
-									updateAgentInstructions(sa.name, (e.currentTarget as HTMLInputElement).value)
-								}
-								placeholder="Per-agent instructions (optional)…"
-								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
-							/>
-							{/* Expandable overrides section */}
-							{isExpanded && (
-								<div class="space-y-1 pt-1 border-t border-dark-700" data-testid="slot-overrides">
-									<p class="text-xs text-gray-500 font-medium">Slot overrides</p>
-									<div class="space-y-0.5">
-										<label class="text-xs text-gray-600">Model</label>
-										<input
-											type="text"
-											data-testid="agent-model-input"
-											value={sa.model ?? ''}
-											onInput={(e) =>
-												updateAgentModel(sa.name, (e.currentTarget as HTMLInputElement).value)
-											}
-											placeholder="e.g. claude-opus-4-6 (leave blank to use default)"
-											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
-										/>
-									</div>
-									<div class="space-y-0.5">
-										<label class="text-xs text-gray-600">System Prompt</label>
-										<textarea
-											data-testid="agent-system-prompt-input"
-											value={sa.systemPrompt ?? ''}
-											onInput={(e) =>
-												updateAgentSystemPrompt(
-													sa.name,
-													(e.currentTarget as HTMLTextAreaElement).value
-												)
-											}
-											placeholder="Override system prompt (leave blank to use agent default)…"
-											rows={3}
-											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-										/>
-									</div>
-								</div>
-							)}
+							<div class="space-y-1">
+								<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+									Agent
+								</label>
+								<select
+									data-testid="agent-slot-select"
+									value={sa.agentId}
+									onChange={(e) =>
+										updateAgentId(sa.name, (e.currentTarget as HTMLSelectElement).value)
+									}
+									class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+								>
+									<option value="">— Select agent —</option>
+									{agents.map((agent) => (
+										<option key={agent.id} value={agent.id}>
+											{agent.name}
+											{` (${agent.role})`}
+										</option>
+									))}
+								</select>
+								<p class="text-[11px] text-gray-600">{agentInfo?.name ?? sa.agentId}</p>
+							</div>
+							<div class="space-y-1">
+								<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+									LLM Model
+								</label>
+								<WorkflowModelSelect
+									testId="agent-model-select"
+									value={sa.model}
+									onChange={(model) => updateAgentModel(sa.name, model ?? '')}
+									className="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+								/>
+							</div>
 						</div>
 					);
 				})}
@@ -377,28 +331,49 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 // Component
 // ============================================================================
 
+type PanelView =
+	| { kind: 'main' }
+	| { kind: 'prompt-and-instructions' }
+	| { kind: 'channel-links' }
+	| { kind: 'gate-editor'; gateId: string };
+
 export function NodeConfigPanel({
 	step,
 	agents,
-	entryCondition,
-	exitCondition,
 	isStartNode,
-	isFirstStep = false,
-	isLastStep = false,
 	onUpdate,
-	onUpdateEntryCondition,
-	onUpdateExitCondition,
 	onSetAsStart,
+	channelLinks = [],
+	onOpenChannelLink,
+	selectedChannelRelation,
+	channelRelationGates = [],
+	onUpdateChannelLink,
+	onDeleteChannelLink,
+	onUpdateChannelGates,
+	onConvertChannelRelationToBidirectional,
+	onCloseChannelLink,
 	onClose,
 	onDelete,
 }: NodeConfigPanelProps) {
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
+	const [panelView, setPanelView] = useState<PanelView>({ kind: 'main' });
 
 	// Reset confirmation dialog when the selected step changes so a previously
 	// open confirmation on one node doesn't bleed through to the next node.
 	useEffect(() => {
 		setConfirmingDelete(false);
+		setPanelView({ kind: 'main' });
 	}, [step.localId]);
+
+	useEffect(() => {
+		if (selectedChannelRelation) {
+			setPanelView({ kind: 'channel-links' });
+			return;
+		}
+		setPanelView((prev) =>
+			prev.kind === 'channel-links' || prev.kind === 'gate-editor' ? { kind: 'main' } : prev
+		);
+	}, [selectedChannelRelation]);
 
 	const handleDeleteClick = () => {
 		if (isStartNode) return; // defence-in-depth: button is also disabled
@@ -414,35 +389,87 @@ export function NodeConfigPanel({
 		setConfirmingDelete(false);
 	};
 
-	return (
-		<div
-			data-testid="node-config-panel"
-			style={{
-				position: 'absolute',
-				top: 0,
-				right: 0,
-				bottom: 0,
-				width: 320,
-				display: 'flex',
-				flexDirection: 'column',
-				zIndex: 20,
-			}}
-			class="bg-dark-900 border-l border-dark-700 shadow-xl animate-slideInRight"
-		>
-			{/* Header */}
+	const updateNodePrompt = (systemPrompt: string) => {
+		onUpdate({
+			...step,
+			systemPrompt: systemPrompt || undefined,
+		});
+	};
+
+	const renderHeader = () => {
+		if (panelView.kind === 'main') {
+			return (
+				<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0">
+					<div class="flex items-center gap-2 min-w-0">
+						{isStartNode && (
+							<span
+								data-testid="start-node-badge"
+								class="text-xs font-bold text-green-400 uppercase tracking-wider flex-shrink-0"
+							>
+								START
+							</span>
+						)}
+						<h3 class="text-sm font-semibold text-gray-100 truncate">
+							{step.name || 'Unnamed Node'}
+						</h3>
+					</div>
+					<button
+						data-testid="close-button"
+						onClick={onClose}
+						class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+						title="Close panel"
+					>
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+					</button>
+				</div>
+			);
+		}
+
+		const title =
+			panelView.kind === 'prompt-and-instructions'
+				? 'Prompt and Instructions'
+				: panelView.kind === 'channel-links'
+					? 'Channel Links'
+					: panelView.kind === 'gate-editor'
+						? 'Gate Editor'
+						: step.name || 'Unnamed Node';
+
+		return (
 			<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0">
 				<div class="flex items-center gap-2 min-w-0">
-					{isStartNode && (
-						<span
-							data-testid="start-node-badge"
-							class="text-xs font-bold text-green-400 uppercase tracking-wider flex-shrink-0"
-						>
-							START
-						</span>
-					)}
-					<h3 class="text-sm font-semibold text-gray-100 truncate">
-						{step.name || 'Unnamed Step'}
-					</h3>
+					<button
+						type="button"
+						data-testid="node-panel-back-button"
+						onClick={() => {
+							if (panelView.kind === 'gate-editor') {
+								setPanelView({ kind: 'channel-links' });
+								return;
+							}
+							if (panelView.kind === 'channel-links') {
+								onCloseChannelLink?.();
+							}
+							setPanelView({ kind: 'main' });
+						}}
+						class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+						title="Back"
+					>
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M15 19l-7-7 7-7"
+							/>
+						</svg>
+					</button>
+					<h3 class="text-sm font-semibold text-gray-100 truncate">{title}</h3>
 				</div>
 				<button
 					data-testid="close-button"
@@ -460,12 +487,98 @@ export function NodeConfigPanel({
 					</svg>
 				</button>
 			</div>
+		);
+	};
 
-			{/* Scrollable body */}
+	const renderPanelBody = () => {
+		if (panelView.kind === 'prompt-and-instructions') {
+			return (
+				<div class="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+					<p class="text-xs text-gray-500">
+						Shared instructions are appended for every agent in this node. A shared system prompt
+						override applies to the assigned agent, or acts as the default prompt override for agent
+						slots that do not define their own override.
+					</p>
+					<div class="space-y-1.5">
+						<label class="text-xs font-medium text-gray-400">
+							System Prompt <span class="font-normal text-gray-600">(optional override)</span>
+						</label>
+						<textarea
+							data-testid="node-system-prompt-input"
+							value={step.systemPrompt ?? ''}
+							onInput={(e) => updateNodePrompt((e.currentTarget as HTMLTextAreaElement).value)}
+							placeholder="Leave blank to use the selected agent's default system prompt…"
+							rows={12}
+							class="w-full text-xs font-mono bg-dark-800 border border-dark-600 rounded px-3 py-2 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+						/>
+					</div>
+					<div class="space-y-1.5">
+						<label class="text-xs font-medium text-gray-400">
+							Instructions <span class="font-normal text-gray-600">(optional)</span>
+						</label>
+						<textarea
+							data-testid="instructions-textarea"
+							value={step.instructions}
+							onInput={(e) =>
+								onUpdate({
+									...step,
+									instructions: (e.currentTarget as HTMLTextAreaElement).value,
+								})
+							}
+							placeholder="Node-specific instructions appended to the agent prompt…"
+							rows={8}
+							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+						/>
+					</div>
+					<p class="text-[11px] text-gray-600">
+						This editor shows the current values for both the shared prompt override and the shared
+						instructions.
+					</p>
+				</div>
+			);
+		}
+
+		if (panelView.kind === 'gate-editor') {
+			const editingGate = channelRelationGates.find((g) => g.id === panelView.gateId);
+			if (!editingGate) return null;
+			return (
+				<GateEditorPanel
+					gate={editingGate}
+					onChange={(updated) => {
+						onUpdateChannelGates?.(
+							channelRelationGates.map((g) => (g.id === updated.id ? updated : g))
+						);
+					}}
+					onBack={() => setPanelView({ kind: 'channel-links' })}
+					embedded
+				/>
+			);
+		}
+
+		if (panelView.kind === 'channel-links' && selectedChannelRelation) {
+			return (
+				<ChannelRelationConfigPanel
+					title={selectedChannelRelation.title}
+					description={selectedChannelRelation.description}
+					forwardLinks={selectedChannelRelation.forwardLinks}
+					reverseLinks={selectedChannelRelation.reverseLinks}
+					canConvertToBidirectional={selectedChannelRelation.canConvertToBidirectional}
+					onConvertToBidirectional={onConvertChannelRelationToBidirectional}
+					gates={channelRelationGates}
+					onGatesChange={(nextGates) => onUpdateChannelGates?.(nextGates)}
+					onEditGate={(gateId) => setPanelView({ kind: 'gate-editor', gateId })}
+					onChange={(index, channel) => onUpdateChannelLink?.(index, channel)}
+					onDelete={(index) => onDeleteChannelLink?.(index)}
+					onClose={onClose}
+					embedded
+				/>
+			);
+		}
+
+		return (
 			<div class="flex-1 overflow-y-auto px-4 py-4 space-y-5">
-				{/* Step Name */}
 				<div class="space-y-1.5">
-					<label class="text-xs font-medium text-gray-400">Step Name</label>
+					<label class="text-xs font-medium text-gray-400">Node Name</label>
 					<input
 						data-testid="step-name-input"
 						type="text"
@@ -478,7 +591,6 @@ export function NodeConfigPanel({
 					/>
 				</div>
 
-				{/* Set as Start button */}
 				{!isStartNode && (
 					<button
 						data-testid="set-as-start-button"
@@ -489,53 +601,106 @@ export function NodeConfigPanel({
 					</button>
 				)}
 
-				{/* Agent(s) */}
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
 
-				{/* Entry Gate */}
-				<GateConfig
-					label="Entry Gate"
-					condition={entryCondition ?? { type: 'always' }}
-					onChange={onUpdateEntryCondition}
-					terminalMessage={isFirstStep ? 'Workflow starts here' : undefined}
-					testId="entry-gate-select"
-				/>
+				<button
+					type="button"
+					data-testid="prompt-instructions-button"
+					onClick={() => setPanelView({ kind: 'prompt-and-instructions' })}
+					class="w-full rounded border border-dark-700 bg-dark-800 px-2.5 py-2 text-left hover:border-amber-500/40 hover:bg-dark-750 transition-colors"
+				>
+					<div class="flex items-center justify-between gap-2">
+						<span class="text-xs font-medium text-gray-200">Prompt and Instructions</span>
+						<div class="flex items-center gap-2 text-[11px] flex-shrink-0">
+							<span class={step.systemPrompt?.trim() ? 'text-amber-300' : 'text-gray-500'}>
+								{step.systemPrompt?.trim() ? 'Prompt set' : 'Prompt default'}
+							</span>
+							<span class={step.instructions?.trim() ? 'text-blue-300' : 'text-gray-500'}>
+								{step.instructions?.trim() ? 'Instructions set' : 'No instructions'}
+							</span>
+						</div>
+					</div>
+					<p class="mt-1 text-[11px] text-gray-500">
+						Open the dedicated editor to review the shared prompt override and shared instructions.
+					</p>
+				</button>
 
-				{/* Exit Gate */}
-				<GateConfig
-					label="Exit Gate"
-					condition={exitCondition ?? { type: 'always' }}
-					onChange={onUpdateExitCondition}
-					terminalMessage={isLastStep ? 'Workflow ends here' : undefined}
-					testId="exit-gate-select"
-				/>
-
-				{/* Instructions */}
 				<div class="space-y-1.5">
-					<label class="text-xs font-medium text-gray-400">
-						Instructions <span class="font-normal text-gray-600">(optional)</span>
-					</label>
-					<textarea
-						data-testid="instructions-textarea"
-						value={step.instructions}
-						onInput={(e) =>
-							onUpdate({
-								...step,
-								instructions: (e.currentTarget as HTMLTextAreaElement).value,
-							})
-						}
-						placeholder="Step-specific instructions appended to the agent's system prompt…"
-						rows={5}
-						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-					/>
+					<div class="flex items-center justify-between">
+						<label class="text-xs font-medium text-gray-400">Channel Links</label>
+						<span class="text-xs text-gray-600">{channelLinks.length}</span>
+					</div>
+					{channelLinks.length > 0 ? (
+						<div class="space-y-1.5">
+							{channelLinks.map((link) => (
+								<button
+									key={link.id}
+									type="button"
+									data-testid="node-channel-link-button"
+									onClick={() => {
+										setPanelView({ kind: 'channel-links' });
+										onOpenChannelLink?.(link.id);
+									}}
+									class="w-full rounded border border-dark-700 bg-dark-800 px-2.5 py-2 text-left hover:border-teal-600/60 hover:bg-dark-750 transition-colors"
+								>
+									<div class="flex items-center justify-between gap-2">
+										<div class="min-w-0">
+											<div class="text-xs font-mono text-gray-200 truncate">{link.label}</div>
+											<div class="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
+												<span>
+													{link.channelCount} link{link.channelCount === 1 ? '' : 's'}
+												</span>
+												{link.hasGate && <span class="text-teal-400">has gate</span>}
+											</div>
+										</div>
+										<svg
+											class="w-4 h-4 text-gray-500 flex-shrink-0"
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+										>
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={2}
+												d="M9 5l7 7-7 7"
+											/>
+										</svg>
+									</div>
+								</button>
+							))}
+						</div>
+					) : (
+						<p class="text-xs text-gray-600">Create links by dragging from one node to another.</p>
+					)}
 				</div>
 			</div>
+		);
+	};
+
+	return (
+		<div
+			data-testid="node-config-panel"
+			style={{
+				position: 'absolute',
+				top: 0,
+				right: 0,
+				bottom: 0,
+				width: 320,
+				display: 'flex',
+				flexDirection: 'column',
+				zIndex: 20,
+			}}
+			class="bg-dark-900 border-l border-dark-700 shadow-xl animate-slideInRight"
+		>
+			{renderHeader()}
+			{renderPanelBody()}
 
 			{/* Footer — Delete button */}
 			<div class="px-4 py-3 border-t border-dark-700 flex-shrink-0">
 				{confirmingDelete ? (
 					<div class="space-y-2">
-						<p class="text-xs text-gray-400">Delete this step? This cannot be undone.</p>
+						<p class="text-xs text-gray-400">Delete this node? This cannot be undone.</p>
 						<div class="flex gap-2">
 							<button
 								data-testid="delete-confirm-button"
@@ -558,10 +723,10 @@ export function NodeConfigPanel({
 						data-testid="delete-step-button"
 						onClick={handleDeleteClick}
 						disabled={isStartNode}
-						title={isStartNode ? 'Designate another node as start before deleting' : 'Delete step'}
+						title={isStartNode ? 'Designate another node as start before deleting' : 'Delete node'}
 						class="w-full text-xs py-1.5 px-3 rounded border border-red-900 text-red-500 hover:bg-red-900/30 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
 					>
-						Delete Step
+						Delete Node
 					</button>
 				)}
 				{isStartNode && !confirmingDelete && (

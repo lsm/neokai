@@ -20,22 +20,17 @@
  * provide a stable `key` prop to force remount when switching between workflows.
  */
 
-import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
-import type {
-	SpaceWorkflow,
-	WorkflowNode,
-	WorkflowConditionType,
-	WorkflowChannel,
-} from '@neokai/shared';
-import { generateUUID, TASK_AGENT_NODE_ID } from '@neokai/shared';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks';
+import type { SpaceWorkflow, WorkflowNode, WorkflowChannel, Gate } from '@neokai/shared';
+import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
-import { filterAgents, TEMPLATES } from '../WorkflowEditor';
+import { filterAgents, TEMPLATES, buildTemplateNodes } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
+import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
-import type { ConditionDraft } from './GateConfig';
-import type { ViewportState, Point, VisualTransition } from './types';
+import type { ViewportState, Point, VisualTransition, WorkflowConditionType } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
 import {
 	workflowToVisualState,
@@ -43,19 +38,135 @@ import {
 	visualStateToUpdateParams,
 } from './serialization';
 import type { WorkflowNodeData } from './WorkflowCanvas';
-import { WorkflowCanvas, DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from './WorkflowCanvas';
+import { WorkflowCanvas } from './WorkflowCanvas';
 import { computeFitToView } from './CanvasToolbar';
-import { autoLayout, TASK_AGENT_INITIAL_POSITION } from './layout';
+import { autoLayout } from './layout';
 import type { NodePosition } from './types';
 import { NodeConfigPanel } from './NodeConfigPanel';
-import { ChannelEditor } from '../ChannelEditor';
+import type { NodeChannelLink } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
+import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
+import { buildVisualNodePositions } from './nodeMetrics';
+import {
+	buildNodeAnchorUsage,
+	buildSemanticWorkflowEdges,
+	routeSemanticWorkflowEdges,
+} from './semanticWorkflowGraph';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment'];
+
+function buildTemplateCanvasSignature(
+	nodes: VisualNode[],
+	edges: VisualEdge[],
+	channels: WorkflowChannel[],
+	startNodeId: string,
+	gates: Gate[]
+): string {
+	const regularNodes = nodes
+		.filter(
+			(node) => node.step.localId !== TASK_AGENT_NODE_ID && node.step.id !== TASK_AGENT_NODE_ID
+		)
+		.map((node) => ({
+			localId: node.step.localId,
+			id: node.step.id ?? null,
+			name: node.step.name,
+			agentId: node.step.agentId ?? null,
+			model: node.step.model ?? null,
+			systemPrompt: node.step.systemPrompt ?? null,
+			instructions: node.step.instructions ?? '',
+			agents:
+				node.step.agents?.map((agent) => ({
+					agentId: agent.agentId ?? null,
+					name: agent.name ?? '',
+					model: agent.model ?? null,
+					systemPrompt: agent.systemPrompt ?? null,
+					instructions: agent.instructions ?? '',
+				})) ?? [],
+			nodeChannels:
+				node.step.channels?.map((channel) => ({
+					from: channel.from,
+					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+					direction: channel.direction,
+					gateId: channel.gateId,
+				})) ?? [],
+			position: { x: node.position.x, y: node.position.y },
+		}))
+		.sort((a, b) => a.localId.localeCompare(b.localId));
+
+	const normalizedEdges = edges
+		.map((edge) => ({
+			fromStepKey: edge.fromStepKey,
+			toStepKey: edge.toStepKey,
+			condition: edge.condition ? { ...edge.condition } : undefined,
+		}))
+		.sort((a, b) =>
+			`${a.fromStepKey}:${a.toStepKey}`.localeCompare(`${b.fromStepKey}:${b.toStepKey}`)
+		);
+
+	const normalizedChannels = channels
+		.map((channel) => ({
+			from: channel.from,
+			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+			direction: channel.direction,
+			gateId: channel.gateId ?? null,
+			maxCycles: channel.maxCycles ?? null,
+		}))
+		.sort((a, b) => `${a.from}:${String(a.to)}`.localeCompare(`${b.from}:${String(b.to)}`));
+
+	const normalizedGates = gates
+		.map((gate) => ({
+			id: gate.id,
+			description: gate.description ?? null,
+			fields: gate.fields,
+			resetOnCycle: gate.resetOnCycle,
+		}))
+		.sort((a, b) => a.id.localeCompare(b.id));
+
+	return JSON.stringify({
+		nodes: regularNodes,
+		edges: normalizedEdges,
+		channels: normalizedChannels,
+		startNodeId,
+		gates: normalizedGates,
+	});
+}
+
+function resolveChannelTargetNodeIds(
+	channel: WorkflowChannel,
+	endpointNodeIdLookup: Map<string, string>
+): string[] {
+	const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+	return targets
+		.map((target) => endpointNodeIdLookup.get(target) ?? null)
+		.filter((nodeId): nodeId is string => !!nodeId);
+}
+
+/**
+ * Thin wrapper around the shared `isChannelCyclic` that accepts pre-built
+ * editor-local lookup maps (keyed by localId, not persisted node.id).
+ */
+function inferChannelIsCyclic(
+	channel: WorkflowChannel,
+	channels: WorkflowChannel[],
+	endpointNodeIdLookup: Map<string, string>,
+	nodeOrder: Map<string, number>,
+	options?: { ignoreChannelIndex?: number }
+): boolean {
+	const index = channels.indexOf(channel);
+	if (index === -1) return false;
+	return isChannelCyclic(
+		index,
+		channels,
+		[],
+		endpointNodeIdLookup,
+		nodeOrder,
+		options?.ignoreChannelIndex
+	);
+}
 
 // ============================================================================
 // Props
@@ -106,7 +217,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					agentId: '',
 					instructions: '',
 				},
-				position: TASK_AGENT_INITIAL_POSITION,
+				position: { x: 0, y: 0 },
 			},
 		];
 	});
@@ -115,9 +226,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
 	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
 	const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
-	// Guard against double-invocation: setNodes updater may be called twice in development
-	// (e.g. React StrictMode, Bun hot reload). Toggle the flag so the second call skips.
-	const addStepGuardRef = useRef(false);
+	const [gates, setGates] = useState<Gate[]>(() => initState?.gates ?? []);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -132,18 +241,49 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
 	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
-	const [showChannels, setShowChannels] = useState(true);
 
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [showRules, setShowRules] = useState(false);
 	const [showTemplates, setShowTemplates] = useState(false);
 	const [tagInput, setTagInput] = useState('');
+	const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
 
 	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
 	const agents = filterAgents(spaceStore.agents.value);
 	const tasksByNodeId = spaceStore.tasksByNodeId.value;
+	const regularNodes = useMemo(
+		() =>
+			nodes.filter(
+				(node) => node.step.id !== TASK_AGENT_NODE_ID && node.step.localId !== TASK_AGENT_NODE_ID
+			),
+		[nodes]
+	);
+	const currentTemplateCanvasSignature = useMemo(
+		() => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates),
+		[nodes, edges, channels, startNodeId, gates]
+	);
+	const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
+		buildTemplateCanvasSignature(
+			initState?.nodes ?? [
+				{
+					step: {
+						localId: TASK_AGENT_NODE_ID,
+						id: TASK_AGENT_NODE_ID,
+						name: 'Task Agent',
+						agentId: '',
+						instructions: '',
+					},
+					position: { x: 0, y: 0 },
+				},
+			],
+			initState?.edges ?? [],
+			initState?.channels ?? [],
+			initState?.startNodeId ?? '',
+			initState?.gates ?? []
+		)
+	);
 
 	// Determine which workflow run to use for completion indicators.
 	// Prefer an active run; fall back to the most recently updated run.
@@ -155,20 +295,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (active) return active.id;
 		return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
 	})();
-
-	// Collect all agent slot names from nodes for ChannelEditor from/to suggestions
-	const agentRoles = useMemo(() => {
-		const roles = new Set<string>();
-		for (const node of nodes) {
-			if (node.step.id === TASK_AGENT_NODE_ID || node.step.localId === TASK_AGENT_NODE_ID) continue;
-			if (node.step.agents) {
-				for (const agent of node.step.agents) {
-					if (agent.name) roles.add(agent.name);
-				}
-			}
-		}
-		return Array.from(roles);
-	}, [nodes]);
 
 	// ------------------------------------------------------------------
 	// Key-resolution maps
@@ -183,100 +309,80 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		return map;
 	}, [nodes]);
 
+	const nodeOrderByLocalId = useMemo(
+		() => new Map(regularNodes.map((node, index) => [node.step.localId, index])),
+		[regularNodes]
+	);
+
+	const endpointNodeIdLookup = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const node of nodes) {
+			if (node.step.localId === TASK_AGENT_NODE_ID || node.step.id === TASK_AGENT_NODE_ID) continue;
+			if (node.step.agentId) map.set(node.step.agentId, node.step.localId);
+			if (node.step.name) map.set(node.step.name, node.step.localId);
+			for (const agent of node.step.agents ?? []) {
+				if (agent.name) map.set(agent.name, node.step.localId);
+				if (agent.agentId) map.set(agent.agentId, node.step.localId);
+			}
+		}
+		return map;
+	}, [nodes]);
+
 	// ------------------------------------------------------------------
 	// Derived: ResolvedWorkflowChannel[] for workflow-level channel connections.
 	// Resolves channel from/to agent role names to node localIds so EdgeRenderer
 	// can render the edges. Includes gate type and ID for visual distinction + selection.
 	// ------------------------------------------------------------------
 
+	const cyclicChannelIndexes = useMemo(() => {
+		const set = new Set<number>();
+		for (let i = 0; i < channels.length; i++) {
+			if (isChannelCyclic(i, channels, [], endpointNodeIdLookup, nodeOrderByLocalId)) {
+				set.add(i);
+			}
+		}
+		return set;
+	}, [channels, endpointNodeIdLookup, nodeOrderByLocalId]);
+
+	const semanticEdges = useMemo(
+		() => buildSemanticWorkflowEdges(nodes, channels, gates, cyclicChannelIndexes),
+		[nodes, channels, gates, cyclicChannelIndexes]
+	);
+
+	const routedSemanticEdges = useMemo(
+		() => routeSemanticWorkflowEdges(nodes, semanticEdges),
+		[nodes, semanticEdges]
+	);
+
+	const anchorUsageByNodeId = useMemo(
+		() => buildNodeAnchorUsage(routedSemanticEdges),
+		[routedSemanticEdges]
+	);
+
 	const channelEdges = useMemo<
 		{
 			fromStepId: string;
 			toStepId: string;
 			direction: 'one-way' | 'bidirectional';
-			gateType?: 'human' | 'condition' | 'task_result';
+			isCyclic?: boolean;
+			gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+			sourceSide?: 'top' | 'bottom' | 'left' | 'right';
+			targetSide?: 'top' | 'bottom' | 'left' | 'right';
 			id?: string;
 			label?: string;
 		}[]
 	>(() => {
-		const result: {
-			fromStepId: string;
-			toStepId: string;
-			direction: 'one-way' | 'bidirectional';
-			gateType?: 'human' | 'condition' | 'task_result';
-			id?: string;
-			label?: string;
-		}[] = [];
-
-		// Build agent name -> node localId lookup for cross-node channel resolution
-		const nameToNodeId = new Map<string, string>();
-		for (const node of nodes) {
-			if (node.step.id === TASK_AGENT_NODE_ID || node.step.localId === TASK_AGENT_NODE_ID) continue;
-			// Map agent slot names (from WorkflowNodeAgent.name)
-			if (node.step.agents) {
-				for (const agent of node.step.agents) {
-					if (agent.name) nameToNodeId.set(agent.name, node.step.localId);
-				}
-			}
-			// Also map node name itself for convenience
-			if (node.step.name) nameToNodeId.set(node.step.name, node.step.localId);
-		}
-
-		const nodeLocalIds = new Set(nodes.map((n) => n.step.localId));
-
-		channels.forEach((channel, i) => {
-			const channelId = String(i);
-			const gateType =
-				channel.gate && channel.gate.type !== 'always'
-					? (channel.gate.type as 'human' | 'condition' | 'task_result')
-					: undefined;
-
-			if (channel.from === 'task-agent') {
-				// task-agent -> node channel: resolve 'to' to a node localId
-				const toTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
-				for (const toStr of toTargets) {
-					const targetNode = nodes.find(
-						(n) =>
-							n.step.localId === toStr ||
-							n.step.id === toStr ||
-							nameToNodeId.get(toStr) === n.step.localId
-					);
-					if (targetNode) {
-						result.push({
-							fromStepId: 'task-agent',
-							toStepId: targetNode.step.localId,
-							direction: channel.direction,
-							gateType,
-							id: channelId,
-							label: channel.label,
-						});
-					}
-				}
-			} else {
-				// Cross-node channel: resolve from agent name to node localId
-				const fromNodeId =
-					nameToNodeId.get(channel.from) ?? (nodeLocalIds.has(channel.from) ? channel.from : null);
-				if (!fromNodeId) return;
-
-				const toTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
-				for (const toStr of toTargets) {
-					if (toStr === '*') continue; // wildcard: no specific edge to render
-					const toNodeId = nameToNodeId.get(toStr) ?? (nodeLocalIds.has(toStr) ? toStr : null);
-					if (!toNodeId || toNodeId === fromNodeId) continue;
-					result.push({
-						fromStepId: fromNodeId,
-						toStepId: toNodeId,
-						direction: channel.direction,
-						gateType,
-						id: channelId,
-						label: channel.label,
-					});
-				}
-			}
-		});
-
-		return result;
-	}, [channels, nodes]);
+		return routedSemanticEdges.map((edge) => ({
+			fromStepId: edge.fromStepId,
+			toStepId: edge.toStepId,
+			direction: edge.direction,
+			gateType: edge.gateType,
+			isCyclic: edge.hasCyclic,
+			sourceSide: edge.sourceSide,
+			targetSide: edge.targetSide,
+			id: edge.id,
+		}));
+	}, [routedSemanticEdges]);
 
 	// ------------------------------------------------------------------
 	// Helpers
@@ -290,32 +396,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		[startNodeId]
 	);
 
-	/** Find the first incoming edge condition for a node (entry gate). */
-	function getEntryCondition(node: VisualNode): ConditionDraft | null {
-		const key = node.step.id ?? node.step.localId;
-		const incoming = edges.find((e) => e.toStepKey === key);
-		if (!incoming) return null;
-		const cond = incoming.condition;
-		if (!cond || cond.type === 'always') return { type: 'always' };
-		return { type: cond.type, expression: cond.expression };
-	}
-
-	/** Find the first outgoing edge condition for a node (exit gate). */
-	function getExitCondition(node: VisualNode): ConditionDraft | null {
-		const key = node.step.id ?? node.step.localId;
-		const outgoing = edges.find((e) => e.fromStepKey === key);
-		if (!outgoing) return null;
-		const cond = outgoing.condition;
-		if (!cond || cond.type === 'always') return { type: 'always' };
-		return { type: cond.type, expression: cond.expression };
-	}
-
 	// ------------------------------------------------------------------
 	// Derived: WorkflowNodeData[] for WorkflowCanvas
 	// ------------------------------------------------------------------
 
 	const nodeData = useMemo<WorkflowNodeData[]>(() => {
-		return nodes.map((node, i) => {
+		return regularNodes.map((node, i) => {
 			const nodeId = node.step.id;
 			const allNodeTasks = nodeId ? (tasksByNodeId.get(nodeId) ?? []) : [];
 			// Filter to the most relevant run to avoid mixing state from past runs.
@@ -334,10 +420,24 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				agents,
 				workflowChannels: channels,
 				isStartNode: nodeIsStart(node),
+				activeAnchorSides: anchorUsageByNodeId.get(node.step.localId) ?? [],
 				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
 			};
 		});
-	}, [nodes, agents, channels, nodeIsStart, tasksByNodeId, relevantRunId]);
+	}, [
+		regularNodes,
+		agents,
+		channels,
+		nodeIsStart,
+		tasksByNodeId,
+		relevantRunId,
+		anchorUsageByNodeId,
+	]);
+
+	const canvasNodePositions = useMemo<NodePosition>(
+		() => buildVisualNodePositions(regularNodes),
+		[regularNodes]
+	);
 
 	// ------------------------------------------------------------------
 	// Derived: selected node / edge
@@ -362,22 +462,161 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		return { fromNode, toNode, edge, fromKey, toKey };
 	}, [selectedEdgeId, nodes, edges, localIdToStepKey]);
 
+	const selectedChannelInfo = useMemo(() => {
+		if (selectedChannelId == null) return null;
+		const relation = routedSemanticEdges.find((edge) => edge.id === selectedChannelId);
+		if (!relation) return null;
+		const fromNode = nodes.find((n) => n.step.localId === relation.fromStepId) ?? null;
+		const toNode = nodes.find((n) => n.step.localId === relation.toStepId) ?? null;
+		const links = Array.from(new Set(relation.channelIndexes))
+			.map((index) => {
+				const channel = channels[index];
+				return channel ? { index, channel } : null;
+			})
+			.filter((entry): entry is { index: number; channel: WorkflowChannel } => !!entry);
+
+		const forwardLinks = links.filter(({ channel }) => {
+			const fromId = endpointNodeIdLookup.get(channel.from);
+			const targetIds = resolveChannelTargetNodeIds(channel, endpointNodeIdLookup);
+			return fromId === relation.fromStepId && targetIds.includes(relation.toStepId);
+		});
+
+		const reverseLinks = links.filter(({ channel }) => {
+			const fromId = endpointNodeIdLookup.get(channel.from);
+			const targetIds = resolveChannelTargetNodeIds(channel, endpointNodeIdLookup);
+			return fromId === relation.toStepId && targetIds.includes(relation.fromStepId);
+		});
+
+		const visibleLinkCount = forwardLinks.length + reverseLinks.length;
+		const relationIsBidirectional =
+			reverseLinks.length > 0 || relation.direction === 'bidirectional';
+
+		return {
+			relation,
+			fromNode,
+			toNode,
+			links,
+			forwardLinks: forwardLinks.map(({ index, channel }) => ({
+				index,
+				channel,
+				shouldBeCyclic: inferChannelIsCyclic(
+					channel,
+					channels,
+					endpointNodeIdLookup,
+					nodeOrderByLocalId,
+					{
+						ignoreChannelIndex: index,
+					}
+				),
+			})),
+			reverseLinks: reverseLinks.map(({ index, channel }) => ({
+				index,
+				channel,
+				shouldBeCyclic: inferChannelIsCyclic(
+					channel,
+					channels,
+					endpointNodeIdLookup,
+					nodeOrderByLocalId,
+					{
+						ignoreChannelIndex: index,
+					}
+				),
+			})),
+			relationIsBidirectional,
+			visibleLinkCount,
+			canConvertToBidirectional: forwardLinks.length > 0 && reverseLinks.length === 0,
+			relationLabel: relationIsBidirectional
+				? `${fromNode?.step.name || 'Unnamed'} ↔ ${toNode?.step.name || 'Unnamed'}`
+				: `${fromNode?.step.name || 'Unnamed'} → ${toNode?.step.name || 'Unnamed'}`,
+		};
+	}, [
+		selectedChannelId,
+		routedSemanticEdges,
+		nodes,
+		channels,
+		endpointNodeIdLookup,
+		nodeOrderByLocalId,
+	]);
+
+	const nodeChannelLinksByNodeId = useMemo(() => {
+		const linksByNodeId = new Map<string, NodeChannelLink[]>();
+
+		for (const edge of routedSemanticEdges) {
+			const fromNode = nodes.find((n) => n.step.localId === edge.fromStepId);
+			const toNode = nodes.find((n) => n.step.localId === edge.toStepId);
+			if (!fromNode || !toNode) continue;
+
+			const link: NodeChannelLink = {
+				id: edge.id,
+				label:
+					edge.direction === 'bidirectional'
+						? `${fromNode.step.name || 'Unnamed'} ↔ ${toNode.step.name || 'Unnamed'}`
+						: `${fromNode.step.name || 'Unnamed'} → ${toNode.step.name || 'Unnamed'}`,
+				direction: edge.direction,
+				channelCount: edge.channelCount,
+				hasGate: edge.hasGate,
+			};
+
+			linksByNodeId.set(edge.fromStepId, [...(linksByNodeId.get(edge.fromStepId) ?? []), link]);
+			linksByNodeId.set(edge.toStepId, [...(linksByNodeId.get(edge.toStepId) ?? []), link]);
+		}
+
+		return linksByNodeId;
+	}, [nodes, routedSemanticEdges]);
+
+	useEffect(() => {
+		if (!selectedChannelInfo) return;
+
+		const legacyBidirectionalLinks = selectedChannelInfo.forwardLinks.filter(
+			({ channel }) => channel.direction === 'bidirectional'
+		);
+		if (legacyBidirectionalLinks.length === 0 || selectedChannelInfo.reverseLinks.length > 0)
+			return;
+
+		setChannels((prev) => {
+			const next = [...prev];
+			let changed = false;
+
+			for (const { index } of legacyBidirectionalLinks) {
+				const current = next[index];
+				if (!current || current.direction !== 'bidirectional') continue;
+
+				next[index] = {
+					...current,
+					direction: 'one-way',
+				};
+
+				const targets = Array.isArray(current.to) ? current.to : [current.to];
+				for (const target of targets) {
+					const reverseExists = next.some(
+						(existing) =>
+							existing.from === target &&
+							(Array.isArray(existing.to)
+								? existing.to.includes(current.from)
+								: existing.to === current.from)
+					);
+					if (reverseExists) continue;
+
+					next.push({
+						from: target,
+						to: current.from,
+						direction: 'one-way',
+						maxCycles: current.maxCycles,
+						gateId: current.gateId,
+					});
+				}
+				changed = true;
+			}
+
+			return changed ? next : prev;
+		});
+	}, [selectedChannelInfo]);
+
 	// ------------------------------------------------------------------
 	// Node operations
 	// ------------------------------------------------------------------
 
 	function addStep() {
-		// Guard: skip if already called this cycle (e.g. double-invoked by React StrictMode).
-		if (addStepGuardRef.current) return;
-		addStepGuardRef.current = true;
-		// Reset synchronously after the state update is enqueued so the guard is fresh
-		// before the next user click. A microtask reset (Promise.resolve().then()) would
-		// create a race: a fast second click within the same microtask tick would see
-		// addStepGuardRef.current === true and be silently dropped.
-		void setTimeout(() => {
-			addStepGuardRef.current = false;
-		}, 0);
-
 		const newLocalId = generateUUID();
 		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
@@ -418,7 +657,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		// handler (which fires on the WorkflowCanvas selected node) can remove it.
 		if (localId === TASK_AGENT_NODE_ID) return;
 		setSelectedNodeId(localId);
-		if (localId) setSelectedEdgeId(null);
+		if (localId) {
+			setSelectedEdgeId(null);
+			setSelectedChannelId(null);
+		}
 	}, []);
 
 	const handleDeleteNode = useCallback(
@@ -472,38 +714,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		setStartStepId(localId);
 	}, []);
 
-	const handleUpdateEntryCondition = useCallback((node: VisualNode, cond: ConditionDraft) => {
-		const key = node.step.id ?? node.step.localId;
-		let updated = false;
-		setEdges((prev) =>
-			prev.map((e) => {
-				if (e.toStepKey !== key || updated) return e;
-				updated = true;
-				const newCond =
-					cond.type === 'always'
-						? undefined
-						: { ...e.condition, type: cond.type, expression: cond.expression };
-				return { ...e, condition: newCond };
-			})
-		);
-	}, []);
-
-	const handleUpdateExitCondition = useCallback((node: VisualNode, cond: ConditionDraft) => {
-		const key = node.step.id ?? node.step.localId;
-		let updated = false;
-		setEdges((prev) =>
-			prev.map((e) => {
-				if (e.fromStepKey !== key || updated) return e;
-				updated = true;
-				const newCond =
-					cond.type === 'always'
-						? undefined
-						: { ...e.condition, type: cond.type, expression: cond.expression };
-				return { ...e, condition: newCond };
-			})
-		);
-	}, []);
-
 	// ------------------------------------------------------------------
 	// Edge operations
 	// ------------------------------------------------------------------
@@ -521,26 +731,145 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (channelId) {
 			setSelectedNodeId(null);
 			setSelectedEdgeId(null);
-			// Auto-expand the Channels section when a channel is selected via canvas
-			setShowChannels(true);
 		}
+	}, []);
+
+	const handleChannelSelectFromNodePanel = useCallback((channelId: string | null) => {
+		setSelectedChannelId(channelId);
+		if (channelId) {
+			setSelectedEdgeId(null);
+		}
+	}, []);
+
+	const resolveSourceChannelName = useCallback((node: VisualNode): string | null => {
+		// Persist workflow channels at node granularity. Runtime fans out from the
+		// node to agent slots when delivery happens.
+		if (node.step.name?.trim()) return node.step.name.trim();
+		if (node.step.agentId?.trim()) return node.step.agentId.trim();
+		return null;
+	}, []);
+
+	const resolveTargetChannelName = useCallback((node: VisualNode): string | null => {
+		// Persist workflow channels at node granularity for both single-agent and
+		// multi-agent nodes so channel config is shared by the whole node.
+		if (node.step.name?.trim()) return node.step.name.trim();
+		if (node.step.agentId?.trim()) return node.step.agentId.trim();
+		return null;
 	}, []);
 
 	const handleCreateTransition = useCallback(
 		(fromLocalId: string, toLocalId: string) => {
-			// Task Agent is not a step in the execution flow — prevent it from being
-			// a source or target of workflow transitions.
+			// Task Agent is not a workflow node — prevent creating channels to/from it.
 			if (fromLocalId === TASK_AGENT_NODE_ID || toLocalId === TASK_AGENT_NODE_ID) return;
 
-			const fromKey = localIdToStepKey.get(fromLocalId) ?? fromLocalId;
-			const toKey = localIdToStepKey.get(toLocalId) ?? toLocalId;
-			setEdges((prev) => {
-				if (prev.some((e) => e.fromStepKey === fromKey && e.toStepKey === toKey)) return prev;
-				return [...prev, { fromStepKey: fromKey, toStepKey: toKey, condition: undefined }];
+			const fromNode = nodes.find((n) => n.step.localId === fromLocalId);
+			const toNode = nodes.find((n) => n.step.localId === toLocalId);
+			if (!fromNode || !toNode) return;
+
+			const fromName = resolveSourceChannelName(fromNode);
+			const toName = resolveTargetChannelName(toNode);
+			if (!toName || !fromName) return;
+
+			setChannels((prev) => {
+				const newChannel: WorkflowChannel = {
+					from: fromName,
+					to: toName,
+					direction: 'one-way',
+				};
+
+				// Deduplicate exact same directed channel produced by repeated drags.
+				if (
+					prev.some(
+						(ch) =>
+							ch.from === newChannel.from &&
+							!Array.isArray(ch.to) &&
+							ch.to === newChannel.to &&
+							ch.direction === newChannel.direction
+					)
+				) {
+					return prev;
+				}
+
+				if (inferChannelIsCyclic(newChannel, prev, endpointNodeIdLookup, nodeOrderByLocalId)) {
+					newChannel.maxCycles = 5;
+				}
+
+				return [...prev, newChannel];
 			});
 		},
-		[localIdToStepKey]
+		[
+			nodes,
+			resolveSourceChannelName,
+			resolveTargetChannelName,
+			endpointNodeIdLookup,
+			nodeOrderByLocalId,
+		]
 	);
+
+	const handleUpdateChannelFromEdgePanel = useCallback(
+		(index: number, channel: WorkflowChannel) => {
+			setChannels((prev) => prev.map((ch, i) => (i === index ? channel : ch)));
+		},
+		[]
+	);
+
+	const handleUpdateGatesFromEdgePanel = useCallback((nextGates: Gate[]) => {
+		setGates(nextGates);
+	}, []);
+
+	const handleDeleteChannelFromEdgePanel = useCallback((index: number) => {
+		setChannels((prev) => prev.filter((_, i) => i !== index));
+	}, []);
+
+	const handleConvertChannelRelationToBidirectional = useCallback(() => {
+		if (!selectedChannelInfo?.fromNode || !selectedChannelInfo.toNode) return;
+
+		const reverseSourceName = resolveSourceChannelName(selectedChannelInfo.toNode);
+		const reverseTargetName = resolveTargetChannelName(selectedChannelInfo.fromNode);
+		if (!reverseSourceName || !reverseTargetName) return;
+
+		const relationFromStepId = selectedChannelInfo.relation.fromStepId;
+		const relationToStepId = selectedChannelInfo.relation.toStepId;
+
+		setChannels((prev) => {
+			const next = [...prev];
+
+			const reverseAlreadyExists = next.some((channel) => {
+				const fromId = endpointNodeIdLookup.get(channel.from);
+				const targetValues = Array.isArray(channel.to) ? channel.to : [channel.to];
+				const targetNodeIds = targetValues
+					.map((target) => endpointNodeIdLookup.get(target) ?? null)
+					.filter((nodeId): nodeId is string => !!nodeId);
+
+				return (
+					fromId === relationToStepId &&
+					targetNodeIds.includes(relationFromStepId) &&
+					channel.from === reverseSourceName &&
+					targetValues.includes(reverseTargetName)
+				);
+			});
+
+			if (reverseAlreadyExists) return prev;
+
+			const reverseChannel: WorkflowChannel = {
+				from: reverseSourceName,
+				to: reverseTargetName,
+				direction: 'one-way',
+			};
+			if (inferChannelIsCyclic(reverseChannel, next, endpointNodeIdLookup, nodeOrderByLocalId)) {
+				reverseChannel.maxCycles = 5;
+			}
+			next.push(reverseChannel);
+
+			return next;
+		});
+	}, [
+		selectedChannelInfo,
+		resolveSourceChannelName,
+		resolveTargetChannelName,
+		endpointNodeIdLookup,
+		nodeOrderByLocalId,
+	]);
 
 	const handleDeleteEdge = useCallback(
 		(edgeId: string) => {
@@ -608,23 +937,23 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function applyTemplate(template: WorkflowTemplate) {
-		const localIds = template.stepRoles.map(() => generateUUID());
-		const firstLocalId = localIds[0];
+		const templateSteps = buildTemplateNodes(template, agents);
+		if (templateSteps.length === 0) return;
+		const firstLocalId = templateSteps[0].localId;
 
-		const newNodes: VisualNode[] = template.stepRoles.map((role, i) => {
-			const found = agents.find(
-				(a) => a.name.toLowerCase() === role || a.role.toLowerCase() === role
-			);
-			return {
-				step: {
-					localId: localIds[i],
-					name: role.charAt(0).toUpperCase() + role.slice(1),
-					agentId: found?.id ?? '',
-					instructions: '',
-				},
-				position: { x: 0, y: 0 }, // overwritten by autoLayout below
-			};
-		});
+		const newNodes: VisualNode[] = templateSteps.map((step) => ({
+			step: {
+				...step,
+				agents: step.agents?.map((slot) => ({ ...slot })),
+				channels: step.channels?.map((channel) => ({
+					...channel,
+					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+				})),
+			},
+			position: { x: 0, y: 0 }, // overwritten by autoLayout below
+		}));
+
+		const localIds = templateSteps.map((step) => step.localId);
 
 		// Linear chain of edges
 		const newEdges: VisualEdge[] = localIds.slice(0, -1).map((fromId, i) => ({
@@ -638,6 +967,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			id: n.step.localId,
 			name: n.step.name,
 			agentId: n.step.agentId,
+			agents: n.step.agents?.map((slot) => ({ ...slot })),
+			model: n.step.model,
+			systemPrompt: n.step.systemPrompt,
 			instructions: n.step.instructions || undefined,
 		}));
 		const layoutTransitions: VisualTransition[] = newEdges.map((e, i) => ({
@@ -647,16 +979,18 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			order: i,
 		}));
 
-		const positions = autoLayout(layoutSteps, layoutTransitions, firstLocalId);
+		const positions = autoLayout(
+			layoutSteps,
+			layoutTransitions,
+			firstLocalId,
+			template.channels ?? []
+		);
 
 		const positionedNodes: VisualNode[] = newNodes.map((n) => ({
 			...n,
 			position: positions.get(n.step.localId) ?? n.position,
 		}));
 
-		// Re-inject the Task Agent virtual node at the position autoLayout computed for it.
-		// applyTemplate replaces the entire nodes array, so without this the Task Agent
-		// would be evicted even in edit mode (where it was previously present).
 		const taskAgentVisualNode: VisualNode = {
 			step: {
 				localId: TASK_AGENT_NODE_ID,
@@ -665,34 +999,57 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				agentId: '',
 				instructions: '',
 			},
-			position: positions.get(TASK_AGENT_NODE_ID) ?? TASK_AGENT_INITIAL_POSITION,
+			position: { x: 0, y: 0 },
 		};
-		setNodes([taskAgentVisualNode, ...positionedNodes]);
+		const nextNodes = [taskAgentVisualNode, ...positionedNodes];
+		const nextChannels = (template.channels ?? []).map((channel) => ({
+			...channel,
+			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+		}));
+		const nextGates = (template.gates ?? []).map((gate) => ({
+			...gate,
+			fields: [...gate.fields],
+		}));
+
+		setNodes(nextNodes);
 		setEdges(newEdges);
+		setChannels(nextChannels);
+		setGates(nextGates);
+		if (template.tags) {
+			setTags([...template.tags]);
+		}
 		setStartStepId(firstLocalId);
 		setSelectedNodeId(null);
 		setSelectedEdgeId(null);
 		setShowTemplates(false);
+		setPendingTemplate(null);
+		setTemplateBaselineSignature(
+			buildTemplateCanvasSignature(nextNodes, newEdges, nextChannels, firstLocalId, nextGates)
+		);
 		if (!name) setName(template.label);
 
 		// Fit viewport to the new layout
 		const container = canvasContainerRef.current;
 		if (container) {
-			const nodePositions: NodePosition = {};
-			for (const n of positionedNodes) {
-				nodePositions[n.step.localId] = {
-					x: n.position.x,
-					y: n.position.y,
-					width: DEFAULT_NODE_WIDTH,
-					height: DEFAULT_NODE_HEIGHT,
-				};
-			}
 			setViewportState(
-				computeFitToView(nodePositions, container.clientWidth, container.clientHeight)
+				computeFitToView(
+					buildVisualNodePositions(positionedNodes),
+					container.clientWidth,
+					container.clientHeight
+				)
 			);
 		} else {
 			setViewportState({ offsetX: 0, offsetY: 0, scale: 1 });
 		}
+	}
+
+	function handleTemplateSelection(template: WorkflowTemplate) {
+		setShowTemplates(false);
+		if (currentTemplateCanvasSignature !== templateBaselineSignature) {
+			setPendingTemplate(template);
+			return;
+		}
+		applyTemplate(template);
 	}
 
 	// ------------------------------------------------------------------
@@ -711,16 +1068,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		);
 
 		if (regularNodes.length === 0) {
-			setError('A workflow must have at least one step.');
+			setError('A workflow must have at least one node.');
 			return;
 		}
 
-		// Validate each step has an agent assigned (single or multi-agent)
+		// Validate each node has an agent assigned (single or multi-agent)
 		for (let i = 0; i < regularNodes.length; i++) {
 			const step = regularNodes[i].step;
 			const hasMultiAgent = Array.isArray(step.agents) && step.agents.length > 0;
 			if (!hasMultiAgent && !step.agentId) {
-				setError(`Step ${i + 1} requires an agent.`);
+				setError(`Node ${i + 1} requires an agent.`);
 				return;
 			}
 		}
@@ -733,7 +1090,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			}
 		}
 
-		const visualState: VisualEditorState = { nodes, edges, startNodeId, rules, tags, channels };
+		const visualState: VisualEditorState = {
+			nodes,
+			edges,
+			startNodeId,
+			rules,
+			tags,
+			channels,
+			gates,
+		};
 
 		setSaving(true);
 		setError(null);
@@ -839,8 +1204,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			)}
 
 			{/* ---- Canvas area ---- */}
-			<div ref={canvasContainerRef} class="flex-1 relative overflow-hidden bg-dark-950">
-				{/* Add Step + Template toolbar */}
+			<div class="flex-1 relative overflow-hidden bg-dark-950">
+				{/* Add Node + Template toolbar */}
 				<div
 					class="absolute top-3 left-3 z-10 flex items-center gap-2"
 					style={{ pointerEvents: 'auto' }}
@@ -858,91 +1223,111 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 								d="M12 4v16m8-8H4"
 							/>
 						</svg>
-						Add Step
+						Add Node
 					</button>
 
-					{/* Template picker — only shown when creating a new workflow with no steps yet */}
-					{!isEditing &&
-						nodes.filter(
-							(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-						).length === 0 && (
-							<div class="relative">
-								<button
-									onClick={() => setShowTemplates((v) => !v)}
-									data-testid="template-picker-button"
-									class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
+					{/* Template picker — always available in create mode.
+					    Reapplying prompts only when the canvas has diverged. */}
+					{!isEditing && (
+						<div class="relative">
+							<button
+								onClick={() => setShowTemplates((v) => !v)}
+								data-testid="template-picker-button"
+								class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
+							>
+								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M4 6h16M4 10h16M4 14h8"
+									/>
+								</svg>
+								From Template
+								<svg
+									class={`w-3 h-3 transition-transform ${showTemplates ? 'rotate-180' : ''}`}
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
 								>
-									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M4 6h16M4 10h16M4 14h8"
-										/>
-									</svg>
-									From Template
-									<svg
-										class={`w-3 h-3 transition-transform ${showTemplates ? 'rotate-180' : ''}`}
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M19 9l-7 7-7-7"
-										/>
-									</svg>
-								</button>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M19 9l-7 7-7-7"
+									/>
+								</svg>
+							</button>
 
-								{showTemplates && (
-									<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
-										{TEMPLATES.map((t) => (
-											<button
-												key={t.label}
-												onClick={() => applyTemplate(t)}
-												data-testid="template-option"
-												data-template-label={t.label}
-												class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
-											>
-												<div class="text-xs font-medium text-gray-200">{t.label}</div>
-												<div class="text-xs text-gray-500 mt-0.5">{t.description}</div>
-											</button>
-										))}
-									</div>
-								)}
-							</div>
-						)}
+							{showTemplates && (
+								<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
+									{TEMPLATES.map((t) => (
+										<button
+											key={t.label}
+											onClick={() => handleTemplateSelection(t)}
+											data-testid="template-option"
+											data-template-label={t.label}
+											class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
+										>
+											<div class="text-xs font-medium text-gray-200">{t.label}</div>
+											<div class="text-xs text-gray-500 mt-0.5">{t.description}</div>
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+					)}
 				</div>
 
 				{/* Empty state overlay — shown when no regular steps exist (Task Agent doesn't count) */}
-				{nodes.filter(
-					(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
-				).length === 0 && (
+				{regularNodes.length === 0 && (
 					<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
 						<div class="text-center">
-							<p class="text-sm text-gray-600">No steps yet.</p>
-							<p class="text-xs text-gray-700 mt-1">Click "Add Step" to start building.</p>
+							<p class="text-sm text-gray-600">No nodes yet.</p>
+							<p class="text-xs text-gray-700 mt-1">Click "Add Node" to start building.</p>
 						</div>
 					</div>
 				)}
 
-				<WorkflowCanvas
-					nodes={nodeData}
-					viewportState={viewportState}
-					onViewportChange={setViewportState}
-					transitions={[]}
-					channels={channelEdges}
-					onNodeSelect={handleNodeSelect}
-					onDeleteNode={handleDeleteNode}
-					onNodePositionChange={handleNodePositionChange}
-					onCreateTransition={handleCreateTransition}
-					onEdgeSelect={handleEdgeSelect}
-					onDeleteEdge={handleDeleteEdge}
-					onChannelSelect={handleChannelSelect}
-					selectedChannelId={selectedChannelId}
-				/>
+				<div class="h-full min-h-0 p-3 pt-16">
+					<div
+						ref={canvasContainerRef}
+						class="relative h-full min-h-0 overflow-hidden rounded-xl border border-dark-700 bg-dark-950"
+						data-testid="native-workflow-canvas-panel"
+					>
+						<div class="pointer-events-none absolute left-3 top-3 z-10 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+							Current Canvas
+						</div>
+						<div
+							data-testid="task-agent-overlay"
+							class="absolute right-3 top-3 z-20 rounded-xl border border-amber-400 bg-amber-950/95 px-4 py-3 shadow-lg"
+						>
+							<div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-300">
+								Task Agent
+							</div>
+							<div class="mt-1 text-sm text-amber-100">Always available coordinator</div>
+							<div class="mt-1 text-xs text-amber-200/70">
+								Implicitly reachable by every workflow node.
+							</div>
+						</div>
+						<WorkflowCanvas
+							nodes={nodeData}
+							nodePositions={canvasNodePositions}
+							viewportState={viewportState}
+							onViewportChange={setViewportState}
+							transitions={[]}
+							channels={channelEdges}
+							onNodeSelect={handleNodeSelect}
+							onDeleteNode={handleDeleteNode}
+							onNodePositionChange={handleNodePositionChange}
+							onCreateTransition={handleCreateTransition}
+							onEdgeSelect={handleEdgeSelect}
+							onDeleteEdge={handleDeleteEdge}
+							onChannelSelect={handleChannelSelect}
+							selectedChannelId={selectedChannelId}
+						/>
+					</div>
+				</div>
 
 				{/* NodeConfigPanel — anchored to the right of the canvas.
 				    isFirstStep/isLastStep indicate whether the node has no incoming/outgoing
@@ -953,24 +1338,32 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					<NodeConfigPanel
 						step={selectedNode.step}
 						agents={agents}
-						entryCondition={getEntryCondition(selectedNode)}
-						exitCondition={getExitCondition(selectedNode)}
 						isStartNode={nodeIsStart(selectedNode)}
-						isFirstStep={
-							!edges.some(
-								(e) => e.toStepKey === (selectedNode.step.id ?? selectedNode.step.localId)
-							)
-						}
-						isLastStep={
-							!edges.some(
-								(e) => e.fromStepKey === (selectedNode.step.id ?? selectedNode.step.localId)
-							)
-						}
 						onUpdate={handleUpdateNode}
-						onUpdateEntryCondition={(c) => handleUpdateEntryCondition(selectedNode, c)}
-						onUpdateExitCondition={(c) => handleUpdateExitCondition(selectedNode, c)}
 						onSetAsStart={handleSetAsStart}
-						onClose={() => setSelectedNodeId(null)}
+						channelLinks={nodeChannelLinksByNodeId.get(selectedNode.step.localId) ?? []}
+						onOpenChannelLink={handleChannelSelectFromNodePanel}
+						selectedChannelRelation={
+							selectedChannelInfo
+								? {
+										title: 'Channel Links',
+										description: `${selectedChannelInfo.relationLabel} · ${selectedChannelInfo.visibleLinkCount} editable link${selectedChannelInfo.visibleLinkCount === 1 ? '' : 's'}`,
+										forwardLinks: selectedChannelInfo.forwardLinks,
+										reverseLinks: selectedChannelInfo.reverseLinks,
+										canConvertToBidirectional: selectedChannelInfo.canConvertToBidirectional,
+									}
+								: undefined
+						}
+						onUpdateChannelLink={handleUpdateChannelFromEdgePanel}
+						onDeleteChannelLink={handleDeleteChannelFromEdgePanel}
+						channelRelationGates={gates}
+						onUpdateChannelGates={handleUpdateGatesFromEdgePanel}
+						onConvertChannelRelationToBidirectional={handleConvertChannelRelationToBidirectional}
+						onCloseChannelLink={() => setSelectedChannelId(null)}
+						onClose={() => {
+							setSelectedChannelId(null);
+							setSelectedNodeId(null);
+						}}
 						onDelete={handleDeleteNode}
 					/>
 				)}
@@ -991,6 +1384,40 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						/>
 					</div>
 				)}
+
+				{/* ChannelRelationConfigPanel — edit underlying channel links for a semantic relation */}
+				{selectedChannelInfo && !selectedNode && (
+					<ChannelRelationConfigPanel
+						title="Channel Links"
+						description={`${selectedChannelInfo.relationLabel} · ${selectedChannelInfo.visibleLinkCount} editable link${selectedChannelInfo.visibleLinkCount === 1 ? '' : 's'}`}
+						forwardLinks={selectedChannelInfo.forwardLinks}
+						reverseLinks={selectedChannelInfo.reverseLinks}
+						canConvertToBidirectional={selectedChannelInfo.canConvertToBidirectional}
+						onConvertToBidirectional={handleConvertChannelRelationToBidirectional}
+						gates={gates}
+						onGatesChange={handleUpdateGatesFromEdgePanel}
+						onChange={handleUpdateChannelFromEdgePanel}
+						onDelete={handleDeleteChannelFromEdgePanel}
+						onBack={selectedNode ? () => setSelectedChannelId(null) : undefined}
+						onClose={() => setSelectedChannelId(null)}
+						width={selectedNode ? 320 : 360}
+					/>
+				)}
+
+				<ConfirmModal
+					isOpen={!!pendingTemplate}
+					onClose={() => setPendingTemplate(null)}
+					onConfirm={() => {
+						if (pendingTemplate) applyTemplate(pendingTemplate);
+					}}
+					title="Replace current canvas?"
+					message="Applying a template will replace the current workflow canvas."
+					confirmText="Apply Template"
+					confirmButtonVariant="warning"
+					confirmTestId="confirm-template-apply-button"
+				>
+					<p class="text-xs text-gray-500">Current canvas changes will be discarded.</p>
+				</ConfirmModal>
 			</div>
 
 			{/* ---- Tags and Rules (collapsible) ---- */}
@@ -1047,43 +1474,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					</div>
 				</div>
 
-				{/* Channels — collapsible section for workflow-level channel management */}
-				<div class="px-4 py-2 border-b border-dark-800">
-					<button
-						onClick={() => setShowChannels((v) => !v)}
-						class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-						data-testid="toggle-channels-button"
-					>
-						<svg
-							class={`w-3 h-3 transition-transform ${showChannels ? 'rotate-90' : ''}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M9 5l7 7-7 7"
-							/>
-						</svg>
-						<span class="font-semibold uppercase tracking-wider">
-							Channels {channels.length > 0 ? `(${channels.length})` : ''}
-						</span>
-					</button>
-
-					{showChannels && (
-						<div class="mt-3" data-testid="channels-section">
-							<ChannelEditor
-								channels={channels}
-								onChange={setChannels}
-								agentRoles={agentRoles}
-								highlightIndex={selectedChannelId != null ? parseInt(selectedChannelId, 10) : null}
-							/>
-						</div>
-					)}
-				</div>
-
 				{/* Rules — collapsible */}
 				<div class="px-4 py-2">
 					<button
@@ -1115,7 +1505,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 								rules={rules}
 								steps={nodes.map((n, i) => ({
 									id: n.step.id ?? n.step.localId,
-									name: n.step.name || `Step ${i + 1}`,
+									name: n.step.name || `Node ${i + 1}`,
 									agentId: n.step.agentId,
 									instructions: n.step.instructions,
 								}))}

@@ -58,6 +58,7 @@ import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager'
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
+import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
@@ -338,9 +339,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
-	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
+	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
+	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
@@ -378,7 +380,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	deps.neoAgentManager.setToolsConfig(neoToolsConfig, deps.appMcpManager);
 
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
-		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);
+		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
 	};
 
 	setupSpaceTaskHandlers(
@@ -411,7 +413,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowManager,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
+		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
+		channelCycleRepo,
 		sessionManager: deps.sessionManager,
 		daemonHub: deps.daemonHub,
 	});
@@ -441,6 +445,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		// Use reactiveDb.db so Task Agent session writes invalidate LiveQuery tables.
 		db: deps.reactiveDb.db,
 		sessionManager: deps.sessionManager,
+		reactiveDb: deps.reactiveDb,
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
 		spaceWorkflowManager,
@@ -448,6 +453,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		gateDataRepo,
+		channelCycleRepo,
 		daemonHub: deps.daemonHub,
 		messageHub: deps.messageHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
@@ -576,7 +582,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	deps.neoAgentManager.setActivityLogger(neoActivityLogger);
 
 	// Human ↔ Task Agent message routing handlers (require taskAgentManager)
-	setupSpaceTaskMessageHandlers(deps.messageHub, taskAgentManager, deps.db);
+	setupSpaceTaskMessageHandlers(deps.messageHub, taskAgentManager, deps.db, deps.daemonHub);
 
 	// Space export/import handlers
 	setupSpaceExportImportHandlers(
@@ -591,7 +597,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space workflow run handlers — reuse the same factory pattern as spaceTask handlers
 	const spaceWorkflowRunTaskManagerFactory: SpaceWorkflowRunTaskManagerFactory = (spaceId) => {
-		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);
+		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
 	};
 	setupSpaceWorkflowRunHandlers(
 		deps.messageHub,

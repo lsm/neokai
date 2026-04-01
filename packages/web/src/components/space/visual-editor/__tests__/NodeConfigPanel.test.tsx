@@ -2,15 +2,13 @@
  * Unit tests for NodeConfigPanel
  *
  * Tests:
- * - Renders all fields (step name, agent dropdown, entry/exit gates, instructions)
+ * - Renders all primary fields (step name, agent dropdown, model override, instructions)
  * - Header shows step name and close button
  * - Step name in header updates when step changes
  * - "Set as Start" button visible for non-start nodes, hidden for start node
  * - "Set as Start" calls onSetAsStart with the step localId
  * - onClose fires when close button clicked
  * - onUpdate fires with updated step when fields change
- * - onUpdateEntryCondition fires when entry gate changes
- * - onUpdateExitCondition fires when exit gate changes
  * - Delete button is disabled for start node with tooltip hint
  * - Delete button shows confirmation dialog when clicked
  * - Confirming delete calls onDelete; cancelling dismisses dialog
@@ -18,13 +16,41 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, act } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
+
+vi.mock('../../../../lib/connection-manager', () => ({
+	connectionManager: {
+		getHubIfConnected: () => ({
+			request: vi.fn(async (method: string) => {
+				if (method === 'models.list') {
+					return {
+						models: [
+							{
+								id: 'claude-sonnet-4-6',
+								display_name: 'Claude Sonnet 4.6',
+								description: '',
+								provider: 'anthropic',
+							},
+							{
+								id: 'gpt-5.4',
+								display_name: 'GPT-5.4',
+								description: '',
+								provider: 'openai',
+							},
+						],
+					};
+				}
+				return {};
+			}),
+		}),
+	},
+}));
+
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
 import type { NodeDraft } from '../../WorkflowNodeCard';
-import type { ConditionDraft } from '../GateConfig';
 
 afterEach(() => cleanup());
 
@@ -55,12 +81,8 @@ function makeProps(overrides: Partial<NodeConfigPanelProps> = {}): NodeConfigPan
 	return {
 		step: makeStep(),
 		agents: defaultAgents,
-		entryCondition: { type: 'always' } as ConditionDraft,
-		exitCondition: { type: 'always' } as ConditionDraft,
 		isStartNode: false,
 		onUpdate: vi.fn(),
-		onUpdateEntryCondition: vi.fn(),
-		onUpdateExitCondition: vi.fn(),
 		onSetAsStart: vi.fn(),
 		onClose: vi.fn(),
 		onDelete: vi.fn(),
@@ -86,11 +108,11 @@ describe('NodeConfigPanel', () => {
 			expect(getByText('Parse Data')).toBeTruthy();
 		});
 
-		it('shows "Unnamed Step" when name is empty', () => {
+		it('shows "Unnamed Node" when name is empty', () => {
 			const { getByText } = render(
 				<NodeConfigPanel {...makeProps({ step: makeStep({ name: '' }) })} />
 			);
-			expect(getByText('Unnamed Step')).toBeTruthy();
+			expect(getByText('Unnamed Node')).toBeTruthy();
 		});
 
 		it('renders the step name input with current value', () => {
@@ -117,18 +139,16 @@ describe('NodeConfigPanel', () => {
 
 		it('renders the instructions textarea with current value', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			fireEvent.click(getByTestId('prompt-instructions-button'));
 			const textarea = getByTestId('instructions-textarea') as HTMLTextAreaElement;
 			expect(textarea.value).toBe('Do stuff.');
 		});
 
-		it('renders entry gate selector', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(getByText('Entry Gate')).toBeTruthy();
-		});
-
-		it('renders exit gate selector', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(getByText('Exit Gate')).toBeTruthy();
+		it('renders the single-agent model selector', async () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			expect(input.value).toBe('');
 		});
 
 		it('renders close button', () => {
@@ -136,7 +156,7 @@ describe('NodeConfigPanel', () => {
 			expect(getByTestId('close-button')).toBeTruthy();
 		});
 
-		it('renders delete step button', () => {
+		it('renders delete node button', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
 			expect(getByTestId('delete-step-button')).toBeTruthy();
 		});
@@ -202,6 +222,7 @@ describe('NodeConfigPanel', () => {
 		it('calls onUpdate with new instructions when textarea changes', () => {
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			fireEvent.click(getByTestId('prompt-instructions-button'));
 			fireEvent.input(getByTestId('instructions-textarea'), {
 				target: { value: 'New instructions.' },
 			});
@@ -210,48 +231,58 @@ describe('NodeConfigPanel', () => {
 			);
 		});
 
-		it('calls onUpdateEntryCondition when entry gate type changes', () => {
-			const onUpdateEntryCondition = vi.fn();
-			const { getByTestId } = render(
-				<NodeConfigPanel
-					{...makeProps({ onUpdateEntryCondition, entryCondition: { type: 'always' } })}
-				/>
+		it('calls onUpdate with new single-agent model when model selector changes', async () => {
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			await waitFor(() =>
+				expect(
+					(getByTestId('single-agent-model-input') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
 			);
-			fireEvent.change(getByTestId('entry-gate-select'), { target: { value: 'human' } });
-			expect(onUpdateEntryCondition).toHaveBeenCalledWith({ type: 'human', expression: undefined });
+			fireEvent.change(getByTestId('single-agent-model-input'), {
+				target: { value: 'gpt-5.4' },
+			});
+			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4' }));
 		});
 
-		it('calls onUpdateExitCondition when exit gate type changes', () => {
-			const onUpdateExitCondition = vi.fn();
+		it('clearing single-agent model sets model to undefined', async () => {
+			const onUpdate = vi.fn();
 			const { getByTestId } = render(
-				<NodeConfigPanel
-					{...makeProps({ onUpdateExitCondition, exitCondition: { type: 'always' } })}
-				/>
+				<NodeConfigPanel {...makeProps({ onUpdate, step: makeStep({ model: 'gpt-5.4' }) })} />
 			);
-			fireEvent.change(getByTestId('exit-gate-select'), { target: { value: 'condition' } });
-			expect(onUpdateExitCondition).toHaveBeenCalledWith({ type: 'condition', expression: '' });
+			await waitFor(() =>
+				expect(
+					(getByTestId('single-agent-model-input') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
+			);
+			fireEvent.change(getByTestId('single-agent-model-input'), {
+				target: { value: '' },
+			});
+			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
+		});
+
+		it('opens the dedicated prompt and instructions editor', () => {
+			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			expect(queryByTestId('node-system-prompt-input')).toBeNull();
+			fireEvent.click(getByTestId('prompt-instructions-button'));
+			expect(getByTestId('node-system-prompt-input')).toBeTruthy();
+			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 		});
 	});
 
-	describe('gate config — condition type', () => {
-		it('shows shell expression input when entry gate type is "condition"', () => {
-			const { getByPlaceholderText } = render(
-				<NodeConfigPanel
-					{...makeProps({ entryCondition: { type: 'condition', expression: '' } })}
-				/>
-			);
-			expect(getByPlaceholderText('e.g. bun test && git diff --quiet')).toBeTruthy();
-		});
-
-		it('shows human approval hint for "human" type', () => {
-			const { getByText } = render(
-				<NodeConfigPanel {...makeProps({ entryCondition: { type: 'human' } })} />
-			);
-			expect(getByText('Transition requires explicit human approval.')).toBeTruthy();
+	describe('instructions copy', () => {
+		it('explains that instructions are appended guidance, not the base system prompt', () => {
+			const { getByTestId, getByText } = render(<NodeConfigPanel {...makeProps()} />);
+			fireEvent.click(getByTestId('prompt-instructions-button'));
+			expect(
+				getByText(
+					'This editor shows the current values for both the shared prompt override and the shared instructions.'
+				)
+			).toBeTruthy();
 		});
 	});
 
-	describe('delete step', () => {
+	describe('delete node', () => {
 		it('delete button is disabled for start node', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ isStartNode: true })} />);
 			const btn = getByTestId('delete-step-button') as HTMLButtonElement;
@@ -336,26 +367,6 @@ describe('NodeConfigPanel', () => {
 		});
 	});
 
-	describe('terminal messages for boundary nodes', () => {
-		it('shows "Workflow starts here" for first step entry gate', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps({ isFirstStep: true })} />);
-			expect(getByText('Workflow starts here')).toBeTruthy();
-		});
-
-		it('shows "Workflow ends here" for last step exit gate', () => {
-			const { getByText } = render(<NodeConfigPanel {...makeProps({ isLastStep: true })} />);
-			expect(getByText('Workflow ends here')).toBeTruthy();
-		});
-
-		it('does not show terminal messages for mid-workflow nodes', () => {
-			const { container } = render(
-				<NodeConfigPanel {...makeProps({ isFirstStep: false, isLastStep: false })} />
-			);
-			expect(container.textContent).not.toContain('Workflow starts here');
-			expect(container.textContent).not.toContain('Workflow ends here');
-		});
-	});
-
 	// ============================================================================
 	// Multi-agent: AgentsSection
 	// ============================================================================
@@ -420,6 +431,15 @@ describe('NodeConfigPanel', () => {
 			// Role appears as the value of the role input field
 			const roleInput = getByTestId('agent-role-input') as HTMLInputElement;
 			expect(roleInput.value).toBe('planner');
+		});
+
+		it('renders an agent selector for each multi-agent slot', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect((getByTestId('agent-slot-select') as HTMLSelectElement).value).toBe('agent-1');
 		});
 
 		it('remove agent button calls onUpdate without that agent', () => {
@@ -515,10 +535,10 @@ describe('NodeConfigPanel', () => {
 	});
 
 	// ============================================================================
-	// Per-slot override fields: role, model, systemPrompt
+	// Per-slot fields: role and model
 	// ============================================================================
 
-	describe('per-slot override fields', () => {
+	describe('per-slot fields', () => {
 		it('renders a role input for each agent slot in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',
@@ -555,15 +575,6 @@ describe('NodeConfigPanel', () => {
 			expect(getByTestId('override-badge')).toBeTruthy();
 		});
 
-		it('shows override-badge when slot has systemPrompt override', () => {
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner', systemPrompt: 'You are strict.' }],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			expect(getByTestId('override-badge')).toBeTruthy();
-		});
-
 		it('does not show override-badge when slot has no overrides', () => {
 			const step = makeStep({
 				agentId: '',
@@ -573,82 +584,80 @@ describe('NodeConfigPanel', () => {
 			expect(queryByTestId('override-badge')).toBeNull();
 		});
 
-		it('model and systemPrompt fields are hidden by default (before expanding)', () => {
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner' }],
-			});
-			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			expect(queryByTestId('agent-model-input')).toBeNull();
-			expect(queryByTestId('agent-system-prompt-input')).toBeNull();
-		});
-
-		it('clicking toggle-overrides-button reveals model and systemPrompt fields', () => {
+		it('shows model selector for each slot without extra expansion', async () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			expect(getByTestId('slot-overrides')).toBeTruthy();
-			expect(getByTestId('agent-model-input')).toBeTruthy();
-			expect(getByTestId('agent-system-prompt-input')).toBeTruthy();
+			await waitFor(() =>
+				expect(
+					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
+			);
+			expect(getByTestId('agent-model-select')).toBeTruthy();
 		});
 
-		it('clicking toggle-overrides-button twice collapses the override section', () => {
+		it('editing agent selection calls onUpdate with updated agentId', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
-			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			expect(getByTestId('slot-overrides')).toBeTruthy();
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			expect(queryByTestId('slot-overrides')).toBeNull();
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.change(getByTestId('agent-slot-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].agentId).toBe('agent-2');
 		});
 
-		it('editing model input calls onUpdate with model field set', () => {
+		it('editing model selector calls onUpdate with model field set', async () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			// Expand the overrides section first
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			fireEvent.input(getByTestId('agent-model-input'), {
-				target: { value: 'claude-opus-4-6' },
-			});
+			await waitFor(() =>
+				expect(
+					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
+			);
+			fireEvent.change(getByTestId('agent-model-select'), { target: { value: 'gpt-5.4' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			expect(updatedStep.agents[0].model).toBe('claude-opus-4-6');
+			expect(updatedStep.agents[0].model).toBe('gpt-5.4');
 		});
 
-		it('clearing model input sets model to undefined', () => {
+		it('clearing model selector sets model to undefined', async () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner', model: 'claude-opus-4-6' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			fireEvent.input(getByTestId('agent-model-input'), { target: { value: '' } });
+			await waitFor(() =>
+				expect(
+					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
+				).toBeGreaterThan(1)
+			);
+			fireEvent.change(getByTestId('agent-model-select'), { target: { value: '' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
 			expect(updatedStep.agents[0].model).toBeUndefined();
 		});
 
-		it('editing systemPrompt textarea calls onUpdate with systemPrompt set', () => {
-			const onUpdate = vi.fn();
+		it('shared prompt and instructions editor is used for multi-agent nodes too', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
+			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			fireEvent.input(getByTestId('agent-system-prompt-input'), {
+			fireEvent.click(getByTestId('prompt-instructions-button'));
+			fireEvent.input(getByTestId('node-system-prompt-input'), {
 				target: { value: 'Be very strict.' },
 			});
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			expect(updatedStep.agents[0].systemPrompt).toBe('Be very strict.');
+			expect(updatedStep.systemPrompt).toBe('Be very strict.');
+			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 		});
 
 		it('adding same agent twice with different roles: both slots shown', () => {
@@ -687,7 +696,7 @@ describe('NodeConfigPanel', () => {
 			expect(queryAllByTestId('override-badge')).toHaveLength(1);
 		});
 
-		it('override section stays expanded after the slot role is renamed', async () => {
+		it('shared prompt and instructions view stays addressable after a slot role is renamed', async () => {
 			// Use a controlled wrapper so onUpdate actually updates the step prop,
 			// matching how the real parent (VisualWorkflowEditor) behaves.
 			function Wrapper() {
@@ -698,17 +707,12 @@ describe('NodeConfigPanel', () => {
 			}
 			const { getByTestId, queryByTestId } = render(<Wrapper />);
 
-			// Expand the overrides section
-			fireEvent.click(getByTestId('toggle-overrides-button'));
-			expect(getByTestId('slot-overrides')).toBeTruthy();
-
-			// Rename the role — expandedSlots must migrate the key from 'planner' to 'lead-planner'
 			await act(async () => {
 				fireEvent.input(getByTestId('agent-role-input'), { target: { value: 'lead-planner' } });
 			});
 
-			// Override section should still be visible after the rename (key migrated in expandedSlots)
-			expect(queryByTestId('slot-overrides')).toBeTruthy();
+			fireEvent.click(getByTestId('prompt-instructions-button'));
+			expect(queryByTestId('node-system-prompt-input')).toBeTruthy();
 		});
 	});
 });

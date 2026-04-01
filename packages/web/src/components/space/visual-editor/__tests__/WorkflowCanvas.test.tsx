@@ -711,7 +711,7 @@ describe('WorkflowCanvas — explicit channels prop', () => {
 		expect(channelEdges.length).toBeGreaterThan(0);
 	});
 
-	it('deduplicates explicit channels with computed node channels', () => {
+	it('prefers explicit channels over computed node channels when provided', () => {
 		// Node has a channel from step-1 to step-2 (via workflowChannels prop)
 		const agentWithRole = makeAgent('agent-1', 'Coder');
 		agentWithRole.role = 'coder';
@@ -756,9 +756,10 @@ describe('WorkflowCanvas — explicit channels prop', () => {
 		}
 
 		const { container } = render(<Wrapper />);
-		// Should deduplicate: only one edge for task-agent->step-1
-		const taskAgentEdges = container.querySelectorAll('[data-channel-edge="task-agent:step-1"]');
-		expect(taskAgentEdges.length).toBeLessThanOrEqual(1);
+		// Explicit channels should win, so only the explicitly passed edge renders.
+		const taskAgentEdge = container.querySelector('[data-testid="channel-edge-task-agent-step-1"]');
+		expect(taskAgentEdge).toBeTruthy();
+		expect(container.querySelectorAll('[data-channel-edge]').length).toBe(1);
 		cleanup();
 	});
 });

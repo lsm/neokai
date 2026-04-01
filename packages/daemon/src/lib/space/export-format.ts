@@ -84,6 +84,8 @@ const exportedWorkflowChannelSchema = z.object({
 const exportedWorkflowNodeSchema = z
 	.object({
 		agentRef: z.string().min(1).optional(),
+		model: z.string().optional(),
+		systemPrompt: z.string().optional(),
 		agents: z.array(exportedWorkflowNodeAgentSchema).optional(),
 		name: z.string().min(1),
 		instructions: z.string().optional(),
@@ -125,7 +127,6 @@ const exportedAgentBaseSchema = z.object({
 	role: z.string().min(1),
 	systemPrompt: z.string().optional(),
 	tools: z.array(z.string()).optional(),
-	injectWorkflowContext: z.boolean().optional(),
 	config: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -181,7 +182,6 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 	if (agent.provider !== undefined) exported.provider = agent.provider;
 	if (agent.systemPrompt !== undefined) exported.systemPrompt = agent.systemPrompt;
 	if (agent.tools !== undefined) exported.tools = agent.tools;
-	if (agent.injectWorkflowContext === true) exported.injectWorkflowContext = true;
 	return exported;
 }
 
@@ -248,6 +248,8 @@ export function exportWorkflow(
 			if (primaryAgentId) {
 				exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
 			}
+			if (node.model !== undefined) exported.model = node.model;
+			if (node.systemPrompt !== undefined) exported.systemPrompt = node.systemPrompt;
 		}
 
 		if (node.instructions !== undefined) exported.instructions = node.instructions;
@@ -297,9 +299,8 @@ export function exportWorkflow(
 				to: ch.to,
 				direction: ch.direction,
 			};
-			if (ch.isCyclic !== undefined) exported.isCyclic = ch.isCyclic;
+			if (ch.maxCycles !== undefined) exported.maxCycles = ch.maxCycles;
 			if (ch.label !== undefined) exported.label = ch.label;
-			if (ch.gate !== undefined) exported.gate = ch.gate;
 			return exported;
 		});
 		result.channels = exportedChannels;

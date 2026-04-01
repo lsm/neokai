@@ -277,6 +277,26 @@ describe('setupLiveQueryHandlers', () => {
 		).rejects.toThrow('Unauthorized');
 	});
 
+	test('subscribe spaceTaskActivity.byTask: nonexistent task rejected', async () => {
+		await expect(
+			setup.callHandler('liveQuery.subscribe', {
+				queryName: 'spaceTaskActivity.byTask',
+				params: ['space-task-does-not-exist'],
+				subscriptionId: 'sub-1',
+			})
+		).rejects.toThrow('Unauthorized');
+	});
+
+	test('subscribe spaceTaskMessages.byTask: nonexistent task rejected', async () => {
+		await expect(
+			setup.callHandler('liveQuery.subscribe', {
+				queryName: 'spaceTaskMessages.byTask',
+				params: ['space-task-does-not-exist'],
+				subscriptionId: 'sub-1',
+			})
+		).rejects.toThrow('Unauthorized');
+	});
+
 	// -----------------------------------------------------------------------
 	// Unauthorized group_id
 	// -----------------------------------------------------------------------

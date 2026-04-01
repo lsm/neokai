@@ -51,6 +51,7 @@ describe('resolveNodeAgents', () => {
 
 	test('returns agents array when agents is set (non-empty)', () => {
 		const node = makeNode({
+			instructions: 'shared guidance',
 			agents: [
 				{ agentId: 'agent-coder-id', name: 'coder', instructions: 'write code' },
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
@@ -60,8 +61,10 @@ describe('resolveNodeAgents', () => {
 		expect(result).toHaveLength(2);
 		expect(result[0].agentId).toBe('agent-coder-id');
 		expect(result[0].name).toBe('coder');
+		expect(result[0].instructions).toBe('shared guidance');
 		expect(result[1].agentId).toBe('agent-reviewer-id');
 		expect(result[1].name).toBe('reviewer');
+		expect(result[1].instructions).toBe('shared guidance');
 	});
 
 	test('agents takes precedence over agentId when both are set', () => {
@@ -88,7 +91,8 @@ describe('resolveNodeAgents', () => {
 
 	test('single-element agents array works correctly', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder', instructions: 'custom' }],
+			instructions: 'custom',
+			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
 		});
 		expect(resolveNodeAgents(node)).toEqual([
 			{ agentId: 'agent-coder-id', name: 'coder', instructions: 'custom' },
@@ -99,6 +103,17 @@ describe('resolveNodeAgents', () => {
 		const node = makeNode({ agentId: 'agent-coder-id' });
 		const result = resolveNodeAgents(node);
 		expect(result[0].instructions).toBeUndefined();
+	});
+
+	test('single-agent shorthand preserves node-level model and systemPrompt overrides', () => {
+		const node = makeNode({
+			agentId: 'agent-coder-id',
+			model: 'gpt-5.4',
+			systemPrompt: 'Be concise.',
+		});
+		const result = resolveNodeAgents(node);
+		expect(result[0].model).toBe('gpt-5.4');
+		expect(result[0].systemPrompt).toBe('Be concise.');
 	});
 
 	test('same agentId can appear multiple times with different roles', () => {
@@ -116,20 +131,24 @@ describe('resolveNodeAgents', () => {
 		expect(result[1].agentId).toBe('agent-coder-id');
 	});
 
-	test('preserves model and systemPrompt override fields', () => {
+	test('multi-agent nodes use shared systemPrompt and instructions for every slot', () => {
 		const node = makeNode({
+			systemPrompt: 'Shared prompt.',
+			instructions: 'Shared guidance.',
 			agents: [
 				{
 					agentId: 'agent-coder-id',
 					name: 'fast-coder',
 					model: 'claude-haiku-4-5',
-					systemPrompt: 'You are a fast coder.',
+					systemPrompt: 'Ignored slot prompt.',
+					instructions: 'Ignored slot instructions.',
 				},
 			],
 		});
 		const result = resolveNodeAgents(node);
 		expect(result[0].model).toBe('claude-haiku-4-5');
-		expect(result[0].systemPrompt).toBe('You are a fast coder.');
+		expect(result[0].systemPrompt).toBe('Shared prompt.');
+		expect(result[0].instructions).toBe('Shared guidance.');
 	});
 });
 

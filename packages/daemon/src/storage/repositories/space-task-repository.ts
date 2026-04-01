@@ -12,10 +12,14 @@ import type {
 	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
 } from '@neokai/shared';
+import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
 
 export class SpaceTaskRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb?: ReactiveDatabase
+	) {}
 
 	/**
 	 * Create a new space task
@@ -67,6 +71,7 @@ export class SpaceTaskRepository {
 		});
 
 		insertTx();
+		this.reactiveDb?.notifyChange('space_tasks');
 
 		return this.getTask(id)!;
 	}
@@ -277,6 +282,7 @@ export class SpaceTaskRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+			this.reactiveDb?.notifyChange('space_tasks');
 		}
 
 		return this.getTask(id);
@@ -292,6 +298,7 @@ export class SpaceTaskRepository {
 			`UPDATE space_tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?`
 		);
 		stmt.run(now, now, id);
+		this.reactiveDb?.notifyChange('space_tasks');
 		return this.getTask(id);
 	}
 
@@ -301,6 +308,9 @@ export class SpaceTaskRepository {
 	deleteTask(id: string): boolean {
 		const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE id = ?`);
 		const result = stmt.run(id);
+		if (result.changes > 0) {
+			this.reactiveDb?.notifyChange('space_tasks');
+		}
 		return result.changes > 0;
 	}
 
@@ -309,6 +319,7 @@ export class SpaceTaskRepository {
 	 */
 	deleteTasksForSpace(spaceId: string): void {
 		this.db.prepare(`DELETE FROM space_tasks WHERE space_id = ?`).run(spaceId);
+		this.reactiveDb?.notifyChange('space_tasks');
 	}
 
 	/**
@@ -320,6 +331,9 @@ export class SpaceTaskRepository {
 				`UPDATE space_tasks SET status = 'pending', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
 			)
 			.run(Date.now(), createdByTaskId);
+		if (result.changes > 0) {
+			this.reactiveDb?.notifyChange('space_tasks');
+		}
 		return result.changes;
 	}
 
