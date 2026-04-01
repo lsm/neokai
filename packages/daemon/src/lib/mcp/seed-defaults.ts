@@ -39,4 +39,17 @@ export function seedDefaultMcpEntries(db: Database): void {
 			enabled: false,
 		});
 	}
+
+	if (!repo.getByName('chrome-devtools')) {
+		repo.create({
+			name: 'chrome-devtools',
+			description:
+				'Browser automation and DevTools integration via Chrome DevTools MCP (isolated mode)',
+			sourceType: 'stdio',
+			command: 'bunx',
+			args: ['chrome-devtools-mcp@latest', '--isolated'],
+			env: {},
+			enabled: false,
+		});
+	}
 }

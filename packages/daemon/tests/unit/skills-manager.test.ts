@@ -778,4 +778,109 @@ describe('SkillsManager', () => {
 			expect(skill.config.appMcpServerId).toBe(seeded.id);
 		}
 	});
+
+	// --- playwright built-in ---
+
+	test('initializeBuiltins registers playwright skill', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright');
+		expect(skill).toBeDefined();
+		expect(skill!.displayName).toBe('Playwright');
+		expect(skill!.sourceType).toBe('builtin');
+		expect(skill!.builtIn).toBe(true);
+		expect(skill!.enabled).toBe(true);
+		expect(skill!.validationStatus).toBe('valid');
+	});
+
+	test('initializeBuiltins playwright has correct commandName', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright')!;
+		expect(skill.config.type).toBe('builtin');
+		if (skill.config.type === 'builtin') {
+			expect(skill.config.commandName).toBe('playwright');
+		}
+	});
+
+	test('initializeBuiltins playwright is included in getEnabledSkills', () => {
+		mgr.initializeBuiltins();
+
+		const enabled = mgr.getEnabledSkills();
+		expect(enabled.some((s) => s.name === 'playwright')).toBe(true);
+	});
+
+	test('initializeBuiltins playwright cannot be deleted (builtIn guard)', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright')!;
+		expect(mgr.removeSkill(skill.id)).toBe(false);
+		expect(mgr.getSkill(skill.id)).not.toBeNull();
+	});
+
+	test('initializeBuiltins playwright is idempotent', () => {
+		mgr.initializeBuiltins();
+		mgr.initializeBuiltins();
+
+		const skills = mgr.listSkills().filter((s) => s.name === 'playwright');
+		expect(skills).toHaveLength(1);
+	});
+
+	// --- playwright-interactive built-in ---
+
+	test('initializeBuiltins registers playwright-interactive skill', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive');
+		expect(skill).toBeDefined();
+		expect(skill!.displayName).toBe('Playwright Interactive');
+		expect(skill!.sourceType).toBe('builtin');
+		expect(skill!.builtIn).toBe(true);
+		expect(skill!.enabled).toBe(true);
+		expect(skill!.validationStatus).toBe('valid');
+	});
+
+	test('initializeBuiltins playwright-interactive has correct commandName', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive')!;
+		expect(skill.config.type).toBe('builtin');
+		if (skill.config.type === 'builtin') {
+			expect(skill.config.commandName).toBe('playwright-interactive');
+		}
+	});
+
+	test('initializeBuiltins playwright-interactive is included in getEnabledSkills', () => {
+		mgr.initializeBuiltins();
+
+		const enabled = mgr.getEnabledSkills();
+		expect(enabled.some((s) => s.name === 'playwright-interactive')).toBe(true);
+	});
+
+	test('initializeBuiltins playwright-interactive cannot be deleted (builtIn guard)', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive')!;
+		expect(mgr.removeSkill(skill.id)).toBe(false);
+		expect(mgr.getSkill(skill.id)).not.toBeNull();
+	});
+
+	test('initializeBuiltins playwright-interactive is idempotent', () => {
+		mgr.initializeBuiltins();
+		mgr.initializeBuiltins();
+
+		const skills = mgr.listSkills().filter((s) => s.name === 'playwright-interactive');
+		expect(skills).toHaveLength(1);
+	});
+
+	test('initializeBuiltins registers all three built-in skills total', () => {
+		mgr.initializeBuiltins();
+
+		const builtIns = mgr.listSkills().filter((s) => s.builtIn);
+		expect(builtIns).toHaveLength(3);
+		const names = builtIns.map((s) => s.name);
+		expect(names).toContain('web-search-mcp');
+		expect(names).toContain('playwright');
+		expect(names).toContain('playwright-interactive');
+	});
 });

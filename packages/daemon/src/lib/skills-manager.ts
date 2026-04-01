@@ -131,6 +131,8 @@ export class SkillsManager {
 	 */
 	initializeBuiltins(): void {
 		this.initWebSearchBraveMcp();
+		this.initPlaywrightSkill();
+		this.initPlaywrightInteractiveSkill();
 	}
 
 	/**
@@ -165,6 +167,50 @@ export class SkillsManager {
 				sourceType: 'mcp_server',
 				config: { type: 'mcp_server', appMcpServerId: appMcpEntry.id },
 				enabled: false, // opt-in, not default
+				builtIn: true,
+				validationStatus: 'valid',
+				createdAt: Date.now(),
+			};
+			this.repo.insert(skill);
+		}
+	}
+
+	/**
+	 * Ensure the Playwright built-in skill is registered.
+	 */
+	private initPlaywrightSkill(): void {
+		const existing = this.repo.getByName('playwright');
+		if (!existing) {
+			const skill: AppSkill = {
+				id: generateUUID(),
+				name: 'playwright',
+				displayName: 'Playwright',
+				description: 'Browser automation and testing via Playwright.',
+				sourceType: 'builtin',
+				config: { type: 'builtin', commandName: 'playwright' },
+				enabled: true,
+				builtIn: true,
+				validationStatus: 'valid',
+				createdAt: Date.now(),
+			};
+			this.repo.insert(skill);
+		}
+	}
+
+	/**
+	 * Ensure the Playwright Interactive built-in skill is registered.
+	 */
+	private initPlaywrightInteractiveSkill(): void {
+		const existing = this.repo.getByName('playwright-interactive');
+		if (!existing) {
+			const skill: AppSkill = {
+				id: generateUUID(),
+				name: 'playwright-interactive',
+				displayName: 'Playwright Interactive',
+				description: 'Interactive browser automation via Playwright with step-by-step control.',
+				sourceType: 'builtin',
+				config: { type: 'builtin', commandName: 'playwright-interactive' },
+				enabled: true,
 				builtIn: true,
 				validationStatus: 'valid',
 				createdAt: Date.now(),
