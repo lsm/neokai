@@ -444,7 +444,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 2. **Remove `WorkflowNode.agentId` shorthand:**
    - Update `resolveNodeAgents()` in `space-utils.ts`: **keep the `agentId` fallback as a permanent compat shim** — convert `agentId` to `agents: [{ agentId }]` silently. Do NOT throw. `resolveNodeAgents()` is called in the runtime tick loop (`space-runtime.ts`, `channel-router.ts`, `task-agent-tools.ts`) and throwing would crash production workflow runs on pre-migration workflows. The editor boundary (Task 10.5) handles normalization on save.
-   - Remove `agentId` from the `WorkflowNode` TypeScript type (Task 1.5) — the compat shim in `resolveNodeAgents()` handles persisted legacy data at runtime.
+   - Remove `agentId` from the `WorkflowNode` TypeScript type (Task 1.5) — the compat shim in `resolveNodeAgents()` handles persisted legacy data at runtime. **Type cast for compat shim:** Since `agentId` is removed from the type, the shim must use `(node as Record<string, unknown>).agentId` (or define a `LegacyWorkflowNode` intersection type) to read the field from persisted JSON without triggering TypeScript errors. Do NOT use `@ts-ignore` or `any` (oxlint `no-explicit-any` will flag it).
    - Update all callers of `resolveNodeAgents()` (20+ call sites) to not reference `node.agentId` directly — always go through `resolveNodeAgents()`.
    - Update `space_workflow_nodes` DB handling to not write `agent_id` on new records.
 
@@ -594,7 +594,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. **RPC handler updates:**
    - **Verification:** Confirm `spaceWorkflow.create` and `spaceWorkflow.update` handlers pass `endNodeId` through (current handlers use cast/spread — no whitelist).
    - **`space-workflow-run-handlers.ts`:** Update all 19 hardcoded `'needs_attention'` references to `'blocked'`. Update `'completed'` to `'done'`. The `markFailed` handler assigns `needs_attention` as a transition target — this will break the CHECK constraint if not updated. Remove references to `goalId`, `config` params. **Keep `failureReason`** references as-is (gate rejection flow preserved).
-   - **`space-task-message-handlers.ts`:** Update references to removed task fields (`workflowNodeId`, `agentName`, `taskAgentSessionId`) used for routing.
+   - **`space-task-message-handlers.ts`:** Update references to removed task fields (`workflowNodeId`, `agentName`) used for routing. Note: `taskAgentSessionId` is **kept** — the handlers' usage of it for orchestration task session management is correct and should remain.
    - Remove references to `goalId`, `config` from all run-related handlers.
 3. **`nodeExecution.list` RPC handler (required):**
    - Add `nodeExecution.list` RPC handler that returns `NodeExecution[]` filtered by `workflowRunId`. This is **mandatory** — the frontend canvas (`WorkflowCanvas.tsx`, `VisualWorkflowEditor.tsx`) needs per-node execution data to display node status after `workflowNodeId` is removed from `space_tasks`.
@@ -685,7 +685,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 4. **Space dashboard and pane components:**
    - `SpaceDashboard.tsx`: update old status checks.
-   - `SpaceTaskPane.tsx`: update status-dependent rendering, remove references to removed fields (`completionSummary`, `progress`, `currentStep`, `prUrl`, `prNumber`, `inputDraft`).
+   - `SpaceTaskPane.tsx`: update status-dependent rendering, remove references to removed fields (`completionSummary`, `progress`, `currentStep`). Note: `prUrl`, `prNumber`, `inputDraft` do not exist in this file; `taskAgentSessionId` is kept.
    - `SpaceContextPanel.tsx` (line 34): update `case 'needs_attention':` → `case 'blocked':`.
    - `SpaceDetailPanel.tsx`: update old status references.
 
@@ -713,7 +713,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Acceptance criteria:**
 - Zero references to old `SpaceTaskStatus` values (`draft`, `pending`, `completed`, `review`, `needs_attention`, `rate_limited`, `usage_limited`) in frontend code.
-- Zero references to removed `SpaceTask` fields (`workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`) in frontend code.
+- Zero references to removed `SpaceTask` fields (`workflowNodeId`, `agentName`, `customAgentId`, `taskType`, `goalId`, `error`, `assignedAgent`, `inputDraft`, `progress`, `currentStep`, `completionSummary`) in frontend code. Note: `taskAgentSessionId`, `workflowRunId`, `prUrl`, `prNumber`, `prCreatedAt`, `activeSession`, `createdByTaskId` are **kept** — do not remove references to these.
 - Zero references to `SpaceAgent.role` in space-specific frontend code (e.g., `SpaceAgentList.tsx` `RoleBadge`, `NodeConfigPanel` role display, `visual-editor/WorkflowCanvas.tsx` `agentRoleToNodeId`). Note: `ROLE_COLORS` for room conversation rendering is **kept** — it uses `authorRole` from session metadata, not `SpaceAgent.role`.
 - `tasksByNodeId` replaced with `nodeExecutionsByNodeId` backed by `NodeExecution` data.
 - `bun run typecheck` passes.
