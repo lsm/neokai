@@ -14,6 +14,7 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	renameSync,
 	statSync,
 	unlinkSync,
@@ -31,7 +32,11 @@ import type { Database } from '../storage/database';
  * @returns Absolute path to the SDK project directory
  */
 function getSDKProjectDir(workspacePath: string): string {
-	const projectKey = workspacePath.replace(/[/.]/g, '-');
+	// Resolve symlinks so our path matches the SDK subprocess, which uses realpath
+	// for its CWD. Without this, macOS symlinks (e.g., /var → /private/var) cause
+	// path mismatches that break session file lookup and resume.
+	const resolved = existsSync(workspacePath) ? realpathSync(workspacePath) : workspacePath;
+	const projectKey = resolved.replace(/[/.]/g, '-');
 	// Support TEST_SDK_SESSION_DIR for isolated testing
 	const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.claude');
 	return join(baseDir, 'projects', projectKey);

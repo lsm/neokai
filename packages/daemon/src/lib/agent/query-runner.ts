@@ -115,8 +115,11 @@ export class QueryRunner {
 
 	/**
 	 * Run the query (main execution loop)
+	 *
+	 * @param queryGeneration - Generation counter to detect stale queries
+	 * @param isRetry - Whether this is an automatic retry after startup timeout
 	 */
-	private async runQuery(queryGeneration: number): Promise<void> {
+	private async runQuery(queryGeneration: number, isRetry = false): Promise<void> {
 		const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
 		try {
@@ -328,20 +331,39 @@ export class QueryRunner {
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
 
-			// Always clear the queue on error so stale messages don't bleed into the next session.
-			messageQueue.clear();
-
-			// If startup timed out or conversation not found while trying to resume a session,
-			// clear sdkSessionId so the next attempt starts a fresh SDK session instead of
-			// repeatedly failing on the same problematic session file.
-			if ((isStartupTimeout || isConversationNotFound) && session.sdkSessionId) {
+			// Startup timeout is transient — keep sdkSessionId so resume works on retry.
+			// "No conversation found" is permanent — clear sdkSessionId so the next
+			// attempt starts fresh instead of looping on a dead conversation.
+			if (isStartupTimeout && session.sdkSessionId) {
 				logger.error(
-					`Clearing sdkSessionId (${session.sdkSessionId}) due to startup timeout. ` +
-						'Next query will start fresh without resume.'
+					`Startup timeout with sdkSessionId (${session.sdkSessionId}). ` +
+						'Keeping sdkSessionId for resume on retry.'
+				);
+			}
+			if (isConversationNotFound && session.sdkSessionId) {
+				logger.error(
+					`No conversation found for sdkSessionId (${session.sdkSessionId}). ` +
+						'Clearing sdkSessionId — next attempt will start fresh.'
 				);
 				session.sdkSessionId = undefined;
 				this.ctx.db.updateSession(session.id, { sdkSessionId: undefined });
 			}
+
+			// Auto-retry once on startup timeout — the user shouldn't have to resend.
+			// This handles transient SDK startup failures (e.g., after a model switch)
+			// where the second attempt succeeds reliably.
+			// Skip messageQueue.clear() so the user's pending message is preserved for the retry.
+			if (isStartupTimeout && !isRetry && !this.ctx.isCleaningUp()) {
+				logger.warn('Auto-retrying query after startup timeout (1 retry).');
+				await this.displayErrorAsAssistantMessage(
+					'Session startup timed out. Retrying automatically...'
+				);
+				await stateManager.setIdle();
+				return this.runQuery(queryGeneration, true);
+			}
+
+			// Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
+			messageQueue.clear();
 
 			if (!isAbortError) {
 				const apiErrorHandled = await this.handleApiValidationError(error);

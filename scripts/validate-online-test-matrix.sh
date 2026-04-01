@@ -80,6 +80,7 @@ PROVIDERS_FILES=(
 CROSS_PROVIDER_FILES=(
   conversation-continuity-after-switch.test.ts
   cross-provider-model-switch.test.ts
+  glm-to-anthropic-resume.test.ts
 )
 
 SPACE_FILES=(
