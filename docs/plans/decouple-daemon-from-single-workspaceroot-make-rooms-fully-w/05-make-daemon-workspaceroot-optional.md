@@ -34,7 +34,8 @@ Change `Config.workspaceRoot` from required to optional. The daemon can now star
 8. Update CLI entry points: `packages/cli/main.ts:53` and `packages/cli/prod-entry.ts:63` both log `config.workspaceRoot` at startup. Update to handle undefined gracefully (e.g., `config.workspaceRoot ?? '(none)'`).
 9. Update `neo-query-tools.ts` `get_system_info` to handle optional `workspaceRoot`.
 10. Update all daemon tests that mock `Config` with `workspaceRoot` to continue working. No test should break -- they all provide explicit values.
-11. Run `bun run typecheck && make test-daemon`.
+11. Add a new test in `packages/daemon/tests/unit/core/config.test.ts` verifying the `workspaceRoot = undefined` code path: when neither `--workspace` flag nor `NEOKAI_WORKSPACE_PATH` env var is set, `getConfig()` returns `workspaceRoot: undefined` and `defaultDbPath` falls back to `~/.neokai/data/daemon.db`.
+12. Run `bun run typecheck && make test-daemon`.
 
 **Acceptance Criteria**:
 - Daemon can start without `--workspace` flag (using default DB path).

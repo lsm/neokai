@@ -50,7 +50,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. Add an input field for workspace path before the background textarea, with label "Workspace Path" and helper text "Filesystem path for this room's workspace".
 3. Add client-side validation using `validateWorkspacePath()` -- show inline error if path is empty or not absolute.
 4. Update the `onSubmit` prop type and call to include `defaultPath: workspacePath`.
-5. In `Lobby.tsx`, update the `onSubmit` callback passed to `CreateRoomModal` to include `defaultPath` in the `lobbyStore.createRoom(params)` call.
+5. In `Lobby.tsx` and `lobby-store.ts`, update the `onSubmit` callback and `createRoom()` to pass `defaultPath` from the form. **Remove any placeholder `defaultPath` value** that Task 1.1 may have added to pass typecheck — replace it with the real form value wired from `CreateRoomModal`.
 6. Update `packages/web/src/components/lobby/__tests__/` tests if any exist for `CreateRoomModal`.
 7. Run `make test-web` to verify.
 

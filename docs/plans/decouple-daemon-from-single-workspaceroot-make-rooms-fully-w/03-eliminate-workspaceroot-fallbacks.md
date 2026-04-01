@@ -76,12 +76,16 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Subtasks**:
 1. In `session-lifecycle.ts`, split the fallback logic based on **session type** (not session ID prefix). At line 91, `sessionType` is available as `params.sessionType ?? 'worker'`. The room-scoped session types are: `'room_chat'`, `'planner'`, `'coder'`, `'leader'`, `'general'`. Guard using a set:
    ```ts
-   const ROOM_SESSION_TYPES = ['room_chat', 'planner', 'coder', 'leader', 'general'] as const;
-   if (ROOM_SESSION_TYPES.includes(sessionType) && !params.workspacePath) {
+   const ROOM_SCOPED_SESSION_TYPES = ['room_chat', 'planner', 'coder', 'leader', 'general', 'space_chat'] as const;
+   if (ROOM_SCOPED_SESSION_TYPES.includes(sessionType) && !params.workspacePath) {
      throw new Error('Room-scoped session must have explicit workspacePath');
    }
    ```
    **Why session type, not ID prefix**: Worker/leader/planner/coder sessions have IDs like `planner:{roomId}:{taskId}:{uuid}`, `coder:{roomId}:...` — they do NOT start with `room:`. Only `room:chat:{roomId}` does. Guarding by `sessionId.startsWith('room:')` would miss all non-chat room sessions. Guarding by `sessionType` is accurate, self-documenting, and resilient to new session ID formats.
+   **Session type coverage**: The full `sessionType` union at `session-lifecycle.ts:53-62` includes: `room_chat`, `planner`, `coder`, `leader`, `general`, `worker`, `lobby`, `spaces_global`, `space_chat`, `neo`. Of these:
+   - `room_chat`, `planner`, `coder`, `leader`, `general`, `space_chat` — room/space-scoped, must have explicit `workspacePath`. Included in the guard.
+   - `lobby` — instance-level agent session, not bound to a specific room workspace. Intentionally excluded; uses daemon `workspaceRoot` fallback.
+   - `worker`, `spaces_global`, `neo`, `undefined` (default) — non-room sessions. Use fallback.
    - For non-room standalone sessions (including `sessionType === undefined` which defaults to `'worker'` per line 91): keep the existing fallback to `this.config.workspaceRoot` with a log warning.
 2. Add a comment clarifying the split: room-scoped session types throw, non-room sessions (including default `worker` type) fall back.
 3. Verify that all room-scoped session creation paths (room chat in `room-handlers.ts`, workers in `room-runtime.ts`) already pass `workspacePath` explicitly. Trace the code paths and document in the PR description.
@@ -117,11 +121,6 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Acceptance Criteria**:
 - `cleanupOrphanedWorktrees` requires an explicit `workspacePath` parameter.
 - The `worktree.cleanup` RPC handler applies the fallback at the RPC boundary (not inside the method).
-- All callers pass an explicit path.
-- Unit test passes.
-
-**Acceptance Criteria**:
-- `cleanupOrphanedWorktrees` requires an explicit `workspacePath` parameter.
 - All callers pass an explicit path.
 - No fallback to `config.workspaceRoot` inside the method.
 - Unit test passes.
