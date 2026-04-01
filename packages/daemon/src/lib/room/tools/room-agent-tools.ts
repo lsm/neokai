@@ -206,6 +206,57 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				updated = await goalManager.updateGoalStatus(args.goal_id, args.status);
 			}
 
+			// Invalidate in-progress planning when title or description changes
+			if (args.title !== undefined || args.description !== undefined) {
+				const nonTerminalStatuses = new Set([
+					'pending',
+					'in_progress',
+					'draft',
+					'review',
+					'rate_limited',
+					'usage_limited',
+				]);
+
+				const runtime = runtimeService?.getRuntime(roomId) ?? null;
+
+				// Find and cancel any in-progress planning tasks linked to this goal
+				for (const taskId of goal.linkedTaskIds) {
+					const task = await taskManager.getTask(taskId);
+					if (!task || task.taskType !== 'planning' || !nonTerminalStatuses.has(task.status))
+						continue;
+
+					if (runtime) {
+						await runtime.cancelTask(taskId);
+					} else {
+						await taskManager.cancelTaskCascade(taskId);
+						if (daemonHub) {
+							const cancelledTask = await taskManager.getTask(taskId);
+							if (cancelledTask) {
+								void daemonHub.emit('room.task.update', {
+									sessionId: `room:${roomId}`,
+									roomId,
+									task: cancelledTask,
+								});
+							}
+						}
+					}
+				}
+
+				// Reset planning_attempts so a fresh planner picks up the updated context
+				updated = await goalManager.patchGoal(args.goal_id, { planning_attempts: 0 });
+
+				// If the goal is stuck in needs_human, transition it back to active so it's
+				// eligible for replanning (getNextGoalForPlanning only iterates 'active' goals)
+				if (updated.status === 'needs_human') {
+					updated = await goalManager.updateGoalStatus(args.goal_id, 'active');
+				}
+
+				// Trigger a fresh planning tick if runtime is available
+				if (runtime) {
+					runtime.onGoalCreated(args.goal_id);
+				}
+			}
+
 			return jsonResult({ success: true, goal: updated });
 		},
 
