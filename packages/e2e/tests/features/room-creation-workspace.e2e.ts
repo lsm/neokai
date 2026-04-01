@@ -4,7 +4,7 @@
  * Verifies the CreateRoomModal flow:
  * - Opening the modal via "Create Room" button
  * - Workspace path field is visible and pre-populated from daemon workspaceRoot
- * - Validation: empty name, empty path, relative path all show errors
+ * - Validation: empty name, empty path, relative path, non-existent path all show errors
  * - Successful creation navigates to /room/:id
  * - Created room appears in the lobby
  *
@@ -16,6 +16,7 @@
  * rather than using `page.getByRole('dialog')` which would cause strict-mode violations.
  */
 
+import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
 import { deleteRoom } from '../helpers/room-helpers';
@@ -48,15 +49,26 @@ test.describe('Room Creation with Workspace Path', () => {
 	 * Uses .first() to avoid strict-mode violation: both the header button and the
 	 * empty-state RoomGrid button share the accessible name "Create Room".
 	 */
-	async function openCreateRoomModal(page: Parameters<typeof waitForWebSocketConnected>[0]) {
+	async function openCreateRoomModal(page: Page) {
 		await page.getByRole('button', { name: 'Create Room', exact: true }).first().click();
 		// Wait for the modal title to appear (specific to the Create Room modal)
 		await expect(page.locator('h2:has-text("Create Room")')).toBeVisible({ timeout: 5000 });
 	}
 
+	/**
+	 * Extract the room ID from the current page URL after navigating to /room/:id.
+	 * Stores the ID in `createdRoomId` for afterEach cleanup.
+	 */
+	function captureRoomIdFromUrl(page: Page) {
+		const match = page.url().match(/\/room\/([a-f0-9-]+)/);
+		if (match) {
+			createdRoomId = match[1];
+		}
+	}
+
 	// ─── Modal Opens ─────────────────────────────────────────────────────────────
 
-	test('opens Create Room dialog when button clicked', async ({ page }) => {
+	test('opens Create Room modal when button clicked', async ({ page }) => {
 		await openCreateRoomModal(page);
 
 		// Verify modal-specific elements are visible
@@ -69,9 +81,11 @@ test.describe('Room Creation with Workspace Path', () => {
 	test('workspace path field is visible and pre-populated from daemon workspaceRoot', async ({
 		page,
 	}) => {
-		const workspaceRoot = await getWorkspaceRoot(page);
-
 		await openCreateRoomModal(page);
+
+		// Resolve workspace root after opening the modal so the systemState signal has
+		// had a chance to deliver its value and pre-fill the field.
+		const workspaceRoot = await getWorkspaceRoot(page);
 
 		const pathInput = page.locator('input[placeholder="/path/to/workspace"]');
 		await expect(pathInput).toBeVisible({ timeout: 3000 });
@@ -83,9 +97,9 @@ test.describe('Room Creation with Workspace Path', () => {
 	test('shows error when room name is empty on submit', async ({ page }) => {
 		await openCreateRoomModal(page);
 
-		// Name input is autoFocus and should be empty by default
+		// Name input starts empty (autoFocus). Verify initial state before submitting.
 		const nameInput = page.locator('input[placeholder*="Website Development"]');
-		await nameInput.fill('');
+		await expect(nameInput).toHaveValue('');
 
 		// Submit via the form's submit button
 		await page.locator('button[type="submit"]').click();
@@ -124,6 +138,22 @@ test.describe('Room Creation with Workspace Path', () => {
 		});
 	});
 
+	test('shows error when workspace path does not exist on disk', async ({ page }) => {
+		await openCreateRoomModal(page);
+
+		// Fill room name and an absolute path guaranteed not to exist
+		await page.locator('input[placeholder*="Website Development"]').fill('Test Room');
+		await page
+			.locator('input[placeholder="/path/to/workspace"]')
+			.fill('/nonexistent/e2e-path-xyz123');
+
+		// Submit via the form's submit button
+		await page.locator('button[type="submit"]').click();
+
+		// Server-side error from room-handlers.ts: "defaultPath does not exist: ..."
+		await expect(page.locator('text=does not exist')).toBeVisible({ timeout: 5000 });
+	});
+
 	// ─── Successful Room Creation ─────────────────────────────────────────────────
 
 	test('creates room and navigates to /room/:id', async ({ page }) => {
@@ -146,13 +176,7 @@ test.describe('Room Creation with Workspace Path', () => {
 
 		// Should navigate to /room/:id
 		await page.waitForURL(/\/room\/[a-f0-9-]+/, { timeout: 10000 });
-
-		// Extract room ID for cleanup
-		const url = page.url();
-		const match = url.match(/\/room\/([a-f0-9-]+)/);
-		if (match) {
-			createdRoomId = match[1];
-		}
+		captureRoomIdFromUrl(page);
 
 		// Room page should load (Overview tab in room tab bar)
 		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
@@ -177,12 +201,7 @@ test.describe('Room Creation with Workspace Path', () => {
 
 		// Wait for navigation
 		await page.waitForURL(/\/room\/[a-f0-9-]+/, { timeout: 10000 });
-
-		const url = page.url();
-		const match = url.match(/\/room\/([a-f0-9-]+)/);
-		if (match) {
-			createdRoomId = match[1];
-		}
+		captureRoomIdFromUrl(page);
 
 		// Navigate back to lobby
 		await page.goto('/');
@@ -196,7 +215,7 @@ test.describe('Room Creation with Workspace Path', () => {
 		});
 	});
 
-	test('dialog can be closed with Cancel button', async ({ page }) => {
+	test('modal can be closed with Cancel button', async ({ page }) => {
 		await openCreateRoomModal(page);
 
 		await page.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -226,12 +245,7 @@ test.describe('Room Creation with Workspace Path', () => {
 
 		// Should navigate to /room/:id without error
 		await page.waitForURL(/\/room\/[a-f0-9-]+/, { timeout: 10000 });
-
-		const url = page.url();
-		const match = url.match(/\/room\/([a-f0-9-]+)/);
-		if (match) {
-			createdRoomId = match[1];
-		}
+		captureRoomIdFromUrl(page);
 
 		// Room page should load
 		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
