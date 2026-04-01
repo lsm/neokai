@@ -112,7 +112,7 @@ Removed: `role`, `toolConfig`, `injectWorkflowContext`.
    - Remove `agentId` shorthand field — always use `agents: WorkflowNodeAgent[]`.
    - Remove `model`, `systemPrompt`, `orderIndex`, `config` from `WorkflowNode`. Note: `model` and `systemPrompt` are persisted inside the `config` JSON blob in `space_workflow_nodes`, not as top-level DB columns. They are being removed from the TypeScript interface and from the JSON blob serialization/deserialization.
    - Keep `id`, `name`, `agents`, `instructions`.
-   - Update `resolveNodeAgents()` in `space-utils.ts`: keep the `agentId` fallback as a **permanent compat shim** — if called with legacy data that has `agentId` instead of `agents[]`, silently convert to `agents: [{ agentId }]`. Do NOT throw — `resolveNodeAgents()` is called in the runtime tick loop and throwing would crash production workflows on pre-migration data.
+   - `resolveNodeAgents()` in `space-utils.ts` will need a compat shim for legacy `agentId` data — see Task 7.2 for implementation details.
 
 6. **`SpaceAgent`:**
    - Remove `role`, `toolConfig`, `injectWorkflowContext` from `SpaceAgent` interface.
