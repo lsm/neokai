@@ -101,17 +101,25 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 1. Add a new `runMigration70(db: BunDatabase)` function in `packages/daemon/src/storage/schema/migrations.ts` (the project uses a single monolithic migrations file with numbered functions — there is NO `migrations/` directory). The migration must follow the existing idempotency pattern: **guard with column/table existence checks** (e.g., check if any rooms still have `default_path IS NULL`; if none, return early). Do NOT use `PRAGMA user_version` — the codebase does not use it. See `runMigration68` and `runMigration69` for the canonical pattern. The migration:
    - Selects all rooms where `default_path IS NULL`.
    - For each, parses the `allowed_paths` JSON column and sets `default_path` to the first entry's `path`.
-   - For rooms where both `default_path` and `allowed_paths` are null/empty, the migration cannot auto-resolve the path from SQL alone. Use a hardcoded sentinel value like `'__NEEDS_WORKSPACE_PATH__'` and add a startup check in the daemon that replaces this sentinel with the actual `workspaceRoot` at boot time (when `Config.workspaceRoot` is available). This keeps the migration pure SQL while ensuring all rooms get a valid path.
+   - For rooms where both `default_path` and `allowed_paths` are null/empty, the migration sets `default_path` to a sentinel value `'__NEEDS_WORKSPACE_PATH__'` (since the migration is pure SQL and has no access to `Config`).
 2. Wire `runMigration70` into the `runMigrations()` function by adding a call at the end of the function body (after `runMigration69`), with a descriptive comment — matching the existing unconditional-call pattern.
-3. Add a unit test that creates rooms with `defaultPath = null` (via direct DB insert), runs the migration, and verifies `defaultPath` is backfilled correctly for both cases (has allowedPaths, and has neither).
-4. Run `make test-daemon` to verify.
+3. **Add a sentinel replacement startup hook** in `packages/daemon/src/app.ts`, immediately after the `runMigrations()` call. This hook:
+   - Queries for rooms where `default_path = '__NEEDS_WORKSPACE_PATH__'`.
+   - Replaces the sentinel with `config.workspaceRoot` (which is available at this point in the boot sequence).
+   - If `config.workspaceRoot` is also undefined (Milestone 5), logs an error listing the affected room IDs — these rooms need manual intervention.
+   - This must run before any room operations to prevent Milestone 3 guards from throwing on sentinel paths.
+4. Add a unit test that creates rooms with `defaultPath = null` (via direct DB insert), runs the migration, and verifies `defaultPath` is backfilled correctly for both cases (has allowedPaths, and has neither — sentinel case).
+5. Add a unit test for the startup hook that verifies sentinel replacement with `workspaceRoot`.
+6. Run `make test-daemon` to verify.
 
 **Acceptance Criteria**:
 - Migration backfills `defaultPath` from `allowedPaths[0].path` for rooms with null `defaultPath` but non-empty `allowedPaths`.
-- Rooms with empty `allowedPaths` AND null `defaultPath` are backfilled with the daemon's `workspaceRoot` (no room is left with null `defaultPath`).
+- Rooms with empty `allowedPaths` AND null `defaultPath` get the sentinel value `'__NEEDS_WORKSPACE_PATH__'`.
+- Startup hook in `app.ts` (after `runMigrations()`) replaces sentinels with `config.workspaceRoot`. If `workspaceRoot` is undefined, logs an error with affected room IDs.
 - Migration is idempotent (safe to run multiple times).
 - Migration follows the existing monolithic pattern in `migrations.ts` (numbered function, wired into `runMigrations()`).
-- Unit test covers both backfill cases.
+- Unit tests cover: backfill from allowedPaths, sentinel insertion, sentinel replacement at startup.
+- Milestone 3 tasks depend on this task (sentinels are replaced before fallbacks are removed).
 
 **Dependencies**: Task 2.1
 

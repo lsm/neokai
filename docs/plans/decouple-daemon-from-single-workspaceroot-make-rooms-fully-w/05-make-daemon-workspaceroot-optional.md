@@ -23,7 +23,7 @@ Change `Config.workspaceRoot` from required to optional. The daemon can now star
 **Subtasks**:
 1. In `config.ts`, change `workspaceRoot: string` to `workspaceRoot?: string` in the `Config` interface.
 2. In `getConfig()`, replace the `throw new Error(...)` (line 76-79) with `workspaceRoot = undefined`. Update the `defaultDbPath` derivation to handle `undefined` -- if `workspaceRoot` is undefined, use `~/.neokai/data/daemon.db` as the default DB path. This is a dedicated path that does not collide with any workspace-derived DB path (which uses `encodeRepoPath()`). This only applies when the daemon is started without `--workspace`.
-3. In `app.ts`, update `DaemonAppContext` creation to handle `config.workspaceRoot` being undefined. `SettingsManager` constructor takes `workspacePath` -- pass `config.workspaceRoot ?? homedir()` as a reasonable fallback for global settings reading.
+3. In `app.ts`, update `DaemonAppContext` creation to handle `config.workspaceRoot` being undefined. `SettingsManager` constructor at `settings-manager.ts:32` takes `private workspacePath: string` — this will fail to compile when `workspaceRoot` becomes `string | undefined`. Pass `config.workspaceRoot ?? homedir()` as the fallback. **Document this behavior explicitly in a code comment**: when no workspace is set, `SettingsManager` reads global MCP config from `~/.claude/.mcp.json` (the home directory), which means MCP servers configured in a project-level `.mcp.json` won't be discovered for the global instance. This is acceptable because room-scoped sessions use their own `defaultPath` for MCP resolution.
 4. In `packages/daemon/src/lib/rpc-handlers/index.ts`, update all places that pass `deps.config.workspaceRoot` to handle `undefined`: `setupRoomHandlers` (already optional param), `RoomRuntimeService.defaultWorkspacePath` (already optional after Milestone 3), `FileIndex` constructor, `setupReferenceHandlers.workspaceRoot`, Neo tools. Also verify `SessionManager.cleanupOrphanedWorktrees` (already updated in Task 3.4 to require explicit path — confirm it no longer references `config.workspaceRoot` internally).
 5. Update `FileIndex` to accept `undefined` root -- when undefined, `init()` is a no-op and searches return empty results. Add a guard at the top of `init()`. **There are two mandatory instantiation sites that must both be updated**:
    - `packages/daemon/src/app.ts:293`: `new FileIndex(config.workspaceRoot)` — update to pass `config.workspaceRoot` (now `string | undefined`).
@@ -40,6 +40,7 @@ Change `Config.workspaceRoot` from required to optional. The daemon can now star
 - `Config.workspaceRoot` is optional.
 - `SystemState.workspaceRoot` is optional.
 - `FileIndex` gracefully degrades when no `workspaceRoot`.
+- `SettingsManager` is constructed with `config.workspaceRoot ?? homedir()` and this fallback behavior is documented in a code comment explaining MCP config implications.
 - All daemon tests pass.
 - Type check passes across all packages.
 

@@ -23,7 +23,7 @@ Update shared type definitions so `defaultPath` is required on `CreateRoomParams
 3. Create `packages/shared/src/validation/workspace-path.ts` with `validateWorkspacePath()` that checks the path is a non-empty absolute path (starts with `/`). Add a doc comment noting this is POSIX-only (Windows is out of scope).
 4. Export the validation utility from `packages/shared/src/mod.ts`.
 5. Add unit tests in `packages/shared/src/validation/__tests__/workspace-path.test.ts` covering: valid absolute path, empty string, relative path, path with trailing slash (valid).
-6. Run `bun run typecheck` to identify all callers that now fail due to the required `defaultPath`. **Fix all type errors in the same PR** by adding placeholder `defaultPath` values to call sites (in daemon test fixtures, use `/tmp/test-workspace`; in frontend, pass `defaultPath` from state). This ensures the PR does not break CI. The behavioral enforcement (runtime validation) is Milestone 2.
+6. Run `bun run typecheck` to identify all callers that now fail due to the required `defaultPath`. **Fix all type errors in the same PR** by adding placeholder `defaultPath` values to call sites. Scope of fixes: only add the minimum needed to pass typecheck — in test fixtures, use `/tmp/test-workspace`; in frontend `lobby-store.ts`, pass `defaultPath` from the form params. Do NOT implement runtime validation or behavioral changes here (that is Milestone 2). The goal is a CI-green branch, not behavioral enforcement.
 7. Run `bun run typecheck && make test-daemon && make test-web` to verify everything passes.
 
 **Acceptance Criteria**:

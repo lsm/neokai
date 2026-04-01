@@ -23,7 +23,7 @@ Remove all fallbacks to `workspaceRoot` in room-scoped code paths. After this mi
 1. Add a `roomManager` (or a `getRoomDefaultPath(roomId: string): string | undefined` callback) to the `ReferenceHandlerDeps` interface.
 2. Pass `roomManager` from `setupAllHandlers` in `packages/daemon/src/lib/rpc-handlers/index.ts` (line 298-307).
 3. In `resolveSessionContext`, when `sessionId.startsWith('room:chat:')`, extract `roomId`, look up the room via deps, and return `room.defaultPath`. If the room is not found (e.g., deleted while a reference request is in-flight), return `deps.workspaceRoot` as a graceful fallback with a warning log — do NOT throw an unhandled exception, since this is invoked during `@file`/`@folder` search in the chat UI and an uncaught throw would surface as an opaque RPC error to the user. Remove the `deps.workspaceRoot` fallback only for the happy path (room exists).
-4. Keep the general fallback `deps.workspaceRoot` for non-room sessions (line 335) -- those still need it.
+4. Keep the general fallback `deps.workspaceRoot` for non-room sessions (line 335) -- those still need it. **Note for Milestone 5**: When `deps.workspaceRoot` becomes `string | undefined`, the return type of `resolveSessionContext` must be updated to `string | undefined` and callers must handle `undefined`. The Task 5.1 implementer should address this.
 5. Keep `sessionData.workspacePath ?? deps.workspaceRoot` on line 340 -- non-room sessions may still lack a workspace path.
 6. Update `packages/daemon/tests/unit/rpc-handlers/reference-handlers.test.ts` to provide the new dependency and test that `room:chat:*` sessions resolve to room's `defaultPath`.
 7. Run `make test-daemon`.
