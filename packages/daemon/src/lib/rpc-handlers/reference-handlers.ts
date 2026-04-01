@@ -79,6 +79,12 @@ export interface ReferenceHandlerDeps {
 	workspaceRoot: string;
 	/** File index for fast file/folder search (reference.search) */
 	fileIndex: FileIndex;
+	/**
+	 * Callback to resolve a room's defaultPath by room ID.
+	 * Used to resolve workspace path for `room:chat:*` synthetic session IDs,
+	 * which have no DB entry and thus no stored workspacePath.
+	 */
+	getRoomDefaultPath?: (roomId: string) => string | undefined;
 }
 
 // ============================================================================
@@ -328,9 +334,19 @@ async function resolveSessionContext(
 	const agentSession = await deps.sessionManager.getSessionAsync(sessionId);
 	if (!agentSession) {
 		// The room agent route uses a synthetic session ID "room:chat:<roomId>"
-		// which has no DB entry — extract the roomId from it.
+		// which has no DB entry — extract the roomId from it and look up the
+		// room's defaultPath rather than falling back to the global workspaceRoot.
 		if (sessionId.startsWith('room:chat:')) {
-			return { workspacePath: deps.workspaceRoot, roomId: sessionId.slice('room:chat:'.length) };
+			const roomId = sessionId.slice('room:chat:'.length);
+			if (deps.getRoomDefaultPath) {
+				const roomPath = deps.getRoomDefaultPath(roomId);
+				if (roomPath) {
+					return { workspacePath: roomPath, roomId };
+				}
+				// Room not found (e.g. deleted while a reference request was in-flight) — warn and fall back.
+				log.warn(`resolveSessionContext: room ${roomId} not found, falling back to workspaceRoot`);
+			}
+			return { workspacePath: deps.workspaceRoot, roomId };
 		}
 		return { workspacePath: deps.workspaceRoot, roomId: null };
 	}

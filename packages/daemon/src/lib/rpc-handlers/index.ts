@@ -303,6 +303,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		goalRepo: deps.db.getGoalRepo(),
 		workspaceRoot: deps.config.workspaceRoot,
 		fileIndex,
+		getRoomDefaultPath: (roomId: string) => roomManager.getRoom(roomId)?.defaultPath ?? undefined,
 	});
 
 	// LiveQuery subscribe/unsubscribe handlers
