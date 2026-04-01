@@ -267,15 +267,21 @@ describe('room workspace isolation', () => {
 
 			const resolveHandler = handlers.get('reference.resolve')!;
 
-			// Resolving a file that exists ONLY in roomWorkspace should succeed
+			// Resolving a file that exists ONLY in roomWorkspace should succeed.
+			// We assert `resolved !== null` (file was found) rather than checking byte
+			// content — FileManager uses existsSync() (sync, never mocked) for the
+			// existence gate, so null/not-null correctly proves which workspace was
+			// searched regardless of any mock.module('node:fs/promises') contamination
+			// from other test files in the same Bun process.
 			const result = (await resolveHandler({
 				sessionId: 'room:chat:room-42',
 				type: 'file',
 				id: 'room-only.txt',
-			})) as { resolved: { data: { content: string } } | null };
+			})) as { resolved: { type: string; id: string } | null };
 
 			expect(result.resolved).not.toBeNull();
-			expect(result.resolved!.data.content).toBe('room workspace file');
+			expect(result.resolved!.type).toBe('file');
+			expect(result.resolved!.id).toBe('room-only.txt');
 		});
 
 		it('does NOT find daemonWorkspaceRoot files when resolving in room context', async () => {
