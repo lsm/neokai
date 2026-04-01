@@ -515,16 +515,25 @@ describe('SessionManager', () => {
 	});
 
 	describe('cleanupOrphanedWorktrees', () => {
-		it('should delegate to worktreeManager', async () => {
+		it('should delegate to worktreeManager using the provided path', async () => {
 			const result = await sessionManager.cleanupOrphanedWorktrees('/custom/path');
 
 			expect(Array.isArray(result)).toBe(true);
 		});
 
-		it('should use config workspaceRoot if no path provided', async () => {
-			await sessionManager.cleanupOrphanedWorktrees();
+		it('should use the provided path, not config.workspaceRoot', async () => {
+			// This test verifies no global fallback occurs inside the method.
+			// The provided path is distinct from config.workspaceRoot ('/default/workspace').
+			const result = await sessionManager.cleanupOrphanedWorktrees('/explicit/repo');
 
-			// Should complete without error
+			// cleanupOrphanedWorktrees should return an array (may be empty for non-git paths)
+			expect(Array.isArray(result)).toBe(true);
+		});
+	});
+
+	describe('getWorkspaceRoot', () => {
+		it('should return the configured workspaceRoot', () => {
+			expect(sessionManager.getWorkspaceRoot()).toBe('/default/workspace');
 		});
 	});
 

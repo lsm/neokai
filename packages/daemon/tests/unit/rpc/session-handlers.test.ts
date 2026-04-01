@@ -168,7 +168,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 }
 
 // Helper to create mock SessionManager
-function createMockSessionManager(): {
+function createMockSessionManager(workspaceRoot?: string): {
 	sessionManager: SessionManager;
 	mocks: {
 		createSession: ReturnType<typeof mock>;
@@ -179,6 +179,7 @@ function createMockSessionManager(): {
 		updateSession: ReturnType<typeof mock>;
 		deleteSession: ReturnType<typeof mock>;
 		cleanupOrphanedWorktrees: ReturnType<typeof mock>;
+		getWorkspaceRoot: ReturnType<typeof mock>;
 		markOutputRemoved: ReturnType<typeof mock>;
 		getDatabase: ReturnType<typeof mock>;
 		getSessionLifecycle: ReturnType<typeof mock>;
@@ -197,6 +198,7 @@ function createMockSessionManager(): {
 		updateSession: mock(async () => {}),
 		deleteSession: mock(async () => {}),
 		cleanupOrphanedWorktrees: mock(async () => []),
+		getWorkspaceRoot: mock(() => workspaceRoot),
 		markOutputRemoved: mock(async () => {}),
 		getDatabase: mock(() => ({
 			getMessageCountByStatus: mock(() => 0),
@@ -230,7 +232,7 @@ describe('Session RPC Handlers', () => {
 		messageHubData = createMockMessageHub();
 		daemonHubData = createMockDaemonHub();
 		roomManager = createMockRoomManager();
-		sessionManagerData = createMockSessionManager();
+		sessionManagerData = createMockSessionManager('/default/workspace');
 
 		// Setup handlers with mocked dependencies
 		setupSessionHandlers(
@@ -1103,7 +1105,7 @@ describe('Session RPC Handlers', () => {
 	});
 
 	describe('worktree.cleanup', () => {
-		it('cleans up orphaned worktrees', async () => {
+		it('cleans up orphaned worktrees using daemon workspaceRoot when no path given', async () => {
 			const handler = messageHubData.handlers.get('worktree.cleanup');
 			expect(handler).toBeDefined();
 
@@ -1119,9 +1121,13 @@ describe('Session RPC Handlers', () => {
 				cleanedPaths: ['/path/to/worktree1', '/path/to/worktree2'],
 				message: 'Cleaned up 2 orphaned worktree(s)',
 			});
+			// Fallback must use daemon workspaceRoot, not undefined
+			expect(sessionManagerData.mocks.cleanupOrphanedWorktrees).toHaveBeenCalledWith(
+				'/default/workspace'
+			);
 		});
 
-		it('accepts workspacePath parameter', async () => {
+		it('accepts workspacePath parameter and passes it directly to cleanupOrphanedWorktrees', async () => {
 			const handler = messageHubData.handlers.get('worktree.cleanup');
 			expect(handler).toBeDefined();
 
@@ -1131,6 +1137,25 @@ describe('Session RPC Handlers', () => {
 
 			expect(sessionManagerData.mocks.cleanupOrphanedWorktrees).toHaveBeenCalledWith(
 				'/custom/workspace'
+			);
+		});
+
+		it('throws an RPC error when no workspacePath and daemon has no workspaceRoot', async () => {
+			// Create a separate handler instance with no workspaceRoot configured
+			const noRootMessageHub = createMockMessageHub();
+			const noRootSessionManager = createMockSessionManager(undefined);
+			setupSessionHandlers(
+				noRootMessageHub.hub,
+				noRootSessionManager.sessionManager,
+				daemonHubData.daemonHub,
+				roomManager
+			);
+
+			const handler = noRootMessageHub.handlers.get('worktree.cleanup');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({}, {})).rejects.toThrow(
+				'workspacePath is required when daemon has no default workspace'
 			);
 		});
 	});
