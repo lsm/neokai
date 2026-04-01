@@ -254,7 +254,11 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `TERMINAL_NODE_EXECUTION_STATUSES`: `done`, `cancelled`.
    - This manager is used by the runtime, node-agent-tools, and CompletionDetector.
 
-3. **Update `CompletionDetector`:**
+3. **`WorkflowRunStatusMachine` updates (`packages/daemon/src/lib/space/runtime/workflow-run-status-machine.ts`):**
+   - Update the `VALID_TRANSITIONS` map: rename `completed` → `done`, `needs_attention` → `blocked` (lines 31–35). This is the canonical state transition table for `WorkflowRunStatus` and is imported by `space-workflow-run-repository.ts`, `space-agent-tools.ts`, and `global-spaces-tools.ts` via `canTransition`/`assertValidTransition`.
+   - Update unit test `workflow-run-status-lifecycle.test.ts`: parameterized tests over all `WorkflowRunStatus` values must use the new names.
+
+4. **Update `CompletionDetector`:**
    - Change from querying `taskRepo.listByWorkflowRun()` to `nodeExecutionRepo.listByWorkflowRun()`.
    - Filter by `NodeExecution` instead of `SpaceTask`.
    - Update `TERMINAL_TASK_STATUSES` reference to `TERMINAL_NODE_EXECUTION_STATUSES` (`done`, `cancelled`).
@@ -262,9 +266,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Add end-node completion logic: if `endNodeId` is provided, find the `NodeExecution` with matching `workflowNodeId` and check for terminal status. Short-circuit on match.
    - **Update ALL call sites** to new signature: `space-runtime.ts` and `task-agent-tools.ts` (the latter is removed in Task 6, but must compile in this task).
 
-4. **Unit tests:**
+5. **Unit tests:**
    - Update `completion-detector.test.ts`: all existing tests updated for new types/repo, plus new end-node tests.
    - New tests for `NodeExecutionManager` status transitions.
+   - Update `workflow-run-status-lifecycle.test.ts` for renamed status values.
    - Parameterized test over all `TERMINAL_NODE_EXECUTION_STATUSES`.
 
 **Acceptance criteria:**
@@ -320,15 +325,23 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `SPACE_TASK_MESSAGES_BY_TASK_SQL` — similarly check for references to removed columns and update.
    - Remove references to `taskType` and `assignedAgent` (6 occurrences).
 
-7. **`SpaceRuntimeService` updates (`packages/daemon/src/lib/space/runtime/space-runtime-service.ts`):**
+7. **`NotificationSink` and `SessionNotificationSink` updates:**
+   - `packages/daemon/src/lib/space/runtime/notification-sink.ts`: update `WorkflowRunCompleted.status` union from `'completed' | 'cancelled' | 'needs_attention'` to `'done' | 'cancelled' | 'blocked'`. Rename event kinds: `task_needs_attention` → `task_blocked`, `workflow_run_needs_attention` → `workflow_run_blocked`.
+   - `packages/daemon/src/lib/space/runtime/session-notification-sink.ts` (line 191): update mirrored status references to match.
+
+8. **`WorkflowExecutor` updates (`packages/daemon/src/lib/space/runtime/workflow-executor.ts`):**
+   - Line 143: update `this.run.status === 'completed'` → `this.run.status === 'done'`. Keep `cancelled` as-is.
+
+9. **`SpaceRuntimeService` updates (`packages/daemon/src/lib/space/runtime/space-runtime-service.ts`):**
    - Inject `NodeExecutionRepository` into the runtime config so all runtime components can access it.
    - Update any direct `SpaceTaskRepository` usage for workflow-internal queries to use `NodeExecutionRepository`.
 
-8. **Unit tests:**
+10. **Unit tests:**
    - Update `space-runtime-completion.test.ts` for new types.
    - Update `channel-router.test.ts` for `NodeExecution` creation.
    - Update `task-agent-manager.test.ts` for session tracking via `NodeExecution`.
    - Add/update tests for `agent-liveness.ts` and `agent-message-router.ts`.
+   - Update notification sink tests for renamed event kinds and status values.
 
 **Acceptance criteria:**
 - Runtime creates `NodeExecution` records, not task-level records for workflow nodes.
@@ -514,16 +527,20 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 3. **NodeConfigPanel** (`NodeConfigPanel.tsx`):
    - Add "Set as End Node" button (parallel to "Set as Start Node").
    - Show "END" badge on end nodes.
-4. **WorkflowEditor (form-based)** (`WorkflowEditor.tsx`):
+   - Line 286: remove `{' (${agent.role})'}` display — replace with agent description or omit.
+4. **Visual editor canvas** (`packages/web/src/components/space/visual-editor/WorkflowCanvas.tsx`):
+   - Lines 155–165: remove `agentRoleToNodeId` map that uses `agent.role`. Replace role-based slot labeling with `agent.name` or `agent.description`.
+   - Line 160: remove `agent.role` reference in node rendering.
+5. **WorkflowEditor (form-based)** (`WorkflowEditor.tsx`):
    - Pass `endNodeId` in create/update params. For new workflows, default to last node. For updates, preserve existing. Add comment: `// Heuristic for new workflows: defaults to last node — use the visual editor for explicit control`.
    - Remove `NodeDraft.agentId` — the form must use `agents[]` format (lines 312, 377, 386, 398, 413, 440, 453, 631, 665, 951). Replace the single agent dropdown with the `agents[]` editor pattern.
    - Remove deprecated field inputs.
-5. **WorkflowNodeCard** (`WorkflowNodeCard.tsx`):
+6. **WorkflowNodeCard** (`WorkflowNodeCard.tsx`):
    - Remove `node.agentId` references (lines 31, 219, 241, 246, 292, 686, 730, 841, 846) — use `node.agents[0]` or the agents list.
    - Update `AgentTaskState` status checks: `state.status === 'completed'` (line 79) → `'done'`, `state.status === 'needs_attention'` (line 160) → `'blocked'`.
-6. **SpaceAgentList** (`SpaceAgentList.tsx`):
+7. **SpaceAgentList** (`SpaceAgentList.tsx`):
    - Line 141 filters `step.agentId === agentId` for agent deletion confirmation — update to check `node.agents.some(a => a.agentId === agentId)`.
-7. **Tests:**
+8. **Tests:**
    - Serialization test for `endNodeId` round-trip.
    - NodeConfigPanel "Set as End Node" button test.
 
@@ -552,7 +569,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Remove validation of deprecated fields.
 2. **RPC handler updates:**
    - **Verification:** Confirm `spaceWorkflow.create` and `spaceWorkflow.update` handlers pass `endNodeId` through (current handlers use cast/spread — no whitelist).
-   - **`space-workflow-run-handlers.ts`:** Update all 6+ hardcoded `'needs_attention'` references (lines 219, 230, 232, 236, 255, 276, 295, 296, 362, 399) to `'blocked'`. Update `'completed'` to `'done'`. The `markFailed` handler assigns `needs_attention` as a transition target — this will break the CHECK constraint if not updated. Remove references to `failureReason`, `goalId`, `config` params.
+   - **`space-workflow-run-handlers.ts`:** Update all 19 hardcoded `'needs_attention'` references to `'blocked'`. Update `'completed'` to `'done'`. The `markFailed` handler assigns `needs_attention` as a transition target — this will break the CHECK constraint if not updated. Remove references to `failureReason`, `goalId`, `config` params.
    - **`space-task-message-handlers.ts`:** Update references to removed task fields (`workflowNodeId`, `agentName`, `taskAgentSessionId`) used for routing.
    - Remove references to `goalId`, `config`, `failureReason` from all run-related handlers.
 3. **`nodeExecution.list` RPC handler (required):**
@@ -562,6 +579,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - **`space-agent-tools.ts`** (lines 606, 679, 705): update old status values (`completed` → `done`, `needs_attention` → `blocked`, etc.).
    - **`global-spaces-tools.ts`** (lines 638, 734, 765): update old status values similarly. Remove references to `goalId`, `taskType`, `assignedAgent`.
    - **`neo-query-tools.ts`:** Remove references to `taskType`, `assignedAgent` (14 occurrences), `completionSummary`, `progress`, and other removed fields in display logic.
+   - **`neo-action-tools.ts`:** Update 4 references to `needs_attention` (lines 1092, 1569, 1570, 2210) → `blocked`, 3 references to `completed` (lines 1025, 1068, 1549) → `done`, and remove `failureReason` reference (line 1092).
    - **`provision-global-agent.ts`** and **`reference-resolver.ts`:** Verify and update any usage of removed `SpaceTask` fields.
 5. **Tests:**
    - Validation tests: valid/invalid `endNodeId`, `null` to clear.
@@ -599,11 +617,18 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Orchestration task in `open` state at completion → skipped, no throw.
 2. Verify no existing integration tests rely on `report_workflow_done`.
 3. Verify `NodeExecution` creation/completion flow works end-to-end through runtime.
+4. **Update online space tests** that assert against old status values:
+   - `space-happy-path-full-pipeline.test.ts`: update `run.status === 'completed'` → `'done'`, `waitForRunStatus(…, ['completed'])` → `['done']`.
+   - `space-happy-path-plan-to-approve.test.ts`: update `'needs_attention'` → `'blocked'`.
+   - `space-happy-path-code-review.test.ts`: update `'completed'` → `'done'`.
+   - `space-happy-path-qa-completion.test.ts`, `space-edge-cases.test.ts`, `space-agent-coordination.test.ts`, `task-agent-lifecycle.test.ts`, `task-agent-skills.test.ts`: update old status references.
+   - `helpers/space-test-helpers.ts`: update `waitForRunStatus`, `waitForNodeActivated` helpers for new status values.
 
 **Acceptance criteria:**
 - Full lifecycle proven: node `report_done` → execution `done` → tick → run `done`.
 - Backward compat: workflows without `endNodeId` still complete.
 - Schema cleanup doesn't break any existing test patterns.
+- All online space tests updated and passing with new status values.
 
 **Dependencies:** Task 4, Task 5, Task 6, Task 11
 
@@ -621,7 +646,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 1. **Status constants and colors** (`packages/web/src/lib/task-constants.ts`):
    - Update `TASK_STATUS_COLORS`: replace `pending` → `open`, `completed` → `done`, `needs_attention` → `blocked`, `review` → remove (or map to `in_progress`), `draft` → `open`, `rate_limited` → `blocked`, `usage_limited` → `blocked`.
-   - Remove `ROLE_COLORS` entirely (roles removed from `SpaceAgent`).
+   - **`ROLE_COLORS` — keep for room conversation rendering.** `ROLE_COLORS` (in `task-constants.ts` and the separate `packages/web/src/lib/role-colors.ts`) maps `authorRole` strings (`'planner'`, `'coder'`, `'leader'`, `'human'`, etc.) for conversation turn color-coding in `TaskConversationRenderer.tsx`, `TurnSummaryBlock.tsx`, `useTurnBlocks.ts`, `SlideOutPanel.tsx`, `AgentTurnBlock.tsx`. These `authorRole` values come from session metadata (`group_member.role`), **not** from `SpaceAgent.role`. Removing `ROLE_COLORS` would break room conversation rendering. Only remove space-specific `SpaceAgent.role`-keyed display (e.g., `RoleBadge` in `SpaceAgentList.tsx` line 48).
    - Update any status label/icon mappings.
 
 2. **Space store** (`packages/web/src/lib/space-store.ts`):
@@ -647,7 +672,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `RoomTasks.tsx`: update 40 occurrences of old status/field references.
    - `TaskView.tsx`, `TaskViewV2.tsx`: remove references to `completionSummary`, `prUrl`, `prNumber`, `progress`, `currentStep`, `inputDraft`; update status values.
    - `TaskActionDialogs.tsx`: update status-dependent actions.
-   - `TaskReviewBar.tsx`: remove or update review-specific status logic (review status moves to `node_executions`).
+   - `TaskReviewBar.tsx`: **remove entirely** — `review` is no longer a `SpaceTaskStatus` value. Review-related state tracking (human approval, PR review) moves to `NodeExecution` blocked/done transitions. If a minimal "needs attention" bar is still needed for `blocked` tasks, repurpose with a new component name.
    - `HeaderReviewBar.tsx`: update review status references.
    - `useTaskViewData.ts`, `useTaskInputDraft.ts`: remove references to removed fields.
 
@@ -661,7 +686,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Acceptance criteria:**
 - Zero references to old `SpaceTaskStatus` values (`draft`, `pending`, `completed`, `review`, `needs_attention`, `rate_limited`, `usage_limited`) in frontend code.
 - Zero references to removed `SpaceTask` fields (`workflowNodeId`, `agentName`, `customAgentId`, `taskAgentSessionId`, `taskType`, `goalId`, `error`, `assignedAgent`) in frontend code.
-- Zero references to removed `SpaceAgent.role` in frontend code (including `ROLE_COLORS`).
+- Zero references to `SpaceAgent.role` in space-specific frontend code (e.g., `SpaceAgentList.tsx` `RoleBadge`, `NodeConfigPanel` role display, `visual-editor/WorkflowCanvas.tsx` `agentRoleToNodeId`). Note: `ROLE_COLORS` for room conversation rendering is **kept** — it uses `authorRole` from session metadata, not `SpaceAgent.role`.
 - `tasksByNodeId` replaced with `nodeExecutionsByNodeId` backed by `NodeExecution` data.
 - `bun run typecheck` passes.
 - `bunx vitest run` passes.
@@ -685,4 +710,14 @@ Task 1 (types)
 │                                                  └── Task 12 (integration tests) ← Tasks 4,5,6,11
 ```
 
-Parallelizable after Task 3: Tasks 7, 9, 10 can run concurrently. Tasks 4, 5 are sequential. Task 6 depends on 4+5. Task 8 depends on 7. Task 11 can run after Task 3. Task 13 depends on Task 11 (needs `nodeExecution.list` LiveQuery). Task 12 depends on 4+5+6+11.
+Parallelizable after Task 3: Tasks 7, 9, 10 can run concurrently. Tasks 4, 5 are sequential. Task 6 depends on 4+5. Task 8 depends on 7. Task 11 can run after Task 3. Task 13 depends on Tasks 1, 3, and 11 (needs `nodeExecution.list` LiveQuery). Task 12 depends on 4+5+6+11.
+
+## Scope Notes
+
+### Room-level `TaskStatus` is out of scope
+
+The room-level `TaskStatus` type (in `packages/shared/src/types/neo.ts`) uses the same 10 old values as `SpaceTaskStatus`. Files like `task-handlers.ts`, `room-agent-tools.ts`, `goal-manager.ts`, and `room-manager.ts` all use room-level `TaskStatus`. **This is intentionally out of scope** — room tasks and space tasks are separate systems. The two type systems will temporarily diverge after this migration. Unifying them is a separate effort.
+
+### Cross-task file split: `VisualWorkflowEditor.tsx`
+
+Task 10 modifies `VisualWorkflowEditor.tsx` for `endNodeId` and `agents[]` changes. Task 13 replaces `tasksByNodeId` with `nodeExecutionsByNodeId` in the same file. To avoid an intermediate compile error between Task 10 and Task 13 landing, Task 10 should add a temporary `tasksByNodeId` shim (empty map returning `[]`) if the signal is removed from `space-store.ts` before Task 13 provides the replacement. Alternatively, Task 13 can be merged before Task 10's changes to this specific file.
