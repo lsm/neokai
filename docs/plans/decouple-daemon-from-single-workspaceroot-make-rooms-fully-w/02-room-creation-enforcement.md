@@ -98,11 +98,11 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Description**: Add a database migration that backfills `defaultPath` for existing rooms where it is `NULL`. The migration should set `defaultPath` to the first entry in `allowedPaths` (parsed from the JSON column). If `allowedPaths` is also empty, the migration cannot auto-fix -- log a warning. This ensures all existing rooms have a `defaultPath` before fallback removal in Milestone 3.
 
 **Subtasks**:
-1. Add a new `runMigration70(db: BunDatabase)` function in `packages/daemon/src/storage/schema/migrations.ts` (the project uses a single monolithic migrations file with numbered functions — there is NO `migrations/` directory). The migration:
+1. Add a new `runMigration70(db: BunDatabase)` function in `packages/daemon/src/storage/schema/migrations.ts` (the project uses a single monolithic migrations file with numbered functions — there is NO `migrations/` directory). The migration must follow the existing idempotency pattern: **guard with column/table existence checks** (e.g., check if any rooms still have `default_path IS NULL`; if none, return early). Do NOT use `PRAGMA user_version` — the codebase does not use it. See `runMigration68` and `runMigration69` for the canonical pattern. The migration:
    - Selects all rooms where `default_path IS NULL`.
    - For each, parses the `allowed_paths` JSON column and sets `default_path` to the first entry's `path`.
-   - For rooms where both `default_path` and `allowed_paths` are null/empty, set `default_path` to the daemon's `workspaceRoot` (passed as parameter or read from config). This ensures ALL rooms have a non-null `defaultPath` after migration — no room is left orphaned.
-2. Wire `runMigration70` into the `runMigrations()` function's version-check chain, following the existing pattern (check `user_version < 70`, call `runMigration70(db)`, set `user_version = 70`).
+   - For rooms where both `default_path` and `allowed_paths` are null/empty, the migration cannot auto-resolve the path from SQL alone. Use a hardcoded sentinel value like `'__NEEDS_WORKSPACE_PATH__'` and add a startup check in the daemon that replaces this sentinel with the actual `workspaceRoot` at boot time (when `Config.workspaceRoot` is available). This keeps the migration pure SQL while ensuring all rooms get a valid path.
+2. Wire `runMigration70` into the `runMigrations()` function by adding a call at the end of the function body (after `runMigration69`), with a descriptive comment — matching the existing unconditional-call pattern.
 3. Add a unit test that creates rooms with `defaultPath = null` (via direct DB insert), runs the migration, and verifies `defaultPath` is backfilled correctly for both cases (has allowedPaths, and has neither).
 4. Run `make test-daemon` to verify.
 

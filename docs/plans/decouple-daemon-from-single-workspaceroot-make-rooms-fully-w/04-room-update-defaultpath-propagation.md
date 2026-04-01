@@ -20,8 +20,8 @@ Allow changing `defaultPath` via `room.update` with safety guards, and propagate
 
 **Subtasks**:
 1. In `room-handlers.ts` `room.update` handler, before calling `roomManager.updateRoom()`, check if `params.defaultPath` differs from the current room's `defaultPath`.
-2. If it differs, query the room's runtime service (or task manager) for active task groups. The `RoomRuntimeService` is not directly available in `room-handlers.ts` -- add it as an optional dependency, or use a callback `hasActiveTaskGroups(roomId): boolean`. **Note**: If the runtime hasn't been created yet for a room (lazy initialization), the callback should return `false` (no active tasks) rather than throwing.
-3. Wire the dependency from `setupAllHandlers` in `index.ts` -- pass `roomRuntimeService` to `setupRoomHandlers`.
+2. If it differs, query the room's runtime service for active task groups. Rather than adding yet another positional parameter to `setupRoomHandlers` (which already takes 7+ params and risks silent `undefined` bugs), use a **callback approach**: add a `hasActiveTaskGroups: (roomId: string) => boolean` callback to the existing deps/options object. This avoids coupling `room-handlers.ts` directly to `RoomRuntimeService`. **Note**: If the runtime hasn't been created yet for a room (lazy initialization), the callback should return `false` (no active tasks) rather than throwing.
+3. Wire the callback from `setupAllHandlers` in `index.ts` -- implement it as `(roomId) => roomRuntimeService.hasActiveTaskGroups(roomId)`, where `hasActiveTaskGroups` is a new method on `RoomRuntimeService` that returns `false` if no runtime exists for the room.
 4. If active task groups exist, throw: `Error('Cannot change defaultPath while tasks are active. Stop or complete all tasks first.')`.
 5. Also validate the new `defaultPath`: must be absolute and exist on disk (`existsSync`).
 6. Update `allowedPaths` if the new `defaultPath` is not in the current `allowedPaths` -- auto-add it.
@@ -46,7 +46,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Description**: When `defaultPath` changes successfully via `room.update`, propagate the change to: (a) the room chat session's `workspacePath`, (b) the `RoomRuntime`'s internal workspace path (via `TaskGroupManager`). Since `TaskGroupManager.workspacePath` is readonly, the runtime must be stopped and recreated.
 
-**Starting state**: Task 3.2 does NOT touch the `room.updated` event handler — all propagation logic is consolidated here.
+**Starting state**: Task 3.2 does NOT touch the `room.updated` event handler — all propagation logic is consolidated here. Task 4.1 already guards against `defaultPath` changes when active task groups exist, so by the time this code runs, there are no in-progress workers. However, the room chat session (the synthetic `room:chat:*` session) may still be active.
 
 **Subtasks**:
 1. In `room-handlers.ts` `room.update` handler, after a successful `defaultPath` change, update the room chat session's `workspacePath` via `sessionManager.updateSession(roomChatSessionId, { workspacePath: newDefaultPath })`. Add this alongside the existing `defaultModel` sync logic.
@@ -54,8 +54,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    a. Stop the existing runtime via `runtime.stop()`.
    b. Remove it from `this.runtimes` map.
    c. Call `this.createOrGetRuntime(room)` to create a new runtime with the updated `workspacePath`.
-   d. Ensure `runtime.stop()` cleanly terminates any sessions that were started before the path change — no orphaned sessions.
-3. Add unit tests verifying: (a) room chat session `workspacePath` is updated, (b) runtime workspace path reflects the new `defaultPath` after recreation, (c) **no orphaned sessions remain** after runtime stop/recreate — verify that sessions started before the path change are cleanly terminated.
+   **Important note on `runtime.stop()` behavior**: The current `RoomRuntime.stop()` cleans up job queues, mirroring subscriptions, observers, and zombie groups, but does NOT terminate active agent sessions (it only calls `cancelPendingTickJobs` and `cleanupZombieGroupsForRoom`). This is acceptable here because Task 4.1's guard ensures no active task groups exist when `defaultPath` changes. The room chat session is updated separately in subtask 1 (its workspace path is changed in-place, not requiring termination). If any edge case arises where sessions could be orphaned, add a `terminateGroupSessions` call for any remaining groups before stop.
+3. Add unit tests verifying: (a) room chat session `workspacePath` is updated, (b) runtime workspace path reflects the new `defaultPath` after recreation, (c) the old runtime is properly stopped (observer disposed, job queue cancelled), (d) verify the guard from Task 4.1 prevents this code from running with active task groups (integration test).
 4. Run `make test-daemon`.
 
 **Acceptance Criteria**:

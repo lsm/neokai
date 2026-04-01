@@ -22,7 +22,7 @@ Remove all fallbacks to `workspaceRoot` in room-scoped code paths. After this mi
 **Subtasks**:
 1. Add a `roomManager` (or a `getRoomDefaultPath(roomId: string): string | undefined` callback) to the `ReferenceHandlerDeps` interface.
 2. Pass `roomManager` from `setupAllHandlers` in `packages/daemon/src/lib/rpc-handlers/index.ts` (line 298-307).
-3. In `resolveSessionContext`, when `sessionId.startsWith('room:chat:')`, extract `roomId`, look up the room via deps, and return `room.defaultPath` (or throw if room not found). Remove the `deps.workspaceRoot` fallback for this code path.
+3. In `resolveSessionContext`, when `sessionId.startsWith('room:chat:')`, extract `roomId`, look up the room via deps, and return `room.defaultPath`. If the room is not found (e.g., deleted while a reference request is in-flight), return `deps.workspaceRoot` as a graceful fallback with a warning log — do NOT throw an unhandled exception, since this is invoked during `@file`/`@folder` search in the chat UI and an uncaught throw would surface as an opaque RPC error to the user. Remove the `deps.workspaceRoot` fallback only for the happy path (room exists).
 4. Keep the general fallback `deps.workspaceRoot` for non-room sessions (line 335) -- those still need it.
 5. Keep `sessionData.workspacePath ?? deps.workspaceRoot` on line 340 -- non-room sessions may still lack a workspace path.
 6. Update `packages/daemon/tests/unit/rpc-handlers/reference-handlers.test.ts` to provide the new dependency and test that `room:chat:*` sessions resolve to room's `defaultPath`.
@@ -49,6 +49,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 1. In `createOrGetRuntime`, replace `room.defaultPath ?? this.ctx.defaultWorkspacePath` with `room.defaultPath`. Add a guard: if `!room.defaultPath`, log an error and throw (this should never happen after backfill).
 2. In the `RoomRuntimeServiceContext` interface, make `defaultWorkspacePath` optional (it will be removed in Milestone 5).
 3. In `setupRoomAgentSession`, where MCP servers are resolved via `this.ctx.settingsManager.getEnabledMcpServersConfig()`, add a comment noting this is global MCP config (acceptable for now -- per-room MCP is out of scope). The key fix is that the room chat session's `workspacePath` is set correctly (from `room.defaultPath`), which is already handled by the room.create handler.
+   - **Also verify `settings-handlers.ts`**: Confirm that `settings.mcp.listFromSources` constructs a `SettingsManager` from `session.workspacePath` (already correct once room sessions have the right path), NOT from `deps.workspaceRoot`. Document this verification in the PR description as "confirmed no change needed for settings-handlers.ts".
 4. **Do NOT modify the `room.updated` event handler here** — all `room.updated` propagation logic (including `defaultPath` changes to the room chat session and runtime) is consolidated in Milestone 4 (Tasks 4.1 and 4.2).
 5. Update `packages/daemon/tests/unit/room/room-runtime-service.test.ts` and `room-runtime-service-wiring.test.ts`: ensure test rooms have `defaultPath` set, verify no fallback to `defaultWorkspacePath` occurs.
 6. Run `make test-daemon`.
@@ -73,17 +74,20 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Description**: In `session-lifecycle.ts` line 93, `const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot` falls back to the daemon's workspace root. For room-scoped sessions (room chat, workers, leaders), the caller already passes `workspacePath` from the room's `defaultPath`. However, the fallback should only apply to non-room sessions. Add clarity and a defensive check.
 
 **Subtasks**:
-1. In `session-lifecycle.ts`, add a comment clarifying that `this.config.workspaceRoot` fallback is for non-room standalone sessions only.
-2. Add a log warning when the fallback is used: `this.logger.warn('Session created without explicit workspacePath, falling back to daemon workspaceRoot')`.
-3. Verify that all room-scoped session creation paths (room chat in `room-handlers.ts`, workers in `room-runtime.ts`) already pass `workspacePath` explicitly. Add a **runtime assertion** in `session-lifecycle.ts` that logs a warning (not throw) when the fallback is hit for a session whose ID matches a room pattern (`room:*`). This provides a machine-checkable guard, not just documentation.
-4. Add a unit test in `packages/daemon/tests/unit/session/` that verifies: (a) a session created with explicit `workspacePath` does NOT fall back to `config.workspaceRoot`, and (b) a room-scoped session created without explicit `workspacePath` triggers the warning log.
+1. In `session-lifecycle.ts`, split the fallback logic based on session type:
+   - For sessions whose ID matches a room pattern (`room:*`): **throw an error** (`'Room-scoped session must have explicit workspacePath'`). This is consistent with the "hard breaking change" philosophy — room sessions must never silently fall back to daemon `workspaceRoot`. When `workspaceRoot` becomes `undefined` in Milestone 5, a soft warning would cause `baseWorkspacePath = undefined`, leading to a downstream crash anyway. Failing early is safer.
+   - For non-room standalone sessions: keep the existing fallback to `this.config.workspaceRoot` with a log warning.
+2. Add a comment clarifying the split: room sessions throw, non-room sessions fall back.
+3. Verify that all room-scoped session creation paths (room chat in `room-handlers.ts`, workers in `room-runtime.ts`) already pass `workspacePath` explicitly. Trace the code paths and document in the PR description.
+4. Add a unit test in `packages/daemon/tests/unit/session/` that verifies: (a) a session created with explicit `workspacePath` does NOT fall back to `config.workspaceRoot`, (b) a room-scoped session created without explicit `workspacePath` **throws**, and (c) a non-room session without explicit `workspacePath` falls back to `config.workspaceRoot` with a warning.
 5. Run `make test-daemon`.
 
 **Acceptance Criteria**:
-- Fallback in `session-lifecycle.ts` is documented as non-room-only.
-- Warning is logged when fallback is used.
-- Verified that all room session creation paths pass explicit `workspacePath`.
-- New unit test passes.
+- Room-scoped sessions (`room:*`) throw if `workspacePath` is not explicitly provided.
+- Non-room sessions fall back to `config.workspaceRoot` with a warning log.
+- Verified that all existing room session creation paths pass explicit `workspacePath` (so the throw is never hit in practice).
+- Unit tests cover both the throw and fallback paths.
+- All daemon tests pass.
 
 **Dependencies**: Task 2.1
 
@@ -116,24 +120,6 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
----
 
-### Task 3.5: Verify settings-handlers.ts has no room-scoped workspaceRoot fallback
 
-**Description**: The overview lists `settings-handlers.ts` in scope. Verify that `settings.mcp.listFromSources` in `settings-handlers.ts` does NOT fall back to `deps.workspaceRoot` for room-scoped sessions — it constructs a `SettingsManager` from `session.workspacePath`, which is already correct once room sessions have the right `workspacePath` (fixed by Tasks 2.1 and 3.2). Document this verification as a no-op in the PR description.
-
-**Subtasks**:
-1. Read `settings-handlers.ts` and trace the `settings.mcp.listFromSources` handler. Confirm it reads `session.workspacePath` (set correctly by the room session creation flow), NOT `deps.workspaceRoot`.
-2. Verify that `setupRoomAgentSession` in `room-runtime-service.ts` uses global `settingsManager` for MCP config — confirm this is acceptable (global MCP config is a daemon concern, not a room-scoped fallback bug). Document this in the PR.
-3. If any room-scoped fallback to `workspaceRoot` is found in `settings-handlers.ts`, fix it. Otherwise, document the verification as "confirmed no change needed."
-4. No code changes expected — this is a verification task.
-
-**Acceptance Criteria**:
-- PR description documents that `settings-handlers.ts` was audited and has no room-scoped `workspaceRoot` fallback.
-- If a fallback is unexpectedly found, it is fixed.
-
-**Dependencies**: Task 3.2
-
-**Agent type**: coder
-
-Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+*(Task 3.5 was folded into Task 3.2, subtask 3 — the `settings-handlers.ts` verification is now a sub-item of Task 3.2.)*
