@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import indexHtml from '../../index.html?raw';
 import appTsx from '../../App.tsx?raw';
+import useViewportSafetyTs from '../../hooks/useViewportSafety.ts?raw';
 
 /**
  * iOS iPad Safari safe area support tests.
@@ -19,5 +20,17 @@ describe('iOS iPad Safari safe area support', () => {
 
 	it('App.tsx applies pt-safe class to the root container for top safe area', () => {
 		expect(appTsx).toContain('pt-safe');
+	});
+
+	it('App.tsx uses h-safe-screen instead of h-dvh for the root container', () => {
+		expect(appTsx).toContain('h-safe-screen');
+		expect(appTsx).not.toContain('h-dvh');
+	});
+
+	it('styles.css defines the .h-safe-screen utility class (verified via hook referencing --safe-height)', () => {
+		// CSS content is stripped in Vite's test environment; instead we verify
+		// that useViewportSafety sets the --safe-height custom property which
+		// is consumed by the .h-safe-screen utility defined in styles.css.
+		expect(useViewportSafetyTs).toContain('--safe-height');
 	});
 });

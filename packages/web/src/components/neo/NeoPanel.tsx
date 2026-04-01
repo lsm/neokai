@@ -154,7 +154,7 @@ export function NeoPanel() {
 				aria-modal="true"
 				aria-label="Neo AI assistant"
 				class={[
-					'fixed top-0 left-0 h-dvh pt-safe z-50',
+					'fixed top-0 left-0 h-safe-screen pt-safe z-50',
 					'w-full sm:w-80 md:w-96',
 					'flex flex-col',
 					'bg-gray-900 border-r border-gray-700 shadow-2xl',

@@ -355,7 +355,7 @@ export function ContextPanel() {
 				class={`
 					fixed md:relative
 					top-0 left-0 md:left-auto
-					h-dvh md:h-full w-70
+					h-safe-screen md:h-full w-70
 					bg-dark-950 border-r ${borderColors.ui.default}
 					flex flex-col
 					pt-safe md:pt-0
