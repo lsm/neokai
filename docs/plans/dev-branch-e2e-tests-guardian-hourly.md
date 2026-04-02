@@ -92,7 +92,8 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
    echo "$UPSTREAM"
 
    # Check for skipped build (e.g., unit test failure caused build to be skipped)
-   BUILD_CONCLUSION=$(echo "$UPSTREAM" | jq -r '.[] | select(.name == "Build Binary (linux-x64)") | .conclusion')
+   # Note: --jq outputs newline-delimited JSON objects, so we must slurp them into an array first
+   BUILD_CONCLUSION=$(echo "$UPSTREAM" | jq -rs '.[] | select(.name == "Build Binary (linux-x64)") | .conclusion')
    if [ "$BUILD_CONCLUSION" = "skipped" ]; then
      echo "WARNING: Build was skipped (likely a prerequisite job failed). E2E cannot run."
      echo "Report this as a CI infrastructure issue rather than 'all green'."
@@ -387,3 +388,36 @@ The existing detailed plan at `docs/plans/dev-branch-e2e-tests-health-check.md` 
 - Excluded tests (`space-export-import`, `space-workflow-rules`) are not investigated.
 - The guardian does NOT trigger `workflow_dispatch` or push to dev directly -- it is a read-only observer.
 - GitHub CLI is authenticated and `jq` is available in the agent environment.
+
+## Per-Execution Task Template
+
+> **Relationship to mission description:** The "Mission Description (Discovery Task Prompt)" section above is the full reference specification. This Per-Execution Task Template is the condensed prompt that the mission system injects as the task description when cloning the task for subsequent executions. Both are authoritative; the template is a self-contained subset of the full description. If the agent needs more detail on any step, it should consult the full mission description.
+
+Each hourly execution produces exactly one task:
+
+**Title:** E2E Discovery: check latest dev CI for failures
+**Agent:** general
+**Priority:** high
+
+```
+Check the latest completed CI run on the dev branch for E2E test failures.
+
+Steps:
+1. Run: gh run list --repo lsm/neokai --branch dev --limit 5 --status completed --json databaseId,conclusion,createdAt,headSha
+2. Pick the most recent non-cancelled run. If all 5 are cancelled, report "all cancelled" and exit. If no completed runs exist at all, poll every 2 minutes for up to 10 minutes (5 attempts), then give up.
+3. Verify E2E jobs actually ran (not skipped). Check upstream jobs (Build Binary, Discover Tests) succeeded. If E2E jobs were all skipped due to upstream failures, report "WARNING: E2E skipped (upstream failure)" and exit -- do NOT report "all green".
+4. Run: gh run view --repo lsm/neokai <run-id> --json jobs --jq '.jobs[] | select(.name | startswith("E2E")) | {name: .name, conclusion: .conclusion}'
+5. If all E2E jobs passed, report "All green" and stop.
+6. For each failed E2E job, extract the failure message from job logs.
+7. For each failure, categorize root cause as: test-bug | product-bug | flaky | env. Check docs/e2e-health-check-log.md for pre-existing occurrences.
+8. Output a structured summary listing each failure with: test name, failure message, commit hash, root cause category, pre-existing status.
+9. Append results to docs/e2e-health-check-log.md following existing format.
+
+Excluded tests (do not investigate): features/space-export-import, features/space-workflow-rules.
+
+Do NOT push commits. Do NOT create PRs. Do NOT modify source code files. Appending to the health check log is the only allowed write. This is otherwise a READ-ONLY discovery task.
+```
+
+### Leader Guidance for CI Infrastructure Warnings
+
+If the discovery output contains a CI infrastructure warning (e.g., "Build was skipped", "No E2E jobs actually ran") with no failure entries, do NOT create fix tasks. These are infrastructure issues, not test failures, and should be reported to the team but not tracked as fix tasks.
