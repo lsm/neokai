@@ -50,14 +50,7 @@ const MAX_BUFFER_BYTES = 1_048_576;
  * Environment variable prefixes that are stripped from the restricted env.
  * These carry credentials, auth tokens, and internal secrets.
  */
-const RESTRICTED_ENV_PREFIXES = [
-	'ANTHROPIC_',
-	'CLAUDE_',
-	'GLM_',
-	'ZHIPU_',
-	'COPILOT_',
-	'NEOKAI_SECRET_',
-];
+const RESTRICTED_ENV_PREFIXES = ['ANTHROPIC_', 'CLAUDE_', 'GLM_', 'ZHIPU_', 'COPILOT_', 'NEOKAI_'];
 
 /**
  * Environment variable keys matching this regex are stripped from the restricted env.
@@ -111,7 +104,7 @@ export function buildRestrictedEnv(
 	env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
 	env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
 
-	// Merge user-specified env (lowest priority — can be overridden by injected vars)
+	// Merge user-specified env (applied after injected vars; cannot override gate-injected vars)
 	if (scriptEnv) {
 		for (const [key, value] of Object.entries(scriptEnv)) {
 			// User env cannot override gate-injected vars
@@ -332,14 +325,28 @@ export async function executeGateScript(
 
 	const restrictedEnv = buildRestrictedEnv(context, env);
 
-	const proc = Bun.spawn(args, {
-		cwd: context.workspacePath,
-		env: restrictedEnv,
-		stdout: 'pipe',
-		stderr: 'pipe',
-	});
+	let proc;
+	try {
+		proc = Bun.spawn(args, {
+			cwd: context.workspacePath,
+			env: restrictedEnv,
+			stdout: 'pipe',
+			stderr: 'pipe',
+		});
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return {
+			success: false,
+			data: {},
+			error: `Failed to spawn ${script.interpreter}: ${message}`,
+		};
+	}
 
 	// Drain stdout and stderr concurrently with proc.exited to avoid pipe deadlock
+	// NOTE: SIGKILL on bash -c only kills the shell, not child processes (e.g. sleep).
+	// This is a known bash limitation. Gate scripts that spawn long-lived children
+	// should manage their own cleanup on SIGTERM-like signals. Process group kill
+	// (-proc.pid) is not used here because Bun.spawn may not always assign a usable PID.
 	const [stdoutResult, stderrResult, exitCode] = await Promise.all([
 		collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
 		collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),

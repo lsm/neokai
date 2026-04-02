@@ -5,7 +5,7 @@
  *   - buildRestrictedEnv: credential stripping, allowlist, injection, user env merging
  *   - deepMergeWithDepthLimit: deep merge, depth limit, prototype pollution rejection
  *   - parseJsonStdout: valid JSON, empty, invalid, non-object
- *   - executeGateScript: success, non-zero exit, timeout, maxBuffer, unknown interpreter
+ *   - executeGateScript: success, non-zero exit, timeout, maxBuffer, spawn errors
  *
  * NOTE: Integration tests that call executeGateScript() use real Bun.spawn() with
  * node/bash. The buildRestrictedEnv describe block manipulates process.env; its
@@ -53,6 +53,8 @@ describe('buildRestrictedEnv', () => {
 		process.env['ZHIPU_API_KEY'] = 'zhipu-secret';
 		process.env['COPILOT_GITHUB_TOKEN'] = 'copilot-secret';
 		process.env['NEOKAI_SECRET_X'] = 'neokai-secret';
+		process.env['NEOKAI_PORT'] = '8080';
+		process.env['NEOKAI_USE_DEV_PROXY'] = '1';
 		process.env['MY_SECRET_KEY'] = 'my-secret';
 		process.env['DB_PASSWORD'] = 'db-secret';
 		process.env['AWS_CREDENTIAL'] = 'aws-secret';
@@ -93,6 +95,11 @@ describe('buildRestrictedEnv', () => {
 
 	test('strips NEOKAI_SECRET_ prefixed env vars', () => {
 		expect(buildRestrictedEnv(CTX)['NEOKAI_SECRET_X']).toBeUndefined();
+	});
+
+	test('strips broader NEOKAI_ prefixed env vars (internal ops)', () => {
+		expect(buildRestrictedEnv(CTX)['NEOKAI_PORT']).toBeUndefined();
+		expect(buildRestrictedEnv(CTX)['NEOKAI_USE_DEV_PROXY']).toBeUndefined();
 	});
 
 	test('strips env vars matching SECRET key pattern', () => {
@@ -145,15 +152,16 @@ describe('buildRestrictedEnv', () => {
 		expect(env['NODE_ENV']).toBe('test');
 	});
 
-	test('injects NEOKAI_GATE_ID', () => {
+	test('injects NEOKAI_GATE_ID after filtering', () => {
+		// NEOKAI_ prefix vars are stripped, but these three are re-injected
 		expect(buildRestrictedEnv(CTX)['NEOKAI_GATE_ID']).toBe('gate-123');
 	});
 
-	test('injects NEOKAI_WORKFLOW_RUN_ID', () => {
+	test('injects NEOKAI_WORKFLOW_RUN_ID after filtering', () => {
 		expect(buildRestrictedEnv(CTX)['NEOKAI_WORKFLOW_RUN_ID']).toBe('run-456');
 	});
 
-	test('injects NEOKAI_WORKSPACE_PATH', () => {
+	test('injects NEOKAI_WORKSPACE_PATH after filtering', () => {
 		expect(buildRestrictedEnv(CTX)['NEOKAI_WORKSPACE_PATH']).toBe('/tmp');
 	});
 
@@ -185,6 +193,10 @@ describe('buildRestrictedEnv', () => {
 		expect(
 			buildRestrictedEnv(CTX, { ANTHROPIC_CUSTOM: 'leak' })['ANTHROPIC_CUSTOM']
 		).toBeUndefined();
+	});
+
+	test('user env with NEOKAI_ prefix is stripped', () => {
+		expect(buildRestrictedEnv(CTX, { NEOKAI_CUSTOM: 'leak' })['NEOKAI_CUSTOM']).toBeUndefined();
 	});
 
 	test('user env with SECRET pattern is stripped', () => {
@@ -231,32 +243,88 @@ describe('deepMergeWithDepthLimit', () => {
 		});
 	});
 
-	test('respects max depth limit (default 5)', () => {
-		const deep: Record<string, unknown> = { v: 'leaf' };
-		let nested = deep;
-		for (let i = 0; i < 5; i++) {
-			nested = { next: nested };
-		}
-		// Source has 6 levels — merge should stop before leaf
-		const result = deepMergeWithDepthLimit({}, nested);
-		let current: unknown = result;
-		let depth = 0;
-		while (current !== null && typeof current === 'object' && !Array.isArray(current)) {
-			const record = current as Record<string, unknown>;
-			if ('next' in record) {
-				current = record['next'];
-				depth++;
-			} else {
-				break;
-			}
-		}
-		expect(depth).toBeLessThan(6);
+	test('respects max depth limit — stops recursion at depth boundary', () => {
+		// Both target and source have overlapping nested structures so the
+		// recursive merge branch is taken. At maxDepth=2, the merge should
+		// stop recursing at depth 2, preserving the target value at that level.
+		const target: Record<string, unknown> = {
+			a: { b: { c: { d: 'original' } } },
+		};
+		const source = {
+			a: { b: { c: { d: 'replaced' }, e: 'added' } },
+		};
+
+		// maxDepth=2: depth 0 merges 'a' (recurse), depth 1 merges 'b' (recurse),
+		// depth 2 >= maxDepth → returns target.b unchanged (no 'e' added, 'd' stays original)
+		const result = deepMergeWithDepthLimit(target, source, 2);
+
+		// a.b preserved from target — depth limit prevented recursive merge
+		const b = (result['a'] as Record<string, unknown>)['b'] as Record<string, unknown>;
+		expect((b['c'] as Record<string, unknown>)['d']).toBe('original');
+		// 'e' was never merged in because recursion stopped at depth 2
+		expect(b['e']).toBeUndefined();
 	});
 
-	test('respects custom max depth', () => {
-		const r = deepMergeWithDepthLimit({}, { l1: { l2: { l3: 'd' } } }, 2);
-		expect(r['l1']).toBeDefined();
-		expect(r['l1']).toEqual({ l2: { l3: 'd' } });
+	test('respects max depth limit — deeper nesting preserved at boundary', () => {
+		const target: Record<string, unknown> = {
+			l1: { l2: { l3: { l4: 'deep' } } },
+		};
+		const source = {
+			l1: { l2: { l3: { l4: 'replaced' } } },
+		};
+
+		// maxDepth=3: depth 0 merges l1, depth 1 merges l2, depth 2 merges l3 (recurse),
+		// depth 3 >= maxDepth → returns target.l3 unchanged (l4 stays 'deep')
+		const result = deepMergeWithDepthLimit(target, source, 3);
+		const l3 = ((result['l1'] as Record<string, unknown>)['l2'] as Record<string, unknown>)[
+			'l3'
+		] as Record<string, unknown>;
+		// l4 preserved from target — depth limit prevented recursive merge
+		expect(l3['l4']).toBe('deep');
+	});
+
+	test('default depth limit (5) allows merging up to 5 levels deep', () => {
+		const target: Record<string, unknown> = {
+			a: { b: { c: { d: { e: 'original' } } } },
+		};
+		const source = {
+			a: { b: { c: { d: { e: 'replaced' } } } },
+		};
+
+		// 5 levels: a(depth 0) → b(depth 1) → c(depth 2) → d(depth 3) → e(depth 4)
+		// All within maxDepth=5, so the leaf value is replaced
+		const result = deepMergeWithDepthLimit(target, source);
+		const e = (
+			(
+				((result['a'] as Record<string, unknown>)['b'] as Record<string, unknown>)['c'] as Record<
+					string,
+					unknown
+				>
+			)['d'] as Record<string, unknown>
+		)['e'] as string;
+		expect(e).toBe('replaced');
+	});
+
+	test('default depth limit (5) stops at 6th level', () => {
+		const target: Record<string, unknown> = {
+			a: { b: { c: { d: { e: { f: 'original' } } } } },
+		};
+		const source = {
+			a: { b: { c: { d: { e: { f: 'replaced' } } } } },
+		};
+
+		// 6 levels: a(0) → b(1) → c(2) → d(3) → e(4) → f(5, blocked by maxDepth)
+		// f is at depth 5 which equals maxDepth → returns target.e unchanged
+		const result = deepMergeWithDepthLimit(target, source);
+		const e = (
+			(
+				((result['a'] as Record<string, unknown>)['b'] as Record<string, unknown>)['c'] as Record<
+					string,
+					unknown
+				>
+			)['d'] as Record<string, unknown>
+		)['e'] as Record<string, unknown>;
+		expect(e['f']).toBe('original');
 	});
 
 	test('rejects __proto__ key — does not create own property', () => {
@@ -444,6 +512,15 @@ describe('executeGateScript — integration', () => {
 		expect(r.error).toContain('Unknown interpreter');
 	});
 
+	test('spawn failure (missing interpreter) returns failure without crashing', async () => {
+		const r = await executeGateScript(
+			{ interpreter: 'node', source: 'console.log(1)' } as GateScript,
+			{ ...CTX, workspacePath: '/nonexistent/path/that/does/not/exist' }
+		);
+		expect(r.success).toBe(false);
+		expect(r.error).toContain('Failed to spawn');
+		expect(r.data).toEqual({});
+	});
 	test('restricted env does not leak credentials to script', async () => {
 		const origKey = process.env['ANTHROPIC_API_KEY'];
 		process.env['ANTHROPIC_API_KEY'] = 'sk-ant-test-secret';
@@ -462,6 +539,28 @@ describe('executeGateScript — integration', () => {
 				delete process.env['ANTHROPIC_API_KEY'];
 			} else {
 				process.env['ANTHROPIC_API_KEY'] = origKey;
+			}
+		}
+	});
+
+	test('restricted env does not leak NEOKAI_ internal vars', async () => {
+		const origPort = process.env['NEOKAI_PORT'];
+		process.env['NEOKAI_PORT'] = '9999';
+		try {
+			const r = await executeGateScript(
+				{
+					interpreter: 'node',
+					source: 'console.log(JSON.stringify({ port: process.env.NEOKAI_PORT }))',
+				} as GateScript,
+				CTX
+			);
+			expect(r.success).toBe(true);
+			expect(r.data['port']).toBeUndefined();
+		} finally {
+			if (origPort === undefined) {
+				delete process.env['NEOKAI_PORT'];
+			} else {
+				process.env['NEOKAI_PORT'] = origPort;
 			}
 		}
 	});
@@ -561,14 +660,22 @@ describe('executeGateScript — integration', () => {
 
 describe('executeGateScript — python3', () => {
 	test('successful python3 script with JSON stdout', async () => {
+		// Probe for python3 availability — skip the entire test if missing
+		let python3Available = false;
 		try {
 			const proc = Bun.spawn(['python3', '-c', 'print("hello")'], {
 				stdout: 'ignore',
 				stderr: 'ignore',
 			});
 			await proc.exited;
+			python3Available = true;
 		} catch {
-			// python3 not available — skip
+			// python3 not available
+		}
+
+		if (!python3Available) {
+			// Log skip reason for CI visibility — bun:test does not have test.skip()
+			console.log('[SKIP] python3 not available on this system');
 			return;
 		}
 
