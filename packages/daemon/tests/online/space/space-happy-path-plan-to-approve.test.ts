@@ -103,7 +103,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 			expect(tasks.length).toBeGreaterThanOrEqual(1);
 			const planningTask = tasks.find((t) => t.title === 'Planning');
 			expect(planningTask).toBeDefined();
-			expect(planningTask!.status).toBe('pending');
+			expect(planningTask!.status).toBe('open');
 			expect(planningTask!.workflowRunId).toBe(runId);
 
 			// Plan Review should NOT be activated yet — no plan has been submitted
@@ -149,7 +149,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
 			expect(planReviewTask.title).toBe('Plan Review');
 			expect(planReviewTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(planReviewTask.status);
+			expect(['open', 'in_progress']).toContain(planReviewTask.status);
 		},
 		TEST_TIMEOUT
 	);
@@ -262,7 +262,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
 			expect(codingTask.title).toBe('Coding');
 			expect(codingTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(codingTask.status);
+			expect(['open', 'in_progress']).toContain(codingTask.status);
 		},
 		TEST_TIMEOUT
 	);
@@ -301,8 +301,8 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 			expect(rejectedGate.data.rejectedAt).toBeDefined();
 			expect(rejectedGate.data.reason).toBe('Plan needs more detail on implementation approach');
 
-			// Run must be in needs_attention with humanRejected
-			expect(rejectedRun.status).toBe('needs_attention');
+			// Run must be in blocked with humanRejected
+			expect(rejectedRun.status).toBe('blocked');
 			expect(rejectedRun.failureReason).toBe('humanRejected');
 
 			// Coding must NOT have been activated
@@ -310,12 +310,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 			expect(codingTasks.length).toBe(0);
 
 			// Confirm via polling helper too
-			const finalRun = await waitForRunStatus(
-				daemon,
-				runId,
-				['needs_attention'],
-				RUN_STATUS_TIMEOUT
-			);
+			const finalRun = await waitForRunStatus(daemon, runId, ['blocked'], RUN_STATUS_TIMEOUT);
 			expect(finalRun.failureReason).toBe('humanRejected');
 		},
 		TEST_TIMEOUT
@@ -343,12 +338,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
 			// Reject first
 			await rejectGate(daemon, runId, 'plan-approval-gate', 'Needs revision');
-			const afterReject = await waitForRunStatus(
-				daemon,
-				runId,
-				['needs_attention'],
-				RUN_STATUS_TIMEOUT
-			);
+			const afterReject = await waitForRunStatus(daemon, runId, ['blocked'], RUN_STATUS_TIMEOUT);
 			expect(afterReject.failureReason).toBe('humanRejected');
 
 			// Now approve (overrides rejection)

@@ -280,13 +280,13 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 				'Reviewed by 3 reviewers. QA confirmed mergeable state.';
 			await mockAgentDone(daemon, spaceId, doneTask.id, completionSummary);
 
-			const completedRun = await waitForRunStatus(daemon, runId, ['completed'], RUN_STATUS_TIMEOUT);
-			expect(completedRun.status).toBe('completed');
+			const completedRun = await waitForRunStatus(daemon, runId, ['done'], RUN_STATUS_TIMEOUT);
+			expect(completedRun.status).toBe('done');
 			expect(completedRun.completedAt).toBeDefined();
 
 			// ── Verify completion summary ──────────────────────────────────────
 			const doneTasks = await getTasksForNode(daemon, spaceId, runId, 'Done');
-			const completedDoneTask = doneTasks.find((t) => t.status === 'completed');
+			const completedDoneTask = doneTasks.find((t) => t.status === 'done');
 			expect(completedDoneTask).toBeDefined();
 			expect(completedDoneTask?.result).toBe(completionSummary);
 
@@ -526,13 +526,13 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			await mockAgentDone(daemon, spaceId, doneTask.id, completionSummary);
 
 			// ── Final assertions ─────────────────────────────────────────────────
-			const completedRun = await waitForRunStatus(daemon, runId, ['completed'], RUN_STATUS_TIMEOUT);
-			expect(completedRun.status).toBe('completed');
+			const completedRun = await waitForRunStatus(daemon, runId, ['done'], RUN_STATUS_TIMEOUT);
+			expect(completedRun.status).toBe('done');
 			expect(completedRun.completedAt).toBeDefined();
 
 			// Completion summary available on the Done task
 			const doneTasks = await getTasksForNode(daemon, spaceId, runId, 'Done');
-			const completedDoneTask = doneTasks.find((t) => t.status === 'completed');
+			const completedDoneTask = doneTasks.find((t) => t.status === 'done');
 			expect(completedDoneTask).toBeDefined();
 			expect(completedDoneTask?.result).toBe(completionSummary);
 		},

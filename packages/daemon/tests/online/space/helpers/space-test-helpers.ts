@@ -268,7 +268,7 @@ export async function waitForNodeActivated(
 		spaceId,
 		runId,
 		nodeNameOrId,
-		['pending', 'in_progress', 'completed', 'review', 'needs_attention'],
+		['open', 'in_progress', 'done', 'blocked', 'cancelled', 'archived'],
 		timeout
 	);
 }
@@ -337,8 +337,8 @@ export async function mockAgentDone(
 		taskId,
 	})) as SpaceTask;
 
-	// pending → in_progress → completed; in_progress → completed
-	if (current.status === 'pending' || current.status === 'draft') {
+	// open → in_progress → done; in_progress → done
+	if (current.status === 'open') {
 		await daemon.messageHub.request('spaceTask.update', {
 			spaceId,
 			taskId,
@@ -349,8 +349,8 @@ export async function mockAgentDone(
 	return (await daemon.messageHub.request('spaceTask.update', {
 		spaceId,
 		taskId,
-		status: 'completed',
-		result: result ?? 'Mock agent completed',
+		status: 'done',
+		result: result ?? 'Mock agent done',
 	})) as SpaceTask;
 }
 
@@ -410,7 +410,7 @@ export async function waitForNewNodeTask(
 					t.workflowNodeId === nodeNameOrId ||
 					t.agentName === nodeNameOrId) &&
 				!excludeTaskIds.has(t.id) &&
-				(t.status === 'pending' || t.status === 'in_progress')
+				(t.status === 'open' || t.status === 'in_progress')
 		);
 		if (match) return match;
 		await new Promise((resolve) => setTimeout(resolve, 300));

@@ -173,7 +173,7 @@ async function triggerRejectCycle(
 	for (const reviewerName of ['Reviewer 1', 'Reviewer 2', 'Reviewer 3']) {
 		const tasks = await getTasksForNode(daemon, spaceId, runId, reviewerName);
 		for (const t of tasks) {
-			if (t.status !== 'completed') {
+			if (t.status !== 'done') {
 				await mockAgentDone(daemon, spaceId, t.id);
 			}
 		}
@@ -530,7 +530,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			for (const name of ['Reviewer 1', 'Reviewer 2', 'Reviewer 3']) {
 				const reviewerTasks = await getTasksForNode(daemon, spaceId, runId, name);
 				const active = reviewerTasks.filter(
-					(t) => t.status === 'pending' || t.status === 'in_progress'
+					(t) => t.status === 'open' || t.status === 'in_progress'
 				);
 				for (const t of active) {
 					await mockAgentDone(daemon, spaceId, t.id);

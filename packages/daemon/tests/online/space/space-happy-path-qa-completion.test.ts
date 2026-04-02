@@ -392,7 +392,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 			// QA must NOT have re-activated — review-votes-gate is still blocked
 			const qaTasks = await getTasksForNode(daemon, spaceId, runId, 'QA');
 			const activeQaTasks = qaTasks.filter(
-				(t) => t.status === 'pending' || t.status === 'in_progress'
+				(t) => t.status === 'open' || t.status === 'in_progress'
 			);
 			expect(activeQaTasks.length).toBe(0);
 
