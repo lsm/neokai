@@ -28,10 +28,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 // Template node ID constants (used as stable IDs for nodes and startNodeId)
 // ---------------------------------------------------------------------------
 
-const CODING_PLANNER_STEP = 'tpl-coding-planner';
-const CODING_CODER_STEP = 'tpl-coding-coder';
-const CODING_VERIFY_STEP = 'tpl-coding-verify';
-const CODING_DONE_STEP = 'tpl-coding-done';
+const CODING_CODE_STEP = 'tpl-coding-code';
+const CODING_REVIEW_STEP = 'tpl-coding-review';
 
 // V2 node IDs
 const V2_PLANNING_STEP = 'tpl-v2-planning';
@@ -78,114 +76,39 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
 /**
  * Coding Workflow
  *
- * Four-node graph: Plan → Code → Verify → Done (with cycle).
- * Routing is channel-based (agent-centric model).
- * - Plan → Code: gated by `plan-approval-gate` — a human must approve the plan.
- * - Code → Verify: no gate — automatically verify after coding.
- * - Verify → Plan: gated by `verify-fail-gate` on 'failed' — loops back (cyclic).
- * - Verify → Done: gated by `verify-pass-gate` on 'passed' — completes the workflow.
- * - Per-channel `maxCycles: 3` caps the number of Plan→Code→Verify cycles.
+ * Two-node linear graph: Code → Review.
+ * Simple Coder → Reviewer pipeline with no gates, no loops.
+ * Used for quick tasks that don't need a full plan-review-QA cycle.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding Workflow',
 	description:
-		'Plan-first coding workflow with verification. A human reviews the plan, code is implemented, then verified. Loops back on failure.',
+		'Simple two-step coding workflow. Coder implements the task, then Reviewer reviews the changes. No gates or loops.',
 	nodes: [
 		{
-			id: CODING_PLANNER_STEP,
-			name: 'Plan',
-			agents: [{ agentId: 'Planner', name: 'planner' }],
-		},
-		{
-			id: CODING_CODER_STEP,
+			id: CODING_CODE_STEP,
 			name: 'Code',
 			agents: [{ agentId: 'Coder', name: 'coder' }],
 		},
 		{
-			id: CODING_VERIFY_STEP,
-			name: 'Verify & Test',
-			agents: [{ agentId: 'General', name: 'general' }],
-			// NOTE: task_result condition uses prefix matching — "failed: reason" matches expression "failed"
-			instructions:
-				'Review the completed work. Run tests, check for issues. Set result to "passed" if everything looks good, or "failed: <reason>" if problems are found.',
-		},
-		{
-			id: CODING_DONE_STEP,
-			name: 'Done',
-			agents: [{ agentId: 'General', name: 'general' }],
+			id: CODING_REVIEW_STEP,
+			name: 'Review',
+			agents: [{ agentId: 'Reviewer', name: 'reviewer' }],
 		},
 	],
-	startNodeId: CODING_PLANNER_STEP,
-	endNodeId: CODING_DONE_STEP,
+	startNodeId: CODING_CODE_STEP,
+	endNodeId: CODING_REVIEW_STEP,
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
-	gates: [
-		{
-			id: 'plan-approval-gate',
-			description: 'Review and approve the plan before coding begins',
-			fields: [
-				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
-			],
-			resetOnCycle: false,
-		},
-		{
-			id: 'verify-fail-gate',
-			description: 'Loop back to planning when verification fails',
-			fields: [
-				{
-					name: 'result',
-					type: 'string',
-					writers: ['general'],
-					check: { op: '==', value: 'failed' },
-				},
-			],
-			resetOnCycle: true,
-		},
-		{
-			id: 'verify-pass-gate',
-			description: 'Complete workflow when verification passes',
-			fields: [
-				{
-					name: 'result',
-					type: 'string',
-					writers: ['general'],
-					check: { op: '==', value: 'passed' },
-				},
-			],
-			resetOnCycle: true,
-		},
-	],
 	channels: [
 		{
-			from: 'Plan',
-			to: 'Code',
-			direction: 'one-way',
-			gateId: 'plan-approval-gate',
-			label: 'Plan → Code',
-		},
-		{
 			from: 'Code',
-			to: 'Verify & Test',
+			to: 'Review',
 			direction: 'one-way',
-			label: 'Code → Verify',
-		},
-		{
-			from: 'Verify & Test',
-			to: 'Plan',
-			direction: 'one-way',
-			maxCycles: 3,
-			gateId: 'verify-fail-gate',
-			label: 'Verify → Plan (on fail)',
-		},
-		{
-			from: 'Verify & Test',
-			to: 'Done',
-			direction: 'one-way',
-			gateId: 'verify-pass-gate',
-			label: 'Verify → Done (on pass)',
+			label: 'Code → Review',
 		},
 	],
 };
