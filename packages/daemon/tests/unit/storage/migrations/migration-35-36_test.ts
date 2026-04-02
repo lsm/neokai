@@ -5,12 +5,14 @@
  * Migration 36: Add max_iterations column to space_workflows.
  *
  * NOTE: These columns (iteration_count, max_iterations) were added in M35/M36 but
- * subsequently removed in M71. After a full migration run the columns no longer exist.
+ * subsequently removed in M71 (space_workflow_runs) and M74 (space_workflows).
+ * After a full migration run the columns no longer exist.
  * Tests that verify the final schema check for the absence of these columns.
  *
  * Covers:
  * - Idempotency: running migrations twice does not error
- * - Post-M71: iteration_count and max_iterations are absent on a fully-migrated DB
+ * - Post-M71: iteration_count and max_iterations are absent on space_workflow_runs
+ * - Post-M74: max_iterations is absent on space_workflows
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -169,10 +171,10 @@ describe('Migration 36: Add max_iterations to space_workflows', () => {
 		}
 	});
 
-	test('fresh DB: max_iterations column exists on space_workflows (added by M36, not yet removed)', () => {
-		// M36 added max_iterations to space_workflows. The column has not been removed by any subsequent migration.
+	test('fresh DB: max_iterations column does NOT exist on space_workflows after M74 dropped it', () => {
+		// M36 added max_iterations to space_workflows; M74 dropped it.
 		runMigrations(db, () => {});
-		expect(columnExists(db, 'space_workflows', 'max_iterations')).toBe(true);
+		expect(columnExists(db, 'space_workflows', 'max_iterations')).toBe(false);
 	});
 
 	test('fresh DB: new workflows can be inserted without max_iterations', () => {

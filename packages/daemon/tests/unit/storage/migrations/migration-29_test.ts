@@ -16,7 +16,10 @@
  * - space_tasks.custom_agent_id, workflow_node_id — removed by M73
  * - space_workflow_runs.config — removed by M73
  * - space_tasks status values changed by M73 ('pending'→'open', 'completed'→'done', etc.)
- * Tests have been updated to reflect the post-M73 schema.
+ * - space_agents.role, config, inject_workflow_context — removed by M74
+ * - space_workflows.config, max_iterations — removed by M74
+ * - space_workflow_nodes.order_index, agent_id — removed by M74
+ * Tests have been updated to reflect the post-M74 schema.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -202,11 +205,11 @@ describe('Migration 29: Space system tables', () => {
 		expect(columnExists(db, 'space_workflow_runs', 'current_step_index')).toBe(false);
 	});
 
-	test('space_agents has role and provider columns', () => {
+	test('space_agents: role dropped by M74, provider retained', () => {
 		runMigrations(db, () => {});
 
-		// space_agents.role and inject_workflow_context still exist (not yet migrated)
-		expect(columnExists(db, 'space_agents', 'role')).toBe(true);
+		// M74 drops role, config, inject_workflow_context from space_agents
+		expect(columnExists(db, 'space_agents', 'role')).toBe(false);
 		expect(columnExists(db, 'space_agents', 'provider')).toBe(true);
 	});
 
@@ -255,7 +258,7 @@ describe('Migration 29: Space system tables', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Indexes — post-M73 schema
+	// Indexes — post-M73/M74 schema
 	// -------------------------------------------------------------------------
 
 	test('expected indexes are created', () => {
@@ -266,7 +269,7 @@ describe('Migration 29: Space system tables', () => {
 			'idx_space_agents_space_id',
 			'idx_space_workflows_space_id',
 			'idx_space_workflow_nodes_workflow_id',
-			'idx_space_workflow_nodes_order',
+			// idx_space_workflow_nodes_order removed: M74 drops order_index column
 			'idx_space_workflow_runs_space_id',
 			'idx_space_workflow_runs_workflow_id',
 			'idx_space_tasks_space_id',
@@ -277,9 +280,10 @@ describe('Migration 29: Space system tables', () => {
 			expect(indexExists(db, idx)).toBe(true);
 		}
 
-		// These indexes were removed (the columns they referenced were dropped by M73)
+		// These indexes were removed (the columns they referenced were dropped by M73/M74)
 		expect(indexExists(db, 'idx_space_tasks_workflow_node_id')).toBe(false);
 		expect(indexExists(db, 'idx_space_tasks_custom_agent_id')).toBe(false);
+		expect(indexExists(db, 'idx_space_workflow_nodes_order')).toBe(false);
 	});
 
 	// -------------------------------------------------------------------------
@@ -297,10 +301,10 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('sp-1', 'cascade-space', '/workspace/cascade', 'Cascade Space', ${now}, ${now})`
 		);
 
-		// Insert a space agent (role still exists in real DB)
+		// Insert a space agent (role dropped by M74)
 		db.exec(
-			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at)
-			 VALUES ('agent-1', 'sp-1', 'Agent 1', 'coder', ${now}, ${now})`
+			`INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+			 VALUES ('agent-1', 'sp-1', 'Agent 1', ${now}, ${now})`
 		);
 
 		// Insert a workflow
@@ -309,10 +313,10 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('wf-1', 'sp-1', 'Workflow 1', ${now}, ${now})`
 		);
 
-		// Insert a workflow node
+		// Insert a workflow node (order_index dropped by M74)
 		db.exec(
-			`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at)
-			 VALUES ('step-1', 'wf-1', 'Step 1', 0, ${now}, ${now})`
+			`INSERT INTO space_workflow_nodes (id, workflow_id, name, created_at, updated_at)
+			 VALUES ('step-1', 'wf-1', 'Step 1', ${now}, ${now})`
 		);
 
 		// Insert a workflow run

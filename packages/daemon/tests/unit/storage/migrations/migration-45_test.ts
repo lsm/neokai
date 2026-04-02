@@ -95,7 +95,8 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		createTables(db);
 
 		const nodeIndexes = getIndexes(db, 'space_workflow_nodes');
-		expect(nodeIndexes).toContain('idx_space_workflow_nodes_order');
+		// M74 drops order_index column, so this index no longer exists
+		expect(nodeIndexes).not.toContain('idx_space_workflow_nodes_order');
 		expect(nodeIndexes).toContain('idx_space_workflow_nodes_workflow_id');
 
 		const taskIndexes = getIndexes(db, 'space_tasks');
@@ -250,7 +251,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
 				name TEXT NOT NULL,
-				description TEXT,
+				description,
 				workflow_run_id TEXT,
 				current_step_id TEXT,
 				task_id TEXT,
@@ -471,7 +472,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
 				name TEXT NOT NULL,
-				description TEXT,
+				description,
 				workflow_run_id TEXT,
 				current_step_id TEXT,
 				task_id TEXT,
@@ -822,7 +823,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
 				name TEXT NOT NULL,
-				description TEXT,
+				description,
 				workflow_run_id TEXT,
 				current_step_id TEXT,
 				task_id TEXT,
@@ -851,15 +852,11 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		// Run migration
 		runMigrations(db, () => {});
 
-		// Verify M30 column (layout) preserved
-		const wf = db
-			.prepare(`SELECT layout, max_iterations FROM space_workflows WHERE id='wf-1'`)
-			.get() as {
+		// Verify M30 column (layout) preserved; max_iterations dropped by M74
+		const wf = db.prepare(`SELECT layout FROM space_workflows WHERE id='wf-1'`).get() as {
 			layout: string | null;
-			max_iterations: number | null;
 		};
 		expect(wf.layout).toBe('{"nodes":{}}');
-		expect(wf.max_iterations).toBe(10);
 
 		// M35 added iteration_count, max_iterations, goal_id to space_workflow_runs.
 		// M71 later removed all three columns via table rebuild.
