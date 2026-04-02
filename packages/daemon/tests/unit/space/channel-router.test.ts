@@ -361,6 +361,8 @@ describe('ChannelRouter', () => {
 
 			// Simulate a concurrent activation by directly inserting a task for the run
 			// before the router creates its task — triggering the idempotency path.
+			// NODE_A has a single agent slot; activateNode() uses node.name ('Node A')
+			// as the task title for single-agent nodes.
 			const firstTask = taskRepo.createTask({
 				spaceId: SPACE_ID,
 				title: 'Node A',
@@ -502,11 +504,12 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Pre-create a task for NODE_B so it is already active
-			// (workflowNodeId, agentName removed in M71; getActiveTasksForNode uses status filter)
+			// Pre-create a task for NODE_B so it is already active.
+			// After M72, getActiveTasksForNode identifies node tasks by task.title.
+			// For single-agent nodes the title equals node.name ('Receiver Node').
 			taskRepo.createTask({
 				spaceId: SPACE_ID,
-				title: 'Planner Task',
+				title: 'Receiver Node',
 				description: '',
 				workflowRunId: run.id,
 				status: 'in_progress',
@@ -1527,6 +1530,56 @@ describe('ChannelRouter', () => {
 			expect(afterReset!.data).toEqual({ votes: {} });
 
 			// Cycle count should have been incremented (channel index 1 is the backward channel)
+			expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
+		});
+
+		test('resetOnCycle: gate with undefined fields (script-only gate) resets to empty object', async () => {
+			// Gate has no fields — simulates a script-only gate where fields is undefined
+			const gate: Gate = {
+				id: 'script-only-gate',
+				resetOnCycle: true,
+			};
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Script-Only Gate Reset Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Seed arbitrary data (simulating script output written to gate data)
+			gateDataRepo.set(run.id, 'script-only-gate', {
+				scriptResult: true,
+				timestamp: '2025-01-01T00:00:00Z',
+			});
+
+			// Traverse the cyclic (backward) channel: planner → coder
+			await router.deliverMessage(run.id, 'planner', 'coder', 'iterating');
+
+			// Gate data should have been reset to empty object (no fields to compute defaults from)
+			const afterReset = gateDataRepo.get(run.id, 'script-only-gate');
+			expect(afterReset).not.toBeNull();
+			expect(afterReset!.data).toEqual({});
+
+			// Cycle count should have been incremented
 			expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
 		});
 
