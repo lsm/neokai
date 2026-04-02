@@ -222,12 +222,19 @@ export class ChannelRouter {
 			);
 		}
 
+		// For single-agent nodes, use the node name as the task title so test helpers
+		// and external observers can find tasks by the familiar node name (e.g.
+		// 'Plan Review', 'Coding'). For multi-agent nodes, use each agent slot's own
+		// name so the individual slots are distinguishable (e.g. 'Reviewer 1',
+		// 'Reviewer 2', 'Reviewer 3').
+		const isMultiAgent = agents.length > 1;
+
 		const tasks: SpaceTask[] = [];
 		for (const agentEntry of agents) {
 			try {
 				const task = this.config.taskRepo.createTask({
 					spaceId: run.spaceId,
-					title: agentEntry.name,
+					title: isMultiAgent ? agentEntry.name : node.name,
 					description: agentEntry.instructions?.value ?? node.instructions ?? '',
 					workflowRunId: runId,
 					status: 'open',
@@ -590,11 +597,13 @@ export class ChannelRouter {
 	 * workflows can re-activate a node after its tasks complete.
 	 *
 	 * Since M72 removed the `workflow_node_id` column from `space_tasks`, node
-	 * identity is determined by matching `task.title` against the agent slot names
-	 * for the node. Tasks are created with `title: agentEntry.name` in
-	 * `activateNode`, so for single-agent nodes the title equals the agent slot
-	 * name (which defaults to node.name), and for multi-agent nodes each task
-	 * title is the individual slot name (e.g. 'Reviewer 1', 'Reviewer 2').
+	 * identity is determined by matching `task.title`:
+	 * - Single-agent nodes: title equals `node.name` (e.g. 'Plan Review', 'Coding')
+	 * - Multi-agent nodes: each task title equals its agent slot name
+	 *   (e.g. 'Reviewer 1', 'Reviewer 2', 'Reviewer 3')
+	 *
+	 * The `nodeId` parameter is tried first as a node UUID; if no node matches,
+	 * it is retried as a node name so callers passing names work correctly too.
 	 */
 	private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
 		const ACTIVE_STATUSES = new Set(['open', 'in_progress']);
@@ -603,21 +612,29 @@ export class ChannelRouter {
 			.filter((t) => ACTIVE_STATUSES.has(t.status));
 		if (allActive.length === 0) return [];
 
-		// Resolve agent slot names for this node to filter by task title.
+		// Resolve the node — try by UUID first, fall back to name.
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return [];
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
-		const node = workflow?.nodes.find((n) => n.id === nodeId);
+		const node =
+			workflow?.nodes.find((n) => n.id === nodeId) ??
+			workflow?.nodes.find((n) => n.name === nodeId);
 		if (!node) return [];
 
-		let agentNames: Set<string>;
+		let agents: ReturnType<typeof resolveNodeAgents>;
 		try {
-			agentNames = new Set(resolveNodeAgents(node).map((a) => a.name));
+			agents = resolveNodeAgents(node);
 		} catch {
 			return [];
 		}
 
-		return allActive.filter((t) => agentNames.has(t.title));
+		// Mirror the title convention used in activateNode():
+		// single-agent → node.name; multi-agent → individual slot names.
+		if (agents.length > 1) {
+			const agentNames = new Set(agents.map((a) => a.name));
+			return allActive.filter((t) => agentNames.has(t.title));
+		}
+		return allActive.filter((t) => t.title === node.name);
 	}
 
 	/**
