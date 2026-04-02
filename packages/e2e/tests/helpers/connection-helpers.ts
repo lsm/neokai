@@ -86,10 +86,12 @@ export async function waitForOnlineStatus(page: Page, timeout: number = 10000): 
 		// If the indicator was visible, wait for it to hide (max 2s).
 		// If it doesn't hide, proceed to the MessageHub check which will
 		// provide a clear failure message about the actual connection state.
-		await offlineIndicator.toBeHidden({ timeout: 2000 }).catch(() => {
-			// Offline indicator still visible — reconnection may have
-			// partially failed. The MessageHub check below will confirm.
-		});
+		await expect(offlineIndicator)
+			.toBeHidden({ timeout: 2000 })
+			.catch(() => {
+				// Offline indicator still visible — reconnection may have
+				// partially failed. The MessageHub check below will confirm.
+			});
 	}
 
 	// Verify WebSocket is actually connected via the MessageHub state.
