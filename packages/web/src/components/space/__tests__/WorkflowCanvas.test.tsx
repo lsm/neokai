@@ -977,7 +977,7 @@ describe('WorkflowCanvas', () => {
 		expect(queryByTestId('gate-script-error-badge')).toBeNull();
 	});
 
-	it('script error badge is NOT shown when _scriptResult.success is false but reason is missing', async () => {
+	it('script-only gate with _scriptResult.success:false but no reason still blocks (no badge shown)', async () => {
 		const gate = makeScriptGate();
 		const wf = makeWorkflow({
 			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
@@ -999,9 +999,9 @@ describe('WorkflowCanvas', () => {
 		const { findByTestId, queryByTestId } = render(
 			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
 		);
-		// No reason string → getScriptErrorReason returns undefined → gate stays open (no fields)
-		await findByTestId('gate-icon-open');
-		// No badge since reason is missing
+		// P0 fix: success === false blocks even without a reason string
+		await findByTestId('gate-icon-blocked');
+		// No badge since reason is missing (badge only shows when reason is truthy)
 		expect(queryByTestId('gate-script-error-badge')).toBeNull();
 	});
 

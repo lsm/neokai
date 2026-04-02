@@ -111,13 +111,22 @@ function computeVoteCount(
 }
 
 /**
- * Extract the script error reason from gate data, if any.
- * Returns the reason string when `_scriptResult.success === false`, otherwise undefined.
+ * Shape of the `_scriptResult` entry stored in gate data by the daemon.
+ * Transport-only type — not the same as the daemon's `GateScriptResult`.
  */
-function getScriptErrorReason(data: Record<string, unknown>): string | undefined {
-	const sr = data._scriptResult as { success: boolean; reason?: string } | undefined;
-	if (sr && !sr.success && sr.reason) return sr.reason;
-	return undefined;
+interface GateScriptResultData {
+	success: boolean;
+	reason?: string;
+}
+
+/**
+ * Check whether a script failure is recorded in gate data.
+ * Returns `{ failed: true, reason? }` when `_scriptResult.success === false`.
+ */
+function parseScriptResult(data: Record<string, unknown>): { failed: boolean; reason?: string } {
+	const sr = data._scriptResult as GateScriptResultData | undefined;
+	if (sr && !sr.success) return { failed: true, reason: sr.reason };
+	return { failed: false };
 }
 
 /**
@@ -131,9 +140,13 @@ function getScriptErrorReason(data: Record<string, unknown>): string | undefined
  *       otherwise               -> waiting_human
  *   - All fields must pass their checks for the gate to be open.
  */
-function evaluateGateStatus(gate: Gate, data: Record<string, unknown>): GateStatus {
-	// Script-based gates: check _scriptResult before the empty-fields shortcut
-	if (getScriptErrorReason(data) !== undefined) return 'blocked';
+function evaluateGateStatus(
+	gate: Gate,
+	data: Record<string, unknown>,
+	scriptFailed = false
+): GateStatus {
+	// Script-based gates: block on failure regardless of reason string
+	if (scriptFailed) return 'blocked';
 	if ((gate.fields ?? []).length === 0) return 'open';
 
 	// Check for human approval field first
@@ -1212,7 +1225,11 @@ export function WorkflowCanvas({
 
 					const gate = ch.gateId ? gatesById.get(ch.gateId) : undefined;
 					const gateData = ch.gateId ? (gateDataMap.get(ch.gateId) ?? {}) : {};
-					const gateStatus: GateStatus = gate ? evaluateGateStatus(gate, gateData) : 'open';
+					const scriptResult =
+						gate && isRuntimeMode ? parseScriptResult(gateData) : { failed: false };
+					const gateStatus: GateStatus = gate
+						? evaluateGateStatus(gate, gateData, scriptResult.failed)
+						: 'open';
 
 					// Channel color based on gate status in runtime mode
 					let strokeColor = '#44403c';
@@ -1234,8 +1251,7 @@ export function WorkflowCanvas({
 						gate && isRuntimeMode ? computeVoteCount(gate.fields ?? [], gateData) : undefined;
 
 					// Script error reason from gate data (for display below the gate icon)
-					const scriptErrorReason =
-						gate && isRuntimeMode ? getScriptErrorReason(gateData) : undefined;
+					const scriptErrorReason = scriptResult.reason;
 
 					return (
 						<g key={`ch-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>
