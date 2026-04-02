@@ -244,3 +244,274 @@ This was first documented in the 2026-03-22 health check log and remains unresol
 1. **Test fix**: Initialize the E2E temp workspace as a git repo before running tests (e.g., `git init` in the test setup)
 2. **Backend fix**: Allow task creation without git worktree isolation for non-git workspaces
 3. **Skip**: Mark tests requiring task isolation as LLM-only and ensure the No-LLM matrix excludes them
+
+---
+
+## 2026-04-02 — Check Run #23904270931
+
+### CI Run Overview
+- **Run ID**: 23904270931
+- **Branch**: dev (commit `c35b1eba1` — `docs: rewrite E2E guardian plan with adaptive discovery-only approach (#1195)`)
+- **Event**: push
+- **Status**: Completed with e2e failures
+
+### Build/Discover Jobs
+- All build/discover jobs: **PASSED** (failures only in E2E test jobs)
+
+### E2E Test Failures at #23904270931
+
+**21 failing E2E jobs** across No-LLM and LLM matrices. All failures are **pre-existing** — identical 21 jobs also failed in run #23887664826 (commit `c75b0e1d1`, earlier the same day).
+
+**Complete list of failing jobs**:
+1. `E2E LLM (features-reference-autocomplete)`
+2. `E2E No-LLM (features-neo-chat-rendering)`
+3. `E2E No-LLM (features-neo-panel)`
+4. `E2E No-LLM (features-neo-settings)`
+5. `E2E No-LLM (features-provider-model-switching)`
+6. `E2E No-LLM (features-reviewer-feedback-loop)`
+7. `E2E No-LLM (features-space-agent-centric-workflow)`
+8. `E2E No-LLM (features-space-agent-chat)`
+9. `E2E No-LLM (features-space-approval-gate-rejection)`
+10. `E2E No-LLM (features-space-context-panel-switching)`
+11. `E2E No-LLM (features-space-creation)`
+12. `E2E No-LLM (features-space-happy-path-pipeline)`
+13. `E2E No-LLM (features-space-multi-agent-editor)`
+14. `E2E No-LLM (features-space-navigation)`
+15. `E2E No-LLM (features-space-settings-crud)`
+16. `E2E No-LLM (features-space-task-creation)`
+17. `E2E No-LLM (features-space-task-fullwidth)`
+18. `E2E No-LLM (features-task-lifecycle)`
+19. `E2E No-LLM (features-visual-workflow-editor)`
+20. `E2E No-LLM (settings-mcp-servers)`
+21. `E2E No-LLM (settings-tools-modal)`
+
+#### Root Cause Analysis — 8 Distinct Failure Categories
+
+---
+
+##### Category 1: Neo Panel Dialog Blocks Escape Key / Dialog Close (affects 7 suites)
+
+**Pattern**: Tests try to dismiss a dialog (typically the Neo AI panel `data-testid="neo-panel"`) by pressing Escape, but the panel stays visible. Tests use a helper like `createSessionViaNewSessionButton` that calls `page.keyboard.press('Escape')` then `expect(anyDialog).toBeHidden()`, but the Neo panel doesn't close.
+
+**Failure signature**:
+```
+Expect "toBeHidden" with timeout 3000ms
+locator('[role="dialog"]:visible') resolved to <div role="dialog" ... data-testid="neo-panel" ... class="... -translate-x-full">...</div>
+```
+
+**Affected suites** (7 jobs):
+| Suite | Failed Tests | Note |
+|---|---|---|
+| `features-provider-model-switching` | 8/8 | All tests fail at `createSessionViaNewSessionButton` |
+| `settings-tools-modal` | 3/3 | Same — Neo panel blocks Escape |
+| `features-neo-panel` | 2/2 | Neo panel close behavior broken |
+| `features-space-creation` | 3/3 | Dialog close fails — Neo panel persists |
+| `settings-mcp-servers` | 3/3 | Session options menu blocked by Neo panel |
+| `features-space-approval-gate-rejection` | 4/4 | Gate UI not visible — setup fails due to Neo panel |
+| `features-neo-settings` | 1/1 | Settings navigation broken |
+
+**Root cause**: `product-bug` — The Neo AI panel (`data-testid="neo-panel"`) intercepts or ignores Escape key events. Tests expect pressing Escape to close it via `locator('[role="dialog"]:visible').toBeHidden()`, but the panel remains visible (it has `role="dialog"` and `aria-modal="true"`). The `createSessionViaNewSessionButton` helper in `provider-model-switching.e2e.ts` and similar shared helpers try to dismiss any open dialog before creating a session, but this fails because the Neo panel doesn't respond to Escape.
+
+**Fix needed**: Either (a) fix the Neo panel to close on Escape, or (b) update test helpers to explicitly close the Neo panel before proceeding (e.g., click outside or call a dismiss function).
+
+---
+
+##### Category 2: Ambiguous Locators — Strict Mode Violations (affects 5 suites)
+
+**Pattern**: Locators match multiple elements in Playwright strict mode, causing tests to fail.
+
+**Failure signatures**:
+
+1. `features-neo-settings`: `locator('h3:has-text("Neo Agent")').locator('..').locator('text=Clear Session')` resolved to **2 elements** — strict mode violation.
+2. `features-space-agent-chat`: `getByRole('button', { name: 'Dashboard', exact: true })` resolved to **2 elements** — appears twice in the DOM.
+3. `features-task-lifecycle`: `locator('[role="dialog"]')` resolved to **2 elements** — Neo panel dialog + archive dialog both match.
+4. `features-space-task-creation`: `getByRole('button', { name: 'Dashboard', exact: true })` resolved to **2 elements** — same duplicate button issue.
+
+**Affected suites** (5 jobs):
+| Suite | Failed Tests | Primary Error | Also Affected By |
+|---|---|---|---|
+| `features-neo-settings` | 1 | `h3:has-text("Neo Agent")` → 2 elements | — |
+| `features-space-agent-chat` | 2 | `Dashboard` button → 2 elements; textarea not hidden | — |
+| `features-task-lifecycle` | 1 | `[role="dialog"]` → 2 elements (Neo panel + archive dialog) | — |
+| `features-space-task-creation` | 4 | `Dashboard` button → 2 elements (strict mode) | Category 3 (space cleanup) |
+| `features-space-context-panel-switching` | 2 | Space navigation fails — heading not visible | Category 3 (space cleanup) |
+
+**Root cause**: `test-bug` — Locators are not specific enough. UI changes (likely adding the Neo panel or duplicate navigation elements) caused existing locators to resolve to multiple elements.
+
+**Fix needed**: Make locators more specific:
+- Use `getByRole('button', { name: 'Dashboard', exact: true }).nth(0)` or scope to a container
+- Use `getByTestId('archive-dialog')` or scope `[role="dialog"]` to a specific parent
+- Use `getByText('Clear Session').first()` or narrow the parent scope
+
+---
+
+##### Category 3: Space Creation — UNIQUE Constraint / Already Exists (affects 7 suites)
+
+**Pattern**: Tests create spaces via RPC, but get `UNIQUE constraint failed: spaces.workspace_path` or `A space already exists for workspace path` errors. Tests don't clean up spaces from previous test runs or retries. Some suites also log `workspace path is not a git repository` warnings, which contributes to setup failures.
+
+**Failure signature**:
+```
+Error: page.evaluate: Error: UNIQUE constraint failed: spaces.workspace_path
+Error: page.evaluate: Error: A space already exists for workspace path: /tmp/tmp.6KrjG8hFj0
+[kai:daemon:spacemanager] workspace path is not a git repository: /tmp/tmp.MLDoNKddkn
+```
+
+**Affected suites** (7 jobs):
+| Suite | Failed Tests | Primary Error | Also Affected By |
+|---|---|---|---|
+| `features-space-happy-path-pipeline` | 1 | UNIQUE constraint on space creation | — |
+| `features-space-navigation` | 2 | Space already exists for workspace path | — |
+| `features-space-settings-crud` | 6 | Cascade — space creation fails in retries | — |
+| `features-space-task-fullwidth` | 2 | Space already exists; workspace not a git repo | — |
+| `features-space-task-creation` | 4 | Cascade — space creation fails | Category 2 (strict mode) |
+| `features-space-context-panel-switching` | 2 | Space navigation fails after setup | Category 2 (strict mode) |
+| `features-reviewer-feedback-loop` | 1 | Space setup fails — workflow canvas not visible | — |
+
+**Root cause**: `test-bug` — Test cleanup (e.g., `afterEach` or `afterAll`) doesn't properly delete spaces created during the test. On retry, the same workspace path is reused but the space already exists in the DB.
+
+**Fix needed**: Add proper space cleanup in test teardown. Use `beforeEach` with space deletion, or use unique workspace paths per test/attempt.
+
+---
+
+##### Category 4: Neo Chat — Provider Not Available / AI-Dependent Tests in No-LLM Matrix (affects 1 suite)
+
+**Pattern**: Tests that send messages and expect AI responses fail because `Provider Anthropic is not available` — no credentials are configured in No-LLM jobs. The Neo chat tests send messages that trigger AI queries, which fail without credentials.
+
+**Failure signature**:
+```
+Error: Provider Anthropic is not available. Please configure credentials.
+MessageQueueTimeoutError: SDK did not consume message ... within 30s
+```
+
+**Affected suite**:
+| Suite | Failed Tests | Error |
+|---|---|---|
+| `features-neo-chat-rendering` | 3/5 | AI-dependent tests timeout — provider not available |
+
+**Note**: 2 tests passed (empty state, user message rendering) — these don't require AI responses. The 3 failing tests expect assistant messages (sparkle avatar, readable text, empty state disappearing after send).
+
+**Root cause**: `test-bug` — AI-dependent tests are classified as No-LLM but require Anthropic credentials. These should either be moved to the LLM matrix, or the Neo chat should be mocked in No-LLM tests.
+
+**Fix needed**: Move the AI-dependent Neo chat rendering tests to the LLM matrix, or mock the AI response in No-LLM mode.
+
+---
+
+##### Category 5: Visual Workflow Editor — Toggle Mode Not Working (affects 1 suite)
+
+**Pattern**: Clicking the toggle button to switch between List and Visual modes doesn't activate the expected mode.
+
+**Failure signature**:
+```
+Expect "toHaveAttribute" with timeout 60000ms
+element(s) not found
+```
+
+**Affected suite**:
+| Suite | Failed Tests | Error |
+|---|---|---|
+| `features-visual-workflow-editor` | 1 | Toggle button click doesn't switch mode |
+
+**Root cause**: `product-bug` or `test-bug` — The toggle button for switching between list/visual modes doesn't work as expected. The test waits 60s for an attribute to appear but the element is never found. Could be a selector issue or the toggle feature is broken.
+
+**Fix needed**: Investigate whether the toggle button selector is correct and whether the feature actually works.
+
+---
+
+##### Category 6: Space Multi-Agent Editor — Missing Workflow Node (affects 1 suite)
+
+**Pattern**: After editing a step to add a second agent, the visual workflow editor only shows 1 node instead of 2.
+
+**Failure signature**:
+```
+Expect "toHaveCount" with timeout 3000ms
+getByTestId('visual-workflow-editor').locator('[data-testid^="workflow-node-"]') resolved to 1 element
+unexpected value "1"
+```
+
+**Affected suite**:
+| Suite | Failed Tests | Error |
+|---|---|---|
+| `features-space-multi-agent-editor` | 1 | Expected 2 workflow nodes, got 1 |
+
+**Root cause**: `product-bug` or `test-bug` — The test adds a second agent to a workflow step but the visual editor doesn't render the new node. Could be a rendering bug or the agent addition didn't actually persist.
+
+**Fix needed**: Verify that the agent addition API call succeeds and that the visual editor re-renders correctly.
+
+---
+
+##### Category 7: Space Agent-Centric Workflow — No .git / Toggle Button Timeout (affects 1 suite)
+
+**Pattern**: The test clicks `getByTestId('toggle-channels-button')` in the visual workflow editor but it never becomes clickable within 60s. The workspace is not a git repo (`No .git found traversing from: /tmp/tmp.*`), which may prevent proper workspace initialization.
+
+**Failure signature**:
+```
+TimeoutError: locator.click: Timeout 60000ms exceeded.
+waiting for getByTestId('visual-workflow-editor').getByTestId('toggle-channels-button')
+[kai:daemon:worktreemanager] No .git found traversing from: /tmp/tmp.ZsQdtuAXRs
+```
+
+**Affected suite**:
+| Suite | Failed Tests | Error |
+|---|---|---|
+| `features-space-agent-centric-workflow` | 1 | Toggle channels button never becomes clickable |
+
+**Root cause**: `env` / `test-bug` — The workspace is not a git repo, which may cause space setup to partially fail. The toggle-channels-button in the visual workflow editor is never rendered or clickable.
+
+**Fix needed**: Ensure the workspace is initialized as a git repo before the test runs (same fix as Category 8 for reference-autocomplete).
+
+---
+
+##### Category 8: Reference Autocomplete — No .git in E2E Workspace (pre-existing, 1 suite)
+
+**Pattern**: All reference-autocomplete tests fail because the E2E temp workspace (`/tmp/tmp.*`) is not a git repository. `WorktreeManager.findGitRoot()` returns null, preventing worktree creation for task isolation.
+
+**Affected suite**:
+| Suite | Failed Tests | Error |
+|---|---|---|
+| `features-reference-autocomplete` (LLM) | 30 | No `.git` in temp workspace — worktree creation fails |
+
+**Root cause**: `env` — Pre-existing issue documented in 2026-03-22 and 2026-03-27 health check logs. E2E CI workspaces lack a `.git` directory.
+
+**Status**: Unresolved pre-existing issue.
+
+---
+
+### Cross-Category Summary
+
+Some suites are affected by **multiple** root causes simultaneously:
+
+| Suite | Category 1 (Escape) | Category 2 (Strict Mode) | Category 3 (Space Cleanup) |
+|---|---|---|---|
+| `features-space-task-creation` | — | Yes | Yes |
+| `features-space-context-panel-switching` | — | Yes | Yes |
+| `features-space-task-fullwidth` | — | — | Yes (also: workspace not a git repo) |
+| `features-reviewer-feedback-loop` | — | — | Yes (workflow canvas not visible) |
+
+### Pre-existing Issues (from prior health checks)
+
+| Issue | First Seen | Status |
+|---|---|---|
+| `features-reference-autocomplete` — no `.git` in E2E workspace | 2026-03-22 | **Unresolved** |
+| `features-worktree-isolation` — session deletion race | 2026-03-22 | Not checked this run (excluded from No-LLM matrix) |
+| `features-space-session-groups` — workspace path race | 2026-03-22 | Not checked this run (not in failed jobs) |
+
+### New Issues (first seen this run)
+
+| Issue | Category | Suites Affected |
+|---|---|---|
+| Neo panel doesn't close on Escape key | `product-bug` | 7 suites (provider-model-switching, settings-tools-modal, neo-panel, space-creation, settings-mcp-servers, space-approval-gate-rejection, neo-settings) |
+| Ambiguous locators (strict mode violations) | `test-bug` | 5 suites (neo-settings, space-agent-chat, task-lifecycle, space-task-creation, space-context-panel-switching) |
+| Space UNIQUE constraint on retry | `test-bug` | 7 suites (space-happy-path-pipeline, space-navigation, space-settings-crud, space-task-fullwidth, space-task-creation, space-context-panel-switching, reviewer-feedback-loop) |
+| AI-dependent tests in No-LLM matrix | `test-bug` | 1 suite (neo-chat-rendering) |
+| Visual workflow editor toggle broken | `product-bug` / `test-bug` | 1 suite (visual-workflow-editor) |
+| Multi-agent editor node count mismatch | `product-bug` / `test-bug` | 1 suite (space-multi-agent-editor) |
+| Space agent-centric workflow — toggle button timeout | `env` / `test-bug` | 1 suite (space-agent-centric-workflow) |
+
+### Priority Recommendations
+
+1. **HIGH — Neo panel Escape key** (affects 7 suites): Fix the Neo panel to close on Escape, or update all test helpers that rely on Escape-to-dismiss.
+2. **HIGH — Space cleanup in tests** (affects 7 suites): Add proper `afterEach`/`afterAll` space deletion to prevent UNIQUE constraint violations on retry.
+3. **HIGH — E2E workspace missing .git** (affects 2 suites: reference-autocomplete, space-agent-centric-workflow): Initialize E2E temp workspace as a git repo before tests run.
+4. **MEDIUM — Ambiguous locators** (affects 5 suites): Make locators more specific to avoid strict mode violations with Neo panel dialogs.
+5. **LOW — Neo chat AI tests in No-LLM** (1 suite): Reclassify or mock AI responses.
+6. **LOW — Visual editor / multi-agent editor** (2 suites): Investigate individually.
