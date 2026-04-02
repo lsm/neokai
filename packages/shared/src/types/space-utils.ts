@@ -39,7 +39,7 @@ export interface ResolvedChannel {
 	direction: 'one-way';
 	/**
 	 * True when the `to` side of the source WorkflowChannel resolved to a node name
-	 * (fan-out delivery to all agents in that node), not an individual agent role.
+	 * (fan-out delivery to all agents in that node), not an individual agent name.
 	 *
 	 * Note: `isFanOut` specifically describes **to-side** fan-out. When `from` in the
 	 * source channel is a node name, the resolver creates one `ResolvedChannel` entry
@@ -330,8 +330,8 @@ export function validateNodeChannels(
  *   (which must be unique across all nodes in the workflow for correct routing).
  * - When `to` matches a **node name** (from `WorkflowNode.name`), the channel
  *   fans out to all agents in that node (`isFanOut: true`).
- * - When `to` matches an **agent role**, the channel is a point-to-point DM (`isFanOut: false`).
- * - The wildcard `'*'` for `from` or `to` (as sole element) expands to all agent roles,
+ * - When `to` matches an **agent name**, the channel is a point-to-point DM (`isFanOut: false`).
+ * - The wildcard `'*'` for `from` or `to` (as sole element) expands to all agent names,
  *   preserving backward compatibility with node-level channel declarations.
  * - Bidirectional channels expand to two one-way entries.
  * - Self-loops are skipped.
