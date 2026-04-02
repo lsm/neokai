@@ -599,8 +599,14 @@ a:focus-visible {
  * When the keyboard is open, the BottomTabBar (position: fixed; bottom: 0) is
  * hidden behind the keyboard on mobile — translate it offscreen with a smooth
  * transition for clean visual behavior.
+ *
+ * The transition is declared on the base element so it applies bidirectionally:
+ * smooth slide-off when keyboard opens, smooth slide-back when keyboard closes.
  */
+[data-testid="bottom-tab-bar"] {
+	transition: transform 0.2s ease;
+}
+
 html.keyboard-open [data-testid="bottom-tab-bar"] {
 	transform: translateY(100%);
-	transition: transform 0.2s ease;
 }
