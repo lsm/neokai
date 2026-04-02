@@ -226,6 +226,44 @@ describe('RoomRuntime flow', () => {
 			expect(afterResume.waitingForQuestion).toBe(false);
 			expect(afterResume.waitingSession).toBeNull();
 		});
+
+		it('should not append duplicate group events on repeated waiting_for_input (idempotency)', async () => {
+			await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			// First waiting_for_input — should append a status event
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Simulate repeated session.updated events (e.g. from draft saves)
+			// SessionObserver is a stateless relay that fires on every matching event
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'waiting_for_input',
+			});
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Only ONE status event should exist for "Worker asked a question"
+			const { events } = ctx.groupRepo.getEvents(group.id);
+			const questionEvents = events.filter(
+				(e) => e.kind === 'status' && e.payloadJson?.includes('Worker asked a question')
+			);
+			expect(questionEvents).toHaveLength(1);
+
+			// Group should still be marked as waiting
+			const updated = ctx.groupRepo.getGroup(group.id);
+			expect(updated!.waitingForQuestion).toBe(true);
+			expect(updated!.waitingSession).toBe('worker');
+		});
 	});
 
 	describe('cancelTask', () => {
@@ -1031,6 +1069,39 @@ describe('RoomRuntime flow', () => {
 			expect(updated.waitingSession).toBe('leader');
 			// Group is still active (not completed)
 			expect(updated.completedAt).toBeNull();
+		});
+
+		it('should not append duplicate group events on repeated waiting_for_input (idempotency)', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			// First waiting_for_input — should append a status event
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Simulate repeated session.updated events (e.g. from draft saves)
+			// SessionObserver is a stateless relay that fires on every matching event
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'waiting_for_input',
+			});
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Only ONE status event should exist for "Leader asked a question"
+			const { events } = ctx.groupRepo.getEvents(group.id);
+			const questionEvents = events.filter(
+				(e) => e.kind === 'status' && e.payloadJson?.includes('Leader asked a question')
+			);
+			expect(questionEvents).toHaveLength(1);
+
+			// Group should still be marked as waiting
+			const updated = ctx.groupRepo.getGroup(group.id);
+			expect(updated!.waitingForQuestion).toBe(true);
+			expect(updated!.waitingSession).toBe('leader');
 		});
 	});
 
