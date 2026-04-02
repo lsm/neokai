@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'preact/hooks';
-import type { Gate, GateField, GateFieldType, GateFieldCheck } from '@neokai/shared';
+import type { Gate, GateField, GateFieldType, GateFieldCheck, GateScript } from '@neokai/shared';
 
 export interface GateEditorPanelProps {
 	gate: Gate;
@@ -23,6 +23,22 @@ const BADGE_RX = 10;
 const BADGE_CHAR_WIDTH = 7;
 const BADGE_PADDING = 8;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const SCRIPT_INTERPRETERS: GateScript['interpreter'][] = ['bash', 'node', 'python3'];
+const SCRIPT_TIMEOUT_DEFAULT = 30;
+const SCRIPT_TIMEOUT_MAX = 120;
+
+const SCRIPT_PRESETS = {
+	lint: {
+		label: 'Lint Check',
+		interpreter: 'bash' as const,
+		source: 'npm run lint 2>/dev/null && echo \'{"passed":true}\' || echo \'{"passed":false}\'',
+	},
+	typecheck: {
+		label: 'Type Check',
+		interpreter: 'node' as const,
+		source: 'console.log(JSON.stringify({passed: true}))',
+	},
+} as const;
 
 // ---------------------------------------------------------------------------
 // Lightweight client-side validation (mirrors daemon gate-evaluator.ts)
@@ -38,6 +54,27 @@ function validateLabel(value: string | undefined): string {
 function validateColor(value: string | undefined): string {
 	if (!value) return '';
 	if (!HEX_COLOR_RE.test(value)) return `color: expected hex format #rrggbb, got "${value}"`;
+	return '';
+}
+
+function validateScriptInterpreter(value: string | undefined): string {
+	if (!value) return 'interpreter is required';
+	if (!SCRIPT_INTERPRETERS.includes(value as GateScript['interpreter'])) {
+		return `interpreter: expected one of [bash, node, python3], got "${value}"`;
+	}
+	return '';
+}
+
+function validateScriptSource(value: string | undefined): string {
+	if (!value || value.trim().length === 0) return 'source: script body is required';
+	return '';
+}
+
+function validateScriptTimeout(value: number | undefined): string {
+	if (value === undefined || value === null) return '';
+	if (typeof value !== 'number' || isNaN(value)) return 'timeout: must be a number';
+	if (value < 1) return 'timeout: must be at least 1 second';
+	if (value > SCRIPT_TIMEOUT_MAX) return `timeout: must be at most ${SCRIPT_TIMEOUT_MAX} seconds`;
 	return '';
 }
 
@@ -65,6 +102,28 @@ export function GateEditorPanel({
 	// Validation errors computed from current gate state
 	const labelError = useMemo(() => validateLabel(gate.label), [gate.label]);
 	const colorError = useMemo(() => validateColor(gate.color), [gate.color]);
+
+	// Script state: track enabled, interpreter, source, and timeout (in seconds)
+	const scriptEnabled = !!gate.script;
+	const scriptInterpreter = gate.script?.interpreter ?? 'bash';
+	const scriptSource = gate.script?.source ?? '';
+	const scriptTimeoutSec = gate.script?.timeoutMs
+		? Math.round(gate.script.timeoutMs / 1000)
+		: SCRIPT_TIMEOUT_DEFAULT;
+
+	// Script validation errors (only shown when script is enabled)
+	const scriptInterpreterError = useMemo(
+		() => (scriptEnabled ? validateScriptInterpreter(scriptInterpreter) : ''),
+		[scriptEnabled, scriptInterpreter]
+	);
+	const scriptSourceError = useMemo(
+		() => (scriptEnabled ? validateScriptSource(scriptSource) : ''),
+		[scriptEnabled, scriptSource]
+	);
+	const scriptTimeoutError = useMemo(
+		() => (scriptEnabled ? validateScriptTimeout(scriptTimeoutSec) : ''),
+		[scriptEnabled, scriptTimeoutSec]
+	);
 
 	// Derived badge preview values
 	const badgeLabel = gate.label ?? 'Gate';
@@ -116,6 +175,36 @@ export function GateEditorPanel({
 			check: { op: '==', value: 'passed' },
 		};
 		updateGate({ fields: [...(gate.fields ?? []), preset] });
+	}
+
+	function toggleScriptEnabled(checked: boolean) {
+		if (checked) {
+			updateGate({
+				script: { interpreter: 'bash', source: '', timeoutMs: SCRIPT_TIMEOUT_DEFAULT * 1000 },
+			});
+		} else {
+			updateGate({ script: undefined });
+		}
+	}
+
+	function updateScriptPartial(partial: Partial<GateScript>) {
+		const current = gate.script ?? {
+			interpreter: 'bash',
+			source: '',
+			timeoutMs: SCRIPT_TIMEOUT_DEFAULT * 1000,
+		};
+		updateGate({ script: { ...current, ...partial } });
+	}
+
+	function applyScriptPreset(key: keyof typeof SCRIPT_PRESETS) {
+		const preset = SCRIPT_PRESETS[key];
+		updateGate({
+			script: {
+				interpreter: preset.interpreter,
+				source: preset.source,
+				timeoutMs: SCRIPT_TIMEOUT_DEFAULT * 1000,
+			},
+		});
 	}
 
 	return (
@@ -330,6 +419,144 @@ export function GateEditorPanel({
 						Task Result
 					</button>
 				</div>
+			</div>
+
+			{/* Script Check */}
+			<div class="space-y-2">
+				<div class="flex items-center justify-between">
+					<label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Script Check</label>
+					<button
+						type="button"
+						data-testid="gate-editor-script-enabled"
+						role="switch"
+						aria-checked={scriptEnabled}
+						onClick={() => toggleScriptEnabled(!scriptEnabled)}
+						class={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+							scriptEnabled ? 'bg-blue-500' : 'bg-dark-600'
+						}`}
+					>
+						<span
+							class={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+								scriptEnabled ? 'translate-x-4' : 'translate-x-0.5'
+							}`}
+						/>
+					</button>
+				</div>
+
+				{scriptEnabled && (
+					<div class="space-y-2 pl-1 border-l-2 border-blue-500/30">
+						{/* Interpreter */}
+						<div class="space-y-0.5">
+							<label class="text-[10px] uppercase tracking-wider text-gray-600">Interpreter</label>
+							<select
+								data-testid="gate-editor-script-interpreter"
+								value={scriptInterpreter}
+								onChange={(e) =>
+									updateScriptPartial({
+										interpreter: e.currentTarget.value as GateScript['interpreter'],
+									})
+								}
+								class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 focus:outline-none ${
+									scriptInterpreterError
+										? 'border-red-500 focus:border-red-500'
+										: 'border-dark-600 focus:border-blue-500'
+								}`}
+							>
+								{SCRIPT_INTERPRETERS.map((interp) => (
+									<option key={interp} value={interp}>
+										{interp}
+									</option>
+								))}
+							</select>
+							{scriptInterpreterError && (
+								<p
+									data-testid="gate-editor-script-interpreter-error"
+									class="text-[10px] text-red-400"
+								>
+									{scriptInterpreterError}
+								</p>
+							)}
+						</div>
+
+						{/* Source */}
+						<div class="space-y-0.5">
+							<label class="text-[10px] uppercase tracking-wider text-gray-600">
+								Script Source
+							</label>
+							<textarea
+								data-testid="gate-editor-script-source"
+								value={scriptSource}
+								placeholder="# Enter your script here..."
+								rows={6}
+								onInput={(e) => updateScriptPartial({ source: e.currentTarget.value })}
+								class={`w-full text-xs bg-dark-800 border rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
+									scriptSourceError
+										? 'border-red-500 focus:border-red-500'
+										: 'border-dark-600 focus:border-blue-500'
+								}`}
+							/>
+							{scriptSourceError && (
+								<p data-testid="gate-editor-script-source-error" class="text-[10px] text-red-400">
+									{scriptSourceError}
+								</p>
+							)}
+						</div>
+
+						{/* Timeout */}
+						<div class="space-y-0.5">
+							<label class="text-[10px] uppercase tracking-wider text-gray-600">
+								Timeout (seconds)
+							</label>
+							<input
+								type="number"
+								data-testid="gate-editor-script-timeout"
+								value={scriptTimeoutSec}
+								min={1}
+								max={SCRIPT_TIMEOUT_MAX}
+								onInput={(e) => {
+									const val = Number((e.currentTarget as HTMLInputElement).value);
+									const clamped = Math.max(1, Math.min(SCRIPT_TIMEOUT_MAX, val));
+									updateScriptPartial({ timeoutMs: clamped * 1000 });
+								}}
+								class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 font-mono focus:outline-none ${
+									scriptTimeoutError
+										? 'border-red-500 focus:border-red-500'
+										: 'border-dark-600 focus:border-blue-500'
+								}`}
+							/>
+							{scriptTimeoutError && (
+								<p data-testid="gate-editor-script-timeout-error" class="text-[10px] text-red-400">
+									{scriptTimeoutError}
+								</p>
+							)}
+						</div>
+
+						{/* Script Presets */}
+						<div class="space-y-1">
+							<label class="text-[10px] uppercase tracking-wider text-gray-600">
+								Script Presets
+							</label>
+							<div class="flex gap-2">
+								<button
+									type="button"
+									data-testid="gate-editor-preset-lint"
+									onClick={() => applyScriptPreset('lint')}
+									class={`flex-1 rounded border px-2 py-1.5 text-xs transition-colors ${modeButtonClass(false)}`}
+								>
+									Lint Check
+								</button>
+								<button
+									type="button"
+									data-testid="gate-editor-preset-typecheck"
+									onClick={() => applyScriptPreset('typecheck')}
+									class={`flex-1 rounded border px-2 py-1.5 text-xs transition-colors ${modeButtonClass(false)}`}
+								>
+									Type Check
+								</button>
+							</div>
+						</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);

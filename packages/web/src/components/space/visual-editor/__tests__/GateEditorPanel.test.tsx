@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 /**
- * Unit tests for GateEditorPanel component — badge label, color, and validation.
+ * Unit tests for GateEditorPanel component — badge label, color, script editor, and validation.
  *
  * Tests:
  * - Renders badge preview with default label "Gate" and default color
@@ -24,6 +24,13 @@
  * - Badge preview uses default label when no custom label set
  * - Existing fields section still renders correctly
  * - Description input still works after new sections added
+ * - Script toggle switch renders and works
+ * - Script interpreter dropdown shows bash/node/python3
+ * - Script source textarea accepts multiline code with monospace font
+ * - Script timeout defaults to 30, clamps to [1, 120]
+ * - Script presets (Lint Check, Type Check) populate form correctly
+ * - Script validation errors displayed for empty source, invalid timeout
+ * - Script-only gate (no fields) works in editor
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -374,5 +381,375 @@ describe('GateEditorPanel — Existing functionality preserved', () => {
 		expect(getByTestId('gate-editor-badge-preview')).toBeDefined();
 		expect(getByTestId('gate-editor-label')).toBeDefined();
 		expect(getByTestId('gate-editor-color')).toBeDefined();
+	});
+});
+
+describe('GateEditorPanel — Script Check toggle', () => {
+	it('renders script toggle switch in off state by default', () => {
+		const gate = makeGate();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const toggle = getByTestId('gate-editor-script-enabled');
+		expect(toggle.getAttribute('role')).toBe('switch');
+		expect(toggle.getAttribute('aria-checked')).toBe('false');
+	});
+
+	it('renders script toggle in on state when gate has script', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo hello', timeoutMs: 30000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const toggle = getByTestId('gate-editor-script-enabled');
+		expect(toggle.getAttribute('aria-checked')).toBe('true');
+	});
+
+	it('hides script editor controls when toggle is off', () => {
+		const gate = makeGate();
+		const { getByTestId, queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(getByTestId('gate-editor-script-enabled')).toBeDefined();
+		expect(queryByTestId('gate-editor-script-interpreter')).toBeNull();
+		expect(queryByTestId('gate-editor-script-source')).toBeNull();
+		expect(queryByTestId('gate-editor-script-timeout')).toBeNull();
+	});
+
+	it('shows script editor controls when toggle is clicked on', () => {
+		const gate = makeGate();
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		const toggle = getByTestId('gate-editor-script-enabled');
+		fireEvent.click(toggle);
+
+		expect(onChange).toHaveBeenCalledOnce();
+		const updatedGate = onChange.mock.calls[0][0];
+		expect(updatedGate.script).toBeDefined();
+		expect(updatedGate.script.interpreter).toBe('bash');
+		expect(updatedGate.script.source).toBe('');
+		expect(updatedGate.script.timeoutMs).toBe(30000);
+	});
+
+	it('clears gate.script when toggle is clicked off', () => {
+		const gate = makeGate({
+			script: { interpreter: 'node', source: 'console.log("hi")', timeoutMs: 10000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		const toggle = getByTestId('gate-editor-script-enabled');
+		fireEvent.click(toggle);
+
+		expect(onChange).toHaveBeenCalledOnce();
+		const updatedGate = onChange.mock.calls[0][0];
+		expect(updatedGate.script).toBeUndefined();
+	});
+});
+
+describe('GateEditorPanel — Script Interpreter', () => {
+	it('shows interpreter dropdown with bash/node/python3 options', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 30000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const select = getByTestId('gate-editor-script-interpreter') as HTMLSelectElement;
+		expect(select.value).toBe('bash');
+
+		const options = Array.from(select.options);
+		expect(options.map((o) => o.value)).toEqual(['bash', 'node', 'python3']);
+	});
+
+	it('calls onChange when interpreter is changed', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 30000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		const select = getByTestId('gate-editor-script-interpreter');
+		fireEvent.change(select, { target: { value: 'python3' } });
+
+		expect(onChange).toHaveBeenCalledOnce();
+		const updatedGate = onChange.mock.calls[0][0];
+		expect(updatedGate.script.interpreter).toBe('python3');
+		expect(updatedGate.script.source).toBe('echo test');
+	});
+
+	it('reflects gate.script.interpreter from props', () => {
+		const gate = makeGate({
+			script: { interpreter: 'node', source: 'console.log(1)', timeoutMs: 30000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const select = getByTestId('gate-editor-script-interpreter') as HTMLSelectElement;
+		expect(select.value).toBe('node');
+	});
+});
+
+describe('GateEditorPanel — Script Source', () => {
+	it('renders textarea with monospace font class', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo hello', timeoutMs: 30000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const textarea = getByTestId('gate-editor-script-source') as HTMLTextAreaElement;
+		expect(textarea.value).toBe('echo hello');
+		expect(textarea.className).toContain('font-mono');
+	});
+
+	it('accepts multiline script code', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: '', timeoutMs: 30000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		const textarea = getByTestId('gate-editor-script-source');
+		const multiline = 'echo "line 1"\necho "line 2"\necho "line 3"';
+		fireEvent.input(textarea, { target: { value: multiline } });
+
+		expect(onChange).toHaveBeenCalledOnce();
+		const updatedGate = onChange.mock.calls[0][0];
+		expect(updatedGate.script.source).toBe(multiline);
+	});
+
+	it('calls onChange with source when user types', () => {
+		const gate = makeGate({
+			script: { interpreter: 'node', source: '', timeoutMs: 30000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		const textarea = getByTestId('gate-editor-script-source');
+		fireEvent.input(textarea, { target: { value: 'console.log("hello")' } });
+
+		expect(onChange).toHaveBeenCalledOnce();
+		expect(onChange.mock.calls[0][0].script.source).toBe('console.log("hello")');
+	});
+});
+
+describe('GateEditorPanel — Script Timeout', () => {
+	it('renders timeout input with default value 30', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 30000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const input = getByTestId('gate-editor-script-timeout') as HTMLInputElement;
+		expect(Number(input.value)).toBe(30);
+	});
+
+	it('renders timeout in seconds from milliseconds in gate.script', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 60000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const input = getByTestId('gate-editor-script-timeout') as HTMLInputElement;
+		expect(Number(input.value)).toBe(60);
+	});
+
+	it('defaults to 30 when timeoutMs is not set', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test' },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const input = getByTestId('gate-editor-script-timeout') as HTMLInputElement;
+		expect(Number(input.value)).toBe(30);
+	});
+
+	it('calls onChange with timeoutMs when value is changed', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 30000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		const input = getByTestId('gate-editor-script-timeout');
+		fireEvent.input(input, { target: { value: '60' } });
+
+		expect(onChange).toHaveBeenCalledOnce();
+		expect(onChange.mock.calls[0][0].script.timeoutMs).toBe(60000);
+	});
+
+	it('clamps timeout value above 120 to 120', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 30000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		const input = getByTestId('gate-editor-script-timeout');
+		fireEvent.input(input, { target: { value: '999' } });
+
+		expect(onChange).toHaveBeenCalledOnce();
+		expect(onChange.mock.calls[0][0].script.timeoutMs).toBe(120000);
+	});
+
+	it('clamps timeout value below 1 to 1', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 30000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		const input = getByTestId('gate-editor-script-timeout');
+		fireEvent.input(input, { target: { value: '0' } });
+
+		expect(onChange).toHaveBeenCalledOnce();
+		expect(onChange.mock.calls[0][0].script.timeoutMs).toBe(1000);
+	});
+});
+
+describe('GateEditorPanel — Script Presets', () => {
+	it('renders Lint Check and Type Check preset buttons when script is enabled', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: '', timeoutMs: 30000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(getByTestId('gate-editor-preset-lint')).toBeDefined();
+		expect(getByTestId('gate-editor-preset-typecheck')).toBeDefined();
+	});
+
+	it('Lint Check preset populates bash interpreter and lint script', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: '', timeoutMs: 30000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		fireEvent.click(getByTestId('gate-editor-preset-lint'));
+
+		expect(onChange).toHaveBeenCalledOnce();
+		const updated = onChange.mock.calls[0][0];
+		expect(updated.script.interpreter).toBe('bash');
+		expect(updated.script.source).toContain('npm run lint');
+		expect(updated.script.source).toContain('{"passed":true}');
+		expect(updated.script.timeoutMs).toBe(30000);
+	});
+
+	it('Type Check preset populates node interpreter and type check script', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: '', timeoutMs: 30000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		fireEvent.click(getByTestId('gate-editor-preset-typecheck'));
+
+		expect(onChange).toHaveBeenCalledOnce();
+		const updated = onChange.mock.calls[0][0];
+		expect(updated.script.interpreter).toBe('node');
+		expect(updated.script.source).toBe('console.log(JSON.stringify({passed: true}))');
+		expect(updated.script.timeoutMs).toBe(30000);
+	});
+
+	it('preset buttons are hidden when script is disabled', () => {
+		const gate = makeGate();
+		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(queryByTestId('gate-editor-preset-lint')).toBeNull();
+		expect(queryByTestId('gate-editor-preset-typecheck')).toBeNull();
+	});
+});
+
+describe('GateEditorPanel — Script Validation', () => {
+	it('shows source error when script source is empty', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: '', timeoutMs: 30000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(getByTestId('gate-editor-script-source-error').textContent).toContain(
+			'script body is required'
+		);
+	});
+
+	it('shows source error when script source is whitespace only', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: '   \n\t  ', timeoutMs: 30000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(getByTestId('gate-editor-script-source-error').textContent).toContain(
+			'script body is required'
+		);
+	});
+
+	it('does not show source error for valid source', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo hello', timeoutMs: 30000 },
+		});
+		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(queryByTestId('gate-editor-script-source-error')).toBeNull();
+	});
+
+	it('does not show source error when script is disabled', () => {
+		const gate = makeGate();
+		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(queryByTestId('gate-editor-script-source-error')).toBeNull();
+	});
+
+	it('shows timeout error for values above 120', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 130000 },
+		});
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(getByTestId('gate-editor-script-timeout-error').textContent).toContain(
+			'must be at most 120'
+		);
+	});
+
+	it('does not show timeout error for value at 120', () => {
+		const gate = makeGate({
+			script: { interpreter: 'bash', source: 'echo test', timeoutMs: 120000 },
+		});
+		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(queryByTestId('gate-editor-script-timeout-error')).toBeNull();
+	});
+});
+
+describe('GateEditorPanel — Script-only gate (no fields)', () => {
+	it('works with script-only gate and no fields', () => {
+		const gate = makeGate({
+			fields: undefined,
+			script: { interpreter: 'node', source: 'console.log("ok")', timeoutMs: 30000 },
+		});
+		const { getByTestId, queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		// Script section is enabled and visible
+		expect(getByTestId('gate-editor-script-enabled').getAttribute('aria-checked')).toBe('true');
+		expect(getByTestId('gate-editor-script-interpreter')).toBeDefined();
+		expect(getByTestId('gate-editor-script-source')).toBeDefined();
+
+		// No validation errors
+		expect(queryByTestId('gate-editor-script-source-error')).toBeNull();
+		expect(queryByTestId('gate-editor-script-interpreter-error')).toBeNull();
+		expect(queryByTestId('gate-editor-script-timeout-error')).toBeNull();
+	});
+
+	it('gate.script correctly propagated via onChange', () => {
+		const gate = makeGate({
+			fields: [],
+			script: { interpreter: 'python3', source: 'print("ok")', timeoutMs: 45000 },
+		});
+		const onChange = vi.fn();
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+		// Change interpreter
+		fireEvent.change(getByTestId('gate-editor-script-interpreter'), { target: { value: 'bash' } });
+
+		const updated = onChange.mock.calls[0][0];
+		expect(updated.script.interpreter).toBe('bash');
+		expect(updated.script.source).toBe('print("ok")');
+		expect(updated.script.timeoutMs).toBe(45000);
 	});
 });
