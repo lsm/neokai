@@ -244,8 +244,19 @@ test.describe('Reconnection - Long Disconnection Period', () => {
 		await closeWebSocket(page);
 		await waitForOfflineStatus(page);
 
-		// Simulate a longer disconnect with a brief polling check
-		await page.waitForTimeout(2000);
+		// Wait for agent to process while offline — poll for new messages
+		// with a short timeout. If no new messages appear, that's fine;
+		// the test validates that existing messages survive the disconnect.
+		const messagesBeforeOffline = await page.locator('[data-message-role]').count();
+		await page
+			.waitForFunction(
+				(before) => document.querySelectorAll('[data-message-role]').length > before,
+				messagesBeforeOffline,
+				{ timeout: 5000, polling: 500 }
+			)
+			.catch(() => {
+				// No new messages during disconnect — acceptable
+			});
 
 		// 5. Come back online
 		await restoreWebSocket(page);

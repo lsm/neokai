@@ -79,13 +79,15 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
           key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile || bun install
+        run: bun install --frozen-lockfile
 
       - name: Validate online test matrix coverage
         run: bash scripts/validate-online-test-matrix.sh
@@ -365,13 +367,15 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
           key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile || bun install
+        run: bun install --frozen-lockfile
 
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
@@ -459,13 +463,15 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
           key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile || bun install
+        run: bun install --frozen-lockfile
 
       - name: Run daemon + shared unit tests from root
         run: make test-daemon
@@ -520,13 +526,15 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
           key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile || bun install
+        run: bun install --frozen-lockfile
 
       - name: Run web tests
         working-directory: packages/web
@@ -582,13 +590,15 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
           key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile || bun install
+        run: bun install --frozen-lockfile
 
       - name: Run CLI tests
         working-directory: packages/cli
@@ -747,13 +757,15 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
           key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile || bun install
+        run: bun install --frozen-lockfile
 
       - name: Build web frontend
         run: cd packages/web && bun run build
@@ -900,7 +912,9 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
           key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             bun-deps-${{ runner.os }}-
@@ -908,8 +922,8 @@ jobs:
       - name: Install dependencies
         run: |
           echo "Starting bun install at $(date)"
-          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || timeout 180 bun install --verbose 2>&1 || {
-            echo "bun install timed out or failed"
+          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || {
+            echo "bun install timed out or failed (lockfile may be stale — run 'bun install' locally and commit the updated bun.lock)"
             exit 1
           }
           echo "Finished bun install at $(date)"
@@ -936,10 +950,10 @@ jobs:
           chmod +x dist/bin/kai-linux-x64
           WORKSPACE=$(mktemp -d)
 
-          # Reserve a port using SO_REUSEADDR to avoid TOCTOU race.
-          # We keep the socket open while the binary starts so no other
-          # process can steal the port, then close it right before binding.
-          PORT=$(python3 -c 'import socket, os; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
+          # Get a free port via a short-lived Python socket with SO_REUSEADDR.
+          # SO_REUSEADDR shrinks the reuse window on Linux so the binary can
+          # re-bind quickly even if the port is briefly in TIME_WAIT state.
+          PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
           echo "Reserved port $PORT for binary"
 
           ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &
@@ -1031,7 +1045,9 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
           key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
           restore-keys: |
             bun-deps-${{ runner.os }}-
@@ -1039,8 +1055,8 @@ jobs:
       - name: Install dependencies
         run: |
           echo "Starting bun install at $(date)"
-          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || timeout 180 bun install --verbose 2>&1 || {
-            echo "bun install timed out or failed"
+          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || {
+            echo "bun install timed out or failed (lockfile may be stale — run 'bun install' locally and commit the updated bun.lock)"
             exit 1
           }
           echo "Finished bun install at $(date)"
@@ -1067,10 +1083,10 @@ jobs:
           chmod +x dist/bin/kai-linux-x64
           WORKSPACE=$(mktemp -d)
 
-          # Reserve a port using SO_REUSEADDR to avoid TOCTOU race.
-          # We keep the socket open while the binary starts so no other
-          # process can steal the port, then close it right before binding.
-          PORT=$(python3 -c 'import socket, os; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
+          # Get a free port via a short-lived Python socket with SO_REUSEADDR.
+          # SO_REUSEADDR shrinks the reuse window on Linux so the binary can
+          # re-bind quickly even if the port is briefly in TIME_WAIT state.
+          PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
           echo "Reserved port $PORT for binary"
 
           ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &

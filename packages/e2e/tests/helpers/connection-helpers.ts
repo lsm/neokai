@@ -68,19 +68,33 @@ export async function waitForOfflineStatus(page: Page, timeout: number = 5000): 
  * Wait for the WebSocket to reconnect and the online status to be restored.
  *
  * This is an event-based alternative to waitForTimeout(3000) that
- * polls for the connection state to be 'connected' via the MessageHub.
+ * verifies the connection state via the MessageHub.
+ *
+ * The offline indicator visibility check uses a short timeout (2s) since
+ * the indicator may not have appeared before the reconnect is initiated.
+ * If it's still visible after reconnect, that indicates a problem and will
+ * surface in the subsequent MessageHub state assertion.
  */
 export async function waitForOnlineStatus(page: Page, timeout: number = 10000): Promise<void> {
-	// First, wait for the offline indicator to disappear (if it was visible)
-	await expect(page.locator('button[aria-label="Daemon: Offline"]').first())
-		.toBeHidden({
-			timeout,
-		})
-		.catch(() => {
-			// The offline indicator might already be hidden or never appeared
-		});
+	// Check if the offline indicator is currently visible and wait for it to
+	// disappear with a short timeout — it may not have appeared at all if
+	// the disconnect was brief.
+	const offlineIndicator = page.locator('button[aria-label="Daemon: Offline"]').first();
+	const wasVisible = await offlineIndicator.isVisible().catch(() => false);
 
-	// Then verify WebSocket is actually connected via the MessageHub state
+	if (wasVisible) {
+		// If the indicator was visible, wait for it to hide (max 2s).
+		// If it doesn't hide, proceed to the MessageHub check which will
+		// provide a clear failure message about the actual connection state.
+		await offlineIndicator.toBeHidden({ timeout: 2000 }).catch(() => {
+			// Offline indicator still visible — reconnection may have
+			// partially failed. The MessageHub check below will confirm.
+		});
+	}
+
+	// Verify WebSocket is actually connected via the MessageHub state.
+	// This is the authoritative check — it waits for the transport to
+	// be fully connected and the hub state to reflect 'connected'.
 	await page.waitForFunction(
 		() => {
 			const hub = window.__messageHub || window.appState?.messageHub;
