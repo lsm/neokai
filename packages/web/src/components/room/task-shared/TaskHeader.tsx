@@ -3,14 +3,15 @@
  *
  * Shared mobile-responsive header for TaskView (V1) and TaskViewV2.
  *
- * Layout (two rows on all viewports):
+ * Layout (always two separate rows):
  * - **Row 1:** Back arrow, task title (flex-1), progress indicator, gear
  * - **Row 2:** Tags (status badge, task type, PR link, mission badge) + sub-line info
  *
  * Responsive behavior:
- * - On mobile, Row 2 has top margin for visual separation
- * - On desktop (>= sm), Row 2 has no top margin and aligns under the title
- *   via a flex spacer matching the back-button width — no hardcoded pixel offset
+ * - On mobile, Row 2 has a top margin for visual separation from Row 1
+ * - On desktop (>= sm), the top margin collapses (sm:mt-0) so the two rows sit
+ *   flush. A hidden spacer (hidden sm:block w-7) keeps tags aligned under the
+ *   title column. Tags within Row 2 are arranged horizontally (sm:flex-row).
  * - Tap targets are enlarged on mobile (min 36px) for stop/gear buttons
  */
 
