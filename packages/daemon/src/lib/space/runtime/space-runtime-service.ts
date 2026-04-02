@@ -306,6 +306,13 @@ export class SpaceRuntimeService {
 	 */
 	async notifyGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
 		if (!this.config.gateDataRepo) return [];
+		// Resolve workspacePath from run → space for script gate evaluation.
+		const run = this.config.workflowRunRepo.getRun(runId);
+		let workspacePath: string | undefined;
+		if (run) {
+			const space = await this.config.spaceManager.getSpace(run.spaceId);
+			workspacePath = space?.workspacePath;
+		}
 		const router = new ChannelRouter({
 			taskRepo: this.config.taskRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -314,6 +321,7 @@ export class SpaceRuntimeService {
 			gateDataRepo: this.config.gateDataRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
+			workspacePath,
 		});
 		return router.onGateDataChanged(runId, gateId);
 	}

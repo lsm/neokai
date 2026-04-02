@@ -619,6 +619,7 @@ export class TaskAgentManager {
 				agentManager: this.config.spaceAgentManager,
 				gateDataRepo: this.config.gateDataRepo,
 				db: this.config.db.getDatabase(),
+				workspacePath,
 			});
 			const completionDetector = new CompletionDetector(this.config.taskRepo);
 
@@ -648,7 +649,8 @@ export class TaskAgentManager {
 						spaceId,
 						workflowRunId,
 						stepTaskId,
-						taskManager
+						taskManager,
+						workspacePath
 					) as unknown as McpServerConfig,
 			});
 
@@ -1436,6 +1438,7 @@ export class TaskAgentManager {
 			gateDataRepo: this.config.gateDataRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
+			workspacePath: rehydrateWorkspacePath,
 		});
 		const rehydrateCompletionDetector = new CompletionDetector(this.config.taskRepo);
 
@@ -1465,7 +1468,8 @@ export class TaskAgentManager {
 					spaceId,
 					rehydrateWorkflowRunId,
 					stepTaskId,
-					taskManager
+					taskManager,
+					rehydrateWorkspacePath
 				) as unknown as McpServerConfig,
 		});
 
@@ -1556,7 +1560,8 @@ export class TaskAgentManager {
 					spaceId,
 					workflowRunId,
 					stepTask.id,
-					taskManager
+					taskManager,
+					rehydrateWorkspacePath
 				);
 				// Merge registry-sourced MCP servers alongside the in-process node-agent server,
 				// matching the createSubSession() pattern so rehydrated sub-sessions have the
@@ -1725,7 +1730,8 @@ export class TaskAgentManager {
 		spaceId: string,
 		workflowRunId: string,
 		stepTaskId: string,
-		taskManager: SpaceTaskManager
+		taskManager: SpaceTaskManager,
+		workspacePath: string
 	) {
 		const workflowNodeId = this.config.taskRepo.getTask(stepTaskId)?.id ?? '';
 		// Build the ChannelResolver from the workflow run's stored config at spawn time.
@@ -1750,6 +1756,7 @@ export class TaskAgentManager {
 			gateDataRepo: this.config.gateDataRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
+			workspacePath,
 		});
 
 		return createNodeAgentMcpServer({
