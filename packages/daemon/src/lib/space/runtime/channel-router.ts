@@ -183,7 +183,7 @@ export class ChannelRouter {
 	 * @param nodeId - ID of the WorkflowNode to activate
 	 * @returns Array of created (or pre-existing) SpaceTask records (≥ 1)
 	 * @throws ActivationError when the run/workflow/node is not found, or the
-	 *   run is in a terminal state (cancelled / completed)
+	 *   run is in a terminal state (cancelled / done)
 	 */
 	async activateNode(runId: string, nodeId: string): Promise<SpaceTask[]> {
 		// ── 1. Load the run ────────────────────────────────────────────────────
@@ -584,19 +584,10 @@ export class ChannelRouter {
 	 * Returns all in-flight tasks for a given (runId, nodeId) pair.
 	 *
 	 * "In-flight" means the task is in an active (non-terminal) status:
-	 * pending, in_progress, review, rate_limited, or usage_limited.
-	 * This mirrors the partial index constraint in Migration 54 so the
-	 * application-level check stays consistent with the DB-level constraint.
+	 * open or in_progress.
 	 *
-	 * Terminal tasks (completed, cancelled, needs_attention, archived) are
-	 * excluded so cyclic workflows can re-activate a node after its tasks complete.
-	 *
-	 * `draft` is intentionally excluded even though it is a valid `SpaceTaskStatus`.
-	 * The ChannelRouter always creates tasks with `status: 'pending'` — `draft` is
-	 * reserved for tasks created by external callers that are not yet ready to run.
-	 * The Migration 54 index matches this exclusion, meaning two draft tasks for the
-	 * same (run, node, slot) are allowed to coexist. Callers that create draft tasks
-	 * outside ChannelRouter must manage uniqueness themselves.
+	 * Terminal tasks (done, blocked, cancelled, archived) are excluded so cyclic
+	 * workflows can re-activate a node after its tasks complete.
 	 */
 	private getActiveTasksForNode(runId: string, _nodeId: string): SpaceTask[] {
 		const ACTIVE_STATUSES = new Set(['open', 'in_progress']);

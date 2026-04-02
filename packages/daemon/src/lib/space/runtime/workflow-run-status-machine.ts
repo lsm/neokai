@@ -22,7 +22,7 @@ import type { WorkflowRunStatus } from '@neokai/shared';
 /**
  * Map from a source status to the set of allowed target statuses.
  *
- * Terminal states (completed, cancelled) have empty target sets —
+ * Terminal states (done, cancelled) have empty target sets —
  * no transitions out of them are permitted.
  */
 export const VALID_TRANSITIONS: Readonly<

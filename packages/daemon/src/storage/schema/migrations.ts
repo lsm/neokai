@@ -4724,6 +4724,7 @@ function runMigration73(db: BunDatabase): void {
 
 		if (needsTasksUpdate) {
 			db.exec('PRAGMA foreign_keys = OFF');
+			db.exec('BEGIN');
 			try {
 				// Rebuild with new schema (adds labels, removes deprecated columns).
 				// Status mapping is done inline via CASE WHEN to avoid running UPDATE
@@ -4796,6 +4797,10 @@ function runMigration73(db: BunDatabase): void {
 				db.exec(
 					`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_task_number ON space_tasks(space_id, task_number)`
 				);
+				db.exec('COMMIT');
+			} catch (err) {
+				db.exec('ROLLBACK');
+				throw err;
 			} finally {
 				db.exec('PRAGMA foreign_keys = ON');
 			}
@@ -4819,6 +4824,7 @@ function runMigration73(db: BunDatabase): void {
 
 		if (needsRunsUpdate) {
 			db.exec('PRAGMA foreign_keys = OFF');
+			db.exec('BEGIN');
 			try {
 				db.exec(`
 					CREATE TABLE space_workflow_runs_m71_new (
@@ -4864,6 +4870,10 @@ function runMigration73(db: BunDatabase): void {
 				db.exec(
 					`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`
 				);
+				db.exec('COMMIT');
+			} catch (err) {
+				db.exec('ROLLBACK');
+				throw err;
 			} finally {
 				db.exec('PRAGMA foreign_keys = ON');
 			}
