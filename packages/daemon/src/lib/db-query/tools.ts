@@ -296,7 +296,9 @@ function rewriteScopedQuery(
 		}
 	}
 
-	// No scope filters needed (global scope or all tables unscoped)
+	// No scope filters needed (global scope, all tables unscoped, or no table refs
+	// e.g. SELECT 1). Table-less queries are safe to pass through — they don't
+	// access any scoped data.
 	if (scopeFilterSet.size === 0) {
 		const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
 		// Use the stricter of the arg-level limit and the SQL-embedded limit

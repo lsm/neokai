@@ -525,10 +525,16 @@ describe('validateSql — edge cases', () => {
 		expect(result.tableRefs).toEqual(['sessions']);
 	});
 
-	test('UNION queries', () => {
+	test('UNION queries rejected', () => {
 		const result = validateSql('SELECT * FROM tasks UNION SELECT * FROM archived_tasks');
-		expect(result.valid).toBe(true);
-		expect(result.tableRefs).toEqual(['tasks', 'archived_tasks']);
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('UNION');
+	});
+
+	test('UNION ALL rejected', () => {
+		const result = validateSql('SELECT * FROM tasks UNION ALL SELECT * FROM tasks');
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('UNION');
 	});
 });
 

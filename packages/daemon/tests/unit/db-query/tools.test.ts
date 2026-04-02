@@ -915,6 +915,35 @@ describe('db-query tools', () => {
 			});
 		});
 
+		describe('UNION queries rejected at handler level', () => {
+			it('rejects UNION query with clear error', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT id FROM tasks UNION SELECT id FROM goals',
+				});
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('UNION');
+			});
+		});
+
+		describe('table-less queries in scoped mode', () => {
+			it('SELECT 1 returns result without scope filter', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT 1' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(1);
+				expect(parsed.rows[0]).toEqual({ '1': 1 });
+			});
+		});
+
 		describe('global scope limit arg', () => {
 			it('respects explicit limit arg in global scope', async () => {
 				seedRooms(db);

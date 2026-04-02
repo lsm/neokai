@@ -359,6 +359,28 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
 // ============ Public API ============
 
 /**
+ * Check whether the SQL contains a UNION or UNION ALL keyword at the top level
+ * (depth 0, outside parentheses). This allows UNION ALL inside CTE bodies
+ * (e.g. WITH RECURSIVE) while rejecting top-level UNION queries.
+ */
+function hasTopLevelUnion(sql: string): boolean {
+	const upper = sql.toUpperCase();
+	let depth = 0;
+	for (let i = 0; i < sql.length; i++) {
+		if (sql[i] === '(') depth++;
+		else if (sql[i] === ')') depth--;
+		else if (depth === 0 && upper.slice(i, i + 5) === 'UNION') {
+			// Check word boundary before and after
+			const beforeOk = i === 0 || /\s/.test(sql[i - 1]);
+			const afterChar = i + 5 < sql.length ? sql[i + 5] : ' ';
+			const afterOk = /\s/.test(afterChar) || afterChar === '(';
+			if (beforeOk && afterOk) return true;
+		}
+	}
+	return false;
+}
+
+/**
  * Validate a SQL statement for use with the db-query MCP server.
  *
  * Checks:
@@ -413,6 +435,18 @@ export function validateSql(sql: string): SqlValidationResult {
 		return {
 			valid: false,
 			error: 'OFFSET is not supported (use LIMIT only)',
+			tableRefs: [],
+		};
+	}
+
+	// Reject UNION at the top level only (not inside parentheses/CTE bodies).
+	// WITH RECURSIVE uses UNION ALL inside CTE bodies, which is fine.
+	// Top-level UNION is incompatible with the scope-wrapping subquery because
+	// each arm gets rewritten to SELECT * with different column counts.
+	if (hasTopLevelUnion(withoutStrings)) {
+		return {
+			valid: false,
+			error: 'UNION queries are not supported (use CTEs or subqueries instead)',
 			tableRefs: [],
 		};
 	}
