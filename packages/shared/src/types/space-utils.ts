@@ -326,7 +326,7 @@ export function validateNodeChannels(
  * cross-node, DM, and fan-out. There is no separate resolveNodeChannels call needed.
  *
  * Addressing semantics:
- * - `from`/`to` values are looked up globally against `WorkflowNodeAgent.role` strings
+ * - `from`/`to` values are looked up globally against `WorkflowNodeAgent.name` strings
  *   (which must be unique across all nodes in the workflow for correct routing).
  * - When `to` matches a **node name** (from `WorkflowNode.name`), the channel
  *   fans out to all agents in that node (`isFanOut: true`).
