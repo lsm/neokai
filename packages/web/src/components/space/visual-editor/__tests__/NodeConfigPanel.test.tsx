@@ -6,13 +6,16 @@
  * - Header shows step name and close button
  * - Step name in header updates when step changes
  * - "Set as Start" button visible for non-start nodes, hidden for start node
+ * - "Set as End" button visible for non-end nodes, "Unset End Node" for end node
  * - "Set as Start" calls onSetAsStart with the step localId
+ * - "Set as End" calls onSetAsEnd with the step localId
  * - onClose fires when close button clicked
  * - onUpdate fires with updated step when fields change
  * - Delete button is disabled for start node with tooltip hint
  * - Delete button shows confirmation dialog when clicked
  * - Confirming delete calls onDelete; cancelling dismisses dialog
  * - Start node badge shown in header when isStartNode=true
+ * - End node badge shown in header when isEndNode=true
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -89,8 +92,10 @@ function makeProps(overrides: Partial<NodeConfigPanelProps> = {}): NodeConfigPan
 		step: makeStep(),
 		agents: defaultAgents,
 		isStartNode: false,
+		isEndNode: false,
 		onUpdate: vi.fn(),
 		onSetAsStart: vi.fn(),
+		onSetAsEnd: vi.fn(),
 		onClose: vi.fn(),
 		onDelete: vi.fn(),
 		...overrides,
@@ -144,9 +149,8 @@ describe('NodeConfigPanel', () => {
 			expect(select.value).toBe('agent-2');
 		});
 
-		it('renders the instructions textarea with current value', () => {
+		it('renders the inline instructions textarea with current value', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			fireEvent.click(getByTestId('prompt-instructions-button'));
 			const textarea = getByTestId('instructions-textarea') as HTMLTextAreaElement;
 			expect(textarea.value).toBe('Do stuff.');
 		});
@@ -181,6 +185,18 @@ describe('NodeConfigPanel', () => {
 		});
 	});
 
+	describe('end node badge', () => {
+		it('shows END badge in header when isEndNode=true', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ isEndNode: true })} />);
+			expect(getByTestId('end-node-badge')).toBeTruthy();
+		});
+
+		it('does not show END badge when isEndNode=false', () => {
+			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ isEndNode: false })} />);
+			expect(queryByTestId('end-node-badge')).toBeNull();
+		});
+	});
+
 	describe('"Set as Start" button', () => {
 		it('is visible when node is not the start node', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ isStartNode: false })} />);
@@ -199,6 +215,43 @@ describe('NodeConfigPanel', () => {
 			);
 			fireEvent.click(getByTestId('set-as-start-button'));
 			expect(onSetAsStart).toHaveBeenCalledWith('my-step');
+		});
+	});
+
+	describe('"Set as End" button', () => {
+		it('is visible when node is not the end node', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ isEndNode: false })} />);
+			expect(getByTestId('set-as-end-button')).toBeTruthy();
+		});
+
+		it('is hidden when node is already the end node', () => {
+			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ isEndNode: true })} />);
+			expect(queryByTestId('set-as-end-button')).toBeNull();
+		});
+
+		it('shows "Unset End Node" button when node is the end node', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ isEndNode: true })} />);
+			expect(getByTestId('unset-as-end-button')).toBeTruthy();
+		});
+
+		it('calls onSetAsEnd with the step localId when clicked', () => {
+			const onSetAsEnd = vi.fn();
+			const { getByTestId } = render(
+				<NodeConfigPanel {...makeProps({ onSetAsEnd, step: makeStep({ localId: 'my-step' }) })} />
+			);
+			fireEvent.click(getByTestId('set-as-end-button'));
+			expect(onSetAsEnd).toHaveBeenCalledWith('my-step');
+		});
+
+		it('"Unset End Node" button calls onSetAsEnd with the step localId', () => {
+			const onSetAsEnd = vi.fn();
+			const { getByTestId } = render(
+				<NodeConfigPanel
+					{...makeProps({ onSetAsEnd, isEndNode: true, step: makeStep({ localId: 'my-step' }) })}
+				/>
+			);
+			fireEvent.click(getByTestId('unset-as-end-button'));
+			expect(onSetAsEnd).toHaveBeenCalledWith('my-step');
 		});
 	});
 
@@ -229,12 +282,22 @@ describe('NodeConfigPanel', () => {
 		it('calls onUpdate with new instructions when textarea changes', () => {
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
-			fireEvent.click(getByTestId('prompt-instructions-button'));
 			fireEvent.input(getByTestId('instructions-textarea'), {
 				target: { value: 'New instructions.' },
 			});
 			expect(onUpdate).toHaveBeenCalledWith(
 				expect.objectContaining({ instructions: 'New instructions.' })
+			);
+		});
+
+		it('calls onUpdate with new system prompt when textarea changes', () => {
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			fireEvent.input(getByTestId('node-system-prompt-input'), {
+				target: { value: 'Custom system prompt.' },
+			});
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({ systemPrompt: 'Custom system prompt.' })
 			);
 		});
 
@@ -268,24 +331,14 @@ describe('NodeConfigPanel', () => {
 			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
 		});
 
-		it('opens the dedicated prompt and instructions editor', () => {
-			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(queryByTestId('node-system-prompt-input')).toBeNull();
-			fireEvent.click(getByTestId('prompt-instructions-button'));
+		it('renders the inline system prompt input', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
 			expect(getByTestId('node-system-prompt-input')).toBeTruthy();
-			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 		});
-	});
 
-	describe('instructions copy', () => {
-		it('explains that instructions are appended guidance, not the base system prompt', () => {
-			const { getByTestId, getByText } = render(<NodeConfigPanel {...makeProps()} />);
-			fireEvent.click(getByTestId('prompt-instructions-button'));
-			expect(
-				getByText(
-					'This editor shows the current values for both the shared prompt override and the shared instructions.'
-				)
-			).toBeTruthy();
+		it('renders the inline instructions textarea', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			expect(getByTestId('instructions-textarea')).toBeTruthy();
 		});
 	});
 
@@ -660,20 +713,18 @@ describe('NodeConfigPanel', () => {
 			expect(true).toBeTruthy();
 		});
 
-		it('shared prompt and instructions editor is used for multi-agent nodes too', () => {
+		it('inline system prompt editor is used for multi-agent nodes too', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.click(getByTestId('prompt-instructions-button'));
 			fireEvent.input(getByTestId('node-system-prompt-input'), {
 				target: { value: 'Be very strict.' },
 			});
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
 			expect(updatedStep.systemPrompt).toBe('Be very strict.');
-			expect(getByTestId('node-panel-back-button')).toBeTruthy();
 		});
 
 		it('adding same agent twice with different roles: both slots shown', () => {
@@ -716,7 +767,7 @@ describe('NodeConfigPanel', () => {
 			expect(queryAllByTestId('override-badge')).toHaveLength(1);
 		});
 
-		it('shared prompt and instructions view stays addressable after a slot role is renamed', async () => {
+		it('inline system prompt input stays addressable after a slot role is renamed', async () => {
 			// Use a controlled wrapper so onUpdate actually updates the step prop,
 			// matching how the real parent (VisualWorkflowEditor) behaves.
 			function Wrapper() {
@@ -731,7 +782,6 @@ describe('NodeConfigPanel', () => {
 				fireEvent.input(getByTestId('agent-role-input'), { target: { value: 'lead-planner' } });
 			});
 
-			fireEvent.click(getByTestId('prompt-instructions-button'));
 			expect(queryByTestId('node-system-prompt-input')).toBeTruthy();
 		});
 	});

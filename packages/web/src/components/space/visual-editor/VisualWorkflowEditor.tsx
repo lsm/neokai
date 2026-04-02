@@ -684,8 +684,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			const remaining = nodes.filter((n) => n.step.localId !== localId);
 			const wasStart =
 				nodeToDelete.step.localId === startNodeId || nodeToDelete.step.id === startNodeId;
-			const wasEnd =
-				nodeToDelete.step.localId === endNodeId || nodeToDelete.step.id === endNodeId;
+			const wasEnd = nodeToDelete.step.localId === endNodeId || nodeToDelete.step.id === endNodeId;
 
 			// Update all state in flat calls — no nested setter inside another updater.
 			setNodes(remaining);
@@ -1041,7 +1040,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		setShowTemplates(false);
 		setPendingTemplate(null);
 		setTemplateBaselineSignature(
-			buildTemplateCanvasSignature(nextNodes, newEdges, nextChannels, firstLocalId, nextGates)
+			buildTemplateCanvasSignature(nextNodes, newEdges, nextChannels, firstLocalId, nextGates, '')
 		);
 		if (!name) setName(template.label);
 
@@ -1111,6 +1110,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			nodes,
 			edges,
 			startNodeId,
+			endNodeId: endNodeId || undefined,
 			rules,
 			tags,
 			channels,
@@ -1358,6 +1358,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						isStartNode={nodeIsStart(selectedNode)}
 						onUpdate={handleUpdateNode}
 						onSetAsStart={handleSetAsStart}
+						isEndNode={nodeIsEnd(selectedNode)}
+						onSetAsEnd={handleSetAsEnd}
 						channelLinks={nodeChannelLinksByNodeId.get(selectedNode.step.localId) ?? []}
 						onOpenChannelLink={handleChannelSelectFromNodePanel}
 						selectedChannelRelation={
