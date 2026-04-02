@@ -226,4 +226,149 @@ describe('ChannelEdgeConfigPanel — gate summary', () => {
 		// When no color is set, the style.color should be empty string (undefined coerced)
 		expect(badge.style.color).toBe('');
 	});
+
+	// ---- Script error display from gateData prop ----
+
+	describe('gateData._scriptResult error display', () => {
+		it('does not show script error when no gateData prop is provided', () => {
+			const gate = makeGate({
+				script: { interpreter: 'bash', source: 'exit 1' },
+			});
+			const channel = makeChannel({ gateId: gate.id });
+			const { queryByTestId } = render(
+				<ChannelEdgeConfigPanel {...defaultProps({ channel, gates: [gate] })} />
+			);
+			expect(queryByTestId('gate-script-error')).toBeNull();
+		});
+
+		it('does not show script error when gateData has no _scriptResult', () => {
+			const gate = makeGate({
+				script: { interpreter: 'bash', source: 'exit 1' },
+			});
+			const channel = makeChannel({ gateId: gate.id });
+			const { queryByTestId } = render(
+				<ChannelEdgeConfigPanel
+					{...defaultProps({ channel, gates: [gate], gateData: { approved: true } })}
+				/>
+			);
+			expect(queryByTestId('gate-script-error')).toBeNull();
+		});
+
+		it('does not show script error when _scriptResult.success is true', () => {
+			const gate = makeGate({
+				script: { interpreter: 'bash', source: 'exit 0' },
+			});
+			const channel = makeChannel({ gateId: gate.id });
+			const { queryByTestId } = render(
+				<ChannelEdgeConfigPanel
+					{...defaultProps({
+						channel,
+						gates: [gate],
+						gateData: { _scriptResult: { success: true } },
+					})}
+				/>
+			);
+			expect(queryByTestId('gate-script-error')).toBeNull();
+		});
+
+		it('shows script error with reason when _scriptResult.success is false', () => {
+			const gate = makeGate({
+				script: { interpreter: 'bash', source: 'exit 1' },
+			});
+			const channel = makeChannel({ gateId: gate.id });
+			const { getByTestId } = render(
+				<ChannelEdgeConfigPanel
+					{...defaultProps({
+						channel,
+						gates: [gate],
+						gateData: {
+							_scriptResult: { success: false, reason: 'Script timed out after 30s' },
+						},
+					})}
+				/>
+			);
+			const errorBox = getByTestId('gate-script-error');
+			expect(errorBox.textContent).toContain('Script timed out after 30s');
+		});
+
+		it('does not show script error when _scriptResult.success is false but reason is empty string', () => {
+			const gate = makeGate({
+				script: { interpreter: 'bash', source: 'exit 1' },
+			});
+			const channel = makeChannel({ gateId: gate.id });
+			const { queryByTestId } = render(
+				<ChannelEdgeConfigPanel
+					{...defaultProps({
+						channel,
+						gates: [gate],
+						gateData: { _scriptResult: { success: false, reason: '' } },
+					})}
+				/>
+			);
+			expect(queryByTestId('gate-script-error')).toBeNull();
+		});
+
+		it('does not show script error when _scriptResult.success is false but reason is undefined', () => {
+			const gate = makeGate({
+				script: { interpreter: 'bash', source: 'exit 1' },
+			});
+			const channel = makeChannel({ gateId: gate.id });
+			const { queryByTestId } = render(
+				<ChannelEdgeConfigPanel
+					{...defaultProps({
+						channel,
+						gates: [gate],
+						gateData: { _scriptResult: { success: false } },
+					})}
+				/>
+			);
+			expect(queryByTestId('gate-script-error')).toBeNull();
+		});
+
+		it('error reason text has text-red-300 class for red styling', () => {
+			const gate = makeGate({
+				script: { interpreter: 'bash', source: 'exit 1' },
+			});
+			const channel = makeChannel({ gateId: gate.id });
+			const { getByTestId } = render(
+				<ChannelEdgeConfigPanel
+					{...defaultProps({
+						channel,
+						gates: [gate],
+						gateData: {
+							_scriptResult: { success: false, reason: 'Connection refused' },
+						},
+					})}
+				/>
+			);
+			const errorBox = getByTestId('gate-script-error');
+			// The error reason span should have text-red-300
+			const reasonSpan = errorBox.querySelector('.text-red-300');
+			expect(reasonSpan).toBeTruthy();
+			expect(reasonSpan?.textContent).toBe('Connection refused');
+		});
+
+		it('error box has warning icon', () => {
+			const gate = makeGate({
+				script: { interpreter: 'bash', source: 'exit 1' },
+			});
+			const channel = makeChannel({ gateId: gate.id });
+			const { getByTestId } = render(
+				<ChannelEdgeConfigPanel
+					{...defaultProps({
+						channel,
+						gates: [gate],
+						gateData: {
+							_scriptResult: { success: false, reason: 'Auth failed' },
+						},
+					})}
+				/>
+			);
+			const errorBox = getByTestId('gate-script-error');
+			// Warning icon with aria-label
+			const warningIcon = errorBox.querySelector('[aria-label="Warning"]');
+			expect(warningIcon).toBeTruthy();
+			expect(warningIcon?.textContent).toBe('\u26A0\uFE0F');
+		});
+	});
 });
