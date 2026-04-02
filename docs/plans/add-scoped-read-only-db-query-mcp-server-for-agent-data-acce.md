@@ -152,6 +152,7 @@ For the initial implementation, rely on `PRAGMA busy_timeout = 5000` for lock co
 
 ## Files to Modify
 
+- `packages/daemon/src/lib/neo/neo-agent-manager.ts` -- Inject `db-query` MCP server into Neo agent session (global scope)
 - `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` -- Inject `db-query` MCP server into room chat, worker, and leader sessions
 - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- Inject `db-query` MCP server into task agent sessions
 - `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` -- Inject `db-query` MCP server into space chat sessions
@@ -348,24 +349,29 @@ Create the core `db-query` MCP server. Each instance owns one read-only SQLite c
 
 ## Task 4: Integration into Agent Sessions
 
-**Title:** Inject db-query MCP server into room, task agent, space, and leader sessions
+**Title:** Inject db-query MCP server into Neo, room, task agent, space, and leader sessions
 
 **Description:**
 Wire the `db-query` MCP server into all agent session types. Each session gets its own MCP server instance with a single read-only connection.
 
 **Subtasks:**
-1. Modify `packages/daemon/src/lib/room/runtime/room-runtime-service.ts`:
+1. Modify `packages/daemon/src/lib/neo/neo-agent-manager.ts`:
+   - In `attachTools()`: create `createDbQueryMcpServer({ dbPath, scopeType: 'global', scopeValue: '' })` and merge it into the `setRuntimeMcpServers()` call alongside the existing `inProcessServers` and `registryMcpServers` under the key `'db-query'`
+   - Store a reference to the created server instance for cleanup (call `close()` on session teardown)
+   - The Neo agent's session context has no `roomId` or `spaceId`, so it receives `global` scope (all non-sensitive tables, no WHERE filter injection)
+2. Modify `packages/daemon/src/lib/room/runtime/room-runtime-service.ts`:
    - Import `createDbQueryMcpServer` and `getScopeForSession`
    - In `setupRoomAgentSession()`: create `createDbQueryMcpServer({ dbPath: ctx.db.getDatabasePath(), scopeType: 'room', scopeValue: room.id })` and merge into `setRuntimeMcpServers()` under the key `'db-query'`
    - In worker/leader session setup paths: same pattern with room scope
    - Store a reference to the created server instance for cleanup (call `close()` when session ends)
-2. Modify `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`:
+3. Modify `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`:
    - In task agent session creation: create `createDbQueryMcpServer({ dbPath, scopeType: 'space', scopeValue: space.id })` and merge into the task agent's MCP servers
-3. Modify `packages/daemon/src/lib/space/runtime/space-runtime-service.ts`:
+4. Modify `packages/daemon/src/lib/space/runtime/space-runtime-service.ts`:
    - In space chat session setup: create `createDbQueryMcpServer({ dbPath, scopeType: 'space', scopeValue: space.id })` and merge into the space chat session's MCP servers
-4. Add connection cleanup to session teardown paths:
+5. Add connection cleanup to session teardown paths:
    - When a session ends, call the db-query server's `close()` method to release the read-only connection
    - In `RoomRuntime.stop()`: close all db-query server instances for sessions in that room
+   - In Neo agent session teardown: close the db-query server instance
    - In space runtime cleanup: close db-query server instances for space sessions
 
 **Integration details:**
@@ -377,10 +383,10 @@ Wire the `db-query` MCP server into all agent session types. Each session gets i
 **Out of scope for initial implementation (can be added in follow-ups):**
 - **Node agent sub-sessions**: spawned by `TaskAgentManager` for individual workflow steps. Deferred because node agents already inherit MCP tools from their parent task agent session.
 - **Planner agent sessions**: used for planning phases in room missions. Deferred because planner sessions have access to the same room-scoped MCP tools as the leader/worker.
-- **Neo agent sessions**: the global scope is defined but wiring into `neo-agent-manager.ts` is deferred to a follow-up PR.
 - **`readOnlyHint: true`**: the `tool()` helper from `@anthropic-ai/claude-agent-sdk` may or may not support this field in the version currently used (v0.2.86). The implementer should verify against the SDK's `tool()` type signature and omit the field if it causes a type error.
 
 **Acceptance criteria:**
+- Neo agent session has a `db-query` MCP server with `global` scope (no WHERE filter, all non-sensitive tables)
 - Room chat sessions have a `db-query` MCP server with `room` scope
 - Worker/leader sessions have a `db-query` MCP server with `room` scope
 - Space chat sessions have a `db-query` MCP server with `space` scope
