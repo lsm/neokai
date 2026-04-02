@@ -588,3 +588,25 @@ a:focus-visible {
 .pb-bottom-bar {
 	padding-bottom: var(--bottom-bar-height, 0px);
 }
+
+/*
+ * Virtual keyboard open state.
+ *
+ * The `keyboard-open` class is toggled on `<html>` by the useViewportSafety hook
+ * when it detects a virtual keyboard (via window.innerHeight - visualViewport.height
+ * exceeding a 50px threshold).
+ *
+ * When the keyboard is open, the BottomTabBar (position: fixed; bottom: 0) is
+ * hidden behind the keyboard on mobile — translate it offscreen with a smooth
+ * transition for clean visual behavior.
+ *
+ * The transition is declared on the base element so it applies bidirectionally:
+ * smooth slide-off when keyboard opens, smooth slide-back when keyboard closes.
+ */
+[data-testid="bottom-tab-bar"] {
+	transition: transform 0.2s ease;
+}
+
+html.keyboard-open [data-testid="bottom-tab-bar"] {
+	transform: translateY(100%);
+}

@@ -225,6 +225,7 @@ export function BottomTabBar() {
 	return (
 		<div
 			ref={rootRef}
+			data-testid="bottom-tab-bar"
 			class="flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md border-t border-dark-700 pb-safe"
 			role="tablist"
 			aria-label="Main navigation"
