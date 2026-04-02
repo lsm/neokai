@@ -3,15 +3,14 @@
  *
  * Shared mobile-responsive header for TaskView (V1) and TaskViewV2.
  *
- * Layout:
- * - **Row 1 (desktop & mobile):** Back arrow, task title (flex-1), progress indicator, gear
- * - **Row 2 (mobile only):** Tags (status badge, task type, PR link, mission badge) left-aligned
- * - **Desktop:** Tags sit inline with the title on row 1 (via sm:flex-row)
- * - **Sub-line:** Iteration count, "awaiting review" indicator (if present)
+ * Layout (two rows on all viewports):
+ * - **Row 1:** Back arrow, task title (flex-1), progress indicator, gear
+ * - **Row 2:** Tags (status badge, task type, PR link, mission badge) + sub-line info
  *
- * Responsive design:
- * - On mobile (< sm), tags wrap to a second row below the title
- * - On desktop (>= sm), tags sit inline in a single row
+ * Responsive behavior:
+ * - On mobile, Row 2 has top margin for visual separation
+ * - On desktop (>= sm), Row 2 has no top margin and aligns under the title
+ *   via a flex spacer matching the back-button width — no hardcoded pixel offset
  * - Tap targets are enlarged on mobile (min 36px) for stop/gear buttons
  */
 
@@ -95,8 +94,10 @@ export function TaskHeader({
 				/>
 			</div>
 
-			{/* Row 2: Tags — on mobile this is a separate row; on desktop, rendered above */}
-			<div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 mt-1.5 sm:mt-0 sm:ml-[28px]">
+			{/* Row 2: Tags and sub-line info */}
+			<div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 mt-1.5 sm:mt-0">
+				{/* Spacer: on desktop, aligns tags under the title by matching back-button width */}
+				<div class="hidden sm:block w-7 flex-shrink-0" aria-hidden="true" />
 				<div class="flex items-center gap-1.5 flex-wrap">
 					<span
 						class={`text-xs font-medium flex-shrink-0 ${statusColor}`}

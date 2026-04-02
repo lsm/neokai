@@ -94,4 +94,20 @@ describe('TaskHeaderActions', () => {
 		const btn = getByTestId('task-info-panel-trigger');
 		expect(btn.className).toContain('bg-blue-600');
 	});
+
+	// --- Tap target sizing (36px minimum for mobile) ---
+
+	it('stop button has 36px minimum tap target width and height', () => {
+		const { getByTestId } = render(<TaskHeaderActions {...defaultProps} canInterrupt={true} />);
+		const btn = getByTestId('task-stop-button');
+		expect(btn.className).toContain('min-w-[36px]');
+		expect(btn.className).toContain('min-h-[36px]');
+	});
+
+	it('gear button has 36px minimum tap target width and height', () => {
+		const { getByTestId } = render(<TaskHeaderActions {...defaultProps} />);
+		const btn = getByTestId('task-info-panel-trigger');
+		expect(btn.className).toContain('min-w-[36px]');
+		expect(btn.className).toContain('min-h-[36px]');
+	});
 });
