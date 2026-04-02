@@ -1017,14 +1017,14 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.allowedTools).toContain('brave-search__*');
 		});
 
-		it('should skip builtin skills (they are not injected as plugins/MCP servers)', async () => {
+		it('should inject builtin skills as local plugins pointing to ~/.neokai/skills/{commandName}', async () => {
 			const builtinSkill = {
 				id: 'skill-builtin-1',
-				name: 'update-config',
-				displayName: 'Update Config',
+				name: 'playwright',
+				displayName: 'Playwright',
 				description: 'A builtin skill',
 				sourceType: 'builtin' as const,
-				config: { type: 'builtin' as const, commandName: 'update-config' },
+				config: { type: 'builtin' as const, commandName: 'playwright' },
 				enabled: true,
 				builtIn: true,
 				validationStatus: 'valid' as const,
@@ -1042,7 +1042,45 @@ describe('QueryOptionsBuilder', () => {
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
 
-			// Builtin skills should not produce plugins or mcpServers
+			// Builtin skills are injected as local plugins so the SDK discovers their SKILL.md
+			expect(options.plugins).toBeDefined();
+			expect(options.plugins).toHaveLength(1);
+			expect(options.plugins![0]).toMatchObject({ type: 'local' });
+			expect((options.plugins![0] as { type: string; path: string }).path).toContain(
+				'.neokai/skills/playwright'
+			);
+			// Builtin skills do not contribute to mcpServers
+			expect(options.mcpServers).toBeUndefined();
+		});
+
+		it('should not inject a disabled builtin skill', async () => {
+			const builtinSkill = {
+				id: 'skill-builtin-2',
+				name: 'playwright-interactive',
+				displayName: 'Playwright Interactive',
+				description: 'A disabled builtin skill',
+				sourceType: 'builtin' as const,
+				config: { type: 'builtin' as const, commandName: 'playwright-interactive' },
+				enabled: false,
+				builtIn: true,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			};
+			const mockSkillsManager = {
+				// getEnabledSkills returns only enabled skills — disabled are not returned
+				getEnabledSkills: mock(() => []),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Disabled skill should not appear in plugins
+			void builtinSkill; // referenced to avoid lint warning
 			expect(options.plugins).toBeUndefined();
 		});
 

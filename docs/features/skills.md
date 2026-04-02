@@ -112,7 +112,7 @@ CLI-first browser automation using `playwright-cli`. Invoke with `/playwright` i
 
 Core workflow: open a URL → snapshot the accessibility tree to get element refs → interact via CLI commands (click, fill, type, press) → re-snapshot after DOM changes. Use the bundled `playwright_cli.sh` wrapper script (`scripts/playwright_cli.sh`) which runs via `npx` without requiring a global install.
 
-This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright/SKILL.md` in the NeoKai repository and is extracted to `~/.neokai/skills/playwright/` at startup when running as a compiled binary.
+This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright/SKILL.md` in the NeoKai repository. At startup the dev server copies it (and all other built-in skill directories) to `~/.neokai/skills/playwright/`; the compiled binary extracts the same files from its embedded VFS. `QueryOptionsBuilder` then registers `~/.neokai/skills/playwright/` as a local SDK plugin so the agent can invoke `/playwright`.
 
 ### Playwright Interactive
 
@@ -126,7 +126,7 @@ Persistent browser session for iterative UI debugging and visual QA. Invoke with
 
 Covers desktop and mobile web contexts, screenshot capture, functional QA checklist, visual QA checklist, signoff criteria, and cleanup with try/finally. Uses a persistent `js_repl` Playwright session.
 
-This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright-interactive/SKILL.md` in the NeoKai repository and is extracted to `~/.neokai/skills/playwright-interactive/` at startup when running as a compiled binary.
+This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright-interactive/SKILL.md` in the NeoKai repository. At startup the dev server copies it to `~/.neokai/skills/playwright-interactive/`; the compiled binary extracts it from its embedded VFS. `QueryOptionsBuilder` registers the directory as a local SDK plugin so the agent can invoke `/playwright-interactive`.
 
 ## Skills Architecture
 
@@ -143,17 +143,37 @@ SkillRepository.insert() → SQLite skills table
     ↓
 reactiveDb.notifyChange('skills') → LiveQuery propagates to all clients
 
+Server starts (dev or prod)
+    ↓
+Dev: ensureBuiltinSkills() copies packages/skills/{name}/ → ~/.neokai/skills/{name}/
+Prod: prod-server-embedded.ts extracts VFS-embedded files → ~/.neokai/skills/{name}/
+(existing files are never overwritten so user edits are preserved)
+    ↓
 Agent session starts
     ↓
 QueryOptionsBuilder.build() calls SkillsManager.getEnabledSkills()
     ↓
-buildPluginsFromSkills() → SDK plugins[] config (plugin skills only)
-getMcpServersFromSkills() → SDK mcpServers{} config (mcp_server skills only)
+buildPluginsFromBuiltinSkills() → SDK plugins[] (builtin skills → ~/.neokai/skills/{commandName}/)
+buildPluginsFromSkills()        → SDK plugins[] (plugin skills → pluginPath)
+getMcpServersFromSkills()       → SDK mcpServers{} (mcp_server skills)
     ↓
 AgentSession initializes with skills injected
 ```
 
-Note: The `builtin` sourceType refers to skills backed by skill directories under `packages/skills/{commandName}/` (source) or `~/.neokai/skills/{commandName}/` (installed). Each skill directory contains a `SKILL.md` prompt file plus optional subdirectories (`scripts/`, `references/`, `agents/`, `assets/`). Built-in skills are embedded in the compiled binary and extracted to `~/.neokai/skills/` at startup. The `builtin` sourceType is not injected by `QueryOptionsBuilder` — only `plugin` and `mcp_server` skills are injected via `QueryOptionsBuilder`.
+#### Builtin skill directory layout
+
+`packages/skills/{commandName}/` is the canonical source. Each skill directory contains:
+
+| Path | Purpose |
+|------|---------|
+| `SKILL.md` | Frontmatter + instructions — what the SDK reads as the slash command definition |
+| `scripts/` | Shell or JS helpers the SKILL.md instructs the agent to invoke |
+| `references/` | Reference documents (CLI help, workflow guides) loaded via `@include` |
+| `agents/openai.yaml` | Display metadata (name, icon, short description) |
+| `assets/` | Icons and other static assets |
+| `LICENSE.txt`, `NOTICE.txt` | Attribution for any upstream content |
+
+At runtime the agent discovers these as slash commands via the SDK's local plugin mechanism — `/playwright` maps to `~/.neokai/skills/playwright/`.
 
 ### Key Files
 
@@ -163,7 +183,9 @@ Note: The `builtin` sourceType refers to skills backed by skill directories unde
 | `packages/daemon/src/lib/skills-manager.ts` | SkillsManager: CRUD, validation, built-in initialization |
 | `packages/daemon/src/lib/rpc-handlers/skill-handlers.ts` | RPC handlers: list, get, create, update, delete, setEnabled |
 | `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` | LiveQuery: `skills.list`, `skills.byRoom` named queries |
-| `packages/daemon/src/lib/agent/query-options-builder.ts` | Injects enabled plugin and MCP server skills into SDK session options |
+| `packages/daemon/src/lib/agent/query-options-builder.ts` | Injects enabled builtin, plugin, and MCP server skills into SDK session options |
+| `packages/cli/src/skill-utils.ts` | `ensureBuiltinSkills()` — copies `packages/skills/` → `~/.neokai/skills/` at dev startup |
+| `packages/skills/` | Built-in skill directories (source of truth; embedded in binary) |
 | `packages/web/src/lib/skills-store.ts` | Frontend reactive store with LiveQuery subscription |
 | `packages/web/src/components/settings/SkillsRegistry.tsx` | Global skills management UI |
 | `packages/web/src/components/room/RoomSkillsSettings.tsx` | Per-room skill override UI |
