@@ -536,6 +536,18 @@ describe('validateSql — edge cases', () => {
 		expect(result.valid).toBe(false);
 		expect(result.error).toContain('UNION');
 	});
+
+	test('INTERSECT rejected', () => {
+		const result = validateSql('SELECT id FROM tasks INTERSECT SELECT id FROM goals');
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('INTERSECT');
+	});
+
+	test('EXCEPT rejected', () => {
+		const result = validateSql('SELECT id FROM tasks EXCEPT SELECT id FROM goals');
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('EXCEPT');
+	});
 });
 
 // ============ Quoted identifiers rejected ============

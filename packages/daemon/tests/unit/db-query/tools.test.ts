@@ -22,7 +22,9 @@ function createTestDb(): Database {
 		CREATE TABLE IF NOT EXISTS rooms (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
-			config TEXT
+			config TEXT,
+			parent_id TEXT,
+			FOREIGN KEY (parent_id) REFERENCES rooms(id)
 		)
 	`);
 	db.exec(`
@@ -925,7 +927,60 @@ describe('db-query tools', () => {
 					sql: 'SELECT id FROM tasks UNION SELECT id FROM goals',
 				});
 				expect(result.isError).toBe(true);
-				expect(parseResult(result).raw).toContain('UNION');
+				expect(parseResult(result).raw).toContain('Compound');
+			});
+		});
+
+		describe('INTERSECT and EXCEPT rejected at handler level', () => {
+			it('rejects INTERSECT query', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT id FROM tasks INTERSECT SELECT id FROM goals',
+				});
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('INTERSECT');
+			});
+
+			it('rejects EXCEPT query', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT id FROM tasks EXCEPT SELECT id FROM goals',
+				});
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('EXCEPT');
+			});
+		});
+
+		describe('WITH RECURSIVE in scoped mode', () => {
+			it('single-column WITH RECURSIVE works in scoped mode', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'WITH RECURSIVE cnt(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM cnt WHERE n < 5) SELECT * FROM cnt',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(5);
+			});
+
+			it('multi-column WITH RECURSIVE works in global scope', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'WITH RECURSIVE hierarchy(id, name, depth) AS (SELECT id, name, 0 FROM rooms WHERE parent_id IS NULL UNION ALL SELECT r.id, r.name, h.depth + 1 FROM rooms r JOIN hierarchy h ON r.parent_id = h.id) SELECT * FROM hierarchy',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
 			});
 		});
 

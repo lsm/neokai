@@ -359,22 +359,31 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
 // ============ Public API ============
 
 /**
- * Check whether the SQL contains a UNION or UNION ALL keyword at the top level
- * (depth 0, outside parentheses). This allows UNION ALL inside CTE bodies
- * (e.g. WITH RECURSIVE) while rejecting top-level UNION queries.
+ * Check whether the SQL contains a top-level set operator
+ * (UNION, INTERSECT, or EXCEPT) at depth 0 (outside parentheses).
+ * This allows UNION ALL inside CTE bodies (e.g. WITH RECURSIVE)
+ * while rejecting top-level compound queries.
+ *
+ * Precondition: `sql` must have string literal contents stripped
+ * (via `stripStringContents`) so that parentheses inside strings don't
+ * affect depth tracking.
  */
-function hasTopLevelUnion(sql: string): boolean {
+function hasTopLevelSetOperator(sql: string): boolean {
 	const upper = sql.toUpperCase();
+	const setOperators = ['UNION', 'INTERSECT', 'EXCEPT'];
 	let depth = 0;
 	for (let i = 0; i < sql.length; i++) {
 		if (sql[i] === '(') depth++;
 		else if (sql[i] === ')') depth--;
-		else if (depth === 0 && upper.slice(i, i + 5) === 'UNION') {
-			// Check word boundary before and after
-			const beforeOk = i === 0 || /\s/.test(sql[i - 1]);
-			const afterChar = i + 5 < sql.length ? sql[i + 5] : ' ';
-			const afterOk = /\s/.test(afterChar) || afterChar === '(';
-			if (beforeOk && afterOk) return true;
+		else if (depth === 0) {
+			for (const op of setOperators) {
+				if (upper.slice(i, i + op.length) === op) {
+					const beforeOk = i === 0 || /\s/.test(sql[i - 1]);
+					const afterChar = i + op.length < sql.length ? sql[i + op.length] : ' ';
+					const afterOk = /\s/.test(afterChar);
+					if (beforeOk && afterOk) return true;
+				}
+			}
 		}
 	}
 	return false;
@@ -443,10 +452,11 @@ export function validateSql(sql: string): SqlValidationResult {
 	// WITH RECURSIVE uses UNION ALL inside CTE bodies, which is fine.
 	// Top-level UNION is incompatible with the scope-wrapping subquery because
 	// each arm gets rewritten to SELECT * with different column counts.
-	if (hasTopLevelUnion(withoutStrings)) {
+	if (hasTopLevelSetOperator(withoutStrings)) {
 		return {
 			valid: false,
-			error: 'UNION queries are not supported (use CTEs or subqueries instead)',
+			error:
+				'Compound queries (UNION, INTERSECT, EXCEPT) are not supported (use CTEs or subqueries instead)',
 			tableRefs: [],
 		};
 	}

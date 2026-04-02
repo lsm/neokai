@@ -302,7 +302,7 @@ function rewriteScopedQuery(
 	if (scopeFilterSet.size === 0) {
 		const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
 		// Use the stricter of the arg-level limit and the SQL-embedded limit
-		const effectiveLimit = Math.min(cappedLimit, Math.min(existingLimit ?? MAX_LIMIT, MAX_LIMIT));
+		const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
 		return {
 			sql: `${strippedSql} LIMIT ${effectiveLimit}`,
 			params: userParams,
@@ -467,6 +467,10 @@ export function createDbQueryToolHandlers(config: DbQueryToolsConfig, db: Databa
 			// PRAGMA does not support parameterized bindings, so the table name
 			// is interpolated directly. The table_name has already been validated
 			// against the scope config's accessible table names (alphanumeric + underscore).
+			// Self-contained format guard: table names must be alphanumeric+underscore
+			if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table_name)) {
+				return errorResult(`Invalid table name: "${table_name}"`);
+			}
 			const columns = db.query(`PRAGMA table_info("${table_name}")`).all() as Array<{
 				cid: number;
 				name: string;
