@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import type { Gate, GateField, GateFieldType, GateFieldCheck } from '@neokai/shared';
 
 export interface GateEditorPanelProps {
@@ -11,6 +11,28 @@ export interface GateEditorPanelProps {
 
 const FIELD_TYPES: GateFieldType[] = ['boolean', 'string', 'number', 'map'];
 const SCALAR_OPS = ['==', '!=', 'exists'] as const;
+const LABEL_MAX_LENGTH = 20;
+const DEFAULT_BADGE_COLOR = '#3b82f6';
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// ---------------------------------------------------------------------------
+// Lightweight client-side validation (mirrors daemon gate-evaluator.ts)
+// ---------------------------------------------------------------------------
+
+function validateLabel(value: string | undefined): string {
+	if (value === undefined || value === null || value === '') return '';
+	if (typeof value !== 'string') return 'label: expected string';
+	if (value.length > LABEL_MAX_LENGTH)
+		return `label: max ${LABEL_MAX_LENGTH} chars, got ${value.length}`;
+	return '';
+}
+
+function validateColor(value: string | undefined): string {
+	if (value === undefined || value === null || value === '') return '';
+	if (typeof value !== 'string') return 'color: expected string';
+	if (!HEX_COLOR_RE.test(value)) return 'color: expected hex format #rrggbb';
+	return '';
+}
 
 function defaultCheckForType(type: GateFieldType): GateFieldCheck {
 	if (type === 'map') {
@@ -32,6 +54,14 @@ export function GateEditorPanel({
 	embedded = false,
 }: GateEditorPanelProps) {
 	const [expandedField, setExpandedField] = useState<number | null>(null);
+
+	// Validation errors computed from current gate state
+	const labelError = useMemo(() => validateLabel(gate.label), [gate.label]);
+	const colorError = useMemo(() => validateColor(gate.color), [gate.color]);
+
+	// Derived badge preview values
+	const badgeLabel = gate.label ?? 'Gate';
+	const badgeColor = gate.color ?? DEFAULT_BADGE_COLOR;
 
 	function updateGate(partial: Partial<Gate>) {
 		onChange({ ...gate, ...partial });
@@ -127,6 +157,90 @@ export function GateEditorPanel({
 					}
 					class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700"
 				/>
+			</div>
+
+			{/* Badge Preview */}
+			<div class="space-y-1">
+				<label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Badge Preview</label>
+				<div class="flex items-center justify-center py-2">
+					<span
+						data-testid="gate-editor-badge-preview"
+						class="inline-flex items-center px-3 py-0.5 rounded-full text-[11px] font-semibold tracking-wide border"
+						style={{
+							backgroundColor: '#0f1115',
+							borderColor: '#232733',
+							color: badgeColor,
+						}}
+					>
+						{badgeLabel}
+					</span>
+				</div>
+			</div>
+
+			{/* Badge Label */}
+			<div class="space-y-1">
+				<div class="flex items-center justify-between">
+					<label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Badge Label</label>
+					<span
+						data-testid="gate-editor-label-count"
+						class="text-[10px] text-gray-600 tabular-nums"
+					>
+						{(gate.label ?? '').length}/{LABEL_MAX_LENGTH}
+					</span>
+				</div>
+				<input
+					type="text"
+					data-testid="gate-editor-label"
+					value={gate.label ?? ''}
+					placeholder="Leave empty for heuristic"
+					maxLength={LABEL_MAX_LENGTH}
+					onInput={(e) => {
+						const value = (e.currentTarget as HTMLInputElement).value;
+						updateGate({ label: value || undefined });
+					}}
+					class={`w-full text-xs bg-dark-800 border rounded px-2 py-1.5 text-gray-200 focus:outline-none placeholder-gray-700 ${
+						labelError
+							? 'border-red-500 focus:border-red-500'
+							: 'border-dark-600 focus:border-blue-500'
+					}`}
+				/>
+				{labelError && (
+					<p data-testid="gate-editor-label-error" class="text-[10px] text-red-400">
+						{labelError}
+					</p>
+				)}
+			</div>
+
+			{/* Badge Color */}
+			<div class="space-y-1">
+				<div class="flex items-center justify-between">
+					<label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Badge Color</label>
+					{gate.color && (
+						<button
+							type="button"
+							data-testid="gate-editor-color-reset"
+							onClick={() => updateGate({ color: undefined })}
+							class="text-[10px] text-gray-500 hover:text-gray-300 underline transition-colors"
+						>
+							Reset
+						</button>
+					)}
+				</div>
+				<div class="flex items-center gap-2">
+					<input
+						type="color"
+						data-testid="gate-editor-color"
+						value={gate.color ?? DEFAULT_BADGE_COLOR}
+						onChange={(e) => updateGate({ color: (e.currentTarget as HTMLInputElement).value })}
+						class="w-8 h-8 rounded border border-dark-600 bg-dark-800 cursor-pointer p-0"
+					/>
+					<span class="text-xs font-mono text-gray-400">{gate.color ?? DEFAULT_BADGE_COLOR}</span>
+				</div>
+				{colorError && (
+					<p data-testid="gate-editor-color-error" class="text-[10px] text-red-400">
+						{colorError}
+					</p>
+				)}
 			</div>
 
 			{/* Reset on cycle */}
@@ -374,7 +488,9 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
 												const n = Number(raw);
 												value = isNaN(n) ? raw : n;
 											}
-											updateField({ check: { op: field.check.op as '==' | '!=', value } });
+											updateField({
+												check: { op: field.check.op as '==' | '!=', value },
+											});
 										}}
 										class="w-full text-xs bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700"
 									/>
