@@ -244,7 +244,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			expect(r3.agentName).toBe('Reviewer 3');
 			for (const task of [r1, r2, r3]) {
 				expect(task.workflowRunId).toBe(runId);
-				expect(['pending', 'in_progress']).toContain(task.status);
+				expect(['open', 'in_progress']).toContain(task.status);
 			}
 
 			// QA must NOT be active yet — review-votes-gate still blocked
@@ -350,7 +350,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 
 			expect(qaTask.title).toBe('QA');
 			expect(qaTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(qaTask.status);
+			expect(['open', 'in_progress']).toContain(qaTask.status);
 
 			// Run is still in_progress — QA hasn't finished yet
 			const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
@@ -390,7 +390,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 
 			expect(codingTask.title).toBe('Coding');
 			expect(codingTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(codingTask.status);
+			expect(['open', 'in_progress']).toContain(codingTask.status);
 
 			// QA must NOT have activated — the happy path did not complete
 			const qaTasks = await getTasksForNode(daemon, spaceId, runId, 'QA');
@@ -433,7 +433,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			// A fresh Coding task must have been created by the reject cycle
 			expect(newCodingTask).toBeDefined();
 			expect(newCodingTask.title).toBe('Coding');
-			expect(['pending', 'in_progress']).toContain(newCodingTask.status);
+			expect(['open', 'in_progress']).toContain(newCodingTask.status);
 		},
 		TEST_TIMEOUT
 	);
@@ -557,7 +557,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 				const codingTasks = await getTasksForNode(daemon, spaceId, runId, 'Coding');
 				unexpectedTask = codingTasks.find(
 					(t) =>
-						!codingTaskIdsBefore.has(t.id) && (t.status === 'pending' || t.status === 'in_progress')
+						!codingTaskIdsBefore.has(t.id) && (t.status === 'open' || t.status === 'in_progress')
 				);
 				if (unexpectedTask) break;
 				await new Promise((resolve) => setTimeout(resolve, 200));
@@ -629,7 +629,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 				'Reviewer 3'
 			);
 			expect(codingTask.title).toBe('Coding');
-			expect(['pending', 'in_progress']).toContain(codingTask.status);
+			expect(['open', 'in_progress']).toContain(codingTask.status);
 		},
 		TEST_TIMEOUT
 	);
@@ -710,7 +710,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			);
 			expect(doneTask.title).toBe('Done');
 			expect(doneTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(doneTask.status);
+			expect(['open', 'in_progress']).toContain(doneTask.status);
 
 			// Run is still in_progress (Done agent hasn't finished yet)
 			const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {

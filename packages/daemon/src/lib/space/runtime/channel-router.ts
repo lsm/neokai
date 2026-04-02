@@ -588,12 +588,26 @@ export class ChannelRouter {
 	 *
 	 * Terminal tasks (done, blocked, cancelled, archived) are excluded so cyclic
 	 * workflows can re-activate a node after its tasks complete.
+	 *
+	 * Since M72 removed the `workflow_node_id` column from `space_tasks`, node
+	 * identity is determined by matching `task.title === node.name` (tasks are
+	 * created with `title: node.name` in `activateNode`).
 	 */
-	private getActiveTasksForNode(runId: string, _nodeId: string): SpaceTask[] {
+	private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
 		const ACTIVE_STATUSES = new Set(['open', 'in_progress']);
-		return this.config.taskRepo
+		const allActive = this.config.taskRepo
 			.listByWorkflowRun(runId)
 			.filter((t) => ACTIVE_STATUSES.has(t.status));
+		if (allActive.length === 0) return [];
+
+		// Resolve the node name so we can filter by task title.
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) return [];
+		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+		const node = workflow?.nodes.find((n) => n.id === nodeId);
+		if (!node) return [];
+
+		return allActive.filter((t) => t.title === node.name);
 	}
 
 	/**

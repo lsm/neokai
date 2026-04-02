@@ -456,7 +456,7 @@ describe('Space Workflow — Edge Cases', () => {
 				);
 				expect(qaTask.title).toBe('QA');
 				expect(qaTask.workflowRunId).toBe(runId);
-				expect(['pending', 'in_progress']).toContain(qaTask.status);
+				expect(['open', 'in_progress']).toContain(qaTask.status);
 			} finally {
 				// afterEach handles daemon shutdown; clean up workspace here.
 				await Bun.$`rm -rf ${restartWorkspace}`.quiet();
