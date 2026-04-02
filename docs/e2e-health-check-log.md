@@ -515,3 +515,93 @@ Some suites are affected by **multiple** root causes simultaneously:
 4. **MEDIUM — Ambiguous locators** (affects 5 suites): Make locators more specific to avoid strict mode violations with Neo panel dialogs.
 5. **LOW — Neo chat AI tests in No-LLM** (1 suite): Reclassify or mock AI responses.
 6. **LOW — Visual editor / multi-agent editor** (2 suites): Investigate individually.
+
+---
+
+## 2026-04-02 — Check Run #23912077742
+
+### CI Run Overview
+- **Run ID**: 23912077742
+- **Branch**: dev (commit `9fb899120` — `docs: address review feedback on db-query MCP server plan (#1220)`)
+- **Event**: push
+- **Status**: Completed with e2e failures
+
+### Build/Discover Jobs
+- `Discover Tests`: **PASSED**
+- `Build Binary (linux-x64)`: **PASSED**
+- All unit test jobs: **SKIPPED** (gated by build prerequisites)
+- E2E jobs: **NOT SKIPPED** — ran successfully (upstream jobs passed)
+
+### E2E Test Failures at #23912077742
+
+**22 failing E2E jobs** (21 previously failing + 1 new). The failures are **almost identical** to run #23904270931 — all 21 previously failing jobs remain broken, plus 1 new failure.
+
+**Complete list of failing jobs** (new entry marked with **[NEW]**):
+1. `E2E LLM (features-reference-autocomplete)` — 11 unique tests (all) fail
+2. `E2E No-LLM (features-neo-chat-rendering)` — 2 of 5 tests fail (AI-dependent)
+3. `E2E No-LLM (features-neo-panel)` — 2 of 3 tests fail
+4. `E2E No-LLM (features-neo-settings)` — 1 of 1 test fails
+5. `E2E No-LLM (features-provider-model-switching)` — 8 of 8 tests fail
+6. `E2E No-LLM (features-reviewer-feedback-loop)` — 1 of 1 test fails
+7. `E2E No-LLM (features-space-agent-centric-workflow)` — 1 of 1 test fails
+8. `E2E No-LLM (features-space-agent-chat)` — 2 of 2 tests fail
+9. `E2E No-LLM (features-space-approval-gate-rejection)` — 5 of 5 tests fail
+10. `E2E No-LLM (features-space-context-panel-switching)` — 3 of 3 tests fail
+11. `E2E No-LLM (features-space-creation)` — 2 of 3 tests fail
+12. `E2E No-LLM (features-space-happy-path-pipeline)` — 2 of 3 tests fail
+13. `E2E No-LLM (features-space-multi-agent-editor)` — 1 of 1 test fails
+14. `E2E No-LLM (features-space-navigation)` — 2 of 2 tests fail
+15. `E2E No-LLM (features-space-settings-crud)` — 6 of 6 tests fail
+16. `E2E No-LLM (features-space-task-creation)` — 4 of 4 tests fail
+17. `E2E No-LLM (features-space-task-fullwidth)` — 2 of 2 tests fail
+18. `E2E No-LLM (features-task-lifecycle)` — 1 of 1 test fails
+19. `E2E No-LLM (features-visual-workflow-editor)` — 1 of 1 test fails
+20. `E2E No-LLM (settings-mcp-servers)` — 3 of 3 tests fail
+21. `E2E No-LLM (settings-tools-modal)` — 2 of 2 tests fail
+22. **`E2E No-LLM (features-app-mcp-registry)` — 1 of 5 tests fail [NEW]**
+
+### Root Cause Analysis
+
+All 21 pre-existing failures are identical to those documented in run #23904270931. Same root cause categories apply (see that entry for details). Below is only the **new** failure.
+
+---
+
+#### New Failure: `features-app-mcp-registry` — Strict Mode Violation **[NEW]**
+
+**Test**: `should show disabled globally badge for brave-search in room settings` (line 207)
+
+**Error**:
+```
+Error: expect(locator).toBeVisible() failed
+Locator: locator('text=disabled globally')
+Expected: visible
+Error: strict mode violation: locator('text=disabled globally') resolved to 2 elements:
+  1) <span class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-gray-500">disabled globally</span> aka getByText('disabled globally').first()
+  2) <span class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-gray-500">disabled globally</span> aka getByText('disabled globally').nth(1)
+```
+
+**Root cause**: `test-bug` — Ambiguous locator `text=disabled globally` matches 2 elements. This is the same category of strict mode violation documented as Category 2 in run #23904270931.
+
+**Fix needed**: Use `.first()` or a more specific scoped locator, e.g., `page.locator('text=disabled globally').first()`.
+
+---
+
+### Pre-existing Issues Status (unchanged from #23904270931)
+
+| Issue | Category | Suites Affected | Status |
+|---|---|---|---|
+| Neo panel doesn't close on Escape key | `product-bug` | 7 suites | **Unresolved** |
+| Ambiguous locators (strict mode violations) | `test-bug` | 5+1 suites (new: app-mcp-registry) | **Unresolved** (worsening) |
+| Space UNIQUE constraint on retry | `test-bug` | 7 suites | **Unresolved** |
+| AI-dependent tests in No-LLM matrix | `test-bug` | 1 suite (neo-chat-rendering) | **Unresolved** |
+| Visual workflow editor toggle broken | `product-bug` / `test-bug` | 1 suite | **Unresolved** |
+| Multi-agent editor node count mismatch | `product-bug` / `test-bug` | 1 suite | **Unresolved** |
+| Space agent-centric workflow — toggle button timeout | `env` / `test-bug` | 1 suite | **Unresolved** |
+| No `.git` in E2E workspace | `env` | 2 suites (reference-autocomplete, space-happy-path-pipeline) | **Unresolved** |
+
+### Regression Summary
+
+- **No regressions** — 21 previously failing jobs remain in the same failure state
+- **1 new failure** — `features-app-mcp-registry` strict mode violation (same root cause category as existing issues)
+- **Total failing jobs**: 22 (up from 21 in previous check)
+- **Unique root cause categories**: 8 (same as before, no new categories)
