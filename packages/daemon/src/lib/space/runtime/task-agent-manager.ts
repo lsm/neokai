@@ -77,6 +77,7 @@ import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { CompletionDetector } from './completion-detector';
+import { executeGateScript } from './gate-script-executor';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
@@ -1776,6 +1777,9 @@ export class TaskAgentManager {
 			workflow,
 			gateDataRepo: this.config.gateDataRepo,
 			onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
+			scriptExecutor: executeGateScript,
+			// gateId is overridden per-gate by the handler ({ ...scriptContext, gateId })
+			scriptContext: { workspacePath, runId: workflowRunId, gateId: '' },
 		});
 	}
 }
