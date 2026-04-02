@@ -20,7 +20,7 @@
  * UI Flow:
  *   Add 2 steps → port-drag to create channel → Node click → NodeConfigPanel →
  *   channel-link button → ChannelRelationConfigPanel (embedded) → "Add Gate" →
- *   GateEditorPanel (embedded)
+ *   GateEditorPanel (embedded, via onEditGate)
  *   Changes in GateEditorPanel propagate reactively to the canvas EdgeRenderer badge.
  */
 
@@ -121,6 +121,7 @@ async function setupWorkflowWithChannel(page: Page): Promise<void> {
  * Postconditions:
  *   - GateEditorPanel is visible (embedded in NodeConfigPanel)
  *   - A new gate has been created with empty fields
+ *   - The gate editor is in edit mode for the newly created gate
  */
 async function openGateEditorForChannel(page: Page): Promise<void> {
 	const editor = page.getByTestId('visual-workflow-editor');
@@ -145,6 +146,7 @@ async function openGateEditorForChannel(page: Page): Promise<void> {
 	await relationPanel.getByTestId('channel-edge-add-gate-0').click();
 
 	// GateEditorPanel should now be visible (embedded, no header)
+	// handleAddGate() calls onEditGate() which switches panelView to 'gate-editor'
 	const gatePanel = nodePanel.getByTestId('gate-editor-panel');
 	await expect(gatePanel).toBeVisible({ timeout: 5000 });
 }
@@ -217,9 +219,10 @@ test.describe('Gate Custom Badges', () => {
 		const colorInput = gatePanel.getByTestId('gate-editor-color');
 		await colorInput.fill('#ff5500');
 
-		// Badge text element should use the custom color as fill
-		const badgeText = gateBadge.locator('text').first();
-		await expect(badgeText).toHaveAttribute('fill', '#ff5500', { timeout: 3000 });
+		// Badge preview should reflect the custom color
+		// (canvas badge text uses white fill when edge is selected)
+		const previewText = badgePreview.locator('text').first();
+		await expect(previewText).toHaveAttribute('fill', '#ff5500', { timeout: 3000 });
 
 		// Color hex display should update next to the picker
 		await expect(gatePanel.locator('text=#ff5500')).toBeVisible({ timeout: 2000 });
