@@ -761,13 +761,17 @@ export function EdgeRenderer({
 				// For one-way or single-direction bidirectional: use whichever is set.
 				// For both-direction bidirectional: use forward gate type (gateType).
 				const effectiveGateType = channel.gateType ?? channel.reverseGateType ?? undefined;
+				// When only the reverse direction is gated on a bidirectional channel,
+				// use the reverse direction's custom fields.
+				const effectiveGateLabel = channel.gateType ? channel.gateLabel : channel.reverseGateLabel;
+				const effectiveGateColor = channel.gateType ? channel.gateColor : channel.reverseGateColor;
 				// Prefer custom gate color, fall back to heuristic color from gateType.
 				const gateColor =
-					channel.gateColor ??
+					effectiveGateColor ??
 					(effectiveGateType ? CHANNEL_GATE_BADGE_COLORS[effectiveGateType] : CHANNEL_EDGE_COLOR);
 				// Prefer custom gate label, fall back to heuristic label from gateType.
 				const gateLabel =
-					channel.gateLabel ??
+					effectiveGateLabel ??
 					(effectiveGateType ? CHANNEL_GATE_BADGE_LABELS[effectiveGateType] : 'Gate');
 				// Whether to show a script icon next to the badge.
 				// For bidirectional channels, use the forward direction's hasScript when available.

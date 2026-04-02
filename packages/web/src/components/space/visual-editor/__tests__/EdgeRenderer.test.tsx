@@ -1139,6 +1139,72 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 		expect(badgeTexts).toHaveLength(2);
 		expect(badgeTexts[1].textContent).toBe('⚡');
 	});
+
+	it('uses reverseGateLabel when only reverse gate is set on bidirectional', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				reverseGateType: 'human',
+				reverseGateLabel: 'Reverse Label',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Reverse Label');
+	});
+
+	it('uses reverseGateColor when only reverse gate is set on bidirectional', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				reverseGateType: 'check',
+				reverseGateColor: '#00ff00',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeText = container.querySelector('g[data-testid="channel-gate-step-1-step-2"] text');
+		expect(badgeText?.getAttribute('fill')).toBe('#00ff00');
+	});
+
+	it('forward gateLabel/gateColor takes precedence over reverse on bidirectional with both gates', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				gateType: 'human',
+				gateLabel: 'Forward',
+				gateColor: '#ff0000',
+				reverseGateType: 'check',
+				reverseGateLabel: 'Reverse',
+				reverseGateColor: '#00ff00',
+			},
+		];
+		const { container, getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Forward');
+		const badgeText = container.querySelector('g[data-testid="channel-gate-step-1-step-2"] text');
+		expect(badgeText?.getAttribute('fill')).toBe('#ff0000');
+	});
+
+	it('reverseGateColor on arrow polygon when only reverse gate is set', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				reverseGateType: 'check',
+				reverseGateColor: '#aa00ff',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const arrow = container.querySelector(
+			'polygon[data-testid="channel-gate-arrow-step-1-step-2"]'
+		);
+		expect(arrow?.getAttribute('fill')).toBe('#aa00ff');
+	});
 });
 
 // ---------------------------------------------------------------------------

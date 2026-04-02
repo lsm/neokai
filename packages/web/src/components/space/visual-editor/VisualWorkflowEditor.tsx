@@ -47,6 +47,7 @@ import type { NodeChannelLink } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { buildVisualNodePositions } from './nodeMetrics';
+import type { ResolvedWorkflowChannel } from './EdgeRenderer';
 import {
 	buildNodeAnchorUsage,
 	buildSemanticWorkflowEdges,
@@ -358,26 +359,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		[routedSemanticEdges]
 	);
 
-	const channelEdges = useMemo<
-		{
-			fromStepId: string;
-			toStepId: string;
-			direction: 'one-way' | 'bidirectional';
-			isCyclic?: boolean;
-			gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
-			reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
-			gateLabel?: string;
-			gateColor?: string;
-			hasScript?: boolean;
-			reverseGateLabel?: string;
-			reverseGateColor?: string;
-			reverseHasScript?: boolean;
-			sourceSide?: 'top' | 'bottom' | 'left' | 'right';
-			targetSide?: 'top' | 'bottom' | 'left' | 'right';
-			id?: string;
-			label?: string;
-		}[]
-	>(() => {
+	const channelEdges = useMemo<ResolvedWorkflowChannel[]>(() => {
 		return routedSemanticEdges.map((edge) => ({
 			fromStepId: edge.fromStepId,
 			toStepId: edge.toStepId,
