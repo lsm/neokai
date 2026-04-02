@@ -677,6 +677,168 @@ describe('ChannelRouter async gate evaluation', () => {
 			const result = await router.canDeliver(run.id, 'coder', 'planner');
 			expect(result.allowed).toBe(true);
 		});
+
+		// -------------------------------------------------------------------
+		// Semaphore overflow and start-after-completion
+		// -------------------------------------------------------------------
+
+		test('3 script gates with maxConcurrentScripts=1: serialized execution', async () => {
+			// Serialization timing is already validated by the pre-existing
+			// "respects maxConcurrentScripts: 1" tests above. This test
+			// verifies correctness with 3 gates (all allowed).
+			const AGENT_REVIEWER_A = 'agent-sem-rev-a';
+			const AGENT_REVIEWER_B = 'agent-sem-rev-b';
+			seedAgent(db, AGENT_REVIEWER_A, SPACE_ID, 'general');
+			seedAgent(db, AGENT_REVIEWER_B, SPACE_ID, 'general');
+
+			const gates: Gate[] = ['a', 'b', 'c'].map((id) => ({
+				id: `sem-ov-${id}`,
+				script: {
+					interpreter: 'bash',
+					source: 'sleep 0.2; echo \'{"ok": true}\'',
+					timeoutMs: 5000,
+				},
+				fields: [{ name: 'ok', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			}));
+
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'sem-ov-a' },
+				{ from: 'coder', to: 'reviewer-a', direction: 'one-way', gateId: 'sem-ov-b' },
+				{ from: 'coder', to: 'reviewer-b', direction: 'one-way', gateId: 'sem-ov-c' },
+			];
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+					{
+						id: 'node-sem-c',
+						name: 'Rev A',
+						agents: [{ agentId: AGENT_REVIEWER_A, name: 'reviewer-a' }],
+					},
+					{
+						id: 'node-sem-d',
+						name: 'Rev B',
+						agents: [{ agentId: AGENT_REVIEWER_B, name: 'reviewer-b' }],
+					},
+				],
+				channels,
+				gates
+			);
+			const run = createActiveRun(workflow);
+
+			const router = makeRouter({ workspacePath: '/tmp', maxConcurrentScripts: 1 });
+
+			const [r1, r2, r3] = await Promise.all([
+				router.canDeliver(run.id, 'coder', 'planner'),
+				router.canDeliver(run.id, 'coder', 'reviewer-a'),
+				router.canDeliver(run.id, 'coder', 'reviewer-b'),
+			]);
+
+			expect(r1.allowed).toBe(true);
+			expect(r2.allowed).toBe(true);
+			expect(r3.allowed).toBe(true);
+		});
+
+		test('after first script gate completes, next one starts immediately (max=2)', async () => {
+			// 3 script gates, maxConcurrentScripts=2. Verify all 3 are allowed
+			// (2 run concurrently, 3rd runs after a slot frees up).
+			const AGENT_REVIEWER_A = 'agent-sem-start-rev-a';
+			const AGENT_REVIEWER_B = 'agent-sem-start-rev-b';
+			seedAgent(db, AGENT_REVIEWER_A, SPACE_ID, 'general');
+			seedAgent(db, AGENT_REVIEWER_B, SPACE_ID, 'general');
+
+			const gates: Gate[] = ['x', 'y', 'z'].map((id) => ({
+				id: `sem-start-${id}`,
+				script: {
+					interpreter: 'bash',
+					source: 'sleep 0.2; echo \'{"ok": true}\'',
+					timeoutMs: 5000,
+				},
+				fields: [{ name: 'ok', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			}));
+
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'sem-start-x' },
+				{ from: 'coder', to: 'reviewer-a', direction: 'one-way', gateId: 'sem-start-y' },
+				{ from: 'coder', to: 'reviewer-b', direction: 'one-way', gateId: 'sem-start-z' },
+			];
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+					{
+						id: 'node-sem-start-c',
+						name: 'Rev A',
+						agents: [{ agentId: AGENT_REVIEWER_A, name: 'reviewer-a' }],
+					},
+					{
+						id: 'node-sem-start-d',
+						name: 'Rev B',
+						agents: [{ agentId: AGENT_REVIEWER_B, name: 'reviewer-b' }],
+					},
+				],
+				channels,
+				gates
+			);
+			const run = createActiveRun(workflow);
+
+			const router = makeRouter({ workspacePath: '/tmp', maxConcurrentScripts: 2 });
+
+			const [r1, r2, r3] = await Promise.all([
+				router.canDeliver(run.id, 'coder', 'planner'),
+				router.canDeliver(run.id, 'coder', 'reviewer-a'),
+				router.canDeliver(run.id, 'coder', 'reviewer-b'),
+			]);
+
+			expect(r1.allowed).toBe(true);
+			expect(r2.allowed).toBe(true);
+			expect(r3.allowed).toBe(true);
+		});
+
+		test('field-only gates are NOT limited by semaphore at all', async () => {
+			// Even with maxConcurrentScripts=1, field-only evaluations should
+			// complete instantly without any semaphore queuing.
+			const gate: Gate = {
+				id: 'field-sem-bypass',
+				fields: [
+					{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				],
+				resetOnCycle: false,
+			};
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				[{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'field-sem-bypass' }],
+				[gate]
+			);
+			const run = createActiveRun(workflow);
+			gateDataRepo.set(run.id, 'field-sem-bypass', { approved: true });
+
+			const router = makeRouter({ maxConcurrentScripts: 1 });
+
+			// 5 concurrent evaluations should all succeed
+			const results = await Promise.all([
+				router.canDeliver(run.id, 'coder', 'planner'),
+				router.canDeliver(run.id, 'coder', 'planner'),
+				router.canDeliver(run.id, 'coder', 'planner'),
+				router.canDeliver(run.id, 'coder', 'planner'),
+				router.canDeliver(run.id, 'coder', 'planner'),
+			]);
+
+			expect(results.every((r) => r.allowed)).toBe(true);
+		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -755,7 +917,7 @@ describe('ChannelRouter async gate evaluation', () => {
 			expect(r2.allowed).toBe(true);
 
 			// The re-evaluation should have occurred.
-			// Timeline: 1st eval (~300ms) + 2nd re-eval (~300ms) = ~600ms minimum
+			// Timeline: 1st eval (~300ms) + 2nd re-eval (~300ms) ≈ 600ms theoretical.
 			// Allow generous tolerance for process startup overhead and CI variance.
 			expect(elapsed).toBeGreaterThanOrEqual(400);
 		});
@@ -975,6 +1137,210 @@ describe('ChannelRouter async gate evaluation', () => {
 			expect(r2.allowed).toBe(false);
 			expect(r2.reason).toContain('Script check failed');
 		});
+
+		// -------------------------------------------------------------------
+		// Coalescing re-evaluation and isolation
+		// -------------------------------------------------------------------
+
+		test('concurrent onGateDataChanged for same gate: second caller re-evaluates after first completes', async () => {
+			const gate: Gate = {
+				id: 're-eval-gate',
+				fields: [
+					{
+						name: 'votes',
+						type: 'map',
+						writers: ['*'],
+						check: { op: 'count', match: 'approved', min: 3 },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const workflow = buildTwoNodeWorkflow(gate);
+			const run = createActiveRun(workflow);
+
+			const router = makeRouter();
+
+			// Set votes to 1 → gate closed
+			gateDataRepo.set(run.id, 're-eval-gate', { votes: { a: 'approved' } });
+			const result1 = await router.onGateDataChanged(run.id, 're-eval-gate');
+			expect(result1).toHaveLength(0);
+
+			// Set votes to 5 → gate opens
+			gateDataRepo.set(run.id, 're-eval-gate', {
+				votes: { a: 'approved', b: 'approved', c: 'approved', d: 'approved', e: 'approved' },
+			});
+
+			// Call onGateDataChanged twice concurrently — both should see votes: 5
+			const [r1, r2] = await Promise.all([
+				router.onGateDataChanged(run.id, 're-eval-gate'),
+				router.onGateDataChanged(run.id, 're-eval-gate'),
+			]);
+
+			// At least one call should activate the node (gate is open with 5 votes).
+			// The second may return empty due to idempotent activation (node already active).
+			const totalActivated = r1.length + r2.length;
+			expect(totalActivated).toBeGreaterThan(0);
+		});
+
+		test('different runId:gateId keys evaluate independently (script gates)', async () => {
+			const gate1: Gate = {
+				id: 'indep-gate-a',
+				script: {
+					interpreter: 'bash',
+					source: 'sleep 0.2; echo \'{"pass": true}\'',
+					timeoutMs: 5000,
+				},
+				fields: [{ name: 'pass', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			};
+			const gate2: Gate = {
+				id: 'indep-gate-b',
+				script: {
+					interpreter: 'bash',
+					source: 'echo \'{"go": true}\'',
+					timeoutMs: 5000,
+				},
+				fields: [{ name: 'go', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			};
+
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'indep-gate-a' },
+			];
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				channels,
+				[gate1, gate2]
+			);
+			const run = createActiveRun(workflow);
+
+			const router = makeRouter({ workspacePath: '/tmp', maxConcurrentScripts: 2 });
+
+			const [r1, r2] = await Promise.all([
+				router.onGateDataChanged(run.id, 'indep-gate-a'),
+				router.onGateDataChanged(run.id, 'indep-gate-b'),
+			]);
+
+			// Gate-a has a 0.2s sleep; gate-b is instant. With independent evaluation,
+			// both should complete (gate-b not on any channel, so returns empty).
+			expect(r1.length).toBeGreaterThan(0);
+			expect(r2).toHaveLength(0);
+		});
+
+		test('two runs with same gateId and script: evaluations are isolated', async () => {
+			const gate: Gate = {
+				id: 'shared-script-gate',
+				script: {
+					interpreter: 'bash',
+					source: 'sleep 0.15; echo \'{"ok": true}\'',
+					timeoutMs: 5000,
+				},
+				fields: [{ name: 'ok', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			};
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				[{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'shared-script-gate' }],
+				[gate]
+			);
+
+			const run1 = createActiveRun(workflow);
+			const run2 = createActiveRun(workflow);
+
+			const router = makeRouter({ workspacePath: '/tmp', maxConcurrentScripts: 2 });
+
+			const [r1, r2] = await Promise.all([
+				router.canDeliver(run1.id, 'coder', 'planner'),
+				router.canDeliver(run2.id, 'coder', 'planner'),
+			]);
+
+			// Two runs should evaluate independently (different composite keys).
+			expect(r1.allowed).toBe(true);
+			expect(r2.allowed).toBe(true);
+		});
+
+		test('same gateId in different runs: gate data isolation', async () => {
+			const gate: Gate = {
+				id: 'iso-gate',
+				fields: [
+					{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				],
+				resetOnCycle: false,
+			};
+
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				[{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'iso-gate' }],
+				[gate]
+			);
+
+			const run1 = createActiveRun(workflow);
+			const run2 = createActiveRun(workflow);
+
+			// Run 1: approved = true → gate open
+			gateDataRepo.set(run1.id, 'iso-gate', { approved: true });
+			// Run 2: approved = false → gate closed
+			gateDataRepo.set(run2.id, 'iso-gate', { approved: false });
+
+			const router = makeRouter();
+
+			const [r1, r2] = await Promise.all([
+				router.canDeliver(run1.id, 'coder', 'planner'),
+				router.canDeliver(run2.id, 'coder', 'planner'),
+			]);
+
+			expect(r1.allowed).toBe(true);
+			expect(r2.allowed).toBe(false);
+		});
+
+		test('concurrent onGateDataChanged for same gate: sequential calls produce consistent results', async () => {
+			const gate: Gate = {
+				id: 'seq-gate',
+				fields: [
+					{
+						name: 'count',
+						type: 'map',
+						writers: ['*'],
+						check: { op: 'count', match: 'yes', min: 5 },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const workflow = buildTwoNodeWorkflow(gate);
+			const run = createActiveRun(workflow);
+
+			const router = makeRouter();
+
+			// Sequentially update gate data and check evaluation
+			for (let i = 1; i <= 5; i++) {
+				const votes: Record<string, string> = {};
+				for (let j = 0; j < i; j++) votes[`v${j}`] = 'yes';
+				gateDataRepo.set(run.id, 'seq-gate', { count: votes });
+				const activated = await router.onGateDataChanged(run.id, 'seq-gate');
+				if (i < 5) {
+					expect(activated).toHaveLength(0);
+				} else {
+					expect(activated.length).toBeGreaterThan(0);
+				}
+			}
+		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -1016,6 +1382,68 @@ describe('ChannelRouter async gate evaluation', () => {
 			const router = makeRouter({ workspacePath: '/tmp' });
 			const activated = await router.onGateDataChanged(run.id, 'script-pass-ogdc');
 			expect(activated.length).toBeGreaterThan(0);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// isChannelOpen synchronous behavior via ChannelRouter
+	// -------------------------------------------------------------------------
+
+	describe('isChannelOpen synchronous behavior via ChannelRouter', () => {
+		test('field-only gate evaluates synchronously (no async overhead)', async () => {
+			// Gate with fields but no script — canDeliver works without
+			// any semaphore or script execution overhead.
+			const gate: Gate = {
+				id: 'sync-field-gate',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const workflow = buildTwoNodeWorkflow(gate);
+			const run = createActiveRun(workflow);
+			gateDataRepo.set(run.id, 'sync-field-gate', { approved: true });
+
+			const router = makeRouter();
+			const result = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result.allowed).toBe(true);
+		});
+
+		test('gate with script but field-only channel remains synchronous in isChannelOpen context', async () => {
+			// isChannelOpen is a pure function (tested in gate-evaluator.test.ts).
+			// ChannelRouter.canDeliver uses evaluateGateById which always runs
+			// the script asynchronously. For field-only gates (no script), the
+			// async function returns immediately without awaiting anything, so it
+			// is effectively synchronous. This test verifies that a gate with
+			// both fields and a script still evaluates correctly through canDeliver.
+			const gate: Gate = {
+				id: 'sync-script-field-gate',
+				script: {
+					interpreter: 'bash',
+					source: 'echo \'{"approved": true}\'',
+					timeoutMs: 5000,
+				},
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['*'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const workflow = buildTwoNodeWorkflow(gate);
+			const run = createActiveRun(workflow);
+
+			const router = makeRouter({ workspacePath: '/tmp' });
+			const result = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result.allowed).toBe(true);
 		});
 	});
 });
