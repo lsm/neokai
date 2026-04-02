@@ -225,6 +225,7 @@ export function ChannelEdgeConfigPanel({
 								))}
 							</div>
 						)}
+
 						<div class="flex gap-2">
 							{onEditGate && (
 								<button
