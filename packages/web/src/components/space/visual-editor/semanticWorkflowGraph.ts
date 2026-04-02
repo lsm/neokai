@@ -13,7 +13,17 @@ export interface SemanticWorkflowEdge {
 	channelCount: number;
 	hasGate: boolean;
 	hasCyclic: boolean;
+	/**
+	 * Gate type for the forward direction (from→to / lowId→highId).
+	 * For one-way edges this is the only gate. For bidirectional edges
+	 * it is the gate on the fromStepId→toStepId direction specifically.
+	 */
 	gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/**
+	 * Gate type for the reverse direction (to→from / highId→lowId).
+	 * Only set on bidirectional edges where the reverse direction has a gate.
+	 */
+	reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
 	channelIndexes: number[];
 }
 
@@ -30,7 +40,10 @@ interface PairAggregate {
 	channelCount: number;
 	hasGate: boolean;
 	hasCyclic: boolean;
-	gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/** Gate type for channels travelling lowId → highId */
+	lowToHighGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/** Gate type for channels travelling highId → lowId */
+	highToLowGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
 	channelIndexes: Set<number>;
 }
 
@@ -142,7 +155,8 @@ export function buildSemanticWorkflowEdges(
 				channelCount: 0,
 				hasGate: false,
 				hasCyclic: false,
-				gateType: undefined,
+				lowToHighGateType: undefined,
+				highToLowGateType: undefined,
 				channelIndexes: new Set<number>(),
 			};
 
@@ -150,7 +164,6 @@ export function buildSemanticWorkflowEdges(
 			const gateType = resolveSemanticGateType(channel, gateLookup);
 			if (gateType) {
 				aggregate.hasGate = true;
-				aggregate.gateType ??= gateType;
 			}
 			if (cyclicChannelIndexes?.has(channelIndex)) {
 				aggregate.hasCyclic = true;
@@ -158,12 +171,19 @@ export function buildSemanticWorkflowEdges(
 			aggregate.channelIndexes.add(channelIndex);
 
 			if (channel.direction === 'bidirectional') {
+				// A bidirectional underlying channel gates both directions.
 				aggregate.lowToHigh = true;
 				aggregate.highToLow = true;
+				if (gateType) {
+					aggregate.lowToHighGateType ??= gateType;
+					aggregate.highToLowGateType ??= gateType;
+				}
 			} else if (fromIsLow) {
 				aggregate.lowToHigh = true;
+				if (gateType) aggregate.lowToHighGateType ??= gateType;
 			} else {
 				aggregate.highToLow = true;
+				if (gateType) aggregate.highToLowGateType ??= gateType;
 			}
 
 			aggregates.set(pairKey, aggregate);
@@ -172,15 +192,19 @@ export function buildSemanticWorkflowEdges(
 
 	return Array.from(aggregates.values()).map((aggregate) => {
 		if (aggregate.lowToHigh && aggregate.highToLow) {
+			// Bidirectional: fromStepId = lowId, toStepId = highId.
+			// gateType       = forward gate (lowId → highId)
+			// reverseGateType = reverse gate (highId → lowId)
 			return {
 				id: `${aggregate.lowId}:${aggregate.highId}`,
 				fromStepId: aggregate.lowId,
 				toStepId: aggregate.highId,
-				direction: 'bidirectional',
+				direction: 'bidirectional' as const,
 				channelCount: aggregate.channelCount,
 				hasGate: aggregate.hasGate,
 				hasCyclic: aggregate.hasCyclic,
-				gateType: aggregate.gateType,
+				gateType: aggregate.lowToHighGateType,
+				reverseGateType: aggregate.highToLowGateType,
 				channelIndexes: Array.from(aggregate.channelIndexes),
 			};
 		}
@@ -190,11 +214,11 @@ export function buildSemanticWorkflowEdges(
 				id: `${aggregate.lowId}:${aggregate.highId}`,
 				fromStepId: aggregate.lowId,
 				toStepId: aggregate.highId,
-				direction: 'one-way',
+				direction: 'one-way' as const,
 				channelCount: aggregate.channelCount,
 				hasGate: aggregate.hasGate,
 				hasCyclic: aggregate.hasCyclic,
-				gateType: aggregate.gateType,
+				gateType: aggregate.lowToHighGateType,
 				channelIndexes: Array.from(aggregate.channelIndexes),
 			};
 		}
@@ -203,11 +227,11 @@ export function buildSemanticWorkflowEdges(
 			id: `${aggregate.highId}:${aggregate.lowId}`,
 			fromStepId: aggregate.highId,
 			toStepId: aggregate.lowId,
-			direction: 'one-way',
+			direction: 'one-way' as const,
 			channelCount: aggregate.channelCount,
 			hasGate: aggregate.hasGate,
 			hasCyclic: aggregate.hasCyclic,
-			gateType: aggregate.gateType,
+			gateType: aggregate.highToLowGateType,
 			channelIndexes: Array.from(aggregate.channelIndexes),
 		};
 	});

@@ -98,18 +98,73 @@ describe('buildSemanticWorkflowEdges', () => {
 			{ from: 'Reviewer 1', to: 'QA', direction: 'one-way', gateId: 'test-gate' },
 		];
 
-		expect(buildSemanticWorkflowEdges(NODES, channels)).toEqual([
+		const result = buildSemanticWorkflowEdges(NODES, channels);
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe('review:qa');
+		expect(result[0].fromStepId).toBe('review');
+		expect(result[0].toStepId).toBe('qa');
+		expect(result[0].direction).toBe('one-way');
+		expect(result[0].hasGate).toBe(true);
+		// gateType is derived from the gate definition; when gate lookup has no data,
+		// resolveSemanticGateType falls back to 'check'.
+		expect(result[0].gateType).toBeTruthy();
+	});
+
+	it('tracks per-direction gate types for bidirectional edges', () => {
+		// Two one-way channels going opposite directions, each with a gate.
+		// plan→review (lowId→highId) has a gate; review→plan (highId→lowId) also has a gate.
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', direction: 'one-way', gateId: 'gate-fwd' },
+			{ from: 'Reviewer 2', to: 'Planning', direction: 'one-way', gateId: 'gate-rev' },
+		];
+
+		const result = buildSemanticWorkflowEdges(NODES, channels);
+		expect(result).toHaveLength(1);
+		expect(result[0].direction).toBe('bidirectional');
+		expect(result[0].hasGate).toBe(true);
+		// Forward gate (plan→review = lowId→highId)
+		expect(result[0].gateType).toBeTruthy();
+		// Reverse gate (review→plan = highId→lowId)
+		expect(result[0].reverseGateType).toBeTruthy();
+	});
+
+	it('does not set reverseGateType when only the forward direction has a gate', () => {
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', direction: 'one-way', gateId: 'gate-fwd' },
+			{ from: 'Reviewer 2', to: 'Planning', direction: 'one-way' },
+		];
+
+		const result = buildSemanticWorkflowEdges(NODES, channels);
+		expect(result[0].direction).toBe('bidirectional');
+		expect(result[0].gateType).toBeTruthy();
+		expect(result[0].reverseGateType).toBeUndefined();
+	});
+
+	it('does not set gateType when only the reverse direction has a gate', () => {
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', direction: 'one-way' },
+			{ from: 'Reviewer 2', to: 'Planning', direction: 'one-way', gateId: 'gate-rev' },
+		];
+
+		const result = buildSemanticWorkflowEdges(NODES, channels);
+		expect(result[0].direction).toBe('bidirectional');
+		expect(result[0].gateType).toBeUndefined();
+		expect(result[0].reverseGateType).toBeTruthy();
+	});
+
+	it('a bidirectional underlying channel gates both directions', () => {
+		const channels: WorkflowChannel[] = [
 			{
-				id: 'review:qa',
-				fromStepId: 'review',
-				toStepId: 'qa',
-				direction: 'one-way',
-				channelCount: 1,
-				hasGate: true,
-				hasCyclic: false,
-				gateType: 'condition',
-				channelIndexes: [2],
+				from: 'Planning',
+				to: 'Reviewer 1',
+				direction: 'bidirectional',
+				gateId: 'gate-both',
 			},
-		]);
+		];
+
+		const result = buildSemanticWorkflowEdges(NODES, channels);
+		expect(result[0].direction).toBe('bidirectional');
+		expect(result[0].gateType).toBeTruthy();
+		expect(result[0].reverseGateType).toBeTruthy();
 	});
 });

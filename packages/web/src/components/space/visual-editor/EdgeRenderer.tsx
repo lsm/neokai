@@ -75,10 +75,16 @@ export interface ResolvedWorkflowChannel {
 	direction: 'one-way' | 'bidirectional';
 	isCyclic?: boolean;
 	/**
-	 * Gate condition type -- when present (and not 'always'), the channel has a gate.
-	 * Gated channels render as solid lines; ungated channels render as dashed lines.
+	 * Gate condition type for the forward direction (from→to).
+	 * For one-way channels this is the only gate.
+	 * For bidirectional channels this is the gate on the fromStepId→toStepId direction.
 	 */
 	gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/**
+	 * Gate condition type for the reverse direction (to→from).
+	 * Only set on bidirectional channels where the reverse direction has its own gate.
+	 */
+	reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
 	/** Stable ID for selection -- typically the workflow-level channel array index as a string. */
 	id?: string;
 	/** Optional display label from WorkflowChannel.label */
@@ -710,20 +716,23 @@ export function EdgeRenderer({
 				const visiblePoints = getVisibleChannelPathPoints(channel, pts);
 				const visibleD = roundedOrthogonalPath(visiblePoints);
 				const isBidirectional = channel.direction === 'bidirectional';
-				const isGated = !!channel.gateType;
+				// A channel is gated if either the forward or reverse direction has a gate.
+				const isGated = !!(channel.gateType || channel.reverseGateType);
 				const isCyclic = !!channel.isCyclic;
 				const isSelected = channel.id != null && channel.id === selectedChannelId;
+				// A bidirectional gate badge has arrows on both sides when both directions
+				// are gated. When only one direction is gated on a bidirectional channel the
+				// badge shows a single directional arrow (just like a one-way channel).
+				const hasBothDirectionGates =
+					isBidirectional && !!channel.gateType && !!channel.reverseGateType;
 
 				const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
 				const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
 				const strokeDasharray = isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
 				const strokeOpacity = isSelected ? 1 : 0.85;
-				// One-way gates compute the path direction angle for the arrow indicator.
-				// Bidirectional gates only need position (no angle required).
+				// Always compute midpoint + angle — needed for all badge variants.
 				const gateBadgeMidpoint = isGated
-					? !isBidirectional
-						? getOrthogonalPathMidpointWithAngle(visiblePoints)
-						: { ...getOrthogonalPathMidpoint(visiblePoints), angle: 0 }
+					? getOrthogonalPathMidpointWithAngle(visiblePoints)
 					: null;
 				const gateBadgePosition = gateBadgeMidpoint;
 				const loopBadgePosition = isCyclic
@@ -734,20 +743,47 @@ export function EdgeRenderer({
 								(isGated ? 26 : 0),
 						}
 					: null;
-				const gateColor = channel.gateType
-					? CHANNEL_GATE_BADGE_COLORS[channel.gateType]
+				// Determine which gate type to use for the color/label.
+				// For one-way or single-direction bidirectional: use whichever is set.
+				// For both-direction bidirectional: use forward gate type (gateType).
+				const effectiveGateType = channel.gateType ?? channel.reverseGateType ?? undefined;
+				const gateColor = effectiveGateType
+					? CHANNEL_GATE_BADGE_COLORS[effectiveGateType]
 					: CHANNEL_EDGE_COLOR;
-				const gateLabelBase = channel.gateType
-					? CHANNEL_GATE_BADGE_LABELS[channel.gateType]
+				const gateLabelBase = effectiveGateType
+					? CHANNEL_GATE_BADGE_LABELS[effectiveGateType]
 					: 'Gate';
-				// Bidirectional badges prepend the ⇄ glyph; one-way badges render an SVG arrow.
-				const gateLabel = isBidirectional ? `⇄ ${gateLabelBase}` : gateLabelBase;
+				const gateLabel = gateLabelBase;
+				// Arrow count determines badge width:
+				//   0 arrows (no gate):              base label width
+				//   1 arrow (one-way / single-dir):  label + ARROW_TOTAL
+				//   2 arrows (both-direction gate):  label + 2 * ARROW_TOTAL
+				const arrowCount = hasBothDirectionGates ? 2 : isGated ? 1 : 0;
 				const gateBadgeWidth =
 					gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
 					CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2 +
-					(!isBidirectional && isGated
-						? CHANNEL_GATE_ARROW_TOTAL + CHANNEL_GATE_ARROW_EXTRA_PADDING
+					(arrowCount > 0
+						? arrowCount * CHANNEL_GATE_ARROW_TOTAL + CHANNEL_GATE_ARROW_EXTRA_PADDING
 						: 0);
+
+				// Pre-compute layout values used in badge JSX.
+				const labelPixelWidth = gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH;
+				// For single-arrow badges: text shifts right by ARROW_TOTAL/2; arrow is to its left.
+				const singleArrowTextX = CHANNEL_GATE_ARROW_TOTAL / 2;
+				const singleArrowX = -(labelPixelWidth / 2 + CHANNEL_GATE_ARROW_GAP / 2);
+				// For dual-arrow badges: text is centered; arrows flank the label.
+				const dualArrowOffsetX =
+					labelPixelWidth / 2 + CHANNEL_GATE_ARROW_GAP + CHANNEL_GATE_ARROW_WIDTH / 2;
+				// Forward arrow points toward toStepId (path direction = gateBadgeMidpoint.angle).
+				// Reverse arrow points toward fromStepId = (angle + 180) % 360.
+				const forwardAngle = gateBadgeMidpoint?.angle ?? 0;
+				const reverseAngle = (forwardAngle + 180) % 360;
+				// For single-arrow on a bidirectional channel where only the reverse direction is
+				// gated, the arrow points toward fromStepId (reverseAngle).
+				const singleArrowAngle =
+					isBidirectional && !channel.gateType && !!channel.reverseGateType
+						? reverseAngle
+						: forwardAngle;
 				const loopBadgeWidth =
 					'Loop'.length * CHANNEL_GATE_BADGE_CHAR_WIDTH + CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
 
@@ -810,7 +846,7 @@ export function EdgeRenderer({
 							<g
 								transform={`translate(${gateBadgePosition.x}, ${gateBadgePosition.y})`}
 								data-testid={`channel-gate-${channel.fromStepId}-${channel.toStepId}`}
-								data-gate-angle={!isBidirectional ? String(gateBadgePosition.angle) : undefined}
+								data-gate-angle={isGated ? String(forwardAngle) : undefined}
 								style={{
 									pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
 									cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
@@ -834,26 +870,45 @@ export function EdgeRenderer({
 									stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
 									strokeWidth="1"
 								/>
-								{!isBidirectional && (
-									// Directional arrow triangle for one-way channels.
-									// Layout: [arrow(8px) | gap(4px) | text] all centered at x=0.
-									//   textX         = ARROW_TOTAL / 2 = 6
-									//   arrowCenterX  = -(textWidth/2 + ARROW_GAP/2)
+								{arrowCount === 1 && (
+									// Single arrow: one-way channel, or bidirectional channel where
+									// only one direction is gated.
+									// Layout: [arrow(8px) | gap(4px) | text] centered as a unit at x=0.
 									//
 									// SVG applies transforms right-to-left to points:
-									//   rotate(angle)  — pivots the right-pointing triangle around origin (0,0)
-									//   translate(tx)  — shifts the already-rotated arrow to arrowCenterX
+									//   rotate(angle)  — pivots the right-pointing triangle around (0,0)
+									//   translate(tx)  — shifts the rotated arrow to singleArrowX
 									// This order is deliberate: rotating around origin first ensures the
-									// arrow stays centered at arrowCenterX for all four cardinal angles.
+									// arrow stays centred at singleArrowX for all four cardinal angles.
 									<polygon
 										points="-4,-5 4,0 -4,5"
 										fill={isSelected ? 'white' : gateColor}
-										transform={`translate(${-(gateLabelBase.length * CHANNEL_GATE_BADGE_CHAR_WIDTH) / 2 - CHANNEL_GATE_ARROW_GAP / 2}, 0) rotate(${gateBadgePosition.angle})`}
+										transform={`translate(${singleArrowX}, 0) rotate(${singleArrowAngle})`}
 										data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
 									/>
 								)}
+								{arrowCount === 2 && (
+									// Dual arrows: bidirectional channel where both directions are gated.
+									// Layout: [←(8px) | gap(4px) | text | gap(4px) | →(8px)] centered at x=0.
+									// Left arrow = reverse direction (toStepId → fromStepId).
+									// Right arrow = forward direction (fromStepId → toStepId).
+									<>
+										<polygon
+											points="-4,-5 4,0 -4,5"
+											fill={isSelected ? 'white' : gateColor}
+											transform={`translate(${-dualArrowOffsetX}, 0) rotate(${reverseAngle})`}
+											data-testid={`channel-gate-reverse-arrow-${channel.fromStepId}-${channel.toStepId}`}
+										/>
+										<polygon
+											points="-4,-5 4,0 -4,5"
+											fill={isSelected ? 'white' : gateColor}
+											transform={`translate(${dualArrowOffsetX}, 0) rotate(${forwardAngle})`}
+											data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
+										/>
+									</>
+								)}
 								<text
-									x={!isBidirectional ? CHANNEL_GATE_ARROW_TOTAL / 2 : 0}
+									x={arrowCount === 1 ? singleArrowTextX : 0}
 									y="4"
 									textAnchor="middle"
 									fontSize="11"

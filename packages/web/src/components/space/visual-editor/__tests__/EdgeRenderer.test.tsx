@@ -737,30 +737,67 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		expect(badge.getAttribute('data-gate-angle')).not.toBeNull();
 	});
 
-	it('bidirectional gated badge does not render a directional arrow polygon', () => {
+	it('bidirectional channel with only forward gate renders a single forward arrow', () => {
+		// Bug fix: a bidirectional channel with a gate only in the forward direction
+		// must NOT show ⇄ — it shows a single directional arrow (same as one-way).
 		const channels: ResolvedWorkflowChannel[] = [
 			{
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
 				direction: 'bidirectional',
 				gateType: 'check',
+				// no reverseGateType
+			},
+		];
+		const { getByTestId, queryByTestId } = renderEdgesWithChannels({ channels });
+		expect(queryByTestId('channel-gate-arrow-step-1-step-2')).not.toBeNull();
+		// Plain label — no ⇄ prefix
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Check');
+	});
+
+	it('bidirectional channel with only reverse gate renders a single reverse arrow', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				// no gateType
+				reverseGateType: 'check',
 			},
 		];
 		const { queryByTestId } = renderEdgesWithChannels({ channels });
-		expect(queryByTestId('channel-gate-arrow-step-1-step-2')).toBeNull();
+		expect(queryByTestId('channel-gate-arrow-step-1-step-2')).not.toBeNull();
 	});
 
-	it('bidirectional gated badge label is prefixed with ⇄', () => {
+	it('bidirectional channel with both direction gates renders two arrows', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
 				direction: 'bidirectional',
 				gateType: 'check',
+				reverseGateType: 'check',
+			},
+		];
+		const { queryByTestId } = renderEdgesWithChannels({ channels });
+		// Forward arrow
+		expect(queryByTestId('channel-gate-arrow-step-1-step-2')).not.toBeNull();
+		// Reverse arrow
+		expect(queryByTestId('channel-gate-reverse-arrow-step-1-step-2')).not.toBeNull();
+	});
+
+	it('both-direction gated badge label has no ⇄ prefix', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				gateType: 'check',
+				reverseGateType: 'check',
 			},
 		];
 		const { getByTestId } = renderEdgesWithChannels({ channels });
-		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('⇄ Check');
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Check');
 	});
 
 	it('renders a loop badge when a channel is cyclic', () => {
