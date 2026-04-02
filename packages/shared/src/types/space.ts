@@ -345,8 +345,8 @@ export interface NodeExecution {
 	workflowNodeId: string;
 	/** Agent slot name (`WorkflowNodeAgent.name`) — channel routing address */
 	agentName: string;
-	/** ID of the SpaceAgent assigned to this slot */
-	agentId: string;
+	/** ID of the SpaceAgent assigned to this slot; null when the agent has been deleted */
+	agentId: string | null;
 	/** Agent sub-session ID for liveness tracking; null until session is created */
 	agentSessionId: string | null;
 	/** Current execution status */
