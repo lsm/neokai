@@ -1,7 +1,7 @@
 import type { Gate, WorkflowChannel } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
-import type { VisualNode } from './serialization';
 import { getVisualNodeDimensions } from './nodeMetrics';
+import type { VisualNode } from './serialization';
 
 export type AnchorSide = 'top' | 'bottom' | 'left' | 'right';
 
@@ -19,11 +19,23 @@ export interface SemanticWorkflowEdge {
 	 * it is the gate on the fromStepId→toStepId direction specifically.
 	 */
 	gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/** Custom badge label for the forward gate. `undefined` → heuristic fallback. */
+	gateLabel?: string;
+	/** Custom badge color for the forward gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
+	gateColor?: string;
+	/** Whether the forward gate has a script-based pre-check. */
+	hasScript?: boolean;
 	/**
 	 * Gate type for the reverse direction (to→from / highId→lowId).
 	 * Only set on bidirectional edges where the reverse direction has a gate.
 	 */
 	reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/** Custom badge label for the reverse gate. `undefined` → heuristic fallback. */
+	reverseGateLabel?: string;
+	/** Custom badge color for the reverse gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
+	reverseGateColor?: string;
+	/** Whether the reverse gate has a script-based pre-check. */
+	reverseHasScript?: boolean;
 	channelIndexes: number[];
 }
 
@@ -42,50 +54,76 @@ interface PairAggregate {
 	hasCyclic: boolean;
 	/** Gate type for channels travelling lowId → highId */
 	lowToHighGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/** Custom badge label for the lowId → highId gate. */
+	lowToHighGateLabel?: string;
+	/** Custom badge color for the lowId → highId gate. */
+	lowToHighGateColor?: string;
+	/** Whether the lowId → highId gate has a script-based pre-check. */
+	lowToHighHasScript?: boolean;
 	/** Gate type for channels travelling highId → lowId */
 	highToLowGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/** Custom badge label for the highId → lowId gate. */
+	highToLowGateLabel?: string;
+	/** Custom badge color for the highId → lowId gate. */
+	highToLowGateColor?: string;
+	/** Whether the highId → lowId gate has a script-based pre-check. */
+	highToLowHasScript?: boolean;
 	channelIndexes: Set<number>;
+}
+
+interface ResolvedGateInfo {
+	type: SemanticWorkflowEdge['gateType'];
+	label?: string;
+	color?: string;
+	hasScript: boolean;
 }
 
 function resolveSemanticGateType(
 	channel: WorkflowChannel,
 	gateLookup: Map<string, Gate>
-): SemanticWorkflowEdge['gateType'] {
+): ResolvedGateInfo {
+	const noGate: ResolvedGateInfo = { type: undefined, hasScript: false };
+
 	if (channel.gateId) {
 		const gate = gateLookup.get(channel.gateId);
-		if (!gate) return 'check';
+		if (!gate) return { type: 'check', hasScript: false };
 
 		// Derive gate type from field declarations
 		const fields = gate.fields ?? [];
-		if (fields.length === 0) return 'check';
 
-		// If any field is a map with count check -> 'count' (votes)
-		if (fields.some((f) => f.type === 'map' && f.check.op === 'count')) {
-			return 'count';
+		let type: SemanticWorkflowEdge['gateType'];
+
+		if (fields.length === 0) {
+			type = 'check';
+		} else if (fields.some((f) => f.type === 'map' && f.check.op === 'count')) {
+			type = 'count';
+		} else {
+			const approvedField = fields.find((f) => f.name === 'approved' && f.type === 'boolean');
+			if (approvedField && approvedField.check.op === '==' && approvedField.check.value === true) {
+				type = 'human';
+			} else {
+				const resultField = fields.find((f) => f.name === 'result' && f.type === 'string');
+				if (
+					resultField &&
+					resultField.check.op === '==' &&
+					typeof resultField.check.value === 'string'
+				) {
+					type = 'task_result';
+				} else {
+					type = 'check';
+				}
+			}
 		}
 
-		// If the gate has a field named 'approved' with boolean == true -> 'human'
-		const approvedField = fields.find((f) => f.name === 'approved' && f.type === 'boolean');
-		if (approvedField && approvedField.check.op === '==' && approvedField.check.value === true) {
-			// Check if writers include 'human'
-			if (approvedField.writers.includes('human')) return 'human';
-			return 'human';
-		}
-
-		// If the gate has a field named 'result' with string == check -> 'task_result'
-		const resultField = fields.find((f) => f.name === 'result' && f.type === 'string');
-		if (
-			resultField &&
-			resultField.check.op === '==' &&
-			typeof resultField.check.value === 'string'
-		) {
-			return 'task_result';
-		}
-
-		return 'check';
+		return {
+			type,
+			label: gate.label,
+			color: gate.color,
+			hasScript: !!gate.script,
+		};
 	}
 
-	return undefined;
+	return noGate;
 }
 
 function buildEndpointNodeLookup(nodes: VisualNode[]): Map<string, string> {
@@ -156,13 +194,19 @@ export function buildSemanticWorkflowEdges(
 				hasGate: false,
 				hasCyclic: false,
 				lowToHighGateType: undefined,
+				lowToHighGateLabel: undefined,
+				lowToHighGateColor: undefined,
+				lowToHighHasScript: undefined,
 				highToLowGateType: undefined,
+				highToLowGateLabel: undefined,
+				highToLowGateColor: undefined,
+				highToLowHasScript: undefined,
 				channelIndexes: new Set<number>(),
 			};
 
 			aggregate.channelCount += 1;
-			const gateType = resolveSemanticGateType(channel, gateLookup);
-			if (gateType) {
+			const gateInfo = resolveSemanticGateType(channel, gateLookup);
+			if (gateInfo.type) {
 				aggregate.hasGate = true;
 			}
 			if (cyclicChannelIndexes?.has(channelIndex)) {
@@ -174,16 +218,32 @@ export function buildSemanticWorkflowEdges(
 				// A bidirectional underlying channel gates both directions.
 				aggregate.lowToHigh = true;
 				aggregate.highToLow = true;
-				if (gateType) {
-					aggregate.lowToHighGateType ??= gateType;
-					aggregate.highToLowGateType ??= gateType;
+				if (gateInfo.type) {
+					aggregate.lowToHighGateType ??= gateInfo.type;
+					aggregate.lowToHighGateLabel ??= gateInfo.label;
+					aggregate.lowToHighGateColor ??= gateInfo.color;
+					if (gateInfo.hasScript) aggregate.lowToHighHasScript = true;
+					aggregate.highToLowGateType ??= gateInfo.type;
+					aggregate.highToLowGateLabel ??= gateInfo.label;
+					aggregate.highToLowGateColor ??= gateInfo.color;
+					if (gateInfo.hasScript) aggregate.highToLowHasScript = true;
 				}
 			} else if (fromIsLow) {
 				aggregate.lowToHigh = true;
-				if (gateType) aggregate.lowToHighGateType ??= gateType;
+				if (gateInfo.type) {
+					aggregate.lowToHighGateType ??= gateInfo.type;
+					aggregate.lowToHighGateLabel ??= gateInfo.label;
+					aggregate.lowToHighGateColor ??= gateInfo.color;
+					if (gateInfo.hasScript) aggregate.lowToHighHasScript = true;
+				}
 			} else {
 				aggregate.highToLow = true;
-				if (gateType) aggregate.highToLowGateType ??= gateType;
+				if (gateInfo.type) {
+					aggregate.highToLowGateType ??= gateInfo.type;
+					aggregate.highToLowGateLabel ??= gateInfo.label;
+					aggregate.highToLowGateColor ??= gateInfo.color;
+					if (gateInfo.hasScript) aggregate.highToLowHasScript = true;
+				}
 			}
 
 			aggregates.set(pairKey, aggregate);
@@ -204,7 +264,13 @@ export function buildSemanticWorkflowEdges(
 				hasGate: aggregate.hasGate,
 				hasCyclic: aggregate.hasCyclic,
 				gateType: aggregate.lowToHighGateType,
+				gateLabel: aggregate.lowToHighGateLabel,
+				gateColor: aggregate.lowToHighGateColor,
+				hasScript: aggregate.lowToHighHasScript,
 				reverseGateType: aggregate.highToLowGateType,
+				reverseGateLabel: aggregate.highToLowGateLabel,
+				reverseGateColor: aggregate.highToLowGateColor,
+				reverseHasScript: aggregate.highToLowHasScript,
 				channelIndexes: Array.from(aggregate.channelIndexes),
 			};
 		}
@@ -219,6 +285,9 @@ export function buildSemanticWorkflowEdges(
 				hasGate: aggregate.hasGate,
 				hasCyclic: aggregate.hasCyclic,
 				gateType: aggregate.lowToHighGateType,
+				gateLabel: aggregate.lowToHighGateLabel,
+				gateColor: aggregate.lowToHighGateColor,
+				hasScript: aggregate.lowToHighHasScript,
 				channelIndexes: Array.from(aggregate.channelIndexes),
 			};
 		}
@@ -232,6 +301,9 @@ export function buildSemanticWorkflowEdges(
 			hasGate: aggregate.hasGate,
 			hasCyclic: aggregate.hasCyclic,
 			gateType: aggregate.highToLowGateType,
+			gateLabel: aggregate.highToLowGateLabel,
+			gateColor: aggregate.highToLowGateColor,
+			hasScript: aggregate.highToLowHasScript,
 			channelIndexes: Array.from(aggregate.channelIndexes),
 		};
 	});
