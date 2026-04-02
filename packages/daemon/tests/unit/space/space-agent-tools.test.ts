@@ -17,6 +17,7 @@ import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -99,6 +100,7 @@ interface TestCtx {
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
+	nodeExecutionRepo: NodeExecutionRepository;
 }
 
 function makeCtx(): TestCtx {
@@ -118,6 +120,7 @@ function makeCtx(): TestCtx {
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceManager = new SpaceManager(db);
 
@@ -143,6 +146,7 @@ function makeCtx(): TestCtx {
 		taskManager,
 		agentManager,
 		runtime,
+		nodeExecutionRepo,
 	};
 }
 
@@ -155,6 +159,7 @@ function makeHandlers(ctx: TestCtx) {
 		workflowRunRepo: ctx.workflowRunRepo,
 		taskManager: ctx.taskManager,
 		spaceAgentManager: ctx.agentManager,
+		nodeExecutionRepo: ctx.nodeExecutionRepo,
 	});
 }
 
@@ -257,7 +262,7 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('returns run with tasks', async () => {
+	test('returns run with executions', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Get WF');
 
 		const startResult = await makeHandlers(ctx).start_workflow_run({
@@ -272,7 +277,7 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.run.id).toBe(runId);
 		expect(parsed.run.status).toBe('in_progress');
-		expect(parsed.tasks).toHaveLength(1);
+		expect(parsed.executions).toHaveLength(0);
 	});
 
 	test('returns error when run not found', async () => {
@@ -293,7 +298,7 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		const result = await makeHandlers(ctx).get_workflow_run({ run_id: rawRun.id });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.tasks).toHaveLength(0);
+		expect(parsed.executions).toHaveLength(0);
 	});
 });
 

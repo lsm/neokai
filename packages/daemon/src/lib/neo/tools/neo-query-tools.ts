@@ -1116,7 +1116,7 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 			{
 				space_id: z.string().describe('ID of the space to query'),
 				status: z
-					.enum(['pending', 'in_progress', 'completed', 'cancelled', 'needs_attention'])
+					.enum(['pending', 'in_progress', 'done', 'blocked', 'cancelled'])
 					.optional()
 					.describe('Filter runs by status'),
 			},

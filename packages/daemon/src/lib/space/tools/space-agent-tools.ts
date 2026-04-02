@@ -27,6 +27,7 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
@@ -58,6 +59,8 @@ export interface SpaceAgentToolsConfig {
 	 * Optional — when not provided, send_message_to_task returns an error.
 	 */
 	taskAgentManager?: TaskAgentManager | null;
+	/** Node execution repository for querying node execution records. */
+	nodeExecutionRepo: NodeExecutionRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +81,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		taskManager,
 		spaceAgentManager,
 		taskAgentManager,
+		nodeExecutionRepo,
 	} = config;
 
 	return {
@@ -138,10 +142,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 
-			// Include tasks for this run
-			const tasks = taskRepo.listByWorkflowRun(run.id);
+			// Include node executions for this run
+			const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
 
-			return jsonResult({ success: true, run, tasks });
+			return jsonResult({ success: true, run, executions });
 		},
 
 		/**
@@ -621,14 +625,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.enum(['low', 'normal', 'high', 'urgent'])
 					.optional()
 					.describe('Task priority (default: normal)'),
-				task_type: z
-					.enum(['planning', 'coding', 'research', 'design', 'review'])
-					.optional()
-					.describe('Task type — determines default execution approach'),
-				assigned_agent: z
-					.enum(['coder', 'general'])
-					.optional()
-					.describe('Agent type to execute this task (default: coder)'),
 				custom_agent_id: z
 					.string()
 					.optional()
@@ -638,7 +634,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'get_task_detail',
-			'Get the full detail of a task by its numeric ID (e.g. task #5) or UUID. Includes error, result, PR URL, PR number, progress, and current step.',
+			'Get the full detail of a task by its numeric ID (e.g. task #5) or UUID. Includes error, result, PR URL, PR number, and current step.',
 			{
 				task_id: z.string().optional().describe('UUID of the task to retrieve'),
 				task_number: z
@@ -650,7 +646,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'retry_task',
-			'Retry a failed (needs_attention) or cancelled task by resetting it to pending. Optionally provide an updated description.',
+			'Retry a failed (blocked) or cancelled task by resetting it to pending. Optionally provide an updated description.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
 				description: z
@@ -676,7 +672,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'reassign_task',
-			'Change the agent assignment for a task. Only allowed for tasks in pending, needs_attention, or cancelled status.',
+			'Change the agent assignment for a task. Only allowed for tasks in open, blocked, or cancelled status.',
 			{
 				task_id: z.string().describe('ID of the task to reassign'),
 				custom_agent_id: z

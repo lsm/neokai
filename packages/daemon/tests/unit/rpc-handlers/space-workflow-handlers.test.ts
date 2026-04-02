@@ -52,11 +52,10 @@ const mockWorkflow: SpaceWorkflow = {
 		{
 			id: 'step-1',
 			name: 'Code',
-			agentId: 'agent-uuid-1',
-			order: 0,
+			agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
 		},
 	],
-	rules: [],
+	startNodeId: 'step-1',
 	tags: [],
 	createdAt: NOW,
 	updatedAt: NOW,

@@ -50,10 +50,8 @@ const mockWorkflow: SpaceWorkflow = {
 	id: 'workflow-1',
 	spaceId: 'space-1',
 	name: 'Test Workflow',
-	nodes: [{ id: 'step-1', name: 'Step One', agentId: 'agent-1' }],
-	transitions: [],
+	nodes: [{ id: 'step-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
 	startNodeId: 'step-1',
-	rules: [],
 	tags: [],
 	createdAt: NOW,
 	updatedAt: NOW,
@@ -347,8 +345,7 @@ describe('space-workflow-run-handlers', () => {
 				'space-1',
 				'workflow-1',
 				'My Run',
-				'Some context',
-				undefined
+				'Some context'
 			);
 			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.created', {
 				sessionId: 'global',
@@ -364,7 +361,6 @@ describe('space-workflow-run-handlers', () => {
 				'space-1',
 				'workflow-1',
 				'Auto',
-				undefined,
 				undefined
 			);
 		});
@@ -379,12 +375,11 @@ describe('space-workflow-run-handlers', () => {
 				'space-1',
 				'workflow-1',
 				'Explicit WF',
-				undefined,
 				undefined
 			);
 		});
 
-		it('passes goalId through to startWorkflowRun', async () => {
+		it('does not pass goalId to startWorkflowRun (removed)', async () => {
 			await call('spaceWorkflowRun.start', {
 				spaceId: 'space-1',
 				title: 'Goal Run',
@@ -394,8 +389,7 @@ describe('space-workflow-run-handlers', () => {
 				'space-1',
 				'workflow-1',
 				'Goal Run',
-				undefined,
-				'goal-rpc-123'
+				undefined
 			);
 		});
 	});

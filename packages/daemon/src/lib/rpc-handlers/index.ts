@@ -59,6 +59,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
+import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
@@ -69,6 +70,7 @@ import { enqueueRoomTick } from '../job-handlers/room-tick.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
+import { setupNodeExecutionHandlers } from './space-node-execution-handlers';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
@@ -351,6 +353,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
+	const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
@@ -424,6 +427,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
 		channelCycleRepo,
+		nodeExecutionRepo,
 		sessionManager: deps.sessionManager,
 		daemonHub: deps.daemonHub,
 	});
@@ -514,6 +518,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 				workflowManager: spaceWorkflowManager,
 				taskRepo: spaceTaskRepo,
 				workflowRunRepo: spaceWorkflowRunRepo,
+				nodeExecutionRepo,
 				db: deps.db.getDatabase(),
 			},
 			neoSpacesState
@@ -602,7 +607,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.db.getDatabase(),
 		deps.daemonHub
 	);
-
 	// Space workflow run handlers — reuse the same factory pattern as spaceTask handlers
 	const spaceWorkflowRunTaskManagerFactory: SpaceWorkflowRunTaskManagerFactory = (spaceId) => {
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
@@ -617,6 +621,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowRunTaskManagerFactory,
 		deps.daemonHub
 	);
+
+	// Node execution handlers
+	setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo);
 
 	// Provision the Global Spaces Agent session (spaces:global)
 	// Create shared state synchronously so the RPC handler is available immediately.
@@ -663,6 +670,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			sessionFactory: globalSessionFactory,
 			taskRepo: spaceTaskRepo,
 			workflowRunRepo: spaceWorkflowRunRepo,
+			nodeExecutionRepo,
 			db: deps.db.getDatabase(),
 			state: globalSpacesState,
 			daemonHub: deps.daemonHub,

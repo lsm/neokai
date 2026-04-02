@@ -64,6 +64,7 @@ export class SpaceWorkflowManager {
 		this.validateName(params.spaceId, trimmedName, null);
 		const nodes = params.nodes ?? [];
 		this.validateNodes(params.spaceId, nodes);
+		this.validateEndNodeId(params.endNodeId, nodes);
 		if (params.channels && params.channels.length > 0) {
 			this.validateChannels(params.channels);
 		}
@@ -105,6 +106,7 @@ export class SpaceWorkflowManager {
 				})
 			);
 			this.validateNodes(existing.spaceId, inputs);
+			this.validateEndNodeId(params.endNodeId, inputs);
 		}
 
 		if (params.channels && params.channels.length > 0) {
@@ -254,6 +256,22 @@ export class SpaceWorkflowManager {
 					throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty agent name string`);
 				}
 			}
+		}
+	}
+
+	private validateEndNodeId(
+		endNodeId: string | null | undefined,
+		nodes: WorkflowNodeInput[]
+	): void {
+		if (endNodeId === undefined || endNodeId === null) return;
+		if (!endNodeId.trim()) {
+			throw new WorkflowValidationError('endNodeId must be a non-empty string or null');
+		}
+		const nodeIds = new Set(nodes.map((n) => n.id));
+		if (!nodeIds.has(endNodeId)) {
+			throw new WorkflowValidationError(
+				`endNodeId "${endNodeId}" does not match any node in this workflow`
+			);
 		}
 	}
 }

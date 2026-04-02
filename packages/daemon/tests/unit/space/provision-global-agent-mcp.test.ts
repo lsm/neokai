@@ -24,6 +24,7 @@ import { SpaceRuntimeService } from '../../../src/lib/space/runtime/space-runtim
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -126,6 +127,7 @@ function buildDeps(
 	const stub = opts.stub ?? makeSessionStub();
 
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
 	const agentRepo = new SpaceAgentRepository(db);
 	const agentManager = new SpaceAgentManager(agentRepo);
@@ -158,6 +160,7 @@ function buildDeps(
 		sessionFactory: makeSessionFactory(),
 		taskRepo,
 		workflowRunRepo,
+		nodeExecutionRepo,
 		db,
 		state,
 		appMcpManager: appMcpManager as never,
