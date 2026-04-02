@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { generateUUID } from '../src/utils.ts';
+import { generateUUID, parseJson, parseJsonOptional } from '../src/utils.ts';
 
 describe('generateUUID', () => {
 	test('generates valid UUID format', () => {
@@ -77,5 +77,95 @@ describe('generateUUID', () => {
 		if (globalThis.crypto && original) {
 			globalThis.crypto.randomUUID = original;
 		}
+	});
+});
+
+describe('parseJson', () => {
+	test('returns parsed value for valid JSON string', () => {
+		const result1 = parseJson<Record<string, number>>('{"a":1}', {});
+		expect(result1).toEqual({ a: 1 });
+
+		const result2 = parseJson<number[]>('[1,2,3]', []);
+		expect(result2).toEqual([1, 2, 3]);
+
+		const result3 = parseJson<string>('"hello"', 'fallback');
+		expect(result3).toBe('hello');
+
+		const result4 = parseJson<number>('42', 0);
+		expect(result4).toBe(42);
+
+		const result5 = parseJson<boolean>('true', false);
+		expect(result5).toBe(true);
+	});
+
+	test('returns fallback for null input', () => {
+		const result1 = parseJson<string>(null, 'default');
+		expect(result1).toBe('default');
+
+		const result2 = parseJson<Record<string, number>>(null, { key: 1 });
+		expect(result2).toEqual({ key: 1 });
+	});
+
+	test('returns fallback for undefined input', () => {
+		const result1 = parseJson<string>(undefined, 'default');
+		expect(result1).toBe('default');
+
+		const result2 = parseJson<number[]>(undefined, [1, 2]);
+		expect(result2).toEqual([1, 2]);
+	});
+
+	test('returns fallback for invalid JSON string', () => {
+		const result1 = parseJson<string>('{not json}', 'fallback');
+		expect(result1).toBe('fallback');
+
+		const result2 = parseJson<Record<string, unknown>>('trailing comma,', {});
+		expect(result2).toEqual({});
+
+		const result3 = parseJson<Record<string, unknown>>('', {});
+		expect(result3).toEqual({});
+	});
+
+	test('returns fallback for empty string', () => {
+		const result1 = parseJson<string>('', 'default');
+		expect(result1).toBe('default');
+
+		const result2 = parseJson<number[]>('', []);
+		expect(result2).toEqual([]);
+	});
+});
+
+describe('parseJsonOptional', () => {
+	test('returns parsed value for valid JSON string', () => {
+		const result1 = parseJsonOptional<Record<string, number>>('{"a":1}');
+		expect(result1).toEqual({ a: 1 });
+
+		const result2 = parseJsonOptional<number[]>('[1,2,3]');
+		expect(result2).toEqual([1, 2, 3]);
+
+		const result3 = parseJsonOptional<string>('"hello"');
+		expect(result3).toBe('hello');
+
+		const result4 = parseJsonOptional<number>('42');
+		expect(result4).toBe(42);
+
+		const result5 = parseJsonOptional<boolean>('true');
+		expect(result5).toBe(true);
+	});
+
+	test('returns undefined for null input', () => {
+		expect(parseJsonOptional(null)).toBeUndefined();
+	});
+
+	test('returns undefined for undefined input', () => {
+		expect(parseJsonOptional(undefined)).toBeUndefined();
+	});
+
+	test('returns undefined for invalid JSON string', () => {
+		expect(parseJsonOptional('{not json}')).toBeUndefined();
+		expect(parseJsonOptional('trailing comma,')).toBeUndefined();
+	});
+
+	test('returns undefined for empty string', () => {
+		expect(parseJsonOptional('')).toBeUndefined();
 	});
 });

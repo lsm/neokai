@@ -20,6 +20,32 @@ export function isUUID(value: string): boolean {
 }
 
 /**
+ * Safely parse a JSON string, returning a fallback value on failure.
+ * Use this for reading DB columns that should be JSON but may be corrupted.
+ */
+export function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+	if (raw == null) return fallback;
+	try {
+		return JSON.parse(raw) as T;
+	} catch {
+		return fallback;
+	}
+}
+
+/**
+ * Safely parse a JSON string, returning undefined on failure or null input.
+ * Use this for reading optional DB columns that should be JSON but may be corrupted.
+ */
+export function parseJsonOptional<T>(raw: string | null | undefined): T | undefined {
+	if (raw == null) return undefined;
+	try {
+		return JSON.parse(raw) as T;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
  * Generate a UUID v4 (browser and Node.js compatible)
  * Uses crypto.randomUUID() if available, otherwise falls back to a polyfill
  */

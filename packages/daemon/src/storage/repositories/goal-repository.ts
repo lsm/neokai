@@ -6,7 +6,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, parseJson, parseJsonOptional } from '@neokai/shared';
 import type {
 	RoomGoal,
 	GoalStatus,
@@ -654,8 +654,8 @@ export class GoalRepository {
 			status: row.status as GoalStatus,
 			priority: row.priority as GoalPriority,
 			progress: row.progress as number,
-			linkedTaskIds: JSON.parse(row.linked_task_ids as string) as string[],
-			metrics: JSON.parse(row.metrics as string) as Record<string, number>,
+			linkedTaskIds: parseJson<string[]>((row.linked_task_ids as string | null) ?? '[]', []),
+			metrics: parseJson<Record<string, number>>((row.metrics as string | null) ?? '{}', {}),
 			planning_attempts: (row.planning_attempts as number | null) ?? 0,
 			goal_review_attempts: (row.goal_review_attempts as number | null) ?? 0,
 			createdAt: row.created_at as number,
@@ -664,12 +664,10 @@ export class GoalRepository {
 			// Mission V2 fields
 			missionType: (row.mission_type as MissionType | null) ?? 'one_shot',
 			autonomyLevel: (row.autonomy_level as AutonomyLevel | null) ?? 'supervised',
-			structuredMetrics:
-				row.structured_metrics != null
-					? (JSON.parse(row.structured_metrics as string) as MissionMetric[])
-					: undefined,
-			schedule:
-				row.schedule != null ? (JSON.parse(row.schedule as string) as CronSchedule) : undefined,
+			structuredMetrics: parseJsonOptional<MissionMetric[]>(
+				row.structured_metrics as string | null
+			),
+			schedule: parseJsonOptional<CronSchedule>(row.schedule as string | null),
 			schedulePaused: row.schedule_paused === 1,
 			nextRunAt: (row.next_run_at as number | null) ?? undefined,
 			maxConsecutiveFailures: (row.max_consecutive_failures as number | null) ?? 3,

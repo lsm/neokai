@@ -220,4 +220,49 @@ describe('GoalRepository — V2 Mission fields', () => {
 			expect(goals[0].schedule?.expression).toBe('0 9 * * *');
 		});
 	});
+
+	describe('defensive JSON parsing for corrupted schedule and structuredMetrics', () => {
+		it('should not crash when schedule column contains a raw cron string', () => {
+			// Create a goal normally, then corrupt the schedule column via direct SQL
+			const goal = repo.createGoal({ roomId, title: 'Corrupted Schedule' });
+			const goalId = goal.id;
+			db.exec(`UPDATE goals SET schedule = '@daily' WHERE id = '${goalId}'`);
+
+			const fetched = repo.getGoal(goalId);
+			expect(fetched).not.toBeNull();
+			expect(fetched!.schedule).toBeUndefined();
+		});
+
+		it('should not crash when structuredMetrics column contains corrupted JSON', () => {
+			const goal = repo.createGoal({ roomId, title: 'Corrupted Metrics' });
+			const goalId = goal.id;
+			db.exec(`UPDATE goals SET structured_metrics = 'corrupted{json' WHERE id = '${goalId}'`);
+
+			const fetched = repo.getGoal(goalId);
+			expect(fetched).not.toBeNull();
+			expect(fetched!.structuredMetrics).toBeUndefined();
+		});
+
+		it('should not crash when both schedule and structuredMetrics are corrupted', () => {
+			const goal = repo.createGoal({ roomId, title: 'Both Corrupted' });
+			const goalId = goal.id;
+			db.exec(
+				`UPDATE goals SET schedule = '0 9 * * *', structured_metrics = 'broken' WHERE id = '${goalId}'`
+			);
+
+			const fetched = repo.getGoal(goalId);
+			expect(fetched).not.toBeNull();
+			expect(fetched!.schedule).toBeUndefined();
+			expect(fetched!.structuredMetrics).toBeUndefined();
+		});
+
+		it('should handle corrupted schedule via listGoals without crashing', () => {
+			const goal = repo.createGoal({ roomId, title: 'List Corrupted' });
+			db.exec(`UPDATE goals SET schedule = '@weekly' WHERE id = '${goal.id}'`);
+
+			const goals = repo.listGoals(roomId);
+			expect(goals).toHaveLength(1);
+			expect(goals[0].schedule).toBeUndefined();
+		});
+	});
 });
