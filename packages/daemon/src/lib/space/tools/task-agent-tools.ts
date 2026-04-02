@@ -90,7 +90,7 @@ export interface SubSessionState {
 export interface SubSessionMemberInfo {
 	/** ID of the SpaceAgent config this sub-session uses */
 	agentId?: string;
-	/** Freeform role string from SpaceAgent.role (e.g. 'coder', 'reviewer') */
+	/** Slot name from WorkflowNodeAgent.name (e.g. 'coder', 'reviewer') */
 	role?: string;
 }
 
@@ -428,6 +428,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					space,
 					sessionId: actualSessionId,
 					workspacePath,
+					slotOverrides,
 				});
 				await messageInjector(actualSessionId, taskMessage);
 			} catch (err) {
