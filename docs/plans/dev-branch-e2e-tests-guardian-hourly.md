@@ -8,7 +8,7 @@ This replaces the previous rigid multi-task plan with a simpler, adaptive approa
 
 ## Approach
 
-1. Configure a recurring mission in the NeoKai room with `@hourly` schedule and `semi_autonomous` autonomy.
+1. Configure a recurring mission in the NeoKai room with `@hourly` schedule and `supervised` autonomy.
 2. The mission description serves as the discovery task prompt -- it contains the exact CI query commands, failure categorization guidance, and reporting format.
 3. On the first execution, the Planner agent expands the discovery prompt into a single concrete task.
 4. On subsequent executions, the mission reuses the same plan (task cloning).
@@ -25,8 +25,12 @@ Create a recurring mission with these parameters:
 |-----------|-------|
 | `missionType` | `recurring` |
 | `schedule.expression` | `@hourly` |
-| `autonomyLevel` | `semi_autonomous` |
+| `autonomyLevel` | `supervised` |
 | `title` | `Dev Branch E2E Tests Guardian` |
+
+### Why `supervised` instead of `semi_autonomous`
+
+The `cancel-in-progress: true` concurrency group on CI means that pushing to `dev` (or merging a PR) cancels any in-progress CI run. If the guardian's fix PR is merged while a CI run is in progress, that run gets cancelled -- but the guardian should not re-trigger CI via `workflow_dispatch` (doing so would itself be cancelled by the next push). Using `supervised` autonomy ensures all PRs get human review before merge, which avoids timing-related merge conflicts and keeps a human in the loop for any cascading effects on CI.
 
 ### Mission Description (Discovery Task Prompt)
 
@@ -37,50 +41,38 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
 
 ## Steps
 
-1. Query the latest CI runs on dev (include `headSha` for commit hash reporting):
+1. Query the latest completed CI runs on dev (include `headSha` for commit hash reporting):
    ```bash
-   gh run list --repo lsm/neokai --branch dev --limit 5 --json databaseId,status,conclusion,createdAt,headSha
+   gh run list --repo lsm/neokai --branch dev --limit 5 --status completed --json databaseId,conclusion,createdAt,headSha
    ```
+   Note: `--status completed` filters to runs that have finished (both success and failure conclusions). This excludes `in_progress` and `queued` runs from the initial query. The `conclusion` field distinguishes success/failure/cancelled within completed runs.
 
-2. Pick the most recent completed run. Skip runs with `conclusion` = `"cancelled"` (these were superseded by a newer push). If the latest run has `status` = `"in_progress"`, wait up to 10 minutes polling every 2 minutes:
+2. Pick the most recent non-cancelled run. If the latest completed run has `conclusion` = `"cancelled"`, check the next older run, and so on up to 5 runs. The 5-run limit covers the common case where a burst of commits causes several consecutive cancellations (each push cancels the previous run due to `cancel-in-progress: true`).
+
+   If all recent runs (last 5) are cancelled, report "No completed CI runs available — all recent runs were cancelled" and stop.
+
+   If no completed runs exist at all (CI is currently running), wait up to 10 minutes polling every 2 minutes:
    ```bash
-   # Query latest run status (check for empty output from network errors)
-   CI_RESULT=$(gh run list --repo lsm/neokai --branch dev --limit 1 --json status,conclusion --jq '.[0]')
-   if [ -z "$CI_RESULT" ]; then
-     echo "ERROR: Failed to query CI status (network error or auth issue)."
-     exit 1
-   fi
-
-   CI_STATUS=$(echo "$CI_RESULT" | jq -r '.status')
-   CI_CONCLUSION=$(echo "$CI_RESULT" | jq -r '.conclusion')
-
-   if [ "$CI_STATUS" = "in_progress" ]; then
-     echo "CI is in progress. Polling for up to 10 minutes (5 attempts × 2 min)..."
+   # Check for any completed runs (cancelled runs still count as completed)
+   LATEST=$(gh run list --repo lsm/neokai --branch dev --limit 1 --status completed --json conclusion --jq '.[0]')
+   if [ -z "$LATEST" ]; then
+     echo "No completed runs yet. Polling for up to 10 minutes (5 attempts x 2 min)..."
      for i in $(seq 1 5); do
        echo "Waiting 2 minutes (attempt $i/5)..."
        sleep 120
-       POLL_RESULT=$(gh run list --repo lsm/neokai --branch dev --limit 1 --json status,conclusion --jq '.[0]')
-       if [ -z "$POLL_RESULT" ]; then
-         echo "WARNING: Poll failed (network error). Retrying next iteration."
-         continue
+       LATEST=$(gh run list --repo lsm/neokai --branch dev --limit 1 --status completed --json conclusion --jq '.[0]')
+       if [ -n "$LATEST" ]; then
+         break
        fi
-       CI_STATUS=$(echo "$POLL_RESULT" | jq -r '.status')
-       CI_CONCLUSION=$(echo "$POLL_RESULT" | jq -r '.conclusion')
-       [ "$CI_STATUS" != "in_progress" ] && break
      done
-     if [ "$CI_STATUS" = "in_progress" ]; then
-       echo "CI still running after 10 minutes. Reporting current status and stopping."
-       echo "Latest run is still in_progress — no completed results to report."
+     if [ -z "$LATEST" ]; then
+       echo "No completed CI runs after 10 minutes of polling. Stopping."
        exit 0
      fi
    fi
    ```
 
-   If the most recent run is `cancelled`, check the next older run, and so on up to 5 runs. The 5-run limit covers the common case where a burst of commits causes several consecutive cancellations (each push cancels the previous run due to `cancel-in-progress: true`).
-
-   If all recent runs (last 5) are cancelled or in-progress, report "No completed CI runs available — all recent runs were cancelled or still in progress" and stop.
-
-3. **Verify E2E jobs actually ran** before checking for failures. E2E jobs are gated on `build` and `discover` succeeding. If either upstream job fails, E2E jobs are skipped — not failed. A run with zero E2E failures and zero E2E jobs run is NOT "all green"; it means E2E never executed.
+3. **Verify E2E jobs actually ran** before checking for failures. E2E jobs are gated on `build` and `discover` succeeding. If either upstream job fails, E2E jobs are skipped -- not failed. A run with zero E2E failures and zero E2E jobs run is NOT "all green"; it means E2E never executed.
 
    Check for skipped E2E jobs and upstream failures:
    ```bash
@@ -119,19 +111,22 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
 
 6. For each failed E2E job, extract the failure message. Use step 6a first (fast, no download). Use step 6b if more detail is needed.
 
-   **6a. Get failure summary from job logs (fast, recommended first)** — gets the name of the failing step(s):
+   **6a. Get failure summary from job logs (fast, recommended first)** -- gets the name of the failing step(s):
    ```bash
    # Get the failing step name(s) and summary
    gh run view --repo lsm/neokai $RUN_ID --json jobs \
      --jq '.jobs[] | select(.name == "<job-name>") | .steps[] | select(.conclusion == "failure") | .name'
    ```
 
-   **6b. Download test report artifact (for detailed failure messages)** — downloads per-test Playwright output:
+   **6b. Download test report artifact (for detailed failure messages)** -- downloads per-test Playwright output:
    ```bash
-   # Artifact naming convention:
+   # Artifact naming convention (from .github/workflows/main.yml):
    #   No-LLM jobs: e2e-no-llm-results-<test-name>
    #   LLM jobs:    e2e-results-llm-<test-name>
    # where <test-name> matches the matrix.test.name value (e.g., "features-mission-terminology")
+   #
+   # IMPORTANT: artifacts are only uploaded when the job fails (if: failure() in the workflow).
+   # Artifacts expire after 7 days (retention-days: 7).
    mkdir -p /tmp/e2e-guardian
    gh run download $RUN_ID --repo lsm/neokai --name "e2e-no-llm-results-<test-name>" --dir "/tmp/e2e-guardian/<test-name>"
    ```
@@ -179,8 +174,6 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
    done
    ```
 
-   **Artifact retention**: Failed job artifacts are retained for 7 days (explicitly set via `retention-days: 7` in the workflow). Artifacts older than 7 days are auto-deleted by GitHub Actions.
-
 7. For each failure, report:
    - Test file path (e.g., `tests/features/mission-terminology.e2e.ts`)
    - CI job name (e.g., `E2E No-LLM (features-mission-terminology)`)
@@ -207,9 +200,15 @@ These issues were documented in prior health check runs (see `docs/e2e-health-ch
 
 ## CI Notes
 - **cancel-in-progress**: CI has `cancel-in-progress: true` with group `ci-${{ github.ref }}`. Pushing to dev while CI is running will cancel the in-progress run. Always check for cancelled runs and skip them (step 2).
+- **Read-only guard**: This mission is a read-only observer. Do NOT trigger `workflow_dispatch` or push to dev directly. All fixes must go through PRs with human review.
 - E2E test categories: `no-llm` (UI-only, fully parallel) and `llm` (requires LLM API, max 4 parallel).
 - The CI `discover` job auto-categorizes tests; artifact names follow `e2e-no-llm-results-<name>` and `e2e-results-llm-<name>`.
 - **Artifact naming**: Jobs are `E2E No-LLM (<name>)` and `E2E LLM (<name>)`. Strip the prefix and parentheses to get the artifact name suffix.
+- **Job dependency chain** (from workflow YAML):
+  - `build` (needs: check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli, discover)
+  - `e2e-no-llm` (needs: build, discover) -- only runs if both succeed
+  - `e2e-llm` (needs: build, discover) -- only runs if both succeed
+- **Artifact upload condition**: `if: failure()` -- artifacts are only uploaded when the job fails, not on success. Artifacts older than 7 days are auto-deleted by GitHub Actions.
 ```
 
 ---
@@ -235,12 +234,12 @@ After the discovery task completes, the Leader agent reviews the failure report 
 The discovery task produces a **structured failure report** as its output text. The Leader agent reads this output to create fix tasks. The data flow is:
 
 ```
-Discovery task runs → produces failure report (text output)
-    ↓
+Discovery task runs -> produces failure report (text output)
+    |
 Leader agent reads the completed task output
-    ↓
+    |
 For each failure entry, Leader calls create_task() with fix details
-    ↓
+    |
 Fix tasks are dispatched to appropriate agents
 ```
 
@@ -266,18 +265,16 @@ The discovery task must output a machine-parseable failure report. Each failure 
    - `description`: Include the failure details, CI run ID, commit hash, and acceptance criteria (test must pass)
    - `agent`: `"coder"` for test-bug/product-bug, `"general"` for flaky/env
    - `priority`: `"high"` for new failures, `"normal"` for pre-existing worsening, `"low"` for flaky tests
-4. Excluded tests (`space-export-import`, `space-workflow-rules`) are never investigated — skip them entirely.
+4. Excluded tests (`space-export-import`, `space-workflow-rules`) are never investigated -- skip them entirely.
 
 For subsequent hourly executions, the mission system reuses the plan from the first successful execution (task cloning). The cloned discovery task runs again, produces a fresh failure report, and the Leader creates new fix tasks only for failures not already covered by in-progress fix tasks from this or prior executions.
 
 ### Autonomy Level and Push Workflow
 
-The mission uses `semi_autonomous` autonomy, which means:
-- Fix tasks **must create a PR** via `gh pr create` targeting `dev` (the standard supervised workflow for code changes).
-- The Leader can **merge approved PRs** without waiting for human confirmation.
-- This does NOT mean direct push to `dev` -- all code changes go through PRs for traceability.
-
-> **Why PRs instead of direct push**: Even though `semi_autonomous` allows skipping human review on merge, PRs provide a commit history trail, enable CI verification before merge, and avoid the `cancel-in-progress` race condition that direct pushes to dev trigger.
+The mission uses `supervised` autonomy, which means:
+- All fix task PRs require human review and approval before merge.
+- This prevents timing-related issues: a merged PR cancelling an in-progress CI run, or the guardian triggering `workflow_dispatch` that gets cancelled by a developer push.
+- All code changes go through PRs targeting `dev` for traceability and CI verification.
 
 ### Task Creation Rules
 
@@ -332,14 +329,15 @@ The existing detailed plan at `docs/plans/dev-branch-e2e-tests-health-check.md` 
 
 ## Acceptance Criteria
 
-- Mission is configured as recurring `@hourly` with `semi_autonomous` autonomy.
+- Mission is configured as recurring `@hourly` with `supervised` autonomy.
 - Discovery task runs each hour and checks the latest completed (non-cancelled) CI run on dev.
 - Discovery task verifies that E2E jobs actually ran (not skipped) before reporting "all green". If E2E jobs were skipped due to build/discover failures, this is reported as a CI infrastructure issue.
-- If the latest run is in-progress, the discovery task waits up to 10 minutes before giving up.
-- If all recent runs (last 5) are cancelled or in-progress, the task reports no data and stops.
+- If no completed runs exist, the discovery task waits up to 10 minutes polling every 2 minutes before giving up.
+- If all recent runs (last 5) are cancelled, the task reports no data and stops.
 - Failure report includes test name, failure message, relevant commit hash, and root cause category.
 - Leader agent creates one fix task per distinct failure.
 - Fix tasks reference the CI run and include clear acceptance criteria.
 - Discovery results are appended to `docs/e2e-health-check-log.md`.
 - Known pre-existing issues documented in `docs/e2e-health-check-log.md` are not re-investigated unless they have worsened.
 - Excluded tests (`space-export-import`, `space-workflow-rules`) are not investigated.
+- The guardian does NOT trigger `workflow_dispatch` or push to dev directly -- it is a read-only observer.
