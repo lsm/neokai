@@ -260,13 +260,36 @@ This was first documented in the 2026-03-22 health check log and remains unresol
 
 ### E2E Test Failures at #23904270931
 
-**22 failing E2E jobs** across No-LLM and LLM matrices. All failures are **pre-existing** — identical 22 jobs also failed in run #23887664826 (commit `c75b0e1d1`, earlier the same day).
+**21 failing E2E jobs** across No-LLM and LLM matrices. All failures are **pre-existing** — identical 21 jobs also failed in run #23887664826 (commit `c75b0e1d1`, earlier the same day).
 
-#### Root Cause Analysis — 7 Distinct Failure Categories
+**Complete list of failing jobs**:
+1. `E2E LLM (features-reference-autocomplete)`
+2. `E2E No-LLM (features-neo-chat-rendering)`
+3. `E2E No-LLM (features-neo-panel)`
+4. `E2E No-LLM (features-neo-settings)`
+5. `E2E No-LLM (features-provider-model-switching)`
+6. `E2E No-LLM (features-reviewer-feedback-loop)`
+7. `E2E No-LLM (features-space-agent-centric-workflow)`
+8. `E2E No-LLM (features-space-agent-chat)`
+9. `E2E No-LLM (features-space-approval-gate-rejection)`
+10. `E2E No-LLM (features-space-context-panel-switching)`
+11. `E2E No-LLM (features-space-creation)`
+12. `E2E No-LLM (features-space-happy-path-pipeline)`
+13. `E2E No-LLM (features-space-multi-agent-editor)`
+14. `E2E No-LLM (features-space-navigation)`
+15. `E2E No-LLM (features-space-settings-crud)`
+16. `E2E No-LLM (features-space-task-creation)`
+17. `E2E No-LLM (features-space-task-fullwidth)`
+18. `E2E No-LLM (features-task-lifecycle)`
+19. `E2E No-LLM (features-visual-workflow-editor)`
+20. `E2E No-LLM (settings-mcp-servers)`
+21. `E2E No-LLM (settings-tools-modal)`
+
+#### Root Cause Analysis — 8 Distinct Failure Categories
 
 ---
 
-##### Category 1: Neo Panel Dialog Blocks Escape Key / Dialog Close (affects 8 suites)
+##### Category 1: Neo Panel Dialog Blocks Escape Key / Dialog Close (affects 7 suites)
 
 **Pattern**: Tests try to dismiss a dialog (typically the Neo AI panel `data-testid="neo-panel"`) by pressing Escape, but the panel stays visible. Tests use a helper like `createSessionViaNewSessionButton` that calls `page.keyboard.press('Escape')` then `expect(anyDialog).toBeHidden()`, but the Neo panel doesn't close.
 
@@ -276,17 +299,16 @@ Expect "toBeHidden" with timeout 3000ms
 locator('[role="dialog"]:visible') resolved to <div role="dialog" ... data-testid="neo-panel" ... class="... -translate-x-full">...</div>
 ```
 
-**Affected suites** (8 jobs):
+**Affected suites** (7 jobs):
 | Suite | Failed Tests | Note |
 |---|---|---|
 | `features-provider-model-switching` | 8/8 | All tests fail at `createSessionViaNewSessionButton` |
 | `settings-tools-modal` | 3/3 | Same — Neo panel blocks Escape |
 | `features-neo-panel` | 2/2 | Neo panel close behavior broken |
 | `features-space-creation` | 3/3 | Dialog close fails — Neo panel persists |
-| `features-mcp-servers` | 3/3 | Session options menu blocked by Neo panel |
+| `settings-mcp-servers` | 3/3 | Session options menu blocked by Neo panel |
 | `features-space-approval-gate-rejection` | 4/4 | Gate UI not visible — setup fails due to Neo panel |
 | `features-neo-settings` | 1/1 | Settings navigation broken |
-| `features-task-lifecycle` | 1/1 | Archive dialog can't open (strict mode — 2 dialogs) |
 
 **Root cause**: `product-bug` — The Neo AI panel (`data-testid="neo-panel"`) intercepts or ignores Escape key events. Tests expect pressing Escape to close it via `locator('[role="dialog"]:visible').toBeHidden()`, but the panel remains visible (it has `role="dialog"` and `aria-modal="true"`). The `createSessionViaNewSessionButton` helper in `provider-model-switching.e2e.ts` and similar shared helpers try to dismiss any open dialog before creating a session, but this fails because the Neo panel doesn't respond to Escape.
 
@@ -294,22 +316,25 @@ locator('[role="dialog"]:visible') resolved to <div role="dialog" ... data-testi
 
 ---
 
-##### Category 2: Ambiguous Locators — Strict Mode Violations (affects 4 suites)
+##### Category 2: Ambiguous Locators — Strict Mode Violations (affects 5 suites)
 
 **Pattern**: Locators match multiple elements in Playwright strict mode, causing tests to fail.
 
 **Failure signatures**:
 
-1. `neo-settings`: `locator('h3:has-text("Neo Agent")').locator('..').locator('text=Clear Session')` resolved to **2 elements** — strict mode violation.
-2. `space-agent-chat`: `getByRole('button', { name: 'Dashboard', exact: true })` resolved to **2 elements** — appears twice in the DOM.
-3. `task-lifecycle`: `locator('[role="dialog"]')` resolved to **2 elements** — Neo panel dialog + archive dialog both match.
+1. `features-neo-settings`: `locator('h3:has-text("Neo Agent")').locator('..').locator('text=Clear Session')` resolved to **2 elements** — strict mode violation.
+2. `features-space-agent-chat`: `getByRole('button', { name: 'Dashboard', exact: true })` resolved to **2 elements** — appears twice in the DOM.
+3. `features-task-lifecycle`: `locator('[role="dialog"]')` resolved to **2 elements** — Neo panel dialog + archive dialog both match.
+4. `features-space-task-creation`: `getByRole('button', { name: 'Dashboard', exact: true })` resolved to **2 elements** — same duplicate button issue.
 
-**Affected suites** (4 jobs):
-| Suite | Failed Tests | Error |
-|---|---|---|
-| `features-neo-settings` | 1 | `h3:has-text("Neo Agent")` locator → 2 elements |
-| `features-space-agent-chat` | 2 | `Dashboard` button → 2 elements; textarea still visible |
-| `features-task-lifecycle` | 1 | `[role="dialog"]` → 2 elements (Neo panel + archive dialog) |
+**Affected suites** (5 jobs):
+| Suite | Failed Tests | Primary Error | Also Affected By |
+|---|---|---|---|
+| `features-neo-settings` | 1 | `h3:has-text("Neo Agent")` → 2 elements | — |
+| `features-space-agent-chat` | 2 | `Dashboard` button → 2 elements; textarea not hidden | — |
+| `features-task-lifecycle` | 1 | `[role="dialog"]` → 2 elements (Neo panel + archive dialog) | — |
+| `features-space-task-creation` | 4 | `Dashboard` button → 2 elements (strict mode) | Category 3 (space cleanup) |
+| `features-space-context-panel-switching` | 2 | Space navigation fails — heading not visible | Category 3 (space cleanup) |
 
 **Root cause**: `test-bug` — Locators are not specific enough. UI changes (likely adding the Neo panel or duplicate navigation elements) caused existing locators to resolve to multiple elements.
 
@@ -320,24 +345,27 @@ locator('[role="dialog"]:visible') resolved to <div role="dialog" ... data-testi
 
 ---
 
-##### Category 3: Space Creation — UNIQUE Constraint / Already Exists (affects 5 suites)
+##### Category 3: Space Creation — UNIQUE Constraint / Already Exists (affects 7 suites)
 
-**Pattern**: Tests create spaces via RPC, but get `UNIQUE constraint failed: spaces.workspace_path` or `A space already exists for workspace path` errors. Tests don't clean up spaces from previous test runs or retries.
+**Pattern**: Tests create spaces via RPC, but get `UNIQUE constraint failed: spaces.workspace_path` or `A space already exists for workspace path` errors. Tests don't clean up spaces from previous test runs or retries. Some suites also log `workspace path is not a git repository` warnings, which contributes to setup failures.
 
 **Failure signature**:
 ```
 Error: page.evaluate: Error: UNIQUE constraint failed: spaces.workspace_path
 Error: page.evaluate: Error: A space already exists for workspace path: /tmp/tmp.6KrjG8hFj0
+[kai:daemon:spacemanager] workspace path is not a git repository: /tmp/tmp.MLDoNKddkn
 ```
 
-**Affected suites** (5 jobs):
-| Suite | Failed Tests | Error |
-|---|---|---|
-| `features-space-happy-path-pipeline` | 1 | UNIQUE constraint on space creation |
-| `features-space-navigation` | 2 | Space already exists for workspace path |
-| `features-space-settings-crud` | 6 | Cascade — space creation fails in retries |
-| `features-space-task-creation` | 4 | Cascade — space creation fails |
-| `features-space-context-panel-switching` | 2 | Space list or navigation fails |
+**Affected suites** (7 jobs):
+| Suite | Failed Tests | Primary Error | Also Affected By |
+|---|---|---|---|
+| `features-space-happy-path-pipeline` | 1 | UNIQUE constraint on space creation | — |
+| `features-space-navigation` | 2 | Space already exists for workspace path | — |
+| `features-space-settings-crud` | 6 | Cascade — space creation fails in retries | — |
+| `features-space-task-fullwidth` | 2 | Space already exists; workspace not a git repo | — |
+| `features-space-task-creation` | 4 | Cascade — space creation fails | Category 2 (strict mode) |
+| `features-space-context-panel-switching` | 2 | Space navigation fails after setup | Category 2 (strict mode) |
+| `features-reviewer-feedback-loop` | 1 | Space setup fails — workflow canvas not visible | — |
 
 **Root cause**: `test-bug` — Test cleanup (e.g., `afterEach` or `afterAll`) doesn't properly delete spaces created during the test. On retry, the same workspace path is reused but the space already exists in the DB.
 
@@ -411,7 +439,29 @@ unexpected value "1"
 
 ---
 
-##### Category 7: Reference Autocomplete — No .git in E2E Workspace (pre-existing, 1 suite)
+##### Category 7: Space Agent-Centric Workflow — No .git / Toggle Button Timeout (affects 1 suite)
+
+**Pattern**: The test clicks `getByTestId('toggle-channels-button')` in the visual workflow editor but it never becomes clickable within 60s. The workspace is not a git repo (`No .git found traversing from: /tmp/tmp.*`), which may prevent proper workspace initialization.
+
+**Failure signature**:
+```
+TimeoutError: locator.click: Timeout 60000ms exceeded.
+waiting for getByTestId('visual-workflow-editor').getByTestId('toggle-channels-button')
+[kai:daemon:worktreemanager] No .git found traversing from: /tmp/tmp.ZsQdtuAXRs
+```
+
+**Affected suite**:
+| Suite | Failed Tests | Error |
+|---|---|---|
+| `features-space-agent-centric-workflow` | 1 | Toggle channels button never becomes clickable |
+
+**Root cause**: `env` / `test-bug` — The workspace is not a git repo, which may cause space setup to partially fail. The toggle-channels-button in the visual workflow editor is never rendered or clickable.
+
+**Fix needed**: Ensure the workspace is initialized as a git repo before the test runs (same fix as Category 8 for reference-autocomplete).
+
+---
+
+##### Category 8: Reference Autocomplete — No .git in E2E Workspace (pre-existing, 1 suite)
 
 **Pattern**: All reference-autocomplete tests fail because the E2E temp workspace (`/tmp/tmp.*`) is not a git repository. `WorktreeManager.findGitRoot()` returns null, preventing worktree creation for task isolation.
 
@@ -426,6 +476,17 @@ unexpected value "1"
 
 ---
 
+### Cross-Category Summary
+
+Some suites are affected by **multiple** root causes simultaneously:
+
+| Suite | Category 1 (Escape) | Category 2 (Strict Mode) | Category 3 (Space Cleanup) |
+|---|---|---|---|
+| `features-space-task-creation` | — | Yes | Yes |
+| `features-space-context-panel-switching` | — | Yes | Yes |
+| `features-space-task-fullwidth` | — | — | Yes (also: workspace not a git repo) |
+| `features-reviewer-feedback-loop` | — | — | Yes (workflow canvas not visible) |
+
 ### Pre-existing Issues (from prior health checks)
 
 | Issue | First Seen | Status |
@@ -438,17 +499,19 @@ unexpected value "1"
 
 | Issue | Category | Suites Affected |
 |---|---|---|
-| Neo panel doesn't close on Escape key | `product-bug` | 8 suites (provider-model-switching, settings-tools-modal, neo-panel, space-creation, mcp-servers, space-approval-gate-rejection, neo-settings, task-lifecycle) |
-| Ambiguous locators (strict mode violations) | `test-bug` | 4 suites (neo-settings, space-agent-chat, task-lifecycle, space-context-panel-switching) |
-| Space UNIQUE constraint on retry | `test-bug` | 5 suites (space-happy-path-pipeline, space-navigation, space-settings-crud, space-task-creation, space-context-panel-switching) |
+| Neo panel doesn't close on Escape key | `product-bug` | 7 suites (provider-model-switching, settings-tools-modal, neo-panel, space-creation, settings-mcp-servers, space-approval-gate-rejection, neo-settings) |
+| Ambiguous locators (strict mode violations) | `test-bug` | 5 suites (neo-settings, space-agent-chat, task-lifecycle, space-task-creation, space-context-panel-switching) |
+| Space UNIQUE constraint on retry | `test-bug` | 7 suites (space-happy-path-pipeline, space-navigation, space-settings-crud, space-task-fullwidth, space-task-creation, space-context-panel-switching, reviewer-feedback-loop) |
 | AI-dependent tests in No-LLM matrix | `test-bug` | 1 suite (neo-chat-rendering) |
 | Visual workflow editor toggle broken | `product-bug` / `test-bug` | 1 suite (visual-workflow-editor) |
 | Multi-agent editor node count mismatch | `product-bug` / `test-bug` | 1 suite (space-multi-agent-editor) |
+| Space agent-centric workflow — toggle button timeout | `env` / `test-bug` | 1 suite (space-agent-centric-workflow) |
 
 ### Priority Recommendations
 
-1. **HIGH — Neo panel Escape key** (affects 8 suites): Fix the Neo panel to close on Escape, or update all test helpers that rely on Escape-to-dismiss.
-2. **HIGH — Space cleanup in tests** (affects 5 suites): Add proper `afterEach`/`afterAll` space deletion to prevent UNIQUE constraint violations on retry.
-3. **MEDIUM — Ambiguous locators** (affects 4 suites): Make locators more specific to avoid strict mode violations with Neo panel dialogs.
-4. **LOW — Neo chat AI tests in No-LLM** (1 suite): Reclassify or mock AI responses.
-5. **LOW — Visual editor / multi-agent editor** (2 suites): Investigate individually.
+1. **HIGH — Neo panel Escape key** (affects 7 suites): Fix the Neo panel to close on Escape, or update all test helpers that rely on Escape-to-dismiss.
+2. **HIGH — Space cleanup in tests** (affects 7 suites): Add proper `afterEach`/`afterAll` space deletion to prevent UNIQUE constraint violations on retry.
+3. **HIGH — E2E workspace missing .git** (affects 2 suites: reference-autocomplete, space-agent-centric-workflow): Initialize E2E temp workspace as a git repo before tests run.
+4. **MEDIUM — Ambiguous locators** (affects 5 suites): Make locators more specific to avoid strict mode violations with Neo panel dialogs.
+5. **LOW — Neo chat AI tests in No-LLM** (1 suite): Reclassify or mock AI responses.
+6. **LOW — Visual editor / multi-agent editor** (2 suites): Investigate individually.
