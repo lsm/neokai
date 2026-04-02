@@ -265,7 +265,7 @@ test.describe('Approval Gate Rejection', () => {
 
 		// Navigate to the Workflows tab.
 		await page.locator('button:has-text("Workflows")').click();
-		await expect(page.locator('text=Coding Workflow V2')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=Full-Cycle Coding Workflow')).toBeVisible({ timeout: 5000 });
 
 		// Navigate back to Dashboard — canvas should still be visible with the blocked state.
 		await page.locator('button:has-text("Dashboard")').click();
@@ -296,7 +296,7 @@ test.describe('Approval Gate Rejection', () => {
 		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
 
 		// The waiting_human gate should no longer be visible.
-		// Assumption: CODING_WORKFLOW_V2 has exactly one human-approval gate in the
+		// Assumption: FULL_CYCLE_CODING_WORKFLOW has exactly one human-approval gate in the
 		// pre-coding phase (plan-approval-gate). If the workflow adds more human gates
 		// in the future, this assertion would need revisiting — but for the current
 		// template it confirms the gate correctly transitioned away from waiting_human.

@@ -184,7 +184,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 };
 
 /**
- * Coding Workflow V2
+ * Full-Cycle Coding Workflow
  *
  * Six-node graph with a single code-review node that runs three reviewers
  * in parallel (via `node.agents[]`) and a QA verification gate.
@@ -204,10 +204,10 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  *   Plan Review → Planning (reviewer requests plan changes)
  *   Coding → Planning (coder asks planner for clarification)
  */
-export const CODING_WORKFLOW_V2: SpaceWorkflow = {
+export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
-	name: 'Coding Workflow V2',
+	name: 'Full-Cycle Coding Workflow',
 	description:
 		'Full-cycle coding workflow with plan review, parallel code reviewers, and QA gate. ' +
 		'Supports rejection cycles at both review and QA stages.',
@@ -512,7 +512,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
  * to persist them with real SpaceAgent IDs for a given space.
  */
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
-	return [CODING_WORKFLOW, CODING_WORKFLOW_V2, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
+	return [CODING_WORKFLOW, FULL_CYCLE_CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
 }
 
 /**

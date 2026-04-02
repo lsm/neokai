@@ -2,7 +2,7 @@
  * Space Happy Path — Code Review with Parallel Reviewers
  *
  * Integration tests for the Coding → code-pr-gate → 3 Reviewers (parallel) →
- * review-votes-gate segment of CODING_WORKFLOW_V2.
+ * review-votes-gate segment of FULL_CYCLE_CODING_WORKFLOW.
  *
  * No real LLM sessions are started. Gate data is written directly via RPC to
  * simulate agent actions, exercising the gate/channel machinery deterministically.
