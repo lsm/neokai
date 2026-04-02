@@ -10,8 +10,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration71 } from '../../../../src/storage/schema/migrations';
 
@@ -40,33 +38,20 @@ function insertGoal(db: BunDatabase, id: string, schedule: string | null): void 
 	const now = Date.now();
 	db.prepare(
 		`INSERT INTO goals (id, room_id, title, description, status, priority, progress, linked_task_ids, metrics, created_at, updated_at, schedule)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(id, 'room-1', 'Test Goal', 'Desc', 'active', 'normal', 0, '[]', '{}', now, now, schedule);
 }
 
 describe('Migration 71: Fix corrupted schedule values in goals table', () => {
-	let testDir: string;
 	let db: BunDatabase;
 
 	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-71', `test-${Date.now()}`);
-		mkdirSync(testDir, { recursive: true });
-		const dbPath = join(testDir, 'test.db');
-		db = new BunDatabase(dbPath);
+		db = new BunDatabase(':memory:');
 		db.exec('PRAGMA foreign_keys = OFF');
 	});
 
 	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			// ignore
-		}
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {
-			// ignore
-		}
+		db.close();
 	});
 
 	test('wraps a bare cron string like @daily into proper JSON', () => {
