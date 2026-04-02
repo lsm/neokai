@@ -382,7 +382,6 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				name,
 				agentId: '',
 				agents: agentSlots,
-				systemPrompt: step.systemPrompt?.trim() ?? undefined,
 				instructions: step.instructions?.trim() ?? '',
 			};
 		}
@@ -393,7 +392,6 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 			localId: makeLocalId(),
 			name,
 			agentId: assigned?.id ?? '',
-			systemPrompt: step.systemPrompt?.trim() ?? undefined,
 			instructions: step.instructions?.trim() ?? '',
 		};
 	});
@@ -670,6 +668,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					description: description.trim() || null,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
+					endNodeId: stepIds[stepIds.length - 1],
 					tags,
 					channels: channels.length > 0 ? channels : [],
 					gates: gates.length > 0 ? gates : [],
@@ -680,6 +679,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					description: description.trim() || undefined,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
+					endNodeId: stepIds[stepIds.length - 1],
 					tags,
 					channels: channels.length > 0 ? channels : undefined,
 					gates: gates.length > 0 ? gates : undefined,
