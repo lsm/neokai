@@ -19,7 +19,7 @@ interface SecondaryAction {
 
 export interface ActionBarProps {
 	type: ActionBarType;
-	title: string;
+	title: ComponentChildren;
 	description?: string;
 	primaryAction: PrimaryAction;
 	secondaryAction?: SecondaryAction;

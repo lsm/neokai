@@ -44,7 +44,12 @@ export function TaskReviewBar({
 		<>
 			<ActionBar
 				type="review"
-				title=""
+				title={
+					<>
+						<span class="sm:hidden">Review</span>
+						<span class="hidden sm:inline">Awaiting your approval</span>
+					</>
+				}
 				primaryAction={{
 					label: 'Approve',
 					onClick: onApprove,
