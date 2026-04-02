@@ -4630,21 +4630,24 @@ export function runMigration71(db: BunDatabase): void {
  * - findByRoomId: SELECT * FROM sessions WHERE type = 'room' AND json_extract(session_context, '$.roomId') = ?
  *
  * Idempotent: CREATE INDEX IF NOT EXISTS ensures safe re-runs.
- * Guards: tableExists checks handle fresh in-memory databases where tables
- * may not yet exist when migrations run before createTables().
+ * Guards: tableHasColumn checks handle test-contrived partial schemas (e.g.,
+ * migration-42 tests that create rooms without a status column) as well as
+ * fresh in-memory databases where tables may not yet exist.
  */
 export function runMigration72(db: BunDatabase): void {
-	if (tableExists(db, 'rooms')) {
+	if (tableExists(db, 'rooms') && tableHasColumn(db, 'rooms', 'status')) {
 		// Rooms: composite index for listRooms ORDER BY updated_at DESC WHERE status = 'active'
 		db.exec(
 			`CREATE INDEX IF NOT EXISTS idx_rooms_status_updated ON rooms(status, updated_at DESC)`
 		);
 	}
 
-	if (tableExists(db, 'sessions')) {
+	if (tableExists(db, 'sessions') && tableHasColumn(db, 'sessions', 'type')) {
 		// Sessions: index on type for listSessionsByType, findByRoomId
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(type)`);
+	}
 
+	if (tableExists(db, 'sessions') && tableHasColumn(db, 'sessions', 'status')) {
 		// Sessions: composite index for listSessions ORDER BY last_active_at DESC WHERE status != 'archived'
 		db.exec(
 			`CREATE INDEX IF NOT EXISTS idx_sessions_status_last_active ON sessions(status, last_active_at DESC)`
