@@ -18,6 +18,13 @@
  * - Gate data event subscription updates gate status
  * - "View Artifacts" button opens artifacts panel overlay for waiting_human gate
  * - Closing the artifacts panel overlay hides it
+ * - Script-only gate (no fields) with _scriptResult.success:false shows blocked icon
+ * - Script error badge rendered with data-testid="gate-script-error-badge"
+ * - Script-only gate with no _scriptResult shows open icon (backward compat)
+ * - Gate with fields and script: _scriptResult.success:false → blocked
+ * - _scriptResult.success:true → gate follows field evaluation
+ * - Script error badge has reason in title attribute
+ * - Script error badge NOT shown in template mode
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
@@ -751,5 +758,287 @@ describe('WorkflowCanvas', () => {
 				approved: true,
 			});
 		});
+	});
+
+	// ---- Script error gate status ----
+
+	function makeScriptGate(overrides: Partial<Gate> = {}): Gate {
+		return {
+			id: 'script-gate',
+			fields: [],
+			script: { interpreter: 'bash', source: 'exit 1' },
+			resetOnCycle: false,
+			...overrides,
+		};
+	}
+
+	it('script-only gate (no fields) with _scriptResult.success:false shows blocked gate icon in runtime mode', async () => {
+		const gate = makeScriptGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'script-gate',
+					data: { _scriptResult: { success: false, reason: 'timeout' } },
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		await findByTestId('gate-icon-blocked');
+	});
+
+	it('script-only gate with _scriptResult.success:false renders gate-script-error-badge', async () => {
+		const gate = makeScriptGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'script-gate',
+					data: { _scriptResult: { success: false, reason: 'connection refused' } },
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const badge = await findByTestId('gate-script-error-badge');
+		expect(badge.textContent).toContain('Script failed');
+	});
+
+	it('script-only gate with no _scriptResult shows open gate icon (backward compat)', async () => {
+		const gate = makeScriptGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'script-gate',
+					data: {},
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		await findByTestId('gate-icon-open');
+	});
+
+	it('gate with both fields and script: _scriptResult.success:false shows blocked regardless of field status', async () => {
+		const gate = makeScriptGate({
+			id: 'combo-gate',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+			],
+		});
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'combo-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		// Fields say approved=true (open), but script says failed
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'combo-gate',
+					data: {
+						approved: true,
+						_scriptResult: { success: false, reason: 'lint errors found' },
+					},
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		await findByTestId('gate-icon-blocked');
+	});
+
+	it('field-only gate failure (approved=false, no _scriptResult) shows blocked (existing behavior)', async () => {
+		const gate = makeGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({
+			gateData: [{ runId: 'run-1', gateId: 'gate-1', data: { approved: false }, updatedAt: 2000 }],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		await findByTestId('gate-icon-blocked');
+	});
+
+	it('_scriptResult.success:true does not override field evaluation (gate follows fields)', async () => {
+		const gate = makeScriptGate({
+			id: 'combo-gate-2',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+			],
+		});
+		const wf = makeWorkflow({
+			channels: [
+				{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'combo-gate-2' },
+			],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		// Script passed, but fields not yet approved -> waiting_human
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'combo-gate-2',
+					data: {
+						_scriptResult: { success: true },
+					},
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		// Script passed (no override), fields pending -> waiting_human
+		await findByTestId('gate-icon-waiting_human');
+	});
+
+	it('script error badge has the reason in its title attribute', async () => {
+		const gate = makeScriptGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'script-gate',
+					data: { _scriptResult: { success: false, reason: 'Script timed out after 30s' } },
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const badge = await findByTestId('gate-script-error-badge');
+		// The title is on the inner div inside the foreignObject
+		const innerDiv = badge.querySelector('div');
+		expect(innerDiv?.getAttribute('title')).toBe('Script timed out after 30s');
+	});
+
+	it('script error badge is NOT shown in template mode', async () => {
+		const gate = makeScriptGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		// No runId -> template mode
+
+		const { queryByTestId } = render(<WorkflowCanvas workflowId="wf-1" spaceId="sp-1" />);
+		expect(queryByTestId('gate-script-error-badge')).toBeNull();
+	});
+
+	it('script-only gate with _scriptResult.success:false but no reason still blocks (no badge shown)', async () => {
+		const gate = makeScriptGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({
+			gateData: [
+				{
+					runId: 'run-1',
+					gateId: 'script-gate',
+					data: { _scriptResult: { success: false } },
+					updatedAt: 2000,
+				},
+			],
+		});
+
+		const { findByTestId, queryByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		// P0 fix: success === false blocks even without a reason string
+		await findByTestId('gate-icon-blocked');
+		// No badge since reason is missing (badge only shows when reason is truthy)
+		expect(queryByTestId('gate-script-error-badge')).toBeNull();
+	});
+
+	it('gate data event with script error updates gate to blocked', async () => {
+		const gate = makeScriptGate();
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
+			gates: [gate],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { findByTestId, queryByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+
+		// Initially open (no data, script gate with no fields)
+		await findByTestId('gate-icon-open');
+		expect(queryByTestId('gate-script-error-badge')).toBeNull();
+
+		// Fire gate data update event with script error
+		const handlers = mockEventListeners.get('space.gateData.updated') ?? [];
+		for (const h of handlers) {
+			h({
+				spaceId: 'sp-1',
+				runId: 'run-1',
+				gateId: 'script-gate',
+				data: { _scriptResult: { success: false, reason: 'disk full' } },
+			});
+		}
+
+		// Should now show blocked with error badge
+		await findByTestId('gate-icon-blocked');
+		const badge = await findByTestId('gate-script-error-badge');
+		// The title is on the inner div inside the foreignObject
+		const innerDiv = badge.querySelector('div');
+		expect(innerDiv?.getAttribute('title')).toBe('disk full');
 	});
 });

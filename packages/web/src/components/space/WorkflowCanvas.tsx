@@ -111,16 +111,42 @@ function computeVoteCount(
 }
 
 /**
- * Evaluate gate status from current gate data (field-based).
+ * Shape of the `_scriptResult` entry stored in gate data by the daemon.
+ * Transport-only type — not the same as the daemon's `GateScriptResult`.
+ */
+interface GateScriptResultData {
+	success: boolean;
+	reason?: string;
+}
+
+/**
+ * Check whether a script failure is recorded in gate data.
+ * Returns `{ failed: true, reason? }` when `_scriptResult.success === false`.
+ */
+function parseScriptResult(data: Record<string, unknown>): { failed: boolean; reason?: string } {
+	const sr = data._scriptResult as GateScriptResultData | undefined;
+	if (sr && !sr.success) return { failed: true, reason: sr.reason };
+	return { failed: false };
+}
+
+/**
+ * Evaluate gate status from current gate data (field-based + script result).
  *
  * Simplified frontend evaluation:
+ *   - Script result: if `_scriptResult.success === false` → blocked
  *   - Human approval gate (field 'approved' with human writers):
  *       data.approved === true  -> open
  *       data.approved === false -> blocked
  *       otherwise               -> waiting_human
  *   - All fields must pass their checks for the gate to be open.
  */
-function evaluateGateStatus(gate: Gate, data: Record<string, unknown>): GateStatus {
+function evaluateGateStatus(
+	gate: Gate,
+	data: Record<string, unknown>,
+	scriptFailed = false
+): GateStatus {
+	// Script-based gates: block on failure regardless of reason string
+	if (scriptFailed) return 'blocked';
 	if ((gate.fields ?? []).length === 0) return 'open';
 
 	// Check for human approval field first
@@ -338,6 +364,8 @@ interface GateIconProps {
 	onReject?: () => void;
 	onViewArtifacts?: () => void;
 	voteCount?: { current: number; min: number };
+	/** Script error reason from `_scriptResult` in gate data. */
+	scriptErrorReason?: string;
 }
 
 const GATE_ICON_R = 11; // radius
@@ -352,6 +380,7 @@ function GateIcon({
 	onReject,
 	onViewArtifacts,
 	voteCount,
+	scriptErrorReason,
 }: GateIconProps): JSX.Element {
 	const [showActions, setShowActions] = useState(false);
 
@@ -469,6 +498,32 @@ function GateIcon({
 				>
 					{voteCount.current}/{voteCount.min}
 				</text>
+			)}
+
+			{/* Script failed indicator */}
+			{scriptErrorReason && isRuntimeMode && (
+				<foreignObject
+					x={x - 55}
+					y={y + GATE_ICON_R + (voteCount !== undefined ? 20 : 8)}
+					width={110}
+					height={16}
+					data-testid="gate-script-error-badge"
+				>
+					<div
+						style={{
+							fontSize: '9px',
+							color: '#ef4444',
+							fontFamily: 'monospace',
+							textAlign: 'center',
+							whiteSpace: 'nowrap',
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+						}}
+						title={scriptErrorReason}
+					>
+						{'⚠️ Script failed'}
+					</div>
+				</foreignObject>
 			)}
 
 			{showActions && isRuntimeMode && (
@@ -1170,7 +1225,11 @@ export function WorkflowCanvas({
 
 					const gate = ch.gateId ? gatesById.get(ch.gateId) : undefined;
 					const gateData = ch.gateId ? (gateDataMap.get(ch.gateId) ?? {}) : {};
-					const gateStatus: GateStatus = gate ? evaluateGateStatus(gate, gateData) : 'open';
+					const scriptResult =
+						gate && isRuntimeMode ? parseScriptResult(gateData) : { failed: false };
+					const gateStatus: GateStatus = gate
+						? evaluateGateStatus(gate, gateData, scriptResult.failed)
+						: 'open';
 
 					// Channel color based on gate status in runtime mode
 					let strokeColor = '#44403c';
@@ -1190,6 +1249,9 @@ export function WorkflowCanvas({
 					const isHumanGate = gate ? isHumanApprovalGate(gate.fields ?? []) : false;
 					const voteCount =
 						gate && isRuntimeMode ? computeVoteCount(gate.fields ?? [], gateData) : undefined;
+
+					// Script error reason from gate data (for display below the gate icon)
+					const scriptErrorReason = scriptResult.reason;
 
 					return (
 						<g key={`ch-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>
@@ -1221,6 +1283,7 @@ export function WorkflowCanvas({
 									isRuntimeMode={isRuntimeMode}
 									gateId={ch.gateId}
 									voteCount={voteCount}
+									scriptErrorReason={scriptErrorReason}
 									onApprove={
 										isHumanGate ? () => void handleApproveGate(ch.gateId!, true) : undefined
 									}

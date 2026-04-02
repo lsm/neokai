@@ -1008,14 +1008,16 @@ export interface ExportedWorkflowNodeAgent {
 	name: string;
 	/**
 	 * Optional system-prompt override for this agent slot.
-	 * `mode: 'override'` replaces; `mode: 'expand'` appends.
+	 * Accepts both plain strings (legacy export format) and `{ mode, value }` objects.
+	 * Plain strings are normalized to `{ mode: 'override', value }` during import.
 	 */
-	systemPrompt?: WorkflowNodeAgentOverride;
+	systemPrompt?: WorkflowNodeAgentOverride | string;
 	/**
 	 * Optional instructions override for this agent slot.
-	 * `mode: 'override'` replaces; `mode: 'expand'` appends.
+	 * Accepts both plain strings (legacy export format) and `{ mode, value }` objects.
+	 * Plain strings are normalized to `{ mode: 'override', value }` during import.
 	 */
-	instructions?: WorkflowNodeAgentOverride;
+	instructions?: WorkflowNodeAgentOverride | string;
 }
 
 /**

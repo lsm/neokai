@@ -58,7 +58,7 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
-import { exportBundle, validateExportBundle } from '../space/export-format';
+import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format';
 import { Logger } from '../logger';
 
 const log = new Logger('space-export-import-handlers');
@@ -191,8 +191,11 @@ export function buildWorkflowCreateParams(
 				agentId: agentId ?? '',
 				name: a.name,
 			};
-			if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
-			if (a.instructions !== undefined) entry.instructions = a.instructions;
+			// Normalize overrides: plain strings (legacy) → { mode: 'override', value }
+			const normalizedSP = normalizeOverride(a.systemPrompt);
+			if (normalizedSP !== undefined) entry.systemPrompt = normalizedSP;
+			const normalizedInst = normalizeOverride(a.instructions);
+			if (normalizedInst !== undefined) entry.instructions = normalizedInst;
 			return entry;
 		});
 

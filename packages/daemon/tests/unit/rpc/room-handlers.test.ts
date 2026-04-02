@@ -108,7 +108,6 @@ function createMockRoomManager(): {
 	const mockRoomOverview: RoomOverview = {
 		room: mockRoom,
 		sessions: [],
-		activeTasks: [],
 	};
 
 	const mockRoomStatus: NeoStatus = {

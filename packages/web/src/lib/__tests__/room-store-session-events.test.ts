@@ -115,8 +115,6 @@ function twoSessionOverview(): RoomOverview {
 			{ id: 'session-1', title: 'Session One', status: 'active', lastActiveAt: 1000 },
 			{ id: 'session-2', title: 'Session Two', status: 'active', lastActiveAt: 2000 },
 		] as SessionSummary[],
-		activeTasks: [],
-		allTasks: [],
 	};
 }
 

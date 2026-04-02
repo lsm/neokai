@@ -16,9 +16,10 @@
  * - task.updateDraft - Persist human input draft for a task (server-side, debounced by client)
  * - task.group.create - (non-production) Create a synthetic session group for a task
  * - task.group.addMessage - (non-production) Insert a synthetic canonical timeline row
+ * - inbox.reviewTasks - Get all review-status tasks across all active rooms
  */
 
-import type { MessageHub, TaskPriority, TaskStatus } from '@neokai/shared';
+import type { MessageHub, TaskPriority, TaskStatus, TaskSummary } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
@@ -27,6 +28,7 @@ import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { resolveTaskId } from '../id-resolution';
+import { toTaskSummary } from '../task-utils';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
@@ -72,8 +74,6 @@ export function setupTaskHandlers(
 					sessionId: `room:${roomId}`,
 					room: overview.room,
 					sessions: overview.sessions,
-					activeTasks: overview.activeTasks,
-					allTasks: overview.allTasks,
 				})
 				.catch((error) => {
 					log.warn(`Failed to emit room.overview for room ${roomId}:`, error);
@@ -1118,5 +1118,28 @@ export function setupTaskHandlers(
 		// TODO: remove once session LiveQuery covers list
 		emitRoomOverview(params.roomId);
 		return { success: true };
+	});
+
+	// inbox.reviewTasks - Get all review-status tasks across all active rooms.
+	// Replaces the client-side fan-out of room.get calls with a single targeted query
+	// that only reads task rows (no session/overview overhead).
+	messageHub.onRequest('inbox.reviewTasks', async () => {
+		const rooms = roomManager.listRooms(false);
+		const taskRepo = makeTaskRepo();
+		const reviewTasks: Array<{ task: TaskSummary; roomId: string; roomTitle: string }> = [];
+
+		for (const room of rooms) {
+			const tasks = taskRepo.listTasks(room.id, { status: 'review' });
+			for (const task of tasks) {
+				reviewTasks.push({
+					task: toTaskSummary(task),
+					roomId: room.id,
+					roomTitle: room.name,
+				});
+			}
+		}
+
+		reviewTasks.sort((a, b) => b.task.updatedAt - a.task.updatedAt);
+		return { tasks: reviewTasks };
 	});
 }

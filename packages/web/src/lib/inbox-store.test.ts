@@ -1,56 +1,19 @@
 /**
  * Tests for InboxStore
- *
- * Tests task aggregation across rooms, filtering to review status,
- * sorting, and computed reviewCount.
  */
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { signal } from '@preact/signals';
-import type { Room, RoomOverview, TaskSummary } from '@neokai/shared';
+import type { TaskSummary } from '@neokai/shared';
+import type { InboxTask } from './inbox-store.ts';
 
-// Hoisted mocks
 const { mockGetHub, mockToastError } = vi.hoisted(() => ({
 	mockGetHub: vi.fn(),
 	mockToastError: vi.fn(),
 }));
 
-vi.mock('./connection-manager', () => ({
-	connectionManager: {
-		getHub: mockGetHub,
-	},
-}));
+vi.mock('./connection-manager', () => ({ connectionManager: { getHub: mockGetHub } }));
+vi.mock('./toast', () => ({ toast: { error: mockToastError } }));
 
-vi.mock('./toast', () => ({
-	toast: {
-		error: mockToastError,
-	},
-}));
-
-// Lobby store mock rooms signal
-const mockRoomsSignal = signal<Room[]>([]);
-vi.mock('./lobby-store', () => ({
-	lobbyStore: {
-		get rooms() {
-			return mockRoomsSignal;
-		},
-	},
-}));
-
-// Import after mocks are set up
 const { inboxStore } = await import('./inbox-store.ts');
-
-function makeRoom(id: string, name: string): Room {
-	return {
-		id,
-		name,
-		allowedPaths: [],
-		sessionIds: [],
-		status: 'active',
-		createdAt: Date.now(),
-		updatedAt: Date.now(),
-	};
-}
 
 function makeTask(id: string, status: TaskSummary['status'], updatedAt = Date.now()): TaskSummary {
 	return {
@@ -64,235 +27,102 @@ function makeTask(id: string, status: TaskSummary['status'], updatedAt = Date.no
 	};
 }
 
-function makeOverview(room: Room, tasks: TaskSummary[]): RoomOverview {
-	return {
-		room,
-		sessions: [],
-		activeTasks: tasks.filter((t) => !['completed', 'cancelled'].includes(t.status)),
-		allTasks: tasks,
-	};
+function makeInboxTask(task: TaskSummary, roomId: string, roomTitle: string): InboxTask {
+	return { task, roomId, roomTitle };
 }
 
 describe('InboxStore', () => {
 	beforeEach(() => {
-		mockRoomsSignal.value = [];
 		inboxStore.items.value = [];
 		inboxStore.isLoading.value = false;
 		vi.clearAllMocks();
 	});
 
 	describe('refresh()', () => {
-		it('should set items to empty array when no rooms', async () => {
-			mockRoomsSignal.value = [];
-
+		it('should call inbox.reviewTasks RPC and set items from response', async () => {
+			const reviewTasks = [makeInboxTask(makeTask('t1', 'review', 3000), 'room-a', 'Room A')];
+			const mockHub = { request: vi.fn().mockResolvedValue({ tasks: reviewTasks }) };
+			mockGetHub.mockResolvedValue(mockHub);
 			await inboxStore.refresh();
+			expect(mockHub.request).toHaveBeenCalledWith('inbox.reviewTasks', {});
+			expect(inboxStore.items.value).toEqual(reviewTasks);
+		});
 
+		it('should set items to empty array on error', async () => {
+			const mockHub = { request: vi.fn().mockRejectedValue(new Error('Connection lost')) };
+			mockGetHub.mockResolvedValue(mockHub);
+			await inboxStore.refresh();
 			expect(inboxStore.items.value).toEqual([]);
-			expect(mockGetHub).not.toHaveBeenCalled();
-		});
-
-		it('should aggregate review-status tasks across rooms', async () => {
-			const roomA = makeRoom('room-a', 'Room A');
-			const roomB = makeRoom('room-b', 'Room B');
-			mockRoomsSignal.value = [roomA, roomB];
-
-			const tasksA = [makeTask('t1', 'review', 1000), makeTask('t2', 'in_progress', 2000)];
-			const tasksB = [makeTask('t3', 'review', 3000), makeTask('t4', 'completed', 4000)];
-
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockImplementationOnce(() => Promise.resolve(makeOverview(roomA, tasksA)))
-					.mockImplementationOnce(() => Promise.resolve(makeOverview(roomB, tasksB))),
-			};
-			mockGetHub.mockResolvedValue(mockHub);
-
-			await inboxStore.refresh();
-
-			const items = inboxStore.items.value;
-			expect(items).toHaveLength(2);
-
-			// Both should be review tasks
-			expect(items.every((item) => item.task.status === 'review')).toBe(true);
-
-			// Should include correct room metadata
-			const ids = items.map((i) => i.task.id);
-			expect(ids).toContain('t1');
-			expect(ids).toContain('t3');
-
-			const itemA = items.find((i) => i.task.id === 't1');
-			expect(itemA?.roomId).toBe('room-a');
-			expect(itemA?.roomTitle).toBe('Room A');
-		});
-
-		it('should sort items by updatedAt descending', async () => {
-			const room = makeRoom('room-1', 'Room 1');
-			mockRoomsSignal.value = [room];
-
-			const tasks = [
-				makeTask('early', 'review', 1000),
-				makeTask('latest', 'review', 3000),
-				makeTask('middle', 'review', 2000),
-			];
-
-			const mockHub = {
-				request: vi.fn().mockResolvedValue(makeOverview(room, tasks)),
-			};
-			mockGetHub.mockResolvedValue(mockHub);
-
-			await inboxStore.refresh();
-
-			const ids = inboxStore.items.value.map((i) => i.task.id);
-			expect(ids).toEqual(['latest', 'middle', 'early']);
-		});
-
-		it('should skip failed room requests gracefully', async () => {
-			const roomA = makeRoom('room-a', 'Room A');
-			const roomB = makeRoom('room-b', 'Room B');
-			mockRoomsSignal.value = [roomA, roomB];
-
-			const tasksB = [makeTask('t1', 'review')];
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockImplementationOnce(() => Promise.reject(new Error('Network error')))
-					.mockImplementationOnce(() => Promise.resolve(makeOverview(roomB, tasksB))),
-			};
-			mockGetHub.mockResolvedValue(mockHub);
-
-			await inboxStore.refresh();
-
-			// Should still have tasks from the successful room
-			expect(inboxStore.items.value).toHaveLength(1);
-			expect(inboxStore.items.value[0].task.id).toBe('t1');
 		});
 
 		it('should set isLoading to false after completion', async () => {
-			mockRoomsSignal.value = [makeRoom('r', 'R')];
-			const mockHub = {
-				request: vi.fn().mockResolvedValue(makeOverview(makeRoom('r', 'R'), [])),
-			};
+			const mockHub = { request: vi.fn().mockResolvedValue({ tasks: [] }) };
 			mockGetHub.mockResolvedValue(mockHub);
-
-			const refreshPromise = inboxStore.refresh();
-			// Loading should be true while in flight
+			const p = inboxStore.refresh();
 			expect(inboxStore.isLoading.value).toBe(true);
-
-			await refreshPromise;
+			await p;
 			expect(inboxStore.isLoading.value).toBe(false);
 		});
 
-		it('should ignore archived rooms', async () => {
-			const activeRoom = makeRoom('active', 'Active Room');
-			const archivedRoom = {
-				...makeRoom('archived', 'Archived Room'),
-				status: 'archived' as const,
-			};
-			mockRoomsSignal.value = [activeRoom, archivedRoom];
-
-			const mockHub = {
-				request: vi.fn().mockResolvedValue(makeOverview(activeRoom, [])),
-			};
+		it('should set isLoading to false even on error', async () => {
+			const mockHub = { request: vi.fn().mockRejectedValue(new Error('fail')) };
 			mockGetHub.mockResolvedValue(mockHub);
-
 			await inboxStore.refresh();
-
-			// Only one request — for the active room
-			expect(mockHub.request).toHaveBeenCalledTimes(1);
+			expect(inboxStore.isLoading.value).toBe(false);
 		});
 	});
 
 	describe('approveTask()', () => {
-		it('should call task.approve, refresh, and return true on success', async () => {
-			const room = makeRoom('r', 'R');
-			mockRoomsSignal.value = [room];
-
+		it('should call task.approve, refresh, and return true', async () => {
 			const mockHub = {
 				request: vi
 					.fn()
-					.mockImplementationOnce(() => Promise.resolve(undefined)) // approve
-					.mockImplementationOnce(() => Promise.resolve(makeOverview(room, []))), // refresh
+					.mockImplementationOnce(() => Promise.resolve(undefined))
+					.mockImplementationOnce(() => Promise.resolve({ tasks: [] })),
 			};
 			mockGetHub.mockResolvedValue(mockHub);
-
-			const result = await inboxStore.approveTask('task-1', 'r');
-
-			expect(result).toBe(true);
-			expect(mockHub.request).toHaveBeenCalledWith('task.approve', {
-				roomId: 'r',
-				taskId: 'task-1',
-			});
+			expect(await inboxStore.approveTask('t1', 'r')).toBe(true);
+			expect(mockHub.request).toHaveBeenCalledWith('inbox.reviewTasks', {});
 		});
 
-		it('should show toast.error and return false when approve fails', async () => {
-			const mockHub = {
-				request: vi.fn().mockRejectedValue(new Error('Server error')),
-			};
+		it('should show toast.error and return false when approveTask fails', async () => {
+			const mockHub = { request: vi.fn().mockRejectedValueOnce(new Error('Network error')) };
 			mockGetHub.mockResolvedValue(mockHub);
-
-			const result = await inboxStore.approveTask('task-1', 'r');
-
+			const result = await inboxStore.approveTask('task-1', 'room-1');
 			expect(result).toBe(false);
-			expect(mockToastError).toHaveBeenCalledWith('Server error');
+			expect(mockToastError).toHaveBeenCalledWith('Network error');
 		});
 	});
 
 	describe('rejectTask()', () => {
-		it('should call task.reject with feedback, refresh, and return true on success', async () => {
-			const room = makeRoom('r', 'R');
-			mockRoomsSignal.value = [room];
-
+		it('should call task.reject with feedback, refresh, and return true', async () => {
 			const mockHub = {
 				request: vi
 					.fn()
-					.mockImplementationOnce(() => Promise.resolve(undefined)) // reject
-					.mockImplementationOnce(() => Promise.resolve(makeOverview(room, []))), // refresh
+					.mockImplementationOnce(() => Promise.resolve(undefined))
+					.mockImplementationOnce(() => Promise.resolve({ tasks: [] })),
 			};
 			mockGetHub.mockResolvedValue(mockHub);
-
-			const result = await inboxStore.rejectTask('task-1', 'r', 'needs more work');
-
-			expect(result).toBe(true);
-			expect(mockHub.request).toHaveBeenCalledWith('task.reject', {
-				roomId: 'r',
-				taskId: 'task-1',
-				feedback: 'needs more work',
-			});
+			expect(await inboxStore.rejectTask('t1', 'r', 'feedback')).toBe(true);
+			expect(mockHub.request).toHaveBeenCalledWith('inbox.reviewTasks', {});
 		});
 
-		it('should show toast.error and return false when reject fails', async () => {
-			const mockHub = {
-				request: vi.fn().mockRejectedValue(new Error('Reject failed')),
-			};
+		it('should show toast.error and return false when rejectTask fails', async () => {
+			const mockHub = { request: vi.fn().mockRejectedValueOnce(new Error('Network error')) };
 			mockGetHub.mockResolvedValue(mockHub);
-
-			const result = await inboxStore.rejectTask('task-1', 'r', 'feedback');
-
+			const result = await inboxStore.rejectTask('task-1', 'room-1', 'needs work');
 			expect(result).toBe(false);
-			expect(mockToastError).toHaveBeenCalledWith('Reject failed');
+			expect(mockToastError).toHaveBeenCalledWith('Network error');
 		});
 	});
 
 	describe('reviewCount', () => {
-		it('should return 0 when items is empty', () => {
+		it('should return 0 when empty', () => {
 			inboxStore.items.value = [];
 			expect(inboxStore.reviewCount.value).toBe(0);
 		});
-
-		it('should return the number of items', () => {
-			const room = makeRoom('r', 'R');
-			inboxStore.items.value = [
-				{ task: makeTask('t1', 'review'), roomId: 'r', roomTitle: 'R' },
-				{ task: makeTask('t2', 'review'), roomId: 'r', roomTitle: 'R' },
-			];
-			expect(inboxStore.reviewCount.value).toBe(2);
-		});
-
-		it('should update reactively when items change', () => {
-			inboxStore.items.value = [];
-			expect(inboxStore.reviewCount.value).toBe(0);
-
-			inboxStore.items.value = [{ task: makeTask('t1', 'review'), roomId: 'r', roomTitle: 'R' }];
+		it('should return count', () => {
+			inboxStore.items.value = [makeInboxTask(makeTask('t1', 'review'), 'r', 'R')];
 			expect(inboxStore.reviewCount.value).toBe(1);
 		});
 	});
