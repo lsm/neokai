@@ -1,0 +1,330 @@
+/**
+ * Gate Custom Badges E2E Tests
+ *
+ * Tests customizable badge label and color on workflow gate badges:
+ * - Create a gate on a channel via the visual editor
+ * - Verify heuristic badge label when no custom label is set
+ * - Set a custom label and verify the badge text updates on the canvas
+ * - Set a custom color and verify the badge fill updates on the canvas
+ * - Remove the custom label and verify heuristic fallback
+ * - Create a script-only gate (no fields) and verify the editor works
+ *
+ * Setup: creates a Space with two agents (coder, reviewer) via RPC in beforeEach.
+ * Cleanup: deletes the Space via RPC in afterEach.
+ *
+ * E2E Rules:
+ * - All test actions go through the UI (clicks, inputs, navigation)
+ * - All assertions check visible DOM state (badge SVG text, fill attributes)
+ * - RPC is only used in beforeEach / afterEach for infrastructure setup / teardown
+ *
+ * UI Flow:
+ *   Node click → NodeConfigPanel → channel-link button → ChannelRelationConfigPanel
+ *   (embedded in NodeConfigPanel) → "Add Gate" → GateEditorPanel (embedded)
+ *   Changes in GateEditorPanel propagate reactively to the canvas EdgeRenderer badge.
+ */
+
+import type { Page } from '@playwright/test';
+import { test, expect } from '../../fixtures';
+import {
+	createSpace,
+	deleteSpace,
+	navigateToSpace,
+	resetEditorModeStorage,
+	openNewWorkflowEditor,
+	switchToVisualMode,
+	setupMultiAgentStep,
+	ensureChannelsSectionOpen,
+	addWorkflowChannel,
+} from '../helpers/workflow-editor-helpers';
+
+const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+
+// ─── Roles used across tests ──────────────────────────────────────────────────
+
+const ROLE_A = 'coder';
+const ROLE_B = 'reviewer';
+const AGENT_A_NAME = 'Coder Agent';
+const AGENT_B_NAME = 'Reviewer Agent';
+const AGENT_A_OPTION = `${AGENT_A_NAME} (${ROLE_A})`;
+const AGENT_B_OPTION = `${AGENT_B_NAME} (${ROLE_B})`;
+
+// ─── RPC helpers (infrastructure only) ───────────────────────────────────────
+
+/**
+ * Creates a space and two agents (coder, reviewer) for gate badge test scenarios.
+ * Returns only spaceId — agent IDs are not needed since agents are selected by
+ * option label in the UI.
+ */
+async function createTestSpace(page: Page): Promise<string> {
+	const spaceName = `E2E Gate Badges ${Date.now()}`;
+	const spaceId = await createSpace(page, spaceName);
+
+	await page.evaluate(
+		async ({ sid, roleA, roleB, agentAName, agentBName }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+			await hub.request('spaceAgent.create', {
+				spaceId: sid,
+				name: agentAName,
+				role: roleA,
+				description: '',
+			});
+			await hub.request('spaceAgent.create', {
+				spaceId: sid,
+				name: agentBName,
+				role: roleB,
+				description: '',
+			});
+		},
+		{
+			sid: spaceId,
+			roleA: ROLE_A,
+			roleB: ROLE_B,
+			agentAName: AGENT_A_NAME,
+			agentBName: AGENT_B_NAME,
+		}
+	);
+
+	return spaceId;
+}
+
+// ─── UI action helpers ────────────────────────────────────────────────────────
+
+/**
+ * Sets up a workflow with a multi-agent step and a one-way channel (coder → reviewer).
+ *
+ * Preconditions:
+ *   - Space is created with coder and reviewer agents
+ *   - Page is navigated to the space
+ *
+ * Postconditions:
+ *   - Visual workflow editor is open with 1 step (multi-agent: coder + reviewer)
+ *   - One-way channel coder → reviewer is added via sidebar
+ *   - NodeConfigPanel is closed
+ */
+async function setupWorkflowWithChannel(page: Page): Promise<void> {
+	await openNewWorkflowEditor(page);
+	await switchToVisualMode(page);
+
+	const editor = page.getByTestId('visual-workflow-editor');
+	await editor.getByTestId('workflow-name-input').fill('Gate Badges Test');
+
+	// Add a step and configure multi-agent
+	await editor.getByTestId('add-step-button').click();
+	const nodes = editor.locator('[data-testid^="workflow-node-"]');
+	// Task Agent node is not rendered as a visible SVG node (feature not implemented yet)
+	await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+	// The regular node (only one visible)
+	const regularNode = nodes.first();
+	await regularNode.click();
+	const panel = editor.getByTestId('node-config-panel');
+	await expect(panel).toBeVisible({ timeout: 3000 });
+	await panel.getByTestId('step-name-input').fill('Gate Step');
+	await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
+
+	// Close the node config panel — channels are added via the sidebar
+	await panel.getByTestId('close-button').click();
+	await expect(panel).not.toBeVisible({ timeout: 2000 });
+
+	// Add a one-way channel: coder → reviewer via the sidebar
+	await ensureChannelsSectionOpen(editor);
+	await addWorkflowChannel(editor, ROLE_A, ROLE_B, 'one-way');
+
+	// Verify the channel entry appears in the sidebar
+	const channelsList = editor.getByTestId('channels-list');
+	await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
+}
+
+/**
+ * Opens the gate editor for the first channel by clicking through:
+ *   Node → NodeConfigPanel → channel-link button → "Add Gate"
+ *
+ * Preconditions:
+ *   - Visual workflow editor is open with a multi-agent step and a channel
+ *   - NodeConfigPanel is closed
+ *
+ * Postconditions:
+ *   - GateEditorPanel is visible (embedded in NodeConfigPanel)
+ *   - A new gate has been created with empty fields
+ */
+async function openGateEditorForChannel(page: Page): Promise<void> {
+	const editor = page.getByTestId('visual-workflow-editor');
+
+	// Click the regular node to open NodeConfigPanel
+	const nodes = editor.locator('[data-testid^="workflow-node-"]');
+	const regularNode = nodes.first();
+	await regularNode.click();
+	const nodePanel = editor.getByTestId('node-config-panel');
+	await expect(nodePanel).toBeVisible({ timeout: 3000 });
+
+	// Click the channel-link button to open ChannelRelationConfigPanel (embedded)
+	const channelLinkButton = nodePanel.getByTestId('node-channel-link-button');
+	await expect(channelLinkButton).toBeVisible({ timeout: 5000 });
+	await channelLinkButton.click();
+
+	// ChannelRelationConfigPanel should appear (embedded in NodeConfigPanel)
+	const relationPanel = nodePanel.getByTestId('channel-relation-config-panel');
+	await expect(relationPanel).toBeVisible({ timeout: 5000 });
+
+	// Click "Add Gate" to create a gate and open GateEditorPanel
+	await relationPanel.getByTestId('channel-edge-add-gate-0').click();
+
+	// GateEditorPanel should now be visible (embedded, no header)
+	const gatePanel = nodePanel.getByTestId('gate-editor-panel');
+	await expect(gatePanel).toBeVisible({ timeout: 5000 });
+}
+
+/**
+ * Returns a locator for the first gate badge on the canvas SVG.
+ * Uses a prefix match since the badge testid includes step IDs (UUIDs).
+ */
+function getFirstGateBadge(page: Page) {
+	return page.locator('[data-testid^="channel-gate-"]').first();
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+test.describe('Gate Custom Badges', () => {
+	test.describe.configure({ mode: 'serial' });
+	test.use({ viewport: DESKTOP_VIEWPORT });
+
+	let spaceId = '';
+
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await resetEditorModeStorage(page);
+		spaceId = await createTestSpace(page);
+	});
+
+	test.afterEach(async ({ page }) => {
+		if (spaceId) {
+			await deleteSpace(page, spaceId);
+			spaceId = '';
+		}
+	});
+
+	// ─── Test 1: Custom label on gate badge ──────────────────────────────────
+
+	test('gate badge shows custom label and color with heuristic fallback', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await setupWorkflowWithChannel(page);
+		await openGateEditorForChannel(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+		const nodePanel = editor.getByTestId('node-config-panel');
+		const gatePanel = nodePanel.getByTestId('gate-editor-panel');
+
+		// ── Step 1: Verify initial badge shows heuristic "Check" ──────────────
+		// A newly created gate has fields:[], so resolveSemanticGateType returns 'check'.
+		// The heuristic label for 'check' is "Check".
+		const gateBadge = getFirstGateBadge(page);
+		await expect(gateBadge).toBeVisible({ timeout: 5000 });
+		await expect(gateBadge).toContainText('Check');
+
+		// ── Step 2: Add Human Approval preset → gate type becomes 'human' ───
+		await gatePanel.getByTestId('gate-editor-preset-human').click();
+
+		// Badge should now show heuristic "Human" label
+		await expect(gateBadge).toContainText('Human', { timeout: 5000 });
+
+		// ── Step 3: Set custom label "Approve" ───────────────────────────────
+		const labelInput = gatePanel.getByTestId('gate-editor-label');
+		await labelInput.fill('Approve');
+
+		// Badge on canvas should update to show custom label
+		await expect(gateBadge).toContainText('Approve', { timeout: 3000 });
+
+		// Badge preview in GateEditorPanel should also show "Approve"
+		const badgePreview = gatePanel.getByTestId('gate-editor-badge-preview');
+		await expect(badgePreview).toContainText('Approve');
+
+		// ── Step 4: Set custom color #ff5500 ────────────────────────────────
+		const colorInput = gatePanel.getByTestId('gate-editor-color');
+		await colorInput.fill('#ff5500');
+
+		// Badge text element should use the custom color as fill
+		const badgeText = gateBadge.locator('text').first();
+		await expect(badgeText).toHaveAttribute('fill', '#ff5500', { timeout: 3000 });
+
+		// Color hex display should update next to the picker
+		await expect(gatePanel.locator('text=#ff5500')).toBeVisible({ timeout: 2000 });
+
+		// ── Step 5: Remove custom label → verify heuristic fallback ──────────
+		await labelInput.fill('');
+
+		// Badge should fall back to heuristic "Human" label
+		await expect(gateBadge).toContainText('Human', { timeout: 3000 });
+
+		// Badge preview should also fall back to "Gate" (default for empty label)
+		await expect(badgePreview).toContainText('Gate');
+	});
+
+	// ─── Test 2: Script-only gate (no fields) ────────────────────────────────
+
+	test('script-only gate can be created and the editor works', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await setupWorkflowWithChannel(page);
+		await openGateEditorForChannel(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+		const nodePanel = editor.getByTestId('node-config-panel');
+		const gatePanel = nodePanel.getByTestId('gate-editor-panel');
+
+		// ── Step 1: Toggle script enabled ────────────────────────────────────
+		const scriptToggle = gatePanel.getByTestId('gate-editor-script-enabled');
+		await scriptToggle.click();
+		await expect(scriptToggle).toHaveAttribute('aria-checked', 'true');
+
+		// ── Step 2: Verify script section UI renders ─────────────────────────
+		const interpreterSelect = gatePanel.getByTestId('gate-editor-script-interpreter');
+		await expect(interpreterSelect).toBeVisible({ timeout: 3000 });
+
+		const sourceTextarea = gatePanel.getByTestId('gate-editor-script-source');
+		await expect(sourceTextarea).toBeVisible({ timeout: 2000 });
+
+		const timeoutInput = gatePanel.getByTestId('gate-editor-script-timeout');
+		await expect(timeoutInput).toBeVisible({ timeout: 2000 });
+
+		// Default timeout should be 30
+		await expect(timeoutInput).toHaveValue('30');
+
+		// ── Step 3: Set interpreter to "node" ───────────────────────────────
+		await interpreterSelect.selectOption({ value: 'node' });
+
+		// ── Step 4: Type script source ───────────────────────────────────────
+		await sourceTextarea.fill("console.log('hello from gate script')");
+
+		// ── Step 5: Verify no gate completeness error ────────────────────────
+		// With script enabled and source set, the gate should pass completeness validation
+		const gateError = gatePanel.getByTestId('gate-editor-gate-error');
+		await expect(gateError).not.toBeVisible({ timeout: 2000 });
+
+		// ── Step 6: Verify badge shows on canvas ────────────────────────────
+		// Gate has fields:[] (type='check') + script enabled → badge renders
+		const gateBadge = getFirstGateBadge(page);
+		await expect(gateBadge).toBeVisible({ timeout: 5000 });
+
+		// Badge should show heuristic "Check" label
+		await expect(gateBadge).toContainText('Check');
+
+		// ── Step 7: Verify script icon ⚡ appears in the badge ──────────────
+		// The script icon is a separate <text> element containing "⚡"
+		await expect(gateBadge).toContainText('\u26A1');
+
+		// ── Step 8: Verify Lint Check preset works ──────────────────────────
+		await gatePanel.getByTestId('gate-editor-preset-lint').click();
+
+		// Interpreter should be 'bash' and source should contain 'npm run lint'
+		await expect(interpreterSelect).toHaveValue('bash');
+		const sourceValue = await sourceTextarea.inputValue();
+		expect(sourceValue).toContain('npm run lint');
+
+		// ── Step 9: Verify Type Check preset works ──────────────────────────
+		await gatePanel.getByTestId('gate-editor-preset-typecheck').click();
+
+		await expect(interpreterSelect).toHaveValue('bash');
+		const sourceValue2 = await sourceTextarea.inputValue();
+		expect(sourceValue2).toContain('npx tsc --noEmit');
+	});
+});
