@@ -34,6 +34,7 @@ import type {
 } from '../../../src/lib/space/runtime/notification-sink.ts';
 import type { SpaceWorkflow, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../src/lib/space/runtime/task-agent-manager.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 
 // ---------------------------------------------------------------------------
 // MockNotificationSink
@@ -147,6 +148,7 @@ describe('SpaceRuntime — notification events', () => {
 	const STEP_B = 'step-nb';
 
 	function makeRuntime(extraConfig?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
+		const nodeExecutionRepo = new NodeExecutionRepository(db);
 		const config: SpaceRuntimeConfig = {
 			db,
 			spaceManager,
@@ -154,6 +156,7 @@ describe('SpaceRuntime — notification events', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
+			nodeExecutionRepo,
 			notificationSink: sink,
 			...extraConfig,
 		};
@@ -1188,6 +1191,7 @@ describe('SpaceRuntime — notification events', () => {
 		const AGENT_PLANNER2 = 'agent-planner-cd';
 
 		function makeRuntimeWithTam(extraConfig?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
 			const config: SpaceRuntimeConfig = {
 				db,
 				spaceManager,
@@ -1195,6 +1199,7 @@ describe('SpaceRuntime — notification events', () => {
 				spaceWorkflowManager: workflowManager,
 				workflowRunRepo,
 				taskRepo,
+				nodeExecutionRepo,
 				notificationSink: sink,
 				taskAgentManager: new MockTaskAgentManager() as unknown as TaskAgentManager,
 				...extraConfig,
