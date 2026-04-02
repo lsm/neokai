@@ -168,7 +168,7 @@ export function isChannelOpen(
  * @param data Runtime data from the `gate_data` table.
  */
 export function evaluateGate(gate: Gate, data: Record<string, unknown>): GateEvalResult {
-	for (const field of gate.fields) {
+	for (const field of gate.fields ?? []) {
 		const result = evaluateFieldCheck(field, data);
 		if (!result.open) return result;
 	}

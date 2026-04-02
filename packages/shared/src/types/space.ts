@@ -577,13 +577,28 @@ export interface GateField {
  * write to gate data via `write_gate`; the runtime evaluates field checks
  * against current data to decide passage.
  */
+export interface GateScript {
+	/** Script interpreter: 'bash', 'node', or 'python3' */
+	interpreter: 'bash' | 'node' | 'python3';
+	/** Script source code to execute */
+	source: string;
+	/** Timeout in milliseconds (default: 30000) */
+	timeoutMs?: number;
+}
+
 export interface Gate {
 	/** Unique identifier */
 	id: string;
 	/** Human-readable description of what this gate checks. */
 	description?: string;
+	/** Custom label displayed on the gate badge in the workflow editor. */
+	label?: string;
+	/** Custom badge color (CSS color value). */
+	color?: string;
 	/** Declared fields with schema, permissions, and checks. */
-	fields: GateField[];
+	fields?: GateField[];
+	/** Optional script-based pre-check executed before field evaluation. */
+	script?: GateScript;
 	/**
 	 * When true, gate data is reset to defaults on cyclic channel traversal.
 	 * Used for cyclic workflows where gate state should be cleared each loop.
@@ -595,9 +610,9 @@ export interface Gate {
  * Compute default data for a gate from its field declarations.
  * Map fields get `{}`, others get nothing (no key in defaults).
  */
-export function computeGateDefaults(fields: GateField[]): Record<string, unknown> {
+export function computeGateDefaults(fields?: GateField[]): Record<string, unknown> {
 	const defaults: Record<string, unknown> = {};
-	for (const field of fields) {
+	for (const field of fields ?? []) {
 		if (field.type === 'map') {
 			defaults[field.name] = {};
 		}

@@ -56,7 +56,7 @@ function resolveSemanticGateType(
 		if (!gate) return 'check';
 
 		// Derive gate type from field declarations
-		const fields = gate.fields;
+		const fields = gate.fields ?? [];
 		if (fields.length === 0) return 'check';
 
 		// If any field is a map with count check -> 'count' (votes)
