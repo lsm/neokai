@@ -387,3 +387,25 @@ The existing detailed plan at `docs/plans/dev-branch-e2e-tests-health-check.md` 
 - Excluded tests (`space-export-import`, `space-workflow-rules`) are not investigated.
 - The guardian does NOT trigger `workflow_dispatch` or push to dev directly -- it is a read-only observer.
 - GitHub CLI is authenticated and `jq` is available in the agent environment.
+
+## Per-Execution Task Template
+
+Each hourly execution produces exactly one task:
+
+**Title:** E2E Discovery: check latest dev CI for failures
+**Agent:** general
+**Priority:** high
+
+```
+Check the latest completed CI run on the dev branch for E2E test failures.
+
+Steps:
+1. Run: gh run list --repo lsm/neokai --branch dev --limit 5 --status completed --json databaseId,conclusion,createdAt,headSha
+2. Pick the most recent non-cancelled run. If all 5 are cancelled, report "all cancelled" and exit.
+3. Run: gh run view --repo lsm/neokai <run-id> --json jobs --jq '.jobs[] | select(.name | test("e2e")) | {name: .name, conclusion: .conclusion}'
+4. If all E2E jobs passed, report "All green" and stop.
+5. For each failed E2E job, extract the failure message from job logs.
+6. Output a structured summary listing each failure with: test name, failure message, commit hash.
+
+Do NOT push commits. Do NOT create PRs. Do NOT modify any files. This is a READ-ONLY discovery task.
+```
