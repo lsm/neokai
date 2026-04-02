@@ -463,10 +463,11 @@ class RoomStore {
 			cleanups.push(unsubSkillDelta);
 
 			// --- Fire ALL subscribe calls in parallel ---
+			// Use Promise.allSettled so a single failure doesn't leak the other two.
 			// Mark goals loading before subscribing; the snapshot handler clears it.
 			this.goalStore.loading.value = true;
 
-			await Promise.all([
+			const subResults = await Promise.allSettled([
 				hub.request('liveQuery.subscribe', {
 					queryName: 'tasks.byRoom',
 					params: [roomId],
@@ -498,72 +499,67 @@ class RoomStore {
 				return;
 			}
 
-			// --- Register reconnect and cleanup handlers AFTER all subscribe calls resolve ---
+			const subIds = [tasksSubId, goalsSubId, skillsSubId] as const;
+			const queryNames = ['tasks.byRoom', 'goals.byRoom', 'skills.byRoom'] as const;
 
-			// Tasks reconnect + cleanup
-			const unsubTaskReconnect = hub.onConnection((state) => {
-				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
-				hub
-					.request('liveQuery.subscribe', {
-						queryName: 'tasks.byRoom',
-						params: [roomId],
-						subscriptionId: tasksSubId,
-					})
-					.catch((err) => {
-						logger.warn('Tasks LiveQuery re-subscribe failed:', err);
-					});
-			});
-			cleanups.push(unsubTaskReconnect);
-			cleanups.push(() => {
-				const h = connectionManager.getHubIfConnected();
-				if (h) {
-					h.request('liveQuery.unsubscribe', { subscriptionId: tasksSubId }).catch(() => {});
-				}
-			});
+			for (let i = 0; i < subResults.length; i++) {
+				const result = subResults[i];
+				const subId = subIds[i];
+				const queryName = queryNames[i];
 
-			// Goals reconnect + cleanup
-			const unsubGoalReconnect = hub.onConnection((state) => {
-				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
-				this.goalStore.loading.value = true;
-				hub
-					.request('liveQuery.subscribe', {
-						queryName: 'goals.byRoom',
-						params: [roomId],
-						subscriptionId: goalsSubId,
-					})
-					.catch((err) => {
-						logger.warn('Goals LiveQuery re-subscribe failed:', err);
-						this.goalStore.loading.value = false;
-					});
-			});
-			cleanups.push(unsubGoalReconnect);
-			cleanups.push(() => {
-				const h = connectionManager.getHubIfConnected();
-				if (h) {
-					h.request('liveQuery.unsubscribe', { subscriptionId: goalsSubId }).catch(() => {});
+				if (result.status === 'rejected') {
+					logger.warn(`${queryName} LiveQuery subscribe failed:`, result.reason);
+					// Fire-and-forget unsubscribe in case the server partially registered
+					const h = connectionManager.getHubIfConnected();
+					if (h) {
+						h.request('liveQuery.unsubscribe', { subscriptionId: subId }).catch(() => {});
+					}
+					continue;
 				}
-			});
 
-			// Skills reconnect + cleanup
-			const unsubSkillReconnect = hub.onConnection((state) => {
-				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
-				hub
-					.request('liveQuery.subscribe', {
-						queryName: 'skills.byRoom',
-						params: [roomId],
-						subscriptionId: skillsSubId,
-					})
-					.catch((err) => {
-						logger.warn('Skills LiveQuery re-subscribe failed:', err);
+				// Successful subscription — add reconnect and cleanup handlers
+				const qn = queryName;
+				const sid = subId;
+
+				if (qn === 'goals.byRoom') {
+					const unsubReconnect = hub.onConnection((state) => {
+						if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
+						this.goalStore.loading.value = true;
+						hub
+							.request('liveQuery.subscribe', {
+								queryName: qn,
+								params: [roomId],
+								subscriptionId: sid,
+							})
+							.catch((err) => {
+								logger.warn(`${qn} LiveQuery re-subscribe failed:`, err);
+								this.goalStore.loading.value = false;
+							});
 					});
-			});
-			cleanups.push(unsubSkillReconnect);
-			cleanups.push(() => {
-				const h = connectionManager.getHubIfConnected();
-				if (h) {
-					h.request('liveQuery.unsubscribe', { subscriptionId: skillsSubId }).catch(() => {});
+					cleanups.push(unsubReconnect);
+				} else {
+					const unsubReconnect = hub.onConnection((state) => {
+						if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
+						hub
+							.request('liveQuery.subscribe', {
+								queryName: qn,
+								params: [roomId],
+								subscriptionId: sid,
+							})
+							.catch((err) => {
+								logger.warn(`${qn} LiveQuery re-subscribe failed:`, err);
+							});
+					});
+					cleanups.push(unsubReconnect);
 				}
-			});
+
+				cleanups.push(() => {
+					const h = connectionManager.getHubIfConnected();
+					if (h) {
+						h.request('liveQuery.unsubscribe', { subscriptionId: sid }).catch(() => {});
+					}
+				});
+			}
 		} catch (err) {
 			this.liveQueryActive.delete(roomId);
 			// Run any cleanups that were registered before the error, so that
@@ -750,7 +746,7 @@ class RoomStore {
 			}
 
 			// Process runtime state result
-			if (runtimeStateResult.status === 'fulfilled') {
+			if (runtimeStateResult.status === 'fulfilled' && runtimeStateResult.value?.state) {
 				this.runtimeState.value = runtimeStateResult.value.state;
 			}
 			// Runtime may not exist yet — silently ignore rejection
