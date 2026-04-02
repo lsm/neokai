@@ -495,7 +495,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					const gateId = channelGateMap.get(`${ch.fromRole}→${ch.toRole}`);
 					const gateEntity = gateId ? gatesById.get(gateId) : undefined;
 					const gateType = gateEntity
-						? gateEntity.fields.some((f) => f.type === 'map' && f.check.op === 'count')
+						? (gateEntity.fields ?? []).some((f) => f.type === 'map' && f.check.op === 'count')
 							? 'count'
 							: 'check'
 						: 'none';
@@ -667,7 +667,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 
 			// Field-level authorization: check each key in data against field declarations
-			const fieldMap = new Map(gateDef.fields.map((f) => [f.name, f]));
+			const fieldMap = new Map((gateDef.fields ?? []).map((f) => [f.name, f]));
 			for (const key of Object.keys(data)) {
 				const fieldDef = fieldMap.get(key);
 				if (!fieldDef) {
@@ -675,7 +675,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						success: false,
 						error:
 							`Field "${key}" is not declared in gate "${gateId}". ` +
-							`Declared fields: ${gateDef.fields.map((f) => f.name).join(', ') || '(none)'}.`,
+							`Declared fields: ${(gateDef.fields ?? []).map((f) => f.name).join(', ') || '(none)'}.`,
 					});
 				}
 				const writers = fieldDef.writers;

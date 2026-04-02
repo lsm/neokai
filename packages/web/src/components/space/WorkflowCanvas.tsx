@@ -121,14 +121,14 @@ function computeVoteCount(
  *   - All fields must pass their checks for the gate to be open.
  */
 function evaluateGateStatus(gate: Gate, data: Record<string, unknown>): GateStatus {
-	if (gate.fields.length === 0) return 'open';
+	if ((gate.fields ?? []).length === 0) return 'open';
 
 	// Check for human approval field first
-	if (isHumanApprovalGate(gate.fields)) {
+	if (isHumanApprovalGate(gate.fields ?? [])) {
 		const val = data['approved'];
 		if (val === true) {
 			// Check remaining fields too
-			const othersPassed = gate.fields.every((f) => {
+			const othersPassed = (gate.fields ?? []).every((f) => {
 				if (f.name === 'approved') return true;
 				return evalFieldStatus(f, data) === 'open';
 			});
@@ -139,7 +139,7 @@ function evaluateGateStatus(gate: Gate, data: Record<string, unknown>): GateStat
 	}
 
 	// All fields must pass
-	for (const field of gate.fields) {
+	for (const field of gate.fields ?? []) {
 		const status = evalFieldStatus(field, data);
 		if (status !== 'open') return status;
 	}
@@ -1207,9 +1207,9 @@ export function WorkflowCanvas({
 					}
 
 					// Channels without gates are always available (plain arrows)
-					const isHumanGate = gate ? isHumanApprovalGate(gate.fields) : false;
+					const isHumanGate = gate ? isHumanApprovalGate(gate.fields ?? []) : false;
 					const voteCount =
-						gate && isRuntimeMode ? computeVoteCount(gate.fields, gateData) : undefined;
+						gate && isRuntimeMode ? computeVoteCount(gate.fields ?? [], gateData) : undefined;
 
 					return (
 						<g key={`ch-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>

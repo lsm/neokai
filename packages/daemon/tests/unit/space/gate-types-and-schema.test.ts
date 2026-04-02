@@ -17,7 +17,16 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
 import { SendMessageSchema } from '../../../src/lib/space/tools/node-agent-tool-schemas.ts';
-import type { Gate, Channel, WorkflowRunFailureReason, SpaceWorkflowRun } from '@neokai/shared';
+import type {
+	Gate,
+	Channel,
+	WorkflowRunFailureReason,
+	SpaceWorkflowRun,
+	GateScript,
+	GateField,
+} from '@neokai/shared';
+import { computeGateDefaults } from '@neokai/shared';
+import { evaluateGate } from '../../../src/lib/space/runtime/gate-evaluator.ts';
 
 // ---------------------------------------------------------------------------
 // DB setup
@@ -414,5 +423,246 @@ describe('SendMessageSchema — data field', () => {
 			data: 'not an object',
 		});
 		expect(result.success).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Extended Gate interface: label, color, script, optional fields
+// ---------------------------------------------------------------------------
+
+describe('Gate extended interface (label, color, script, optional fields)', () => {
+	test('Gate accepts label and color', () => {
+		const gate: Gate = {
+			id: 'gate-label-color',
+			label: 'Code Review',
+			color: '#22c55e',
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
+			resetOnCycle: false,
+		};
+		expect(gate.label).toBe('Code Review');
+		expect(gate.color).toBe('#22c55e');
+	});
+
+	test('Gate accepts GateScript', () => {
+		const script: GateScript = {
+			interpreter: 'bash',
+			source: 'echo "check passed"',
+			timeoutMs: 5000,
+		};
+		const gate: Gate = {
+			id: 'gate-script',
+			script,
+			resetOnCycle: false,
+		};
+		expect(gate.script).toBeDefined();
+		expect(gate.script!.interpreter).toBe('bash');
+		expect(gate.script!.source).toBe('echo "check passed"');
+		expect(gate.script!.timeoutMs).toBe(5000);
+	});
+
+	test('GateScript accepts all interpreter types', () => {
+		const interpreters: GateScript['interpreter'][] = ['bash', 'node', 'python3'];
+		for (const interpreter of interpreters) {
+			const script: GateScript = { interpreter, source: 'test' };
+			expect(script.interpreter).toBe(interpreter);
+		}
+	});
+
+	test('GateScript timeoutMs is optional', () => {
+		const script: GateScript = {
+			interpreter: 'node',
+			source: 'console.log("ok")',
+		};
+		expect(script.timeoutMs).toBeUndefined();
+	});
+
+	test('Gate without fields compiles and fields is undefined', () => {
+		const gate: Gate = {
+			id: 'gate-no-fields',
+			script: {
+				interpreter: 'bash',
+				source: 'exit 0',
+			},
+			resetOnCycle: false,
+		};
+		expect(gate.fields).toBeUndefined();
+	});
+
+	test('Gate with all new fields together', () => {
+		const gate: Gate = {
+			id: 'gate-full',
+			description: 'Full gate',
+			label: 'Build Check',
+			color: '#ef4444',
+			fields: [
+				{
+					name: 'build_passed',
+					type: 'boolean',
+					writers: ['builder'],
+					check: { op: '==', value: true },
+				},
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'make test',
+				timeoutMs: 60000,
+			},
+			resetOnCycle: false,
+		};
+		expect(gate.label).toBe('Build Check');
+		expect(gate.color).toBe('#ef4444');
+		expect(gate.fields).toHaveLength(1);
+		expect(gate.script!.interpreter).toBe('bash');
+	});
+
+	test('Gate with only label and no fields or script', () => {
+		const gate: Gate = {
+			id: 'gate-label-only',
+			label: 'Manual Gate',
+			resetOnCycle: false,
+		};
+		expect(gate.label).toBe('Manual Gate');
+		expect(gate.fields).toBeUndefined();
+		expect(gate.script).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// computeGateDefaults with optional fields
+// ---------------------------------------------------------------------------
+
+describe('computeGateDefaults with optional fields', () => {
+	test('computeGateDefaults(undefined) returns empty object', () => {
+		const result = computeGateDefaults(undefined);
+		expect(result).toEqual({});
+	});
+
+	test('computeGateDefaults([]) returns empty object', () => {
+		const result = computeGateDefaults([]);
+		expect(result).toEqual({});
+	});
+
+	test('computeGateDefaults with map fields returns map defaults', () => {
+		const fields: GateField[] = [
+			{
+				name: 'reviews',
+				type: 'map',
+				writers: ['reviewer-1', 'reviewer-2'],
+				check: { op: 'count', match: 'approved', min: 2 },
+			},
+		];
+		const result = computeGateDefaults(fields);
+		expect(result).toEqual({ reviews: {} });
+	});
+
+	test('computeGateDefaults with boolean fields returns empty (no key)', () => {
+		const fields: GateField[] = [
+			{
+				name: 'approved',
+				type: 'boolean',
+				writers: ['reviewer'],
+				check: { op: '==', value: true },
+			},
+		];
+		const result = computeGateDefaults(fields);
+		expect(result).toEqual({});
+	});
+
+	test('computeGateDefaults with mixed fields returns only map defaults', () => {
+		const fields: GateField[] = [
+			{
+				name: 'approved',
+				type: 'boolean',
+				writers: ['reviewer'],
+				check: { op: '==', value: true },
+			},
+			{
+				name: 'votes',
+				type: 'map',
+				writers: ['*'],
+				check: { op: 'count', match: 'yes', min: 2 },
+			},
+			{
+				name: 'comment',
+				type: 'string',
+				writers: ['human'],
+				check: { op: 'exists' },
+			},
+		];
+		const result = computeGateDefaults(fields);
+		expect(result).toEqual({ votes: {} });
+	});
+
+	test('computeGateDefaults with multiple map fields returns all map defaults', () => {
+		const fields: GateField[] = [
+			{
+				name: 'reviewer_votes',
+				type: 'map',
+				writers: ['reviewer'],
+				check: { op: 'count', match: 'approved', min: 1 },
+			},
+			{
+				name: 'tester_votes',
+				type: 'map',
+				writers: ['tester'],
+				check: { op: 'count', match: 'passed', min: 1 },
+			},
+		];
+		const result = computeGateDefaults(fields);
+		expect(result).toEqual({ reviewer_votes: {}, tester_votes: {} });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// evaluateGate with optional fields
+// ---------------------------------------------------------------------------
+
+describe('evaluateGate with optional fields', () => {
+	test('Gate with no fields evaluates as open', () => {
+		const gate: Gate = {
+			id: 'gate-empty',
+			resetOnCycle: false,
+		};
+		const result = evaluateGate(gate, {});
+		expect(result.open).toBe(true);
+	});
+
+	test('Gate with script-only (no fields) evaluates as open', () => {
+		const gate: Gate = {
+			id: 'gate-script-only',
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const result = evaluateGate(gate, {});
+		expect(result.open).toBe(true);
+	});
+
+	test('Gate with fields still evaluates normally', () => {
+		const gate: Gate = {
+			id: 'gate-with-fields',
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
+			resetOnCycle: false,
+		};
+		const result = evaluateGate(gate, { approved: false });
+		expect(result.open).toBe(false);
+		const result2 = evaluateGate(gate, { approved: true });
+		expect(result2.open).toBe(true);
 	});
 });

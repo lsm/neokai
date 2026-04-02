@@ -135,7 +135,7 @@ function formatChannel(ch: WorkflowChannel, gates: Gate[]): string {
 
 function formatGate(gate: Gate): string {
 	const desc = gate.description ? ` — ${gate.description}` : '';
-	const fieldSummaries = gate.fields.map((f) => {
+	const fieldSummaries = (gate.fields ?? []).map((f) => {
 		const writers = f.writers.length > 0 ? f.writers.join(', ') : '(none)';
 		const checkDesc =
 			f.check.op === 'count'

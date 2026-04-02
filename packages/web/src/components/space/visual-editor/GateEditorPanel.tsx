@@ -38,7 +38,7 @@ export function GateEditorPanel({
 	}
 
 	function updateField(index: number, updated: GateField) {
-		const next = [...gate.fields];
+		const next = [...(gate.fields ?? [])];
 		next[index] = updated;
 		updateGate({ fields: next });
 	}
@@ -50,12 +50,12 @@ export function GateEditorPanel({
 			writers: ['*'],
 			check: { op: 'exists' },
 		};
-		updateGate({ fields: [...gate.fields, newField] });
-		setExpandedField(gate.fields.length);
+		updateGate({ fields: [...(gate.fields ?? []), newField] });
+		setExpandedField((gate.fields ?? []).length);
 	}
 
 	function deleteField(index: number) {
-		const next = gate.fields.filter((_, i) => i !== index);
+		const next = (gate.fields ?? []).filter((_, i) => i !== index);
 		updateGate({ fields: next });
 		if (expandedField === index) setExpandedField(null);
 		else if (expandedField !== null && expandedField > index) setExpandedField(expandedField - 1);
@@ -68,7 +68,7 @@ export function GateEditorPanel({
 			writers: ['human'],
 			check: { op: '==', value: true },
 		};
-		updateGate({ fields: [...gate.fields, preset] });
+		updateGate({ fields: [...(gate.fields ?? []), preset] });
 	}
 
 	function addTaskResultPreset() {
@@ -78,7 +78,7 @@ export function GateEditorPanel({
 			writers: ['*'],
 			check: { op: '==', value: 'passed' },
 		};
-		updateGate({ fields: [...gate.fields, preset] });
+		updateGate({ fields: [...(gate.fields ?? []), preset] });
 	}
 
 	return (
@@ -146,10 +146,10 @@ export function GateEditorPanel({
 			{/* Fields */}
 			<div class="space-y-2">
 				<label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Fields</label>
-				{gate.fields.length === 0 && (
+				{(gate.fields ?? []).length === 0 && (
 					<p class="text-xs text-gray-600 italic">No fields — gate always opens</p>
 				)}
-				{gate.fields.map((field, i) => (
+				{(gate.fields ?? []).map((field, i) => (
 					<FieldCard
 						key={i}
 						field={field}

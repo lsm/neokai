@@ -603,7 +603,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		setGates(
 			(template.gates ?? []).map((gate) => ({
 				...gate,
-				fields: [...gate.fields],
+				fields: [...(gate.fields ?? [])],
 			}))
 		);
 		if (template.tags) {

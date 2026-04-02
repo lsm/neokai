@@ -211,8 +211,8 @@ describe('workflowToVisualState', () => {
 		const state = workflowToVisualState(wf);
 		expect(state.gates).toHaveLength(1);
 		expect(state.gates[0].id).toBe('review-votes-gate');
-		expect(state.gates[0].fields[0].name).toBe('votes');
-		expect(state.gates[0].fields[0].check).toMatchObject({
+		expect(state.gates[0].fields![0].name).toBe('votes');
+		expect(state.gates[0].fields![0].check).toMatchObject({
 			op: 'count',
 			match: 'approved',
 			min: 3,

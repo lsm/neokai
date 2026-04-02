@@ -1010,7 +1010,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		}));
 		const nextGates = (template.gates ?? []).map((gate) => ({
 			...gate,
-			fields: [...gate.fields],
+			fields: [...(gate.fields ?? [])],
 		}));
 
 		setNodes(nextNodes);

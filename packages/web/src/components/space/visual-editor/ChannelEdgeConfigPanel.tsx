@@ -170,11 +170,11 @@ export function ChannelEdgeConfigPanel({
 				) : (
 					<div class="space-y-2">
 						{/* Field summary rows */}
-						{currentGate.fields.length === 0 ? (
+						{(currentGate.fields ?? []).length === 0 ? (
 							<p class="text-xs text-gray-600 italic">No fields defined yet</p>
 						) : (
 							<div class="space-y-1">
-								{currentGate.fields.map((field) => (
+								{(currentGate.fields ?? []).map((field) => (
 									<div
 										key={field.name}
 										class="flex items-center gap-2 text-xs bg-dark-800 rounded px-2 py-1.5 border border-dark-700"
