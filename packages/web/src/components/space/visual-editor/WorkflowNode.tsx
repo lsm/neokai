@@ -42,6 +42,8 @@ export interface WorkflowNodeProps {
 	isSelected?: boolean;
 	/** First step in the workflow — hides input port, adds green border + START badge */
 	isStartNode?: boolean;
+	/** Last step in the workflow — adds purple END badge */
+	isEndNode?: boolean;
 	/** Current viewport scale — used to convert screen-space drag deltas to canvas-space */
 	scale: number;
 	/** Called continuously while the node is being dragged */
@@ -149,6 +151,7 @@ export function WorkflowNode({
 	workflowChannels: _workflowChannels = [],
 	isSelected = false,
 	isStartNode = false,
+	isEndNode = false,
 	isDropTarget = false,
 	scale,
 	onPositionChange,
@@ -442,6 +445,14 @@ export function WorkflowNode({
 							class="text-xs font-bold text-green-400 uppercase tracking-wider"
 						>
 							START
+						</span>
+					)}
+					{isEndNode && (
+						<span
+							data-testid="end-badge"
+							class="text-xs font-bold text-purple-400 uppercase tracking-wider"
+						>
+							END
 						</span>
 					)}
 				</div>
