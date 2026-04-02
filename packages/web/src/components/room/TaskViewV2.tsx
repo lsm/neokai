@@ -39,6 +39,7 @@ import {
 	SetStatusModal,
 } from './task-shared/TaskActionDialogs';
 import { TaskHeader } from './task-shared/TaskHeader';
+import { TaskReviewBar } from './task-shared/TaskReviewBar';
 
 interface TaskViewV2Props {
 	roomId: string;
@@ -56,6 +57,7 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 		error,
 		associatedGoal,
 		conversationKey,
+		approveReviewedTask,
 		rejectReviewedTask,
 		interruptSession,
 		reactivateTask,
@@ -63,7 +65,9 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 		cancelTask,
 		archiveTask,
 		setTaskStatusManually,
+		approving,
 		rejecting,
+		reviewError,
 		interrupting,
 		reactivating,
 		rejectModal,
@@ -255,6 +259,18 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 					setStatus: false,
 				}}
 			/>
+
+			{/* Review bar — shown when awaiting human review */}
+			{group?.submittedForReview && (
+				<TaskReviewBar
+					task={task}
+					approving={approving}
+					rejecting={rejecting}
+					onApprove={approveReviewedTask}
+					onOpenRejectModal={rejectModal.open}
+					reviewError={reviewError}
+				/>
+			)}
 
 			{/* Dependencies */}
 			{task.dependsOn && task.dependsOn.length > 0 && (
