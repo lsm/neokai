@@ -35,13 +35,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type {
-	SpaceTask,
-	SpaceTaskType,
-	SpaceWorkflow,
-	WorkflowChannel,
-	WorkflowNode,
-} from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@neokai/shared';
 import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
@@ -78,12 +72,6 @@ export class ChannelGateBlockedError extends Error {
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** Resolved task-type metadata for a single agent slot */
-interface ResolvedTaskType {
-	taskType: SpaceTaskType;
-	customAgentId: string | undefined;
-}
 
 /**
  * Return value from deliverMessage().
@@ -203,7 +191,7 @@ export class ChannelRouter {
 		if (!run) {
 			throw new ActivationError(`Run not found: ${runId}`);
 		}
-		if (run.status === 'cancelled' || run.status === 'completed') {
+		if (run.status === 'cancelled' || run.status === 'done') {
 			throw new ActivationError(`Cannot activate node for run in status "${run.status}": ${runId}`);
 		}
 
@@ -236,19 +224,13 @@ export class ChannelRouter {
 
 		const tasks: SpaceTask[] = [];
 		for (const agentEntry of agents) {
-			const resolved = this.resolveTaskTypeForAgent(agentEntry.agentId);
 			try {
 				const task = this.config.taskRepo.createTask({
 					spaceId: run.spaceId,
 					title: node.name,
-					description: agentEntry.instructions ?? node.instructions ?? '',
+					description: agentEntry.instructions?.value ?? node.instructions ?? '',
 					workflowRunId: runId,
-					workflowNodeId: nodeId,
-					taskType: resolved.taskType,
-					customAgentId: resolved.customAgentId,
-					agentName: agentEntry.name,
-					status: 'pending',
-					goalId: run.goalId,
+					status: 'open',
 				});
 				tasks.push(task);
 			} catch (err) {
@@ -469,7 +451,7 @@ export class ChannelRouter {
 	 */
 	async onGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
 		const run = this.config.workflowRunRepo.getRun(runId);
-		if (!run || run.status === 'cancelled' || run.status === 'completed') return [];
+		if (!run || run.status === 'cancelled' || run.status === 'done') return [];
 
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) return [];
@@ -616,17 +598,11 @@ export class ChannelRouter {
 	 * same (run, node, slot) are allowed to coexist. Callers that create draft tasks
 	 * outside ChannelRouter must manage uniqueness themselves.
 	 */
-	private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
-		const ACTIVE_STATUSES = new Set([
-			'pending',
-			'in_progress',
-			'review',
-			'rate_limited',
-			'usage_limited',
-		]);
+	private getActiveTasksForNode(runId: string, _nodeId: string): SpaceTask[] {
+		const ACTIVE_STATUSES = new Set(['open', 'in_progress']);
 		return this.config.taskRepo
 			.listByWorkflowRun(runId)
-			.filter((t) => t.workflowNodeId === nodeId && ACTIVE_STATUSES.has(t.status));
+			.filter((t) => ACTIVE_STATUSES.has(t.status));
 	}
 
 	/**
@@ -752,21 +728,6 @@ export class ChannelRouter {
 				);
 			}
 		}
-	}
-
-	/**
-	 * Resolves the SpaceTaskType and optional customAgentId for an agent ID.
-	 * Mirrors SpaceRuntime.resolveTaskTypeForAgent() so task creation is consistent.
-	 */
-	private resolveTaskTypeForAgent(agentId: string): ResolvedTaskType {
-		const agent = this.config.agentManager.getById(agentId);
-		if (!agent) return { taskType: 'coding', customAgentId: agentId };
-		if (agent.role === 'planner') return { taskType: 'planning', customAgentId: undefined };
-		if (agent.role === 'coder' || agent.role === 'general') {
-			return { taskType: 'coding', customAgentId: undefined };
-		}
-		// Custom role
-		return { taskType: 'coding', customAgentId: agentId };
 	}
 }
 

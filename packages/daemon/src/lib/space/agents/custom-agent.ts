@@ -77,7 +77,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 	sections.push(`**Title:** ${task.title}`);
 	sections.push(`**Description:** ${task.description}`);
 	if (task.priority) sections.push(`**Priority:** ${task.priority}`);
-	if (task.taskType) sections.push(`**Type:** ${task.taskType}`);
+	// taskType removed from SpaceTask
 
 	if (workflowRun) {
 		sections.push(`\n## Workflow Context\n`);
@@ -104,12 +104,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 			}
 		}
 
-		if (workflow.rules.length > 0) {
-			sections.push(`\n**Workflow Rules:**`);
-			for (const rule of workflow.rules) {
-				sections.push(`- **${rule.name}:** ${rule.content}`);
-			}
-		}
+		// workflow.rules removed — no rule rendering
 	}
 
 	if (space.backgroundContext) {
@@ -164,9 +159,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 	if (customTools) {
 		const agentKey = sanitizeAgentKey(customAgent.name);
 		const agentDef: AgentDefinition = {
-			description:
-				customAgent.description ??
-				`Custom ${getRoleLabel(customAgent.role)} agent: ${customAgent.name}`,
+			description: customAgent.description ?? `Custom agent: ${customAgent.name}`,
 			tools: customTools,
 			model: 'inherit',
 			prompt: visiblePrompt,
@@ -179,7 +172,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 				type: 'preset',
 				preset: 'claude_code',
 			},
-			features: getFeaturesForRole(customAgent.role),
+			features: getFeaturesForRole('coder'),
 			context: { spaceId: space.id },
 			type: 'worker',
 			model,
@@ -198,7 +191,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			preset: 'claude_code',
 			append: visiblePrompt,
 		},
-		features: getFeaturesForRole(customAgent.role),
+		features: getFeaturesForRole('coder'),
 		context: { spaceId: space.id },
 		type: 'worker',
 		model,
@@ -226,6 +219,11 @@ export interface ResolveAgentInitConfig {
 	previousTaskSummaries?: string[];
 	/** Optional per-slot workflow overrides */
 	slotOverrides?: SlotOverrides;
+	/**
+	 * Explicit agent ID to use for this session.
+	 * Required since SpaceTask no longer stores customAgentId directly.
+	 */
+	agentId: string;
 }
 
 /**
@@ -242,17 +240,12 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		workflow,
 		previousTaskSummaries,
 		slotOverrides,
+		agentId,
 	} = config;
 
-	if (!task.customAgentId) {
-		throw new Error(
-			`Task "${task.id}" has no agentId — assign a SpaceAgent to the task before calling resolveAgentInit()`
-		);
-	}
-
-	const agent = agentManager.getById(task.customAgentId);
+	const agent = agentManager.getById(agentId);
 	if (!agent) {
-		throw new Error(`Agent not found: ${task.customAgentId} (task: ${task.id})`);
+		throw new Error(`Agent not found: ${agentId} (task: ${task.id})`);
 	}
 
 	return createCustomAgentInit({
@@ -276,9 +269,4 @@ function sanitizeAgentKey(name: string): string {
 			.replace(/^-+|-+$/g, '')
 			.slice(0, 40) || 'custom-agent'
 	);
-}
-
-function getRoleLabel(role: string): string {
-	if (!role) return 'Custom';
-	return role.charAt(0).toUpperCase() + role.slice(1);
 }

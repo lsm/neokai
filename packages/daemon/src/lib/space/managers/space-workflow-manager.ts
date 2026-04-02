@@ -31,7 +31,7 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
  */
 export interface SpaceAgentLookup {
 	/** Returns the SpaceAgent with the given UUID in the given space, or null if not found. */
-	getAgentById(spaceId: string, id: string): { id: string; name: string; role: string } | null;
+	getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,9 +100,7 @@ export class SpaceWorkflowManager {
 				(n): WorkflowNodeInput => ({
 					id: n.id,
 					name: n.name,
-					agentId: n.agentId,
 					agents: n.agents,
-					systemPrompt: n.systemPrompt,
 					instructions: n.instructions,
 				})
 			);
@@ -167,58 +165,43 @@ export class SpaceWorkflowManager {
 	}
 
 	private validateNodeAgentRef(spaceId: string, node: WorkflowNodeInput, index: number): void {
-		const hasAgentId = node.agentId && node.agentId.trim().length > 0;
 		const hasAgents = node.agents && node.agents.length > 0;
 
-		if (!hasAgentId && !hasAgents) {
-			throw new WorkflowValidationError(
-				`node[${index}]: at least one of agentId or agents must be provided`
-			);
+		if (!hasAgents) {
+			throw new WorkflowValidationError(`node[${index}]: agents must be a non-empty array`);
 		}
 
 		// Format-level validation: always run regardless of agentLookup
-		if (hasAgents) {
-			const seenNames = new Set<string>();
-			for (let j = 0; j < node.agents!.length; j++) {
-				const entry = node.agents![j];
-				if (!entry.agentId || !entry.agentId.trim()) {
-					throw new WorkflowValidationError(
-						`node[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
-					);
-				}
-				if (!entry.name || !entry.name.trim()) {
-					throw new WorkflowValidationError(
-						`node[${index}].agents[${j}]: name must be a non-empty string`
-					);
-				}
-				if (seenNames.has(entry.name)) {
-					throw new WorkflowValidationError(
-						`node[${index}].agents[${j}]: duplicate name "${entry.name}" — each agent slot must have a unique name within the node`
-					);
-				}
-				seenNames.add(entry.name);
+		const seenNames = new Set<string>();
+		for (let j = 0; j < node.agents.length; j++) {
+			const entry = node.agents[j];
+			if (!entry.agentId || !entry.agentId.trim()) {
+				throw new WorkflowValidationError(
+					`node[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
+				);
 			}
+			if (!entry.name || !entry.name.trim()) {
+				throw new WorkflowValidationError(
+					`node[${index}].agents[${j}]: name must be a non-empty string`
+				);
+			}
+			if (seenNames.has(entry.name)) {
+				throw new WorkflowValidationError(
+					`node[${index}].agents[${j}]: duplicate name "${entry.name}" — each agent slot must have a unique name within the node`
+				);
+			}
+			seenNames.add(entry.name);
 		}
 
 		// Existence validation: only when agentLookup is available.
 		if (this.agentLookup) {
-			if (hasAgentId) {
-				const agent = this.agentLookup.getAgentById(spaceId, node.agentId!);
+			for (let j = 0; j < node.agents.length; j++) {
+				const entry = node.agents[j];
+				const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
 				if (!agent) {
 					throw new WorkflowValidationError(
-						`node[${index}]: agentId "${node.agentId}" does not match any SpaceAgent in this space`
+						`node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
 					);
-				}
-			}
-			if (hasAgents) {
-				for (let j = 0; j < node.agents!.length; j++) {
-					const entry = node.agents![j];
-					const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
-					if (!agent) {
-						throw new WorkflowValidationError(
-							`node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
-						);
-					}
 				}
 			}
 		}

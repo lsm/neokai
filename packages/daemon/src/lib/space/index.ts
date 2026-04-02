@@ -34,8 +34,8 @@ export { NullNotificationSink } from './runtime/notification-sink';
 export type {
 	NotificationSink,
 	SpaceNotificationEvent,
-	TaskNeedsAttentionEvent,
-	WorkflowRunNeedsAttentionEvent,
+	TaskBlockedEvent,
+	WorkflowRunBlockedEvent,
 	TaskTimeoutEvent,
 	WorkflowRunCompletedEvent,
 } from './runtime/notification-sink';
@@ -123,9 +123,7 @@ export type { ValidationResult } from './export-format';
 export type {
 	SpaceWorkflow,
 	WorkflowNode,
-	WorkflowRule,
 	WorkflowNodeInput,
-	WorkflowRuleInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 } from '@neokai/shared';

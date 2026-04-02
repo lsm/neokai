@@ -64,7 +64,7 @@ import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 // ---- Helpers ----
 
 function makeAgent(id: string, name: string): SpaceAgent {
-	return { id, spaceId: 'space-1', name, role: 'coder', createdAt: 0, updatedAt: 0 };
+	return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
 }
 
 function makeWorkflow(): SpaceWorkflow {
@@ -74,11 +74,10 @@ function makeWorkflow(): SpaceWorkflow {
 		name: 'My Workflow',
 		description: '',
 		nodes: [
-			{ id: 'step-1', name: 'Plan', agentId: 'agent-1', instructions: '' },
-			{ id: 'step-2', name: 'Code', agentId: 'agent-2', instructions: '' },
+			{ id: 'step-1', name: 'Plan', agents: [{ agentId: 'agent-1', name: 'planner' }] },
+			{ id: 'step-2', name: 'Code', agents: [{ agentId: 'agent-2', name: 'coder' }] },
 		],
 		startNodeId: 'step-1',
-		rules: [],
 		tags: [],
 		createdAt: 0,
 		updatedAt: 0,

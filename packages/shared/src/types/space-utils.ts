@@ -66,46 +66,20 @@ export interface ResolvedChannel {
 /**
  * Resolves the concrete agent list for a workflow node.
  *
- * Precedence rules:
- * 1. If `agents` is provided and non-empty, it takes precedence.
- *    (`agentId`, if also set, is silently ignored — callers should validate
- *    and warn users that `agents` overrides `agentId` at edit time.)
- * 2. If only `agentId` is provided, returns a single-element array:
- *    `[{ agentId, name: agentId, instructions: node.instructions }]`.
- *    (The `agentId` is used as a synthetic name since no explicit name is available
- *    in the legacy shorthand format.)
- * 3. If neither is provided, throws an `Error`.
+ * Returns the node's `agents` array directly. Throws when `agents` is empty.
  *
  * @param node - The workflow node to resolve agents for.
  * @returns Non-empty array of `WorkflowNodeAgent` records for this node.
- * @throws {Error} When neither `agentId` nor `agents` is provided.
+ * @throws {Error} When `agents` is empty or not provided.
  */
 export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 	if (node.agents && node.agents.length > 0) {
-		return node.agents.map((agent) => ({
-			...agent,
-			// Node-level overrides take precedence only when defined;
-			// otherwise preserve the agent-level values.
-			systemPrompt: node.systemPrompt ?? agent.systemPrompt,
-			instructions: node.instructions ?? agent.instructions,
-		}));
-	}
-
-	if (node.agentId) {
-		return [
-			{
-				agentId: node.agentId,
-				name: node.agentId,
-				model: node.model,
-				systemPrompt: node.systemPrompt,
-				instructions: node.instructions,
-			},
-		];
+		return node.agents;
 	}
 
 	throw new Error(
-		`WorkflowNode "${node.name}" (id: ${node.id}) has neither agentId nor agents defined. ` +
-			'At least one must be provided.'
+		`WorkflowNode "${node.name}" (id: ${node.id}) has no agents defined. ` +
+			'At least one agent must be provided.'
 	);
 }
 

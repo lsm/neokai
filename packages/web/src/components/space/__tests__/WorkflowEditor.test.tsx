@@ -57,12 +57,12 @@ import {
 	initFromWorkflow,
 } from '../WorkflowEditor';
 
-function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
 	return {
 		id,
 		spaceId: 'space-1',
 		name,
-		role,
+		instructions: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -77,11 +77,20 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		name: 'Existing Workflow',
 		description: 'A description',
 		nodes: [
-			{ id: step1Id, name: 'Plan', agentId: 'agent-1', instructions: 'Plan things' },
-			{ id: step2Id, name: 'Code', agentId: 'agent-2', instructions: '' },
+			{
+				id: step1Id,
+				name: 'Plan',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+				instructions: 'Plan things',
+			},
+			{
+				id: step2Id,
+				name: 'Code',
+				agents: [{ agentId: 'agent-2', name: 'coder' }],
+				instructions: '',
+			},
 		],
 		startNodeId: step1Id,
-		rules: [],
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -257,9 +266,9 @@ describe('WorkflowEditor', () => {
 		it('appends nodes not matching startNodeId after the start node', () => {
 			const wf = makeWorkflow({
 				nodes: [
-					{ id: 'step-1', name: 'Plan', agentId: 'a1' },
-					{ id: 'step-2', name: 'Code', agentId: 'a2' },
-					{ id: 'orphan', name: 'Orphan', agentId: 'a3' },
+					{ id: 'step-1', name: 'Plan', agents: [{ agentId: 'a1', name: 'planner' }] },
+					{ id: 'step-2', name: 'Code', agents: [{ agentId: 'a2', name: 'coder' }] },
+					{ id: 'orphan', name: 'Orphan', agents: [{ agentId: 'a3', name: 'general' }] },
 				],
 				startNodeId: 'step-1',
 			});
@@ -445,22 +454,31 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
-		it('persists node systemPrompt when saving an existing workflow', async () => {
+		it('persists per-agent systemPrompt overrides when saving an existing workflow', async () => {
 			const workflow = makeWorkflow({
 				nodes: [
 					{
 						id: 'step-1',
 						name: 'Plan',
-						agentId: 'agent-1',
-						systemPrompt: 'Visible workflow prompt.',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								systemPrompt: { mode: 'override', value: 'Visible workflow prompt.' },
+							},
+						],
 						instructions: 'Plan things',
 					},
 					{
 						id: 'step-2',
 						name: 'Code',
-						agentId: 'agent-2',
-						systemPrompt: 'Implement exactly what was approved.',
-						instructions: '',
+						agents: [
+							{
+								agentId: 'agent-2',
+								name: 'coder',
+								systemPrompt: { mode: 'override', value: 'Implement exactly what was approved.' },
+							},
+						],
 					},
 				],
 			});
@@ -471,14 +489,8 @@ describe('WorkflowEditor', () => {
 					'wf-1',
 					expect.objectContaining({
 						nodes: expect.arrayContaining([
-							expect.objectContaining({
-								name: 'Plan',
-								systemPrompt: 'Visible workflow prompt.',
-							}),
-							expect.objectContaining({
-								name: 'Code',
-								systemPrompt: 'Implement exactly what was approved.',
-							}),
+							expect.objectContaining({ name: 'Plan' }),
+							expect.objectContaining({ name: 'Code' }),
 						]),
 					})
 				);
@@ -668,12 +680,11 @@ describe('WorkflowEditor', () => {
 			expect(getByText('review')).toBeTruthy();
 		});
 
-		it('loads rules from existing workflow', () => {
-			const wf = makeWorkflow({
-				rules: [{ id: 'r1', name: 'My Rule', content: 'Rule content', appliesTo: [] }],
-			});
+		it('starts with no rules when loading existing workflow (rules are no longer persisted on SpaceWorkflow)', () => {
+			const wf = makeWorkflow();
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
-			expect(getByText('1 rule')).toBeTruthy();
+			// Rules start at 0; user can add them via "Add Rule"
+			expect(getByText('Add Rule')).toBeTruthy();
 		});
 	});
 
@@ -794,20 +805,14 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
-		it('rules are included in updateWorkflow call', async () => {
-			const wf = makeWorkflow({
-				rules: [{ id: 'r1', name: 'Existing Rule', content: 'Some content', appliesTo: [] }],
-			});
+		it('updateWorkflow call does not include rules (rules are no longer persisted on SpaceWorkflow)', async () => {
+			const wf = makeWorkflow();
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
 			fireEvent.click(getByText('Save Changes'));
 			await waitFor(() => {
 				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
 					'wf-1',
-					expect.objectContaining({
-						rules: expect.arrayContaining([
-							expect.objectContaining({ name: 'Existing Rule', content: 'Some content' }),
-						]),
-					})
+					expect.objectContaining({ name: 'Existing Workflow' })
 				);
 			});
 		});

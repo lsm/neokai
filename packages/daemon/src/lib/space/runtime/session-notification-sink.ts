@@ -101,10 +101,10 @@ export function formatEventMessage(
 	autonomyLevel: AutonomyLevel
 ): string {
 	switch (event.kind) {
-		case 'task_needs_attention':
-			return formatTaskNeedsAttention(event, autonomyLevel);
-		case 'workflow_run_needs_attention':
-			return formatWorkflowRunNeedsAttention(event, autonomyLevel);
+		case 'task_blocked':
+			return formatTaskBlocked(event, autonomyLevel);
+		case 'workflow_run_blocked':
+			return formatWorkflowRunBlocked(event, autonomyLevel);
 		case 'task_timeout':
 			return formatTaskTimeout(event, autonomyLevel);
 		case 'workflow_run_completed':
@@ -116,9 +116,9 @@ export function formatEventMessage(
 	}
 }
 
-function formatTaskNeedsAttention(
+function formatTaskBlocked(
 	event: {
-		kind: 'task_needs_attention';
+		kind: 'task_blocked';
 		spaceId: string;
 		taskId: string;
 		reason: string;
@@ -126,7 +126,7 @@ function formatTaskNeedsAttention(
 	},
 	autonomyLevel: AutonomyLevel
 ): string {
-	const humanReadable = `Task ${event.taskId} in space ${event.spaceId} needs attention: ${event.reason}`;
+	const humanReadable = `Task ${event.taskId} in space ${event.spaceId} is blocked: ${event.reason}`;
 	const payload = {
 		kind: event.kind,
 		spaceId: event.spaceId,
@@ -138,9 +138,9 @@ function formatTaskNeedsAttention(
 	return buildMessage(event.kind, humanReadable, payload);
 }
 
-function formatWorkflowRunNeedsAttention(
+function formatWorkflowRunBlocked(
 	event: {
-		kind: 'workflow_run_needs_attention';
+		kind: 'workflow_run_blocked';
 		spaceId: string;
 		runId: string;
 		reason: string;
@@ -148,7 +148,7 @@ function formatWorkflowRunNeedsAttention(
 	},
 	autonomyLevel: AutonomyLevel
 ): string {
-	const humanReadable = `Workflow run ${event.runId} in space ${event.spaceId} needs attention: ${event.reason}`;
+	const humanReadable = `Workflow run ${event.runId} in space ${event.spaceId} is blocked: ${event.reason}`;
 	const payload = {
 		kind: event.kind,
 		spaceId: event.spaceId,
@@ -188,18 +188,18 @@ function formatWorkflowRunCompleted(
 		kind: 'workflow_run_completed';
 		spaceId: string;
 		runId: string;
-		status: 'completed' | 'cancelled' | 'needs_attention';
+		status: 'done' | 'cancelled' | 'blocked';
 		summary?: string;
 		timestamp: string;
 	},
 	autonomyLevel: AutonomyLevel
 ): string {
 	const statusLabel =
-		event.status === 'completed'
+		event.status === 'done'
 			? 'completed successfully'
 			: event.status === 'cancelled'
 				? 'was cancelled'
-				: 'ended and needs attention';
+				: 'ended and is blocked';
 	const summaryPart = event.summary ? ` Summary: ${event.summary}` : '';
 	const humanReadable = `Workflow run ${event.runId} in space ${event.spaceId} ${statusLabel}.${summaryPart}`;
 	const payload: Record<string, unknown> = {
@@ -251,7 +251,7 @@ function formatAgentCrash(
 ): string {
 	const humanReadable =
 		`Task ${event.taskId} in space ${event.spaceId} encountered an agent crash. ` +
-		`The task has been marked as needs_attention. ` +
+		`The task has been marked as blocked. ` +
 		`Please investigate and retry the task when ready.`;
 	const payload = {
 		kind: event.kind,

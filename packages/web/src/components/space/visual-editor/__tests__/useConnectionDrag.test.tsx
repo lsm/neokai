@@ -45,7 +45,7 @@ afterEach(() => cleanup());
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
 function makeAgent(id: string, name = 'Agent'): SpaceAgent {
-	return { id, spaceId: 'space-1', name, role: 'coder', createdAt: 0, updatedAt: 0 };
+	return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
 }
 
 function makeStep(localId: string, name = 'Step'): NodeDraft {

@@ -58,11 +58,10 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		name: 'My Workflow',
 		description: 'Does stuff',
 		nodes: [
-			{ id: s1, name: 'Plan', agentId: 'a1' },
-			{ id: s2, name: 'Code', agentId: 'a2' },
+			{ id: s1, name: 'Plan', agents: [{ agentId: 'a1', name: 'planner' }] },
+			{ id: s2, name: 'Code', agents: [{ agentId: 'a2', name: 'coder' }] },
 		],
 		startNodeId: s1,
-		rules: [],
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -153,7 +152,7 @@ describe('WorkflowList', () => {
 			...defaultProps,
 			workflows: [
 				makeWorkflow({
-					nodes: [{ id: s1, name: 'Plan', agentId: 'a1' }],
+					nodes: [{ id: s1, name: 'Plan', agents: [{ agentId: 'a1', name: 'planner' }] }],
 					startNodeId: s1,
 				}),
 			],

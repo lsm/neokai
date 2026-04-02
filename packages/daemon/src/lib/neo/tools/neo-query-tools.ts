@@ -496,9 +496,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			}
 
 			const runs = workflowRunRepository.listBySpace(space.id);
-			const activeRuns = runs.filter(
-				(r) => r.status === 'in_progress' || r.status === 'needs_attention'
-			);
+			const activeRuns = runs.filter((r) => r.status === 'in_progress' || r.status === 'blocked');
 
 			// listBySpace defaults to includeArchived=false, matching the UI behavior.
 			// Archived tasks are intentionally excluded from the counts here.
@@ -553,7 +551,6 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			const agentsSummary = agents.map((a) => ({
 				id: a.id,
 				name: a.name,
-				role: a.role,
 				model: a.model ?? null,
 			}));
 
@@ -598,11 +595,9 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				agents.map((a) => ({
 					id: a.id,
 					name: a.name,
-					role: a.role,
 					description: a.description ?? null,
 					model: a.model ?? null,
 					provider: a.provider ?? null,
-					injectWorkflowContext: a.injectWorkflowContext ?? false,
 					createdAt: a.createdAt,
 					updatedAt: a.updatedAt,
 				}))
@@ -656,8 +651,6 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 					description: r.description ?? null,
 					status: r.status,
 					workflowId: r.workflowId,
-					goalId: r.goalId ?? null,
-					iterationCount: r.iterationCount,
 					createdAt: r.createdAt,
 					updatedAt: r.updatedAt,
 					completedAt: r.completedAt ?? null,

@@ -25,7 +25,6 @@ import { WorkflowNodeCard } from './WorkflowNodeCard';
 import type { NodeDraft, ConditionDraft, AgentTaskState } from './WorkflowNodeCard';
 import { WorkflowRulesEditor } from './WorkflowRulesEditor';
 import type { RuleDraft } from './WorkflowRulesEditor';
-import { rulesToDrafts } from './WorkflowRulesEditor';
 import { ChannelEditor } from './ChannelEditor';
 
 // ============================================================================
@@ -322,9 +321,7 @@ function makeDefaultCondition(): ConditionDraft {
  * orchestration layer and must not be assigned to workflow steps.
  */
 export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
-	return agents.filter(
-		(a) => a.name.toLowerCase() !== 'leader' && a.role.toLowerCase() !== 'leader'
-	);
+	return agents.filter((a) => a.name.toLowerCase() !== 'leader');
 }
 
 function capitalizeRole(role: string): string {
@@ -338,9 +335,7 @@ function resolveTemplateAgent(
 ): SpaceAgent | undefined {
 	const key = roleOrName.trim().toLowerCase();
 	if (!key) return undefined;
-	const matches = agents.filter(
-		(a) => a.name.toLowerCase() === key || a.role.toLowerCase() === key
-	);
+	const matches = agents.filter((a) => a.name.toLowerCase() === key);
 	if (matches.length === 0) return undefined;
 
 	// Prefer distinct matches for repeated slots of the same role, then fall back
@@ -376,7 +371,9 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				return {
 					agentId: assigned?.id ?? '',
 					name: slot.name?.trim() || `${capitalizeRole(slot.role)} ${slotIndex + 1}`,
-					instructions: slot.instructions?.trim() || undefined,
+					instructions: slot.instructions?.trim()
+						? { mode: 'override' as const, value: slot.instructions.trim() }
+						: undefined,
 				};
 			});
 
@@ -437,9 +434,10 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 			localId: makeLocalId(),
 			id: startNode.id,
 			name: startNode.name,
-			agentId: startNode.agentId ?? '',
-			systemPrompt: startNode.systemPrompt ?? undefined,
+			agentId: startNode.agents?.[0]?.agentId ?? '',
+			systemPrompt: undefined,
 			instructions: startNode.instructions ?? '',
+			agents: startNode.agents && startNode.agents.length > 1 ? startNode.agents : undefined,
 		});
 	}
 
@@ -450,9 +448,10 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 				localId: makeLocalId(),
 				id: s.id,
 				name: s.name,
-				agentId: s.agentId ?? '',
-				systemPrompt: s.systemPrompt ?? undefined,
+				agentId: s.agents?.[0]?.agentId ?? '',
+				systemPrompt: undefined,
 				instructions: s.instructions ?? '',
+				agents: s.agents && s.agents.length > 1 ? s.agents : undefined,
 			});
 		}
 	}
@@ -463,7 +462,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 	return {
 		steps: ordered,
 		transitions: conditions,
-		rules: rulesToDrafts(wf.rules ?? []),
+		rules: [],
 		tags: wf.tags ?? [],
 		channels: wf.channels ?? [],
 		gates: wf.gates ?? [],
@@ -653,56 +652,34 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 			// Generate IDs for new steps
 			const stepIds = steps.map((s) => s.id ?? generateUUID());
 
-			// Map from the display ID used in WorkflowRulesEditor (s.id ?? s.localId)
-			// to the final persisted step ID, so appliesTo references survive the save.
-			const displayIdToStepId = new Map<string, string>(
-				steps.map((s, i) => [s.id ?? s.localId, stepIds[i]])
-			);
-
 			const builtNodes = steps.map((s, i) => ({
 				id: stepIds[i],
 				name: s.name || `Step ${i + 1}`,
-				agentId: s.agentId ?? '',
-				systemPrompt: s.systemPrompt || undefined,
+				agents:
+					s.agents && s.agents.length > 0
+						? s.agents
+						: s.agentId
+							? [{ agentId: s.agentId, name: s.name || `Step ${i + 1}` }]
+							: [],
 				instructions: s.instructions || undefined,
 			}));
 
-			// Build rules — filter out completely blank drafts
-			const filteredRuleDrafts = rules.filter((r) => r.name.trim() || r.content.trim());
-
 			if (isEditing && workflow) {
-				// Update needs full WorkflowRule objects with IDs
-				const updateRules = filteredRuleDrafts.map((r) => ({
-					id: r.id ?? generateUUID(),
-					name: r.name.trim() || 'Untitled Rule',
-					content: r.content,
-					// Remap display IDs (localId for new steps) to final persisted step IDs
-					appliesTo: r.appliesTo.map((id) => displayIdToStepId.get(id) ?? id),
-				}));
 				await spaceStore.updateWorkflow(workflow.id, {
 					name: name.trim(),
 					description: description.trim() || null,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
-					rules: updateRules,
 					tags,
 					channels: channels.length > 0 ? channels : [],
 					gates: gates.length > 0 ? gates : [],
 				});
 			} else {
-				// Create uses WorkflowRuleInput (no id)
-				const createRules = filteredRuleDrafts.map((r) => ({
-					name: r.name.trim() || 'Untitled Rule',
-					content: r.content,
-					// Remap display IDs (localId for new steps) to final persisted step IDs
-					appliesTo: r.appliesTo.map((id) => displayIdToStepId.get(id) ?? id),
-				}));
 				await spaceStore.createWorkflow({
 					name: name.trim(),
 					description: description.trim() || undefined,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
-					rules: createRules,
 					tags,
 					channels: channels.length > 0 ? channels : undefined,
 					gates: gates.length > 0 ? gates : undefined,
@@ -840,9 +817,9 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 								? allNodeTasks.filter((t) => t.workflowRunId === relevantRunId)
 								: allNodeTasks;
 							const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
-								agentName: t.agentName ?? null,
+								agentName: null,
 								status: t.status,
-								completionSummary: t.completionSummary,
+								completionSummary: t.result ?? null,
 							}));
 							return (
 								<WorkflowNodeCard
@@ -887,7 +864,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					<ChannelEditor
 						channels={channels}
 						onChange={setChannels}
-						agentRoles={agents.map((a) => a.role).filter(Boolean)}
+						agentRoles={agents.map((a) => a.name).filter(Boolean)}
 					/>
 				</div>
 
@@ -948,8 +925,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					steps={steps.map((s, i) => ({
 						id: s.id ?? s.localId,
 						name: s.name || `Step ${i + 1}`,
-						agentId: s.agentId ?? '',
-						instructions: s.instructions,
+						agents: s.agents ?? [],
 					}))}
 					onChange={setRules}
 				/>

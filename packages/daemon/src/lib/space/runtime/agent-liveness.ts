@@ -114,7 +114,7 @@ export async function autoCompleteStuckAgents(
 		);
 
 		const updated = taskRepo.updateTask(task.id, {
-			status: 'completed',
+			status: 'done',
 			result,
 		});
 

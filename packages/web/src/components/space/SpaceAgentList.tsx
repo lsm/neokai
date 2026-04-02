@@ -19,7 +19,8 @@ import { Modal } from '../ui/Modal';
 import type { SpaceAgent } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 
-function RoleBadge({ role }: { role: string }) {
+function RoleBadge({ role }: { role?: string }) {
+	if (!role) return null;
 	const colorMap: Record<string, string> = {
 		worker: 'bg-blue-900/40 text-blue-300 border-blue-800/60',
 		reviewer: 'bg-purple-900/40 text-purple-300 border-purple-800/60',
@@ -45,7 +46,7 @@ function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-2 flex-wrap">
 						<span class="text-sm font-medium text-gray-100">{agent.name}</span>
-						<RoleBadge role={agent.role} />
+						<RoleBadge role={agent.description} />
 						{agent.model && <span class="text-xs text-gray-500 font-mono">{agent.model}</span>}
 					</div>
 					{agent.description && (
@@ -138,7 +139,7 @@ export function SpaceAgentList() {
 
 	function getWorkflowNamesReferencingAgent(agentId: string): string[] {
 		return workflows
-			.filter((wf) => wf.nodes.some((step) => step.agentId === agentId))
+			.filter((wf) => wf.nodes.some((step) => step.agents.some((a) => a.agentId === agentId)))
 			.map((wf) => wf.name);
 	}
 

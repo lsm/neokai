@@ -26,27 +26,24 @@ export function setupSpaceAgentHandlers(
 		const params = data as {
 			spaceId: string;
 			name: string;
-			role: string;
 			description?: string;
 			model?: string;
 			provider?: string;
-			toolConfig?: Record<string, unknown>;
 			systemPrompt?: string;
+			instructions?: string | null;
 		};
 
 		if (!params.spaceId) throw new Error('spaceId is required');
 		if (!params.name) throw new Error('name is required');
-		if (!params.role) throw new Error('role is required');
 
 		const result = await spaceAgentManager.create({
 			spaceId: params.spaceId,
 			name: params.name,
-			role: params.role,
 			description: params.description,
 			model: params.model,
 			provider: params.provider,
-			toolConfig: params.toolConfig,
 			systemPrompt: params.systemPrompt,
+			instructions: params.instructions,
 		});
 
 		if (!result.ok) throw new Error(result.error);
@@ -90,11 +87,10 @@ export function setupSpaceAgentHandlers(
 			id: string;
 			name?: string;
 			description?: string | null;
-			role?: string;
 			model?: string | null;
 			provider?: string | null;
-			toolConfig?: Record<string, unknown> | null;
 			systemPrompt?: string | null;
+			instructions?: string | null;
 		};
 
 		if (!params.id) throw new Error('id is required');
@@ -103,11 +99,10 @@ export function setupSpaceAgentHandlers(
 		const result = await spaceAgentManager.update(id, {
 			name: updateFields.name,
 			description: updateFields.description,
-			role: updateFields.role,
 			model: updateFields.model,
 			provider: updateFields.provider,
-			toolConfig: updateFields.toolConfig,
 			systemPrompt: updateFields.systemPrompt,
+			instructions: updateFields.instructions,
 		});
 
 		if (!result.ok) throw new Error(result.error);

@@ -89,7 +89,7 @@ export function setupSpaceHandlers(
 			seedBuiltInWorkflows(
 				space.id,
 				spaceWorkflowManager,
-				(role) => agents.find((a) => a.role === role)?.id
+				(name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id
 			);
 		} catch (err) {
 			log.warn('Failed to seed built-in workflows for space', space.id, err);
@@ -265,7 +265,7 @@ export function setupSpaceHandlers(
 			...space,
 			tasks: taskRepo
 				.listBySpace(space.id)
-				.filter((t) => t.status !== 'completed' && t.status !== 'cancelled'),
+				.filter((t) => t.status !== 'done' && t.status !== 'cancelled'),
 		}));
 	});
 

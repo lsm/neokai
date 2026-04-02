@@ -327,7 +327,7 @@ export class TaskAgentManager {
 			kickoff: false,
 		});
 
-		if (task.status === 'pending') {
+		if (task.status === 'open') {
 			this.config.taskRepo.updateTask(taskId, { status: 'in_progress' });
 		}
 
@@ -396,8 +396,7 @@ export class TaskAgentManager {
 			space.id,
 			selectedWorkflow.id,
 			task.title,
-			task.description,
-			task.goalId
+			task.description
 		);
 
 		const bootstrapTask = startTasks[0];
@@ -411,7 +410,6 @@ export class TaskAgentManager {
 			workflowRunId: run.id,
 			// Keep orchestration tasks detached from concrete workflow nodes.
 			// Node-scoped tasks are created by the runtime as separate rows.
-			workflowNodeId: null,
 		});
 
 		const reboundTask = this.config.taskRepo.getTask(task.id);
@@ -568,14 +566,9 @@ export class TaskAgentManager {
 						`TaskAgentManager: created worktree for task ${taskId} at ${result.path} (slug: ${result.slug})`
 					);
 
-					// Persist worktree path in workflow run config for M6 artifacts RPC.
-					if (workflowRun) {
-						const updatedConfig = {
-							...workflowRun.config,
-							worktreePath: result.path,
-						};
-						this.config.workflowRunRepo.updateRun(workflowRun.id, { config: updatedConfig });
-					}
+					// Worktree path is stored in-memory in taskWorktreePaths map.
+					// Persisting to run config is no longer supported.
+					void workflowRun;
 				} catch (err) {
 					log.warn(
 						`TaskAgentManager: failed to create worktree for task ${taskId}, falling back to space workspace: ${err instanceof Error ? err.message : String(err)}`
@@ -959,7 +952,7 @@ export class TaskAgentManager {
 	 * @param reason - 'cancelled': remove the worktree immediately.
 	 *                 'completed' (default): mark the worktree as completed for TTL-based cleanup.
 	 */
-	async cleanup(taskId: string, reason: 'completed' | 'cancelled' = 'completed'): Promise<void> {
+	async cleanup(taskId: string, reason: 'done' | 'cancelled' = 'done'): Promise<void> {
 		// Collect the exact session IDs that belong to this task so that
 		// the callback/listener cleanup in steps 3 & 4 uses precise matches
 		// rather than a fragile substring check.
@@ -1213,7 +1206,7 @@ export class TaskAgentManager {
 		const stepTasks = workflowRunId
 			? this.config.taskRepo
 					.listByWorkflowRun(workflowRunId)
-					.filter((t) => t.workflowNodeId === stepId && t.taskAgentSessionId === subSessionId)
+					.filter((t) => t.taskAgentSessionId === subSessionId)
 			: [];
 
 		if (stepTasks.length > 0) {
@@ -1226,7 +1219,7 @@ export class TaskAgentManager {
 						spaceId,
 						this.config.reactiveDb
 					);
-					await taskManager.setTaskStatus(stepTask.id, 'completed');
+					await taskManager.setTaskStatus(stepTask.id, 'done');
 				}
 			} catch (err) {
 				log.warn(`TaskAgentManager: failed to mark step task ${stepTask.id} as completed:`, err);
@@ -1291,7 +1284,7 @@ export class TaskAgentManager {
 						spaceId,
 						this.config.reactiveDb
 					);
-					await taskManager.setTaskStatus(failedStepTask.id, 'needs_attention', { error });
+					await taskManager.setTaskStatus(failedStepTask.id, 'blocked');
 				} catch (err) {
 					log.warn(
 						`TaskAgentManager: failed to mark step task ${failedStepTask.id} as needs_attention after session.error:`,
@@ -1304,7 +1297,7 @@ export class TaskAgentManager {
 		const taskAgentSession = this.taskAgentSessions.get(parentTaskId);
 		if (!taskAgentSession) return;
 
-		const stepId = failedStepTask?.workflowNodeId ?? 'unknown-step';
+		const stepId = failedStepTask?.id ?? 'unknown-step';
 		await this.injectMessageIntoSession(
 			taskAgentSession,
 			`[STEP_FAILED] Step "${stepId}" sub-session (${subSessionId}) reported an error: ${error}\nDecide whether to retry, request human input, or report_result.`,
@@ -1408,10 +1401,8 @@ export class TaskAgentManager {
 		// fall back to space.workspacePath to avoid directing sub-sessions at a
 		// non-existent location.
 		const rehydrateWorkspacePath = (() => {
-			const storedPath =
-				workflowRun?.config && typeof workflowRun.config.worktreePath === 'string'
-					? workflowRun.config.worktreePath
-					: null;
+			// workflowRun.config no longer exists; worktree paths are in-memory only.
+			const storedPath: string | null = null;
 			if (storedPath && existsSync(storedPath)) {
 				this.taskWorktreePaths.set(taskId, storedPath);
 				return storedPath;
@@ -1556,7 +1547,7 @@ export class TaskAgentManager {
 
 				// Re-attach node-agent MCP tools (runtime-only, not persisted to DB).
 				// Use agentName from the step task as the member role; fall back to 'agent'.
-				const memberRole = stepTask.agentName ?? 'agent';
+				const memberRole = stepTask.title ?? 'agent';
 
 				const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
 					taskId,
@@ -1736,14 +1727,13 @@ export class TaskAgentManager {
 		stepTaskId: string,
 		taskManager: SpaceTaskManager
 	) {
-		const workflowNodeId = this.config.taskRepo.getTask(stepTaskId)?.workflowNodeId ?? '';
+		const workflowNodeId = this.config.taskRepo.getTask(stepTaskId)?.id ?? '';
 		// Build the ChannelResolver from the workflow run's stored config at spawn time.
 		// Channels are written once at step-start by SpaceRuntime.storeResolvedChannels(),
 		// so reading them here gives the correct topology for this sub-session's lifetime.
 		const run = this.config.workflowRunRepo.getRun(workflowRunId);
-		const channelResolver = ChannelResolver.fromRunConfig(
-			run?.config as Record<string, unknown> | undefined
-		);
+		// run.config is no longer stored on SpaceWorkflowRun; use empty resolver.
+		const channelResolver = ChannelResolver.fromRunConfig(undefined);
 
 		// Load the workflow definition so node agents can access channel/gate metadata.
 		const workflow = run?.workflowId

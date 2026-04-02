@@ -154,10 +154,10 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
 	// This is used to resolve channel endpoints that reference agent roles
 	const agentRoleToNodeId = new Map<string, string>();
 	for (const node of nodes) {
-		// node.agents is SpaceAgent[] which has .role
+		// node.agents is SpaceAgent[] which has .name
 		if (node.agents) {
 			for (const agent of node.agents) {
-				agentRoleToNodeId.set(agent.role, node.step.localId);
+				agentRoleToNodeId.set(agent.name, node.step.localId);
 			}
 		}
 	}

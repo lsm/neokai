@@ -49,7 +49,6 @@ import type {
 	CreateSpaceAgentParams,
 	CreateSpaceWorkflowParams,
 	WorkflowNodeInput,
-	WorkflowRuleInput,
 	SpaceExportBundle,
 	ExportedSpaceAgent,
 	ExportedSpaceWorkflow,
@@ -134,11 +133,12 @@ function buildAgentCreateParams(
 	name: string,
 	exported: ExportedSpaceAgent
 ): CreateSpaceAgentParams {
-	const params: CreateSpaceAgentParams = { spaceId, name, role: exported.role };
+	const params: CreateSpaceAgentParams = { spaceId, name };
 	if (exported.description !== undefined) params.description = exported.description;
 	if (exported.model !== undefined) params.model = exported.model;
 	if (exported.provider !== undefined) params.provider = exported.provider;
 	if (exported.systemPrompt !== undefined) params.systemPrompt = exported.systemPrompt;
+	if (exported.instructions !== undefined) params.instructions = exported.instructions;
 	if (exported.tools !== undefined) params.tools = exported.tools;
 	return params;
 }
@@ -173,48 +173,34 @@ export function buildWorkflowCreateParams(
 
 	// Build WorkflowNodeInput list — resolve agentRef names → UUIDs
 	const nodes: WorkflowNodeInput[] = exported.nodes.map((exportedNode) => {
+		// Resolve each agentRef name → UUID
+		const agents = exportedNode.agents.map((a) => {
+			const agentId =
+				importedAgentNameToId.get(a.agentRef) ?? existingAgentNameToId.get(a.agentRef) ?? null;
+			if (!agentId) {
+				warnings.push(`node "${exportedNode.name}" references unknown agent "${a.agentRef}"`);
+			}
+			// agentId ?? '' is a placeholder for unresolved refs — warnings.length > 0 will
+			// cause a throw before createWorkflow is called, so '' never reaches the DB.
+			const entry: {
+				agentId: string;
+				name: string;
+				systemPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
+				instructions?: import('@neokai/shared').WorkflowNodeAgentOverride;
+			} = {
+				agentId: agentId ?? '',
+				name: a.name,
+			};
+			if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
+			if (a.instructions !== undefined) entry.instructions = a.instructions;
+			return entry;
+		});
+
 		const node: WorkflowNodeInput = {
 			id: nodeNameToId.get(exportedNode.name)!,
 			name: exportedNode.name,
+			agents,
 		};
-
-		if (exportedNode.agents && exportedNode.agents.length > 0) {
-			// Multi-agent node: resolve each agentRef name → UUID
-			node.agents = exportedNode.agents.map((a) => {
-				const agentId =
-					importedAgentNameToId.get(a.agentRef) ?? existingAgentNameToId.get(a.agentRef) ?? null;
-				if (!agentId) {
-					warnings.push(`node "${exportedNode.name}" references unknown agent "${a.agentRef}"`);
-				}
-				// agentId ?? '' is a placeholder for unresolved refs — warnings.length > 0 will
-				// cause a throw before createWorkflow is called, so '' never reaches the DB.
-				const entry: {
-					agentId: string;
-					name: string;
-					model?: string;
-					systemPrompt?: string;
-					instructions?: string;
-				} = {
-					agentId: agentId ?? '',
-					name: a.name,
-				};
-				if (a.model !== undefined) entry.model = a.model;
-				if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
-				if (a.instructions !== undefined) entry.instructions = a.instructions;
-				return entry;
-			});
-		} else {
-			// Single-agent node (backward compat): resolve scalar agentRef → agentId
-			const agentRef = exportedNode.agentRef ?? '';
-			const agentId =
-				importedAgentNameToId.get(agentRef) ?? existingAgentNameToId.get(agentRef) ?? null;
-			if (!agentId && agentRef) {
-				warnings.push(`node "${exportedNode.name}" references unknown agent "${agentRef}"`);
-			}
-			node.agentId = agentId ?? '';
-			if (exportedNode.model !== undefined) node.model = exportedNode.model;
-			if (exportedNode.systemPrompt !== undefined) node.systemPrompt = exportedNode.systemPrompt;
-		}
 
 		if (exportedNode.instructions !== undefined) node.instructions = exportedNode.instructions;
 		return node;
@@ -222,29 +208,17 @@ export function buildWorkflowCreateParams(
 
 	// Resolve startNode name → new UUID
 	const startNodeId = nodeNameToId.get(exported.startNode);
-
-	// Build WorkflowRuleInput list — remap appliesTo node names → new node UUIDs
-	const rules: WorkflowRuleInput[] = exported.rules.map((rule) => {
-		const ruleOut: WorkflowRuleInput = { name: rule.name, content: rule.content };
-		if (rule.appliesTo?.length) {
-			const nodeIds = rule.appliesTo
-				.map((nodeName) => nodeNameToId.get(nodeName))
-				.filter((id): id is string => id !== undefined);
-			if (nodeIds.length > 0) ruleOut.appliesTo = nodeIds;
-		}
-		return ruleOut;
-	});
+	const endNodeId = exported.endNode ? nodeNameToId.get(exported.endNode) : undefined;
 
 	const params: CreateSpaceWorkflowParams = {
 		spaceId,
 		name,
 		nodes,
-		rules,
 		tags: exported.tags,
 	};
 	if (startNodeId) params.startNodeId = startNodeId;
+	if (endNodeId) params.endNodeId = endNodeId;
 	if (exported.description !== undefined) params.description = exported.description;
-	if (exported.config !== undefined) params.config = exported.config;
 	if (exported.channels && exported.channels.length > 0) params.channels = exported.channels;
 
 	return { params, nodeNameToId, warnings };
@@ -276,21 +250,10 @@ function validateWorkflowForPreview(
 
 	for (const node of exported.nodes) {
 		// ── 1. Agent ref validation ───────────────────────────────────────────
-		if (node.agents && node.agents.length > 0) {
-			// Multi-agent node: validate each agent ref
-			for (const a of node.agents) {
-				if (!importedAgentNames.has(a.agentRef) && !existingAgentNameToId.has(a.agentRef)) {
-					errors.push(
-						`node "${node.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
-					);
-				}
-			}
-		} else {
-			// Single-agent node: validate scalar agentRef
-			const agentRef = node.agentRef ?? '';
-			if (agentRef && !importedAgentNames.has(agentRef) && !existingAgentNameToId.has(agentRef)) {
+		for (const a of node.agents) {
+			if (!importedAgentNames.has(a.agentRef) && !existingAgentNameToId.has(a.agentRef)) {
 				errors.push(
-					`node "${node.name}" references unknown agent "${agentRef}" — not found in bundle or target space`
+					`node "${node.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
 				);
 			}
 		}
@@ -375,11 +338,7 @@ export function setupSpaceExportImportHandlers(
 		const referencedNames = new Set<string>();
 		for (const wf of full.workflows) {
 			for (const node of wf.nodes) {
-				if (node.agents && node.agents.length > 0) {
-					for (const a of node.agents) referencedNames.add(a.agentRef);
-				} else if (node.agentRef) {
-					referencedNames.add(node.agentRef);
-				}
+				for (const a of node.agents) referencedNames.add(a.agentRef);
 			}
 		}
 
@@ -439,10 +398,8 @@ export function setupSpaceExportImportHandlers(
 		const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
 		const existingAgentNameToId = new Map(existingAgents.map((a) => [a.name, a.id]));
 
-		// Build name → role map for channel role validation.
-		// Bundle agent roles override existing agent roles (bundle wins on same name).
-		const agentNameToRole = new Map<string, string>(existingAgents.map((a) => [a.name, a.role]));
-		for (const a of bundle.agents) agentNameToRole.set(a.name, a.role);
+		// Build name map for channel validation (role field no longer exists).
+		const agentNameToRole = new Map<string, string>(existingAgents.map((a) => [a.name, a.name]));
 
 		// Agent previews
 		const agentPreviews: ImportPreview[] = bundle.agents.map((a) => {
@@ -550,11 +507,11 @@ export function setupSpaceExportImportHandlers(
 						// Fields absent from the export are explicitly cleared (null → empty string
 						// or null) so that replace produces the same result as delete + create.
 						const updated = agentRepo.update(existing.id, {
-							role: exportedAgent.role,
 							description: exportedAgent.description ?? null,
 							model: exportedAgent.model ?? null,
 							provider: exportedAgent.provider ?? null,
 							systemPrompt: exportedAgent.systemPrompt ?? null,
+							instructions: exportedAgent.instructions ?? null,
 							tools: exportedAgent.tools ?? null,
 						});
 						const id = updated?.id ?? existing.id;

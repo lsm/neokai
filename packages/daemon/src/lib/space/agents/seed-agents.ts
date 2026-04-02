@@ -108,7 +108,6 @@ export const ROLE_TOOLS: Record<string, string[]> = {
 
 interface PresetDefinition {
 	name: string;
-	role: SpaceAgent['role'];
 	description: string;
 	tools: string[];
 }
@@ -116,14 +115,12 @@ interface PresetDefinition {
 const PRESET_AGENTS: PresetDefinition[] = [
 	{
 		name: 'Coder',
-		role: 'coder',
 		description:
 			'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
 		tools: CODER_TOOLS,
 	},
 	{
 		name: 'General',
-		role: 'general',
 		description:
 			'Done node agent. Reads gate data from completed workflow stages and produces a ' +
 			'comprehensive human-readable summary of what was accomplished.',
@@ -131,21 +128,18 @@ const PRESET_AGENTS: PresetDefinition[] = [
 	},
 	{
 		name: 'Planner',
-		role: 'planner',
 		description:
 			'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
 		tools: PLANNER_TOOLS,
 	},
 	{
 		name: 'Reviewer',
-		role: 'reviewer',
 		description:
 			'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
 		tools: REVIEWER_TOOLS,
 	},
 	{
 		name: 'QA',
-		role: 'qa',
 		description:
 			'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
 		tools: QA_TOOLS,
@@ -185,7 +179,6 @@ export async function seedPresetAgents(
 		const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
 			spaceId,
 			name: preset.name,
-			role: preset.role,
 			description: preset.description,
 			tools: preset.tools,
 		});

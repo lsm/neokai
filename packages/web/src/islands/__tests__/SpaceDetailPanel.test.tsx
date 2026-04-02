@@ -116,15 +116,23 @@ import { SpaceDetailPanel } from '../SpaceDetailPanel';
 function makeTask(
 	id: string,
 	title: string,
-	status: SpaceTask['status'] = 'pending',
+	status: SpaceTask['status'] = 'open',
 	overrides: Partial<SpaceTask> = {}
 ): SpaceTask {
 	return {
 		id,
 		spaceId: 'space-1',
+		taskNumber: 1,
 		title,
+		description: '',
 		status,
 		priority: 'normal',
+		labels: [],
+		dependsOn: [],
+		result: null,
+		startedAt: null,
+		completedAt: null,
+		archivedAt: null,
 		createdAt: 0,
 		updatedAt: 0,
 		...overrides,
@@ -142,8 +150,8 @@ function makeRun(
 		workflowId: 'wf-1',
 		title,
 		status,
-		iterationCount: 0,
-		maxIterations: 10,
+		startedAt: null,
+		completedAt: null,
 		createdAt: 0,
 		updatedAt: 0,
 	} as SpaceWorkflowRun;
@@ -294,7 +302,7 @@ describe('SpaceDetailPanel', () => {
 	it('shows active tasks under Active tab by default', () => {
 		mockTasksSignal.value = [
 			makeTask('t1', 'Active Task', 'in_progress'),
-			makeTask('t2', 'Done Task', 'completed'),
+			makeTask('t2', 'Done Task', 'done'),
 		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('Active Task')).toBeTruthy();
@@ -304,7 +312,7 @@ describe('SpaceDetailPanel', () => {
 	it('keeps selected done task visible even when Active tab is selected', () => {
 		mockTasksSignal.value = [
 			makeTask('t1', 'Active Task', 'in_progress'),
-			makeTask('t2', 'Done Task', 'completed'),
+			makeTask('t2', 'Done Task', 'done'),
 		];
 		mockCurrentSpaceTaskIdSignal.value = 't2';
 		render(<SpaceDetailPanel spaceId="space-1" />);
@@ -316,7 +324,7 @@ describe('SpaceDetailPanel', () => {
 		mockWorkflowRunsSignal.value = [makeRun('r1', 'Run')];
 		mockTasksSignal.value = [
 			makeTask('t1', 'Run Task', 'in_progress', { workflowRunId: 'r1' }),
-			makeTask('t2', 'Standalone Task', 'pending'),
+			makeTask('t2', 'Standalone Task', 'open'),
 		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('Run Task')).toBeTruthy();
@@ -327,9 +335,9 @@ describe('SpaceDetailPanel', () => {
 
 	it('shows draft and pending tasks under Active tab', () => {
 		mockTasksSignal.value = [
-			makeTask('t1', 'Draft Task', 'draft'),
-			makeTask('t2', 'Pending Task', 'pending'),
-			makeTask('t3', 'Done Task', 'completed'),
+			makeTask('t1', 'Draft Task', 'open'),
+			makeTask('t2', 'Pending Task', 'open'),
+			makeTask('t3', 'Done Task', 'done'),
 		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('Draft Task')).toBeTruthy();
@@ -340,8 +348,8 @@ describe('SpaceDetailPanel', () => {
 	it('switches to Review tab to show review tasks', () => {
 		mockTasksSignal.value = [
 			makeTask('t1', 'Active Task', 'in_progress'),
-			makeTask('t2', 'Review Task', 'review'),
-			makeTask('t3', 'Attention Task', 'needs_attention'),
+			makeTask('t2', 'Review Task', 'blocked'),
+			makeTask('t3', 'Attention Task', 'blocked'),
 		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 
@@ -359,13 +367,13 @@ describe('SpaceDetailPanel', () => {
 	});
 
 	it('shows rate_limited tasks under Active tab', () => {
-		mockTasksSignal.value = [makeTask('t1', 'Throttled Task', 'rate_limited')];
+		mockTasksSignal.value = [makeTask('t1', 'Throttled Task', 'blocked')];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('Throttled Task')).toBeTruthy();
 	});
 
 	it('shows usage_limited tasks under Active tab', () => {
-		mockTasksSignal.value = [makeTask('t1', 'Limited Task', 'usage_limited')];
+		mockTasksSignal.value = [makeTask('t1', 'Limited Task', 'blocked')];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('Limited Task')).toBeTruthy();
 	});
@@ -383,7 +391,7 @@ describe('SpaceDetailPanel', () => {
 
 	it('navigates to a task on click and calls onNavigate', () => {
 		const onNavigate = vi.fn();
-		mockTasksSignal.value = [makeTask('t1', 'Click Me', 'pending')];
+		mockTasksSignal.value = [makeTask('t1', 'Click Me', 'open')];
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 
 		fireEvent.click(screen.getByText('Click Me'));
@@ -392,7 +400,7 @@ describe('SpaceDetailPanel', () => {
 	});
 
 	it('highlights selected task in the task list', () => {
-		mockTasksSignal.value = [makeTask('t1', 'Selected Task', 'pending')];
+		mockTasksSignal.value = [makeTask('t1', 'Selected Task', 'open')];
 		mockCurrentSpaceTaskIdSignal.value = 't1';
 		render(<SpaceDetailPanel spaceId="space-1" />);
 

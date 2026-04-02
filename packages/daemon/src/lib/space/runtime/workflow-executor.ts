@@ -140,7 +140,7 @@ export class WorkflowExecutor {
 	 * (status is 'completed' or 'cancelled').
 	 */
 	isComplete(): boolean {
-		return this.run.status === 'completed' || this.run.status === 'cancelled';
+		return this.run.status === 'done' || this.run.status === 'cancelled';
 	}
 
 	// -------------------------------------------------------------------------

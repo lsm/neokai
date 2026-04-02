@@ -93,11 +93,10 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		name: 'Test Workflow',
 		description: '',
 		nodes: [
-			{ id: 'n1', name: 'Planner' },
-			{ id: 'n2', name: 'Coder' },
+			{ id: 'n1', name: 'Planner', agents: [] },
+			{ id: 'n2', name: 'Coder', agents: [] },
 		],
 		startNodeId: 'n1',
-		rules: [],
 		channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way' }],
 		gates: [],
 		tags: [],
@@ -114,8 +113,8 @@ function makeRun(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkflowRun {
 		workflowId: 'wf-1',
 		title: 'Run 1',
 		status: 'in_progress',
-		iterationCount: 0,
-		maxIterations: 10,
+		startedAt: null,
+		completedAt: null,
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -129,11 +128,15 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 		taskNumber: 1,
 		title: 'Task 1',
 		description: '',
-		status: 'pending',
+		status: 'open',
 		priority: 'normal',
+		labels: [],
 		dependsOn: [],
+		result: null,
+		startedAt: null,
+		completedAt: null,
+		archivedAt: null,
 		workflowRunId: 'run-1',
-		workflowNodeId: 'n1',
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -208,9 +211,9 @@ describe('WorkflowCanvas', () => {
 		mockWorkflows.value = [
 			makeWorkflow({
 				nodes: [
-					{ id: 'n1', name: 'Plan' },
-					{ id: 'n2', name: 'Code' },
-					{ id: 'n3', name: 'Verify' },
+					{ id: 'n1', name: 'Plan', agents: [] },
+					{ id: 'n2', name: 'Code', agents: [] },
+					{ id: 'n3', name: 'Verify', agents: [] },
 				],
 				startNodeId: 'n1',
 				channels: [
@@ -324,9 +327,7 @@ describe('WorkflowCanvas', () => {
 		const wf = makeWorkflow();
 		mockWorkflows.value = [wf];
 		mockWorkflowRuns.value = [makeRun()];
-		mockTasksByRun.value = new Map([
-			['run-1', [makeTask({ workflowNodeId: 'n1', status: 'in_progress' })]],
-		]);
+		mockTasksByRun.value = new Map([['run-1', [makeTask({ status: 'in_progress' })]]]);
 		mockHub.request.mockResolvedValue({ gateData: [] });
 
 		const { getByTestId } = render(
@@ -340,9 +341,7 @@ describe('WorkflowCanvas', () => {
 		const wf = makeWorkflow();
 		mockWorkflows.value = [wf];
 		mockWorkflowRuns.value = [makeRun()];
-		mockTasksByRun.value = new Map([
-			['run-1', [makeTask({ workflowNodeId: 'n2', status: 'completed' })]],
-		]);
+		mockTasksByRun.value = new Map([['run-1', [makeTask({ status: 'done' })]]]);
 		mockHub.request.mockResolvedValue({ gateData: [] });
 
 		const { getByTestId } = render(
@@ -357,9 +356,7 @@ describe('WorkflowCanvas', () => {
 	it('shows needs_attention banner for needs_attention run', () => {
 		const wf = makeWorkflow();
 		mockWorkflows.value = [wf];
-		mockWorkflowRuns.value = [
-			makeRun({ status: 'needs_attention', failureReason: 'humanRejected' }),
-		];
+		mockWorkflowRuns.value = [makeRun({ status: 'blocked', failureReason: 'humanRejected' })];
 		mockHub.request.mockResolvedValue({ gateData: [] });
 
 		const { getByText } = render(<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />);

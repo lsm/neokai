@@ -86,16 +86,9 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
 		let filtered: typeof sorted;
 		if (taskTab === 'active') {
-			filtered = sorted.filter(
-				(t) =>
-					t.status === 'draft' ||
-					t.status === 'pending' ||
-					t.status === 'in_progress' ||
-					t.status === 'rate_limited' ||
-					t.status === 'usage_limited'
-			);
+			filtered = sorted.filter((t) => t.status === 'open' || t.status === 'in_progress');
 		} else {
-			filtered = sorted.filter((t) => t.status === 'review' || t.status === 'needs_attention');
+			filtered = sorted.filter((t) => t.status === 'blocked');
 		}
 
 		// Keep the currently open task visible even if the tab filter would hide it.
@@ -272,11 +265,8 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 									<span class="block text-[11px] uppercase tracking-[0.14em] text-gray-600">
 										{task.workflowRunId ? 'Workflow task' : 'Standalone task'}
 										{selectedTask?.id === task.id &&
-											selectedTask.status !== 'draft' &&
-											selectedTask.status !== 'pending' &&
+											selectedTask.status !== 'open' &&
 											selectedTask.status !== 'in_progress' &&
-											selectedTask.status !== 'rate_limited' &&
-											selectedTask.status !== 'usage_limited' &&
 											` · ${selectedTask.status.replace('_', ' ')}`}
 									</span>
 								</div>

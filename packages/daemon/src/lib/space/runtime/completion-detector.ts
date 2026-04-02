@@ -4,8 +4,8 @@
  * Determines whether all agents in a workflow run have reached a terminal
  * status. Uses a single direct query on space_tasks by workflow_run_id.
  *
- * Terminal statuses: completed, needs_attention, cancelled, rate_limited, usage_limited.
- * Non-terminal statuses (block completion): draft, pending, in_progress, review.
+ * Terminal statuses: done, blocked, cancelled, archived.
+ * Non-terminal statuses (block completion): open, in_progress.
  */
 
 import type { SpaceTaskStatus, WorkflowChannel, WorkflowNode } from '@neokai/shared';
@@ -15,13 +15,15 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 /**
  * Task statuses that represent a terminal (done) state for a workflow agent.
  * A run is complete only when every task is in one of these statuses.
+ *
+ * Terminal statuses (new schema): `done`, `blocked`, `cancelled`, `archived`.
+ * `blocked` is terminal for completion purposes — it halts progress and requires human action.
  */
 export const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>([
-	'completed',
-	'needs_attention',
+	'done',
+	'blocked',
 	'cancelled',
-	'rate_limited',
-	'usage_limited',
+	'archived',
 ]);
 
 export class CompletionDetector {
@@ -53,12 +55,8 @@ export class CompletionDetector {
 		channels: WorkflowChannel[] = [],
 		nodes: WorkflowNode[] = []
 	): boolean {
-		// Only consider node-agent tasks (those with workflowNodeId set).
-		// The orchestration task (Task Agent's own task) has workflowNodeId = null
-		// and is still in_progress while this check runs — it must be excluded.
-		const tasks = this.taskRepo
-			.listByWorkflowRun(workflowRunId)
-			.filter((t) => t.workflowNodeId != null);
+		// Consider all tasks in the run.
+		const tasks = this.taskRepo.listByWorkflowRun(workflowRunId);
 
 		// Workflow has not started yet — no node tasks created
 		if (tasks.length === 0) return false;
@@ -69,9 +67,8 @@ export class CompletionDetector {
 		// Pending-but-blocked guard: check whether any channel targets an
 		// unactivated node. If so, the run is not yet complete.
 		if (channels.length > 0 && nodes.length > 0) {
-			const activatedNodeIds = new Set(
-				tasks.map((t) => t.workflowNodeId).filter((id): id is string => id != null)
-			);
+			// workflowNodeId is no longer tracked; skip node activation guard
+			const activatedNodeIds = new Set<string>();
 
 			for (const channel of channels) {
 				const targets = Array.isArray(channel.to) ? channel.to : [channel.to];

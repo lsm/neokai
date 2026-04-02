@@ -459,7 +459,7 @@ export function WorkflowNode({
 				{multi ? (
 					<div data-testid="agent-badges" class="flex flex-wrap gap-1 mt-1">
 						{step.agents!.map((sa) => {
-							const hasOverrides = !!(sa.model || sa.systemPrompt);
+							const hasOverrides = !!(sa.systemPrompt || sa.instructions);
 							const taskState = taskStateByAgent.get(sa.name);
 							return (
 								<span

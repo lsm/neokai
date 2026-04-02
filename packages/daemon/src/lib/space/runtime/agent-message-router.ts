@@ -17,18 +17,16 @@
  */
 
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { ResolvedChannel } from '@neokai/shared';
 import { ChannelResolver } from './channel-resolver';
 
 export interface AgentMessageRouterConfig {
 	/** Task repository for looking up peer sessions by workflow run and node. */
 	spaceTaskRepo: SpaceTaskRepository;
-	/** Workflow node ID — used to filter peer tasks. */
-	workflowNodeId: string;
-	/** Workflow run repository for loading channel topology. */
-	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** Workflow run ID for loading channel topology from run config. */
+	/** Workflow run ID for looking up peer tasks. */
 	workflowRunId: string;
+	/** Pre-resolved channel topology for this step. */
+	resolvedChannels: ResolvedChannel[];
 	/** Injects a message into a target session as a user turn. */
 	messageInjector: (sessionId: string, message: string) => Promise<void>;
 	/**
@@ -99,20 +97,11 @@ export class AgentMessageRouter {
 	 */
 	async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
 		const { fromRole, fromSessionId, target, message, data } = params;
-		const {
-			spaceTaskRepo,
-			workflowNodeId,
-			workflowRunRepo,
-			workflowRunId,
-			messageInjector,
-			nodeGroups,
-		} = this.config;
+		const { spaceTaskRepo, workflowRunId, resolvedChannels, messageInjector, nodeGroups } =
+			this.config;
 
 		// --- Build channel resolver ---
-		const run = workflowRunRepo.getRun(workflowRunId);
-		const resolver = ChannelResolver.fromRunConfig(
-			run?.config as Record<string, unknown> | undefined
-		);
+		const resolver = new ChannelResolver(resolvedChannels);
 
 		// Channel topology required
 		if (resolver.isEmpty()) {
@@ -127,12 +116,12 @@ export class AgentMessageRouter {
 		}
 
 		// --- Load peers from space_tasks ---
-		const allNodeTasks = spaceTaskRepo
+		const allRunTasks = spaceTaskRepo
 			.listByWorkflowRun(workflowRunId)
-			.filter((t) => t.workflowNodeId === workflowNodeId && t.taskAgentSessionId);
-		const peers = allNodeTasks
+			.filter((t) => t.taskAgentSessionId);
+		const peers = allRunTasks
 			.filter((t) => t.taskAgentSessionId !== fromSessionId)
-			.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.agentName ?? 'agent' }));
+			.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.title ?? 'agent' }));
 
 		// --- Resolve target roles ---
 		let targetRoles: string[];

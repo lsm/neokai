@@ -152,7 +152,6 @@ export function setupSpaceTaskHandlers(
 				// Status is changing — validate via setTaskStatus (enforces transitions)
 				task = await taskManager.setTaskStatus(taskId, updateParams.status, {
 					result: updateParams.result ?? undefined,
-					error: updateParams.error ?? undefined,
 				});
 			} else {
 				// Status is the same — treat as a regular field update.

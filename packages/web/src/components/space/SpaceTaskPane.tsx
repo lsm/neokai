@@ -11,16 +11,12 @@ interface SpaceTaskPaneProps {
 }
 
 const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
-	draft: 'Draft',
-	pending: 'Pending',
+	open: 'Open',
 	in_progress: 'In Progress',
-	review: 'Review',
-	completed: 'Completed',
-	needs_attention: 'Needs Attention',
+	done: 'Done',
+	blocked: 'Blocked',
 	cancelled: 'Cancelled',
 	archived: 'Archived',
-	rate_limited: 'Rate Limited',
-	usage_limited: 'Usage Limited',
 };
 
 const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
@@ -71,8 +67,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	useEffect(() => {
 		if (!task || !runtimeSpaceIdCandidate) return;
-		if (task.status === 'archived' || task.status === 'cancelled' || task.status === 'completed')
-			return;
+		if (task.status === 'archived' || task.status === 'cancelled' || task.status === 'done') return;
 
 		let cancelled = false;
 		const showSpawnLoading = !task.taskAgentSessionId;
@@ -117,7 +112,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const runtimeSpaceId = spaceId ?? task.spaceId;
 	const agentSessionId = task.taskAgentSessionId ?? threadSessionId;
 	const isTerminalTask =
-		task.status === 'completed' || task.status === 'cancelled' || task.status === 'archived';
+		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
 	const showInlineComposer = !!agentSessionId && !isTerminalTask;
 	const canSendThreadMessage =
 		!!agentSessionId && !isTerminalTask && !ensuringThread && !sendingThread;
@@ -157,7 +152,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	};
 
 	const handleReopenTask = async () => {
-		if (task.status !== 'completed') return;
+		if (task.status !== 'done') return;
 		try {
 			setReopeningTask(true);
 			setThreadSendError(null);
@@ -279,7 +274,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						{isTerminalTask && (
 							<div class="flex flex-wrap items-center gap-3">
 								<p class="text-xs text-gray-500">This task is read-only in its current state.</p>
-								{task.status === 'completed' && (
+								{task.status === 'done' && (
 									<button
 										type="button"
 										onClick={() => void handleReopenTask()}

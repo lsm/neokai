@@ -68,7 +68,7 @@ export type CheckNodeStatusInput = z.infer<typeof CheckNodeStatusSchema>;
 /**
  * Possible final statuses for a task result.
  */
-export const TaskResultStatusSchema = z.enum(['completed', 'needs_attention', 'cancelled']);
+export const TaskResultStatusSchema = z.enum(['done', 'blocked', 'cancelled']);
 
 export type TaskResultStatus = z.infer<typeof TaskResultStatusSchema>;
 
@@ -79,14 +79,14 @@ export type TaskResultStatus = z.infer<typeof TaskResultStatusSchema>;
 export const ReportResultSchema = z.object({
 	/** Final task status. */
 	status: TaskResultStatusSchema.describe(
-		"Final task status: 'completed' (success), 'needs_attention' (human intervention required), or 'cancelled'"
+		"Final task status: 'done' (success), 'blocked' (human intervention required), or 'cancelled'"
 	),
 	/** Human-readable summary of what was accomplished or why it stopped. */
 	summary: z.string().describe('Human-readable summary of the task outcome'),
-	/** Optional error message when status is needs_attention or cancelled. */
+	/** Optional error message when status is blocked or cancelled. */
 	error: z
 		.string()
-		.describe('Error details when the task ended in needs_attention or was cancelled')
+		.describe('Error details when the task ended in blocked state or was cancelled')
 		.optional(),
 });
 

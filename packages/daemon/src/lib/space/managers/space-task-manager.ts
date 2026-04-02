@@ -22,16 +22,12 @@ import type {
  * Maps current status -> allowed next statuses
  */
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
-	draft: ['pending'],
-	pending: ['in_progress', 'cancelled'],
-	in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
-	review: ['completed', 'needs_attention', 'in_progress'],
-	completed: ['in_progress', 'archived'], // Reactivate or archive
-	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
-	cancelled: ['pending', 'in_progress', 'completed', 'archived'], // Restart, complete, or archive
+	open: ['in_progress', 'cancelled'],
+	in_progress: ['done', 'blocked', 'cancelled'],
+	done: ['in_progress', 'archived'], // Reactivate or archive
+	blocked: ['open', 'in_progress', 'archived'], // Restart allowed + archive
+	cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
 	archived: [], // True terminal state — no going back
-	rate_limited: ['in_progress', 'needs_attention', 'cancelled'],
-	usage_limited: ['in_progress', 'needs_attention', 'cancelled'],
 };
 
 /**
@@ -114,7 +110,7 @@ export class SpaceTaskManager {
 	async setTaskStatus(
 		taskId: string,
 		newStatus: SpaceTaskStatus,
-		options?: { result?: string; error?: string }
+		options?: { result?: string }
 	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
@@ -130,26 +126,18 @@ export class SpaceTaskManager {
 
 		const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
 
-		if (newStatus === 'completed') {
-			updates.progress = 100;
+		if (newStatus === 'done') {
 			if (options?.result) updates.result = options.result;
 		}
 
-		if (newStatus === 'needs_attention' && options?.error) {
-			updates.error = options.error;
-		}
-
-		// Clear error/result/progress when restarting from a terminal/failed state.
-		// Covers needs_attention, cancelled, and completed → reactivation transitions.
+		// Clear result when restarting from a terminal/failed state.
+		// Covers blocked, cancelled, and done → reactivation transitions.
 		if (
-			(task.status === 'needs_attention' &&
-				(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')) ||
-			(task.status === 'cancelled' && (newStatus === 'pending' || newStatus === 'in_progress')) ||
-			(task.status === 'completed' && newStatus === 'in_progress')
+			(task.status === 'blocked' && (newStatus === 'open' || newStatus === 'in_progress')) ||
+			(task.status === 'cancelled' && (newStatus === 'open' || newStatus === 'in_progress')) ||
+			(task.status === 'done' && newStatus === 'in_progress')
 		) {
-			updates.error = null;
 			updates.result = null;
-			updates.progress = null;
 		}
 
 		const updated = this.taskRepo.updateTask(taskId, updates);
@@ -160,30 +148,7 @@ export class SpaceTaskManager {
 		return updated;
 	}
 
-	/**
-	 * Update task progress
-	 */
-	async updateTaskProgress(
-		taskId: string,
-		progress: number,
-		currentStep?: string
-	): Promise<SpaceTask> {
-		const task = await this.getTask(taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
-
-		const updated = this.taskRepo.updateTask(taskId, {
-			progress: Math.min(100, Math.max(0, progress)),
-			currentStep,
-		});
-
-		if (!updated) {
-			throw new Error(`Failed to update task progress: ${taskId}`);
-		}
-
-		return updated;
-	}
+	// updateTaskProgress has been removed — progress tracking moved to node-level executions
 
 	/**
 	 * Start a task (mark as in_progress)
@@ -196,14 +161,14 @@ export class SpaceTaskManager {
 	 * Complete a task
 	 */
 	async completeTask(taskId: string, result: string): Promise<SpaceTask> {
-		return this.setTaskStatus(taskId, 'completed', { result });
+		return this.setTaskStatus(taskId, 'done', { result });
 	}
 
 	/**
-	 * Fail a task (mark as needs_attention)
+	 * Fail a task (mark as blocked)
 	 */
-	async failTask(taskId: string, error: string): Promise<SpaceTask> {
-		return this.setTaskStatus(taskId, 'needs_attention', { error });
+	async failTask(taskId: string, _error?: string): Promise<SpaceTask> {
+		return this.setTaskStatus(taskId, 'blocked');
 	}
 
 	/**
@@ -225,7 +190,7 @@ export class SpaceTaskManager {
 		const result = await this.setTaskStatus(taskId, 'cancelled');
 		acc.push(result);
 
-		const pendingTasks = await this.listTasksByStatus('pending');
+		const pendingTasks = await this.listTasksByStatus('open');
 		for (const t of pendingTasks) {
 			if (t.dependsOn?.includes(taskId)) {
 				await this.doCancelCascade(t.id, acc);
@@ -236,18 +201,12 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Move task to review (work done, awaiting human approval).
-	 * Validates the transition via setTaskStatus, then applies PR metadata.
+	 * Submit PR for a task (records PR metadata while keeping task in_progress).
+	 * Note: 'review' status no longer exists — PR submission is now tracked via prUrl/prNumber fields.
 	 */
 	async reviewTask(taskId: string, prUrl?: string): Promise<SpaceTask> {
-		// setTaskStatus handles existence check, transition validation, and field clearing
-		await this.setTaskStatus(taskId, 'review');
-
-		// Apply PR metadata on top of the transition
-		const prUpdates: Parameters<SpaceTaskRepository['updateTask']>[1] = {
-			currentStep: prUrl ?? 'Awaiting review',
-			progress: 80,
-		};
+		// Apply PR metadata
+		const prUpdates: Parameters<SpaceTaskRepository['updateTask']>[1] = {};
 
 		if (prUrl !== undefined) {
 			prUpdates.prUrl = prUrl;
@@ -346,16 +305,16 @@ export class SpaceTaskManager {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		const retryableStatuses: SpaceTaskStatus[] = ['needs_attention', 'cancelled', 'completed'];
+		const retryableStatuses: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
 		if (!retryableStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot retry task in '${task.status}' status. Task must be in 'needs_attention', 'cancelled', or 'completed' status.`
+				`Cannot retry task in '${task.status}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`
 			);
 		}
 
-		// Transition to in_progress for completed/cancelled (reactivation), pending for needs_attention
+		// Transition to in_progress for done/cancelled (reactivation), open for blocked
 		const targetStatus: SpaceTaskStatus =
-			task.status === 'completed' || task.status === 'cancelled' ? 'in_progress' : 'pending';
+			task.status === 'done' || task.status === 'cancelled' ? 'in_progress' : 'open';
 		// Transition first — if this fails, the description is untouched (no partial state)
 		const retried = await this.setTaskStatus(taskId, targetStatus);
 
@@ -369,43 +328,30 @@ export class SpaceTaskManager {
 
 	/**
 	 * Reassign a task to a different agent.
-	 * Only allowed for tasks in 'pending', 'needs_attention', 'cancelled', or 'completed' status.
-	 * Tasks in 'in_progress', 'review', or 'draft' cannot be reassigned.
+	 * Only allowed for tasks in 'open', 'blocked', 'cancelled', or 'done' status.
 	 *
 	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
+	 * TODO: Update callers to use new status values — customAgentId/assignedAgent fields removed.
 	 */
 	async reassignTask(
 		taskId: string,
-		customAgentId: string | null | undefined,
-		assignedAgent?: 'coder' | 'general'
+		_customAgentId?: string | null,
+		_assignedAgent?: string
 	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		const allowedStatuses: SpaceTaskStatus[] = [
-			'pending',
-			'needs_attention',
-			'cancelled',
-			'completed',
-		];
+		const allowedStatuses: SpaceTaskStatus[] = ['open', 'blocked', 'cancelled', 'done'];
 		if (!allowedStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot reassign task in '${task.status}' status. Task must be in 'pending', 'needs_attention', 'cancelled', or 'completed' status.`
+				`Cannot reassign task in '${task.status}' status. Task must be in 'open', 'blocked', 'cancelled', or 'done' status.`
 			);
 		}
 
-		const updates: UpdateSpaceTaskParams = {};
-		// Only update customAgentId when explicitly provided (undefined = leave as-is)
-		if (customAgentId !== undefined) {
-			updates.customAgentId = customAgentId;
-		}
-		if (assignedAgent !== undefined) {
-			updates.assignedAgent = assignedAgent;
-		}
-
-		return this.updateTask(taskId, updates);
+		// Agent assignment fields removed from SpaceTask — return task unchanged
+		return task;
 	}
 
 	/**
@@ -418,7 +364,7 @@ export class SpaceTaskManager {
 
 		for (const depId of task.dependsOn) {
 			const dep = await this.getTask(depId);
-			if (!dep || dep.status !== 'completed') {
+			if (!dep || dep.status !== 'done') {
 				return false;
 			}
 		}

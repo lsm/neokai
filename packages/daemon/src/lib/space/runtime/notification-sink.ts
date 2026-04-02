@@ -13,27 +13,27 @@
 // Event payload types
 // ---------------------------------------------------------------------------
 
-/** A task has transitioned to `needs_attention` and requires judgment. */
-export interface TaskNeedsAttentionEvent {
-	kind: 'task_needs_attention';
+/** A task has transitioned to `blocked` and requires judgment. */
+export interface TaskBlockedEvent {
+	kind: 'task_blocked';
 	/** Space the task belongs to. */
 	spaceId: string;
-	/** Task that needs attention. */
+	/** Task that is blocked. */
 	taskId: string;
-	/** Human-readable reason the task needs attention. */
+	/** Human-readable reason the task is blocked. */
 	reason: string;
 	/** ISO-8601 timestamp when the event was emitted. */
 	timestamp: string;
 }
 
-/** A workflow run has transitioned to `needs_attention` (e.g. a transition condition failed). */
-export interface WorkflowRunNeedsAttentionEvent {
-	kind: 'workflow_run_needs_attention';
+/** A workflow run has transitioned to `blocked` (e.g. a transition condition failed). */
+export interface WorkflowRunBlockedEvent {
+	kind: 'workflow_run_blocked';
 	/** Space the workflow run belongs to. */
 	spaceId: string;
-	/** Workflow run that needs attention. */
+	/** Workflow run that is blocked. */
 	runId: string;
-	/** Human-readable reason the run needs attention. */
+	/** Human-readable reason the run is blocked. */
 	reason: string;
 	/** ISO-8601 timestamp when the event was emitted. */
 	timestamp: string;
@@ -75,7 +75,7 @@ export interface AgentAutoCompletedEvent {
  *
  * Emitted when `isTaskAgentAlive()` returns `false` for an in-progress task
  * that had a live Task Agent session. The task is transitioned to
- * `needs_attention` so a human can investigate and retry.
+ * `blocked` so a human can investigate and retry.
  */
 export interface AgentCrashEvent {
 	kind: 'agent_crash';
@@ -87,7 +87,7 @@ export interface AgentCrashEvent {
 	timestamp: string;
 }
 
-/** A workflow run has reached a terminal state (completed, cancelled, or needs_attention). */
+/** A workflow run has reached a terminal state (done, cancelled, or blocked). */
 export interface WorkflowRunCompletedEvent {
 	kind: 'workflow_run_completed';
 	/** Space the workflow run belongs to. */
@@ -96,10 +96,10 @@ export interface WorkflowRunCompletedEvent {
 	runId: string;
 	/**
 	 * Final status of the run — a terminal subset of `WorkflowRunStatus`.
-	 * `'needs_attention'` represents a run that ended due to an unrecoverable
+	 * `'blocked'` represents a run that ended due to an unrecoverable
 	 * error or condition gate failure.
 	 */
-	status: 'completed' | 'cancelled' | 'needs_attention';
+	status: 'done' | 'cancelled' | 'blocked';
 	/** Optional summary of what the run accomplished. */
 	summary?: string;
 	/** ISO-8601 timestamp when the event was emitted. */
@@ -114,11 +114,11 @@ export interface WorkflowRunCompletedEvent {
  * ```ts
  * function handleEvent(event: SpaceNotificationEvent) {
  *   switch (event.kind) {
- *     case 'task_needs_attention':
- *       // event is TaskNeedsAttentionEvent
+ *     case 'task_blocked':
+ *       // event is TaskBlockedEvent
  *       break;
- *     case 'workflow_run_needs_attention':
- *       // event is WorkflowRunNeedsAttentionEvent
+ *     case 'workflow_run_blocked':
+ *       // event is WorkflowRunBlockedEvent
  *       break;
  *     case 'task_timeout':
  *       // event is TaskTimeoutEvent
@@ -131,8 +131,8 @@ export interface WorkflowRunCompletedEvent {
  * ```
  */
 export type SpaceNotificationEvent =
-	| TaskNeedsAttentionEvent
-	| WorkflowRunNeedsAttentionEvent
+	| TaskBlockedEvent
+	| WorkflowRunBlockedEvent
 	| TaskTimeoutEvent
 	| WorkflowRunCompletedEvent
 	| AgentAutoCompletedEvent

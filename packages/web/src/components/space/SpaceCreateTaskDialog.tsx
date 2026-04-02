@@ -7,7 +7,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
-import type { SpaceTask, SpaceTaskPriority, SpaceTaskType } from '@neokai/shared';
+import type { SpaceTask, SpaceTaskPriority } from '@neokai/shared';
 
 interface SpaceCreateTaskDialogProps {
 	isOpen: boolean;
@@ -22,19 +22,10 @@ const PRIORITY_OPTIONS: { value: SpaceTaskPriority; label: string }[] = [
 	{ value: 'urgent', label: 'Urgent' },
 ];
 
-const TASK_TYPE_OPTIONS: { value: SpaceTaskType; label: string }[] = [
-	{ value: 'coding', label: 'Coding' },
-	{ value: 'planning', label: 'Planning' },
-	{ value: 'research', label: 'Research' },
-	{ value: 'design', label: 'Design' },
-	{ value: 'review', label: 'Review' },
-];
-
 export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreateTaskDialogProps) {
 	const [title, setTitle] = useState('');
 	const [description, setDescription] = useState('');
 	const [priority, setPriority] = useState<SpaceTaskPriority>('normal');
-	const [taskType, setTaskType] = useState<SpaceTaskType>('coding');
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +33,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 		setTitle('');
 		setDescription('');
 		setPriority('normal');
-		setTaskType('coding');
 		setError(null);
 		onClose();
 	};
@@ -63,7 +53,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 				title: title.trim(),
 				description: description.trim(),
 				priority,
-				taskType,
 			});
 
 			toast.success(`Task "${task.title}" created`);
@@ -118,40 +107,23 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 					/>
 				</div>
 
-				{/* Priority + Type row */}
-				<div class="grid grid-cols-2 gap-3">
-					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-1.5">Priority</label>
-						<select
-							value={priority}
-							onChange={(e) =>
-								setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
-							}
-							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
-								focus:outline-none focus:border-blue-500 text-sm"
-						>
-							{PRIORITY_OPTIONS.map((opt) => (
-								<option key={opt.value} value={opt.value}>
-									{opt.label}
-								</option>
-							))}
-						</select>
-					</div>
-					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-1.5">Type</label>
-						<select
-							value={taskType}
-							onChange={(e) => setTaskType((e.target as HTMLSelectElement).value as SpaceTaskType)}
-							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
-								focus:outline-none focus:border-blue-500 text-sm"
-						>
-							{TASK_TYPE_OPTIONS.map((opt) => (
-								<option key={opt.value} value={opt.value}>
-									{opt.label}
-								</option>
-							))}
-						</select>
-					</div>
+				{/* Priority row */}
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">Priority</label>
+					<select
+						value={priority}
+						onChange={(e) =>
+							setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
+						}
+						class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+							focus:outline-none focus:border-blue-500 text-sm"
+					>
+						{PRIORITY_OPTIONS.map((opt) => (
+							<option key={opt.value} value={opt.value}>
+								{opt.label}
+							</option>
+						))}
+					</select>
 				</div>
 
 				<div class="flex gap-3 pt-1">

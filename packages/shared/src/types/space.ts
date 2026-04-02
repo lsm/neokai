@@ -116,22 +116,27 @@ export interface UpdateSpaceParams {
 // ============================================================================
 
 /**
- * Space task status — matches NeoTask status set plus space-specific values
+ * Space task status
+ *
+ * - `open`       — task is queued and waiting to be picked up
+ * - `in_progress` — a Task Agent session is actively working on this task
+ * - `done`       — task completed successfully
+ * - `blocked`    — task requires human attention or intervention
+ * - `cancelled`  — task was cancelled and will not be completed
+ * - `archived`   — task is archived (soft-delete, `archivedAt` is stamped)
  */
 export type SpaceTaskStatus =
-	| 'draft'
-	| 'pending'
+	| 'open'
 	| 'in_progress'
-	| 'review'
-	| 'completed'
-	| 'needs_attention'
+	| 'done'
+	| 'blocked'
 	| 'cancelled'
-	| 'archived'
-	| 'rate_limited'
-	| 'usage_limited';
+	| 'archived';
 
 /**
  * Space task priority
+ *
+ * Numeric priority values P0–P3 where lower number = higher priority.
  */
 export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -149,14 +154,9 @@ export type SpaceTaskActivityState =
 	| 'interrupted';
 
 /**
- * Space task type — determines default execution approach
- */
-export type SpaceTaskType = 'planning' | 'coding' | 'research' | 'design' | 'review';
-
-/**
  * A task managed within a Space.
- * Mirrors NeoTask but is tied to a Space (not a Room) and includes
- * workflow/agent routing fields built in from the start.
+ * User-facing orchestration unit — one task = one deliverable that may involve
+ * multiple workflow node executions internally.
  */
 export interface SpaceTask {
 	/** Unique identifier */
@@ -173,43 +173,16 @@ export interface SpaceTask {
 	status: SpaceTaskStatus;
 	/** Priority level */
 	priority: SpaceTaskPriority;
-	/** Task type — determines default execution approach */
-	taskType?: SpaceTaskType;
-	/** Which agent type should execute this task (default: 'coder') */
-	assignedAgent?: 'coder' | 'general';
-	/** ID of a custom Space agent assigned to execute this task */
-	customAgentId?: string;
-	/**
-	 * The `WorkflowNodeAgent.name` of the specific agent slot that spawned this task.
-	 * Stored at task creation time so `spawn_node_agent` can unambiguously map the task
-	 * back to the correct slot even when the same `agentId` appears multiple times in the node.
-	 */
-	agentName?: string;
-	/**
-	 * Brief human-readable summary written by the agent when the task reaches a terminal state
-	 * (completed, needs_attention, cancelled). Populated by the executing agent; null until set.
-	 */
-	completionSummary?: string | null;
-	/** ID of the workflow run that spawned this task (if any) */
-	workflowRunId?: string;
-	/** ID of the workflow node that spawned this task (if any) */
-	workflowNodeId?: string;
-	/** ID of the planning task that created this task */
-	createdByTaskId?: string;
-	/** ID of the goal/mission this task is associated with */
-	goalId?: string;
-	/** Progress percentage (0-100) */
-	progress?: number | null;
-	/** Description of current step */
-	currentStep?: string | null;
-	/** Result of completed task */
-	result?: string | null;
-	/** Error message for failed task */
-	error?: string | null;
-	/** IDs of tasks this task depends on */
+	/** Free-form labels for filtering and categorisation */
+	labels: string[];
+	/** IDs of tasks this task depends on (prerequisites in the same space) */
 	dependsOn: string[];
-	/** Draft input text for the human input area */
-	inputDraft?: string | null;
+	/** Final output from the agent when the task reaches a terminal state; null until set */
+	result: string | null;
+	/** ID of the workflow run that orchestrates this task (links task to its workflow execution) */
+	workflowRunId?: string | null;
+	/** ID of the planning task that created this task */
+	createdByTaskId?: string | null;
 	/**
 	 * Which agent session is currently active (generating output).
 	 * Cleared when the session reaches a terminal state.
@@ -221,20 +194,21 @@ export interface SpaceTask {
 	prNumber?: number | null;
 	/** When PR was created/submitted (milliseconds since epoch) */
 	prCreatedAt?: number | null;
-	/** Archive timestamp (milliseconds since epoch) — derived from status='archived' */
-	archivedAt?: number | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
-	 * Set when the task transitions from 'pending' to 'in_progress' and a Task Agent
+	 * Set when the task transitions from `open` to `in_progress` and a Task Agent
 	 * session is created. Null when no Task Agent has been spawned yet.
+	 * Node-level tasks use `node_executions.agentSessionId` instead.
 	 */
 	taskAgentSessionId?: string | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
-	/** Start timestamp (milliseconds since epoch) */
-	startedAt?: number;
-	/** Completion timestamp (milliseconds since epoch) */
-	completedAt?: number;
+	/** Timestamp when task transitioned to `in_progress` (milliseconds since epoch); null until started */
+	startedAt: number | null;
+	/** Timestamp when task reached a terminal state (milliseconds since epoch); null until completed */
+	completedAt: number | null;
+	/** Timestamp when task was archived (milliseconds since epoch); null until archived */
+	archivedAt: number | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
 }
@@ -266,18 +240,22 @@ export interface SpaceTaskActivityMember {
 	taskId?: string | null;
 	/** Human-readable task title associated with this member */
 	taskTitle?: string | null;
-	/** Status of the linked SpaceTask, if any */
+	/** Status of the linked SpaceTask, if any (uses new 6-value SpaceTaskStatus) */
 	taskStatus?: SpaceTaskStatus | null;
-	/** Workflow node ID for step tasks */
-	workflowNodeId?: string | null;
-	/** Human-readable workflow node / agent slot name */
-	agentName?: string | null;
-	/** Latest current-step string associated with the member */
-	currentStep?: string | null;
-	/** Latest error associated with the member */
-	error?: string | null;
-	/** Latest completion summary associated with the member */
-	completionSummary?: string | null;
+	/**
+	 * Node execution context for node-agent members.
+	 * Provides workflow-internal state (node, agent slot, result) without polluting SpaceTask.
+	 */
+	nodeExecution?: {
+		/** Workflow node ID */
+		nodeId: string;
+		/** Human-readable node / agent slot name */
+		agentName: string;
+		/** Execution status */
+		status: NodeExecutionStatus;
+		/** Result output from `report_done`, if set */
+		result?: string | null;
+	} | null;
 	/** Last update timestamp from the linked SpaceTask or backing session metadata */
 	updatedAt?: number | null;
 	/** Timestamp of the last persisted SDK message for this session */
@@ -290,31 +268,21 @@ export interface SpaceTaskActivityMember {
 export interface CreateSpaceTaskParams {
 	spaceId: string;
 	title: string;
-	description: string;
+	description?: string;
 	priority?: SpaceTaskPriority;
-	taskType?: SpaceTaskType;
-	assignedAgent?: 'coder' | 'general';
-	/** Custom Space agent to execute this task */
-	customAgentId?: string;
-	/**
-	 * The `WorkflowNodeAgent.name` of the specific slot that spawned this task.
-	 * See `SpaceTask.agentName` for details.
-	 */
-	agentName?: string;
-	/** Workflow run that spawned this task */
-	workflowRunId?: string;
-	/** Workflow node that spawned this task */
-	workflowNodeId?: string;
+	/** Free-form labels for filtering and categorisation */
+	labels?: string[];
+	/** IDs of prerequisite tasks in the same space */
 	dependsOn?: string[];
-	/** Initial status — defaults to 'pending' */
+	/** Initial status — defaults to 'open' */
 	status?: SpaceTaskStatus;
+	/** Workflow run that spawned this task */
+	workflowRunId?: string | null;
 	/** ID of planning task that created this task */
-	createdByTaskId?: string;
-	/** Goal/mission this task is associated with */
-	goalId?: string;
+	createdByTaskId?: string | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
-	 * Set when the task transitions from 'pending' to 'in_progress'.
+	 * Set when the task transitions from 'open' to 'in_progress'.
 	 */
 	taskAgentSessionId?: string | null;
 }
@@ -327,33 +295,97 @@ export interface UpdateSpaceTaskParams {
 	description?: string;
 	status?: SpaceTaskStatus;
 	priority?: SpaceTaskPriority;
-	taskType?: SpaceTaskType;
-	assignedAgent?: 'coder' | 'general';
-	customAgentId?: string | null;
-	workflowRunId?: string | null;
-	workflowNodeId?: string | null;
-	progress?: number | null;
-	currentStep?: string | null;
-	result?: string | null;
-	/**
-	 * Human-readable summary written by the agent when it marks the task as done.
-	 * Set alongside `status: 'completed'`; null to clear.
-	 */
-	completionSummary?: string | null;
-	error?: string | null;
+	labels?: string[];
 	dependsOn?: string[];
+	result?: string | null;
+	workflowRunId?: string | null;
 	activeSession?: 'worker' | 'leader' | null;
 	prUrl?: string | null;
 	prNumber?: number | null;
 	prCreatedAt?: number | null;
-	inputDraft?: string | null;
-	/** Goal/mission this task is associated with; null to clear */
-	goalId?: string | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when spawning a Task Agent; null to clear the reference.
 	 */
 	taskAgentSessionId?: string | null;
+	/** Timestamp when task transitioned to `in_progress`; null to clear */
+	startedAt?: number | null;
+	/** Timestamp when task reached a terminal state; null to clear */
+	completedAt?: number | null;
+	/** Timestamp when task was archived; null to clear */
+	archivedAt?: number | null;
+}
+
+// ============================================================================
+// Node Execution Types
+// ============================================================================
+
+/**
+ * Status of a node execution slot within a workflow run.
+ *
+ * - `pending`     — slot has been created but the agent has not started yet
+ * - `in_progress` — agent session is actively running
+ * - `done`        — agent called `report_done`; execution completed successfully
+ * - `blocked`     — execution requires human intervention or a gate has not passed
+ * - `cancelled`   — execution was cancelled (workflow run cancelled or error path)
+ */
+export type NodeExecutionStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled';
+
+/**
+ * Records the execution of a single agent slot within a workflow run's node.
+ * One row is created per `(workflowRunId, workflowNodeId, agentName)` triple.
+ * This separates workflow-internal state from the user-facing `SpaceTask`.
+ */
+export interface NodeExecution {
+	/** Unique identifier */
+	id: string;
+	/** Workflow run this execution belongs to */
+	workflowRunId: string;
+	/** ID of the workflow node in the workflow definition */
+	workflowNodeId: string;
+	/** Agent slot name (`WorkflowNodeAgent.name`) — channel routing address */
+	agentName: string;
+	/** ID of the SpaceAgent assigned to this slot */
+	agentId: string;
+	/** Agent sub-session ID for liveness tracking; null until session is created */
+	agentSessionId: string | null;
+	/** Current execution status */
+	status: NodeExecutionStatus;
+	/** Output captured from `report_done(summary)`; null until the agent completes */
+	result: string | null;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Timestamp when execution transitioned to `in_progress`; null until started */
+	startedAt: number | null;
+	/** Timestamp when execution reached a terminal state; null until completed */
+	completedAt: number | null;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
+}
+
+/**
+ * Parameters for creating a new NodeExecution record
+ */
+export interface CreateNodeExecutionParams {
+	workflowRunId: string;
+	workflowNodeId: string;
+	agentName: string;
+	agentId: string;
+	/** Initial status — defaults to 'pending' */
+	status?: NodeExecutionStatus;
+	/** Agent sub-session ID when the session is already known at creation time */
+	agentSessionId?: string | null;
+}
+
+/**
+ * Parameters for updating a NodeExecution record
+ */
+export interface UpdateNodeExecutionParams {
+	status?: NodeExecutionStatus;
+	agentSessionId?: string | null;
+	result?: string | null;
+	startedAt?: number | null;
+	completedAt?: number | null;
 }
 
 // ============================================================================
@@ -361,14 +393,15 @@ export interface UpdateSpaceTaskParams {
 // ============================================================================
 
 /**
- * Status of a workflow run
+ * Status of a workflow run.
+ *
+ * - `pending`     — run created, awaiting Task Agent to start nodes
+ * - `in_progress` — at least one node execution is active
+ * - `done`        — end node called `report_done` or all nodes completed
+ * - `blocked`     — run requires human intervention (gate rejection, crash, etc.)
+ * - `cancelled`   — run was cancelled before completion
  */
-export type WorkflowRunStatus =
-	| 'pending'
-	| 'in_progress'
-	| 'completed'
-	| 'cancelled'
-	| 'needs_attention';
+export type WorkflowRunStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled';
 
 /**
  * Tracks a single execution of a Space workflow.
@@ -388,31 +421,19 @@ export interface SpaceWorkflowRun {
 	description?: string;
 	/** Current execution status */
 	status: WorkflowRunStatus;
-	/** Optional runtime configuration for this run */
-	config?: Record<string, unknown>;
-	/**
-	 * @deprecated Global iteration counter replaced by per-channel cycle tracking.
-	 * Retained for backward compatibility with existing DB rows; runtime ignores it.
-	 */
-	iterationCount?: number;
-	/**
-	 * @deprecated Global max iterations replaced by per-channel `maxCycles`.
-	 * Retained for backward compatibility with existing DB rows; runtime ignores it.
-	 */
-	maxIterations?: number;
-	/** Optional goal/mission ID this run is associated with */
-	goalId?: string;
 	/**
 	 * Reason for workflow run failure. Only set when the run reaches a terminal
-	 * failure state (e.g. `needs_attention` or `cancelled`).
+	 * failure state (`blocked` or `cancelled`).
 	 */
 	failureReason?: WorkflowRunFailureReason;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
+	/** Timestamp when the first node execution started; null until the run begins executing */
+	startedAt: number | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
-	/** Completion timestamp (milliseconds since epoch) */
-	completedAt?: number;
+	/** Completion timestamp (milliseconds since epoch); null until the run reaches a terminal state */
+	completedAt: number | null;
 }
 
 /**
@@ -423,8 +444,6 @@ export interface CreateWorkflowRunParams {
 	workflowId: string;
 	title: string;
 	description?: string;
-	/** Optional goal/mission ID to associate with this run */
-	goalId?: string;
 }
 
 // ============================================================================
@@ -444,27 +463,26 @@ export interface SpaceAgent {
 	name: string;
 	/** Optional description of this agent's specialization */
 	description?: string;
-	/**
-	 * Role label — a free-form string describing the agent's purpose (e.g. 'coder', 'general').
-	 * Used for display and default tool/feature profiles; has no runtime routing effect.
-	 */
-	role: string;
 	/** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
 	model?: string;
 	/** Provider name override (e.g., 'anthropic', 'openai') */
 	provider?: string;
-	/** Exact system prompt text for this agent */
+	/**
+	 * System prompt — persona and constraints for this agent.
+	 * Defines WHO the agent is and WHAT it must/must not do.
+	 */
 	systemPrompt?: string;
+	/**
+	 * Instructions — default operating procedure for this agent.
+	 * Describes HOW the agent performs its work by default. Null when not set.
+	 */
+	instructions: string | null;
 	/**
 	 * Tool list override — which tools this agent may use.
 	 * Any entry must be a name from KNOWN_TOOLS.
 	 * When unset, role-based defaults apply.
 	 */
 	tools?: string[];
-	/** Tool configuration overrides */
-	toolConfig?: Record<string, unknown>;
-	/** @deprecated Workflow runs always include factual workflow structure. */
-	injectWorkflowContext?: boolean;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -477,16 +495,14 @@ export interface SpaceAgent {
 export interface CreateSpaceAgentParams {
 	spaceId: string;
 	name: string;
-	role: string;
 	description?: string;
 	model?: string;
 	provider?: string;
 	systemPrompt?: string;
+	/** Default operating procedure for this agent; null when not set */
+	instructions?: string | null;
 	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
 	tools?: string[];
-	toolConfig?: Record<string, unknown>;
-	/** @deprecated Workflow runs always include factual workflow structure. */
-	injectWorkflowContext?: boolean;
 }
 
 /**
@@ -495,15 +511,13 @@ export interface CreateSpaceAgentParams {
 export interface UpdateSpaceAgentParams {
 	name?: string;
 	description?: string | null;
-	role?: string;
 	model?: string | null;
 	provider?: string | null;
 	systemPrompt?: string | null;
+	/** Default operating procedure for this agent; null to clear */
+	instructions?: string | null;
 	/** Tool list override — null clears (reverts to role defaults) */
 	tools?: string[] | null;
-	toolConfig?: Record<string, unknown> | null;
-	/** @deprecated Workflow runs always include factual workflow structure. */
-	injectWorkflowContext?: boolean | null;
 }
 
 // ============================================================================
@@ -669,6 +683,17 @@ export type WorkflowRunFailureReason =
 	| 'agentCrash';
 
 /**
+ * Override shape for `systemPrompt` and `instructions` in a workflow node agent slot.
+ *
+ * - `mode: 'override'` — replaces the agent's default value entirely.
+ * - `mode: 'expand'`   — appends the value to the agent's default (separated by `\n\n`).
+ */
+export interface WorkflowNodeAgentOverride {
+	mode: 'override' | 'expand';
+	value: string;
+}
+
+/**
  * A single agent entry within a multi-agent workflow node.
  * References a SpaceAgent by ID with an optional per-slot configuration override.
  */
@@ -680,19 +705,24 @@ export interface WorkflowNodeAgent {
 	 * Used for channel routing (`WorkflowChannel.from`/`to`) and must be unique across
 	 * all agent slots in the same node.
 	 *
-	 * This is a **slot-specific label** distinct from `SpaceAgent.role`, which identifies
-	 * the agent's job category (e.g. `"coder"`, `"reviewer"`). The same `SpaceAgent` may
-	 * appear in multiple slots with different `WorkflowNodeAgent.name` values (e.g.
+	 * This is a **slot-specific label** distinct from the agent's name. The same `SpaceAgent`
+	 * may appear in multiple slots with different `WorkflowNodeAgent.name` values (e.g.
 	 * `"strict-reviewer"` and `"quick-reviewer"`). When added via the UI a second time,
 	 * a numeric suffix is appended automatically (e.g. `"coder"` → `"coder-2"`).
 	 */
 	name: string;
-	/** Override the agent's default model for this slot. */
-	model?: string;
-	/** Override the agent's default system prompt for this slot. */
-	systemPrompt?: string;
-	/** Per-agent instructions override — appended to the agent's system prompt */
-	instructions?: string;
+	/**
+	 * Optional system-prompt override for this agent slot.
+	 * `mode: 'override'` replaces the agent's `systemPrompt` entirely.
+	 * `mode: 'expand'` appends the value to the agent's `systemPrompt`.
+	 */
+	systemPrompt?: WorkflowNodeAgentOverride;
+	/**
+	 * Optional instructions override for this agent slot.
+	 * `mode: 'override'` replaces the agent's `instructions` entirely.
+	 * `mode: 'expand'` appends the value to the agent's `instructions`.
+	 */
+	instructions?: WorkflowNodeAgentOverride;
 }
 
 /**
@@ -774,11 +804,8 @@ export interface WorkflowChannel {
  * Nodes run one or more agents (in parallel when multiple are specified).
  * Nodes are connected by WorkflowChannels.
  *
- * All agents are referenced by ID — there is no separate builtin/custom distinction.
- * Preset agents (coder, general, planner, reviewer) seeded at Space creation time
- * are regular SpaceAgent records that happen to have a well-known role label.
- *
- * At least one of `agentId` or `agents` must be provided.
+ * All agents are specified via `agents: WorkflowNodeAgent[]` — there is no
+ * single-agent `agentId` shorthand. `agents` must be non-empty.
  */
 export interface WorkflowNode {
 	/** Unique identifier for this node (stable across renames) */
@@ -786,45 +813,15 @@ export interface WorkflowNode {
 	/** Human-readable name for display */
 	name: string;
 	/**
-	 * ID of the SpaceAgent assigned to execute this node.
-	 * Shorthand for single-agent nodes. When `agents` is also provided, `agents` takes
-	 * precedence and this field is ignored.
-	 * At least one of `agentId` or `agents` must be provided.
+	 * Agents for parallel execution within this node.
+	 * Must be non-empty. Each agent runs concurrently; the node completes when all agents complete.
 	 */
-	agentId?: string;
-	/** Override the agent's default model for single-agent shorthand nodes. */
-	model?: string;
-	/** Override the agent's default system prompt for single-agent shorthand nodes. */
-	systemPrompt?: string;
+	agents: WorkflowNodeAgent[];
 	/**
-	 * Multiple agents for parallel execution within this node.
-	 * When provided (non-empty), takes precedence over `agentId`.
-	 * Each agent runs concurrently; the node completes when all agents complete.
-	 * At least one of `agentId` or `agents` must be provided.
+	 * Node-level instructions shared by all agents in this node.
+	 * Describes the specific task for this node's execution context.
 	 */
-	agents?: WorkflowNodeAgent[];
-	/** Node-specific instructions shared by all agents in this node */
 	instructions?: string;
-}
-
-/**
- * A rule that applies to workflow execution, similar to room-level rules.
- * Rules express constraints, standards, or guidelines the agent must follow.
- */
-export interface WorkflowRule {
-	/** Unique identifier (stable across renames) */
-	id: string;
-	/** Human-readable name for display */
-	name: string;
-	/** Rule content — markdown prose describing the constraint or guideline */
-	content: string;
-	/**
-	 * List of node IDs this rule applies to.
-	 *
-	 * Uses node **IDs** (not names) so that rules survive node renames.
-	 * Empty array or omitted means the rule applies to ALL nodes in the workflow.
-	 */
-	appliesTo?: string[];
 }
 
 /**
@@ -832,37 +829,17 @@ export interface WorkflowRule {
  * `id` is optional — if provided the backend uses it, otherwise a UUID is generated.
  * Providing an explicit `id` allows channels in the same CreateSpaceWorkflowParams
  * call to reference the node before it has been persisted.
- *
- * At least one of `agentId` or `agents` must be provided.
  */
 export interface WorkflowNodeInput {
 	/** Optional pre-assigned node ID. Generated by backend when omitted. */
 	id?: string;
 	name: string;
 	/**
-	 * ID of the SpaceAgent assigned to execute this node.
-	 * Shorthand for single-agent nodes. When `agents` is also provided, `agents` takes
-	 * precedence. At least one of `agentId` or `agents` must be provided.
+	 * Agents for parallel execution within this node. Must be non-empty.
 	 */
-	agentId?: string;
-	/** Override the agent's default model for single-agent shorthand nodes. */
-	model?: string;
-	/** Override the agent's default system prompt for single-agent shorthand nodes. */
-	systemPrompt?: string;
-	/**
-	 * Multiple agents for parallel execution within this node.
-	 * When provided (non-empty), takes precedence over `agentId`.
-	 * At least one of `agentId` or `agents` must be provided.
-	 */
-	agents?: WorkflowNodeAgent[];
+	agents: WorkflowNodeAgent[];
 	instructions?: string;
 }
-
-/**
- * Input shape for a workflow rule at creation time.
- * `id` is backend-assigned and must not be provided by callers.
- */
-export type WorkflowRuleInput = Omit<WorkflowRule, 'id'>;
 
 /**
  * A named, reusable workflow definition within a Space.
@@ -882,8 +859,13 @@ export interface SpaceWorkflow {
 	nodes: WorkflowNode[];
 	/** ID of the node where execution begins */
 	startNodeId: string;
-	/** Rules that govern agent behavior during this workflow */
-	rules: WorkflowRule[];
+	/**
+	 * ID of the node where execution ends.
+	 * When the end node's execution calls `report_done`, the workflow run is
+	 * automatically marked `done`. If absent, completion relies on the
+	 * `CompletionDetector` all-agents-done check as a safety net.
+	 */
+	endNodeId?: string;
 	/**
 	 * Directed messaging channels between agents in this workflow.
 	 * Channels define which agents may communicate and under what conditions.
@@ -898,21 +880,8 @@ export interface SpaceWorkflow {
 	 * Persisted as JSON in the `gates` column of `space_workflows`.
 	 */
 	gates?: Gate[];
-	/**
-	 * @deprecated isDefault is no longer used for workflow selection.
-	 * Workflow selection uses only two modes: explicit workflowId or AI auto-select.
-	 * This field is retained for backward compatibility but has no runtime effect.
-	 */
-	isDefault?: boolean;
 	/** Tags for organizational categorization. Not used for automatic workflow selection. */
 	tags: string[];
-	/** Additional runtime configuration (opaque bag for future extensibility) */
-	config?: Record<string, unknown>;
-	/**
-	 * @deprecated Global max iterations replaced by per-channel `maxCycles` on WorkflowChannel.
-	 * Retained for backward compatibility; runtime ignores it.
-	 */
-	maxIterations?: number;
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
 	/** Creation timestamp (milliseconds since epoch) */
@@ -939,22 +908,18 @@ export interface CreateSpaceWorkflowParams {
 	 */
 	startNodeId?: string;
 	/**
-	 * Rules governing agent behavior. `id` is backend-assigned.
+	 * ID of the node where execution ends.
+	 * When the end node's execution calls `report_done`, the workflow run auto-completes.
 	 */
-	rules?: WorkflowRuleInput[];
+	endNodeId?: string;
 	/**
 	 * Workflow-level messaging channels. `id` is optional — backend generates one when omitted.
 	 */
 	channels?: WorkflowChannel[];
 	/** Gate definitions for this workflow. */
 	gates?: Gate[];
-	/**
-	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
-	 */
-	isDefault?: boolean;
 	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
 	tags?: string[];
-	config?: Record<string, unknown>;
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
 }
@@ -963,7 +928,7 @@ export interface CreateSpaceWorkflowParams {
  * Parameters for updating an existing SpaceWorkflow.
  * All fields are optional — only provided fields are updated.
  *
- * For array fields (`nodes`, `channels`, `rules`, `tags`):
+ * For array fields (`nodes`, `channels`, `tags`):
  * - Pass a new array to replace the entire collection.
  * - Pass `null` to explicitly clear the field to an empty collection.
  * - Pass `[]` to clear all entries (equivalent to null for arrays).
@@ -980,9 +945,9 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	startNodeId?: string | null;
 	/**
-	 * Replaces the entire rule list. Pass `[]` or `null` to clear all rules.
+	 * Updates the workflow end node. Pass `null` to remove the end node constraint.
 	 */
-	rules?: WorkflowRule[] | null;
+	endNodeId?: string | null;
 	/**
 	 * Replaces the channel list. Pass `[]` or `null` to clear all channels.
 	 */
@@ -992,15 +957,10 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	gates?: Gate[] | null;
 	/**
-	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
-	 */
-	isDefault?: boolean;
-	/**
 	 * Replaces the tag list. Pass `[]` or `null` to clear all tags.
 	 * Tags are for organizational categorization only — not used for automatic workflow selection.
 	 */
 	tags?: string[] | null;
-	config?: Record<string, unknown> | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
 }
@@ -1046,12 +1006,16 @@ export interface ExportedWorkflowNodeAgent {
 	 * Mirrors `WorkflowNodeAgent.name`.
 	 */
 	name: string;
-	/** Override the agent's default model for this slot. */
-	model?: string;
-	/** Override the agent's default system prompt for this slot. */
-	systemPrompt?: string;
-	/** Per-agent instructions override */
-	instructions?: string;
+	/**
+	 * Optional system-prompt override for this agent slot.
+	 * `mode: 'override'` replaces; `mode: 'expand'` appends.
+	 */
+	systemPrompt?: WorkflowNodeAgentOverride;
+	/**
+	 * Optional instructions override for this agent slot.
+	 * `mode: 'override'` replaces; `mode: 'expand'` appends.
+	 */
+	instructions?: WorkflowNodeAgentOverride;
 }
 
 /**
@@ -1059,62 +1023,23 @@ export interface ExportedWorkflowNodeAgent {
  *
  * Differences from `WorkflowNode`:
  * - `id` is stripped (space-specific, regenerated on import)
- * - `agentId` UUID is replaced by `agentRef` (the agent's **name**), making the
- *   reference portable across Space instances that may have different UUIDs.
  * - `agents[]` entries have their `agentId` UUIDs replaced by `agentRef` names.
  * - `channels[]` have moved to `ExportedSpaceWorkflow.channels` (workflow-level).
  *
  * Node names are used as cross-references throughout the exported format
- * (in `ExportedSpaceWorkflow.startNode`, and `ExportedWorkflowRule.appliesTo`).
+ * (in `ExportedSpaceWorkflow.startNode` / `endNode`).
  * Node names must therefore be unique within an exported workflow.
- *
- * At least one of `agentRef` or `agents` (non-empty) must be present:
- * - Single-agent nodes use `agentRef` (shorthand, backward-compatible).
- * - Multi-agent nodes use `agents` (array of `ExportedWorkflowNodeAgent` entries).
- * - The export function never sets both simultaneously, but the type and Zod schema
- *   do not enforce mutual exclusivity — if both are present, `agents` takes precedence
- *   on import (consistent with `WorkflowNode` resolution semantics).
  */
 export interface ExportedWorkflowNode {
 	/**
-	 * Name of the SpaceAgent assigned to this node (portable, not a UUID).
-	 * Used for single-agent nodes. Mutually exclusive with `agents`.
-	 */
-	agentRef?: string;
-	/** Override the single-agent node's default model. */
-	model?: string;
-	/** Override the single-agent node's default system prompt. */
-	systemPrompt?: string;
-	/**
 	 * Multiple agents for parallel execution.
-	 * Used for multi-agent nodes. Mutually exclusive with `agentRef`.
-	 * When present (non-empty), `agentRef` must be absent.
+	 * `agentId` UUIDs are replaced with portable `agentRef` names.
 	 */
-	agents?: ExportedWorkflowNodeAgent[];
+	agents: ExportedWorkflowNodeAgent[];
 	/** Human-readable node name — used as the stable cross-reference key in the export */
 	name: string;
-	/** Node-specific instructions appended to the agent's system prompt */
+	/** Node-level instructions shared by all agents in this node */
 	instructions?: string;
-}
-
-/**
- * A workflow rule in the exported format.
- *
- * Differences from `WorkflowRule`:
- * - `id` is stripped (space-specific, regenerated on import)
- * - `appliesTo` contains node **names** instead of node UUIDs (strings),
- *   so the reference survives re-import with freshly generated node IDs.
- */
-export interface ExportedWorkflowRule {
-	/** Human-readable name for display */
-	name: string;
-	/** Rule content — markdown prose describing the constraint or guideline */
-	content: string;
-	/**
-	 * Names of the nodes this rule applies to.
-	 * Empty array or omitted means the rule applies to ALL nodes.
-	 */
-	appliesTo?: string[];
 }
 
 /**
@@ -1134,31 +1059,19 @@ export interface ExportedSpaceAgent {
 	model?: string;
 	/** Provider name override */
 	provider?: string;
-	/**
-	 * Role label — free-form string describing the agent's purpose (e.g. 'coder', 'reviewer').
-	 * Used for display and default tool/feature profiles; has no runtime routing effect.
-	 * Mirrors `SpaceAgent.role`.
-	 */
-	role: string;
-	/** Custom system prompt */
+	/** System prompt — persona and constraints for this agent */
 	systemPrompt?: string;
 	/**
+	 * Default operating procedure — describes HOW the agent performs its work.
+	 * Mirrors `SpaceAgent.instructions`.
+	 */
+	instructions?: string;
+	/**
 	 * Tool name overrides — list of tool names from KNOWN_TOOLS this agent may use.
-	 * When absent, role-based defaults apply on import.
+	 * When absent, defaults apply on import.
 	 * Mirrors `SpaceAgent.tools`.
 	 */
 	tools?: string[];
-	/** @deprecated Workflow runs always include factual workflow structure. */
-	injectWorkflowContext?: boolean;
-	/**
-	 * Additional agent configuration.
-	 *
-	 * Forward-compatibility stub: `SpaceAgent` does not currently expose a `config`
-	 * field, so `exportAgent()` never populates this. It is reserved here for future
-	 * agent-level configuration that cannot be expressed through the named fields above,
-	 * and for hand-crafted export payloads that need to carry extra metadata.
-	 */
-	config?: Record<string, unknown>;
 }
 
 /**
@@ -1180,12 +1093,13 @@ export interface ExportedSpaceWorkflow {
 	nodes: ExportedWorkflowNode[];
 	/** Name of the node where execution begins */
 	startNode: string;
-	/** Rules governing agent behavior; `appliesTo` uses node names */
-	rules: ExportedWorkflowRule[];
+	/**
+	 * Name of the node where execution ends (optional — mirrors `SpaceWorkflow.endNodeId`).
+	 * When present, the end node's `report_done` call auto-completes the workflow run.
+	 */
+	endNode?: string;
 	/** Tags for categorization */
 	tags: string[];
-	/** Additional runtime configuration */
-	config?: Record<string, unknown>;
 	/**
 	 * Directed messaging channels for the workflow.
 	 * Uses agent slot name strings and node names (portable — not UUIDs).

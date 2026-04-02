@@ -19,8 +19,9 @@ export interface UpdateWorkflowRunParams {
 	title?: string;
 	description?: string;
 	status?: WorkflowRunStatus;
-	config?: Record<string, unknown>;
 	failureReason?: WorkflowRunFailureReason | null;
+	startedAt?: number | null;
+	completedAt?: number | null;
 }
 
 export class SpaceWorkflowRunRepository {
@@ -34,8 +35,8 @@ export class SpaceWorkflowRunRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -45,10 +46,6 @@ export class SpaceWorkflowRunRepository {
 			params.title,
 			params.description ?? '',
 			'pending',
-			null,
-			0, // iteration_count (dead column, kept for backward compat)
-			5, // max_iterations (dead column, kept for backward compat)
-			params.goalId ?? null,
 			now,
 			now
 		);
@@ -96,18 +93,16 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * List runs that need an executor on startup: in_progress and needs_attention.
+	 * List runs that need an executor on startup: in_progress and blocked.
 	 *
 	 * This superset of getActiveRuns() is used exclusively by rehydrateExecutors()
-	 * so that runs blocked at a human gate (needs_attention) get an executor
-	 * reloaded on restart. Without this, a run waiting for human approval would
-	 * be permanently stuck after a process restart.
+	 * so that runs blocked at a human gate get an executor reloaded on restart.
 	 *
 	 * `pending` is still excluded for the same reason as in getActiveRuns().
 	 */
 	getRehydratableRuns(spaceId: string): SpaceWorkflowRun[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_workflow_runs WHERE space_id = ? AND status IN ('in_progress', 'needs_attention') ORDER BY created_at ASC`
+			`SELECT * FROM space_workflow_runs WHERE space_id = ? AND status IN ('in_progress', 'blocked') ORDER BY created_at ASC`
 		);
 		const rows = stmt.all(spaceId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToRun(r));
@@ -132,18 +127,25 @@ export class SpaceWorkflowRunRepository {
 			fields.push('status = ?');
 			values.push(params.status);
 
-			if (params.status === 'completed' || params.status === 'cancelled') {
+			if (params.status === 'done' || params.status === 'cancelled') {
 				fields.push('completed_at = ?');
 				values.push(Date.now());
+			} else if (params.status === 'in_progress') {
+				fields.push('started_at = ?');
+				values.push(Date.now());
 			}
-		}
-		if (params.config !== undefined) {
-			fields.push('config = ?');
-			values.push(JSON.stringify(params.config));
 		}
 		if (params.failureReason !== undefined) {
 			fields.push('failure_reason = ?');
 			values.push(params.failureReason);
+		}
+		if (params.startedAt !== undefined) {
+			fields.push('started_at = ?');
+			values.push(params.startedAt ?? null);
+		}
+		if (params.completedAt !== undefined) {
+			fields.push('completed_at = ?');
+			values.push(params.completedAt ?? null);
 		}
 
 		if (fields.length > 0) {
@@ -200,9 +202,6 @@ export class SpaceWorkflowRunRepository {
 	 * Convert a database row to a SpaceWorkflowRun object
 	 */
 	private rowToRun(row: Record<string, unknown>): SpaceWorkflowRun {
-		const rawConfig = row.config as string | null;
-		const config = rawConfig ? (JSON.parse(rawConfig) as Record<string, unknown>) : undefined;
-
 		return {
 			id: row.id as string,
 			spaceId: row.space_id as string,
@@ -210,14 +209,11 @@ export class SpaceWorkflowRunRepository {
 			title: row.title as string,
 			description: (row.description as string | null) ?? undefined,
 			status: row.status as WorkflowRunStatus,
-			config,
-			iterationCount: (row.iteration_count as number | undefined) ?? 0,
-			maxIterations: (row.max_iterations as number | undefined) ?? 5,
-			goalId: (row.goal_id as string | null) ?? undefined,
 			failureReason: (row.failure_reason as WorkflowRunFailureReason | null) ?? undefined,
 			createdAt: row.created_at as number,
+			startedAt: (row.started_at as number | null) ?? null,
 			updatedAt: row.updated_at as number,
-			completedAt: (row.completed_at as number | null) ?? undefined,
+			completedAt: (row.completed_at as number | null) ?? null,
 		};
 	}
 }

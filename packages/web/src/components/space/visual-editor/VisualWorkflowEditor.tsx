@@ -82,9 +82,8 @@ function buildTemplateCanvasSignature(
 				node.step.agents?.map((agent) => ({
 					agentId: agent.agentId ?? null,
 					name: agent.name ?? '',
-					model: agent.model ?? null,
 					systemPrompt: agent.systemPrompt ?? null,
-					instructions: agent.instructions ?? '',
+					instructions: agent.instructions ?? null,
 				})) ?? [],
 			nodeChannels:
 				node.step.channels?.map((channel) => ({
@@ -411,9 +410,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				? allNodeTasks.filter((t) => t.workflowRunId === relevantRunId)
 				: allNodeTasks;
 			const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
-				agentName: t.agentName ?? null,
+				agentName: null,
 				status: t.status,
-				completionSummary: t.completionSummary,
+				completionSummary: t.result,
 			}));
 			return {
 				stepIndex: i,
@@ -968,10 +967,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		const layoutSteps: WorkflowNode[] = newNodes.map((n) => ({
 			id: n.step.localId,
 			name: n.step.name,
-			agentId: n.step.agentId,
-			agents: n.step.agents?.map((slot) => ({ ...slot })),
-			model: n.step.model,
-			systemPrompt: n.step.systemPrompt,
+			agents: n.step.agents?.map((slot) => ({ ...slot })) ?? [],
 			instructions: n.step.instructions || undefined,
 		}));
 		const layoutTransitions: VisualTransition[] = newEdges.map((e, i) => ({
@@ -1508,7 +1504,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 								steps={nodes.map((n, i) => ({
 									id: n.step.id ?? n.step.localId,
 									name: n.step.name || `Node ${i + 1}`,
-									agentId: n.step.agentId,
+									agents: n.step.agents ?? [],
 									instructions: n.step.instructions,
 								}))}
 								onChange={setRules}

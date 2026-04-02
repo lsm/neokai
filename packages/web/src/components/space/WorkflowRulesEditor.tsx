@@ -11,7 +11,15 @@
  *   (IDs survive renames; empty selection = applies to all steps)
  */
 
-import type { WorkflowRule, WorkflowNode } from '@neokai/shared';
+import type { WorkflowNode } from '@neokai/shared';
+
+// Local type for workflow rules (WorkflowRule removed from shared schema)
+export interface WorkflowRule {
+	id: string;
+	name: string;
+	content: string;
+	appliesTo?: string[];
+}
 import { generateUUID } from '@neokai/shared';
 
 // ============================================================================

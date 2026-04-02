@@ -43,26 +43,20 @@ export class SpaceTaskRepository {
 
 			this.db
 				.prepare(
-					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, task_type, assigned_agent, custom_agent_id, agent_name, completion_summary, workflow_run_id, workflow_node_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, created_by_task_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					id,
 					params.spaceId,
 					nextNumber,
 					params.title,
-					params.description,
-					params.status ?? 'pending',
+					params.description ?? '',
+					params.status ?? 'open',
 					params.priority ?? 'normal',
-					params.taskType ?? null,
-					params.assignedAgent ?? 'coder',
-					params.customAgentId ?? null,
-					params.agentName ?? null,
-					null,
+					JSON.stringify(params.labels ?? []),
 					params.workflowRunId ?? null,
-					params.workflowNodeId ?? null,
 					params.createdByTaskId ?? null,
-					params.goalId ?? null,
 					JSON.stringify(params.dependsOn ?? []),
 					params.taskAgentSessionId ?? null,
 					now,
@@ -114,17 +108,6 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * List all non-archived tasks associated with a goal/mission.
-	 */
-	findByGoalId(goalId: string): SpaceTask[] {
-		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE goal_id = ? AND archived_at IS NULL ORDER BY created_at ASC`
-		);
-		const rows = stmt.all(goalId) as Record<string, unknown>[];
-		return rows.map((r) => this.rowToSpaceTask(r));
-	}
-
-	/**
 	 * List standalone tasks for a space (tasks with no workflowRunId).
 	 * The SQL-level filter avoids fetching workflow tasks that would be discarded by the caller.
 	 */
@@ -172,13 +155,13 @@ export class SpaceTaskRepository {
 
 			if (params.status === 'in_progress') {
 				// Always stamp started_at on entry to in_progress, including re-entries from
-				// needs_attention or cancelled. This records when the most recent work began,
-				// not when the task was originally created. Mirrors TaskRepository behavior.
+				// blocked or cancelled. This records when the most recent work began,
+				// not when the task was originally created.
 				fields.push('started_at = ?');
 				values.push(Date.now());
 			} else if (
-				params.status === 'completed' ||
-				params.status === 'needs_attention' ||
+				params.status === 'done' ||
+				params.status === 'blocked' ||
 				params.status === 'cancelled'
 			) {
 				fields.push('completed_at = ?');
@@ -192,45 +175,17 @@ export class SpaceTaskRepository {
 			fields.push('priority = ?');
 			values.push(params.priority);
 		}
-		if (params.taskType !== undefined) {
-			fields.push('task_type = ?');
-			values.push(params.taskType ?? null);
-		}
-		if (params.assignedAgent !== undefined) {
-			fields.push('assigned_agent = ?');
-			values.push(params.assignedAgent ?? null);
-		}
-		if (params.customAgentId !== undefined) {
-			fields.push('custom_agent_id = ?');
-			values.push(params.customAgentId ?? null);
+		if (params.labels !== undefined) {
+			fields.push('labels = ?');
+			values.push(JSON.stringify(params.labels));
 		}
 		if (params.workflowRunId !== undefined) {
 			fields.push('workflow_run_id = ?');
 			values.push(params.workflowRunId ?? null);
 		}
-		if (params.workflowNodeId !== undefined) {
-			fields.push('workflow_node_id = ?');
-			values.push(params.workflowNodeId ?? null);
-		}
-		if (params.progress !== undefined) {
-			fields.push('progress = ?');
-			values.push(params.progress ?? null);
-		}
-		if (params.currentStep !== undefined) {
-			fields.push('current_step = ?');
-			values.push(params.currentStep ?? null);
-		}
 		if (params.result !== undefined) {
 			fields.push('result = ?');
 			values.push(params.result ?? null);
-		}
-		if (params.completionSummary !== undefined) {
-			fields.push('completion_summary = ?');
-			values.push(params.completionSummary ?? null);
-		}
-		if (params.error !== undefined) {
-			fields.push('error = ?');
-			values.push(params.error ?? null);
 		}
 		if (params.dependsOn !== undefined) {
 			fields.push('depends_on = ?');
@@ -243,8 +198,8 @@ export class SpaceTaskRepository {
 		// Auto-clear active_session when task reaches a terminal status
 		if (
 			params.activeSession === undefined &&
-			(params.status === 'completed' ||
-				params.status === 'needs_attention' ||
+			(params.status === 'done' ||
+				params.status === 'blocked' ||
 				params.status === 'cancelled' ||
 				params.status === 'archived')
 		) {
@@ -263,17 +218,21 @@ export class SpaceTaskRepository {
 			fields.push('pr_created_at = ?');
 			values.push(params.prCreatedAt ?? null);
 		}
-		if (params.inputDraft !== undefined) {
-			fields.push('input_draft = ?');
-			values.push(params.inputDraft ?? null);
-		}
 		if (params.taskAgentSessionId !== undefined) {
 			fields.push('task_agent_session_id = ?');
 			values.push(params.taskAgentSessionId ?? null);
 		}
-		if (params.goalId !== undefined) {
-			fields.push('goal_id = ?');
-			values.push(params.goalId ?? null);
+		if (params.startedAt !== undefined) {
+			fields.push('started_at = ?');
+			values.push(params.startedAt ?? null);
+		}
+		if (params.completedAt !== undefined) {
+			fields.push('completed_at = ?');
+			values.push(params.completedAt ?? null);
+		}
+		if (params.archivedAt !== undefined) {
+			fields.push('archived_at = ?');
+			values.push(params.archivedAt ?? null);
 		}
 
 		if (fields.length > 0) {
@@ -323,12 +282,12 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * Promote draft tasks created by a planning task to pending
+	 * Promote open tasks created by a planning task (legacy method, kept for API compatibility)
 	 */
 	promoteDraftTasksByCreator(createdByTaskId: string): number {
 		const result = this.db
 			.prepare(
-				`UPDATE space_tasks SET status = 'pending', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
+				`UPDATE space_tasks SET status = 'open', updated_at = ? WHERE created_by_task_id = ? AND status = 'open'`
 			)
 			.run(Date.now(), createdByTaskId);
 		if (result.changes > 0) {
@@ -340,13 +299,13 @@ export class SpaceTaskRepository {
 	/**
 	 * List all tasks that have an active Task Agent session.
 	 *
-	 * Returns tasks with status `in_progress` or `needs_attention` that have a
+	 * Returns tasks with status `in_progress` or `blocked` that have a
 	 * non-null `task_agent_session_id`. Used by `TaskAgentManager.rehydrate()` on
 	 * daemon restart to find Task Agent sessions that need to be restarted.
 	 */
 	listActiveWithTaskAgentSession(): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'needs_attention') AND task_agent_session_id IS NOT NULL`
+			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'blocked') AND task_agent_session_id IS NOT NULL`
 		);
 		const rows = stmt.all() as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
@@ -376,12 +335,12 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * Get draft tasks created by a specific planning task
+	 * Get open tasks created by a specific planning task
 	 */
 	getDraftTasksByCreator(createdByTaskId: string): SpaceTask[] {
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM space_tasks WHERE created_by_task_id = ? AND status = 'draft' ORDER BY created_at ASC`
+				`SELECT * FROM space_tasks WHERE created_by_task_id = ? AND status = 'open' ORDER BY created_at ASC`
 			)
 			.all(createdByTaskId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
@@ -399,30 +358,20 @@ export class SpaceTaskRepository {
 			description: (row.description as string) ?? '',
 			status: row.status as SpaceTask['status'],
 			priority: row.priority as SpaceTask['priority'],
-			taskType: (row.task_type as SpaceTask['taskType'] | null) ?? undefined,
-			assignedAgent: (row.assigned_agent as SpaceTask['assignedAgent'] | null) ?? undefined,
-			customAgentId: (row.custom_agent_id as string | null) ?? undefined,
-			agentName: (row.agent_name as string | null) ?? undefined,
+			labels: JSON.parse((row.labels as string | null) ?? '[]') as string[],
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
-			workflowNodeId: (row.workflow_node_id as string | null) ?? undefined,
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
-			goalId: (row.goal_id as string | null) ?? undefined,
-			progress: (row.progress as number | null) ?? undefined,
-			currentStep: (row.current_step as string | null) ?? undefined,
-			result: (row.result as string | null) ?? undefined,
-			completionSummary: (row.completion_summary as string | null) ?? undefined,
-			error: (row.error as string | null) ?? undefined,
-			dependsOn: JSON.parse(row.depends_on as string) as string[],
-			inputDraft: (row.input_draft as string | null) ?? undefined,
+			result: (row.result as string | null) ?? null,
+			dependsOn: JSON.parse((row.depends_on as string | null) ?? '[]') as string[],
 			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,
 			taskAgentSessionId: (row.task_agent_session_id as string | null) ?? undefined,
 			prUrl: (row.pr_url as string | null) ?? undefined,
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
-			archivedAt: (row.archived_at as number | null) ?? undefined,
+			archivedAt: (row.archived_at as number | null) ?? null,
 			createdAt: row.created_at as number,
-			startedAt: (row.started_at as number | null) ?? undefined,
-			completedAt: (row.completed_at as number | null) ?? undefined,
+			startedAt: (row.started_at as number | null) ?? null,
+			completedAt: (row.completed_at as number | null) ?? null,
 			updatedAt: (row.updated_at as number | null) ?? (row.created_at as number),
 		};
 	}

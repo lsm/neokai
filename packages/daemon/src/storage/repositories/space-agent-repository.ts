@@ -4,11 +4,9 @@
  * CRUD operations for space_agents table.
  *
  * Column mapping:
- *   SpaceAgent.tools                 ↔  tools column (JSON string array; '[]' or null → undefined)
- *   SpaceAgent.toolConfig            ↔  config column (JSON)
- *   SpaceAgent.systemPrompt          ↔  system_prompt column
- *   SpaceAgent.role                  ↔  role column (free-form string display label, e.g. 'coder', 'planner')
- *   SpaceAgent.injectWorkflowContext ↔  inject_workflow_context column (INTEGER 0/1; 0/null → undefined)
+ *   SpaceAgent.tools         ↔  tools column (JSON string array; '[]' or null → undefined)
+ *   SpaceAgent.systemPrompt  ↔  system_prompt column
+ *   SpaceAgent.instructions  ↔  instructions column (nullable text)
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -29,21 +27,19 @@ export class SpaceAgentRepository {
 		this.db
 			.prepare(
 				`INSERT INTO space_agents
-					(id, space_id, name, description, model, provider, tools, system_prompt, role, config, inject_workflow_context, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					(id, space_id, name, description, model, provider, tools, system_prompt, instructions, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
 				params.spaceId,
 				params.name,
-				params.description ?? '', // NOT NULL DEFAULT '' in Mig29 — never pass null
+				params.description ?? '',
 				params.model ?? null,
 				params.provider ?? null,
 				params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]',
-				params.systemPrompt ?? '', // NOT NULL DEFAULT '' in Mig29 — never pass null
-				params.role,
-				params.toolConfig ? JSON.stringify(params.toolConfig) : null,
-				params.injectWorkflowContext ? 1 : 0,
+				params.systemPrompt ?? '',
+				params.instructions ?? null,
 				now,
 				now
 			);
@@ -116,7 +112,7 @@ export class SpaceAgentRepository {
 		}
 		if (params.description !== undefined) {
 			fields.push('description = ?');
-			values.push(params.description ?? ''); // NOT NULL — null means clear → ''
+			values.push(params.description ?? '');
 		}
 		if (params.model !== undefined) {
 			fields.push('model = ?');
@@ -128,24 +124,15 @@ export class SpaceAgentRepository {
 		}
 		if (params.systemPrompt !== undefined) {
 			fields.push('system_prompt = ?');
-			values.push(params.systemPrompt ?? ''); // NOT NULL — null means clear → ''
+			values.push(params.systemPrompt ?? '');
 		}
-		if (params.role !== undefined) {
-			fields.push('role = ?');
-			values.push(params.role);
+		if (params.instructions !== undefined) {
+			fields.push('instructions = ?');
+			values.push(params.instructions ?? null);
 		}
 		if (params.tools !== undefined) {
 			fields.push('tools = ?');
 			values.push(params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]');
-		}
-		if (params.toolConfig !== undefined) {
-			fields.push('config = ?');
-			values.push(params.toolConfig ? JSON.stringify(params.toolConfig) : null);
-		}
-		if (params.injectWorkflowContext !== undefined) {
-			fields.push('inject_workflow_context = ?');
-			// null means clear → 0 (false)
-			values.push(params.injectWorkflowContext ? 1 : 0);
 		}
 
 		if (fields.length === 0) return this.getById(id);
@@ -196,17 +183,12 @@ export class SpaceAgentRepository {
 			id: row.id as string,
 			spaceId: row.space_id as string,
 			name: row.name as string,
-			description: (row.description as string) || undefined, // '' or null → undefined
+			description: (row.description as string) || undefined,
 			model: (row.model as string | null) ?? undefined,
 			provider: (row.provider as string | null) ?? undefined,
-			systemPrompt: (row.system_prompt as string) || undefined, // '' or null → undefined
-			role: (row.role as SpaceAgent['role'] | null) ?? 'coder',
+			systemPrompt: (row.system_prompt as string) || undefined,
+			instructions: (row.instructions as string | null) ?? null,
 			tools,
-			toolConfig: row.config
-				? (JSON.parse(row.config as string) as Record<string, unknown>)
-				: undefined,
-			// 0 or null → undefined (falsy); 1 → true
-			injectWorkflowContext: row.inject_workflow_context ? true : undefined,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};

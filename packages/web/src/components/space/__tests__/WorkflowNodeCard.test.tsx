@@ -23,12 +23,12 @@ vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
 	return {
 		id,
 		spaceId: 'space-1',
 		name,
-		role,
+		instructions: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -248,11 +248,15 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 		expect(queryAllByTestId('override-dot')).toHaveLength(0);
 	});
 
-	it('shows override-dot on slot with model override', () => {
+	it('shows override-dot on slot with instructions override', () => {
 		const node = makeStep({
 			agentId: '',
 			agents: [
-				{ agentId: 'agent-1', name: 'coder', model: 'claude-opus-4-6' },
+				{
+					agentId: 'agent-1',
+					name: 'coder',
+					instructions: { mode: 'override', value: 'Be strict.' },
+				},
 				{ agentId: 'agent-2', name: 'reviewer' },
 			],
 		});
@@ -266,7 +270,13 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 	it('shows override-dot on slot with systemPrompt override', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', name: 'coder', systemPrompt: 'Be strict.' }],
+			agents: [
+				{
+					agentId: 'agent-1',
+					name: 'coder',
+					systemPrompt: { mode: 'override', value: 'Be strict.' },
+				},
+			],
 		});
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: false })} />);
 		expect(getByTestId('override-dot')).toBeTruthy();
@@ -276,8 +286,16 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 		const node = makeStep({
 			agentId: '',
 			agents: [
-				{ agentId: 'agent-1', name: 'coder', model: 'claude-opus-4-6' },
-				{ agentId: 'agent-2', name: 'reviewer', systemPrompt: 'Review carefully.' },
+				{
+					agentId: 'agent-1',
+					name: 'coder',
+					instructions: { mode: 'override', value: 'Code carefully.' },
+				},
+				{
+					agentId: 'agent-2',
+					name: 'reviewer',
+					systemPrompt: { mode: 'override', value: 'Review carefully.' },
+				},
 			],
 		});
 		const { getAllByTestId } = render(
@@ -347,7 +365,7 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 		expect(queryByTestId('slot-overrides')).toBeTruthy();
 	});
 
-	it('model input inside slot-overrides calls onUpdate with updated model', async () => {
+	it('model input inside slot-overrides is a no-op (model removed from WorkflowNodeAgent)', async () => {
 		const onUpdate = vi.fn();
 		const node = makeStep({
 			agentId: '',
@@ -362,9 +380,12 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 				target: { value: 'claude-opus-4-6' },
 			});
 		});
-		expect(onUpdate).toHaveBeenCalled();
-		const updated = onUpdate.mock.calls[0][0] as NodeDraft;
-		expect(updated.agents?.[0].model).toBe('claude-opus-4-6');
+		// model is no longer a property of WorkflowNodeAgent; updateAgentModel is a no-op
+		// onUpdate should not have been called (or if called, no model field on agents)
+		if (onUpdate.mock.calls.length > 0) {
+			const updated = onUpdate.mock.calls[0][0] as NodeDraft;
+			expect((updated.agents?.[0] as unknown as Record<string, unknown>)['model']).toBeUndefined();
+		}
 	});
 });
 
@@ -397,14 +418,14 @@ describe('WorkflowNodeCard — agent completion state', () => {
 		expect(getByTestId('agent-status-spinner')).toBeTruthy();
 	});
 
-	it('shows checkmark for completed agent (single-agent)', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'completed' }];
+	it('shows checkmark for done agent (single-agent)', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'done' }];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('agent-status-check')).toBeTruthy();
 	});
 
-	it('shows fail icon for needs_attention agent (single-agent)', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'needs_attention' }];
+	it('shows fail icon for blocked agent (single-agent)', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'blocked' }];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('agent-status-fail')).toBeTruthy();
 	});
@@ -415,14 +436,14 @@ describe('WorkflowNodeCard — agent completion state', () => {
 		expect(getByTestId('agent-status-fail')).toBeTruthy();
 	});
 
-	it('shows pending dot for pending agent', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'pending' }];
+	it('shows pending dot for open agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'open' }];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('agent-status-pending')).toBeTruthy();
 	});
 
 	it('applies green step badge when all agents done', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'completed' }];
+		const states: AgentTaskState[] = [{ agentName: null, status: 'done' }];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		const badge = getByTestId('node-step-badge');
 		expect(badge.className).toContain('green');
@@ -437,7 +458,7 @@ describe('WorkflowNodeCard — agent completion state', () => {
 
 	it('shows completion summary text when provided', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: null, status: 'completed', completionSummary: 'All done nicely' },
+			{ agentName: null, status: 'done', completionSummary: 'All done nicely' },
 		];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('node-completion-summary').textContent).toBe('All done nicely');
@@ -445,7 +466,7 @@ describe('WorkflowNodeCard — agent completion state', () => {
 
 	it('shows per-agent status for multi-agent nodes', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'completed' },
+			{ agentName: 'coder', status: 'done' },
 			{ agentName: 'reviewer', status: 'in_progress' },
 		];
 		const { getAllByTestId } = render(
@@ -463,10 +484,10 @@ describe('WorkflowNodeCard — agent completion state', () => {
 		expect(container.querySelector('[data-testid="agent-status-fail"]')).toBeNull();
 	});
 
-	it('shows green border when all agents completed', () => {
+	it('shows green border when all agents done', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'completed' },
-			{ agentName: 'reviewer', status: 'completed' },
+			{ agentName: 'coder', status: 'done' },
+			{ agentName: 'reviewer', status: 'done' },
 		];
 		const { container } = render(
 			<WorkflowNodeCard {...makeProps({ node: makeMultiAgentStep(), nodeTaskStates: states })} />

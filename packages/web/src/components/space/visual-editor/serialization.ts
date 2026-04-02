@@ -34,7 +34,6 @@ import type {
 } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { RuleDraft } from '../WorkflowRulesEditor';
-import { rulesToDrafts } from '../WorkflowRulesEditor';
 import type { Point, WorkflowCondition } from './types';
 import { autoLayout } from './layout';
 
@@ -125,9 +124,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			localId: generateUUID(),
 			id: s.id,
 			name: s.name,
-			agentId: s.agentId ?? '',
-			model: s.model ?? undefined,
-			systemPrompt: s.systemPrompt ?? undefined,
+			agentId: '',
 			agents: s.agents,
 			instructions: s.instructions ?? '',
 		};
@@ -160,7 +157,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		nodes: [taskAgentNode, ...nodes],
 		edges,
 		startNodeId: startKey,
-		rules: rulesToDrafts(workflow.rules ?? []),
+		rules: [],
 		tags: workflow.tags ?? [],
 		channels: workflow.channels ?? [],
 		gates: workflow.gates ?? [],
@@ -178,14 +175,10 @@ interface BuiltWorkflowFields {
 	nodes: Array<{
 		id: string;
 		name: string;
-		agentId?: string;
-		model?: string;
-		systemPrompt?: string;
-		agents?: WorkflowNodeAgent[];
+		agents: WorkflowNodeAgent[];
 		instructions?: string;
 	}>;
 	startNodeId: string;
-	rules: Array<{ id?: string; name: string; content: string; appliesTo?: string[] }>;
 	layout: Record<string, { x: number; y: number }>;
 	tags: string[];
 	channels?: WorkflowChannel[];
@@ -256,15 +249,16 @@ function buildWorkflowFields(state: VisualEditorState): {
 		const key = node.step.id ?? node.step.localId;
 		const persistedId = nodeMap.get(key)!.persistedId;
 		const hasMultiAgent = Array.isArray(node.step.agents) && node.step.agents.length > 0;
+		// Build agents array — if no multi-agent configured, fall back to single agentId as a slot
+		const agents: WorkflowNodeAgent[] = hasMultiAgent
+			? node.step.agents!
+			: node.step.agentId
+				? [{ agentId: node.step.agentId, name: node.step.agentId }]
+				: [];
 		return {
 			id: persistedId,
 			name: node.step.name || `Step ${i + 1}`,
-			// When agents array is provided and non-empty, omit agentId (agents takes precedence).
-			// Otherwise use the single agentId (may be empty string, serialized as undefined).
-			agentId: hasMultiAgent ? undefined : node.step.agentId || undefined,
-			model: hasMultiAgent ? undefined : node.step.model || undefined,
-			systemPrompt: hasMultiAgent ? undefined : node.step.systemPrompt || undefined,
-			agents: hasMultiAgent ? node.step.agents : undefined,
+			agents,
 			instructions: node.step.instructions || undefined,
 		};
 	});
@@ -289,16 +283,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 			: null);
 	const startNodeId = startEntry?.persistedId ?? '';
 
-	// Build rules — blank rules (both name and content empty/whitespace) are filtered out
-	const rules = state.rules
-		.filter((r) => r.name.trim() || r.content.trim())
-		.map((r) => ({
-			id: r.id,
-			name: r.name.trim() || 'Untitled Rule',
-			content: r.content,
-			appliesTo: r.appliesTo.map((id) => keyToPersistedId.get(id) ?? id),
-		}));
-
 	const referencedGateIds = new Set(
 		state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
 	);
@@ -308,7 +292,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 		fields: {
 			nodes,
 			startNodeId,
-			rules,
 			layout,
 			tags: state.tags,
 			channels: state.channels,
@@ -340,8 +323,6 @@ export function visualStateToCreateParams(
 		description,
 		nodes: fields.nodes,
 		startNodeId: fields.startNodeId || undefined,
-		// WorkflowRuleInput omits `id` — strip it from each rule
-		rules: fields.rules.map(({ id: _id, ...rest }) => rest),
 		layout: fields.layout,
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
@@ -365,13 +346,6 @@ export function visualStateToUpdateParams(
 		...overrides,
 		nodes: fields.nodes,
 		startNodeId: fields.startNodeId || null,
-		// WorkflowRule requires `id` — generate one for new rules that lack a persisted id
-		rules: fields.rules.map((r) => ({
-			id: r.id ?? generateUUID(),
-			name: r.name,
-			content: r.content,
-			appliesTo: r.appliesTo,
-		})),
 		layout: fields.layout,
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,

@@ -22,7 +22,7 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { SpaceTaskStatus, SpaceTaskPriority, SpaceTaskType } from '@neokai/shared';
+import type { SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -162,7 +162,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 
-			if (run.status === 'completed' || run.status === 'cancelled') {
+			if (run.status === 'done' || run.status === 'cancelled') {
 				return jsonResult({
 					success: false,
 					error: `Cannot change plan for a ${run.status} run.`,
@@ -188,8 +188,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						spaceId,
 						args.workflow_id,
 						run.title,
-						newDescription,
-						run.goalId
+						newDescription
 					);
 					return jsonResult({
 						success: true,
@@ -342,29 +341,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			title: string;
 			description: string;
 			priority?: SpaceTaskPriority;
-			task_type?: SpaceTaskType;
-			assigned_agent?: 'coder' | 'general';
-			custom_agent_id?: string;
 		}): Promise<ToolResult> {
 			try {
-				// Validate custom_agent_id if provided
-				if (args.custom_agent_id) {
-					const agent = spaceAgentManager.getById(args.custom_agent_id);
-					if (!agent) {
-						return jsonResult({
-							success: false,
-							error: `Custom agent not found: ${args.custom_agent_id}`,
-						});
-					}
-				}
-
 				const task = await taskManager.createTask({
 					title: args.title,
 					description: args.description,
 					priority: args.priority,
-					taskType: args.task_type,
-					assignedAgent: args.assigned_agent,
-					customAgentId: args.custom_agent_id,
 				});
 				return jsonResult({ success: true, task });
 			} catch (err) {
@@ -597,15 +579,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			'List SpaceTasks for this space. Filterable by status and workflow run. Use compact:true and limit/offset to reduce payload size.',
 			{
 				status: z
-					.enum([
-						'draft',
-						'pending',
-						'in_progress',
-						'review',
-						'completed',
-						'needs_attention',
-						'cancelled',
-					])
+					.enum(['open', 'in_progress', 'done', 'blocked', 'cancelled', 'archived'])
 					.optional()
 					.describe('Filter by task status'),
 				workflow_run_id: z

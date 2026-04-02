@@ -6,14 +6,14 @@
  * Lifecycle:
  *   pending        → in_progress   (startWorkflowRun promotes immediately after creation)
  *   pending        → cancelled     (error during run initialization before tasks created)
- *   in_progress    → completed     (all agents reached terminal status)
- *   in_progress    → needs_attention  (agent failed or gate blocked requiring human action)
+ *   in_progress    → done          (all agents reached terminal status)
+ *   in_progress    → blocked       (agent failed or gate blocked requiring human action)
  *   in_progress    → cancelled     (explicit cancellation via API)
- *   needs_attention → in_progress  (human resolved the blocking issue)
- *   needs_attention → cancelled    (explicit cancellation while blocked)
+ *   blocked        → in_progress   (human resolved the blocking issue)
+ *   blocked        → cancelled     (explicit cancellation while blocked)
  *
  * Terminal states (no outbound transitions):
- *   completed — run finished successfully, immutable
+ *   done      — run finished successfully, immutable
  *   cancelled — run stopped, immutable
  */
 
@@ -29,9 +29,9 @@ export const VALID_TRANSITIONS: Readonly<
 	Record<WorkflowRunStatus, ReadonlySet<WorkflowRunStatus>>
 > = {
 	pending: new Set<WorkflowRunStatus>(['in_progress', 'cancelled']),
-	in_progress: new Set<WorkflowRunStatus>(['completed', 'needs_attention', 'cancelled']),
-	needs_attention: new Set<WorkflowRunStatus>(['in_progress', 'cancelled']),
-	completed: new Set<WorkflowRunStatus>(),
+	in_progress: new Set<WorkflowRunStatus>(['done', 'blocked', 'cancelled']),
+	blocked: new Set<WorkflowRunStatus>(['in_progress', 'cancelled']),
+	done: new Set<WorkflowRunStatus>(),
 	cancelled: new Set<WorkflowRunStatus>(),
 };
 
