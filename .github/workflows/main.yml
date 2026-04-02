@@ -125,14 +125,13 @@ jobs:
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
   # Run on: PR to dev, PR to main, push to main (skip on push to dev)
-  # Default timeout raised to 7min (from 5min) to reduce flaky timeouts.
   # ============================================
 
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
     if: github.ref_type != 'tag' && (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
-    timeout-minutes: ${{ matrix.timeout || 7 }}
+    timeout-minutes: ${{ matrix.timeout || 5 }}
 
     strategy:
       fail-fast: false
@@ -153,7 +152,8 @@ jobs:
           # - providers-anthropic-to-codex-bridge
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
-          - rewind
+          - rewind-1
+          - rewind-2
           - room-mcp
           - room-coder-subagents
           - cross-provider-1
@@ -234,8 +234,12 @@ jobs:
           # - module: providers-anthropic-copilot
           #   test_path: tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
           #   timeout: 15
-          - module: rewind
-            test_path: tests/online/rewind
+          # rewind: split into 2 parallel jobs (largest dir-level module without custom timeout)
+          - module: rewind-1
+            test_path: tests/online/rewind/rewind-feature.test.ts
+            mock_sdk: true
+          - module: rewind-2
+            test_path: tests/online/rewind/selective-rewind.test.ts
             mock_sdk: true
           - module: room-mcp
             test_path: tests/online/room/room-mcp-enablement.test.ts
