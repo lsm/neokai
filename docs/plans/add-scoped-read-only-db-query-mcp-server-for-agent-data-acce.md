@@ -67,15 +67,19 @@ Tables are categorized by scope with their filtering mechanism:
 | `channel_cycles` | `run_id` -> `space_workflow_runs.space_id` | Indirect join |
 
 **Global tables (no scope filter):**
-`sessions`, `rooms`, `spaces`, `app_mcp_servers`, `skills`, `inbox_items`, `neo_activity_log`, `job_queue`, `short_id_counters`, `github_mapping`
+`sessions`, `rooms`, `spaces`, `app_mcp_servers`, `skills`, `inbox_items`, `neo_activity_log`, `job_queue`, `short_id_counters`
 
 **Always excluded (all scopes):**
 - `auth_config`, `global_tools_config`, `global_settings` -- contain credentials/API keys
 - `sdk_messages` -- excluded due to size (millions of rows) and limited analytical value; agents have other tools for message history
+- `session_groups`, `session_group_members`, `task_group_events` -- internal session lifecycle infrastructure tables, not useful for agent data analysis
 
 **Dropped tables (not in current schema, do not include):**
 - `space_session_groups`, `space_session_group_members` -- dropped in migration 60
 - `space_workflow_transitions` -- dropped in migration 59
+
+**Not classified -- intentionally deferred:**
+- `spaces` table is in global scope, meaning space-scoped agents cannot directly query their own space record. This is intentional: space agents have other MCP tools for space metadata access, and adding `spaces` to space scope would be misleading since it has no per-row space_id filter (every space-scoped agent can only see one space).
 
 ### Scope Filter Injection Strategy
 
@@ -97,7 +101,15 @@ The wrapping approach handles all SQL edge cases (CTEs, subqueries, UNION, ORDER
 
 **Cross-scope join prevention:** The regex validator extracts table references from FROM/JOIN clauses. If any referenced table is outside the current scope's table list, the query is rejected before execution. This prevents a room-scoped agent from joining to space tables.
 
-**Multi-table queries:** If a query references multiple tables (e.g., `tasks JOIN goals`), each table's scope filter is combined with AND. All referenced tables must be in the same scope.
+**Multi-table queries:** If a query references multiple tables (e.g., `tasks JOIN goals`), the inner subquery uses `SELECT *` (not the user's column selection) to ensure all scope columns are available in the outer `_dbq`. The user's column selection is applied after scope filtering. When multiple tables share a scope column name (e.g., both `tasks` and `goals` have `room_id`), the outer WHERE clause qualifies with the `_dbq` alias to avoid ambiguity: `_dbq.room_id = ?`. If different tables in the same query require different scope filters (e.g., one direct, one indirect), each filter is combined with AND and column names are qualified. All referenced tables must be in the same scope.
+
+```sql
+-- Agent provides:  SELECT me.status, g.title FROM mission_executions me JOIN goals g ON me.goal_id = g.id
+-- System wraps:    SELECT me.status, g.title FROM (
+--                     SELECT * FROM mission_executions me JOIN goals g ON me.goal_id = g.id
+--                   ) AS _dbq
+--                   WHERE _dbq.goal_id IN (SELECT id FROM goals WHERE room_id = ?)
+```
 
 ### Connection Management
 
@@ -209,7 +221,7 @@ Create `packages/daemon/src/lib/db-query/scope-config.ts` that defines which tab
    - `blacklistedColumns: string[]` -- columns to exclude from `db_describe_table` and `SELECT *`
    - `description: string` -- human-readable description for the agent
 3. Define scope configurations matching the "Table Access by Scope" table in the Approach section above:
-   - **`global` scope**: sessions, rooms, spaces, app_mcp_servers, skills, inbox_items, neo_activity_log, job_queue, short_id_counters, github_mapping -- no filter, column blacklists applied
+   - **`global` scope**: sessions, rooms, spaces, app_mcp_servers, skills, inbox_items, neo_activity_log, job_queue, short_id_counters -- no filter, column blacklists applied
    - **`room` scope**: tasks, goals, mission_executions (indirect via goals), mission_metric_history (indirect via goals), room_github_mappings, room_mcp_enablement, room_skill_overrides
    - **`space` scope**: space_agents, space_workflows, space_workflow_steps (indirect via space_workflows), space_workflow_runs, space_tasks, space_worktrees, gate_data (indirect via space_workflow_runs), channel_cycles (indirect via space_workflow_runs)
 4. Implement `getScopeConfig(scopeType: DbScopeType): ScopeTableConfig[]`
@@ -236,6 +248,7 @@ Create `packages/daemon/src/lib/db-query/scope-config.ts` that defines which tab
 - All scope configuration tests pass
 - No sensitive tables (`auth_config`, `global_tools_config`, `global_settings`) are in any scope
 - `sdk_messages` is excluded from all scopes
+- Internal infrastructure tables (`session_groups`, `session_group_members`, `task_group_events`) are excluded from all scopes
 - Dropped tables (`space_session_groups`, `space_session_group_members`, `space_workflow_transitions`) are not in any scope config
 - `buildScopeFilter` produces correct parameterized SQL for both direct and indirect scope configs
 - Column blacklists exclude known-sensitive columns
@@ -272,8 +285,8 @@ Create the core `db-query` MCP server. Each instance owns one read-only SQLite c
      1. Call `validateSql(sql)` -- reject if invalid (return `{ isError: true }`)
      2. Check all extracted `tableRefs` are in the current scope's accessible tables -- reject if any table is out-of-scope (prevents cross-scope joins)
      3. For each referenced table, look up its `ScopeTableConfig` and `buildScopeFilter()`
-     4. Combine all scope filters with AND
-     5. Wrap the query: `SELECT * FROM (<original_query>) AS _dbq WHERE <combined_scope_filter>`
+     4. Combine all scope filters with AND, qualifying column names with `_dbq.` prefix to avoid ambiguity when multiple tables share column names
+     5. Rewrite the inner query to use `SELECT *` (ensuring scope columns are available), then wrap: `SELECT <user_columns> FROM (SELECT * FROM <user_tables_and_joins>) AS _dbq WHERE <combined_scope_filter>`. For single-table queries without explicit column selection, the outer SELECT defaults to `*`.
      6. Append LIMIT cap: `Math.min(limit ?? 200, 1000)`
      7. Execute via `db.query(wrappedSql, [...userParams, ...scopeParams])`
      8. Apply column blacklist: remove blacklisted columns from each row before returning
@@ -360,6 +373,12 @@ Wire the `db-query` MCP server into all agent session types. Each session gets i
 - The `dbPath` is obtained from `ctx.db.getDatabasePath()` (verified to exist at `packages/daemon/src/storage/index.ts`)
 - The `createSdkMcpServer` return type is cast to `McpServerConfig` via `as unknown as McpServerConfig` (same pattern as `room-agent-tools`)
 - Each MCP server instance owns its own connection (no pool). The `close()` method is called on session teardown.
+
+**Out of scope for initial implementation (can be added in follow-ups):**
+- **Node agent sub-sessions**: spawned by `TaskAgentManager` for individual workflow steps. Deferred because node agents already inherit MCP tools from their parent task agent session.
+- **Planner agent sessions**: used for planning phases in room missions. Deferred because planner sessions have access to the same room-scoped MCP tools as the leader/worker.
+- **Neo agent sessions**: the global scope is defined but wiring into `neo-agent-manager.ts` is deferred to a follow-up PR.
+- **`readOnlyHint: true`**: the `tool()` helper from `@anthropic-ai/claude-agent-sdk` may or may not support this field in the version currently used (v0.2.86). The implementer should verify against the SDK's `tool()` type signature and omit the field if it causes a type error.
 
 **Acceptance criteria:**
 - Room chat sessions have a `db-query` MCP server with `room` scope
