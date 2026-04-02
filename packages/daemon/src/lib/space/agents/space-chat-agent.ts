@@ -52,7 +52,6 @@ export interface WorkflowSummary {
 export interface AgentSummary {
 	id: string;
 	name: string;
-	role?: string;
 	description?: string;
 }
 
@@ -129,7 +128,7 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 		sections.push(`\n## Available Agents\n`);
 		for (const agent of context.agents) {
 			const desc = agent.description ? ` — ${agent.description}` : '';
-			sections.push(`- **${agent.name}**${agent.role ? ` (role: ${agent.role})` : ''}${desc}`);
+			sections.push(`- **${agent.name}**${desc}`);
 		}
 	}
 

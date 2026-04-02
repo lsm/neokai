@@ -90,7 +90,7 @@ export interface SubSessionState {
 export interface SubSessionMemberInfo {
 	/** ID of the SpaceAgent config this sub-session uses */
 	agentId?: string;
-	/** Freeform role string from SpaceAgent.role (e.g. 'coder', 'reviewer') */
+	/** Slot name from WorkflowNodeAgent.name (e.g. 'coder', 'reviewer') */
 	role?: string;
 }
 
@@ -313,7 +313,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Extract slot-level overrides (systemPrompt) if present.
 			// model is no longer on WorkflowNodeAgent; systemPrompt is now WorkflowNodeAgentOverride.
 			const slotOverrides: import('../agents/custom-agent').SlotOverrides = {
-				systemPrompt: agentSlot?.systemPrompt?.value,
+				systemPrompt: agentSlot?.systemPrompt,
+				instructions: agentSlot?.instructions,
 			};
 
 			// Generate a new session ID for the sub-session.
@@ -427,6 +428,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					space,
 					sessionId: actualSessionId,
 					workspacePath,
+					slotOverrides,
 				});
 				await messageInjector(actualSessionId, taskMessage);
 			} catch (err) {

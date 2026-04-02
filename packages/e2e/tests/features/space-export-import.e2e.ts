@@ -60,7 +60,6 @@ async function createTestSpace(page: Page): Promise<{
 			const agentRes = await hub.request('spaceAgent.create', {
 				spaceId,
 				name: 'Test Coder',
-				role: 'coder',
 				description: 'A test coder agent',
 			});
 			const agentId = (agentRes as { agent: { id: string } }).agent.id;
@@ -205,7 +204,6 @@ test.describe('Space Export/Import', () => {
 					version: 1,
 					type: 'agent',
 					name: 'Imported Reviewer',
-					role: 'reviewer',
 					description: 'A reviewer agent imported from a bundle',
 					tools: [],
 				},
@@ -248,7 +246,6 @@ test.describe('Space Export/Import', () => {
 					version: 1,
 					type: 'agent',
 					name: agentName, // same name → conflict
-					role: 'coder',
 					description: 'Duplicate agent',
 					tools: [],
 				},
@@ -297,7 +294,6 @@ test.describe('Space Export/Import', () => {
 					version: 1,
 					type: 'agent',
 					name: 'Bundle Agent',
-					role: 'general',
 					tools: [],
 				},
 			],

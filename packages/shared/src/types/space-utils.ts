@@ -27,9 +27,15 @@ import type {
  * Wildcard and array `to` declarations are expanded into one entry per resolved pair.
  */
 export interface ResolvedChannel {
-	/** Name of the sending agent (matches WorkflowNodeAgent.name) */
+	/**
+	 * Name of the sending agent (matches WorkflowNodeAgent.name).
+	 * Note: field name is historical — stores agent name, not role.
+	 */
 	fromRole: string;
-	/** Name of the receiving agent (matches WorkflowNodeAgent.name) */
+	/**
+	 * Name of the receiving agent (matches WorkflowNodeAgent.name).
+	 * Note: field name is historical — stores agent name, not role.
+	 */
 	toRole: string;
 	/** Agent ID of the sender */
 	fromAgentId: string;
@@ -39,7 +45,7 @@ export interface ResolvedChannel {
 	direction: 'one-way';
 	/**
 	 * True when the `to` side of the source WorkflowChannel resolved to a node name
-	 * (fan-out delivery to all agents in that node), not an individual agent role.
+	 * (fan-out delivery to all agents in that node), not an individual agent name.
 	 *
 	 * Note: `isFanOut` specifically describes **to-side** fan-out. When `from` in the
 	 * source channel is a node name, the resolver creates one `ResolvedChannel` entry
@@ -79,9 +85,8 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 
 	// Backward compatibility: if `agentId` shorthand is present on the node object
 	// (legacy test code and call-sites), synthesize a single-agent array.
-	const legacyAgentId = (node as unknown as Record<string, unknown>)['agentId'] as
-		| string
-		| undefined;
+	const legacyRecord = node as unknown as Record<string, unknown>;
+	const legacyAgentId = legacyRecord['agentId'] as string | undefined;
 	if (legacyAgentId) {
 		return [{ agentId: legacyAgentId, name: node.name }];
 	}
@@ -327,12 +332,12 @@ export function validateNodeChannels(
  * cross-node, DM, and fan-out. There is no separate resolveNodeChannels call needed.
  *
  * Addressing semantics:
- * - `from`/`to` values are looked up globally against `WorkflowNodeAgent.role` strings
+ * - `from`/`to` values are looked up globally against `WorkflowNodeAgent.name` strings
  *   (which must be unique across all nodes in the workflow for correct routing).
  * - When `to` matches a **node name** (from `WorkflowNode.name`), the channel
  *   fans out to all agents in that node (`isFanOut: true`).
- * - When `to` matches an **agent role**, the channel is a point-to-point DM (`isFanOut: false`).
- * - The wildcard `'*'` for `from` or `to` (as sole element) expands to all agent roles,
+ * - When `to` matches an **agent name**, the channel is a point-to-point DM (`isFanOut: false`).
+ * - The wildcard `'*'` for `from` or `to` (as sole element) expands to all agent names,
  *   preserving backward compatibility with node-level channel declarations.
  * - Bidirectional channels expand to two one-way entries.
  * - Self-loops are skipped.

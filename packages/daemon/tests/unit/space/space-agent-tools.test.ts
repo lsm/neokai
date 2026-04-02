@@ -1475,7 +1475,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 	});
 
 	test('start_workflow_run with planning start node creates task with planning taskType', async () => {
-		// Seed a planner agent so resolveTaskTypeForAgent returns 'planning'
+		// Seed a planner agent for the planning step
 		seedAgentRow(ctx.db, 'agent-planner-1', ctx.spaceId, 'Planner');
 
 		const stepId = 'planning-step-1';

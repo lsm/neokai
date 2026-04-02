@@ -29,7 +29,7 @@ export type {
 	CommandRunner,
 } from './runtime/workflow-executor';
 export { SpaceRuntime } from './runtime/space-runtime';
-export type { SpaceRuntimeConfig, ResolvedTaskType } from './runtime/space-runtime';
+export type { SpaceRuntimeConfig } from './runtime/space-runtime';
 export { NullNotificationSink } from './runtime/notification-sink';
 export type {
 	NotificationSink,

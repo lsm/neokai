@@ -14,22 +14,52 @@ import type {
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
+	WorkflowNodeAgentOverride,
 } from '@neokai/shared';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
-import { getFeaturesForRole } from './seed-agents';
+import { SUB_SESSION_FEATURES } from './seed-agents';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
 
 /**
  * Per-slot overrides from a `WorkflowNodeAgent` entry.
  * Applied on top of the base `SpaceAgent` config when spawning a specific slot.
+ *
+ * Override semantics:
+ * - `mode: 'override'` — replaces the agent's base value entirely.
+ * - `mode: 'expand'`   — appends the value to the agent's base (joined with `\n\n`).
+ * - absent (undefined) — uses the agent's base value unchanged.
  */
 export interface SlotOverrides {
 	/** Override the agent's default model for this slot */
 	model?: string;
 	/** Override the agent's default system prompt for this slot */
-	systemPrompt?: string;
+	systemPrompt?: WorkflowNodeAgentOverride;
+	/** Override the agent's default instructions for this slot */
+	instructions?: WorkflowNodeAgentOverride;
+}
+
+/**
+ * Two-layer composition: applies a slot override on top of a base value.
+ *
+ * - If `override` is absent (undefined), returns the `base` unchanged.
+ * - If `override.mode === 'override'`, returns `override.value` (replaces base).
+ * - If `override.mode === 'expand'`, returns `base + '\n\n' + override.value`.
+ *   When `base` is empty/null/undefined, only `override.value` is returned.
+ */
+export function composePromptLayer(
+	base: string | null | undefined,
+	override: WorkflowNodeAgentOverride | undefined
+): string {
+	if (!override) return base?.trim() ?? '';
+	const trimmedBase = base?.trim() ?? '';
+	const trimmedValue = override.value.trim();
+	if (override.mode === 'override') return trimmedValue;
+	// expand mode — if value is empty after trimming, just return base
+	if (!trimmedValue) return trimmedBase;
+	if (!trimmedBase) return trimmedValue;
+	return `${trimmedBase}\n\n${trimmedValue}`;
 }
 
 export interface CustomAgentConfig {
@@ -56,20 +86,25 @@ export interface CustomAgentConfig {
 /**
  * Build the runtime system prompt text for a custom agent.
  *
- * This function intentionally returns only the visible prompt text configured by
- * the user or workflow. No role-based behavioral instructions are injected.
+ * Applies the slot's `systemPrompt` override (if any) on top of the agent's
+ * base `systemPrompt` using two-layer composition.
  */
-export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
-	return customAgent.systemPrompt?.trim() ?? '';
+export function buildCustomAgentSystemPrompt(
+	customAgent: SpaceAgent,
+	slotOverrides?: SlotOverrides
+): string {
+	return composePromptLayer(customAgent.systemPrompt, slotOverrides?.systemPrompt);
 }
 
 /**
  * Build the initial user message for a custom agent session.
  *
  * This message contains only factual task/workflow/space context.
+ * Slot-level instructions override is composed separately and passed as
+ * part of the initial message when provided.
  */
 export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
-	const { task, workflowRun, workflow, space, previousTaskSummaries } = config;
+	const { task, workflowRun, workflow, space, previousTaskSummaries, slotOverrides } = config;
 
 	const sections: string[] = [];
 
@@ -77,7 +112,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 	sections.push(`**Title:** ${task.title}`);
 	sections.push(`**Description:** ${task.description}`);
 	if (task.priority) sections.push(`**Priority:** ${task.priority}`);
-	// taskType removed from SpaceTask
 
 	if (workflowRun) {
 		sections.push(`\n## Workflow Context\n`);
@@ -103,8 +137,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 				}
 			}
 		}
-
-		// workflow.rules removed — no rule rendering
 	}
 
 	if (space.backgroundContext) {
@@ -129,7 +161,29 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
+	// Compose slot-level instructions override on top of agent's base instructions.
+	// When present, this provides the node-specific HOW for the agent.
+	const composedInstructions = composePromptLayer(
+		customAgentInstructions(config.customAgent, config),
+		slotOverrides?.instructions
+	);
+	if (composedInstructions) {
+		sections.push(`\n## Instructions\n`);
+		sections.push(composedInstructions);
+	}
+
 	return sections.join('\n');
+}
+
+/**
+ * Extract the agent's instructions field for composition.
+ * Used as the base layer for slot-level instruction overrides.
+ */
+function customAgentInstructions(
+	customAgent: SpaceAgent,
+	_config: CustomAgentConfig
+): string | null {
+	return customAgent.instructions;
 }
 
 /**
@@ -138,9 +192,13 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
  * Workflow execution is WYSIWYG:
  * - inside a workflow run, the workflow slot prompt is the only behavioral prompt
  * - outside a workflow run, the agent's own `systemPrompt` is used
+ *
+ * Override/expand composition:
+ * - `slotOverrides.systemPrompt` composes on top of `customAgent.systemPrompt`
+ * - `slotOverrides.instructions` composes on top of `customAgent.instructions`
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
-	const { customAgent, space, sessionId, workspacePath, slotOverrides, workflowRun } = config;
+	const { customAgent, space, sessionId, workspacePath, slotOverrides } = config;
 
 	const customTools =
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
@@ -148,13 +206,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
 	const provider = inferProviderForModel(model);
 
-	const promptAgent: SpaceAgent =
-		workflowRun !== null
-			? { ...customAgent, systemPrompt: slotOverrides?.systemPrompt }
-			: slotOverrides?.systemPrompt !== undefined
-				? { ...customAgent, systemPrompt: slotOverrides.systemPrompt }
-				: customAgent;
-	const visiblePrompt = buildCustomAgentSystemPrompt(promptAgent);
+	const visiblePrompt = buildCustomAgentSystemPrompt(customAgent, slotOverrides);
 
 	if (customTools) {
 		const agentKey = sanitizeAgentKey(customAgent.name);
@@ -172,7 +224,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 				type: 'preset',
 				preset: 'claude_code',
 			},
-			features: getFeaturesForRole('coder'),
+			features: SUB_SESSION_FEATURES,
 			context: { spaceId: space.id },
 			type: 'worker',
 			model,
@@ -191,7 +243,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			preset: 'claude_code',
 			append: visiblePrompt,
 		},
-		features: getFeaturesForRole('coder'),
+		features: SUB_SESSION_FEATURES,
 		context: { spaceId: space.id },
 		type: 'worker',
 		model,

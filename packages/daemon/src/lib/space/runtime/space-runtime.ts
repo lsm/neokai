@@ -56,7 +56,7 @@ export interface SpaceRuntimeConfig {
 	db: BunDatabase;
 	/** Space manager for listing spaces and fetching workspace paths */
 	spaceManager: SpaceManager;
-	/** Agent manager for resolving agent roles in resolveTaskTypeForStep() */
+	/** Agent manager for resolving agents */
 	spaceAgentManager: SpaceAgentManager;
 	/** Workflow manager for loading workflow definitions */
 	spaceWorkflowManager: SpaceWorkflowManager;
@@ -96,18 +96,6 @@ export interface SpaceRuntimeConfig {
 	 * Defaults to `new CompletionDetector(taskRepo)` if not provided.
 	 */
 	completionDetector?: CompletionDetector;
-}
-
-// ---------------------------------------------------------------------------
-// Return types
-// ---------------------------------------------------------------------------
-
-/** Result of resolveTaskTypeForAgent(): agentId for the resolved agent */
-export interface ResolvedTaskType {
-	/**
-	 * The agent ID for this task's execution.
-	 */
-	agentId: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -400,29 +388,6 @@ export class SpaceRuntime {
 		this.resolveAndStoreChannels(run.id, space.id, startStep, workflow.channels ?? []);
 
 		return { run, tasks };
-	}
-
-	/**
-	 * Resolve the agent ID for a specific agent entry.
-	 */
-	resolveTaskTypeForAgent(agentId: string): ResolvedTaskType {
-		return { agentId };
-	}
-
-	/**
-	 * Resolve per-agent task types for a workflow step.
-	 * Returns one `ResolvedTaskType` per agent entry in the step (in order).
-	 */
-	resolveTaskTypesForStep(step: WorkflowNode): ResolvedTaskType[] {
-		const nodeAgents = resolveNodeAgents(step);
-		return nodeAgents.map((sa) => this.resolveTaskTypeForAgent(sa.agentId));
-	}
-
-	/**
-	 * Resolve the ResolvedTaskType for a workflow step (first agent).
-	 */
-	resolveTaskTypeForStep(step: WorkflowNode): ResolvedTaskType {
-		return this.resolveTaskTypesForStep(step)[0];
 	}
 
 	/**

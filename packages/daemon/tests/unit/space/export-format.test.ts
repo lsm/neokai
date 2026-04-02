@@ -151,11 +151,9 @@ describe('exportAgent', () => {
 		expect(exported.tools).toEqual(['edit_file', 'bash']);
 	});
 
-	test('exports reviewer role', () => {
+	test('exports reviewer agent', () => {
 		const agent = makeReviewerAgent();
 		const exported = exportAgent(agent);
-		// role field was removed from SpaceAgent in M71; not exported
-		expect((exported as Record<string, unknown>).role).toBeUndefined();
 		expect(exported.name).toBe('Reviewer');
 	});
 
