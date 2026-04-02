@@ -1,10 +1,18 @@
 import { generateUUID } from '@neokai/shared';
 import type { Gate, GateField, WorkflowChannel } from '@neokai/shared';
 
+/** Shape of the `_scriptResult` entry stored in gate data by the daemon. */
+interface ScriptResult {
+	success: boolean;
+	reason?: string;
+}
+
 export interface ChannelEdgeConfigPanelProps {
 	index: number;
 	channel: WorkflowChannel;
 	gates: Gate[];
+	/** Optional runtime gate data (e.g. from `space.gateData.updated` event). */
+	gateData?: Record<string, unknown>;
 	shouldBeCyclic?: boolean;
 	onChange: (index: number, channel: WorkflowChannel) => void;
 	onDelete: (index: number) => void;
@@ -54,6 +62,7 @@ export function ChannelEdgeConfigPanel({
 	index,
 	channel,
 	gates,
+	gateData,
 	shouldBeCyclic = false,
 	onChange,
 	onDelete,
@@ -225,6 +234,26 @@ export function ChannelEdgeConfigPanel({
 								))}
 							</div>
 						)}
+
+						{/* Script error reason from runtime gate data */}
+						{(() => {
+							const sr = gateData?._scriptResult as ScriptResult | undefined;
+							if (sr && !sr.success && sr.reason) {
+								return (
+									<div
+										data-testid="gate-script-error"
+										class="flex items-start gap-1.5 rounded border border-red-800/50 bg-red-950/30 px-2 py-1.5 text-xs"
+									>
+										<span class="shrink-0 text-red-400" role="img" aria-label="Warning">
+											{'\u26A0\uFE0F'}
+										</span>
+										<span class="text-red-300 break-all leading-snug">{sr.reason}</span>
+									</div>
+								);
+							}
+							return null;
+						})()}
+
 						<div class="flex gap-2">
 							{onEditGate && (
 								<button

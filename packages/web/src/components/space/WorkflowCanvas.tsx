@@ -111,9 +111,20 @@ function computeVoteCount(
 }
 
 /**
- * Evaluate gate status from current gate data (field-based).
+ * Extract the script error reason from gate data, if any.
+ * Returns the reason string when `_scriptResult.success === false`, otherwise undefined.
+ */
+function getScriptErrorReason(data: Record<string, unknown>): string | undefined {
+	const sr = data._scriptResult as { success: boolean; reason?: string } | undefined;
+	if (sr && !sr.success && sr.reason) return sr.reason;
+	return undefined;
+}
+
+/**
+ * Evaluate gate status from current gate data (field-based + script result).
  *
  * Simplified frontend evaluation:
+ *   - Script result: if `_scriptResult.success === false` → blocked
  *   - Human approval gate (field 'approved' with human writers):
  *       data.approved === true  -> open
  *       data.approved === false -> blocked
@@ -121,6 +132,8 @@ function computeVoteCount(
  *   - All fields must pass their checks for the gate to be open.
  */
 function evaluateGateStatus(gate: Gate, data: Record<string, unknown>): GateStatus {
+	// Script-based gates: check _scriptResult before the empty-fields shortcut
+	if (getScriptErrorReason(data) !== undefined) return 'blocked';
 	if ((gate.fields ?? []).length === 0) return 'open';
 
 	// Check for human approval field first
@@ -338,6 +351,8 @@ interface GateIconProps {
 	onReject?: () => void;
 	onViewArtifacts?: () => void;
 	voteCount?: { current: number; min: number };
+	/** Script error reason from `_scriptResult` in gate data. */
+	scriptErrorReason?: string;
 }
 
 const GATE_ICON_R = 11; // radius
@@ -352,6 +367,7 @@ function GateIcon({
 	onReject,
 	onViewArtifacts,
 	voteCount,
+	scriptErrorReason,
 }: GateIconProps): JSX.Element {
 	const [showActions, setShowActions] = useState(false);
 
@@ -469,6 +485,32 @@ function GateIcon({
 				>
 					{voteCount.current}/{voteCount.min}
 				</text>
+			)}
+
+			{/* Script failed indicator */}
+			{scriptErrorReason && isRuntimeMode && (
+				<foreignObject
+					x={x - 55}
+					y={y + GATE_ICON_R + (voteCount !== undefined ? 20 : 8)}
+					width={110}
+					height={16}
+					data-testid="gate-script-error-badge"
+				>
+					<div
+						style={{
+							fontSize: '9px',
+							color: '#ef4444',
+							fontFamily: 'monospace',
+							textAlign: 'center',
+							whiteSpace: 'nowrap',
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+						}}
+						title={scriptErrorReason}
+					>
+						{'⚠️ Script failed'}
+					</div>
+				</foreignObject>
 			)}
 
 			{showActions && isRuntimeMode && (
@@ -1191,6 +1233,10 @@ export function WorkflowCanvas({
 					const voteCount =
 						gate && isRuntimeMode ? computeVoteCount(gate.fields ?? [], gateData) : undefined;
 
+					// Script error reason from gate data (for display below the gate icon)
+					const scriptErrorReason =
+						gate && isRuntimeMode ? getScriptErrorReason(gateData) : undefined;
+
 					return (
 						<g key={`ch-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>
 							{/* Invisible wider hitbox */}
@@ -1221,6 +1267,7 @@ export function WorkflowCanvas({
 									isRuntimeMode={isRuntimeMode}
 									gateId={ch.gateId}
 									voteCount={voteCount}
+									scriptErrorReason={scriptErrorReason}
 									onApprove={
 										isHumanGate ? () => void handleApproveGate(ch.gateId!, true) : undefined
 									}
