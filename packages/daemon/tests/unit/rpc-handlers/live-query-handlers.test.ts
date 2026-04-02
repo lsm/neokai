@@ -425,6 +425,61 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			const sql = NAMED_QUERY_REGISTRY.get('goals.byRoom')!.sql;
 			expect(sql).toContain('ORDER BY priority DESC, created_at ASC, id ASC');
 		});
+
+		describe('defensive JSON parsing for schedule and structuredMetrics', () => {
+			function insertGoalRaw(overrides: Record<string, unknown> = {}): string {
+				const id = `goal-${Date.now()}-${Math.random()}`;
+				const linkedTaskIds = JSON.stringify(overrides.linkedTaskIds ?? []);
+				const metrics = JSON.stringify(overrides.metrics ?? {});
+				const schedule = overrides.schedule != null ? `'${String(overrides.schedule)}'` : 'NULL';
+				const structuredMetrics =
+					overrides.structuredMetrics != null ? `'${String(overrides.structuredMetrics)}'` : 'NULL';
+				db.exec(`
+					INSERT INTO goals (
+						id, room_id, title, description, status, priority, progress,
+						linked_task_ids, metrics, created_at, updated_at,
+						schedule, structured_metrics
+					) VALUES (
+						'${id}', '${roomId}', 'Test Goal', 'Desc', 'active', 'normal', 0,
+						'${linkedTaskIds}', '${metrics}', ${now}, ${now},
+						${schedule}, ${structuredMetrics}
+					)
+				`);
+				return id;
+			}
+
+			test('raw cron string in schedule column does not crash — returns undefined', () => {
+				insertGoalRaw({ schedule: '@daily' });
+				const [row] = queryAndMap();
+				expect(row.schedule).toBeUndefined();
+			});
+
+			test('valid JSON schedule parses correctly', () => {
+				const scheduleJson = JSON.stringify({ expression: '@daily', timezone: 'UTC' });
+				insertGoalRaw({ schedule: scheduleJson });
+				const [row] = queryAndMap();
+				expect(row.schedule).toEqual({ expression: '@daily', timezone: 'UTC' });
+			});
+
+			test('corrupted JSON in structuredMetrics column does not crash', () => {
+				insertGoalRaw({ structuredMetrics: 'corrupted{json' });
+				const [row] = queryAndMap();
+				expect(row.structuredMetrics).toBeUndefined();
+			});
+
+			test('valid JSON structuredMetrics parses correctly', () => {
+				const metricsJson = JSON.stringify([{ name: 'coverage', target: 80, current: 60 }]);
+				insertGoalRaw({ structuredMetrics: metricsJson });
+				const [row] = queryAndMap();
+				expect(row.structuredMetrics).toEqual([{ name: 'coverage', target: 80, current: 60 }]);
+			});
+
+			test('corrupted JSON in schedule column does not crash', () => {
+				insertGoalRaw({ schedule: 'not-valid-json{' });
+				const [row] = queryAndMap();
+				expect(row.schedule).toBeUndefined();
+			});
+		});
 	});
 
 	// -------------------------------------------------------------------------
