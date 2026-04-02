@@ -16,9 +16,10 @@
  * - task.updateDraft - Persist human input draft for a task (server-side, debounced by client)
  * - task.group.create - (non-production) Create a synthetic session group for a task
  * - task.group.addMessage - (non-production) Insert a synthetic canonical timeline row
+ * - inbox.reviewTasks - Get all review-status tasks across all active rooms
  */
 
-import type { MessageHub, TaskPriority, TaskStatus } from '@neokai/shared';
+import type { MessageHub, TaskPriority, TaskStatus, TaskSummary } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
@@ -1118,5 +1119,43 @@ export function setupTaskHandlers(
 		// TODO: remove once session LiveQuery covers list
 		emitRoomOverview(params.roomId);
 		return { success: true };
+	});
+
+	// inbox.reviewTasks - Get all review-status tasks across all active rooms.
+	// Replaces the client-side fan-out of room.get calls with a single targeted query
+	// that only reads task rows (no session/overview overhead).
+	messageHub.onRequest('inbox.reviewTasks', async () => {
+		const rooms = roomManager.listRooms(false);
+		const reviewTasks: Array<{ task: TaskSummary; roomId: string; roomTitle: string }> = [];
+
+		for (const room of rooms) {
+			const tasks = makeTaskRepo().listTasks(room.id);
+			for (const task of tasks) {
+				if (task.status === 'review') {
+					reviewTasks.push({
+						task: {
+							id: task.id,
+							shortId: task.shortId,
+							title: task.title,
+							status: task.status,
+							priority: task.priority,
+							progress: task.progress,
+							currentStep: task.currentStep,
+							dependsOn: task.dependsOn,
+							error: task.error,
+							activeSession: task.activeSession,
+							prUrl: task.prUrl,
+							prNumber: task.prNumber,
+							updatedAt: task.updatedAt,
+						},
+						roomId: room.id,
+						roomTitle: room.name,
+					});
+				}
+			}
+		}
+
+		reviewTasks.sort((a, b) => b.task.updatedAt - a.task.updatedAt);
+		return { tasks: reviewTasks };
 	});
 }
