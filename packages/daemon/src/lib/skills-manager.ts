@@ -96,6 +96,36 @@ export function resolveSkillRawUrl(url: string): string {
 	throw new Error(`Cannot resolve raw content URL from: ${url}`);
 }
 
+/**
+ * Convert a GitHub tree URL to a GitHub API contents URL.
+ *
+ * https://github.com/owner/repo/tree/branch/path
+ * → https://api.github.com/repos/owner/repo/contents/path?ref=branch
+ *
+ * Throws for non-github.com URLs or URLs missing /tree/.
+ */
+export function resolveGitHubApiContentsUrl(url: string): string {
+	const githubBase = 'https://github.com/';
+	if (!url.startsWith(githubBase)) {
+		throw new Error(`resolveGitHubApiContentsUrl: expected a github.com URL, got: ${url}`);
+	}
+	const rest = url.slice(githubBase.length);
+	const treeSep = '/tree/';
+	const treeIdx = rest.indexOf(treeSep);
+	if (treeIdx === -1) {
+		throw new Error(`resolveGitHubApiContentsUrl: URL must contain /tree/: ${url}`);
+	}
+	const ownerRepo = rest.slice(0, treeIdx);
+	const branchAndPath = rest.slice(treeIdx + treeSep.length);
+	const slashIdx = branchAndPath.indexOf('/');
+	if (slashIdx === -1) {
+		throw new Error(`resolveGitHubApiContentsUrl: URL must have a path after the branch: ${url}`);
+	}
+	const branch = branchAndPath.slice(0, slashIdx);
+	const path = branchAndPath.slice(slashIdx + 1);
+	return `https://api.github.com/repos/${ownerRepo}/contents/${path}?ref=${branch}`;
+}
+
 /** Maximum response body size accepted when fetching a remote skill (1 MiB). */
 const SKILL_FETCH_MAX_BYTES = 1 * 1024 * 1024;
 
@@ -243,18 +273,23 @@ export class SkillsManager {
 	 * Accepts GitHub tree URLs like:
 	 *   https://github.com/openai/skills/tree/main/skills/.curated/playwright
 	 *
-	 * Fetches the SKILL.md (converted via resolveSkillRawUrl) from the repo,
-	 * stores it at ~/.neokai/skills/{commandName}/SKILL.md (only if not already present),
-	 * writes it to {workspaceRoot}/.claude/commands/{commandName}.md (only if not already present),
-	 * and registers a builtin skill entry in the DB.
+	 * For GitHub tree URLs: fetches the entire skill directory via the GitHub API
+	 * and stores all files at ~/.neokai/skills/{commandName}/ (preserving structure).
+	 *
+	 * For other URLs (raw or fallback): fetches a single SKILL.md file.
+	 *
+	 * Registers a builtin skill entry in the DB.
 	 *
 	 * Idempotent: if a skill with the same name already exists in the DB, returns it
 	 * without re-fetching or overwriting any local files.
+	 *
+	 * @param _workspaceRoot - kept for API compatibility but no longer used;
+	 *   skills are always installed to ~/.neokai/skills/
 	 */
 	async installSkillFromGit(
 		repoUrl: string,
 		commandName: string,
-		workspaceRoot?: string
+		_workspaceRoot?: string
 	): Promise<AppSkill> {
 		// Sanitize commandName before using it in any filesystem path
 		validateCommandName(commandName);
@@ -266,57 +301,23 @@ export class SkillsManager {
 			return existing;
 		}
 
-		const rawUrl = resolveSkillRawUrl(repoUrl);
+		const destDir = join(homedir(), '.neokai', 'skills', commandName);
 
-		// Fetch with a timeout and size limit to prevent hangs and oversized writes
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), SKILL_FETCH_TIMEOUT_MS);
-		let content: string;
-		try {
-			const response = await fetch(rawUrl, { signal: controller.signal });
-			if (!response.ok) {
-				throw new Error(
-					`Failed to fetch skill from ${rawUrl}: ${response.status} ${response.statusText}`
-				);
-			}
-			const contentLength = response.headers.get('content-length');
-			if (contentLength && parseInt(contentLength, 10) > SKILL_FETCH_MAX_BYTES) {
-				throw new Error(
-					`Skill file at ${rawUrl} is too large (${contentLength} bytes; limit is ${SKILL_FETCH_MAX_BYTES})`
-				);
-			}
-			const buffer = await response.arrayBuffer();
-			if (buffer.byteLength > SKILL_FETCH_MAX_BYTES) {
-				throw new Error(
-					`Skill file at ${rawUrl} is too large (${buffer.byteLength} bytes; limit is ${SKILL_FETCH_MAX_BYTES})`
-				);
-			}
-			content = new TextDecoder().decode(buffer);
-		} finally {
-			clearTimeout(timeoutId);
-		}
-
-		// Store to ~/.neokai/skills/{commandName}/ — skip if already present
-		const skillsDir = join(homedir(), '.neokai', 'skills', commandName);
-		await mkdir(skillsDir, { recursive: true });
-		const skillFile = join(skillsDir, 'SKILL.md');
-		const skillFileExists = await access(skillFile)
-			.then(() => true)
-			.catch(() => false);
-		if (!skillFileExists) {
-			await writeFile(skillFile, content, 'utf-8');
-		}
-
-		// Write to workspace .claude/commands/ — skip if already present
-		if (workspaceRoot) {
-			const commandsDir = join(workspaceRoot, '.claude', 'commands');
-			await mkdir(commandsDir, { recursive: true });
-			const cmdFile = join(commandsDir, `${commandName}.md`);
-			const cmdFileExists = await access(cmdFile)
+		if (repoUrl.includes('github.com') && repoUrl.includes('/tree/')) {
+			// Fetch full skill directory via GitHub API
+			const apiUrl = resolveGitHubApiContentsUrl(repoUrl);
+			await this.fetchGitHubDirectory(apiUrl, destDir);
+		} else {
+			// Fallback: fetch a single SKILL.md (raw URL or blob URL)
+			const rawUrl = resolveSkillRawUrl(repoUrl);
+			await mkdir(destDir, { recursive: true });
+			const content = await this.fetchTextWithLimits(rawUrl);
+			const skillFile = join(destDir, 'SKILL.md');
+			const exists = await access(skillFile)
 				.then(() => true)
 				.catch(() => false);
-			if (!cmdFileExists) {
-				await writeFile(cmdFile, content, 'utf-8');
+			if (!exists) {
+				await writeFile(skillFile, content, 'utf-8');
 			}
 		}
 
@@ -334,6 +335,80 @@ export class SkillsManager {
 		};
 		this.repo.insert(skill);
 		return this.repo.get(skill.id)!;
+	}
+
+	/**
+	 * Recursively fetch a GitHub directory (via API contents endpoint) to destDir.
+	 * Skips files that already exist to preserve local edits.
+	 */
+	private async fetchGitHubDirectory(apiUrl: string, destDir: string): Promise<void> {
+		type GitHubEntry = {
+			name: string;
+			type: string;
+			download_url: string | null;
+			url: string;
+		};
+
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), SKILL_FETCH_TIMEOUT_MS);
+		let entries: GitHubEntry[];
+		try {
+			const response = await fetch(apiUrl, {
+				signal: controller.signal,
+				headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'neokai' },
+			});
+			if (!response.ok) {
+				throw new Error(
+					`GitHub API error for ${apiUrl}: ${response.status} ${response.statusText}`
+				);
+			}
+			entries = (await response.json()) as GitHubEntry[];
+		} finally {
+			clearTimeout(timeoutId);
+		}
+
+		await mkdir(destDir, { recursive: true });
+
+		for (const entry of entries) {
+			if (entry.type === 'file' && entry.download_url) {
+				const destFile = join(destDir, entry.name);
+				const alreadyExists = await access(destFile)
+					.then(() => true)
+					.catch(() => false);
+				if (!alreadyExists) {
+					const content = await this.fetchTextWithLimits(entry.download_url);
+					await writeFile(destFile, content, 'utf-8');
+				}
+			} else if (entry.type === 'dir') {
+				// Recurse into subdirectory
+				await this.fetchGitHubDirectory(entry.url, join(destDir, entry.name));
+			}
+		}
+	}
+
+	/**
+	 * Fetch a URL with timeout and size limit. Returns text content.
+	 */
+	private async fetchTextWithLimits(url: string): Promise<string> {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), SKILL_FETCH_TIMEOUT_MS);
+		try {
+			const response = await fetch(url, { signal: controller.signal });
+			if (!response.ok) {
+				throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+			}
+			const contentLength = response.headers.get('content-length');
+			if (contentLength && parseInt(contentLength, 10) > SKILL_FETCH_MAX_BYTES) {
+				throw new Error(`File at ${url} exceeds size limit`);
+			}
+			const buffer = await response.arrayBuffer();
+			if (buffer.byteLength > SKILL_FETCH_MAX_BYTES) {
+				throw new Error(`File at ${url} exceeds size limit`);
+			}
+			return new TextDecoder().decode(buffer);
+		} finally {
+			clearTimeout(timeoutId);
+		}
 	}
 
 	/**

@@ -102,16 +102,17 @@ This skill is **opt-in**, not automatically enabled. Enable it in the global ski
 
 ### Playwright
 
-CLI-first browser automation using `bunx @playwright/cli`. Invoke with `/playwright` in a session.
+CLI-first browser automation using `playwright-cli`. Invoke with `/playwright` in a session.
 
 - **Name**: `playwright`
 - **Type**: Built-in (enabled by default)
-- **Command file**: `.claude/commands/playwright.md`
+- **Skill directory (source)**: `packages/skills/playwright/`
+- **Skill directory (installed)**: `~/.neokai/skills/playwright/`
 - **Usage**: `/playwright` — drives a real browser for scraping, form filling, UI interaction, screenshots, and navigation. **Not** for running test suites.
 
-Core workflow: open a URL → snapshot the accessibility tree to get element refs → interact via CLI commands (click, fill, type, press) → re-snapshot after DOM changes. Use `bunx @playwright/cli snapshot`, `click`, `fill`, `screenshot`, `tab-new`, `tracing-start`, etc.
+Core workflow: open a URL → snapshot the accessibility tree to get element refs → interact via CLI commands (click, fill, type, press) → re-snapshot after DOM changes. Use the bundled `playwright_cli.sh` wrapper script (`scripts/playwright_cli.sh`) which runs via `npx` without requiring a global install.
 
-This skill is **enabled by default**. The slash command definition lives at `.claude/commands/playwright.md` in the NeoKai repository root and is automatically discovered by the Claude Code SDK.
+This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright/SKILL.md` in the NeoKai repository and is extracted to `~/.neokai/skills/playwright/` at startup when running as a compiled binary.
 
 ### Playwright Interactive
 
@@ -119,12 +120,13 @@ Persistent browser session for iterative UI debugging and visual QA. Invoke with
 
 - **Name**: `playwright-interactive`
 - **Type**: Built-in (enabled by default)
-- **Command file**: `.claude/commands/playwright-interactive.md`
+- **Skill directory (source)**: `packages/skills/playwright-interactive/`
+- **Skill directory (installed)**: `~/.neokai/skills/playwright-interactive/`
 - **Usage**: `/playwright-interactive` — bootstraps browser/context/page handles once and reuses them across interactions for fast iterative debugging without reopening the browser
 
-Covers desktop and mobile web contexts, screenshot capture, functional QA checklist, visual QA checklist, signoff criteria, and cleanup with try/finally. Uses `bunx playwright` for the npm package.
+Covers desktop and mobile web contexts, screenshot capture, functional QA checklist, visual QA checklist, signoff criteria, and cleanup with try/finally. Uses a persistent `js_repl` Playwright session.
 
-This skill is **enabled by default**. The slash command definition lives at `.claude/commands/playwright-interactive.md` in the NeoKai repository root and is automatically discovered by the Claude Code SDK.
+This skill is **enabled by default**. The skill definition lives at `packages/skills/playwright-interactive/SKILL.md` in the NeoKai repository and is extracted to `~/.neokai/skills/playwright-interactive/` at startup when running as a compiled binary.
 
 ## Skills Architecture
 
@@ -151,7 +153,7 @@ getMcpServersFromSkills() → SDK mcpServers{} config (mcp_server skills only)
 AgentSession initializes with skills injected
 ```
 
-Note: The `builtin` sourceType refers to slash commands backed by `.claude/commands/*.md` files in the NeoKai repository root. These are discovered automatically by the Claude Code SDK from the working directory — they do not need to be injected by `QueryOptionsBuilder`. Only `plugin` and `mcp_server` skills are injected via `QueryOptionsBuilder`.
+Note: The `builtin` sourceType refers to skills backed by skill directories under `packages/skills/{commandName}/` (source) or `~/.neokai/skills/{commandName}/` (installed). Each skill directory contains a `SKILL.md` prompt file plus optional subdirectories (`scripts/`, `references/`, `agents/`, `assets/`). Built-in skills are embedded in the compiled binary and extracted to `~/.neokai/skills/` at startup. The `builtin` sourceType is not injected by `QueryOptionsBuilder` — only `plugin` and `mcp_server` skills are injected via `QueryOptionsBuilder`.
 
 ### Key Files
 

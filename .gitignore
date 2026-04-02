@@ -62,6 +62,5 @@ browser-coverage.lcov
 .devproxy/.devproxy.pid
 .devproxy/devproxy.log
 
-# Claude Code — ignore everything except .claude/commands/ (slash command definitions)
-.claude/*
-!.claude/commands/
+# Claude Code — ignore everything under .claude/
+.claude/

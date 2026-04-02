@@ -1,0 +1,19 @@
+This skill includes material derived from the Microsoft playwright-cli repository.
+
+Source:
+- Repository: microsoft/playwright-cli
+- Path: skills/playwright-cli/SKILL.md
+
+Also includes material from the OpenAI skills repository:
+- Repository: openai/skills
+- Path: skills/.curated/playwright/
+
+Copyright (c) Microsoft Corporation.
+
+Licensed under the Apache License, Version 2.0.
+See LICENSE.txt in this directory.
+
+Modifications:
+- Adapted for NeoKai from the OpenAI skill collection.
+- Updated skill path references from $CODEX_HOME/.codex/skills to $NEOKAI_SKILLS_HOME (~/.neokai/skills).
+- Added wrapper script and local reference guides.

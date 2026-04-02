@@ -2,17 +2,18 @@
  * Scans packages/web/dist/ and generates packages/cli/src/embedded-assets.ts
  * with Bun file imports for embedding in compiled binaries.
  *
- * Also scans .claude/commands/*.md and embeds them as built-in command files.
+ * Also scans packages/skills/ recursively and embeds all skill files as
+ * embeddedBuiltinSkills — extracted to ~/.neokai/skills/ at startup.
  *
  * Usage: bun run scripts/generate-embedded-assets.ts
  */
 
 import { readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative, extname, basename } from 'node:path';
+import { join, relative, extname } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 const DIST_DIR = join(ROOT, 'packages/web/dist');
-const COMMANDS_DIR = join(ROOT, '.claude/commands');
+const SKILLS_DIR = join(ROOT, 'packages/skills');
 const OUTPUT_FILE = join(ROOT, 'packages/cli/src/embedded-assets.ts');
 
 const MIME_TYPES: Record<string, string> = {
@@ -96,33 +97,33 @@ for (const absPath of allFiles) {
 	mapEntries.push(`\t['${urlPath}', { filePath: ${id}, mimeType: '${mime}' }],`);
 }
 
-// Scan .claude/commands/*.md for built-in command files
-const cmdImports: string[] = [];
-const cmdMapEntries: string[] = [];
+// Scan packages/skills/ recursively for built-in skill files
+const skillImports: string[] = [];
+const skillMapEntries: string[] = [];
 
-let commandsExist = false;
+let skillsExist = false;
 try {
-	statSync(COMMANDS_DIR);
-	commandsExist = true;
+	statSync(SKILLS_DIR);
+	skillsExist = true;
 } catch {
-	// .claude/commands dir not present — skip
+	// packages/skills dir not present — skip
 }
 
-if (commandsExist) {
-	const cmdFiles = readdirSync(COMMANDS_DIR).filter((f) => f.endsWith('.md'));
-	for (const file of cmdFiles) {
-		const commandName = basename(file, '.md');
-		// Sanitize for use as a JS identifier: replace hyphens and dots with underscores
+if (skillsExist) {
+	const skillFiles = walkDir(SKILLS_DIR);
+	for (const absPath of skillFiles) {
+		const relPath = relative(SKILLS_DIR, absPath).replace(/\\/g, '/');
+		// Sanitize for use as a JS identifier
 		const varName =
-			'cmd_' +
-			commandName
+			'skill_' +
+			relPath
 				.replace(/[^a-zA-Z0-9]/g, '_')
 				.replace(/_+/g, '_')
 				.replace(/^_|_$/, '');
-		// Import path relative to packages/cli/src/ → ../../../.claude/commands/
-		const importPath = `'../../../.claude/commands/${file}' with { type: 'file' }`;
-		cmdImports.push(`import ${varName} from ${importPath};`);
-		cmdMapEntries.push(`\t['${commandName}', ${varName}],`);
+		// Import path relative to packages/cli/src/ → ../../skills/<relPath>
+		const importPath = `'../../skills/${relPath}' with { type: 'file' }`;
+		skillImports.push(`import ${varName} from ${importPath};`);
+		skillMapEntries.push(`\t['${relPath}', ${varName}],`);
 	}
 }
 
@@ -138,14 +139,14 @@ export const embeddedAssets = new Map<string, EmbeddedAsset>([
 ${mapEntries.join('\n')}
 ]);
 
-${cmdImports.join('\n')}
+${skillImports.join('\n')}
 
-export const embeddedBuiltinCommands = new Map<string, string>([
-${cmdMapEntries.join('\n')}
+export const embeddedBuiltinSkills = new Map<string, string>([
+${skillMapEntries.join('\n')}
 ]);
 `;
 
 writeFileSync(OUTPUT_FILE, output);
 console.log(
-	`Generated ${OUTPUT_FILE} with ${mapEntries.length} embedded assets (${skipped} source maps skipped), ${cmdMapEntries.length} built-in commands`
+	`Generated ${OUTPUT_FILE} with ${mapEntries.length} embedded assets (${skipped} source maps skipped), ${skillMapEntries.length} built-in skill files`
 );

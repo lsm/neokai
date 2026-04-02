@@ -11,4 +11,4 @@ export interface EmbeddedAsset {
 
 export declare const embeddedAssets: Map<string, EmbeddedAsset>;
 
-export declare const embeddedBuiltinCommands: Map<string, string>;
+export declare const embeddedBuiltinSkills: Map<string, string>;

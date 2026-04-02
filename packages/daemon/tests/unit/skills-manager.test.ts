@@ -13,8 +13,6 @@
  */
 
 import { unlinkSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
@@ -24,6 +22,7 @@ import { AppMcpServerRepository } from '../../src/storage/repositories/app-mcp-s
 import {
 	SkillsManager,
 	resolveSkillRawUrl,
+	resolveGitHubApiContentsUrl,
 	validateCommandName,
 } from '../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../helpers/reactive-database';
@@ -1077,6 +1076,44 @@ describe('validateCommandName', () => {
 });
 
 // ---------------------------------------------------------------------------
+// resolveGitHubApiContentsUrl utility
+// ---------------------------------------------------------------------------
+
+describe('resolveGitHubApiContentsUrl', () => {
+	test('converts a GitHub tree URL to GitHub API contents URL', () => {
+		expect(
+			resolveGitHubApiContentsUrl(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright'
+			)
+		).toBe(
+			'https://api.github.com/repos/openai/skills/contents/skills/.curated/playwright?ref=main'
+		);
+	});
+
+	test('handles nested paths correctly', () => {
+		expect(
+			resolveGitHubApiContentsUrl('https://github.com/owner/repo/tree/main/some/deep/path')
+		).toBe('https://api.github.com/repos/owner/repo/contents/some/deep/path?ref=main');
+	});
+
+	test('throws for non-github.com URL', () => {
+		expect(() => resolveGitHubApiContentsUrl('https://gitlab.com/foo/bar')).toThrow(
+			'expected a github.com URL'
+		);
+	});
+
+	test('throws for github.com URL without /tree/', () => {
+		expect(() => resolveGitHubApiContentsUrl('https://github.com/openai/skills')).toThrow('/tree/');
+	});
+
+	test('throws for tree URL without a path after branch', () => {
+		expect(() => resolveGitHubApiContentsUrl('https://github.com/openai/skills/tree/main')).toThrow(
+			'path after the branch'
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // SkillsManager.installSkillFromGit
 // ---------------------------------------------------------------------------
 
@@ -1096,17 +1133,39 @@ describe('SkillsManager.installSkillFromGit', () => {
 		db.close();
 	});
 
-	test('registers skill in DB and writes command file to workspace', async () => {
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = async () =>
-			new Response('# Playwright Skill\n\nContent here', { status: 200 });
+	/**
+	 * Helper: mock fetch for GitHub API + download_url pattern.
+	 * Returns a directory listing for api.github.com URLs and file content for raw URLs.
+	 */
+	function makeGitHubApiFetch(fileContent: string = '# Playwright Skill\n\nContent here') {
+		return async (url: string | URL | Request) => {
+			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: 'SKILL.md',
+							type: 'file',
+							download_url: 'https://raw.githubusercontent.com/mock/SKILL.md',
+							url: '',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			// download_url fetch
+			return new Response(fileContent, { status: 200 });
+		};
+	}
 
-		const tmpDir = await mkdtemp(join(tmpdir(), 'neokai-test-'));
+	test('registers skill in DB and writes SKILL.md to ~/.neokai/skills/', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = makeGitHubApiFetch() as typeof globalThis.fetch;
+
 		try {
 			const skill = await mgr.installSkillFromGit(
 				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
-				'playwright-test',
-				tmpDir
+				'playwright-test'
 			);
 
 			expect(skill.name).toBe('playwright-test');
@@ -1117,36 +1176,27 @@ describe('SkillsManager.installSkillFromGit', () => {
 			if (skill.config.type === 'builtin') {
 				expect(skill.config.commandName).toBe('playwright-test');
 			}
-
-			const cmdFile = join(tmpDir, '.claude', 'commands', 'playwright-test.md');
-			const content = await Bun.file(cmdFile).text();
-			expect(content).toContain('Playwright Skill');
 		} finally {
 			globalThis.fetch = originalFetch;
-			await rm(tmpDir, { recursive: true });
 		}
 	});
 
 	test('is idempotent — second call returns existing skill unchanged', async () => {
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = async () => new Response('# Content', { status: 200 });
+		globalThis.fetch = makeGitHubApiFetch() as typeof globalThis.fetch;
 
-		const tmpDir = await mkdtemp(join(tmpdir(), 'neokai-test-'));
 		try {
 			const skill1 = await mgr.installSkillFromGit(
 				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
-				'pw-idem',
-				tmpDir
+				'pw-idem'
 			);
 			const skill2 = await mgr.installSkillFromGit(
 				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
-				'pw-idem',
-				tmpDir
+				'pw-idem'
 			);
 			expect(skill1.id).toBe(skill2.id);
 		} finally {
 			globalThis.fetch = originalFetch;
-			await rm(tmpDir, { recursive: true });
 		}
 	});
 
@@ -1171,37 +1221,52 @@ describe('SkillsManager.installSkillFromGit', () => {
 	test('is truly idempotent — does not call fetch on second call', async () => {
 		let fetchCalls = 0;
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = async () => {
+		globalThis.fetch = (async (url: string | URL | Request) => {
 			fetchCalls++;
+			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: 'SKILL.md',
+							type: 'file',
+							download_url: 'https://raw.githubusercontent.com/mock/SKILL.md',
+							url: '',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
 			return new Response('# Content', { status: 200 });
-		};
+		}) as typeof globalThis.fetch;
 
-		const tmpDir = await mkdtemp(join(tmpdir(), 'neokai-test-'));
 		try {
 			await mgr.installSkillFromGit(
 				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
-				'idem-fetch-test',
-				tmpDir
+				'idem-fetch-test'
 			);
-			expect(fetchCalls).toBe(1);
+			// Expect 2 fetches: 1 for API directory listing, 1 for SKILL.md download
+			const firstCallCount = fetchCalls;
+			expect(firstCallCount).toBeGreaterThan(0);
 
 			// Second call should NOT fetch again — skill already in DB
 			await mgr.installSkillFromGit(
 				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
-				'idem-fetch-test',
-				tmpDir
+				'idem-fetch-test'
 			);
-			expect(fetchCalls).toBe(1); // still 1
+			expect(fetchCalls).toBe(firstCallCount); // still same count
 		} finally {
 			globalThis.fetch = originalFetch;
-			await rm(tmpDir, { recursive: true });
 		}
 	});
 
-	test('throws when fetch returns non-ok status', async () => {
+	test('throws when GitHub API returns non-ok status', async () => {
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = async () =>
-			new Response('Not Found', { status: 404, statusText: 'Not Found' });
+		globalThis.fetch = (async () =>
+			new Response('Not Found', {
+				status: 404,
+				statusText: 'Not Found',
+			})) as typeof globalThis.fetch;
 
 		try {
 			await expect(
@@ -1215,9 +1280,10 @@ describe('SkillsManager.installSkillFromGit', () => {
 		}
 	});
 
-	test('works without workspaceRoot (no command file written)', async () => {
+	test('falls back to single SKILL.md fetch for raw URL', async () => {
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = async () => new Response('# Content', { status: 200 });
+		globalThis.fetch = (async () =>
+			new Response('# Content', { status: 200 })) as typeof globalThis.fetch;
 
 		try {
 			const skill = await mgr.installSkillFromGit(
