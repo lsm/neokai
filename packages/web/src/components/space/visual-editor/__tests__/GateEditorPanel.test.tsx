@@ -12,14 +12,14 @@
  * - Typing in label input calls onChange with updated label
  * - Clearing label input calls onChange with label: undefined
  * - Label input is bounded by maxLength=20
- * - Label validation error shown when label exceeds 20 chars (should not happen due to maxLength, but tested for safety)
+ * - Label validation error shown when label exceeds 20 chars via props
  * - Color picker updates badge preview in real-time
  * - Color picker calls onChange with new color value
  * - Color hex display shows current color value
  * - Reset button visible only when custom color is set
  * - Reset button clears custom color and reverts to default
- * - Validation errors shown inline for invalid label
- * - Validation errors shown inline for invalid color
+ * - Validation errors shown inline for invalid label (21+ chars)
+ * - Validation errors shown inline for invalid color (non-hex format)
  * - Badge preview uses default color when no custom color set
  * - Badge preview uses default label when no custom label set
  * - Existing fields section still renders correctly
@@ -134,6 +134,28 @@ describe('GateEditorPanel — Badge Label', () => {
 
 		expect(queryByTestId('gate-editor-label-error')).toBeNull();
 	});
+
+	it('shows validation error when label exceeds 20 chars', () => {
+		const gate = makeGate({ label: 'a'.repeat(21) });
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const error = getByTestId('gate-editor-label-error');
+		expect(error.textContent).toBe('label: must be at most 20 characters, got 21');
+	});
+
+	it('shows validation error for label at exactly 21 chars (boundary)', () => {
+		const gate = makeGate({ label: 'a'.repeat(21) });
+		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(queryByTestId('gate-editor-label-error')).not.toBeNull();
+	});
+
+	it('shows no validation error for label at exactly 20 chars', () => {
+		const gate = makeGate({ label: 'a'.repeat(20) });
+		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(queryByTestId('gate-editor-label-error')).toBeNull();
+	});
 });
 
 describe('GateEditorPanel — Badge Color', () => {
@@ -216,6 +238,28 @@ describe('GateEditorPanel — Badge Color', () => {
 		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
 		expect(queryByTestId('gate-editor-color-error')).toBeNull();
+	});
+
+	it('shows validation error for invalid color format', () => {
+		const gate = makeGate({ color: 'not-a-color' });
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		const error = getByTestId('gate-editor-color-error');
+		expect(error.textContent).toContain('color: expected hex format #rrggbb');
+	});
+
+	it('shows validation error for short hex format', () => {
+		const gate = makeGate({ color: '#abc' });
+		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(queryByTestId('gate-editor-color-error')).not.toBeNull();
+	});
+
+	it('shows validation error for color without hash prefix', () => {
+		const gate = makeGate({ color: 'ff0000' });
+		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+		expect(queryByTestId('gate-editor-color-error')).not.toBeNull();
 	});
 });
 

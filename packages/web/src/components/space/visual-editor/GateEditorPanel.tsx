@@ -12,7 +12,9 @@ export interface GateEditorPanelProps {
 const FIELD_TYPES: GateFieldType[] = ['boolean', 'string', 'number', 'map'];
 const SCALAR_OPS = ['==', '!=', 'exists'] as const;
 const LABEL_MAX_LENGTH = 20;
-// TODO: Import from EdgeRenderer once badge constants are exported there
+// TODO: Import all badge constants from EdgeRenderer once exported there:
+//   DEFAULT_BADGE_COLOR, BADGE_BG, BADGE_BORDER, BADGE_HEIGHT, BADGE_RX,
+//   BADGE_CHAR_WIDTH, BADGE_PADDING
 const DEFAULT_BADGE_COLOR = '#3b82f6';
 const BADGE_BG = '#0f1115';
 const BADGE_BORDER = '#232733';
@@ -170,8 +172,8 @@ export function GateEditorPanel({
 				<div class="flex items-center justify-center py-2">
 					<svg
 						data-testid="gate-editor-badge-preview"
+						width={badgeLabel.length * BADGE_CHAR_WIDTH + BADGE_PADDING * 2}
 						height={BADGE_HEIGHT}
-						class="overflow-visible"
 					>
 						<rect
 							x={0}
