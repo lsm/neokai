@@ -173,7 +173,14 @@ export function TaskInfoPanel({
 				{/* View toggle section */}
 				{viewVersion && (
 					<div class="flex items-center justify-between">
-						<span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">View</span>
+						<div class="flex flex-col gap-0.5">
+							<span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">View</span>
+							<span class="text-[10px] text-gray-600">
+								{viewVersion.version === 'v1'
+									? 'V1 Timeline → V2 Turn-based'
+									: 'V2 Turn-based → V1 Timeline'}
+							</span>
+						</div>
 						<button
 							data-testid="task-view-toggle"
 							onClick={viewVersion.onToggleVersion}

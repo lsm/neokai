@@ -314,44 +314,45 @@ describe('TaskHeader', () => {
 		expect(header.className).toContain('py-2.5');
 		expect(header.className).toContain('sm:py-3');
 	});
-});
-// --- Desktop layout: tags row has no top margin on sm+ ---
 
-it('tags row has mt-1.5 on mobile and sm:mt-0 on desktop', () => {
-	const { container } = render(<TaskHeader {...defaultProps()} />);
-	const tagsRow = container.querySelector('.mt-1\\.5');
-	expect(tagsRow).toBeTruthy();
-	expect(tagsRow!.className).toContain('sm:mt-0');
-});
+	// --- Desktop layout: tags row has no top margin on sm+ ---
 
-it('tags row uses a flex spacer (w-7) for desktop alignment, hidden on mobile', () => {
-	const { container } = render(<TaskHeader {...defaultProps()} />);
-	const spacer = container.querySelector('.hidden');
-	expect(spacer).toBeTruthy();
-	expect(spacer!.className).toContain('sm:block');
-	expect(spacer!.className).toContain('w-7');
-});
+	it('tags row has mt-1.5 on mobile and sm:mt-0 on desktop', () => {
+		const { container } = render(<TaskHeader {...defaultProps()} />);
+		const tagsRow = container.querySelector('.mt-1\\.5');
+		expect(tagsRow).toBeTruthy();
+		expect(tagsRow!.className).toContain('sm:mt-0');
+	});
 
-// --- PR fallback edge case ---
+	it('tags row uses a flex spacer (w-7) for desktop alignment, hidden on mobile', () => {
+		const { container } = render(<TaskHeader {...defaultProps()} />);
+		const spacer = container.querySelector('.hidden');
+		expect(spacer).toBeTruthy();
+		expect(spacer!.className).toContain('sm:block');
+		expect(spacer!.className).toContain('w-7');
+	});
 
-it('renders "PR #?" when prUrl is set but prNumber is null', () => {
-	const { container } = render(
-		<TaskHeader
-			{...defaultProps({
-				task: makeTask({ prUrl: 'https://github.com/org/repo/pull/42', prNumber: null }),
-			})}
-		/>
-	);
-	expect(container.textContent).toContain('PR #?');
-});
+	// --- PR fallback edge cases ---
 
-it('renders "PR #?" when prUrl is set but prNumber is undefined', () => {
-	const { container } = render(
-		<TaskHeader
-			{...defaultProps({
-				task: makeTask({ prUrl: 'https://github.com/org/repo/pull/42', prNumber: undefined }),
-			})}
-		/>
-	);
-	expect(container.textContent).toContain('PR #?');
+	it('renders "PR #?" when prUrl is set but prNumber is null', () => {
+		const { container } = render(
+			<TaskHeader
+				{...defaultProps({
+					task: makeTask({ prUrl: 'https://github.com/org/repo/pull/42', prNumber: null }),
+				})}
+			/>
+		);
+		expect(container.textContent).toContain('PR #?');
+	});
+
+	it('renders "PR #?" when prUrl is set but prNumber is undefined', () => {
+		const { container } = render(
+			<TaskHeader
+				{...defaultProps({
+					task: makeTask({ prUrl: 'https://github.com/org/repo/pull/42', prNumber: undefined }),
+				})}
+			/>
+		);
+		expect(container.textContent).toContain('PR #?');
+	});
 });
