@@ -192,8 +192,10 @@ export function buildWorkflowCreateParams(
 				name: a.name,
 			};
 			// Normalize overrides: plain strings (legacy) → { mode: 'override', value }
-			entry.systemPrompt = normalizeOverride(a.systemPrompt);
-			entry.instructions = normalizeOverride(a.instructions);
+			const normalizedSP = normalizeOverride(a.systemPrompt);
+			if (normalizedSP !== undefined) entry.systemPrompt = normalizedSP;
+			const normalizedInst = normalizeOverride(a.instructions);
+			if (normalizedInst !== undefined) entry.instructions = normalizedInst;
 			return entry;
 		});
 

@@ -369,6 +369,17 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
 			error: `invalid: startNode "${result.data.startNode}" does not reference a known node name`,
 		};
 	}
+	// endNode must reference a known node name when present (skip check when nodes is empty)
+	if (
+		result.data.endNode !== undefined &&
+		result.data.nodes.length > 0 &&
+		!nodeNameSet.has(result.data.endNode)
+	) {
+		return {
+			ok: false,
+			error: `invalid: endNode "${result.data.endNode}" does not reference a known node name`,
+		};
+	}
 
 	// Channel from/to must reference known node names, agent slot names, or '*' wildcard.
 	// Build valid name set: '*' + all node names + all agent slot names (agents[].name).

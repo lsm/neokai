@@ -2029,8 +2029,8 @@ describe('validateExportedWorkflow — legacy plain-string overrides', () => {
 		expect(result.ok).toBe(false);
 	});
 
-	test('plain string overrides survive export → JSON → validate round-trip', () => {
-		// Export produces { mode, value } — but validate should also accept the result
+	test('workflow without per-slot overrides round-trips cleanly', () => {
+		// No per-slot overrides — all should be absent after round-trip
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
@@ -2097,5 +2097,37 @@ describe('exportWorkflow — endNode', () => {
 		if (result.ok) {
 			expect(result.value.endNode).toBe('Plan step');
 		}
+	});
+
+	test('rejects endNode that does not reference a known node name', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [{ agents: [{ agentRef: 'A', name: 'a' }], name: 'Step' }],
+			startNode: 'Step',
+			endNode: 'NonExistentNode',
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('endNode');
+			expect(result.error).toContain('NonExistentNode');
+		}
+	});
+
+	test('accepts endNode when nodes array is empty', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [],
+			startNode: 'first',
+			endNode: 'NonExistentNode',
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
 	});
 });
