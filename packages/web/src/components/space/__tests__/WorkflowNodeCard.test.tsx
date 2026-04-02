@@ -436,8 +436,8 @@ describe('WorkflowNodeCard — agent completion state', () => {
 		expect(getByTestId('agent-status-fail')).toBeTruthy();
 	});
 
-	it('shows pending dot for open agent', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'open' }];
+	it('shows pending dot for pending agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'pending' }];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('agent-status-pending')).toBeTruthy();
 	});

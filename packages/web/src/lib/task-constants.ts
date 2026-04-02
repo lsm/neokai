@@ -1,12 +1,19 @@
 export const TASK_STATUS_COLORS: Record<string, string> = {
-	pending: 'text-gray-400',
+	// SpaceTaskStatus values
+	open: 'text-gray-400',
 	in_progress: 'text-yellow-400',
+	done: 'text-green-400',
+	blocked: 'text-red-400',
+	cancelled: 'text-gray-500',
+	archived: 'text-gray-600',
+	// TaskStatus (room) values
+	pending: 'text-gray-400',
 	completed: 'text-green-400',
 	needs_attention: 'text-red-400',
 	review: 'text-purple-400',
 	draft: 'text-gray-500',
-	cancelled: 'text-gray-500',
-	archived: 'text-gray-600',
+	rate_limited: 'text-orange-500',
+	usage_limited: 'text-orange-600',
 };
 
 export const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: string }> = {

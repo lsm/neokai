@@ -8,13 +8,13 @@
  * Expanded: name input, agent dropdown, entry/exit gate selectors, instructions
  */
 
-import { useState, useCallback } from 'preact/hooks';
 import type {
+	NodeExecutionStatus,
 	SpaceAgent,
-	WorkflowNodeAgent,
 	WorkflowChannel,
-	SpaceTaskStatus,
+	WorkflowNodeAgent,
 } from '@neokai/shared';
+import { useCallback, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -65,16 +65,16 @@ export interface ConditionDraft {
 
 /**
  * Runtime completion state for a single agent slot within a workflow node.
- * Derived from SpaceTask records filtered by workflowNodeId.
+ * Derived from NodeExecution records grouped by workflowNodeId.
  */
 export interface AgentTaskState {
 	/** Matches WorkflowNodeAgent.name; null means single-agent node */
 	agentName: string | null;
-	status: SpaceTaskStatus;
+	status: NodeExecutionStatus;
 	completionSummary?: string | null;
 }
 
-/** Returns true when all provided agent states have status === 'completed'. */
+/** Returns true when all provided agent states have status === 'done'. */
 export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
 	return states.length > 0 && states.every((s) => s.status === 'done');
 }
@@ -681,7 +681,7 @@ interface WorkflowNodeCardProps {
 	disableRemove?: boolean;
 	/**
 	 * Runtime agent completion states for this node.
-	 * Derived from SpaceTask records filtered by the node's ID.
+	 * Derived from NodeExecution records filtered by the node's ID.
 	 * When provided, per-agent status indicators are shown in the collapsed header.
 	 */
 	nodeTaskStates?: AgentTaskState[];

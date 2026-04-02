@@ -60,7 +60,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 	};
 }
 
-function makeTask(id: string, status: SpaceTask['status'] = 'pending'): SpaceTask {
+function makeTask(id: string, status: SpaceTask['status'] = 'open'): SpaceTask {
 	return {
 		id,
 		spaceId: 'space-1',
@@ -137,8 +137,8 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [
 			makeTask('t1', 'in_progress'),
-			makeTask('t2', 'review'),
-			makeTask('t3', 'completed'),
+			makeTask('t2', 'blocked'),
+			makeTask('t3', 'done'),
 		];
 		const { getByText, getAllByText } = render(<SpaceDashboard spaceId="space-1" />);
 		expect(getAllByText('Active').length).toBeGreaterThanOrEqual(1);
@@ -150,9 +150,9 @@ describe('SpaceDashboard', () => {
 	it('shows attention, in-progress, and recent sections for tasks', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [
-			makeTask('attention', 'needs_attention'),
+			makeTask('attention', 'blocked'),
 			makeTask('active', 'in_progress'),
-			makeTask('done', 'completed'),
+			makeTask('done', 'done'),
 		];
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
 		expect(getByText('Attention Queue')).toBeTruthy();
@@ -185,7 +185,7 @@ describe('SpaceDashboard', () => {
 
 	it('calls onSelectTask when a recent task row is clicked', () => {
 		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'completed')];
+		mockTasks.value = [makeTask('t1', 'done')];
 		const onSelectTask = vi.fn();
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" onSelectTask={onSelectTask} />);
 		fireEvent.click(getByText('Task t1').closest('button')!);

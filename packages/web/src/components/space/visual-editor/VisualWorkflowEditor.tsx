@@ -255,7 +255,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
 	const agents = filterAgents(spaceStore.agents.value);
-	const tasksByNodeId = spaceStore.tasksByNodeId.value;
+	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 	const regularNodes = useMemo(
 		() =>
 			nodes.filter(
@@ -410,15 +410,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const nodeData = useMemo<WorkflowNodeData[]>(() => {
 		return regularNodes.map((node, i) => {
 			const nodeId = node.step.id;
-			const allNodeTasks = nodeId ? (tasksByNodeId.get(nodeId) ?? []) : [];
+			const allNodeExecs = nodeId ? (nodeExecutionsByNodeId.get(nodeId) ?? []) : [];
 			// Filter to the most relevant run to avoid mixing state from past runs.
-			const nodeTasks = relevantRunId
-				? allNodeTasks.filter((t) => t.workflowRunId === relevantRunId)
-				: allNodeTasks;
-			const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
-				agentName: null,
-				status: t.status,
-				completionSummary: t.result,
+			const nodeExecs = relevantRunId
+				? allNodeExecs.filter((e) => e.workflowRunId === relevantRunId)
+				: allNodeExecs;
+			const nodeTaskStates: AgentTaskState[] = nodeExecs.map((e) => ({
+				agentName: e.agentName ?? null,
+				status: e.status,
+				completionSummary: e.result,
 			}));
 			return {
 				stepIndex: i,
@@ -438,7 +438,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		channels,
 		nodeIsStart,
 		nodeIsEnd,
-		tasksByNodeId,
+		nodeExecutionsByNodeId,
 		relevantRunId,
 		anchorUsageByNodeId,
 	]);
