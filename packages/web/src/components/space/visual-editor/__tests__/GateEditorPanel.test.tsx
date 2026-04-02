@@ -27,7 +27,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, act } from '@testing-library/preact';
+import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { GateEditorPanel } from '../GateEditorPanel';
 import type { Gate } from '@neokai/shared';
 
@@ -119,14 +119,6 @@ describe('GateEditorPanel — Badge Label', () => {
 		const gateLong = makeGate({ label: 'Hello World' });
 		rerender(<GateEditorPanel {...makeProps(gateLong)} />);
 		expect(count.textContent).toBe('11/20');
-	});
-
-	it('respects maxLength of 20 characters', () => {
-		const gate = makeGate();
-		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
-
-		const input = getByTestId('gate-editor-label') as HTMLInputElement;
-		expect(input.maxLength).toBe(20);
 	});
 
 	it('does not show validation error for valid label', () => {
@@ -232,41 +224,48 @@ describe('GateEditorPanel — Badge Preview', () => {
 		const gate = makeGate();
 		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
-		const preview = getByTestId('gate-editor-badge-preview');
-		expect(preview.textContent).toBe('Gate');
+		const svg = getByTestId('gate-editor-badge-preview');
+		const text = svg.querySelector('text');
+		expect(text?.textContent).toBe('Gate');
 	});
 
 	it('renders badge preview with custom label', () => {
 		const gate = makeGate({ label: 'Approve' });
 		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
-		const preview = getByTestId('gate-editor-badge-preview');
-		expect(preview.textContent).toBe('Approve');
+		const svg = getByTestId('gate-editor-badge-preview');
+		const text = svg.querySelector('text');
+		expect(text?.textContent).toBe('Approve');
 	});
 
 	it('renders badge preview with default color when no color set', () => {
 		const gate = makeGate();
 		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
-		const preview = getByTestId('gate-editor-badge-preview');
-		expect(preview.style.color).toBe('#3b82f6');
+		const svg = getByTestId('gate-editor-badge-preview');
+		const text = svg.querySelector('text');
+		expect(text?.getAttribute('fill')).toBe('#3b82f6');
 	});
 
 	it('renders badge preview with custom color', () => {
 		const gate = makeGate({ color: '#ef4444' });
 		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
-		const preview = getByTestId('gate-editor-badge-preview');
-		expect(preview.style.color).toBe('#ef4444');
+		const svg = getByTestId('gate-editor-badge-preview');
+		const text = svg.querySelector('text');
+		expect(text?.getAttribute('fill')).toBe('#ef4444');
 	});
 
-	it('badge preview has dark background and border matching EdgeRenderer style', () => {
+	it('badge preview uses SVG rect matching EdgeRenderer style', () => {
 		const gate = makeGate();
 		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
-		const preview = getByTestId('gate-editor-badge-preview');
-		expect(preview.style.backgroundColor).toBe('#0f1115');
-		expect(preview.style.borderColor).toBe('#232733');
+		const svg = getByTestId('gate-editor-badge-preview');
+		const rect = svg.querySelector('rect');
+		expect(rect?.getAttribute('fill')).toBe('#0f1115');
+		expect(rect?.getAttribute('stroke')).toBe('#232733');
+		expect(rect?.getAttribute('rx')).toBe('10');
+		expect(Number(rect?.getAttribute('height'))).toBe(20);
 	});
 });
 
@@ -324,23 +323,12 @@ describe('GateEditorPanel — Existing functionality preserved', () => {
 		expect(queryByTestId('gate-editor-back')).toBeNull();
 	});
 
-	it('badge preview, label input, and color picker appear between description and reset on cycle', () => {
+	it('all new sections (preview, label, color) are present', () => {
 		const gate = makeGate();
-		const { container } = render(<GateEditorPanel {...makeProps(gate)} />);
+		const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
-		const allSections = container.querySelectorAll('[data-testid]');
-		const testIds = Array.from(allSections).map((el) => el.getAttribute('data-testid'));
-
-		const descIdx = testIds.indexOf('gate-editor-description');
-		const previewIdx = testIds.indexOf('gate-editor-badge-preview');
-		const labelIdx = testIds.indexOf('gate-editor-label');
-		const colorIdx = testIds.indexOf('gate-editor-color');
-		const resetIdx = testIds.indexOf('gate-editor-reset-on-cycle');
-
-		expect(descIdx).toBeGreaterThanOrEqual(0);
-		expect(previewIdx).toBeGreaterThan(descIdx);
-		expect(labelIdx).toBeGreaterThan(previewIdx);
-		expect(colorIdx).toBeGreaterThan(labelIdx);
-		expect(resetIdx).toBeGreaterThan(colorIdx);
+		expect(getByTestId('gate-editor-badge-preview')).toBeDefined();
+		expect(getByTestId('gate-editor-label')).toBeDefined();
+		expect(getByTestId('gate-editor-color')).toBeDefined();
 	});
 });

@@ -12,7 +12,14 @@ export interface GateEditorPanelProps {
 const FIELD_TYPES: GateFieldType[] = ['boolean', 'string', 'number', 'map'];
 const SCALAR_OPS = ['==', '!=', 'exists'] as const;
 const LABEL_MAX_LENGTH = 20;
+// TODO: Import from EdgeRenderer once badge constants are exported there
 const DEFAULT_BADGE_COLOR = '#3b82f6';
+const BADGE_BG = '#0f1115';
+const BADGE_BORDER = '#232733';
+const BADGE_HEIGHT = 20;
+const BADGE_RX = 10;
+const BADGE_CHAR_WIDTH = 7;
+const BADGE_PADDING = 8;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 // ---------------------------------------------------------------------------
@@ -20,17 +27,15 @@ const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 // ---------------------------------------------------------------------------
 
 function validateLabel(value: string | undefined): string {
-	if (value === undefined || value === null || value === '') return '';
-	if (typeof value !== 'string') return 'label: expected string';
+	if (!value) return '';
 	if (value.length > LABEL_MAX_LENGTH)
-		return `label: max ${LABEL_MAX_LENGTH} chars, got ${value.length}`;
+		return `label: must be at most 20 characters, got ${value.length}`;
 	return '';
 }
 
 function validateColor(value: string | undefined): string {
-	if (value === undefined || value === null || value === '') return '';
-	if (typeof value !== 'string') return 'color: expected string';
-	if (!HEX_COLOR_RE.test(value)) return 'color: expected hex format #rrggbb';
+	if (!value) return '';
+	if (!HEX_COLOR_RE.test(value)) return `color: expected hex format #rrggbb, got "${value}"`;
 	return '';
 }
 
@@ -163,17 +168,33 @@ export function GateEditorPanel({
 			<div class="space-y-1">
 				<label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Badge Preview</label>
 				<div class="flex items-center justify-center py-2">
-					<span
+					<svg
 						data-testid="gate-editor-badge-preview"
-						class="inline-flex items-center px-3 py-0.5 rounded-full text-[11px] font-semibold tracking-wide border"
-						style={{
-							backgroundColor: '#0f1115',
-							borderColor: '#232733',
-							color: badgeColor,
-						}}
+						height={BADGE_HEIGHT}
+						class="overflow-visible"
 					>
-						{badgeLabel}
-					</span>
+						<rect
+							x={0}
+							y={0}
+							width={badgeLabel.length * BADGE_CHAR_WIDTH + BADGE_PADDING * 2}
+							height={BADGE_HEIGHT}
+							rx={BADGE_RX}
+							fill={BADGE_BG}
+							stroke={BADGE_BORDER}
+							strokeWidth="1"
+						/>
+						<text
+							x={BADGE_PADDING}
+							y={BADGE_HEIGHT / 2}
+							dominantBaseline="central"
+							fontSize="11"
+							fontWeight="600"
+							letterSpacing="0.06em"
+							fill={badgeColor}
+						>
+							{badgeLabel}
+						</text>
+					</svg>
 				</div>
 			</div>
 
