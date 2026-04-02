@@ -9,7 +9,7 @@
  * - Remove the custom label and verify heuristic fallback
  * - Create a script-only gate (no fields) and verify the editor works
  *
- * Setup: creates a Space with two agents (coder, reviewer) via RPC in beforeEach.
+ * Setup: creates a Space via RPC in beforeEach.
  * Cleanup: deletes the Space via RPC in afterEach.
  *
  * E2E Rules:
@@ -18,8 +18,9 @@
  * - RPC is only used in beforeEach / afterEach for infrastructure setup / teardown
  *
  * UI Flow:
- *   Node click → NodeConfigPanel → channel-link button → ChannelRelationConfigPanel
- *   (embedded in NodeConfigPanel) → "Add Gate" → GateEditorPanel (embedded)
+ *   Add 2 steps → port-drag to create channel → Node click → NodeConfigPanel →
+ *   channel-link button → ChannelRelationConfigPanel (embedded) → "Add Gate" →
+ *   GateEditorPanel (embedded)
  *   Changes in GateEditorPanel propagate reactively to the canvas EdgeRenderer badge.
  */
 
@@ -32,75 +33,32 @@ import {
 	resetEditorModeStorage,
 	openNewWorkflowEditor,
 	switchToVisualMode,
-	setupMultiAgentStep,
-	ensureChannelsSectionOpen,
-	addWorkflowChannel,
 } from '../helpers/workflow-editor-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
-// ─── Roles used across tests ──────────────────────────────────────────────────
-
-const ROLE_A = 'coder';
-const ROLE_B = 'reviewer';
-const AGENT_A_NAME = 'Coder Agent';
-const AGENT_B_NAME = 'Reviewer Agent';
-// Agent select dropdown shows only the name (not "name (role)").
-const AGENT_A_OPTION = AGENT_A_NAME;
-const AGENT_B_OPTION = AGENT_B_NAME;
-
 // ─── RPC helpers (infrastructure only) ───────────────────────────────────────
 
 /**
- * Creates a space and two agents (coder, reviewer) for gate badge test scenarios.
- * Returns only spaceId — agent IDs are not needed since agents are selected by
- * option label in the UI.
+ * Creates a space for gate badge test scenarios.
  */
 async function createTestSpace(page: Page): Promise<string> {
 	const spaceName = `E2E Gate Badges ${Date.now()}`;
-	const spaceId = await createSpace(page, spaceName);
-
-	await page.evaluate(
-		async ({ sid, roleA, roleB, agentAName, agentBName }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			await hub.request('spaceAgent.create', {
-				spaceId: sid,
-				name: agentAName,
-				role: roleA,
-				description: '',
-			});
-			await hub.request('spaceAgent.create', {
-				spaceId: sid,
-				name: agentBName,
-				role: roleB,
-				description: '',
-			});
-		},
-		{
-			sid: spaceId,
-			roleA: ROLE_A,
-			roleB: ROLE_B,
-			agentAName: AGENT_A_NAME,
-			agentBName: AGENT_B_NAME,
-		}
-	);
-
-	return spaceId;
+	return createSpace(page, spaceName);
 }
 
 // ─── UI action helpers ────────────────────────────────────────────────────────
 
 /**
- * Sets up a workflow with a multi-agent step and a one-way channel (coder → reviewer).
+ * Sets up a workflow with two regular steps connected by a channel.
  *
  * Preconditions:
- *   - Space is created with coder and reviewer agents
+ *   - Space is created
  *   - Page is navigated to the space
  *
  * Postconditions:
- *   - Visual workflow editor is open with 1 step (multi-agent: coder + reviewer)
- *   - One-way channel coder → reviewer is added via sidebar
+ *   - Visual workflow editor is open with 2 named steps
+ *   - A one-way channel exists from step 1 (start) to step 2
  *   - NodeConfigPanel is closed
  */
 async function setupWorkflowWithChannel(page: Page): Promise<void> {
@@ -110,31 +68,46 @@ async function setupWorkflowWithChannel(page: Page): Promise<void> {
 	const editor = page.getByTestId('visual-workflow-editor');
 	await editor.getByTestId('workflow-name-input').fill('Gate Badges Test');
 
-	// Add a step and configure multi-agent
+	// Add step 1 (auto-designated as start node)
 	await editor.getByTestId('add-step-button').click();
-	const nodes = editor.locator('[data-testid^="workflow-node-"]');
-	// Task Agent node is not rendered as a visible SVG node (feature not implemented yet)
-	await expect(nodes).toHaveCount(1, { timeout: 3000 });
+	const regularNodes = () =>
+		editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+	await expect(regularNodes()).toHaveCount(1, { timeout: 3000 });
 
-	// The regular node (only one visible)
-	const regularNode = nodes.first();
-	await regularNode.click();
-	const panel = editor.getByTestId('node-config-panel');
-	await expect(panel).toBeVisible({ timeout: 3000 });
-	await panel.getByTestId('step-name-input').fill('Gate Step');
-	await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
+	// Name step 1
+	const step1 = regularNodes().first();
+	await step1.click();
+	const panel1 = editor.getByTestId('node-config-panel');
+	await expect(panel1).toBeVisible({ timeout: 3000 });
+	await panel1.getByTestId('step-name-input').fill('Gate Step');
+	await panel1.getByTestId('close-button').click();
+	await expect(panel1).not.toBeVisible({ timeout: 2000 });
 
-	// Close the node config panel — channels are added via the sidebar
-	await panel.getByTestId('close-button').click();
-	await expect(panel).not.toBeVisible({ timeout: 2000 });
+	// Add step 2
+	await editor.getByTestId('add-step-button').click();
+	await expect(regularNodes()).toHaveCount(2, { timeout: 3000 });
 
-	// Add a one-way channel: coder → reviewer via the sidebar
-	await ensureChannelsSectionOpen(editor);
-	await addWorkflowChannel(editor, ROLE_A, ROLE_B, 'one-way');
+	// Name step 2
+	const step2 = regularNodes().nth(1);
+	await step2.click();
+	const panel2 = editor.getByTestId('node-config-panel');
+	await expect(panel2).toBeVisible({ timeout: 3000 });
+	await panel2.getByTestId('step-name-input').fill('Target Step');
+	await panel2.getByTestId('close-button').click();
+	await expect(panel2).not.toBeVisible({ timeout: 2000 });
 
-	// Verify the channel entry appears in the sidebar
-	const channelsList = editor.getByTestId('channels-list');
-	await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
+	// Create a channel by dragging from step 1's output port to step 2's input port
+	const step1Output = step1.getByTestId('port-output');
+	const step2Input = step2.getByTestId('port-input');
+	await step1Output.dragTo(step2Input);
+
+	// Verify the channel was created: step 1 should now show a channel-links entry
+	await step1.click();
+	const verifyPanel = editor.getByTestId('node-config-panel');
+	await expect(verifyPanel).toBeVisible({ timeout: 3000 });
+	await expect(verifyPanel.getByTestId('node-channel-link-button')).toBeVisible({ timeout: 5000 });
+	await verifyPanel.getByTestId('close-button').click();
+	await expect(verifyPanel).not.toBeVisible({ timeout: 2000 });
 }
 
 /**
@@ -142,7 +115,7 @@ async function setupWorkflowWithChannel(page: Page): Promise<void> {
  *   Node → NodeConfigPanel → channel-link button → "Add Gate"
  *
  * Preconditions:
- *   - Visual workflow editor is open with a multi-agent step and a channel
+ *   - Visual workflow editor is open with 2 steps connected by a channel
  *   - NodeConfigPanel is closed
  *
  * Postconditions:
@@ -152,10 +125,10 @@ async function setupWorkflowWithChannel(page: Page): Promise<void> {
 async function openGateEditorForChannel(page: Page): Promise<void> {
 	const editor = page.getByTestId('visual-workflow-editor');
 
-	// Click the regular node to open NodeConfigPanel
-	const nodes = editor.locator('[data-testid^="workflow-node-"]');
-	const regularNode = nodes.first();
-	await regularNode.click();
+	// Click step 1 to open NodeConfigPanel
+	const regularNodes = () =>
+		editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+	await regularNodes().first().click();
 	const nodePanel = editor.getByTestId('node-config-panel');
 	await expect(nodePanel).toBeVisible({ timeout: 3000 });
 
