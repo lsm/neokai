@@ -5223,5 +5223,5 @@ function runMigration75(db: BunDatabase): void {
 			CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_agent
 			ON node_executions(workflow_run_id, workflow_node_id, agent_name)
 		`);
-	});
+	})();
 }
