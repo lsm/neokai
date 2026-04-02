@@ -605,3 +605,95 @@ Error: strict mode violation: locator('text=disabled globally') resolved to 2 el
 - **1 new failure** — `features-app-mcp-registry` strict mode violation (same root cause category as existing issues)
 - **Total failing jobs**: 22 (up from 21 in previous check)
 - **Unique root cause categories**: 8 (same as before, no new categories)
+
+---
+
+## 2026-04-02 — Check Run #23914538827
+
+### CI Run Overview
+- **Run ID**: 23914538827
+- **Branch**: dev (commit `fed2a6f88` — `feat: add NodeExecutionRepository for workflow node execution tracking (#1226)`)
+- **Event**: push
+- **Status**: Completed with e2e failures
+
+### Build/Discover Jobs
+- `Discover Tests`: **PASSED**
+- `Build Binary (linux-x64)`: **PASSED**
+- All unit test jobs: **SKIPPED** (gated by build prerequisites)
+- E2E jobs: **NOT SKIPPED** — ran successfully (upstream jobs passed)
+
+### E2E Test Failures at #23914538827
+
+**23 failing E2E jobs** (22 previously failing + 1 new). **1 job cancelled** (`features-neo-conversation`). All 22 pre-existing failures are identical to run #23912077742 — same root cause categories apply.
+
+**Complete list of failing jobs** (new entry marked with **[NEW]**):
+1. `E2E LLM (features-reference-autocomplete)` — 31 tests fail
+2. `E2E No-LLM (core-connection-resilience)` — 3 tests fail **[NEW]**
+3. `E2E No-LLM (features-app-mcp-registry)` — 1 test fails
+4. `E2E No-LLM (features-neo-panel)` — 2 tests fail
+5. `E2E No-LLM (features-neo-settings)` — 1 test fails
+6. `E2E No-LLM (features-provider-model-switching)` — 8 tests fail
+7. `E2E No-LLM (features-reviewer-feedback-loop)` — 1 test fails
+8. `E2E No-LLM (features-space-agent-centric-workflow)` — 1 test fails
+9. `E2E No-LLM (features-space-agent-chat)` — 2 tests fail
+10. `E2E No-LLM (features-space-approval-gate-rejection)` — 5 tests fail
+11. `E2E No-LLM (features-space-context-panel-switching)` — 2 tests fail
+12. `E2E No-LLM (features-space-creation)` — 2 tests fail
+13. `E2E No-LLM (features-space-happy-path-pipeline)` — 2 tests fail
+14. `E2E No-LLM (features-space-multi-agent-editor)` — 1 test fails
+15. `E2E No-LLM (features-space-navigation)` — 2 tests fail
+16. `E2E No-LLM (features-space-settings-crud)` — 6 tests fail
+17. `E2E No-LLM (features-space-task-creation)` — 4 tests fail
+18. `E2E No-LLM (features-space-task-fullwidth)` — 2 tests fail
+19. `E2E No-LLM (features-task-lifecycle)` — 1 test fails
+20. `E2E No-LLM (features-visual-workflow-editor)` — 1 test fails
+21. `E2E No-LLM (features-neo-chat-rendering)` — 2 tests fail
+22. `E2E No-LLM (settings-mcp-servers)` — 3 tests fail
+23. `E2E No-LLM (settings-tools-modal)` — 2 tests fail
+
+**Cancelled**: `E2E No-LLM (features-neo-conversation)` — cancelled after 10+ min (likely timeout)
+
+### Root Cause Analysis
+
+All 22 pre-existing failures are identical to those documented in runs #23904270931 and #23912077742. Same root cause categories apply (see those entries for details). Below is only the **new** failure.
+
+---
+
+#### New Failure: `core-connection-resilience` — WebSocket Reconnect Timeouts **[NEW]**
+
+**Tests**: All 3 tests fail:
+1. `messages generated during disconnection are displayed upon reconnection`
+2. `preserves message order after multiple disconnect-reconnect cycles`
+3. `handles rapid connect-disconnect cycles`
+
+**Error**:
+```
+TimeoutError: page.waitForFunction: Timeout 60000ms exceeded.
+```
+
+**Root cause**: `flaky` / `env` — All 3 tests in this suite involve WebSocket disconnection/reconnection and use `page.waitForFunction()` to wait for reconnection state. The tests were passing in run #23912077742 (not in the failing list). This is likely a CI timing/infrastructure issue — the WebSocket reconnection may be slow in this particular CI environment, causing the 60s timeout to be exceeded.
+
+**Note**: This suite was **not failing** in run #23912077742 (just 2 commits earlier). The only code change between runs is `fed2a6f88` (NodeExecutionRepository), which is unrelated to WebSocket/connection logic. This strongly suggests a **flaky** classification.
+
+---
+
+### Pre-existing Issues Status (unchanged from #23912077742)
+
+| Issue | Category | Suites Affected | Status |
+|---|---|---|---|
+| Neo panel doesn't close on Escape key | `product-bug` | 7 suites | **Unresolved** |
+| Ambiguous locators (strict mode violations) | `test-bug` | 6 suites (incl. app-mcp-registry) | **Unresolved** |
+| Space UNIQUE constraint on retry | `test-bug` | 7 suites | **Unresolved** |
+| AI-dependent tests in No-LLM matrix | `test-bug` | 1 suite (neo-chat-rendering) | **Unresolved** |
+| Visual workflow editor toggle broken | `product-bug` / `test-bug` | 1 suite | **Unresolved** |
+| Multi-agent editor node count mismatch | `product-bug` / `test-bug` | 1 suite | **Unresolved** |
+| Space agent-centric workflow — toggle button timeout | `env` / `test-bug` | 1 suite | **Unresolved** |
+| No `.git` in E2E workspace | `env` | 2 suites (reference-autocomplete, space-happy-path-pipeline) | **Unresolved** |
+
+### Regression Summary
+
+- **No regressions** — 22 previously failing jobs remain in the same failure state
+- **1 new failure** — `core-connection-resilience` WebSocket reconnect timeouts (likely flaky — was passing 2 commits ago)
+- **1 cancelled** — `features-neo-conversation` (likely timeout after 10+ min)
+- **Total failing jobs**: 23 (up from 22 in previous check)
+- **Unique root cause categories**: 8 (same as before + 1 likely-flaky new entry)
