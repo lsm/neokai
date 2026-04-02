@@ -1,7 +1,7 @@
 /**
  * Tests for TaskHeaderActions component
  *
- * Verifies that the stop, reactivate, and gear buttons render conditionally
+ * Verifies that the reactivate and gear buttons render conditionally
  * and fire the correct callbacks.
  */
 
@@ -13,9 +13,6 @@ describe('TaskHeaderActions', () => {
 	beforeEach(() => cleanup());
 
 	const defaultProps = {
-		canInterrupt: false,
-		interrupting: false,
-		onInterrupt: vi.fn(),
 		canReactivate: false,
 		reactivating: false,
 		onReactivate: vi.fn(),
@@ -26,32 +23,6 @@ describe('TaskHeaderActions', () => {
 	it('renders the gear (info panel trigger) button always', () => {
 		const { getByTestId } = render(<TaskHeaderActions {...defaultProps} />);
 		expect(getByTestId('task-info-panel-trigger')).not.toBeNull();
-	});
-
-	it('does not render stop button when canInterrupt is false', () => {
-		const { queryByTestId } = render(<TaskHeaderActions {...defaultProps} canInterrupt={false} />);
-		expect(queryByTestId('task-stop-button')).toBeNull();
-	});
-
-	it('renders stop button when canInterrupt is true', () => {
-		const { getByTestId } = render(<TaskHeaderActions {...defaultProps} canInterrupt={true} />);
-		expect(getByTestId('task-stop-button')).not.toBeNull();
-	});
-
-	it('calls onInterrupt when stop button is clicked', () => {
-		const onInterrupt = vi.fn();
-		const { getByTestId } = render(
-			<TaskHeaderActions {...defaultProps} canInterrupt={true} onInterrupt={onInterrupt} />
-		);
-		fireEvent.click(getByTestId('task-stop-button'));
-		expect(onInterrupt).toHaveBeenCalled();
-	});
-
-	it('disables stop button when interrupting is true', () => {
-		const { getByTestId } = render(
-			<TaskHeaderActions {...defaultProps} canInterrupt={true} interrupting={true} />
-		);
-		expect((getByTestId('task-stop-button') as HTMLButtonElement).disabled).toBe(true);
 	});
 
 	it('does not render reactivate button when canReactivate is false', () => {
@@ -96,13 +67,6 @@ describe('TaskHeaderActions', () => {
 	});
 
 	// --- Tap target sizing (36px minimum for mobile) ---
-
-	it('stop button has 36px minimum tap target width and height', () => {
-		const { getByTestId } = render(<TaskHeaderActions {...defaultProps} canInterrupt={true} />);
-		const btn = getByTestId('task-stop-button');
-		expect(btn.className).toContain('min-w-[36px]');
-		expect(btn.className).toContain('min-h-[36px]');
-	});
 
 	it('gear button has 36px minimum tap target width and height', () => {
 		const { getByTestId } = render(<TaskHeaderActions {...defaultProps} />);

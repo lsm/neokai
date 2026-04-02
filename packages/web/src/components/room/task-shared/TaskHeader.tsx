@@ -4,19 +4,18 @@
  * Shared mobile-responsive header for TaskView (V1) and TaskViewV2.
  *
  * Layout (always two separate rows):
- * - **Row 1:** Back arrow, task title (flex-1), progress indicator, gear
- * - **Row 2:** Tags (status badge, task type, PR link, mission badge) + sub-line info
+ * - **Row 1:** Back arrow, task title (flex-1), progress indicator (arc only), gear
+ * - **Row 2:** Tags (status badge, task type, PR link, mission badge)
  *
  * Responsive behavior:
  * - On mobile, Row 2 has a top margin for visual separation from Row 1
  * - On desktop (>= sm), the top margin collapses (sm:mt-0) so the two rows sit
  *   flush. A hidden spacer (hidden sm:block w-7) keeps tags aligned under the
  *   title column. Tags within Row 2 are arranged horizontally (sm:flex-row).
- * - Tap targets are enlarged on mobile (min 36px) for stop/gear buttons
+ * - Tap targets are enlarged on mobile (min 36px) for the gear button
  */
 
 import type { NeoTask, RoomGoal } from '@neokai/shared';
-import type { TaskGroupInfo } from '../../../hooks/useTaskViewData';
 import { TASK_STATUS_COLORS } from '../../../lib/task-constants';
 import { navigateToRoom } from '../../../lib/router';
 import { currentRoomTabSignal } from '../../../lib/signals';
@@ -26,13 +25,9 @@ import { TaskHeaderActions } from './TaskHeaderActions';
 export interface TaskHeaderProps {
 	roomId: string;
 	task: NeoTask;
-	group: TaskGroupInfo | null;
 	associatedGoal: RoomGoal | null;
-	canInterrupt: boolean;
-	interrupting: boolean;
 	canReactivate: boolean;
 	reactivating: boolean;
-	interruptSession: () => void;
 	reactivateTask: () => void;
 	isInfoPanelOpen: boolean;
 	onToggleInfoPanel: () => void;
@@ -41,13 +36,9 @@ export interface TaskHeaderProps {
 export function TaskHeader({
 	roomId,
 	task,
-	group,
 	associatedGoal,
-	canInterrupt,
-	interrupting,
 	canReactivate,
 	reactivating,
-	interruptSession,
 	reactivateTask,
 	isInfoPanelOpen,
 	onToggleInfoPanel,
@@ -73,20 +64,18 @@ export function TaskHeader({
 					<h2 class="text-base font-semibold text-gray-100 truncate leading-tight">{task.title}</h2>
 				</div>
 
-				{/* Circular progress indicator for task progress */}
+				{/* Circular progress indicator (arc only, no percentage text) */}
 				{task.progress != null && task.progress > 0 && (
 					<CircularProgressIndicator
 						progress={task.progress}
-						size={32}
+						size={28}
+						showPercentage={false}
 						class="flex-shrink-0"
 						title={`Task progress: ${task.progress}%`}
 					/>
 				)}
 
 				<TaskHeaderActions
-					canInterrupt={canInterrupt}
-					interrupting={interrupting}
-					onInterrupt={interruptSession}
 					canReactivate={canReactivate}
 					reactivating={reactivating}
 					onReactivate={reactivateTask}
@@ -95,7 +84,7 @@ export function TaskHeader({
 				/>
 			</div>
 
-			{/* Row 2: Tags and sub-line info */}
+			{/* Row 2: Tags */}
 			<div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 mt-1.5 sm:mt-0">
 				{/* Spacer: on desktop, aligns tags under the title by matching back-button width */}
 				<div class="hidden sm:block w-7 flex-shrink-0" aria-hidden="true" />
@@ -149,26 +138,6 @@ export function TaskHeader({
 						</button>
 					)}
 				</div>
-
-				{/* Sub-line info: iteration count and status indicators */}
-				{group && (
-					<div class="flex items-center gap-2 flex-wrap">
-						<p class="text-xs text-gray-500">
-							{group.feedbackIteration > 0 && `iteration ${group.feedbackIteration}`}
-						</p>
-						{group.submittedForReview && !task.activeSession && (
-							<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
-								Awaiting your review
-							</span>
-						)}
-						{task.status === 'review' && task.activeSession && (
-							<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400 bg-blue-900/30 border border-blue-700/40 px-1.5 py-0.5 rounded-full">
-								<span class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-								{task.activeSession === 'worker' ? 'Worker' : 'Leader'} processing your message…
-							</span>
-						)}
-					</div>
-				)}
 			</div>
 		</div>
 	);

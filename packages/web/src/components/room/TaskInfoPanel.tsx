@@ -87,6 +87,7 @@ export interface TaskInfoPanelProps {
 	leaderSession?: SessionInfo | null;
 	/** Available action handlers */
 	actions: {
+		onInterrupt?: () => void;
 		onComplete?: () => void;
 		onCancel?: () => void;
 		onArchive?: () => void;
@@ -96,6 +97,7 @@ export interface TaskInfoPanelProps {
 	};
 	/** Whether each action should be shown (context-aware) */
 	visibleActions: {
+		interrupt?: boolean;
 		complete?: boolean;
 		cancel?: boolean;
 		archive?: boolean;
@@ -105,6 +107,7 @@ export interface TaskInfoPanelProps {
 	};
 	/** Whether each action is disabled */
 	disabledActions?: {
+		interrupt?: boolean;
 		complete?: boolean;
 		cancel?: boolean;
 		archive?: boolean;
@@ -153,6 +156,7 @@ export function TaskInfoPanel({
 		null;
 
 	const hasVisibleActions =
+		visibleActions.interrupt ||
 		visibleActions.complete ||
 		visibleActions.cancel ||
 		visibleActions.archive ||
@@ -383,6 +387,22 @@ export function TaskInfoPanel({
 							Actions
 						</h3>
 						<div class="flex items-center gap-2 flex-wrap">
+							{visibleActions.interrupt && actions.onInterrupt && (
+								<button
+									type="button"
+									onClick={actions.onInterrupt}
+									disabled={disabledActions?.interrupt}
+									data-testid="task-info-panel-interrupt"
+									class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 border border-amber-700/40 hover:border-amber-600/60"
+									title="Interrupt generation"
+								>
+									<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+										<rect x="6" y="6" width="12" height="12" rx="1" />
+									</svg>
+									Stop
+								</button>
+							)}
+
 							{visibleActions.complete && actions.onComplete && (
 								<button
 									type="button"

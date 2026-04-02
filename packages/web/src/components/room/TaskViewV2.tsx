@@ -39,7 +39,6 @@ import {
 	SetStatusModal,
 } from './task-shared/TaskActionDialogs';
 import { TaskHeader } from './task-shared/TaskHeader';
-import { TaskReviewBar } from './task-shared/TaskReviewBar';
 
 interface TaskViewV2Props {
 	roomId: string;
@@ -57,7 +56,6 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 		error,
 		associatedGoal,
 		conversationKey,
-		approveReviewedTask,
 		rejectReviewedTask,
 		interruptSession,
 		reactivateTask,
@@ -65,11 +63,9 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 		cancelTask,
 		archiveTask,
 		setTaskStatusManually,
-		approving,
 		rejecting,
 		interrupting,
 		reactivating,
-		reviewError,
 		rejectModal,
 		completeModal,
 		cancelModal,
@@ -186,13 +182,9 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 			<TaskHeader
 				roomId={roomId}
 				task={task}
-				group={group}
 				associatedGoal={associatedGoal}
-				canInterrupt={canInterrupt}
-				interrupting={interrupting}
 				canReactivate={canReactivate}
 				reactivating={reactivating}
-				interruptSession={interruptSession}
 				reactivateTask={reactivateTask}
 				isInfoPanelOpen={isInfoPanelOpen}
 				onToggleInfoPanel={() => setIsInfoPanelOpen(!isInfoPanelOpen)}
@@ -215,6 +207,12 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 				workerSession={workerSession}
 				leaderSession={leaderSession}
 				actions={{
+					onInterrupt: canInterrupt
+						? () => {
+								setIsInfoPanelOpen(false);
+								interruptSession();
+							}
+						: undefined,
 					onComplete:
 						canComplete && task.status !== 'review'
 							? () => {
@@ -243,30 +241,20 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 							: undefined,
 				}}
 				visibleActions={{
+					interrupt: canInterrupt,
 					complete: canComplete && task.status !== 'review',
 					cancel: canCancel,
 					archive: canArchive,
 					setStatus: task.status !== 'archived',
 				}}
 				disabledActions={{
+					interrupt: interrupting,
 					complete: interrupting,
 					cancel: interrupting,
 					archive: false,
 					setStatus: false,
 				}}
 			/>
-
-			{/* Review bar — shown when awaiting human review */}
-			{group?.submittedForReview && (
-				<TaskReviewBar
-					task={task}
-					approving={approving}
-					rejecting={rejecting}
-					onApprove={approveReviewedTask}
-					onOpenRejectModal={rejectModal.open}
-					reviewError={reviewError}
-				/>
-			)}
 
 			{/* Dependencies */}
 			{task.dependsOn && task.dependsOn.length > 0 && (

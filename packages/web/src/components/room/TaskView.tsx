@@ -34,7 +34,6 @@ import {
 	SetStatusModal,
 } from './task-shared/TaskActionDialogs';
 import { TaskHeader } from './task-shared/TaskHeader';
-import { TaskReviewBar } from './task-shared/TaskReviewBar';
 
 interface TaskViewProps {
 	roomId: string;
@@ -52,7 +51,6 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 		error,
 		associatedGoal,
 		conversationKey,
-		approveReviewedTask,
 		rejectReviewedTask,
 		interruptSession,
 		reactivateTask,
@@ -60,11 +58,9 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 		cancelTask,
 		archiveTask,
 		setTaskStatusManually,
-		approving,
 		rejecting,
 		interrupting,
 		reactivating,
-		reviewError,
 		rejectModal,
 		completeModal,
 		cancelModal,
@@ -173,13 +169,9 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 			<TaskHeader
 				roomId={roomId}
 				task={task}
-				group={group}
 				associatedGoal={associatedGoal}
-				canInterrupt={canInterrupt}
-				interrupting={interrupting}
 				canReactivate={canReactivate}
 				reactivating={reactivating}
-				interruptSession={interruptSession}
 				reactivateTask={reactivateTask}
 				isInfoPanelOpen={isInfoPanelOpen}
 				onToggleInfoPanel={() => setIsInfoPanelOpen(!isInfoPanelOpen)}
@@ -202,6 +194,12 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 				workerSession={workerSession}
 				leaderSession={leaderSession}
 				actions={{
+					onInterrupt: canInterrupt
+						? () => {
+								setIsInfoPanelOpen(false);
+								interruptSession();
+							}
+						: undefined,
 					onComplete:
 						canComplete && task.status !== 'review'
 							? () => {
@@ -264,6 +262,7 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 						: undefined,
 				}}
 				visibleActions={{
+					interrupt: canInterrupt,
 					complete: canComplete && task.status !== 'review',
 					cancel: canCancel,
 					archive: canArchive,
@@ -272,6 +271,7 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 					resetLeaderAgent: !!leaderSession,
 				}}
 				disabledActions={{
+					interrupt: interrupting,
 					complete: interrupting,
 					cancel: interrupting,
 					archive: false,
@@ -280,18 +280,6 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 					resetLeaderAgent: interrupting,
 				}}
 			/>
-
-			{/* Action bar — shown when awaiting human review/approval */}
-			{group?.submittedForReview && (
-				<TaskReviewBar
-					task={task}
-					approving={approving}
-					rejecting={rejecting}
-					onApprove={approveReviewedTask}
-					onOpenRejectModal={rejectModal.open}
-					reviewError={reviewError}
-				/>
-			)}
 
 			{/* Dependencies */}
 			{task.dependsOn && task.dependsOn.length > 0 && (

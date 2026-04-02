@@ -4,14 +4,12 @@
  * Covers:
  * - Renders task title and status badge
  * - Renders tags: task type, PR link, mission badge
- * - Renders iteration count and review indicators
- * - Renders progress indicator when task.progress > 0
- * - Renders gear button and stop button
- * - Larger tap targets on mobile (min-w/min-h for stop and gear)
+ * - Renders progress indicator (arc only, no percentage) when task.progress > 0
+ * - Renders gear button
+ * - Larger tap targets on mobile (min-w/min-h for gear)
  * - data-testid="task-header" on root
  * - data-testid="task-status-badge" on status
  * - data-testid="task-view-goal-badge" on mission badge
- * - data-testid="task-stop-button" when canInterrupt
  * - data-testid="task-info-panel-trigger" on gear button
  */
 
@@ -20,7 +18,6 @@ import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { TaskHeader } from '../TaskHeader';
 import type { TaskHeaderProps } from '../TaskHeader';
 import type { NeoTask, RoomGoal } from '@neokai/shared';
-import type { TaskGroupInfo } from '../../../../hooks/useTaskViewData';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -45,11 +42,17 @@ vi.mock('../../../../lib/signals.ts', () => ({
 }));
 
 vi.mock('../../../ui/CircularProgressIndicator.tsx', () => ({
-	CircularProgressIndicator: (props: { progress: number; size?: number; title?: string }) => (
+	CircularProgressIndicator: (props: {
+		progress: number;
+		size?: number;
+		showPercentage?: boolean;
+		title?: string;
+	}) => (
 		<div
 			data-testid="circular-progress"
 			data-progress={props.progress}
 			data-size={props.size}
+			data-show-percentage={String(props.showPercentage)}
 			title={props.title}
 		/>
 	),
@@ -57,9 +60,6 @@ vi.mock('../../../ui/CircularProgressIndicator.tsx', () => ({
 
 vi.mock('./TaskHeaderActions', () => ({
 	TaskHeaderActions: (props: {
-		canInterrupt: boolean;
-		interrupting: boolean;
-		onInterrupt: () => void;
 		canReactivate: boolean;
 		reactivating: boolean;
 		onReactivate: () => void;
@@ -67,7 +67,6 @@ vi.mock('./TaskHeaderActions', () => ({
 		onToggleInfoPanel: () => void;
 	}) => (
 		<div>
-			<button data-testid="task-stop-button">Stop</button>
 			<button data-testid="task-info-panel-trigger" onClick={props.onToggleInfoPanel}>
 				Gear
 			</button>
@@ -93,21 +92,6 @@ function makeTask(overrides: Partial<NeoTask> = {}): NeoTask {
 	} as NeoTask;
 }
 
-function makeGroup(overrides: Partial<TaskGroupInfo> = {}): TaskGroupInfo {
-	return {
-		id: 'group-1',
-		taskId: 'task-1',
-		workerSessionId: 'session-worker',
-		leaderSessionId: 'session-leader',
-		workerRole: 'worker',
-		feedbackIteration: 0,
-		submittedForReview: false,
-		createdAt: Date.now(),
-		completedAt: null,
-		...overrides,
-	};
-}
-
 function makeGoal(overrides: Partial<RoomGoal> = {}): RoomGoal {
 	return {
 		id: 'goal-1',
@@ -124,13 +108,9 @@ function defaultProps(overrides: Partial<TaskHeaderProps> = {}): TaskHeaderProps
 	return {
 		roomId: 'room-1',
 		task: makeTask(),
-		group: makeGroup(),
 		associatedGoal: null,
-		canInterrupt: true,
-		interrupting: false,
 		canReactivate: false,
 		reactivating: false,
-		interruptSession: vi.fn(),
 		reactivateTask: vi.fn(),
 		isInfoPanelOpen: false,
 		onToggleInfoPanel: vi.fn(),
@@ -203,40 +183,7 @@ describe('TaskHeader', () => {
 		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
 	});
 
-	// --- Sub-line info ---
-
-	it('renders iteration count when feedbackIteration > 0', () => {
-		const { container } = render(
-			<TaskHeader {...defaultProps({ group: makeGroup({ feedbackIteration: 3 }) })} />
-		);
-		expect(container.textContent).toContain('iteration 3');
-	});
-
-	it('renders "Awaiting your review" when group.submittedForReview and no active session', () => {
-		const { container } = render(
-			<TaskHeader
-				{...defaultProps({
-					task: makeTask({ status: 'review', activeSession: undefined }),
-					group: makeGroup({ submittedForReview: true }),
-				})}
-			/>
-		);
-		expect(container.textContent).toContain('Awaiting your review');
-	});
-
-	it('renders "Worker processing" when task is review and has active worker session', () => {
-		const { container } = render(
-			<TaskHeader
-				{...defaultProps({
-					task: makeTask({ status: 'review', activeSession: 'worker' as unknown as undefined }),
-					group: makeGroup(),
-				})}
-			/>
-		);
-		expect(container.textContent).toContain('Worker processing your message');
-	});
-
-	// --- Progress indicator ---
+	// --- Progress indicator (arc only, no percentage) ---
 
 	it('renders circular progress when task.progress > 0', () => {
 		const { getByTestId } = render(
@@ -244,6 +191,13 @@ describe('TaskHeader', () => {
 		);
 		expect(getByTestId('circular-progress')).toBeTruthy();
 		expect(getByTestId('circular-progress').getAttribute('data-progress')).toBe('65');
+	});
+
+	it('passes showPercentage=false to progress indicator', () => {
+		const { getByTestId } = render(
+			<TaskHeader {...defaultProps({ task: makeTask({ progress: 65 }) })} />
+		);
+		expect(getByTestId('circular-progress').getAttribute('data-show-percentage')).toBe('false');
 	});
 
 	it('does not render circular progress when task.progress is null', () => {
@@ -262,11 +216,6 @@ describe('TaskHeader', () => {
 
 	// --- Action buttons ---
 
-	it('renders stop button', () => {
-		const { getByTestId } = render(<TaskHeader {...defaultProps({ canInterrupt: true })} />);
-		expect(getByTestId('task-stop-button')).toBeTruthy();
-	});
-
 	it('renders gear button', () => {
 		const { getByTestId } = render(<TaskHeader {...defaultProps()} />);
 		expect(getByTestId('task-info-panel-trigger')).toBeTruthy();
@@ -279,6 +228,33 @@ describe('TaskHeader', () => {
 		);
 		fireEvent.click(getByTestId('task-info-panel-trigger'));
 		expect(onToggle).toHaveBeenCalledTimes(1);
+	});
+
+	// --- No stop button in header ---
+
+	it('does not render stop button in header', () => {
+		const { queryByTestId } = render(<TaskHeader {...defaultProps()} />);
+		expect(queryByTestId('task-stop-button')).toBeNull();
+	});
+
+	// --- No iteration count in header ---
+
+	it('does not render iteration count in header', () => {
+		const { container } = render(<TaskHeader {...defaultProps()} />);
+		expect(container.textContent).not.toContain('iteration 3');
+	});
+
+	// --- No "Awaiting your review" badge in header ---
+
+	it('does not render "Awaiting your review" badge in header', () => {
+		const { container } = render(
+			<TaskHeader
+				{...defaultProps({
+					task: makeTask({ status: 'review', activeSession: undefined }),
+				})}
+			/>
+		);
+		expect(container.textContent).not.toContain('Awaiting your review');
 	});
 
 	// --- Back button ---
@@ -294,7 +270,7 @@ describe('TaskHeader', () => {
 	// --- No group ---
 
 	it('renders without group (no sub-line info)', () => {
-		const { container } = render(<TaskHeader {...defaultProps({ group: null })} />);
+		const { container } = render(<TaskHeader {...defaultProps()} />);
 		expect(container.textContent).toContain('Test Task');
 		expect(container.textContent).not.toContain('iteration');
 	});

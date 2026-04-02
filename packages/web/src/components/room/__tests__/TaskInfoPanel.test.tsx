@@ -609,6 +609,63 @@ describe('TaskInfoPanel', () => {
 	});
 
 	describe('Actions Section', () => {
+		it('should show Interrupt (Stop) action when visible', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="task-info-panel-interrupt"]')).toBeTruthy();
+			expect(container.textContent).toContain('Stop');
+		});
+
+		it('should call onInterrupt when Stop button is clicked', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+				/>
+			);
+
+			fireEvent.click(container.querySelector('[data-testid="task-info-panel-interrupt"]')!);
+			expect(onInterrupt).toHaveBeenCalledOnce();
+		});
+
+		it('should disable Interrupt button when disabledActions.interrupt is true', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+					disabledActions={{ interrupt: true }}
+				/>
+			);
+
+			const btn = container.querySelector(
+				'[data-testid="task-info-panel-interrupt"]'
+			) as HTMLButtonElement;
+			expect(btn?.disabled).toBe(true);
+		});
+
+		it('should not show Interrupt action when not visible', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt: vi.fn() }}
+					visibleActions={{ interrupt: false }}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="task-info-panel-interrupt"]')).toBeNull();
+		});
+
 		it('should show Complete action when visible', () => {
 			const onComplete = vi.fn();
 			const { container } = render(
