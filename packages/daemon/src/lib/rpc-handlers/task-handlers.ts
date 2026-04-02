@@ -73,8 +73,6 @@ export function setupTaskHandlers(
 					sessionId: `room:${roomId}`,
 					room: overview.room,
 					sessions: overview.sessions,
-					activeTasks: overview.activeTasks,
-					allTasks: overview.allTasks,
 				})
 				.catch((error) => {
 					log.warn(`Failed to emit room.overview for room ${roomId}:`, error);

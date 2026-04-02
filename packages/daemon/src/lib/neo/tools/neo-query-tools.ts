@@ -58,8 +58,6 @@ export interface NeoQueryRoomManager {
 	getRoomOverview(roomId: string): {
 		room: Room;
 		sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
-		activeTasks: TaskSummary[];
-		allTasks?: TaskSummary[];
 	} | null;
 }
 
@@ -278,7 +276,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				return errorResult(`Room not found: ${args.room_id}`);
 			}
 
-			const { room, sessions, activeTasks, allTasks } = overview;
+			const { room, sessions } = overview;
 			const goals = goalRepository.listGoals(room.id);
 
 			const goalsSummary = goals.map((g) => ({
@@ -292,6 +290,29 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				linkedTaskCount: g.linkedTaskIds.length,
 			}));
 
+			const toSummary = (task: NeoTask): TaskSummary => ({
+				id: task.id,
+				shortId: task.shortId,
+				title: task.title,
+				status: task.status,
+				priority: task.priority,
+				progress: task.progress,
+				currentStep: task.currentStep,
+				dependsOn: task.dependsOn,
+				error: task.error,
+				activeSession: task.activeSession,
+				prUrl: task.prUrl,
+				prNumber: task.prNumber,
+				updatedAt: task.updatedAt,
+			});
+
+			const allTasks = taskRepository.listTasks(room.id, { includeArchived: true });
+			const nonTerminal = allTasks.filter(
+				(t) =>
+					t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'
+			);
+			const activeTasks = nonTerminal.map(toSummary);
+
 			return jsonResult({
 				id: room.id,
 				name: room.name,
@@ -303,7 +324,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				sessions,
 				goals: goalsSummary,
 				activeTasks,
-				allTaskCount: allTasks?.length ?? activeTasks.length,
+				allTaskCount: allTasks.length,
 				createdAt: room.createdAt,
 				updatedAt: room.updatedAt,
 			});

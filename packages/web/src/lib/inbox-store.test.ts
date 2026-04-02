@@ -16,7 +16,15 @@ vi.mock('./toast', () => ({ toast: { error: mockToastError } }));
 const { inboxStore } = await import('./inbox-store.ts');
 
 function makeTask(id: string, status: TaskSummary['status'], updatedAt = Date.now()): TaskSummary {
-	return { id, title: `Task ${id}`, status, priority: 'normal', progress: null, dependsOn: [], updatedAt };
+	return {
+		id,
+		title: `Task ${id}`,
+		status,
+		priority: 'normal',
+		progress: null,
+		dependsOn: [],
+		updatedAt,
+	};
 }
 
 function makeInboxTask(task: TaskSummary, roomId: string, roomTitle: string): InboxTask {
@@ -24,7 +32,11 @@ function makeInboxTask(task: TaskSummary, roomId: string, roomTitle: string): In
 }
 
 describe('InboxStore', () => {
-	beforeEach(() => { inboxStore.items.value = []; inboxStore.isLoading.value = false; vi.clearAllMocks(); });
+	beforeEach(() => {
+		inboxStore.items.value = [];
+		inboxStore.isLoading.value = false;
+		vi.clearAllMocks();
+	});
 
 	describe('refresh()', () => {
 		it('should call inbox.reviewTasks RPC and set items from response', async () => {
@@ -62,7 +74,12 @@ describe('InboxStore', () => {
 
 	describe('approveTask()', () => {
 		it('should call task.approve, refresh, and return true', async () => {
-			const mockHub = { request: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined)).mockImplementationOnce(() => Promise.resolve({ tasks: [] })) };
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockImplementationOnce(() => Promise.resolve(undefined))
+					.mockImplementationOnce(() => Promise.resolve({ tasks: [] })),
+			};
 			mockGetHub.mockResolvedValue(mockHub);
 			expect(await inboxStore.approveTask('t1', 'r')).toBe(true);
 			expect(mockHub.request).toHaveBeenCalledWith('inbox.reviewTasks', {});
@@ -71,7 +88,12 @@ describe('InboxStore', () => {
 
 	describe('rejectTask()', () => {
 		it('should call task.reject with feedback, refresh, and return true', async () => {
-			const mockHub = { request: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined)).mockImplementationOnce(() => Promise.resolve({ tasks: [] })) };
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockImplementationOnce(() => Promise.resolve(undefined))
+					.mockImplementationOnce(() => Promise.resolve({ tasks: [] })),
+			};
 			mockGetHub.mockResolvedValue(mockHub);
 			expect(await inboxStore.rejectTask('t1', 'r', 'feedback')).toBe(true);
 			expect(mockHub.request).toHaveBeenCalledWith('inbox.reviewTasks', {});
@@ -79,7 +101,13 @@ describe('InboxStore', () => {
 	});
 
 	describe('reviewCount', () => {
-		it('should return 0 when empty', () => { inboxStore.items.value = []; expect(inboxStore.reviewCount.value).toBe(0); });
-		it('should return count', () => { inboxStore.items.value = [makeInboxTask(makeTask('t1', 'review'), 'r', 'R')]; expect(inboxStore.reviewCount.value).toBe(1); });
+		it('should return 0 when empty', () => {
+			inboxStore.items.value = [];
+			expect(inboxStore.reviewCount.value).toBe(0);
+		});
+		it('should return count', () => {
+			inboxStore.items.value = [makeInboxTask(makeTask('t1', 'review'), 'r', 'R')];
+			expect(inboxStore.reviewCount.value).toBe(1);
+		});
 	});
 });
