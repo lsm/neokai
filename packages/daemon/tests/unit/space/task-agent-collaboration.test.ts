@@ -375,6 +375,14 @@ describe('Task Agent — full collaboration flow', () => {
 						status: 'done',
 						completedAt: Date.now(),
 					});
+					// Create matching node_execution record for CompletionDetector
+					ctx.nodeExecutionRepo.create({
+						workflowRunId: run.id,
+						workflowNodeId: wf.nodes[0].id,
+						agentName: 'Code',
+						agentId: ctx.coderAgentId,
+						status: 'done',
+					});
 				},
 				completionDetector: new CompletionDetector(ctx.nodeExecutionRepo),
 			})
@@ -453,6 +461,19 @@ describe('Task Agent — full collaboration flow', () => {
 							status: 'done',
 							completedAt: Date.now(),
 						});
+						// Update existing node_execution record to 'done' for CompletionDetector
+						const nodeExec = wf.nodes.find(
+							(n) => task.title.includes(n.name) || task.title.includes(n.id)
+						);
+						if (nodeExec) {
+							const executions = ctx.nodeExecutionRepo.listByNode(run.id, nodeExec.id);
+							const execution = executions.find(
+								(e) => e.status !== 'done' && e.status !== 'cancelled'
+							);
+							if (execution) {
+								ctx.nodeExecutionRepo.updateStatus(execution.id, 'done');
+							}
+						}
 					}
 				},
 				completionDetector,
@@ -467,6 +488,23 @@ describe('Task Agent — full collaboration flow', () => {
 		const spawn2 = await handlers.spawn_node_agent({ step_id: node2Id });
 		const spawn2Parsed = JSON.parse(spawn2.content[0].text);
 		expect(spawn2Parsed.success).toBe(true);
+
+		// Create node_execution records for both nodes (pending status)
+		// so CompletionDetector sees all nodes and checks their status
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: node1Id,
+			agentName: wf.nodes[0].name,
+			agentId: wf.nodes[0].agents[0].agentId,
+			status: 'pending',
+		});
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: node2Id,
+			agentName: wf.nodes[1].name,
+			agentId: wf.nodes[1].agents[0].agentId,
+			status: 'pending',
+		});
 
 		// Complete only node1 — report_workflow_done should be blocked
 		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(
@@ -658,11 +696,20 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		const { run, mainTask } = await startRun(ctx, wf);
 		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
 
-		// Set the step task to needs_attention (blocked by gate, non-terminal for CompletionDetector)
-		// workflowNodeId was removed in M71 — filter by tasks that are not the main task
+		// Set the step task to done (terminal) with a matching node_execution record
+		// so CompletionDetector considers the workflow complete.
 		const stepTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
 		expect(stepTasks.length).toBeGreaterThan(0);
-		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'blocked' });
+		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'done', completedAt: Date.now() });
+
+		// Create node_execution record — 'done' is a terminal status for CompletionDetector
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: wf.nodes[0].id,
+			agentName: wf.nodes[0].name,
+			agentId: wf.nodes[0].agents[0].agentId,
+			status: 'done',
+		});
 
 		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
@@ -670,12 +717,10 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
 		);
 
-		// report_workflow_done should be blocked — node agent is in needs_attention which
-		// is terminal for CompletionDetector (gate-blocked = terminal from detector perspective)
-		// NOTE: needs_attention IS terminal for CompletionDetector
+		// report_workflow_done should succeed — node execution has terminal status
 		const result = await handlers.report_workflow_done({ summary: 'Should complete' });
 		const parsed = JSON.parse(result.content[0].text);
-		// needs_attention is a terminal status — CompletionDetector allows it
+		// 'done' is a terminal status — CompletionDetector allows it
 		expect(parsed.success).toBe(true);
 		// Confirm run was marked completed
 		const updatedRun = ctx.workflowRunRepo.getRun(run.id);
@@ -787,8 +832,28 @@ describe('Task Agent — multi-agent node collaboration', () => {
 		// Idempotency: second spawn returns the same session (the last-created task)
 		expect(spawn2Parsed.alreadySpawned).toBe(true);
 
+		// Create node_execution records for both agents (pending status)
+		// so CompletionDetector sees all agents and checks their status
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: nodeId,
+			agentName: nodeTasks[0].title,
+			agentId: wf.nodes[0].agents[0].agentId,
+			status: 'pending',
+		});
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: nodeId,
+			agentName: nodeTasks[1].title,
+			agentId: wf.nodes[0].agents[1].agentId,
+			status: 'pending',
+		});
+
 		// Mark one task completed, one still pending — detector should block
 		ctx.taskRepo.updateTask(nodeTasks[0].id, { status: 'done', completedAt: Date.now() });
+		// Update first agent's node_execution to 'done'
+		const exec1 = ctx.nodeExecutionRepo.listByNode(run.id, nodeId).find((e) => e.status !== 'done');
+		if (exec1) ctx.nodeExecutionRepo.updateStatus(exec1.id, 'done');
 
 		const earlyResult = await handlers.report_workflow_done({ summary: 'Too early' });
 		const earlyParsed = JSON.parse(earlyResult.content[0].text);
@@ -797,6 +862,9 @@ describe('Task Agent — multi-agent node collaboration', () => {
 
 		// Mark second task completed
 		ctx.taskRepo.updateTask(nodeTasks[1].id, { status: 'done', completedAt: Date.now() });
+		// Update second agent's node_execution to 'done'
+		const exec2 = ctx.nodeExecutionRepo.listByNode(run.id, nodeId).find((e) => e.status !== 'done');
+		if (exec2) ctx.nodeExecutionRepo.updateStatus(exec2.id, 'done');
 
 		const finalResult = await handlers.report_workflow_done({
 			summary: 'All parallel agents done',
