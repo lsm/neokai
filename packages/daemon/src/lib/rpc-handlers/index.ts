@@ -60,7 +60,6 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
-import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
@@ -354,7 +353,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
-	const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
@@ -430,7 +428,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
 		channelCycleRepo,
-		nodeExecutionRepo,
 		sessionManager: deps.sessionManager,
 		daemonHub: deps.daemonHub,
 	});
@@ -523,7 +520,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 				taskRepo: spaceTaskRepo,
 				nodeExecutionRepo,
 				workflowRunRepo: spaceWorkflowRunRepo,
-				nodeExecutionRepo,
 				db: deps.db.getDatabase(),
 			},
 			neoSpacesState
@@ -677,7 +673,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			taskRepo: spaceTaskRepo,
 			nodeExecutionRepo,
 			workflowRunRepo: spaceWorkflowRunRepo,
-			nodeExecutionRepo,
 			db: deps.db.getDatabase(),
 			state: globalSpacesState,
 			daemonHub: deps.daemonHub,

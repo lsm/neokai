@@ -30,6 +30,7 @@ import type {
 	NotificationSink,
 	SpaceNotificationEvent,
 } from '../../../src/lib/space/runtime/notification-sink.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SessionNotificationSink } from '../../../src/lib/space/runtime/session-notification-sink.ts';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager.ts';
 import type { MessageDeliveryMode } from '@neokai/shared';
@@ -208,6 +209,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			workflowRunRepo,
 			taskRepo,
 			notificationSink: sink,
+			nodeExecutionRepo: new NodeExecutionRepository(db),
 			...extraConfig,
 		});
 	}

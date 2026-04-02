@@ -38,6 +38,7 @@ import { SpaceTaskRepository } from '../../../src/storage/repositories/space-tas
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
 import { ChannelCycleRepository } from '../../../src/storage/repositories/channel-cycle-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
@@ -196,6 +197,7 @@ describe('ChannelRouter', () => {
 			gateDataRepo,
 			channelCycleRepo,
 			db,
+			nodeExecutionRepo: new NodeExecutionRepository(db),
 		});
 	});
 

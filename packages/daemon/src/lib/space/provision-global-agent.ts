@@ -18,7 +18,6 @@ import type { SpaceWorkflowManager } from './managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { SpaceRuntimeService } from './runtime/space-runtime-service';
 import type { DaemonHub } from '../daemon-hub';
 import { Logger } from '../logger';
@@ -56,8 +55,6 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	taskRepo: SpaceTaskRepository;
 	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** Node execution repository for querying node execution records. */
-	nodeExecutionRepo: NodeExecutionRepository;
 	/** Database instance passed through to GlobalSpacesToolsConfig for SpaceTaskManager creation. */
 	db: BunDatabase;
 	/** Shared mutable state for the active space context. Created externally so RPC handlers can use the same reference. */
@@ -101,7 +98,6 @@ export async function provisionGlobalSpacesAgent(
 		taskRepo,
 		nodeExecutionRepo,
 		workflowRunRepo,
-		nodeExecutionRepo,
 		db,
 		state,
 		daemonHub,
@@ -155,7 +151,6 @@ export async function provisionGlobalSpacesAgent(
 			taskRepo,
 			nodeExecutionRepo,
 			workflowRunRepo,
-			nodeExecutionRepo,
 			db,
 		},
 		state

@@ -1779,16 +1779,17 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		// The executor creates two tasks for this step (one per agent slot)
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Verify two step tasks were created (both have title = step name; mainTask is the 3rd)
+		// Verify two step tasks were created (one per agent slot; mainTask is the 3rd).
+		// Multi-agent start nodes use agentEntry.name as task title (per-agent titles).
 		const allRunTasks = ctx.taskRepo
 			.listByWorkflowRun(run.id)
 			.sort((a, b) => a.createdAt - b.createdAt);
-		// Filter to only step tasks (those with title matching the step node name)
-		const stepTasks = allRunTasks.filter((t) => t.title === 'Dual Instance Step');
+		// Filter to only step tasks (those with agent slot names as titles)
+		const slotNames = new Set(['strict-reviewer', 'quick-reviewer']);
+		const stepTasks = allRunTasks.filter((t) => slotNames.has(t.title));
 		expect(stepTasks).toHaveLength(2);
-		// Both tasks have the same title (the step name), since agentName was removed in M71
-		expect(stepTasks[0]?.title).toBe('Dual Instance Step');
-		expect(stepTasks[1]?.title).toBe('Dual Instance Step');
+		expect(slotNames.has(stepTasks[0]?.title ?? '')).toBe(true);
+		expect(slotNames.has(stepTasks[1]?.title ?? '')).toBe(true);
 
 		// spawn_node_agent picks the last matching task
 		const factory = makeMockSessionFactory();
@@ -2067,14 +2068,11 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		// Mark the step task as terminal (bypass state machine)
 		ctx.taskRepo.updateTask(stepTask.id, { status: 'done' });
 
-		// Create a matching node_execution record in terminal status so
-		// CompletionDetector (which now queries node_executions) sees it.
-		ctx.nodeExecutionRepo.create({
-			workflowRunId: run.id,
-			workflowNodeId: wf.startNodeId,
-			agentName: 'only-step',
-			status: 'done',
-		});
+		// Update the existing node_execution record (created by startWorkflowRun)
+		// to terminal status so CompletionDetector sees it as complete.
+		const executions = ctx.nodeExecutionRepo.listByWorkflowRun(run.id);
+		expect(executions).toHaveLength(1);
+		ctx.nodeExecutionRepo.updateStatus(executions[0].id, 'done');
 
 		// Create the orchestration (main) task WITHOUT workflowRunId so the
 		// CompletionDetector does not see it and only checks step tasks.
@@ -2107,13 +2105,11 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		// cancelled is a terminal status for NodeExecution (done + cancelled)
 		ctx.taskRepo.updateTask(stepTask.id, { status: 'cancelled' });
 
-		// Create a matching node_execution record in terminal status
-		ctx.nodeExecutionRepo.create({
-			workflowRunId: run.id,
-			workflowNodeId: wf.startNodeId,
-			agentName: 'only-step',
-			status: 'cancelled',
-		});
+		// Update the existing node_execution record to terminal status.
+		// 'cancelled' is a terminal status for NodeExecution.
+		const executions = ctx.nodeExecutionRepo.listByWorkflowRun(run.id);
+		expect(executions).toHaveLength(1);
+		ctx.nodeExecutionRepo.updateStatus(executions[0].id, 'cancelled');
 
 		// Create orchestration task WITHOUT workflowRunId (excluded from detector)
 		const mainTask = ctx.taskRepo.createTask({

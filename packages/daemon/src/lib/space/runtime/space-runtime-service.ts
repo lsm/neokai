@@ -19,7 +19,6 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
@@ -61,8 +60,6 @@ export interface SpaceRuntimeServiceConfig {
 	 */
 	gateDataRepo?: GateDataRepository;
 	channelCycleRepo?: ChannelCycleRepository;
-	/** Node execution repository for querying node execution records. */
-	nodeExecutionRepo: NodeExecutionRepository;
 	/**
 	 * Optional SessionManager for provisioning space:chat:${spaceId} sessions.
 	 * When provided, setupSpaceAgentSession() attaches MCP tools and system prompts
@@ -222,7 +219,6 @@ export class SpaceRuntimeService {
 			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,
 			taskAgentManager: this.taskAgentManager,
-			nodeExecutionRepo: this.config.nodeExecutionRepo,
 		});
 
 		session.setRuntimeMcpServers({

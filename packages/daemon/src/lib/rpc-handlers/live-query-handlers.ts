@@ -719,25 +719,6 @@ WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('co
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
-const NODE_EXECUTIONS_BY_RUN_SQL = `
-SELECT
-  id,
-  workflow_run_id  AS workflowRunId,
-  workflow_node_id AS workflowNodeId,
-  agent_name       AS agentName,
-  agent_id         AS agentId,
-  agent_session_id AS agentSessionId,
-  status,
-  result,
-  created_at       AS createdAt,
-  started_at       AS startedAt,
-  completed_at     AS completedAt,
-  updated_at       AS updatedAt
-FROM node_executions
-WHERE workflow_run_id = ?
-ORDER BY created_at ASC, id ASC
-`.trim();
-
 // ============================================================================
 // Registry
 // ============================================================================

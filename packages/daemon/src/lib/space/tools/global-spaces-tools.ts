@@ -28,7 +28,6 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
@@ -46,8 +45,6 @@ export interface GlobalSpacesToolsConfig {
 	taskRepo: SpaceTaskRepository;
 	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** Node execution repository for querying node execution records. */
-	nodeExecutionRepo: NodeExecutionRepository;
 	/** Database instance used to create SpaceTaskManager instances on demand. */
 	db: BunDatabase;
 }
@@ -91,7 +88,6 @@ export function createGlobalSpacesToolHandlers(
 		taskRepo,
 		nodeExecutionRepo,
 		workflowRunRepo,
-		nodeExecutionRepo,
 		db,
 	} = config;
 
@@ -712,6 +708,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'retry_task',
+			'Retry a failed or cancelled task. Optionally update the task description for the retry attempt.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
 				space_id: z
