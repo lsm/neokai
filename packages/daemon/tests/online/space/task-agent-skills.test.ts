@@ -68,7 +68,7 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 		spaceId: space.id,
 	})) as { agents: SpaceAgent[] };
 
-	const coderAgent = agents.find((a) => a.role === 'coder');
+	const coderAgent = agents.find((a) => a.name === 'Coder');
 	if (!coderAgent) throw new Error('Pre-seeded Coder agent not found');
 
 	const workflowResult = (await daemon.messageHub.request('spaceWorkflow.create', {
@@ -99,8 +99,8 @@ async function startWorkflowRun(
 		spaceId,
 	})) as Array<{ id: string; workflowRunId: string; status: string }>;
 
-	const task = tasks.find((t) => t.workflowRunId === run.id && t.status === 'pending');
-	if (!task) throw new Error(`No pending task found for workflow run ${run.id}`);
+	const task = tasks.find((t) => t.workflowRunId === run.id && t.status === 'open');
+	if (!task) throw new Error(`No open task found for workflow run ${run.id}`);
 
 	return { runId: run.id, taskId: task.id };
 }

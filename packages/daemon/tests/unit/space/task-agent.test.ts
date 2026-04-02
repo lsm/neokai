@@ -64,7 +64,7 @@ function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
 		id: 'agent-1',
 		spaceId: 'space-1',
 		name: 'Coder',
-		role: 'coder',
+		instructions: null,
 		description: 'Implementation specialist',
 		createdAt: 1000,
 		updatedAt: 2000,
@@ -79,24 +79,20 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 		name: 'Feature Workflow',
 		description: 'Plan, code, and review.',
 		nodes: [
-			{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner' },
-			{ id: 'step-code', name: 'Code', agentId: 'agent-1', instructions: 'Write tests too.' },
-			{ id: 'step-review', name: 'Review', agentId: 'agent-reviewer' },
+			{ id: 'step-plan', name: 'Plan', agents: [{ agentId: 'agent-planner', name: 'Planner' }] },
+			{
+				id: 'step-code',
+				name: 'Code',
+				agents: [{ agentId: 'agent-1', name: 'Coder' }],
+				instructions: 'Write tests too.',
+			},
+			{
+				id: 'step-review',
+				name: 'Review',
+				agents: [{ agentId: 'agent-reviewer', name: 'Reviewer' }],
+			},
 		],
 		startNodeId: 'step-plan',
-		rules: [
-			{
-				id: 'rule-1',
-				name: 'No console.log',
-				content: 'Remove all console.log statements before merging.',
-			},
-			{
-				id: 'rule-2',
-				name: 'Test coverage',
-				content: 'All new code must have 80% coverage.',
-				appliesTo: ['step-code'],
-			},
-		],
 		isDefault: false,
 		tags: ['feature', 'review'],
 		createdAt: 1000,
@@ -112,8 +108,8 @@ function makeWorkflowRun(overrides?: Partial<SpaceWorkflowRun>): SpaceWorkflowRu
 		workflowId: 'wf-1',
 		title: 'Feature X Run #1',
 		status: 'in_progress',
-		iterationCount: 0,
-		maxIterations: 5,
+		startedAt: null,
+		completedAt: null,
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -128,14 +124,14 @@ function makeContext(overrides?: Partial<TaskAgentContext>): TaskAgentContext {
 		space: makeSpace(),
 		availableAgents: [
 			makeAgent(),
-			makeAgent({ id: 'agent-planner', name: 'Planner', role: 'planner' }),
-			makeAgent({ id: 'agent-reviewer', name: 'Reviewer', role: 'reviewer' }),
+			makeAgent({ id: 'agent-planner', name: 'Planner' }),
+			makeAgent({ id: 'agent-reviewer', name: 'Reviewer' }),
 		],
 		previousTaskSummaries: [
 			{
 				taskId: 'task-0',
 				title: 'Setup environment',
-				status: 'completed',
+				status: 'done',
 				result: 'Environment is ready.',
 			},
 		],
@@ -397,37 +393,40 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('Write tests too.');
 	});
 
-	test('includes workflow rules', () => {
+	test('includes workflow step IDs and names', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('No console.log');
-		expect(msg).toContain('Remove all console.log statements before merging.');
+		expect(msg).toContain('step-plan');
+		expect(msg).toContain('step-code');
+		expect(msg).toContain('step-review');
 	});
 
-	test('includes scoped rule step reference', () => {
+	test('includes step IDs for each node', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
 		expect(msg).toContain('step-code');
 	});
 
-	test('rule with no appliesTo shows "(all steps)" scope', () => {
+	test('includes workflow name and step count', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
-				rules: [
-					{ id: 'r1', name: 'Global Rule', content: 'Follow conventions.', appliesTo: undefined },
-				],
+				nodes: [{ id: 'step-a', name: 'Step A', agents: [{ agentId: 'agent-1', name: 'Coder' }] }],
+				startNodeId: 'step-a',
 			}),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('all steps');
+		expect(msg).toContain('Feature Workflow');
+		expect(msg).toContain('step-a');
 	});
 
-	test('rule with empty appliesTo array shows "(all steps)" scope', () => {
+	test('shows all steps listed under workflow section', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
-				rules: [{ id: 'r1', name: 'Global Rule', content: 'Follow conventions.', appliesTo: [] }],
+				nodes: [{ id: 's1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'Coder' }] }],
+				startNodeId: 's1',
 			}),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('all steps');
+		expect(msg).toContain('s1');
+		expect(msg).toContain('Step One');
 	});
 
 	test('includes workflow run details when present', () => {
@@ -474,7 +473,13 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 	test('step with unresolvable agentId falls back to raw agent id', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
-				nodes: [{ id: 'step-orphan', name: 'Orphan Step', agentId: 'agent-missing' }],
+				nodes: [
+					{
+						id: 'step-orphan',
+						name: 'Orphan Step',
+						agents: [{ agentId: 'agent-missing', name: 'OrphanAgent' }],
+					},
+				],
 				startNodeId: 'step-orphan',
 			}),
 			availableAgents: [],
@@ -483,10 +488,10 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('agent id: agent-missing');
 	});
 
-	test('handles workflow with no rules', () => {
-		const ctx = makeContext({ workflow: makeWorkflow({ rules: [] }) });
+	test('handles workflow with no channels', () => {
+		const ctx = makeContext({ workflow: makeWorkflow({ channels: [] }) });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).not.toContain('Workflow Rules');
+		expect(msg).toContain('No channels are declared');
 	});
 });
 
@@ -497,10 +502,10 @@ describe('buildTaskAgentInitialMessage — available agents', () => {
 		expect(msg).toContain('Planner');
 	});
 
-	test('includes agent roles', () => {
+	test('includes agent names for available agents', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('coder');
-		expect(msg).toContain('planner');
+		expect(msg).toContain('Coder');
+		expect(msg).toContain('Planner');
 	});
 
 	test('includes agent IDs', () => {
@@ -546,8 +551,8 @@ describe('buildTaskAgentInitialMessage — previous task results', () => {
 
 	test('includes multiple previous tasks', () => {
 		const summaries: PreviousTaskSummary[] = [
-			{ taskId: 'task-prev-1', title: 'Setup', status: 'completed', result: 'Done.' },
-			{ taskId: 'task-prev-2', title: 'Research', status: 'completed', result: 'Findings noted.' },
+			{ taskId: 'task-prev-1', title: 'Setup', status: 'done', result: 'Done.' },
+			{ taskId: 'task-prev-2', title: 'Research', status: 'done', result: 'Findings noted.' },
 		];
 		const ctx = makeContext({ previousTaskSummaries: summaries });
 		const msg = buildTaskAgentInitialMessage(ctx);

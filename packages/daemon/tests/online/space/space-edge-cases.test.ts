@@ -167,7 +167,7 @@ describe('Space Workflow — Edge Cases', () => {
 			// Confirm Planning task is pending before cancellation
 			const planningTask = tasks.find((t) => t.title === 'Planning');
 			expect(planningTask).toBeDefined();
-			expect(planningTask!.status).toBe('pending');
+			expect(planningTask!.status).toBe('open');
 
 			// Cancel the run
 			const cancelResult = (await daemon.messageHub.request('spaceWorkflowRun.cancel', {
@@ -246,14 +246,14 @@ describe('Space Workflow — Edge Cases', () => {
 				'Planning agent session terminated unexpectedly'
 			);
 
-			expect(failedRun.status).toBe('needs_attention');
+			expect(failedRun.status).toBe('blocked');
 			expect(failedRun.failureReason).toBe('agentCrash');
 
 			// Verify via a fresh get
 			const { run: reloaded } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };
-			expect(reloaded.status).toBe('needs_attention');
+			expect(reloaded.status).toBe('blocked');
 			expect(reloaded.failureReason).toBe('agentCrash');
 		},
 		TEST_TIMEOUT
@@ -273,12 +273,7 @@ describe('Space Workflow — Edge Cases', () => {
 			// Mark as crashed
 			await markRunFailed(daemon, runId, 'agentCrash');
 
-			const runAfterCrash = await waitForRunStatus(
-				daemon,
-				runId,
-				['needs_attention'],
-				RUN_STATUS_TIMEOUT
-			);
+			const runAfterCrash = await waitForRunStatus(daemon, runId, ['blocked'], RUN_STATUS_TIMEOUT);
 			expect(runAfterCrash.failureReason).toBe('agentCrash');
 
 			// Resume — human resolved the issue
@@ -461,7 +456,7 @@ describe('Space Workflow — Edge Cases', () => {
 				);
 				expect(qaTask.title).toBe('QA');
 				expect(qaTask.workflowRunId).toBe(runId);
-				expect(['pending', 'in_progress']).toContain(qaTask.status);
+				expect(['open', 'in_progress']).toContain(qaTask.status);
 			} finally {
 				// afterEach handles daemon shutdown; clean up workspace here.
 				await Bun.$`rm -rf ${restartWorkspace}`.quiet();

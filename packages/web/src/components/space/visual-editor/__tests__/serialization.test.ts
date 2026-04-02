@@ -15,7 +15,8 @@ import {
 	visualStateToUpdateParams,
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
-import type { SpaceWorkflow, WorkflowNode, WorkflowRule } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowNode } from '@neokai/shared';
+import type { WorkflowRule } from '../../WorkflowRulesEditor';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 // ---------------------------------------------------------------------------
 // Stable UUID counter so tests are deterministic
@@ -39,7 +40,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 function makeStep(id: string, name?: string, agentId?: string): WorkflowNode {
-	return { id, name: name ?? id, agentId: agentId ?? 'agent-1' };
+	return { id, name: name ?? id, agents: [{ agentId: agentId ?? 'agent-1', name: 'coder' }] };
 }
 
 function makeRule(id: string, name: string, content: string, appliesTo?: string[]): WorkflowRule {
@@ -53,7 +54,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		name: 'Test Workflow',
 		nodes: [],
 		startNodeId: '',
-		rules: [],
 		tags: [],
 		createdAt: 0,
 		updatedAt: 0,
@@ -166,17 +166,13 @@ describe('workflowToVisualState', () => {
 		expect(state.edges).toHaveLength(0);
 	});
 
-	it('converts rules to drafts', () => {
+	it('returns empty rules array (rules removed from SpaceWorkflow)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1')],
 			startNodeId: 's1',
-			rules: [makeRule('r1', 'Rule 1', 'Content 1', ['s1'])],
 		});
 		const state = workflowToVisualState(wf);
-		expect(state.rules).toHaveLength(1);
-		expect(state.rules[0].id).toBe('r1');
-		expect(state.rules[0].name).toBe('Rule 1');
-		expect(state.rules[0].appliesTo).toContain('s1');
+		expect(state.rules).toHaveLength(0);
 	});
 
 	it('passes tags through', () => {
@@ -273,16 +269,19 @@ describe('visualStateToCreateParams', () => {
 	it('produces correct steps array', () => {
 		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
 		expect(params.nodes).toHaveLength(2);
-		expect(params.nodes![0]).toMatchObject({ id: 's1', name: 'Step 1', agentId: 'a1' });
+		expect(params.nodes![0]).toMatchObject({ id: 's1', name: 'Step 1' });
+		expect(params.nodes![0].agents).toHaveLength(1);
+		expect(params.nodes![0].agents[0].agentId).toBe('a1');
 		expect(params.nodes![1]).toMatchObject({
 			id: 's2',
 			name: 'Step 2',
-			agentId: 'a2',
 			instructions: 'do work',
 		});
+		expect(params.nodes![1].agents[0].agentId).toBe('a2');
 	});
 
-	it('persists single-agent model and systemPrompt overrides into create params', () => {
+	it('produces agents array (model/systemPrompt removed from WorkflowNodeInput)', () => {
+		// model and systemPrompt are NodeDraft-only fields (not on WorkflowNodeInput or WorkflowNodeAgent)
 		const params = visualStateToCreateParams(
 			makeState({
 				nodes: [
@@ -292,8 +291,6 @@ describe('visualStateToCreateParams', () => {
 							id: 's1',
 							name: 'Step 1',
 							agentId: 'a1',
-							model: 'gpt-5.4',
-							systemPrompt: 'Be precise.',
 							instructions: '',
 						},
 						position: { x: 50, y: 50 },
@@ -303,8 +300,8 @@ describe('visualStateToCreateParams', () => {
 			'space-1',
 			'My Workflow'
 		);
-		expect(params.nodes![0].model).toBe('gpt-5.4');
-		expect(params.nodes![0].systemPrompt).toBe('Be precise.');
+		expect(params.nodes![0].agents).toHaveLength(1);
+		expect(params.nodes![0].agents[0].agentId).toBe('a1');
 	});
 
 	it('omits empty instructions', () => {
@@ -345,7 +342,7 @@ describe('visualStateToCreateParams', () => {
 		expect(params.tags).toEqual(['coding']);
 	});
 
-	it('includes rules without id field', () => {
+	it('rules are not included in create params (rules removed from SpaceWorkflow)', () => {
 		const state = makeState({
 			rules: [
 				{
@@ -358,12 +355,11 @@ describe('visualStateToCreateParams', () => {
 			],
 		});
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.rules).toHaveLength(1);
-		expect(params.rules![0]).not.toHaveProperty('id');
-		expect(params.rules![0].name).toBe('My Rule');
+		// rules no longer part of CreateSpaceWorkflowParams
+		expect((params as unknown as Record<string, unknown>)['rules']).toBeUndefined();
 	});
 
-	it('silently drops blank rules (both name and content empty)', () => {
+	it('blank rules do not affect create params (rules removed from SpaceWorkflow)', () => {
 		const state = makeState({
 			rules: [
 				{ localId: 'lr1', name: '', content: '', appliesTo: [] },
@@ -371,8 +367,8 @@ describe('visualStateToCreateParams', () => {
 			],
 		});
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.rules).toHaveLength(1);
-		expect(params.rules![0].name).toBe('Real Rule');
+		// rules no longer part of CreateSpaceWorkflowParams
+		expect((params as unknown as Record<string, unknown>)['rules']).toBeUndefined();
 	});
 
 	it('generates a new UUID for steps without id', () => {
@@ -474,20 +470,14 @@ describe('round-trip serialization', () => {
 		expect(params.tags).toEqual(['research', 'review']);
 	});
 
-	it('preserves rules after round-trip', () => {
+	it('rules not present in update params (rules removed from SpaceWorkflow)', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
 			startNodeId: 's1',
-			rules: [makeRule('r1', 'Security Rule', 'No secrets in output', ['s1'])],
 		});
 		const params = visualStateToUpdateParams(workflowToVisualState(original));
-		expect(params.rules).toHaveLength(1);
-		expect(params.rules![0]).toMatchObject({
-			id: 'r1',
-			name: 'Security Rule',
-			content: 'No secrets in output',
-		});
-		expect(params.rules![0].appliesTo).toContain('s1');
+		// rules no longer part of UpdateSpaceWorkflowParams
+		expect((params as Record<string, unknown>)['rules']).toBeUndefined();
 	});
 
 	it('edges are empty after round-trip (transitions removed from backend)', () => {
@@ -510,7 +500,6 @@ describe('round-trip serialization', () => {
 			startNodeId: 's1',
 			layout: { s1: { x: 50, y: 50 }, s2: { x: 50, y: 200 }, s3: { x: 50, y: 350 } },
 			tags: ['coding'],
-			rules: [makeRule('r1', 'R1', 'Content', ['s1', 's2'])],
 		});
 
 		const visualState = workflowToVisualState(original);
@@ -535,11 +524,6 @@ describe('round-trip serialization', () => {
 
 		// Tags
 		expect(params.tags).toEqual(['coding']);
-
-		// Rules
-		expect(params.rules![0]).toMatchObject({ id: 'r1', name: 'R1', content: 'Content' });
-		expect(params.rules![0].appliesTo).toContain('s1');
-		expect(params.rules![0].appliesTo).toContain('s2');
 	});
 });
 
@@ -571,7 +555,7 @@ describe('visualStateToUpdateParams', () => {
 		expect(params.description).toBe('New desc');
 	});
 
-	it('rules include generated IDs for new rules', () => {
+	it('rules are not included in update params (rules removed from SpaceWorkflow)', () => {
 		const state: VisualEditorState = {
 			nodes: [
 				{
@@ -589,7 +573,8 @@ describe('visualStateToUpdateParams', () => {
 			gates: [],
 		};
 		const params = visualStateToUpdateParams(state);
-		expect(params.rules![0].id).toBeTruthy();
+		// rules no longer part of UpdateSpaceWorkflowParams
+		expect((params as Record<string, unknown>)['rules']).toBeUndefined();
 	});
 });
 
@@ -606,7 +591,11 @@ describe('multi-agent step serialization', () => {
 					name: 'Parallel Step',
 					agents: [
 						{ agentId: 'a1', name: 'coder' },
-						{ agentId: 'a2', name: 'reviewer', instructions: 'focus on security' },
+						{
+							agentId: 'a2',
+							name: 'reviewer',
+							instructions: { mode: 'override', value: 'focus on security' },
+						},
 					],
 				},
 			],
@@ -617,7 +606,7 @@ describe('multi-agent step serialization', () => {
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
 		expect(step.agents![1].agentId).toBe('a2');
-		expect(step.agents![1].instructions).toBe('focus on security');
+		expect(step.agents![1].instructions).toEqual({ mode: 'override', value: 'focus on security' });
 		// agentId should be empty (multi-agent step)
 		expect(step.agentId).toBe('');
 	});
@@ -657,7 +646,11 @@ describe('multi-agent step serialization', () => {
 						agentId: '',
 						agents: [
 							{ agentId: 'a1', name: 'coder' },
-							{ agentId: 'a2', name: 'reviewer', instructions: 'custom' },
+							{
+								agentId: 'a2',
+								name: 'reviewer',
+								instructions: { mode: 'override', value: 'custom' },
+							},
 						],
 						instructions: '',
 					},
@@ -675,9 +668,9 @@ describe('multi-agent step serialization', () => {
 		const step = params.nodes![0];
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
-		expect(step.agents![1].instructions).toBe('custom');
+		expect(step.agents![1].instructions).toEqual({ mode: 'override', value: 'custom' });
 		// agentId should be absent (undefined) when agents is set
-		expect(step.agentId).toBeUndefined();
+		expect((step as unknown as Record<string, unknown>)['agentId']).toBeUndefined();
 	});
 
 	it('visualStateToCreateParams omits empty channels array', () => {
@@ -772,7 +765,7 @@ describe('multi-agent step serialization', () => {
 		expect(params.gates![0].id).toBe('review-votes-gate');
 	});
 
-	it('single-agent step round-trip: agentId preserved, no agents array', () => {
+	it('single-agent step round-trip: agentId set in NodeDraft, agents output in serialized params', () => {
 		const workflow = makeWorkflow({
 			nodes: [makeStep('s1', 'Code', 'agent-coder')],
 		});
@@ -780,11 +773,11 @@ describe('multi-agent step serialization', () => {
 		// Use find() — Task Agent virtual node is injected at index 0
 		const s1Node = state.nodes.find((n) => n.step.id === 's1')!;
 		expect(s1Node.step.agentId).toBe('agent-coder');
-		expect(s1Node.step.agents).toBeUndefined();
 
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.nodes![0].agentId).toBe('agent-coder');
-		expect(params.nodes![0].agents).toBeUndefined();
+		// serialization builds agents array from agentId for single-agent steps
+		expect(params.nodes![0].agents).toHaveLength(1);
+		expect(params.nodes![0].agents[0].agentId).toBe('agent-coder');
 	});
 
 	it('full round-trip workflowToVisualState → visualStateToUpdateParams preserves multi-agent data', () => {
@@ -798,7 +791,11 @@ describe('multi-agent step serialization', () => {
 					id: 's1',
 					name: 'Parallel',
 					agents: [
-						{ agentId: 'a1', name: 'coder', instructions: 'focus on tests' },
+						{
+							agentId: 'a1',
+							name: 'coder',
+							instructions: { mode: 'override', value: 'focus on tests' },
+						},
 						{ agentId: 'a2', name: 'reviewer' },
 					],
 				},
@@ -812,11 +809,11 @@ describe('multi-agent step serialization', () => {
 		// agents array preserved through update round-trip
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
-		expect(step.agents![0].instructions).toBe('focus on tests');
+		expect(step.agents![0].instructions).toEqual({ mode: 'override', value: 'focus on tests' });
 		expect(step.agents![1].agentId).toBe('a2');
 		expect(step.agents![1].instructions).toBeUndefined();
 		// agentId should be absent for multi-agent steps
-		expect(step.agentId).toBeUndefined();
+		expect((step as unknown as Record<string, unknown>)['agentId']).toBeUndefined();
 		// Workflow-level channels are preserved through serialization
 		expect(params.channels).toHaveLength(2);
 		expect(params.channels![0]).toMatchObject({
@@ -903,14 +900,12 @@ describe('Task Agent virtual node', () => {
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 
 		// Regular nodes preserved
-		expect(params.nodes!.find((n) => n.id === 's1')).toMatchObject({
-			name: 'Coder',
-			agentId: 'agent-coder',
-		});
-		expect(params.nodes!.find((n) => n.id === 's2')).toMatchObject({
-			name: 'Reviewer',
-			agentId: 'agent-reviewer',
-		});
+		const s1Node = params.nodes!.find((n) => n.id === 's1')!;
+		expect(s1Node.name).toBe('Coder');
+		expect(s1Node.agents[0].agentId).toBe('agent-coder');
+		const s2Node = params.nodes!.find((n) => n.id === 's2')!;
+		expect(s2Node.name).toBe('Reviewer');
+		expect(s2Node.agents[0].agentId).toBe('agent-reviewer');
 		// Task Agent not present
 		expect(params.nodes!.some((n) => n.id === TASK_AGENT_NODE_ID)).toBe(false);
 	});
@@ -946,54 +941,7 @@ describe('Task Agent virtual node', () => {
 // ---------------------------------------------------------------------------
 
 describe('per-slot agent overrides round-trip', () => {
-	it('workflowToVisualState preserves model override on agents', () => {
-		const wf = makeWorkflow({
-			nodes: [
-				{
-					id: 's1',
-					name: 'Review',
-					agents: [
-						{ agentId: 'a1', name: 'strict-reviewer', model: 'claude-opus-4-6' },
-						{ agentId: 'a1', name: 'quick-reviewer' },
-					],
-				},
-			],
-			startNodeId: 's1',
-		});
-		const state = workflowToVisualState(wf);
-		const node = state.nodes.find((n) => n.step.id === 's1')!;
-		expect(node.step.agents).toHaveLength(2);
-		expect(node.step.agents![0]).toMatchObject({
-			name: 'strict-reviewer',
-			model: 'claude-opus-4-6',
-		});
-		// slot without override has no model field
-		expect(node.step.agents![1].model).toBeUndefined();
-	});
-
 	it('workflowToVisualState preserves systemPrompt override on agents', () => {
-		const wf = makeWorkflow({
-			nodes: [
-				{
-					id: 's1',
-					name: 'Code',
-					agents: [
-						{
-							agentId: 'a1',
-							name: 'coder',
-							systemPrompt: 'You are a strict TypeScript expert.',
-						},
-					],
-				},
-			],
-			startNodeId: 's1',
-		});
-		const state = workflowToVisualState(wf);
-		const node = state.nodes.find((n) => n.step.id === 's1')!;
-		expect(node.step.agents![0].systemPrompt).toBe('You are a strict TypeScript expert.');
-	});
-
-	it('visualStateToCreateParams passes model and systemPrompt through to output', () => {
 		const wf = makeWorkflow({
 			nodes: [
 				{
@@ -1003,8 +951,62 @@ describe('per-slot agent overrides round-trip', () => {
 						{
 							agentId: 'a1',
 							name: 'strict-reviewer',
-							model: 'claude-opus-4-6',
-							systemPrompt: 'Be strict.',
+							systemPrompt: { mode: 'override', value: 'Be strict.' },
+						},
+						{ agentId: 'a1', name: 'quick-reviewer' },
+					],
+				},
+			],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const node = state.nodes.find((n) => n.step.id === 's1')!;
+		expect(node.step.agents).toHaveLength(2);
+		expect(node.step.agents![0].name).toBe('strict-reviewer');
+		expect(node.step.agents![0].systemPrompt).toMatchObject({
+			mode: 'override',
+			value: 'Be strict.',
+		});
+		// slot without override has no systemPrompt field
+		expect(node.step.agents![1].systemPrompt).toBeUndefined();
+	});
+
+	it('workflowToVisualState preserves instructions override on agents', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 's1',
+					name: 'Code',
+					agents: [
+						{
+							agentId: 'a1',
+							name: 'coder',
+							instructions: { mode: 'override', value: 'You are a strict TypeScript expert.' },
+						},
+					],
+				},
+			],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const node = state.nodes.find((n) => n.step.id === 's1')!;
+		expect(node.step.agents![0].instructions).toMatchObject({
+			mode: 'override',
+			value: 'You are a strict TypeScript expert.',
+		});
+	});
+
+	it('visualStateToCreateParams passes systemPrompt override through to output', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 's1',
+					name: 'Review',
+					agents: [
+						{
+							agentId: 'a1',
+							name: 'strict-reviewer',
+							systemPrompt: { mode: 'override', value: 'Be strict.' },
 						},
 						{ agentId: 'a2', name: 'quick-reviewer' },
 					],
@@ -1017,12 +1019,8 @@ describe('per-slot agent overrides round-trip', () => {
 
 		const node = params.nodes![0];
 		expect(node.agents).toHaveLength(2);
-		expect(node.agents![0]).toMatchObject({
-			name: 'strict-reviewer',
-			model: 'claude-opus-4-6',
-			systemPrompt: 'Be strict.',
-		});
-		expect(node.agents![1].model).toBeUndefined();
+		expect(node.agents![0].name).toBe('strict-reviewer');
+		expect(node.agents![0].systemPrompt).toMatchObject({ mode: 'override', value: 'Be strict.' });
 		expect(node.agents![1].systemPrompt).toBeUndefined();
 	});
 
@@ -1036,15 +1034,13 @@ describe('per-slot agent overrides round-trip', () => {
 						{
 							agentId: 'a1',
 							name: 'coder',
-							model: 'claude-haiku-4-5-20251001',
-							systemPrompt: 'Fast coder.',
-							instructions: 'Focus on speed.',
+							systemPrompt: { mode: 'override', value: 'Fast coder.' },
+							instructions: { mode: 'override', value: 'Focus on speed.' },
 						},
 						{
 							agentId: 'a1',
 							name: 'coder-2',
-							model: 'claude-opus-4-6',
-							instructions: 'Focus on quality.',
+							instructions: { mode: 'expand', value: 'Focus on quality.' },
 						},
 					],
 				},
@@ -1056,13 +1052,11 @@ describe('per-slot agent overrides round-trip', () => {
 
 		const [slot1, slot2] = params.nodes![0].agents!;
 		expect(slot1.name).toBe('coder');
-		expect(slot1.model).toBe('claude-haiku-4-5-20251001');
-		expect(slot1.systemPrompt).toBe('Fast coder.');
-		expect(slot1.instructions).toBe('Focus on speed.');
+		expect(slot1.systemPrompt).toMatchObject({ mode: 'override', value: 'Fast coder.' });
+		expect(slot1.instructions).toMatchObject({ mode: 'override', value: 'Focus on speed.' });
 		expect(slot2.name).toBe('coder-2');
-		expect(slot2.model).toBe('claude-opus-4-6');
 		expect(slot2.systemPrompt).toBeUndefined();
-		expect(slot2.instructions).toBe('Focus on quality.');
+		expect(slot2.instructions).toMatchObject({ mode: 'expand', value: 'Focus on quality.' });
 	});
 
 	it('same agent added twice with different roles: both preserved in create params', () => {
@@ -1073,7 +1067,11 @@ describe('per-slot agent overrides round-trip', () => {
 					name: 'Dual Review',
 					agents: [
 						{ agentId: 'reviewer-agent', name: 'reviewer' },
-						{ agentId: 'reviewer-agent', name: 'reviewer-2', model: 'claude-opus-4-6' },
+						{
+							agentId: 'reviewer-agent',
+							name: 'reviewer-2',
+							systemPrompt: { mode: 'override', value: 'Be thorough.' },
+						},
 					],
 				},
 			],
@@ -1088,7 +1086,7 @@ describe('per-slot agent overrides round-trip', () => {
 		expect(agents[0].name).toBe('reviewer');
 		expect(agents[1].agentId).toBe('reviewer-agent');
 		expect(agents[1].name).toBe('reviewer-2');
-		expect(agents[1].model).toBe('claude-opus-4-6');
+		expect(agents[1].systemPrompt).toMatchObject({ mode: 'override', value: 'Be thorough.' });
 	});
 
 	it('role rename in visual state is reflected in serialized output', () => {
@@ -1100,7 +1098,7 @@ describe('per-slot agent overrides round-trip', () => {
 				{
 					id: 's1',
 					name: 'Code',
-					agents: [{ agentId: 'a1', name: 'coder', model: 'claude-haiku-4-5-20251001' }],
+					agents: [{ agentId: 'a1', name: 'coder' }],
 				},
 			],
 			startNodeId: 's1',
@@ -1109,17 +1107,13 @@ describe('per-slot agent overrides round-trip', () => {
 
 		// Simulate the user renaming 'coder' → 'lead-coder' via the role input
 		const nodeIdx = state.nodes.findIndex((n) => n.step.id === 's1');
-		state.nodes[nodeIdx].step.agents = [
-			{ agentId: 'a1', name: 'lead-coder', model: 'claude-haiku-4-5-20251001' },
-		];
+		state.nodes[nodeIdx].step.agents = [{ agentId: 'a1', name: 'lead-coder' }];
 
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		const node = params.nodes![0];
 
 		// New role is serialized
 		expect(node.agents![0].name).toBe('lead-coder');
-		// Override fields are preserved through the rename
-		expect(node.agents![0].model).toBe('claude-haiku-4-5-20251001');
 		// Workflow-level channels are preserved through serialization
 		expect(params.channels).toHaveLength(1);
 		expect(params.channels![0]).toMatchObject({

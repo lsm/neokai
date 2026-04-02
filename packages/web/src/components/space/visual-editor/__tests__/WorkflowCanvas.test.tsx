@@ -37,7 +37,7 @@ afterEach(() => cleanup());
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
 function makeAgent(id: string, name: string): SpaceAgent {
-	return { id, spaceId: 'space-1', name, role: 'coder', createdAt: 0, updatedAt: 0 };
+	return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
 }
 
 function makeStep(localId: string, name: string): NodeDraft {
@@ -472,7 +472,7 @@ import type { WorkflowChannel } from '@neokai/shared';
 
 describe('computeChannelEdges', () => {
 	function makeAgentWithRole(id: string, role: string): SpaceAgent {
-		return { id, spaceId: 'space-1', name: role, role, createdAt: 0, updatedAt: 0 };
+		return { id, spaceId: 'space-1', name: role, instructions: null, createdAt: 0, updatedAt: 0 };
 	}
 
 	function makeNodeWithAgentsAndChannels(
@@ -713,8 +713,7 @@ describe('WorkflowCanvas — explicit channels prop', () => {
 
 	it('prefers explicit channels over computed node channels when provided', () => {
 		// Node has a channel from step-1 to step-2 (via workflowChannels prop)
-		const agentWithRole = makeAgent('agent-1', 'Coder');
-		agentWithRole.role = 'coder';
+		const agentWithRole = makeAgent('agent-1', 'coder');
 		const nodesWithChannels: WorkflowNodeData[] = [
 			{
 				step: {

@@ -73,10 +73,8 @@ const mockWorkflow: SpaceWorkflow = {
 	id: 'workflow-1',
 	spaceId: 'space-1',
 	name: 'Test Workflow',
-	nodes: [{ id: 'step-1', name: 'Step One', agentId: 'agent-1' }],
-	transitions: [],
+	nodes: [{ id: 'step-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'Coder' }] }],
 	startNodeId: 'step-1',
-	rules: [],
 	tags: [],
 	createdAt: NOW,
 	updatedAt: NOW,
@@ -88,9 +86,8 @@ const mockRun: SpaceWorkflowRun = {
 	workflowId: 'workflow-1',
 	title: 'Test Run',
 	status: 'in_progress',
-	config: { worktreePath: '/tmp/worktrees/task-1' },
-	iterationCount: 0,
-	maxIterations: 5,
+	startedAt: null,
+	completedAt: null,
 	createdAt: NOW,
 	updatedAt: NOW,
 };
@@ -212,7 +209,11 @@ describe('space-workflow-run gate handlers', () => {
 	let taskManagerFactory: SpaceWorkflowRunTaskManagerFactory;
 
 	function setup(
-		opts: { run?: SpaceWorkflowRun | null; existingGateData?: GateDataRecord | null } = {}
+		opts: {
+			run?: SpaceWorkflowRun | null;
+			existingGateData?: GateDataRecord | null;
+			space?: Space | null;
+		} = {}
 	) {
 		mockExecResult = () => '';
 		mockExecFile.mockClear();
@@ -231,9 +232,11 @@ describe('space-workflow-run gate handlers', () => {
 			cancelTask: mock(async () => {}),
 		})) as unknown as SpaceWorkflowRunTaskManagerFactory;
 
+		const resolvedSpace = 'space' in opts ? opts.space : mockSpace;
+
 		setupSpaceWorkflowRunHandlers(
 			hub,
-			createMockSpaceManager(),
+			createMockSpaceManager(resolvedSpace),
 			createMockWorkflowManager(),
 			runRepo,
 			gateDataRepo,
@@ -280,10 +283,10 @@ describe('space-workflow-run gate handlers', () => {
 		});
 
 		it('throws if run is completed', async () => {
-			setup({ run: { ...mockRun, status: 'completed' } });
+			setup({ run: { ...mockRun, status: 'done' } });
 			await expect(
 				call('spaceWorkflowRun.approveGate', { runId: 'run-1', gateId: 'g', approved: true })
-			).rejects.toThrow('Cannot modify gate on a completed workflow run');
+			).rejects.toThrow('Cannot modify gate on a done workflow run');
 		});
 
 		it('throws if run is cancelled', async () => {
@@ -331,7 +334,7 @@ describe('space-workflow-run gate handlers', () => {
 			expect(result.gateData.data.approved).toBe(true);
 		});
 
-		it('rejection: merges { approved: false } and sets run to needs_attention + humanRejected', async () => {
+		it('rejection: merges { approved: false } and sets run to blocked + humanRejected', async () => {
 			const result = (await call('spaceWorkflowRun.approveGate', {
 				runId: 'run-1',
 				gateId: 'gate-approval',
@@ -344,11 +347,11 @@ describe('space-workflow-run gate handlers', () => {
 				rejectedAt: expect.any(Number),
 				reason: 'Not ready',
 			});
-			// State machine transition to needs_attention (in_progress→needs_attention is valid)
-			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'needs_attention');
+			// State machine transition to blocked (in_progress→blocked is valid)
+			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'blocked');
 			// failureReason written separately so it persists independently
 			expect(runRepo.updateRun).toHaveBeenCalledWith('run-1', { failureReason: 'humanRejected' });
-			expect(result.run.status).toBe('needs_attention');
+			expect(result.run.status).toBe('blocked');
 			expect(result.run.failureReason).toBe('humanRejected');
 			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
 		});
@@ -370,7 +373,7 @@ describe('space-workflow-run gate handlers', () => {
 		it('rejection is idempotent: returns existing state if gate data already shows rejected', async () => {
 			const alreadyRejectedRun: SpaceWorkflowRun = {
 				...mockRun,
-				status: 'needs_attention',
+				status: 'blocked',
 				failureReason: 'humanRejected',
 			};
 			setup({
@@ -393,7 +396,7 @@ describe('space-workflow-run gate handlers', () => {
 		it('approve after prior rejection: transitions run back to in_progress and clears failureReason', async () => {
 			const rejectedRun: SpaceWorkflowRun = {
 				...mockRun,
-				status: 'needs_attention',
+				status: 'blocked',
 				failureReason: 'humanRejected',
 			};
 			setup({ run: rejectedRun });
@@ -418,13 +421,13 @@ describe('space-workflow-run gate handlers', () => {
 			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
 		});
 
-		it('rejection when run is already needs_attention (non-humanRejected): skips transitionStatus, sets failureReason', async () => {
-			// e.g. run is needs_attention due to maxIterationsReached; human gate rejection
+		it('rejection when run is already blocked (non-humanRejected): skips transitionStatus, sets failureReason', async () => {
+			// e.g. run is blocked due to maxIterationsReached; human gate rejection
 			// should override the failureReason without calling transitionStatus (which would
-			// reject needs_attention→needs_attention as a no-op or invalid transition).
+			// reject blocked→blocked as a no-op or invalid transition).
 			const stuckRun: SpaceWorkflowRun = {
 				...mockRun,
-				status: 'needs_attention',
+				status: 'blocked',
 				failureReason: 'maxIterationsReached',
 			};
 			setup({ run: stuckRun });
@@ -435,11 +438,11 @@ describe('space-workflow-run gate handlers', () => {
 				approved: false,
 			})) as { run: SpaceWorkflowRun; gateData: GateDataRecord };
 
-			// transitionStatus must NOT be called since status is already needs_attention
+			// transitionStatus must NOT be called since status is already blocked
 			expect(runRepo.transitionStatus).not.toHaveBeenCalled();
 			// Only failureReason is written
 			expect(runRepo.updateRun).toHaveBeenCalledWith('run-1', { failureReason: 'humanRejected' });
-			expect(result.run.status).toBe('needs_attention');
+			expect(result.run.status).toBe('blocked');
 			expect(result.run.failureReason).toBe('humanRejected');
 		});
 
@@ -505,17 +508,17 @@ describe('space-workflow-run gate handlers', () => {
 			);
 		});
 
-		it('throws if run has no worktree path in config', async () => {
-			setup({ run: { ...mockRun, config: {} } });
+		it('throws if space has no workspace path', async () => {
+			setup({ space: { ...mockSpace, workspacePath: '' } });
 			await expect(call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' })).rejects.toThrow(
-				'No worktree path found for run: run-1'
+				'No workspace path found for run: run-1'
 			);
 		});
 
-		it('throws if run has no config at all', async () => {
-			setup({ run: { ...mockRun, config: undefined } });
+		it('throws if space is not found', async () => {
+			setup({ space: null });
 			await expect(call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' })).rejects.toThrow(
-				'No worktree path found for run: run-1'
+				'No workspace path found for run: run-1'
 			);
 		});
 
@@ -542,7 +545,7 @@ describe('space-workflow-run gate handlers', () => {
 			expect(result.files[1]).toEqual({ path: 'src/bar.ts', additions: 2, deletions: 0 });
 			expect(result.totalAdditions).toBe(7);
 			expect(result.totalDeletions).toBe(3);
-			expect(result.worktreePath).toBe('/tmp/worktrees/task-1');
+			expect(result.worktreePath).toBe('/tmp/test-workspace');
 			expect(result.baseRef).toBe('abc123');
 		});
 
@@ -640,11 +643,11 @@ describe('space-workflow-run gate handlers', () => {
 			).rejects.toThrow('WorkflowRun not found: missing');
 		});
 
-		it('throws if run has no worktree path', async () => {
-			setup({ run: { ...mockRun, config: undefined } });
+		it('throws if space has no workspace path', async () => {
+			setup({ space: null });
 			await expect(
 				call('spaceWorkflowRun.getFileDiff', { runId: 'run-1', filePath: 'src/foo.ts' })
-			).rejects.toThrow('No worktree path found for run: run-1');
+			).rejects.toThrow('No workspace path found for run: run-1');
 		});
 
 		it('returns unified diff for a file', async () => {
@@ -786,15 +789,15 @@ describe('space-workflow-run gate handlers', () => {
 			).rejects.toThrow('WorkflowRun not found: run-1');
 		});
 
-		it('throws if run is completed (status guard)', async () => {
-			setup({ run: { ...mockRun, status: 'completed' } });
+		it('throws if run is done (status guard)', async () => {
+			setup({ run: { ...mockRun, status: 'done' } });
 			await expect(
 				call('spaceWorkflowRun.writeGateData', {
 					runId: 'run-1',
 					gateId: 'review-votes-gate',
 					data: { votes: { 'Reviewer 1': 'approved' } },
 				})
-			).rejects.toThrow('Cannot write gate data on a completed workflow run');
+			).rejects.toThrow('Cannot write gate data on a done workflow run');
 		});
 
 		it('throws if run is cancelled (status guard)', async () => {

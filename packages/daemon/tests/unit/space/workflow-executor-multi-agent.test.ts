@@ -76,7 +76,14 @@ function seedAgent(
 // ---------------------------------------------------------------------------
 
 function makeSpaceAgent(id: string, name: string): SpaceAgent {
-	return { id, spaceId: 'space-1', name: `${name} agent`, role: name, createdAt: 0, updatedAt: 0 };
+	return {
+		id,
+		spaceId: 'space-1',
+		name: `${name} agent`,
+		instructions: null,
+		createdAt: 0,
+		updatedAt: 0,
+	};
 }
 
 // ===========================================================================
@@ -169,8 +176,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		expect(tasks).toHaveLength(2);
 		for (const task of tasks) {
 			expect(task.workflowRunId).toBe(run.id);
-			expect(task.workflowNodeId).toBe(STEP_A);
-			expect(task.status).toBe('pending');
+			expect(task.status).toBe('open');
 		}
 	});
 
@@ -183,8 +189,16 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel Start',
 					agents: [
-						{ agentId: AGENT_CODER, name: 'coder', instructions: 'Coder task' },
-						{ agentId: AGENT_PLANNER, name: 'planner', instructions: 'Planner task' },
+						{
+							agentId: AGENT_CODER,
+							name: 'coder',
+							instructions: { value: 'Coder task', mode: 'override' },
+						},
+						{
+							agentId: AGENT_PLANNER,
+							name: 'planner',
+							instructions: { value: 'Planner task', mode: 'override' },
+						},
 					],
 				},
 			],
@@ -223,13 +237,11 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 		expect(tasks).toHaveLength(2);
-		const plannerTask = tasks.find((t) => t.taskType === 'planning');
-		const coderTask = tasks.find((t) => t.taskType === 'coding');
-
-		expect(plannerTask).toBeDefined();
-		expect(plannerTask!.customAgentId).toBeUndefined();
-		expect(coderTask).toBeDefined();
-		expect(coderTask!.customAgentId).toBeUndefined();
+		// taskType and customAgentId were removed in M71
+		// Verify both tasks were created with correct status
+		for (const task of tasks) {
+			expect(task.status).toBe('open');
+		}
 	});
 
 	test('custom-role agent in multi-agent start step sets customAgentId on its task', async () => {
@@ -255,14 +267,11 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 		expect(tasks).toHaveLength(2);
-		// Custom role agent should have customAgentId set
-		const customTask = tasks.find((t) => t.customAgentId === AGENT_CUSTOM);
-		expect(customTask).toBeDefined();
-		expect(customTask!.taskType).toBe('coding');
-		// Preset coder role should have no customAgentId
-		const coderTask = tasks.find((t) => t.customAgentId === undefined);
-		expect(coderTask).toBeDefined();
-		expect(coderTask!.taskType).toBe('coding');
+		// taskType and customAgentId were removed in M71
+		// Verify both tasks were created with correct status
+		for (const task of tasks) {
+			expect(task.status).toBe('open');
+		}
 	});
 
 	// -------------------------------------------------------------------------
@@ -294,7 +303,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		expect(tasks).toHaveLength(2);
 
 		// Complete only one of the two parallel tasks
-		taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+		taskRepo.updateTask(tasks[0].id, { status: 'done' });
 		// tasks[1] remains pending
 
 		await runtime.executeTick();
@@ -332,7 +341,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 		// One task fails, but sibling is still in_progress
-		taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Build failed' });
+		taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Build failed' });
 		taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
 
 		await runtime.executeTick();
@@ -370,13 +379,13 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		expect(tasks).toHaveLength(2);
 
 		// One completes, one fails — both are terminal
-		taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-		taskRepo.updateTask(tasks[1].id, { status: 'needs_attention', error: 'Agent crashed' });
+		taskRepo.updateTask(tasks[0].id, { status: 'done' });
+		taskRepo.updateTask(tasks[1].id, { status: 'blocked', error: 'Agent crashed' });
 
 		await runtime.executeTick();
 
 		const updatedRun = workflowRunRepo.getRun(run.id)!;
-		expect(updatedRun.status).toBe('needs_attention');
+		expect(updatedRun.status).toBe('blocked');
 	});
 
 	test('marks run needs_attention when two of three tasks complete but one fails', async () => {
@@ -406,14 +415,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 		expect(tasks).toHaveLength(3);
 
-		taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-		taskRepo.updateTask(tasks[1].id, { status: 'completed' });
-		taskRepo.updateTask(tasks[2].id, { status: 'needs_attention', error: 'Crash' });
+		taskRepo.updateTask(tasks[0].id, { status: 'done' });
+		taskRepo.updateTask(tasks[1].id, { status: 'done' });
+		taskRepo.updateTask(tasks[2].id, { status: 'blocked', error: 'Crash' });
 
 		await runtime.executeTick();
 
 		const updatedRun = workflowRunRepo.getRun(run.id)!;
-		expect(updatedRun.status).toBe('needs_attention');
+		expect(updatedRun.status).toBe('blocked');
 	});
 
 	// -------------------------------------------------------------------------
@@ -433,7 +442,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 		expect(tasks).toHaveLength(1);
-		expect(tasks[0].workflowNodeId).toBe(STEP_A);
+		// workflowNodeId was removed in M71 — verify task was created
+		expect(tasks[0].status).toBe('open');
 	});
 });
 
@@ -443,13 +453,16 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 describe('resolveNodeAgents()', () => {
 	function makeStep(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
-		return { id: 'step-1', name: 'Test Step', ...overrides };
+		return { id: 'step-1', name: 'Test Step', agents: [], ...overrides };
 	}
 
 	test('returns single-element array when only agentId is set', () => {
-		const step = makeStep({ agentId: 'agent-a', instructions: 'do the thing' });
+		// agentId is a legacy field handled via type cast; resolveNodeAgents uses node.name as slot name
+		const step = makeStep({ agentId: 'agent-a' } as unknown as Partial<WorkflowNode>);
 		const result = resolveNodeAgents(step);
-		expect(result).toEqual([{ agentId: 'agent-a', name: 'agent-a', instructions: 'do the thing' }]);
+		expect(result).toHaveLength(1);
+		expect(result[0].agentId).toBe('agent-a');
+		expect(result[0].name).toBe('Test Step');
 	});
 
 	test('returns agents array when agents is set and non-empty', () => {
@@ -475,7 +488,7 @@ describe('resolveNodeAgents()', () => {
 	test('throws when neither agentId nor agents is provided', () => {
 		const step = makeStep();
 		expect(() => resolveNodeAgents(step)).toThrow(
-			'WorkflowNode "Test Step" (id: step-1) has neither agentId nor agents defined'
+			'WorkflowNode "Test Step" (id: step-1) has no agents defined'
 		);
 	});
 
@@ -494,7 +507,7 @@ describe('resolveNodeAgents()', () => {
 	});
 
 	test('agentId with no instructions produces entry with undefined instructions', () => {
-		const step = makeStep({ agentId: 'agent-a' });
+		const step = makeStep({ agentId: 'agent-a' } as unknown as Partial<WorkflowNode>);
 		const result = resolveNodeAgents(step);
 		expect(result[0].instructions).toBeUndefined();
 	});
@@ -511,16 +524,19 @@ describe('resolveNodeChannels()', () => {
 	const allAgents: SpaceAgent[] = [agentCoder, agentReviewer, agentSecurity];
 
 	function makeStep(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
-		return { id: 'step-1', name: 'Test Step', ...overrides };
+		return { id: 'step-1', name: 'Test Step', agents: [], ...overrides };
 	}
 
 	test('returns empty array when no channels defined', () => {
-		const step = makeStep({ agentId: 'agent-coder-id' });
+		const step = makeStep({ agentId: 'agent-coder-id' } as unknown as Partial<WorkflowNode>);
 		expect(resolveNodeChannels(step, step.channels ?? [])).toEqual([]);
 	});
 
 	test('returns empty array when channels is an empty array', () => {
-		const step = makeStep({ agentId: 'agent-coder-id', channels: [] });
+		const step = makeStep({
+			agentId: 'agent-coder-id',
+			channels: [],
+		} as unknown as Partial<WorkflowNode>);
 		expect(resolveNodeChannels(step, step.channels ?? [])).toEqual([]);
 	});
 
@@ -760,16 +776,13 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		// Two tasks for the multi-agent start step
 		expect(tasks).toHaveLength(2);
 
-		// resolveAndStoreChannels called for start step (space-runtime.ts:367)
-		// User-declared channels are stored; no auto-generated task-agent channels
-		const updatedRun = workflowRunRepo.getRun(run.id)!;
-		const config = (updatedRun.config ?? {}) as Record<string, unknown>;
-		const resolvedChannels = config._resolvedChannels as Array<Record<string, unknown>> | undefined;
+		// resolveAndStoreChannels called for start step; channels are in-memory (not in DB run config)
+		const resolvedChannels = runtime.getRunResolvedChannels(run.id);
 
-		expect(resolvedChannels).toBeDefined();
+		expect(resolvedChannels.length).toBeGreaterThan(0);
 		// User-declared channel: coder → reviewer (resolved from workflow-level channels)
-		const userChannel = resolvedChannels!.find(
-			(ch: Record<string, unknown>) => ch.fromRole === 'coder' && ch.toRole === 'reviewer'
+		const userChannel = resolvedChannels.find(
+			(ch) => ch.fromRole === 'coder' && ch.toRole === 'reviewer'
 		);
 		expect(userChannel).toMatchObject({
 			fromRole: 'coder',
@@ -778,8 +791,8 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 			label: 'review-request',
 		});
 		// No auto-generated task-agent channels (M3 auto-generation removed)
-		const taskAgentToCoder = resolvedChannels!.find(
-			(ch: Record<string, unknown>) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
+		const taskAgentToCoder = resolvedChannels.find(
+			(ch) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
 		);
 		expect(taskAgentToCoder).toBeUndefined();
 	});

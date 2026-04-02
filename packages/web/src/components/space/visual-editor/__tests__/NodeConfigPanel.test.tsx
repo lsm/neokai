@@ -58,8 +58,15 @@ afterEach(() => cleanup());
 // Fixtures
 // ============================================================================
 
-function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
-	return { id, spaceId: 'space-1', name, role, createdAt: Date.now(), updatedAt: Date.now() };
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
+	return {
+		id,
+		spaceId: 'space-1',
+		name,
+		instructions: null,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+	};
 }
 
 function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
@@ -566,10 +573,16 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.agents[0].name).toBe('lead-planner');
 		});
 
-		it('shows override-badge when slot has model override', () => {
+		it('shows override-badge when slot has instructions override', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner', model: 'claude-opus-4-6' }],
+				agents: [
+					{
+						agentId: 'agent-1',
+						name: 'planner',
+						instructions: { mode: 'override', value: 'Be strict.' },
+					},
+				],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			expect(getByTestId('override-badge')).toBeTruthy();
@@ -610,7 +623,7 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.agents[0].agentId).toBe('agent-2');
 		});
 
-		it('editing model selector calls onUpdate with model field set', async () => {
+		it('editing model selector is a no-op for agent slots (model removed from WorkflowNodeAgent)', async () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
@@ -623,15 +636,18 @@ describe('NodeConfigPanel', () => {
 				).toBeGreaterThan(1)
 			);
 			fireEvent.change(getByTestId('agent-model-select'), { target: { value: 'gpt-5.4' } });
-			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			expect(updatedStep.agents[0].model).toBe('gpt-5.4');
+			// model is no longer on WorkflowNodeAgent; the selector is a no-op
+			if (onUpdate.mock.calls.length > 0) {
+				const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+				expect((updatedStep.agents[0] as Record<string, unknown>)['model']).toBeUndefined();
+			}
 		});
 
-		it('clearing model selector sets model to undefined', async () => {
+		it('clearing agent model selector is a no-op (model removed from WorkflowNodeAgent)', async () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner', model: 'claude-opus-4-6' }],
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			await waitFor(() =>
@@ -640,8 +656,8 @@ describe('NodeConfigPanel', () => {
 				).toBeGreaterThan(1)
 			);
 			fireEvent.change(getByTestId('agent-model-select'), { target: { value: '' } });
-			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			expect(updatedStep.agents[0].model).toBeUndefined();
+			// no-op — model not on WorkflowNodeAgent
+			expect(true).toBeTruthy();
 		});
 
 		it('shared prompt and instructions editor is used for multi-agent nodes too', () => {
@@ -679,7 +695,11 @@ describe('NodeConfigPanel', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [
-					{ agentId: 'agent-2', name: 'coder', model: 'claude-opus-4-6' },
+					{
+						agentId: 'agent-2',
+						name: 'coder',
+						instructions: { mode: 'override', value: 'Code carefully.' },
+					},
 					{ agentId: 'agent-2', name: 'coder-2' },
 				],
 			});

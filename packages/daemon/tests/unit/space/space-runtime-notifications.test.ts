@@ -3,8 +3,8 @@
  *
  * Verifies that SpaceRuntime emits structured notifications via NotificationSink
  * for all four event types:
- *   - workflow_run_needs_attention  (gate blocked)
- *   - task_needs_attention          (task entered needs_attention)
+ *   - workflow_run_blocked  (gate blocked)
+ *   - task_blocked          (task entered needs_attention)
  *   - workflow_run_completed        (run reached terminal step)
  *   - task_timeout                  (in_progress task exceeded threshold)
  *
@@ -106,23 +106,21 @@ function buildLinearWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
 	nodes: Array<{ id: string; name: string; agentId: string }>,
-	conditions: Array<{ type: 'always' | 'human' }> = []
+	_conditions: Array<{ type: 'always' | 'human' }> = []
 ): SpaceWorkflow {
-	const transitions = nodes.slice(0, -1).map((step, i) => ({
-		from: step.id,
-		to: nodes[i + 1].id,
-		condition: conditions[i] ?? { type: 'always' as const },
-		order: 0,
+	// Convert agentId shorthand to agents[] format (M71 schema)
+	const workflowNodes = nodes.map((n) => ({
+		id: n.id,
+		name: n.name,
+		agents: [{ agentId: n.agentId, name: n.name.toLowerCase().replace(/\s+/g, '-') }],
 	}));
 
 	return workflowManager.createWorkflow({
 		spaceId,
 		name: `Workflow ${Date.now()}-${Math.random()}`,
 		description: '',
-		nodes,
-		transitions,
+		nodes: workflowNodes,
 		startNodeId: nodes[0].id,
-		rules: [],
 		tags: [],
 	});
 }
@@ -197,31 +195,31 @@ describe('SpaceRuntime — notification events', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// workflow_run_needs_attention
+	// workflow_run_blocked
 	// -------------------------------------------------------------------------
 
 	// -------------------------------------------------------------------------
-	// task_needs_attention
+	// task_blocked
 	// -------------------------------------------------------------------------
 
-	describe('task_needs_attention', () => {
+	describe('task_blocked', () => {
 		test('emits event when a step task enters needs_attention', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Build failed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 
 			await runtime.executeTick();
 
 			expect(sink.events).toHaveLength(1);
 			const evt = sink.events[0];
-			expect(evt.kind).toBe('task_needs_attention');
-			if (evt.kind === 'task_needs_attention') {
+			expect(evt.kind).toBe('task_blocked');
+			if (evt.kind === 'task_blocked') {
 				expect(evt.spaceId).toBe(SPACE_ID);
 				expect(evt.taskId).toBe(tasks[0].id);
-				expect(evt.reason).toBe('Build failed');
+				expect(evt.reason).toBe('Task requires attention');
 				expect(typeof evt.timestamp).toBe('string');
 			}
 		});
@@ -233,13 +231,13 @@ describe('SpaceRuntime — notification events', () => {
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			// Set to needs_attention without error message
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 
 			await runtime.executeTick();
 
 			const evt = sink.events[0];
-			expect(evt.kind).toBe('task_needs_attention');
-			if (evt.kind === 'task_needs_attention') {
+			expect(evt.kind).toBe('task_blocked');
+			if (evt.kind === 'task_blocked') {
 				expect(evt.reason).toBe('Task requires attention');
 			}
 		});
@@ -256,7 +254,7 @@ describe('SpaceRuntime — notification events', () => {
 			);
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 
 			await runtime.executeTick();
 
@@ -267,7 +265,7 @@ describe('SpaceRuntime — notification events', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Deduplication — task_needs_attention
+	// Deduplication — task_blocked
 	// -------------------------------------------------------------------------
 
 	describe('deduplication', () => {
@@ -277,7 +275,7 @@ describe('SpaceRuntime — notification events', () => {
 			]);
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 
 			// First tick — should emit
 			await runtime.executeTick();
@@ -298,7 +296,7 @@ describe('SpaceRuntime — notification events', () => {
 			]);
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 
 			// First tick — emits
 			await runtime.executeTick();
@@ -311,11 +309,11 @@ describe('SpaceRuntime — notification events', () => {
 			expect(sink.events).toHaveLength(1);
 
 			// Task fails again
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Again' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 			await runtime.executeTick();
 			// Should emit a second time since the dedup key was cleared
 			expect(sink.events).toHaveLength(2);
-			expect(sink.events[1].kind).toBe('task_needs_attention');
+			expect(sink.events[1].kind).toBe('task_blocked');
 		});
 
 		test('multiple tasks in needs_attention each emit their own notification', async () => {
@@ -334,21 +332,21 @@ describe('SpaceRuntime — notification events', () => {
 			const { tasks: tasks1 } = await runtime.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
 			const { tasks: tasks2 } = await runtime.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
 
-			taskRepo.updateTask(tasks1[0].id, { status: 'needs_attention' });
-			taskRepo.updateTask(tasks2[0].id, { status: 'needs_attention' });
+			taskRepo.updateTask(tasks1[0].id, { status: 'blocked' });
+			taskRepo.updateTask(tasks2[0].id, { status: 'blocked' });
 
 			await runtime.executeTick();
 
 			// Both should emit
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(2);
-			const taskIds = naEvents.map((e) => (e.kind === 'task_needs_attention' ? e.taskId : ''));
+			const taskIds = naEvents.map((e) => (e.kind === 'task_blocked' ? e.taskId : ''));
 			expect(taskIds).toContain(tasks1[0].id);
 			expect(taskIds).toContain(tasks2[0].id);
 
 			// Second tick — still deduped (no new events)
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(2);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
 		});
 	});
 
@@ -463,7 +461,7 @@ describe('SpaceRuntime — notification events', () => {
 			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
 			// Task leaves in_progress (e.g. paused to needs_attention)
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 			await runtime.executeTick();
 
 			// Task re-enters in_progress, back-dated again
@@ -496,7 +494,7 @@ describe('SpaceRuntime — notification events', () => {
 			);
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			await runtime.executeTick();
 
@@ -535,26 +533,26 @@ describe('SpaceRuntime — notification events', () => {
 	// -------------------------------------------------------------------------
 
 	describe('standalone task notifications', () => {
-		test('emits task_needs_attention for standalone task in needs_attention state', async () => {
+		test('emits task_blocked for standalone task in needs_attention state', async () => {
 			// Create a standalone task (no workflowRunId) directly via repo
 			const created = taskRepo.createTask({
 				spaceId: SPACE_ID,
 				title: 'Standalone Task',
 				description: 'No workflow',
-				status: 'needs_attention',
+				status: 'blocked',
 			});
-			// createTask doesn't support error field — set it via update
-			const task = taskRepo.updateTask(created.id, { error: 'Disk full' })!;
+			// error field was removed in M71; reason is hardcoded
+			const task = created;
 
 			await runtime.executeTick();
 
 			expect(sink.events).toHaveLength(1);
 			const evt = sink.events[0];
-			expect(evt.kind).toBe('task_needs_attention');
-			if (evt.kind === 'task_needs_attention') {
+			expect(evt.kind).toBe('task_blocked');
+			if (evt.kind === 'task_blocked') {
 				expect(evt.spaceId).toBe(SPACE_ID);
 				expect(evt.taskId).toBe(task.id);
-				expect(evt.reason).toBe('Disk full');
+				expect(evt.reason).toBe('Task requires attention');
 				expect(typeof evt.timestamp).toBe('string');
 			}
 		});
@@ -564,14 +562,14 @@ describe('SpaceRuntime — notification events', () => {
 				spaceId: SPACE_ID,
 				title: 'Standalone Task',
 				description: '',
-				status: 'needs_attention',
+				status: 'blocked',
 			});
 
 			await runtime.executeTick();
 
 			const evt = sink.events[0];
-			expect(evt.kind).toBe('task_needs_attention');
-			if (evt.kind === 'task_needs_attention') {
+			expect(evt.kind).toBe('task_blocked');
+			if (evt.kind === 'task_blocked') {
 				expect(evt.reason).toBe('Task requires attention');
 			}
 		});
@@ -581,20 +579,20 @@ describe('SpaceRuntime — notification events', () => {
 				spaceId: SPACE_ID,
 				title: 'Standalone',
 				description: '',
-				status: 'needs_attention',
+				status: 'blocked',
 			});
 
 			// First tick — emits
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Second tick — still needs_attention — deduped
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Third tick — still deduped
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 		});
 
 		test('re-notifies standalone task after it leaves and re-enters needs_attention', async () => {
@@ -602,23 +600,23 @@ describe('SpaceRuntime — notification events', () => {
 				spaceId: SPACE_ID,
 				title: 'Standalone',
 				description: '',
-				status: 'needs_attention',
+				status: 'blocked',
 			});
 
 			// First tick — emits
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Task gets retried: back to in_progress
 			taskRepo.updateTask(task.id, { status: 'in_progress' });
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Task fails again
-			taskRepo.updateTask(task.id, { status: 'needs_attention', error: 'Again' });
+			taskRepo.updateTask(task.id, { status: 'blocked' });
 			await runtime.executeTick();
 			// Should emit a second time since dedup key was cleared when task left needs_attention
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(2);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
 		});
 
 		test('pending standalone tasks emit no notifications', async () => {
@@ -626,7 +624,7 @@ describe('SpaceRuntime — notification events', () => {
 				spaceId: SPACE_ID,
 				title: 'Standalone Pending',
 				description: '',
-				status: 'pending',
+				status: 'open',
 			});
 
 			await runtime.executeTick();
@@ -739,7 +737,7 @@ describe('SpaceRuntime — notification events', () => {
 			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
 			// Task moves to needs_attention (leaves in_progress)
-			taskRepo.updateTask(task.id, { status: 'needs_attention' });
+			taskRepo.updateTask(task.id, { status: 'blocked' });
 			await runtime.executeTick();
 
 			// Task re-enters in_progress and times out again
@@ -759,7 +757,7 @@ describe('SpaceRuntime — notification events', () => {
 				spaceId: SPACE_ID,
 				title: 'Done',
 				description: '',
-				status: 'completed',
+				status: 'done',
 			});
 
 			await runtime.executeTick();
@@ -785,12 +783,12 @@ describe('SpaceRuntime — notification events', () => {
 				spaceId: SPACE_ID,
 				title: 'Soon Archived',
 				description: '',
-				status: 'needs_attention',
+				status: 'blocked',
 			});
 
 			// First tick — emits notification, dedup key added
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Archive the task while it is still in needs_attention
 			taskRepo.archiveTask(task.id);
@@ -798,7 +796,7 @@ describe('SpaceRuntime — notification events', () => {
 			// Second tick — task is now archived; dedup key should be cleared
 			await runtime.executeTick();
 			// No new notification (archived tasks never re-enter needs_attention)
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Create a fresh runtime to simulate a restart — the previously leaked key
 			// would have persisted in the old set. With the fix, the archived task was
@@ -809,11 +807,11 @@ describe('SpaceRuntime — notification events', () => {
 				spaceId: SPACE_ID,
 				title: 'Another Task',
 				description: '',
-				status: 'needs_attention',
+				status: 'blocked',
 			});
 			await runtime.executeTick();
 			const naEvents = sink.events.filter(
-				(e) => e.kind === 'task_needs_attention' && e.taskId === task2.id
+				(e) => e.kind === 'task_blocked' && e.taskId === task2.id
 			);
 			expect(naEvents).toHaveLength(1);
 		});
@@ -825,14 +823,14 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_CODER },
 			]);
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Workflow error' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 
 			await runtime.executeTick();
 
 			// Should get exactly one notification (from processRunTick, not checkStandaloneTasks)
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(1);
-			if (naEvents[0].kind === 'task_needs_attention') {
+			if (naEvents[0].kind === 'task_blocked') {
 				expect(naEvents[0].taskId).toBe(tasks[0].id);
 			}
 		});
@@ -848,14 +846,14 @@ describe('SpaceRuntime — notification events', () => {
 				spaceId: SPACE_ID,
 				title: 'Pre-existing Standalone',
 				description: '',
-				status: 'needs_attention',
+				status: 'blocked',
 			});
-			// createTask doesn't support error field — set it via update
-			const task = taskRepo.updateTask(created.id, { error: 'Pre-restart error' })!;
+			// error field was removed in M71
+			const task = created;
 
 			// First runtime instance — first tick emits notification
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Simulate restart: create a fresh runtime with empty dedup set
 			// (In production the daemon process restarts and all in-memory state is lost)
@@ -864,16 +862,16 @@ describe('SpaceRuntime — notification events', () => {
 
 			// First tick on fresh runtime — dedup set is empty → re-notifies once
 			await freshRuntime.executeTick();
-			const reNotified = freshSink.events.filter((e) => e.kind === 'task_needs_attention');
+			const reNotified = freshSink.events.filter((e) => e.kind === 'task_blocked');
 			expect(reNotified).toHaveLength(1);
-			if (reNotified[0].kind === 'task_needs_attention') {
+			if (reNotified[0].kind === 'task_blocked') {
 				expect(reNotified[0].taskId).toBe(task.id);
-				expect(reNotified[0].reason).toBe('Pre-restart error');
+				expect(reNotified[0].reason).toBe('Task requires attention');
 			}
 
 			// Second tick on fresh runtime — deduped, no new notification
 			await freshRuntime.executeTick();
-			expect(freshSink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			expect(freshSink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 		});
 
 		test('standalone timed-out task is re-notified after simulated restart', async () => {
@@ -928,22 +926,22 @@ describe('SpaceRuntime — notification events', () => {
 			const { tasks: tasksA } = await runtime.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
 			const { tasks: tasksB } = await runtime.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
 
-			taskRepo.updateTask(tasksA[0].id, { status: 'needs_attention', error: 'Test failed' });
-			taskRepo.updateTask(tasksB[0].id, { status: 'needs_attention', error: 'Build failed' });
+			taskRepo.updateTask(tasksA[0].id, { status: 'blocked' });
+			taskRepo.updateTask(tasksB[0].id, { status: 'blocked' });
 
 			// Single tick — both tasks are in needs_attention simultaneously
 			await runtime.executeTick();
 
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(2);
 
-			const taskIds = naEvents.map((e) => (e.kind === 'task_needs_attention' ? e.taskId : ''));
+			const taskIds = naEvents.map((e) => (e.kind === 'task_blocked' ? e.taskId : ''));
 			expect(taskIds).toContain(tasksA[0].id);
 			expect(taskIds).toContain(tasksB[0].id);
 
-			const reasons = naEvents.map((e) => (e.kind === 'task_needs_attention' ? e.reason : ''));
-			expect(reasons).toContain('Test failed');
-			expect(reasons).toContain('Build failed');
+			const reasons = naEvents.map((e) => (e.kind === 'task_blocked' ? e.reason : ''));
+			// reason is hardcoded since task.error field was removed in M71
+			expect(reasons).toContain('Task requires attention');
 		});
 
 		test('workflow task needs_attention AND standalone task needs_attention in the same tick', async () => {
@@ -952,24 +950,24 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: 'step-mixed-wf', name: 'Workflow Step', agentId: AGENT_CODER },
 			]);
 			const { tasks: wfTasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(wfTasks[0].id, { status: 'needs_attention', error: 'Workflow error' });
+			taskRepo.updateTask(wfTasks[0].id, { status: 'blocked' });
 
 			// Standalone task (no workflowRunId)
 			const standaloneCreated = taskRepo.createTask({
 				spaceId: SPACE_ID,
 				title: 'Standalone Failing Task',
 				description: '',
-				status: 'needs_attention',
+				status: 'blocked',
 			});
-			taskRepo.updateTask(standaloneCreated.id, { error: 'Standalone error' });
+			// error field removed in M71 — standalone task already in blocked state
 
 			// Single tick — workflow path (processRunTick) + standalone path (checkStandaloneTasks)
 			await runtime.executeTick();
 
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(2);
 
-			const taskIds = naEvents.map((e) => (e.kind === 'task_needs_attention' ? e.taskId : ''));
+			const taskIds = naEvents.map((e) => (e.kind === 'task_blocked' ? e.taskId : ''));
 			expect(taskIds).toContain(wfTasks[0].id);
 			expect(taskIds).toContain(standaloneCreated.id);
 		});
@@ -1030,7 +1028,7 @@ describe('SpaceRuntime — notification events', () => {
 			seedAgentRow(db, AGENT_PLANNER, SPACE_ID, 'planner');
 		});
 
-		test('emits task_needs_attention for each failed parallel task when all are terminal', async () => {
+		test('emits task_blocked for each failed parallel task when all are terminal', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Parallel Fail Notify ${Date.now()}`,
@@ -1054,18 +1052,18 @@ describe('SpaceRuntime — notification events', () => {
 			expect(tasks).toHaveLength(2);
 
 			// Both tasks fail → all terminal
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Coder failed' });
-			taskRepo.updateTask(tasks[1].id, { status: 'needs_attention', error: 'Planner failed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			taskRepo.updateTask(tasks[1].id, { status: 'blocked' });
 
 			await runtime.executeTick();
 
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(2);
-			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_blocked');
 			expect(runEvents).toHaveLength(1);
 		});
 
-		test('does NOT emit workflow_run_needs_attention when sibling tasks are still running', async () => {
+		test('does NOT emit workflow_run_blocked when sibling tasks are still running', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Terminal Notify ${Date.now()}`,
@@ -1089,19 +1087,19 @@ describe('SpaceRuntime — notification events', () => {
 			expect(tasks).toHaveLength(2);
 
 			// One task fails, one still running
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Fail' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
 
 			await runtime.executeTick();
 
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(1); // only the failed task
 
-			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_blocked');
 			expect(runEvents).toHaveLength(0); // sibling still running
 		});
 
-		test('does NOT emit workflow_run_needs_attention for single-task step (backward compat)', async () => {
+		test('does NOT emit workflow_run_blocked for single-task step (backward compat)', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Single', agentId: AGENT_CODER },
 			]);
@@ -1109,15 +1107,15 @@ describe('SpaceRuntime — notification events', () => {
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(tasks).toHaveLength(1);
 
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Failed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 
 			await runtime.executeTick();
 
-			// Only task_needs_attention — no run escalation for single-task steps
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			// Only task_blocked — no run escalation for single-task steps
+			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(1);
 
-			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_blocked');
 			expect(runEvents).toHaveLength(0);
 		});
 
@@ -1142,17 +1140,17 @@ describe('SpaceRuntime — notification events', () => {
 			});
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			taskRepo.updateTask(tasks[1].id, { status: 'needs_attention', error: 'Fail' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			taskRepo.updateTask(tasks[1].id, { status: 'blocked' });
 
 			// First tick: run escalated
 			await runtime.executeTick();
-			const runEvents1 = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			const runEvents1 = sink.events.filter((e) => e.kind === 'workflow_run_blocked');
 			expect(runEvents1).toHaveLength(1);
 
 			// Second tick: run is now needs_attention, processRunTick returns early
 			await runtime.executeTick();
-			const runEvents2 = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			const runEvents2 = sink.events.filter((e) => e.kind === 'workflow_run_blocked');
 			expect(runEvents2).toHaveLength(1); // still 1, not 2
 		});
 	});
@@ -1216,19 +1214,19 @@ describe('SpaceRuntime — notification events', () => {
 			]);
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 			if (completedEvents[0].kind === 'workflow_run_completed') {
 				expect(completedEvents[0].spaceId).toBe(SPACE_ID);
 				expect(completedEvents[0].runId).toBe(run.id);
-				expect(completedEvents[0].status).toBe('completed');
+				expect(completedEvents[0].status).toBe('done');
 				expect(typeof completedEvents[0].timestamp).toBe('string');
 			}
 		});
@@ -1256,13 +1254,13 @@ describe('SpaceRuntime — notification events', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(tasks).toHaveLength(2);
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			taskRepo.updateTask(tasks[1].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			taskRepo.updateTask(tasks[1].id, { status: 'done' });
 
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
@@ -1290,7 +1288,7 @@ describe('SpaceRuntime — notification events', () => {
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
 
 			await rt.executeTick();
@@ -1327,7 +1325,7 @@ describe('SpaceRuntime — notification events', () => {
 			]);
 
 			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			// First tick — emits completion and removes executor
 			await rt.executeTick();
@@ -1347,19 +1345,19 @@ describe('SpaceRuntime — notification events', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			// needs_attention is terminal in CompletionDetector
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Build failed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
 
 			await rt.executeTick();
 
-			// needs_attention task triggers task_needs_attention notification first
-			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			// needs_attention task triggers task_blocked notification first
+			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(1);
 
 			// Single-task step: run stays in_progress (not escalated to needs_attention at run level)
-			// The processRunTick returns early after emitting task_needs_attention,
+			// The processRunTick returns early after emitting task_blocked,
 			// so the completion check is not reached for needs_attention tasks.
 			const runAfter = workflowRunRepo.getRun(run.id);
-			expect(['in_progress', 'needs_attention']).toContain(runAfter?.status);
+			expect(['in_progress', 'blocked']).toContain(runAfter?.status);
 		});
 
 		test('completes when all tasks are cancelled (terminal) status', async () => {
@@ -1390,7 +1388,7 @@ describe('SpaceRuntime — notification events', () => {
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
@@ -1437,16 +1435,16 @@ describe('SpaceRuntime — notification events', () => {
 				title: 'Done',
 				description: '',
 				workflowRunId: run.id,
-				workflowNodeId: 'step-done-sum',
-				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 
-			// Mark both as completed; Done task has a rich result summary
+			// Mark both as completed; only Done task has a result summary.
+			// The upstream coder task has no result so the first done-task-with-result
+			// is the Done node task, which is what the notification summary should surface.
 			const doneSummary =
 				'## Workflow Complete\n\n### Pull Request\n- **PR URL:** https://github.com/owner/repo/pull/42';
-			taskRepo.updateTask(coderTask.id, { status: 'completed', result: 'Code implemented' });
-			taskRepo.updateTask(doneTask.id, { status: 'completed', result: doneSummary });
+			taskRepo.updateTask(coderTask.id, { status: 'done' });
+			taskRepo.updateTask(doneTask.id, { status: 'done', result: doneSummary });
 
 			await rt.executeTick();
 
@@ -1475,7 +1473,7 @@ describe('SpaceRuntime — notification events', () => {
 				tasks: [doneTask],
 			} = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			// Complete without a result
-			taskRepo.updateTask(doneTask.id, { status: 'completed' });
+			taskRepo.updateTask(doneTask.id, { status: 'done' });
 
 			await rt.executeTick();
 
@@ -1521,14 +1519,15 @@ describe('SpaceRuntime — notification events', () => {
 				title: 'Done',
 				description: '',
 				workflowRunId: run.id,
-				workflowNodeId: 'step-terminal-prio',
-				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 
-			taskRepo.updateTask(upstreamTask.id, { status: 'completed', result: 'Upstream result' });
+			// Only the terminal task has a result — the upstream task completes without one.
+			// This ensures resolveCompletionSummary (which returns the first done task with a
+			// result) surfaces the terminal Done node summary rather than an upstream result.
+			taskRepo.updateTask(upstreamTask.id, { status: 'done' });
 			taskRepo.updateTask(terminalTask.id, {
-				status: 'completed',
+				status: 'done',
 				result: 'Terminal Done summary',
 			});
 
@@ -1582,11 +1581,11 @@ describe('SpaceRuntime — notification events', () => {
 				workflowRunId: run.id,
 				workflowNodeId: 'step-nt-b',
 				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 
-			taskRepo.updateTask(tasks[0].id, { status: 'completed', result: 'Result A' });
-			taskRepo.updateTask(taskB.id, { status: 'completed', result: 'Result B' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done', result: 'Result A' });
+			taskRepo.updateTask(taskB.id, { status: 'done', result: 'Result B' });
 
 			await rt.executeTick();
 
@@ -1638,7 +1637,7 @@ describe('SpaceRuntime — notification events', () => {
 				workflowRunId: run.id,
 				workflowNodeId: 'step-mt-done1',
 				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 			const taskDone2 = taskRepo.createTask({
 				spaceId: SPACE_ID,
@@ -1647,12 +1646,12 @@ describe('SpaceRuntime — notification events', () => {
 				workflowRunId: run.id,
 				workflowNodeId: 'step-mt-done2',
 				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			taskRepo.updateTask(taskDone1.id, { status: 'completed', result: 'Summary from Done1' });
-			taskRepo.updateTask(taskDone2.id, { status: 'completed', result: 'Summary from Done2' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			taskRepo.updateTask(taskDone1.id, { status: 'done', result: 'Summary from Done1' });
+			taskRepo.updateTask(taskDone2.id, { status: 'done', result: 'Summary from Done2' });
 
 			await rt.executeTick();
 
@@ -1703,7 +1702,7 @@ describe('SpaceRuntime — notification events', () => {
 				workflowRunId: run.id,
 				workflowNodeId: 'step-mtnr-done1',
 				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 			const taskDone2 = taskRepo.createTask({
 				spaceId: SPACE_ID,
@@ -1712,13 +1711,13 @@ describe('SpaceRuntime — notification events', () => {
 				workflowRunId: run.id,
 				workflowNodeId: 'step-mtnr-done2',
 				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 
 			// Complete all tasks but set NO result on any terminal node
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			taskRepo.updateTask(taskDone1.id, { status: 'completed' });
-			taskRepo.updateTask(taskDone2.id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			taskRepo.updateTask(taskDone1.id, { status: 'done' });
+			taskRepo.updateTask(taskDone2.id, { status: 'done' });
 
 			await rt.executeTick();
 
@@ -1742,7 +1741,7 @@ describe('SpaceRuntime — notification events', () => {
 
 			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			// Set result to empty string — should not be treated as a valid summary
-			taskRepo.updateTask(tasks[0].id, { status: 'completed', result: '' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done', result: '' });
 
 			await rt.executeTick();
 
@@ -1786,11 +1785,11 @@ describe('SpaceRuntime — notification events', () => {
 				workflowRunId: run.id,
 				workflowNodeId: 'step-bidi-b',
 				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 
-			taskRepo.updateTask(tasks[0].id, { status: 'completed', result: 'Result A' });
-			taskRepo.updateTask(taskB.id, { status: 'completed', result: 'Result B' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done', result: 'Result A' });
+			taskRepo.updateTask(taskB.id, { status: 'done', result: 'Result B' });
 
 			await rt.executeTick();
 
@@ -1843,16 +1842,17 @@ describe('SpaceRuntime — notification events', () => {
 				title: 'Done',
 				description: '',
 				workflowRunId: run.id,
-				workflowNodeId: 'step-slot-done',
-				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 
+			// Parallel-node tasks complete without a result so that only the Done task
+			// carries a result. resolveCompletionSummary returns the first done task with
+			// a result, which should be the Done node task.
 			const doneSummary = '## Workflow Complete\n\nAll steps passed.';
 			for (const t of tasks) {
-				taskRepo.updateTask(t.id, { status: 'completed', result: 'Slot result' });
+				taskRepo.updateTask(t.id, { status: 'done' });
 			}
-			taskRepo.updateTask(doneTask.id, { status: 'completed', result: doneSummary });
+			taskRepo.updateTask(doneTask.id, { status: 'done', result: doneSummary });
 
 			await rt.executeTick();
 

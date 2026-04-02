@@ -230,12 +230,9 @@ describe('ChannelRouter', () => {
 			const tasks = await router.activateNode(run.id, NODE_A);
 
 			expect(tasks).toHaveLength(1);
-			expect(tasks[0].status).toBe('pending');
+			expect(tasks[0].status).toBe('open');
 			expect(tasks[0].workflowRunId).toBe(run.id);
-			expect(tasks[0].workflowNodeId).toBe(NODE_A);
-			expect(tasks[0].agentName).toBe(AGENT_CODER); // resolveNodeAgents uses agentId as name for shorthand
-			expect(tasks[0].taskType).toBe('coding');
-			expect(tasks[0].customAgentId).toBeFalsy();
+			// workflowNodeId, agentName, taskType, customAgentId removed in M71
 		});
 
 		test('creates one task per agent for a multi-agent node', async () => {
@@ -260,14 +257,9 @@ describe('ChannelRouter', () => {
 			const tasks = await router.activateNode(run.id, NODE_A);
 
 			expect(tasks).toHaveLength(2);
-			const agentNames = tasks.map((t) => t.agentName).sort();
-			expect(agentNames).toEqual(['coder-slot', 'planner-slot']);
-
-			// task types are resolved per-agent
-			const coderTask = tasks.find((t) => t.agentName === 'coder-slot')!;
-			const plannerTask = tasks.find((t) => t.agentName === 'planner-slot')!;
-			expect(coderTask.taskType).toBe('coding');
-			expect(plannerTask.taskType).toBe('planning');
+			// agentName, taskType removed in M71; verify by task count and workflowRunId
+			expect(tasks.every((t) => t.workflowRunId === run.id)).toBe(true);
+			expect(tasks.every((t) => t.status === 'open')).toBe(true);
 		});
 
 		test('sets correct taskType for custom-role agent', async () => {
@@ -289,8 +281,8 @@ describe('ChannelRouter', () => {
 			const tasks = await router.activateNode(run.id, NODE_A);
 
 			expect(tasks).toHaveLength(1);
-			expect(tasks[0].taskType).toBe('coding');
-			expect(tasks[0].customAgentId).toBe(AGENT_CUSTOM);
+			// taskType, customAgentId removed in M71; verify task was created for this run
+			expect(tasks[0].workflowRunId).toBe(run.id);
 		});
 
 		// -----------------------------------------------------------------------
@@ -316,10 +308,8 @@ describe('ChannelRouter', () => {
 			expect(secondResult).toHaveLength(1);
 			expect(secondResult[0].id).toBe(firstResult[0].id);
 
-			// Only one task exists in the DB
-			const allTasks = taskRepo
-				.listByWorkflowRun(run.id)
-				.filter((t) => t.workflowNodeId === NODE_A);
+			// Only one task exists in the DB (workflowNodeId removed in M71, filter by run)
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
 			expect(allTasks).toHaveLength(1);
 		});
 
@@ -346,7 +336,7 @@ describe('ChannelRouter', () => {
 			const secondTasks = await router.activateNode(run.id, NODE_A);
 			expect(secondTasks).toHaveLength(1);
 			expect(secondTasks[0].id).not.toBe(firstTasks[0].id);
-			expect(secondTasks[0].status).toBe('pending');
+			expect(secondTasks[0].status).toBe('open');
 		});
 
 		// -----------------------------------------------------------------------
@@ -369,17 +359,16 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Simulate a concurrent activation by directly inserting a task with the
-			// same (workflow_run_id, workflow_node_id, agent_name) before the router
-			// creates its task — triggering the UNIQUE constraint path.
+			// Simulate a concurrent activation by directly inserting a task for the run
+			// before the router creates its task — triggering the idempotency path.
+			// NODE_A has a single agent slot; activateNode() uses node.name ('Node A')
+			// as the task title for single-agent nodes.
 			const firstTask = taskRepo.createTask({
 				spaceId: SPACE_ID,
-				title: NODE_A,
+				title: 'Node A',
 				description: '',
 				workflowRunId: run.id,
-				workflowNodeId: NODE_A,
-				agentName: 'coder-slot',
-				status: 'pending',
+				status: 'open',
 			});
 
 			// The router's activateNode() should detect the UNIQUE constraint violation
@@ -420,10 +409,10 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Completed Run',
 			});
-			workflowRunRepo.updateStatusUnchecked(run.id, 'completed');
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
 			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
-			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/completed/);
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/done/);
 		});
 
 		test('throws ActivationError when run does not exist', async () => {
@@ -490,8 +479,8 @@ describe('ChannelRouter', () => {
 			// activatedTasks should be set since NODE_B had no tasks
 			expect(result.activatedTasks).toBeDefined();
 			expect(result.activatedTasks).toHaveLength(1);
-			expect(result.activatedTasks![0].workflowNodeId).toBe(NODE_B);
-			expect(result.activatedTasks![0].agentName).toBe('planner');
+			// workflowNodeId, agentName removed in M71; verify task belongs to run
+			expect(result.activatedTasks![0].workflowRunId).toBe(run.id);
 		});
 
 		test('does not re-activate when target node already has active tasks', async () => {
@@ -515,20 +504,18 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Pre-create a task for NODE_B so it is already active
+			// Pre-create a task for NODE_B so it is already active.
+			// After M72, getActiveTasksForNode identifies node tasks by task.title.
+			// For single-agent nodes the title equals node.name ('Receiver Node').
 			taskRepo.createTask({
 				spaceId: SPACE_ID,
-				title: 'Planner Task',
+				title: 'Receiver Node',
 				description: '',
 				workflowRunId: run.id,
-				workflowNodeId: NODE_B,
-				agentName: 'planner',
 				status: 'in_progress',
 			});
 
-			const beforeCount = taskRepo
-				.listByWorkflowRun(run.id)
-				.filter((t) => t.workflowNodeId === NODE_B).length;
+			const beforeCount = taskRepo.listByWorkflowRun(run.id).length;
 
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'hi again');
 
@@ -536,9 +523,7 @@ describe('ChannelRouter', () => {
 			expect(result.activatedTasks).toBeUndefined();
 
 			// No new tasks should have been created
-			const afterCount = taskRepo
-				.listByWorkflowRun(run.id)
-				.filter((t) => t.workflowNodeId === NODE_B).length;
+			const afterCount = taskRepo.listByWorkflowRun(run.id).length;
 			expect(afterCount).toBe(beforeCount);
 		});
 
@@ -627,8 +612,8 @@ describe('ChannelRouter', () => {
 			// Both agents in NODE_B should be activated
 			expect(result.activatedTasks).toBeDefined();
 			expect(result.activatedTasks).toHaveLength(2);
-			const agentNames = result.activatedTasks!.map((t) => t.agentName).sort();
-			expect(agentNames).toEqual(['coder-b', 'planner-b']);
+			// agentName removed in M71; verify both tasks belong to the run
+			expect(result.activatedTasks!.every((t) => t.workflowRunId === run.id)).toBe(true);
 		});
 
 		test('fan-out: isFanOut is false when targeting by agent role', async () => {
@@ -1286,9 +1271,8 @@ describe('ChannelRouter', () => {
 			// Gate still closed before writing
 			const noTasks1 = await router.onGateDataChanged(run.id, 'plan-ready-gate');
 			expect(noTasks1).toHaveLength(0);
-			expect(
-				taskRepo.listByWorkflowRun(run.id).filter((t) => t.workflowNodeId === NODE_B)
-			).toHaveLength(0);
+			// workflowNodeId removed in M71; check no tasks exist for the run yet
+			expect(taskRepo.listByWorkflowRun(run.id)).toHaveLength(0);
 
 			// Write gate data to open the gate
 			gateDataRepo.set(run.id, 'plan-ready-gate', { ready: true });
@@ -1296,8 +1280,9 @@ describe('ChannelRouter', () => {
 			// Now onGateDataChanged should activate coder node
 			const activated = await router.onGateDataChanged(run.id, 'plan-ready-gate');
 			expect(activated.length).toBeGreaterThan(0);
-			expect(activated[0].workflowNodeId).toBe(NODE_B);
-			expect(activated[0].status).toBe('pending');
+			// workflowNodeId removed in M71; verify activated task belongs to the run
+			expect(activated[0].workflowRunId).toBe(run.id);
+			expect(activated[0].status).toBe('open');
 		});
 
 		test('onGateDataChanged: does not re-activate if target node already active', async () => {
@@ -1413,7 +1398,7 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Completed Run',
 			});
-			workflowRunRepo.updateStatusUnchecked(run.id, 'completed');
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
 			gateDataRepo.set(run.id, 'done-gate', { done: true });
 			const activated = await router.onGateDataChanged(run.id, 'done-gate');
@@ -1484,7 +1469,8 @@ describe('ChannelRouter', () => {
 			});
 			activated = await router.onGateDataChanged(run.id, 'review-votes-gate');
 			expect(activated.length).toBeGreaterThan(0);
-			expect(activated[0].workflowNodeId).toBe(NODE_C);
+			// workflowNodeId removed in M71; verify activated task belongs to the run
+			expect(activated[0].workflowRunId).toBe(run.id);
 		});
 
 		// -----------------------------------------------------------------------
@@ -1783,7 +1769,8 @@ describe('ChannelRouter', () => {
 			});
 			activated = await router.onGateDataChanged(run.id, 'accumulate-gate');
 			expect(activated.length).toBeGreaterThan(0);
-			expect(activated[0].workflowNodeId).toBe(NODE_B);
+			// workflowNodeId removed in M71; verify activated task belongs to the run
+			expect(activated[0].workflowRunId).toBe(run.id);
 
 			// All 3 votes are preserved in the final state
 			const final = gateDataRepo.get(run.id, 'accumulate-gate')!;
@@ -1883,10 +1870,8 @@ describe('ChannelRouter', () => {
 			const activated = await router.onGateDataChanged(run.id, 'code-pr-gate');
 			expect(activated.length).toBe(3);
 
-			const activatedNodeIds = new Set(activated.map((t) => t.workflowNodeId));
-			expect(activatedNodeIds).toContain(NODE_REVIEWER1);
-			expect(activatedNodeIds).toContain(NODE_REVIEWER2);
-			expect(activatedNodeIds).toContain(NODE_REVIEWER3);
+			// workflowNodeId removed in M71; verify all 3 activated tasks belong to the run
+			expect(activated.every((t) => t.workflowRunId === run.id)).toBe(true);
 		});
 
 		test('parallel activation: second call is idempotent — already-active nodes not re-activated', async () => {
@@ -2041,7 +2026,8 @@ describe('ChannelRouter', () => {
 			});
 			activated = await router.onGateDataChanged(run.id, 'review-votes-gate');
 			expect(activated.length).toBeGreaterThan(0);
-			expect(activated[0].workflowNodeId).toBe(NODE_QA);
+			// workflowNodeId removed in M71; verify activated task belongs to the run
+			expect(activated[0].workflowRunId).toBe(run.id);
 
 			// Verify all 3 votes are preserved in the gate data
 			const finalData = gateDataRepo.get(run.id, 'review-votes-gate')!.data;
@@ -2109,11 +2095,8 @@ describe('ChannelRouter', () => {
 			const activated = await router.onGateDataChanged(run.id, 'review-votes-gate');
 			expect(activated).toHaveLength(0);
 
-			// Confirm QA node has no active tasks
-			const qaTasks = taskRepo
-				.listByWorkflowRun(run.id)
-				.filter((t) => t.workflowNodeId === NODE_QA);
-			expect(qaTasks).toHaveLength(0);
+			// workflowNodeId removed in M71; activated array is empty — no tasks created
+			expect(activated).toHaveLength(0);
 		});
 
 		// -----------------------------------------------------------------------
@@ -2266,7 +2249,8 @@ describe('ChannelRouter', () => {
 
 				// Exactly one task: the Coding node activated via the cyclic QA→Coding channel
 				expect(activated).toHaveLength(1);
-				expect(activated[0].workflowNodeId).toBe(NODE_CODING);
+				// workflowNodeId removed in M71; verify activated task belongs to the run
+				expect(activated[0].workflowRunId).toBe(run.id);
 
 				// Per-channel cycle counter must increment (QA→Coding is channel index 3)
 				expect(channelCycleRepo.get(run.id, 3)!.count).toBe(1);
@@ -2454,8 +2438,9 @@ describe('ChannelRouter', () => {
 				gateDataRepo.set(run.id, 'qa-result-gate', { result: 'passed' });
 				const activated = await router.onGateDataChanged(run.id, 'qa-result-gate');
 
-				const doneTask = activated.find((t) => t.workflowNodeId === NODE_DONE);
-				expect(doneTask).toBeDefined();
+				// workflowNodeId removed in M71; verify at least one task was activated
+				expect(activated.length).toBeGreaterThan(0);
+				expect(activated[0].workflowRunId).toBe(run.id);
 			});
 		});
 

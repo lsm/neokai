@@ -26,7 +26,6 @@ import type {
 	ExportedWorkflowChannel,
 	ExportedWorkflowNode,
 	ExportedWorkflowNodeAgent,
-	ExportedWorkflowRule,
 	SpaceExportBundle,
 } from '@neokai/shared';
 
@@ -59,12 +58,16 @@ const workflowConditionSchema = z
 		}
 	});
 
+const workflowNodeAgentOverrideSchema = z.object({
+	mode: z.enum(['override', 'expand']),
+	value: z.string(),
+});
+
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),
 	name: z.string().min(1),
-	model: z.string().optional(),
-	systemPrompt: z.string().optional(),
-	instructions: z.string().optional(),
+	systemPrompt: workflowNodeAgentOverrideSchema.optional(),
+	instructions: workflowNodeAgentOverrideSchema.optional(),
 });
 
 /**
@@ -81,30 +84,10 @@ const exportedWorkflowChannelSchema = z.object({
 	gate: workflowConditionSchema.optional(),
 });
 
-const exportedWorkflowNodeSchema = z
-	.object({
-		agentRef: z.string().min(1).optional(),
-		model: z.string().optional(),
-		systemPrompt: z.string().optional(),
-		agents: z.array(exportedWorkflowNodeAgentSchema).optional(),
-		name: z.string().min(1),
-		instructions: z.string().optional(),
-	})
-	.superRefine((val, ctx) => {
-		const hasAgentRef = val.agentRef !== undefined && val.agentRef.length > 0;
-		const hasAgents = val.agents !== undefined && val.agents.length > 0;
-		if (!hasAgentRef && !hasAgents) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'node must have either agentRef or agents (non-empty)',
-			});
-		}
-	});
-
-const exportedWorkflowRuleSchema = z.object({
+const exportedWorkflowNodeSchema = z.object({
+	agents: z.array(exportedWorkflowNodeAgentSchema).min(1),
 	name: z.string().min(1),
-	content: z.string().min(1),
-	appliesTo: z.array(z.string()).optional(),
+	instructions: z.string().optional(),
 });
 
 /** Validates the version field; returns an error string or null. */
@@ -124,10 +107,9 @@ const exportedAgentBaseSchema = z.object({
 	description: z.string().optional(),
 	model: z.string().optional(),
 	provider: z.string().optional(),
-	role: z.string().min(1),
 	systemPrompt: z.string().optional(),
+	instructions: z.string().optional(),
 	tools: z.array(z.string()).optional(),
-	config: z.record(z.string(), z.unknown()).optional(),
 });
 
 const exportedWorkflowBaseSchema = z.object({
@@ -136,9 +118,8 @@ const exportedWorkflowBaseSchema = z.object({
 	description: z.string().optional(),
 	nodes: z.array(exportedWorkflowNodeSchema),
 	startNode: z.string().min(1),
-	rules: z.array(exportedWorkflowRuleSchema),
+	endNode: z.string().optional(),
 	tags: z.array(z.string()),
-	config: z.record(z.string(), z.unknown()).optional(),
 	channels: z.array(exportedWorkflowChannelSchema).optional(),
 });
 
@@ -175,12 +156,13 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 		version: 1,
 		type: 'agent',
 		name: agent.name,
-		role: agent.role,
 	};
 	if (agent.description !== undefined) exported.description = agent.description;
 	if (agent.model !== undefined) exported.model = agent.model;
 	if (agent.provider !== undefined) exported.provider = agent.provider;
 	if (agent.systemPrompt !== undefined) exported.systemPrompt = agent.systemPrompt;
+	if (agent.instructions !== null && agent.instructions !== undefined)
+		exported.instructions = agent.instructions;
 	if (agent.tools !== undefined) exported.tools = agent.tools;
 	return exported;
 }
@@ -219,38 +201,22 @@ export function exportWorkflow(
 	}
 
 	// Export nodes — strip `id`, remap agentId UUIDs → agent names.
-	// Multi-agent nodes (agents[] non-empty) export an `agents` array.
-	// Single-agent nodes export a scalar `agentRef` (backward-compatible shorthand).
 	// Channels are exported at the workflow level (not per-node).
 	const exportedNodes: ExportedWorkflowNode[] = nodes.map((node) => {
-		const exported: ExportedWorkflowNode = { name: node.name };
+		const exportedAgents: ExportedWorkflowNodeAgent[] = node.agents.map((a) => {
+			const entry: ExportedWorkflowNodeAgent = {
+				agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
+				name: a.name,
+			};
+			if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
+			if (a.instructions !== undefined) entry.instructions = a.instructions;
+			return entry;
+		});
 
-		if (node.agents && node.agents.length > 0) {
-			// Multi-agent node: export agents array with agentRef names
-			const exportedAgents: ExportedWorkflowNodeAgent[] = node.agents.map((a) => {
-				const entry: ExportedWorkflowNodeAgent = {
-					agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
-					name: a.name,
-				};
-				if (a.model !== undefined) entry.model = a.model;
-				if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
-				if (a.instructions !== undefined) entry.instructions = a.instructions;
-				return entry;
-			});
-			exported.agents = exportedAgents;
-		} else {
-			// Single-agent node: export as scalar agentRef.
-			// Only set agentRef when agentId is present — a node with neither agentId
-			// nor agents is invalid; leaving agentRef unset produces a clear Zod error
-			// ("node must have either agentRef or agents") rather than a confusing
-			// min-length failure on an empty string.
-			const primaryAgentId = node.agentId;
-			if (primaryAgentId) {
-				exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
-			}
-			if (node.model !== undefined) exported.model = node.model;
-			if (node.systemPrompt !== undefined) exported.systemPrompt = node.systemPrompt;
-		}
+		const exported: ExportedWorkflowNode = {
+			name: node.name,
+			agents: exportedAgents,
+		};
 
 		if (node.instructions !== undefined) exported.instructions = node.instructions;
 
@@ -260,25 +226,9 @@ export function exportWorkflow(
 	// Export startNodeId UUID → node name
 	const startId = workflow.startNodeId;
 	const startNode = nodeIdToName.get(startId) ?? startId;
-
-	// Export rules — strip `id`, remap appliesTo node UUIDs → node names
-	const exportedRules: ExportedWorkflowRule[] = workflow.rules.map((rule) => {
-		const exported: ExportedWorkflowRule = { name: rule.name, content: rule.content };
-		if (rule.appliesTo !== undefined && rule.appliesTo.length > 0) {
-			const nodeNames = rule.appliesTo
-				.map((nodeId) => nodeIdToName.get(nodeId))
-				.filter((n): n is string => n !== undefined);
-			// If all referenced node UUIDs are absent from the workflow (e.g., stale data),
-			// nodeNames will be empty and `appliesTo` is omitted. This changes the rule
-			// semantics from "applies to specific nodes" to "applies to all nodes" — an
-			// intentional graceful degradation: a rule that can't resolve its targets is
-			// treated as global rather than silently dropped.
-			if (nodeNames.length > 0) {
-				exported.appliesTo = nodeNames;
-			}
-		}
-		return exported;
-	});
+	const endNode = workflow.endNodeId
+		? (nodeIdToName.get(workflow.endNodeId) ?? workflow.endNodeId)
+		: undefined;
 
 	const result: ExportedSpaceWorkflow = {
 		version: 1,
@@ -286,11 +236,10 @@ export function exportWorkflow(
 		name: workflow.name,
 		nodes: exportedNodes,
 		startNode,
-		rules: exportedRules,
 		tags: workflow.tags,
 	};
+	if (endNode !== undefined) result.endNode = endNode;
 	if (workflow.description !== undefined) result.description = workflow.description;
-	if (workflow.config !== undefined) result.config = workflow.config;
 	// Export channels — strip `id` (space-specific) and convert to portable ExportedWorkflowChannel format
 	if (workflow.channels && workflow.channels.length > 0) {
 		const exportedChannels: ExportedWorkflowChannel[] = workflow.channels.map((ch) => {

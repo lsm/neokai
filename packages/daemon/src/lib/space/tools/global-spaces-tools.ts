@@ -20,7 +20,6 @@ import type {
 	CreateSpaceParams,
 	UpdateSpaceParams,
 	SpaceTaskPriority,
-	SpaceTaskType,
 } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
@@ -345,9 +344,6 @@ export function createGlobalSpacesToolHandlers(
 			title: string;
 			description: string;
 			priority?: SpaceTaskPriority;
-			task_type?: SpaceTaskType;
-			assigned_agent?: 'coder' | 'general';
-			custom_agent_id?: string;
 			depends_on?: string[];
 		}): Promise<ToolResult> {
 			const resolved = resolveSpaceId(args.space_id);
@@ -358,9 +354,6 @@ export function createGlobalSpacesToolHandlers(
 					title: args.title,
 					description: args.description,
 					priority: args.priority,
-					taskType: args.task_type,
-					assignedAgent: args.assigned_agent,
-					customAgentId: args.custom_agent_id,
 					dependsOn: args.depends_on,
 				});
 				return jsonResult({ success: true, space_id: resolved.spaceId, task });
@@ -629,15 +622,7 @@ export function createGlobalSpacesMcpServer(
 					.optional()
 					.describe('Target space ID (defaults to the active space context)'),
 				status: z
-					.enum([
-						'draft',
-						'pending',
-						'in_progress',
-						'review',
-						'completed',
-						'needs_attention',
-						'cancelled',
-					])
+					.enum(['open', 'in_progress', 'done', 'blocked', 'cancelled', 'archived'])
 					.optional()
 					.describe('Filter by task status'),
 				workflow_run_id: z.string().optional().describe('Filter by workflow run ID'),

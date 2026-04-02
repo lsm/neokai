@@ -102,8 +102,7 @@ function QueueItem({
 		id: string;
 		title: string;
 		status: string;
-		workflowRunId?: string;
-		currentStep?: string | null;
+		workflowRunId?: string | null;
 	};
 	onClick?: (taskId: string) => void;
 }) {
@@ -124,13 +123,11 @@ function QueueItem({
 							'block h-2.5 w-2.5 rounded-full',
 							task.status === 'in_progress'
 								? 'bg-blue-400'
-								: task.status === 'review'
-									? 'bg-purple-400'
-									: task.status === 'needs_attention'
-										? 'bg-amber-400'
-										: task.status === 'completed'
-											? 'bg-green-400'
-											: 'bg-gray-500'
+								: task.status === 'blocked'
+									? 'bg-amber-400'
+									: task.status === 'done'
+										? 'bg-green-400'
+										: 'bg-gray-500'
 						)}
 					/>
 				</div>
@@ -142,8 +139,7 @@ function QueueItem({
 						</span>
 					</div>
 					<p class="mt-1 text-xs text-gray-500">
-						{task.currentStep ||
-							(task.workflowRunId ? 'Part of a workflow-backed task flow.' : 'Standalone task.')}
+						{task.workflowRunId ? 'Part of a workflow-backed task flow.' : 'Standalone task.'}
 					</p>
 				</div>
 			</div>
@@ -240,19 +236,11 @@ export function SpaceDashboard({
 	}
 
 	const activeTasks = tasks.filter(
-		(task) =>
-			task.status === 'draft' ||
-			task.status === 'pending' ||
-			task.status === 'in_progress' ||
-			task.status === 'rate_limited' ||
-			task.status === 'usage_limited'
+		(task) => task.status === 'open' || task.status === 'in_progress'
 	);
-	const reviewTasks = tasks.filter(
-		(task) => task.status === 'review' || task.status === 'needs_attention'
-	);
+	const reviewTasks = tasks.filter((task) => task.status === 'blocked');
 	const completedTasks = tasks.filter(
-		(task) =>
-			task.status === 'completed' || task.status === 'cancelled' || task.status === 'archived'
+		(task) => task.status === 'done' || task.status === 'cancelled' || task.status === 'archived'
 	);
 	const recentCompleted = [...completedTasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6);
 	const activeQueue = [...activeTasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6);

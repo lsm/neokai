@@ -14,7 +14,7 @@ function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
 		id: 'agent-1',
 		spaceId: 'space-1',
 		name: 'Test Agent',
-		role: 'coder',
+		instructions: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
@@ -44,7 +44,7 @@ function makeTask(overrides?: Partial<SpaceTask>): SpaceTask {
 		taskNumber: 1,
 		title: 'Implement feature X',
 		description: 'Add feature X to the codebase',
-		status: 'pending',
+		status: 'open',
 		priority: 'normal',
 		dependsOn: [],
 		createdAt: Date.now(),
@@ -60,8 +60,8 @@ function makeWorkflowRun(overrides?: Partial<SpaceWorkflowRun>): SpaceWorkflowRu
 		workflowId: 'wf-1',
 		title: 'Workflow Run',
 		status: 'in_progress',
-		iterationCount: 0,
-		maxIterations: 5,
+		startedAt: null,
+		completedAt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
@@ -75,11 +75,15 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 		name: 'Coding Workflow',
 		description: 'Visible workflow description',
 		nodes: [
-			{ id: 'node-1', name: 'Plan', agentId: 'agent-1', instructions: 'Write a plan' },
-			{ id: 'node-2', name: 'Code', agentId: 'agent-1' },
+			{
+				id: 'node-1',
+				name: 'Plan',
+				agents: [{ agentId: 'agent-1', name: 'Coder' }],
+				instructions: 'Write a plan',
+			},
+			{ id: 'node-2', name: 'Code', agents: [{ agentId: 'agent-1', name: 'Coder' }] },
 		],
 		startNodeId: 'node-1',
-		rules: [{ id: 'rule-1', name: 'Rule A', content: 'Do the thing' }],
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -120,7 +124,6 @@ describe('buildCustomAgentTaskMessage', () => {
 					title: 'Ship auth flow',
 					description: 'Implement auth flow',
 					priority: 'high',
-					taskType: 'coding',
 					prUrl: 'https://github.com/org/repo/pull/42',
 				}),
 				workflowRun: makeWorkflowRun({ title: 'Auth rollout', description: 'Production' }),
@@ -141,8 +144,6 @@ describe('buildCustomAgentTaskMessage', () => {
 		expect(message).toContain('Nodes:');
 		expect(message).toContain('Plan');
 		expect(message).toContain('Write a plan');
-		expect(message).toContain('Workflow Rules:');
-		expect(message).toContain('Rule A');
 		expect(message).toContain('Monorepo project');
 		expect(message).toContain('Run tests before finishing.');
 		expect(message).toContain('https://github.com/org/repo/pull/42');
@@ -250,28 +251,15 @@ describe('createCustomAgentInit', () => {
 });
 
 describe('resolveAgentInit', () => {
-	it('throws when task has no assigned agent', () => {
-		const agentManager = { getById: mock(() => null) } as unknown as SpaceAgentManager;
-
-		expect(() =>
-			resolveAgentInit({
-				task: makeTask({ customAgentId: undefined }),
-				space: makeSpace(),
-				agentManager,
-				sessionId: 'session-1',
-				workspacePath: '/workspace/project',
-			})
-		).toThrow('has no agentId');
-	});
-
 	it('throws when assigned agent cannot be found', () => {
 		const agentManager = { getById: mock(() => null) } as unknown as SpaceAgentManager;
 
 		expect(() =>
 			resolveAgentInit({
-				task: makeTask({ customAgentId: 'missing-agent' }),
+				task: makeTask(),
 				space: makeSpace(),
 				agentManager,
+				agentId: 'missing-agent',
 				sessionId: 'session-1',
 				workspacePath: '/workspace/project',
 			})
@@ -284,9 +272,10 @@ describe('resolveAgentInit', () => {
 		} as unknown as SpaceAgentManager;
 
 		const init = resolveAgentInit({
-			task: makeTask({ customAgentId: 'agent-2' }),
+			task: makeTask(),
 			space: makeSpace(),
 			agentManager,
+			agentId: 'agent-2',
 			sessionId: 'session-1',
 			workspacePath: '/workspace/project',
 		});

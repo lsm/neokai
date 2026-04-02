@@ -550,7 +550,13 @@ interface NodeBoxProps {
 	isRuntimeMode: boolean;
 }
 
-function NodeBox({ node, layout, status, tasks, isRuntimeMode }: NodeBoxProps): JSX.Element {
+function NodeBox({
+	node,
+	layout,
+	status,
+	tasks,
+	isRuntimeMode: _isRuntimeMode,
+}: NodeBoxProps): JSX.Element {
 	const { x, y, width, height } = layout;
 
 	let borderColor: string;
@@ -581,7 +587,7 @@ function NodeBox({ node, layout, status, tasks, isRuntimeMode }: NodeBoxProps): 
 			bgColor = '#052e16';
 			labelColor = '#86efac';
 			// Find most recent completed task for elapsed time
-			const completedTasks = tasks.filter((t) => t.status === 'completed' && t.updatedAt);
+			const completedTasks = tasks.filter((t) => t.status === 'done' && t.updatedAt);
 			const elapsed =
 				completedTasks.length > 0
 					? formatElapsed(
@@ -649,12 +655,8 @@ function NodeBox({ node, layout, status, tasks, isRuntimeMode }: NodeBoxProps): 
 	}
 
 	// Agent count badge
-	const agentCount = node.agents?.length ?? (node.agentId ? 1 : 0);
+	const agentCount = node.agents.length;
 	const agentLabel = agentCount > 1 ? `×${agentCount}` : null;
-
-	// Active task progress
-	const activeTasks = isRuntimeMode ? tasks.filter((t) => t.status === 'in_progress') : [];
-	const progressTask = activeTasks.find((t) => t.progress != null);
 
 	return (
 		<g data-testid={`node-${node.id}`} class={status === 'active' ? pulseClass : undefined}>
@@ -697,28 +699,6 @@ function NodeBox({ node, layout, status, tasks, isRuntimeMode }: NodeBoxProps): 
 				>
 					{agentLabel} agents
 				</text>
-			)}
-
-			{/* Progress bar for active task */}
-			{progressTask?.progress != null && (
-				<>
-					<rect
-						x={x + 8}
-						y={y + height - 10}
-						width={width - 16}
-						height={3}
-						rx={1.5}
-						fill="#292524"
-					/>
-					<rect
-						x={x + 8}
-						y={y + height - 10}
-						width={(width - 16) * (progressTask.progress / 100)}
-						height={3}
-						rx={1.5}
-						fill="#3b82f6"
-					/>
-				</>
 			)}
 
 			{/* Status indicator (top-right corner) */}
@@ -768,7 +748,7 @@ function getNodeStatus(
 	tasks: SpaceTask[],
 	run: SpaceWorkflowRun | null
 ): NodeStatus {
-	const nodeTasks = tasks.filter((t) => t.workflowNodeId === nodeId);
+	const nodeTasks = tasks.filter((t) => t.workflowRunId === nodeId);
 
 	if (nodeTasks.length === 0) {
 		return 'pending';
@@ -778,15 +758,15 @@ function getNodeStatus(
 
 	if (
 		nodeTasks.every(
-			(t) => t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
+			(t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
 		)
 	) {
 		// All terminal — check if they succeeded
-		if (nodeTasks.some((t) => t.status === 'completed')) return 'completed';
+		if (nodeTasks.some((t) => t.status === 'done')) return 'completed';
 	}
 
-	if (run?.status === 'needs_attention' || run?.status === 'cancelled') {
-		if (nodeTasks.some((t) => t.status === 'needs_attention' || t.status === 'cancelled')) {
+	if (run?.status === 'blocked' || run?.status === 'cancelled') {
+		if (nodeTasks.some((t) => t.status === 'blocked' || t.status === 'cancelled')) {
 			return 'failed';
 		}
 	}
@@ -1138,7 +1118,7 @@ export function WorkflowCanvas({
 			{gateDataLoading && (
 				<div class="absolute top-2 right-2 text-stone-500 text-xs">Loading gate data…</div>
 			)}
-			{run && run.status === 'needs_attention' && (
+			{run && run.status === 'blocked' && (
 				<div class="absolute top-0 left-0 right-0 bg-amber-900/40 border-b border-amber-700/50 px-3 py-1.5 text-xs text-amber-300 text-center z-10">
 					{run.failureReason === 'humanRejected'
 						? 'Workflow paused — awaiting approval'
@@ -1316,7 +1296,7 @@ export function WorkflowCanvas({
 					const nodeLayout = layout.get(node.id);
 					if (!nodeLayout) return null;
 
-					const nodeTasks = runTasks.filter((t) => t.workflowNodeId === node.id);
+					const nodeTasks = runTasks.filter((t) => t.workflowRunId === node.id);
 					const status = isRuntimeMode ? getNodeStatus(node.id, runTasks, run) : 'pending';
 
 					return (

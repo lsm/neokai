@@ -4,8 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with runMigration40 in packages/daemon/src/storage/schema/migrations.ts
- * and space-agent-schema.ts.
+ * Keep in sync with the fully-migrated production schema (after M71).
  *
  * IMPORTANT: The schema defined here must exactly match the fully-migrated production
  * schema (i.e. after all migrations have run). Never add columns or constraints here
@@ -49,12 +48,10 @@ export function createSpaceTables(db: BunDatabase): void {
 			model TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
 			system_prompt TEXT NOT NULL DEFAULT '',
-			config TEXT,
+			instructions TEXT,
+			provider TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			role TEXT NOT NULL,
-			provider TEXT,
-			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -66,11 +63,11 @@ export function createSpaceTables(db: BunDatabase): void {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			start_node_id TEXT,
+			end_node_id TEXT,
 			config TEXT,
 			channels TEXT,
 			gates TEXT,
 			layout TEXT,
-			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -84,6 +81,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			agent_id TEXT,
+			agents TEXT NOT NULL DEFAULT '[]',
 			order_index INTEGER NOT NULL,
 			config TEXT,
 			created_at INTEGER NOT NULL,
@@ -115,23 +113,25 @@ export function createSpaceTables(db: BunDatabase): void {
 			space_id TEXT NOT NULL,
 			workflow_id TEXT NOT NULL,
 			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			current_step_index INTEGER NOT NULL DEFAULT 0,
+			description TEXT,
 			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
-			config TEXT,
-			iteration_count INTEGER NOT NULL DEFAULT 0,
-			max_iterations INTEGER NOT NULL DEFAULT 5,
-			goal_id TEXT,
-			failure_reason TEXT
-				CHECK(failure_reason IN ('humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash')),
+				CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
+			failure_reason TEXT,
 			created_at INTEGER NOT NULL,
+			started_at INTEGER,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
 		)
 	`);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`
+	);
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS gate_data (
@@ -152,27 +152,15 @@ export function createSpaceTables(db: BunDatabase): void {
 			task_number INTEGER NOT NULL,
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
+			status TEXT NOT NULL DEFAULT 'open'
+				CHECK(status IN ('open', 'in_progress', 'done', 'blocked', 'cancelled', 'archived')),
 			priority TEXT NOT NULL DEFAULT 'normal'
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-			task_type TEXT
-				CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
-			assigned_agent TEXT
-				CHECK(assigned_agent IN ('coder', 'general')),
-			custom_agent_id TEXT,
-			agent_name TEXT,
+			labels TEXT NOT NULL DEFAULT '[]',
 			workflow_run_id TEXT,
-			workflow_node_id TEXT,
 			created_by_task_id TEXT,
-			goal_id TEXT,
-			progress INTEGER,
-			current_step TEXT,
 			result TEXT,
-			error TEXT,
-			completion_summary TEXT,
 			depends_on TEXT NOT NULL DEFAULT '[]',
-			input_draft TEXT,
 			active_session TEXT
 				CHECK(active_session IN ('worker', 'leader')),
 			task_agent_session_id TEXT,
@@ -185,12 +173,15 @@ export function createSpaceTables(db: BunDatabase): void {
 			completed_at INTEGER,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
-			FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
 		)
 	`);
 
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
 }

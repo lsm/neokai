@@ -96,17 +96,17 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			id: CODING_PLANNER_STEP,
 			name: 'Plan',
-			agentId: 'planner',
+			agents: [{ agentId: 'Planner', name: 'planner' }],
 		},
 		{
 			id: CODING_CODER_STEP,
 			name: 'Code',
-			agentId: 'coder',
+			agents: [{ agentId: 'Coder', name: 'coder' }],
 		},
 		{
 			id: CODING_VERIFY_STEP,
 			name: 'Verify & Test',
-			agentId: 'general',
+			agents: [{ agentId: 'General', name: 'general' }],
 			// NOTE: task_result condition uses prefix matching — "failed: reason" matches expression "failed"
 			instructions:
 				'Review the completed work. Run tests, check for issues. Set result to "passed" if everything looks good, or "failed: <reason>" if problems are found.',
@@ -114,11 +114,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			id: CODING_DONE_STEP,
 			name: 'Done',
-			agentId: 'general',
+			agents: [{ agentId: 'General', name: 'general' }],
 		},
 	],
 	startNodeId: CODING_PLANNER_STEP,
-	rules: [],
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -207,16 +206,15 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		{
 			id: RESEARCH_PLANNER_STEP,
 			name: 'Plan Research',
-			agentId: 'planner',
+			agents: [{ agentId: 'Planner', name: 'planner' }],
 		},
 		{
 			id: RESEARCH_GENERAL_STEP,
 			name: 'Research',
-			agentId: 'general',
+			agents: [{ agentId: 'General', name: 'general' }],
 		},
 	],
 	startNodeId: RESEARCH_PLANNER_STEP,
-	rules: [],
 	tags: ['research'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -248,11 +246,10 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 		{
 			id: REVIEW_CODER_STEP,
 			name: 'Code',
-			agentId: 'coder',
+			agents: [{ agentId: 'Coder', name: 'coder' }],
 		},
 	],
 	startNodeId: REVIEW_CODER_STEP,
-	rules: [],
 	tags: ['coding', 'review'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -290,8 +287,13 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		{
 			id: V2_PLANNING_STEP,
 			name: 'Planning',
-			agentId: 'planner',
-			systemPrompt: V2_PLANNING_PROMPT,
+			agents: [
+				{
+					agentId: 'Planner',
+					name: 'planner',
+					systemPrompt: { mode: 'override', value: V2_PLANNING_PROMPT },
+				},
+			],
 			instructions:
 				'Break down the task into an actionable implementation plan. ' +
 				'When the plan is ready, write it to the plan-pr-gate (field: plan_submitted) to notify reviewers.',
@@ -299,8 +301,13 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		{
 			id: V2_PLAN_REVIEW_STEP,
 			name: 'Plan Review',
-			agentId: 'reviewer',
-			systemPrompt: V2_PLAN_REVIEW_PROMPT,
+			agents: [
+				{
+					agentId: 'Reviewer',
+					name: 'reviewer',
+					systemPrompt: { mode: 'override', value: V2_PLAN_REVIEW_PROMPT },
+				},
+			],
 			instructions:
 				'Review the implementation plan for feasibility and completeness. ' +
 				'Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
@@ -308,8 +315,13 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		{
 			id: V2_CODING_STEP,
 			name: 'Coding',
-			agentId: 'coder',
-			systemPrompt: V2_CODING_PROMPT,
+			agents: [
+				{
+					agentId: 'Coder',
+					name: 'coder',
+					systemPrompt: { mode: 'override', value: V2_CODING_PROMPT },
+				},
+			],
 			instructions:
 				'Implement the approved plan. Open a pull request when done. ' +
 				'Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
@@ -317,45 +329,61 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		{
 			id: V2_REVIEW_STEP,
 			name: 'Code Review',
-			systemPrompt: V2_CODE_REVIEW_PROMPT,
 			agents: [
 				{
-					agentId: 'reviewer',
+					agentId: 'Reviewer',
 					name: 'Reviewer 1',
-					instructions:
-						'Review the pull request for correctness, style, and test coverage. ' +
-						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-						'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
-						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+					systemPrompt: { mode: 'override', value: V2_CODE_REVIEW_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Review the pull request for correctness, style, and test coverage. ' +
+							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+							'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
+							'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+							'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+					},
 				},
 				{
-					agentId: 'reviewer',
+					agentId: 'Reviewer',
 					name: 'Reviewer 2',
-					instructions:
-						'Review the pull request for correctness, style, and test coverage. ' +
-						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-						'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
-						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+					systemPrompt: { mode: 'override', value: V2_CODE_REVIEW_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Review the pull request for correctness, style, and test coverage. ' +
+							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+							'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
+							'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+							'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+					},
 				},
 				{
-					agentId: 'reviewer',
+					agentId: 'Reviewer',
 					name: 'Reviewer 3',
-					instructions:
-						'Review the pull request for correctness, style, and test coverage. ' +
-						'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-						'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
-						'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-						'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+					systemPrompt: { mode: 'override', value: V2_CODE_REVIEW_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Review the pull request for correctness, style, and test coverage. ' +
+							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
+							'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
+							'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
+							'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+					},
 				},
 			],
 		},
 		{
 			id: V2_QA_STEP,
 			name: 'QA',
-			agentId: 'qa',
-			systemPrompt: V2_QA_PROMPT,
+			agents: [
+				{
+					agentId: 'QA',
+					name: 'qa',
+					systemPrompt: { mode: 'override', value: V2_QA_PROMPT },
+				},
+			],
 			instructions:
 				'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. ' +
 				'Write "result: passed" to qa-result-gate if everything is green, or ' +
@@ -365,12 +393,16 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		{
 			id: V2_DONE_STEP,
 			name: 'Done',
-			agentId: 'general',
-			systemPrompt: V2_DONE_PROMPT,
+			agents: [
+				{
+					agentId: 'General',
+					name: 'general',
+					systemPrompt: { mode: 'override', value: V2_DONE_PROMPT },
+				},
+			],
 		},
 	],
 	startNodeId: V2_PLANNING_STEP,
-	rules: [],
 	tags: ['coding', 'v2', 'parallel-review', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -557,9 +589,9 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 /**
  * Seeds all four built-in workflow templates into the given space.
  *
- * Each template step's `agentId` placeholder (e.g., `'planner'`, `'coder'`,
- * `'general'`) is resolved to a real SpaceAgent UUID via `resolveAgentId`.
- * If any role cannot be resolved, this function throws — persisting a
+ * Each template node agent's `agentId` placeholder (e.g., `'Planner'`, `'Coder'`,
+ * `'General'`) is resolved to a real SpaceAgent UUID via `resolveAgentId`.
+ * If any name cannot be resolved, this function throws — persisting a
  * placeholder string as an `agentId` would create broken workflow data.
  *
  * Idempotent: if the space already has at least one workflow, this is a no-op.
@@ -570,15 +602,15 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
  * Example call site:
  * ```ts
  * const agents = spaceAgentManager.listBySpaceId(spaceId);
- * seedBuiltInWorkflows(spaceId, workflowManager, (role) =>
- *   agents.find(a => a.role === role)?.id
+ * seedBuiltInWorkflows(spaceId, workflowManager, (name) =>
+ *   agents.find(a => a.name.toLowerCase() === name.toLowerCase())?.id
  * );
  * ```
  */
 export function seedBuiltInWorkflows(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	resolveAgentId: (role: string) => string | undefined
+	resolveAgentId: (name: string) => string | undefined
 ): void {
 	const existing = workflowManager.listWorkflows(spaceId);
 	if (existing.length > 0) {
@@ -586,31 +618,30 @@ export function seedBuiltInWorkflows(
 		return;
 	}
 
-	// Pre-validate: resolve every role needed across ALL templates before
+	// Pre-validate: resolve every agent name needed across ALL templates before
 	// persisting anything. This guarantees all-or-nothing behaviour.
 	const templates = getBuiltInWorkflows();
-	const neededRoles = new Set<string>();
+	const neededNames = new Set<string>();
 	for (const template of templates) {
 		for (const node of template.nodes) {
-			if (node.agentId) neededRoles.add(node.agentId);
-			for (const agent of node.agents ?? []) {
-				if (agent.agentId) neededRoles.add(agent.agentId);
+			for (const agent of node.agents) {
+				if (agent.agentId) neededNames.add(agent.agentId);
 			}
 		}
 	}
 	const resolvedIds = new Map<string, string>();
-	for (const role of neededRoles) {
-		const agentId = resolveAgentId(role);
+	for (const agentName of neededNames) {
+		const agentId = resolveAgentId(agentName);
 		if (!agentId) {
 			throw new Error(
-				`seedBuiltInWorkflows: no SpaceAgent found for role '${role}' in space '${spaceId}'. ` +
+				`seedBuiltInWorkflows: no SpaceAgent found with name '${agentName}' in space '${spaceId}'. ` +
 					`Preset agents must be seeded before calling seedBuiltInWorkflows.`
 			);
 		}
-		resolvedIds.set(role, agentId);
+		resolvedIds.set(agentName, agentId);
 	}
 
-	// All roles resolved — safe to persist.
+	// All names resolved — safe to persist.
 	for (const template of templates) {
 		// Assign real UUIDs to template node IDs
 		const nodeIdMap = new Map<string, string>(); // templateId -> realUUID
@@ -618,24 +649,15 @@ export function seedBuiltInWorkflows(
 			nodeIdMap.set(node.id, generateUUID());
 		}
 
-		const nodes = template.nodes.map((s) => {
-			const hasAgents = Array.isArray(s.agents) && s.agents.length > 0;
-			const resolvedAgents = hasAgents
-				? s.agents!.map((a) => ({
-						...a,
-						agentId: resolvedIds.get(a.agentId)!,
-					}))
-				: undefined;
-
-			return {
-				id: nodeIdMap.get(s.id)!,
-				name: s.name,
-				agentId: hasAgents ? undefined : resolvedIds.get(s.agentId ?? '')!,
-				agents: resolvedAgents,
-				systemPrompt: s.systemPrompt,
-				instructions: s.instructions,
-			};
-		});
+		const nodes = template.nodes.map((s) => ({
+			id: nodeIdMap.get(s.id)!,
+			name: s.name,
+			agents: s.agents.map((a) => ({
+				...a,
+				agentId: resolvedIds.get(a.agentId)!,
+			})),
+			instructions: s.instructions,
+		}));
 
 		const startNodeId = nodeIdMap.get(template.startNodeId)!;
 
@@ -645,7 +667,6 @@ export function seedBuiltInWorkflows(
 			description: template.description,
 			nodes,
 			startNodeId,
-			rules: [],
 			tags: [...template.tags],
 			channels: template.channels ? [...template.channels] : undefined,
 			gates: template.gates ? [...template.gates] : undefined,

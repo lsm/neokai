@@ -9,7 +9,7 @@
  *
  * 1. The daemon auto-provisions the `spaces:global` session at startup when
  *    `NEOKAI_ENABLE_SPACES_AGENT=1` is set (or in non-test environments).
- * 2. Tests inject [TASK_EVENT] messages via `sendMessage` to that session.
+ * 2. Tests inject [TASK_EVENT] task_blocked messages via `sendMessage` to that session.
  * 3. Dev Proxy intercepts Anthropic API calls and returns pre-configured mocks.
  * 4. Mock responses are selected by body content matching on a unique "probe phrase"
  *    embedded in the [TASK_EVENT] `reason` field:
@@ -223,7 +223,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 			//    an escalation text response (see mocks.json).
 			const eventMessage = formatEventMessage(
 				{
-					kind: 'task_needs_attention',
+					kind: 'task_blocked',
 					spaceId: space.id,
 					taskId,
 					reason: 'probe_supervised_escalation: agent returned a non-zero exit code',
@@ -284,7 +284,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 			//    The SDK stores the full BetaMessage including the get_task_detail tool_use block.
 			const eventMessage = formatEventMessage(
 				{
-					kind: 'task_needs_attention',
+					kind: 'task_blocked',
 					spaceId: space.id,
 					taskId,
 					reason: 'probe_semi_autonomous_get_detail: task exited with error code 1',
@@ -356,7 +356,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 			//    The SDK stores the full BetaMessage including the retry_task tool_use block.
 			const eventMessage = formatEventMessage(
 				{
-					kind: 'task_needs_attention',
+					kind: 'task_blocked',
 					spaceId: space.id,
 					taskId,
 					reason: 'probe_semi_autonomous_retry: transient failure, suitable for automatic retry',

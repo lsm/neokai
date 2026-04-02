@@ -4,12 +4,10 @@
  * Data access layer for SpaceWorkflow and SpaceWorkflowNode records.
  *
  * Storage layout:
- *   space_workflows             — id, space_id, name, description, start_node_id, config (JSON), channels (JSON), layout (JSON), created_at, updated_at
- *   space_workflow_nodes        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
+ *   space_workflows             — id, space_id, name, description, start_node_id, end_node_id, tags (JSON), channels (JSON), gates (JSON), layout (JSON), created_at, updated_at
+ *   space_workflow_nodes        — id, workflow_id, name, order_index, config (JSON), created_at, updated_at
  *
- * The `config` column on space_workflows stores: { tags, rules, ...extra }
- * The `channels` column on space_workflows stores: WorkflowChannel[] JSON (unified channel topology)
- * The `config` column on space_workflow_nodes stores: { systemPrompt?, instructions?, agents? }
+ * The `config` column on space_workflow_nodes stores: { instructions?, agents? }
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -17,9 +15,7 @@ import { generateUUID } from '@neokai/shared';
 import type {
 	SpaceWorkflow,
 	WorkflowNode,
-	WorkflowRule,
 	WorkflowNodeInput,
-	WorkflowRuleInput,
 	WorkflowNodeAgent,
 	WorkflowChannel,
 	Gate,
@@ -37,11 +33,11 @@ interface WorkflowRow {
 	name: string;
 	description: string;
 	start_node_id: string | null;
+	end_node_id?: string | null;
 	config: string | null;
 	channels: string | null;
 	gates: string | null;
 	layout: string | null;
-	max_iterations: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -50,7 +46,6 @@ interface NodeRow {
 	id: string;
 	workflow_id: string;
 	name: string;
-	agent_id: string | null;
 	order_index: number;
 	config: string | null;
 	created_at: number;
@@ -60,15 +55,13 @@ interface NodeRow {
 // JSON stored inside space_workflows.config
 interface WorkflowConfigJson {
 	tags?: string[];
-	rules?: WorkflowRule[];
 	extra?: Record<string, unknown>;
 }
 
 // JSON stored inside space_workflow_nodes.config
 interface NodeConfigJson {
-	systemPrompt?: string;
 	instructions?: string;
-	/** Multi-agent array — present when the node uses the agents[] format */
+	/** Multi-agent array */
 	agents?: WorkflowNodeAgent[];
 }
 
@@ -87,57 +80,56 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 
 function rowToNode(row: NodeRow): WorkflowNode {
 	const cfg = parseJson<NodeConfigJson>(row.config, {});
+	// Ensure agents is always a non-empty array
+	const agents: WorkflowNodeAgent[] =
+		cfg.agents && cfg.agents.length > 0
+			? cfg.agents.map((a: WorkflowNodeAgent) => ({
+					...a,
+					// Backfill name if missing (legacy rows)
+					name: a.name?.trim() ? a.name : a.agentId,
+				}))
+			: [];
+
 	const node: WorkflowNode = {
 		id: row.id,
 		name: row.name,
+		agents,
 	};
-	// agentId: stored as non-empty string for single-agent nodes, null/empty for multi-agent nodes.
-	if (row.agent_id) {
-		node.agentId = row.agent_id;
-	}
 	if (cfg.instructions) {
 		node.instructions = cfg.instructions;
-	}
-	if (cfg.systemPrompt) {
-		node.systemPrompt = cfg.systemPrompt;
-	}
-	if (cfg.agents && cfg.agents.length > 0) {
-		// Backfill name = agentId for rows persisted before the name field was introduced.
-		node.agents = cfg.agents.map((a: WorkflowNodeAgent) => ({
-			...a,
-			// Support legacy data where role was stored instead of name
-			name: a.name?.trim() ? a.name : (a as unknown as { role?: string }).role?.trim() || a.agentId,
-		}));
 	}
 	return node;
 }
 
 function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 	const cfg = parseJson<WorkflowConfigJson>(row.config, {});
-	// Derive startNodeId: use explicit column, fall back to first node
 	const startNodeId = row.start_node_id ?? nodes[0]?.id ?? '';
 	const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
-	// Read channels from the dedicated column (Migration 53+).
 	const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
-	// Read gates from the dedicated column (Migration 61+).
 	const gates = parseJson<Gate[] | null>(row.gates, null);
-	return {
+
+	// `end_node_id` may not exist in older DB schemas — guard for undefined
+	const rawEndNodeId = (row as unknown as Record<string, unknown>).end_node_id as
+		| string
+		| null
+		| undefined;
+
+	const wf: SpaceWorkflow = {
 		id: row.id,
 		spaceId: row.space_id,
 		name: row.name,
 		description: row.description || undefined,
 		nodes,
 		startNodeId,
-		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
-		channels: channels && channels.length > 0 ? channels : undefined,
-		gates: gates && gates.length > 0 ? gates : undefined,
-		config: cfg.extra,
-		maxIterations: row.max_iterations ?? undefined,
-		layout: layout ?? undefined,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
+	if (rawEndNodeId) wf.endNodeId = rawEndNodeId;
+	if (channels && channels.length > 0) wf.channels = channels;
+	if (gates && gates.length > 0) wf.gates = gates;
+	if (layout) wf.layout = layout;
+	return wf;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +147,7 @@ export class SpaceWorkflowRepository {
 		const workflowId = generateUUID();
 		const now = Date.now();
 
-		// Pre-resolve node IDs so transitions can reference them
+		// Pre-resolve node IDs so channels can reference them
 		const nodeInputs = params.nodes ?? [];
 		const resolvedNodes: Array<{ id: string; input: WorkflowNodeInput }> = nodeInputs.map(
 			(input) => ({
@@ -164,13 +156,11 @@ export class SpaceWorkflowRepository {
 			})
 		);
 
-		// Determine startNodeId: use provided value or default to first node
 		const startNodeId = params.startNodeId ?? resolvedNodes[0]?.id ?? null;
+		const endNodeId = params.endNodeId ?? null;
 
 		const cfg: WorkflowConfigJson = {
 			tags: params.tags ?? [],
-			rules: this.assignRuleIds(params.rules ?? []),
-			extra: params.config,
 		};
 
 		const channelsJson =
@@ -180,7 +170,7 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, channels, gates, layout, max_iterations, created_at, updated_at)
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, config, channels, gates, layout, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
@@ -189,11 +179,11 @@ export class SpaceWorkflowRepository {
 				params.name.trim(),
 				params.description ?? '',
 				startNodeId,
+				endNodeId,
 				JSON.stringify(cfg),
 				channelsJson,
 				gatesJson,
 				layoutJson,
-				null, // max_iterations (dead column, kept for backward compat)
 				now,
 				now
 			);
@@ -253,6 +243,10 @@ export class SpaceWorkflowRepository {
 			fields.push('start_node_id = ?');
 			values.push(params.startNodeId ?? null);
 		}
+		if (params.endNodeId !== undefined) {
+			fields.push('end_node_id = ?');
+			values.push(params.endNodeId ?? null);
+		}
 
 		// Build updated config
 		const existingCfg = parseJson<WorkflowConfigJson>(row.config, {});
@@ -261,14 +255,6 @@ export class SpaceWorkflowRepository {
 
 		if (params.tags !== undefined) {
 			newCfg.tags = params.tags ?? [];
-			cfgChanged = true;
-		}
-		if (params.rules !== undefined) {
-			newCfg.rules = params.rules ?? [];
-			cfgChanged = true;
-		}
-		if (params.config !== undefined) {
-			newCfg.extra = params.config ?? undefined;
 			cfgChanged = true;
 		}
 
@@ -335,21 +321,15 @@ export class SpaceWorkflowRepository {
 	 * Find all workflows in a space whose nodes reference the given custom SpaceAgent ID.
 	 * Used by SpaceAgentManager to prevent deletion of agents that are still in use.
 	 *
-	 * Checks two storage locations:
-	 * - The `agent_id` column: used by single-agent nodes (legacy agentId format).
-	 * - The `config` JSON column: used by multi-agent nodes (agents[] format stores agent IDs
-	 *   in the JSON config; the agent_id column is NULL for these nodes).
+	 * Checks the `config` JSON column for multi-agent nodes (agents[] format).
 	 */
 	getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
-		// Match single-agent nodes (agent_id column) and multi-agent nodes (config JSON contains
-		// the agent ID string). The LIKE pattern is conservative — it matches any config that
-		// contains the UUID as a substring, which is safe because UUIDs are globally unique.
 		const nodeRows = this.db
 			.prepare(
 				`SELECT DISTINCT workflow_id FROM space_workflow_nodes
-         WHERE agent_id = ? OR config LIKE '%' || ? || '%'`
+         WHERE config LIKE '%' || ? || '%'`
 			)
-			.all(agentId, agentId) as Array<{ workflow_id: string }>;
+			.all(agentId) as Array<{ workflow_id: string }>;
 
 		const workflows: SpaceWorkflow[] = [];
 		for (const { workflow_id } of nodeRows) {
@@ -379,18 +359,21 @@ export class SpaceWorkflowRepository {
 		index: number,
 		now: number
 	): void {
-		const nodeCfg: NodeConfigJson = {
-			systemPrompt: input.systemPrompt,
-			instructions: input.instructions,
-		};
-		// Persist agents into the JSON config column so they survive round-trips.
-		if (input.agents && input.agents.length > 0) {
-			nodeCfg.agents = input.agents;
-		}
+		const nodeCfg: NodeConfigJson = {};
+		if (input.instructions) nodeCfg.instructions = input.instructions;
 
-		// Store null for agent_id when using the multi-agent agents[] format.
-		// Single-agent nodes store the UUID directly for fast lookups.
-		const agentIdValue = input.agentId && input.agentId.trim() ? input.agentId : null;
+		// Normalize agents: use `agents` array if present, otherwise fall back to legacy
+		// `agentId` shorthand (still used in tests and older call-sites).
+		const legacyAgentId = (input as unknown as Record<string, unknown>)['agentId'] as
+			| string
+			| undefined;
+		let resolvedAgents = input.agents && input.agents.length > 0 ? input.agents : undefined;
+		if (!resolvedAgents && legacyAgentId) {
+			resolvedAgents = [{ agentId: legacyAgentId, name: input.name }];
+		}
+		if (resolvedAgents && resolvedAgents.length > 0) {
+			nodeCfg.agents = resolvedAgents;
+		}
 
 		this.db
 			.prepare(
@@ -398,20 +381,6 @@ export class SpaceWorkflowRepository {
            (id, workflow_id, name, description, agent_id, order_index, config, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
-			.run(
-				nodeId,
-				workflowId,
-				input.name,
-				'',
-				agentIdValue,
-				index,
-				JSON.stringify(nodeCfg),
-				now,
-				now
-			);
-	}
-
-	private assignRuleIds(rules: WorkflowRuleInput[]): WorkflowRule[] {
-		return rules.map((r) => ({ ...r, id: generateUUID() }));
+			.run(nodeId, workflowId, input.name, '', null, index, JSON.stringify(nodeCfg), now, now);
 	}
 }

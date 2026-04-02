@@ -179,12 +179,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
 			// Load all tasks on this workflow node from the DB
-			const nodeTasks =
-				workflowRunId && workflowNodeId
-					? spaceTaskRepo
-							.listByWorkflowRun(workflowRunId)
-							.filter((t) => t.workflowNodeId === workflowNodeId)
-					: [];
+			const nodeTasks = workflowRunId ? spaceTaskRepo.listByWorkflowRun(workflowRunId) : [];
 
 			const resolver = channelResolver;
 
@@ -195,36 +190,36 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const peers = nodeTasks
 				.filter(
 					(t) =>
-						t.agentName !== 'task-agent' &&
+						t.title !== 'task-agent' &&
 						t.taskAgentSessionId !== mySessionId &&
-						(t.taskAgentSessionId != null || t.status === 'completed')
+						(t.taskAgentSessionId != null || t.status === 'done')
 				)
 				.map((t) => {
 					const taskStatus = t.status;
 					const memberStatus =
-						taskStatus === 'completed'
+						taskStatus === 'done'
 							? ('completed' as const)
-							: taskStatus === 'needs_attention' || taskStatus === 'cancelled'
+							: taskStatus === 'blocked' || taskStatus === 'cancelled'
 								? ('failed' as const)
 								: ('active' as const);
 					return {
 						sessionId: t.taskAgentSessionId ?? null,
-						role: t.agentName ?? 'agent',
-						agentId: t.customAgentId ?? null,
+						role: t.title ?? 'agent',
+						agentId: null,
 						status: memberStatus,
 						completionState: {
-							agentName: t.agentName ?? null,
+							agentName: t.title ?? null,
 							taskStatus: t.status,
-							completionSummary: t.completionSummary ?? null,
+							completionSummary: t.result ?? null,
 							completedAt: t.completedAt ?? null,
 						},
 					};
 				});
 
 			const nodeCompletionState = nodeTasks.map((t) => ({
-				agentName: t.agentName ?? null,
+				agentName: t.title ?? null,
 				taskStatus: t.status,
-				completionSummary: t.completionSummary ?? null,
+				completionSummary: t.result ?? null,
 				completedAt: t.completedAt ?? null,
 			}));
 
@@ -350,15 +345,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 
 			// Find peer sessions via task repo
-			const legacyNodeTasks =
-				workflowRunId && workflowNodeId
-					? spaceTaskRepo
-							.listByWorkflowRun(workflowRunId)
-							.filter((t) => t.workflowNodeId === workflowNodeId && t.taskAgentSessionId)
-					: [];
+			const legacyNodeTasks = workflowRunId
+				? spaceTaskRepo.listByWorkflowRun(workflowRunId).filter((t) => t.taskAgentSessionId)
+				: [];
 			const peers = legacyNodeTasks
 				.filter((t) => t.taskAgentSessionId !== mySessionId)
-				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.agentName ?? 'agent' }));
+				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.title ?? 'agent' }));
 			const delivered: Array<{ role: string; sessionId: string }> = [];
 			const notFound: string[] = [];
 			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
@@ -435,24 +427,21 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const resolver = channelResolver;
 
 			// Load peer tasks from DB
-			const reachableNodeTasks =
-				workflowRunId && workflowNodeId
-					? spaceTaskRepo
-							.listByWorkflowRun(workflowRunId)
-							.filter((t) => t.workflowNodeId === workflowNodeId && t.taskAgentSessionId)
-					: [];
+			const reachableNodeTasks = workflowRunId
+				? spaceTaskRepo.listByWorkflowRun(workflowRunId).filter((t) => t.taskAgentSessionId)
+				: [];
 
-			// Within-node peers: tasks on this node excluding self
+			// Within-node peers: tasks in this run excluding self
 			const withinNodePeers = reachableNodeTasks
 				.filter((t) => t.taskAgentSessionId !== mySessionId)
 				.map((t) => {
 					const ts = t.status;
 					return {
-						agentName: t.agentName ?? 'agent',
+						agentName: t.title ?? 'agent',
 						status:
-							ts === 'completed'
+							ts === 'done'
 								? ('completed' as const)
-								: ts === 'needs_attention' || ts === 'cancelled'
+								: ts === 'blocked' || ts === 'cancelled'
 									? ('failed' as const)
 									: ('active' as const),
 					};
@@ -462,7 +451,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
 			// Cross-node targets: outgoing channel entries where the target role is NOT
 			// already in the current node tasks (i.e., it lives on a different node).
-			const withinNodeRoles = new Set(reachableNodeTasks.map((t) => t.agentName ?? 'agent'));
+			const withinNodeRoles = new Set(reachableNodeTasks.map((t) => t.title ?? 'agent'));
 
 			type CrossNodeTarget = {
 				agentName: string;
@@ -743,7 +732,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		/**
 		 * Signal that this node agent has completed its work.
 		 *
-		 * Marks the step's SpaceTask as 'completed', persists the optional summary
+		 * Marks the step's SpaceTask as 'done', persists the optional summary
 		 * as the task result, and emits a `space.task.updated` event for real-time UI.
 		 *
 		 * After calling this tool, the node agent should stop and not perform
@@ -753,7 +742,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const { summary } = args;
 
 			try {
-				const updatedTask = await taskManager.setTaskStatus(stepTaskId, 'completed', {
+				const updatedTask = await taskManager.setTaskStatus(stepTaskId, 'done', {
 					result: summary,
 				});
 

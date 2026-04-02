@@ -41,7 +41,7 @@ const mockAgents: Signal<SpaceAgent[]> = signal([
 		id: 'agent-1',
 		spaceId: 'space-1',
 		name: 'Test Agent',
-		role: 'coder',
+		instructions: null,
 		createdAt: 0,
 		updatedAt: 0,
 	},
@@ -77,7 +77,11 @@ import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 
 /** Create a WorkflowNode with a given index. */
 function makeStep(index: number): WorkflowNode {
-	return { id: `node-${index}`, name: `Step ${index}`, agentId: 'agent-1' };
+	return {
+		id: `node-${index}`,
+		name: `Step ${index}`,
+		agents: [{ agentId: 'agent-1', name: 'coder' }],
+	};
 }
 
 /**
@@ -98,7 +102,6 @@ function buildLargeWorkflow(): SpaceWorkflow {
 		description: 'Performance test workflow with 25 nodes and 35 edges',
 		nodes,
 		startNodeId: 'node-0',
-		rules: [],
 		tags: [],
 		createdAt: 0,
 		updatedAt: 0,

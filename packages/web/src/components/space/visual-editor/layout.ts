@@ -32,10 +32,9 @@ function buildEndpointNodeLookup(nodes: WorkflowNode[]): Map<string, string> {
 	const lookup = new Map<string, string>();
 
 	for (const node of nodes) {
-		if (node.agentId) lookup.set(node.agentId, node.id);
 		if (node.name) lookup.set(node.name, node.id);
 
-		for (const agent of node.agents ?? []) {
+		for (const agent of node.agents) {
 			if (agent.name) lookup.set(agent.name, node.id);
 			if (agent.agentId) lookup.set(agent.agentId, node.id);
 		}

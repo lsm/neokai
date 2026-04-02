@@ -95,8 +95,8 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 		spaceId: space.id,
 	})) as { agents: SpaceAgent[] };
 
-	const coderAgent = agents.find((a) => a.role === 'coder');
-	const reviewerAgent = agents.find((a) => a.role === 'reviewer');
+	const coderAgent = agents.find((a) => a.name === 'Coder');
+	const reviewerAgent = agents.find((a) => a.name === 'Reviewer');
 
 	if (!coderAgent) throw new Error('Pre-seeded Coder agent not found');
 	if (!reviewerAgent) throw new Error('Pre-seeded Reviewer agent not found');
@@ -150,8 +150,8 @@ async function startWorkflowRunAndGetTask(
 		taskAgentSessionId: string | null;
 	}>;
 
-	const task = tasks.find((t) => t.workflowRunId === run.id && t.status === 'pending');
-	if (!task) throw new Error(`No pending task found for workflow run ${run.id}`);
+	const task = tasks.find((t) => t.workflowRunId === run.id && t.status === 'open');
+	if (!task) throw new Error(`No open task found for workflow run ${run.id}`);
 
 	return { runId: run.id, task };
 }
@@ -283,7 +283,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 
 			// Before the tick fires, taskAgentSessionId must not be set
 			expect(task.taskAgentSessionId).toBeFalsy();
-			expect(task.status).toBe('pending');
+			expect(task.status).toBe('open');
 
 			// Wait for SpaceRuntime tick loop to detect the pending task and spawn a Task Agent
 			const taskAgentSessionId = await waitForTaskAgentSpawned(
@@ -521,10 +521,10 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 				daemon,
 				space.id,
 				task.id,
-				['completed'],
+				['done'],
 				IS_MOCK ? 8_000 : 30_000
 			);
-			expect(finalStatus).toBe('completed');
+			expect(finalStatus).toBe('done');
 		},
 		TEST_TIMEOUT
 	);
@@ -595,10 +595,10 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 				daemon,
 				space.id,
 				task.id,
-				['completed'],
+				['done'],
 				IS_MOCK ? 8_000 : 30_000
 			);
-			expect(finalStatus).toBe('completed');
+			expect(finalStatus).toBe('done');
 
 			// Wait for the Space Agent to receive and process the completion notification.
 			// provision-global-agent.ts subscribes to space.task.completed and injects

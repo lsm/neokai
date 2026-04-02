@@ -10,12 +10,12 @@ import {
 // Test fixtures
 // ============================================================================
 
-function makeAgent(id: string, role: string): SpaceAgent {
+function makeAgent(id: string, name: string): SpaceAgent {
 	return {
 		id,
 		spaceId: 'space-1',
-		name: `${role} agent`,
-		role,
+		name,
+		instructions: null,
 		createdAt: 0,
 		updatedAt: 0,
 	};
@@ -25,13 +25,14 @@ function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
 	return {
 		id: 'node-1',
 		name: 'Test Node',
+		agents: [],
 		...overrides,
 	};
 }
 
-const agentCoder = makeAgent('agent-coder-id', 'coder');
-const agentReviewer = makeAgent('agent-reviewer-id', 'reviewer');
-const agentSecurity = makeAgent('agent-security-id', 'security');
+const agentCoder = makeAgent('agent-coder-id', 'coder agent');
+const agentReviewer = makeAgent('agent-reviewer-id', 'reviewer agent');
+const agentSecurity = makeAgent('agent-security-id', 'security agent');
 const allAgents: SpaceAgent[] = [agentCoder, agentReviewer, agentSecurity];
 
 // ============================================================================
@@ -39,21 +40,11 @@ const allAgents: SpaceAgent[] = [agentCoder, agentReviewer, agentSecurity];
 // ============================================================================
 
 describe('resolveNodeAgents', () => {
-	test('returns single-element array when only agentId is set', () => {
-		const node = makeNode({ agentId: 'agent-coder-id', instructions: 'do the thing' });
-		const result = resolveNodeAgents(node);
-		expect(result).toHaveLength(1);
-		expect(result[0].agentId).toBe('agent-coder-id');
-		expect(result[0].instructions).toBe('do the thing');
-		// Synthetic name uses agentId as placeholder
-		expect(result[0].name).toBe('agent-coder-id');
-	});
-
 	test('returns agents array when agents is set (non-empty)', () => {
 		const node = makeNode({
 			instructions: 'shared guidance',
 			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder', instructions: 'write code' },
+				{ agentId: 'agent-coder-id', name: 'coder' },
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 			],
 		});
@@ -61,62 +52,23 @@ describe('resolveNodeAgents', () => {
 		expect(result).toHaveLength(2);
 		expect(result[0].agentId).toBe('agent-coder-id');
 		expect(result[0].name).toBe('coder');
-		expect(result[0].instructions).toBe('shared guidance');
 		expect(result[1].agentId).toBe('agent-reviewer-id');
 		expect(result[1].name).toBe('reviewer');
-		expect(result[1].instructions).toBe('shared guidance');
 	});
 
-	test('agents takes precedence over agentId when both are set', () => {
-		const node = makeNode({
-			agentId: 'agent-coder-id',
-			agents: [{ agentId: 'agent-reviewer-id', name: 'reviewer' }],
-		});
-		const result = resolveNodeAgents(node);
-		expect(result).toHaveLength(1);
-		expect(result[0].agentId).toBe('agent-reviewer-id');
-	});
-
-	test('throws when neither agentId nor agents is provided', () => {
-		const node = makeNode();
-		expect(() => resolveNodeAgents(node)).toThrow(
-			'WorkflowNode "Test Node" (id: node-1) has neither agentId nor agents defined'
-		);
-	});
-
-	test('throws when agents is an empty array and agentId is absent', () => {
+	test('throws when agents is an empty array', () => {
 		const node = makeNode({ agents: [] });
 		expect(() => resolveNodeAgents(node)).toThrow();
 	});
 
 	test('single-element agents array works correctly', () => {
 		const node = makeNode({
-			instructions: 'custom',
 			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
 		});
-		expect(resolveNodeAgents(node)).toEqual([
-			{ agentId: 'agent-coder-id', name: 'coder', instructions: 'custom' },
-		]);
+		expect(resolveNodeAgents(node)).toEqual([{ agentId: 'agent-coder-id', name: 'coder' }]);
 	});
 
-	test('agentId with no instructions produces entry with undefined instructions', () => {
-		const node = makeNode({ agentId: 'agent-coder-id' });
-		const result = resolveNodeAgents(node);
-		expect(result[0].instructions).toBeUndefined();
-	});
-
-	test('single-agent shorthand preserves node-level model and systemPrompt overrides', () => {
-		const node = makeNode({
-			agentId: 'agent-coder-id',
-			model: 'gpt-5.4',
-			systemPrompt: 'Be concise.',
-		});
-		const result = resolveNodeAgents(node);
-		expect(result[0].model).toBe('gpt-5.4');
-		expect(result[0].systemPrompt).toBe('Be concise.');
-	});
-
-	test('same agentId can appear multiple times with different roles', () => {
+	test('same agentId can appear multiple times with different names', () => {
 		const node = makeNode({
 			agents: [
 				{ agentId: 'agent-coder-id', name: 'strict-reviewer' },
@@ -131,24 +83,20 @@ describe('resolveNodeAgents', () => {
 		expect(result[1].agentId).toBe('agent-coder-id');
 	});
 
-	test('multi-agent nodes use shared systemPrompt and instructions for every slot', () => {
+	test('preserves systemPrompt and instructions overrides on agent slots', () => {
 		const node = makeNode({
-			systemPrompt: 'Shared prompt.',
-			instructions: 'Shared guidance.',
 			agents: [
 				{
 					agentId: 'agent-coder-id',
 					name: 'fast-coder',
-					model: 'claude-haiku-4-5',
-					systemPrompt: 'Ignored slot prompt.',
-					instructions: 'Ignored slot instructions.',
+					systemPrompt: { mode: 'override', value: 'Be concise.' },
+					instructions: { mode: 'expand', value: 'Extra guidance.' },
 				},
 			],
 		});
 		const result = resolveNodeAgents(node);
-		expect(result[0].model).toBe('claude-haiku-4-5');
-		expect(result[0].systemPrompt).toBe('Shared prompt.');
-		expect(result[0].instructions).toBe('Shared guidance.');
+		expect(result[0].systemPrompt).toEqual({ mode: 'override', value: 'Be concise.' });
+		expect(result[0].instructions).toEqual({ mode: 'expand', value: 'Extra guidance.' });
 	});
 });
 
@@ -158,13 +106,17 @@ describe('resolveNodeAgents', () => {
 
 describe('resolveNodeChannels', () => {
 	test('returns empty array when no channels defined', () => {
-		const node = makeNode({ agentId: 'agent-coder-id' });
+		const node = makeNode({
+			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
+		});
 		expect(resolveNodeChannels(node, [])).toEqual([]);
 	});
 
 	test('returns empty array when channels is an empty array', () => {
 		const channels: WorkflowChannel[] = [];
-		const node = makeNode({ agentId: 'agent-coder-id' });
+		const node = makeNode({
+			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
+		});
 		expect(resolveNodeChannels(node, channels)).toEqual([]);
 	});
 
@@ -359,13 +311,8 @@ describe('resolveNodeChannels', () => {
 		expect(result[1]).toMatchObject({ fromRole: 'reviewer', toRole: 'security' });
 	});
 
-	test('backward-compat: node with only agentId and no channels resolves channels to []', () => {
-		const node = makeNode({ agentId: 'agent-coder-id' });
-		expect(resolveNodeChannels(node, [])).toEqual([]);
-	});
-
-	test('same agentId with different roles routes channels correctly', () => {
-		// Two slots using the same agent but different roles
+	test('same agentId with different names routes channels correctly', () => {
+		// Two slots using the same agent but different names
 		const channels = [
 			{ from: 'strict-reviewer', to: 'quick-reviewer', direction: 'one-way' as const },
 		];
@@ -391,13 +338,13 @@ describe('resolveNodeChannels', () => {
 
 describe('validateNodeChannels', () => {
 	test('returns empty errors for node with no channels', () => {
-		const node = makeNode({ agentId: 'agent-coder-id' });
+		const node = makeNode({ agents: [{ agentId: 'agent-coder-id', name: 'coder' }] });
 		expect(validateNodeChannels(node, allAgents, [])).toEqual([]);
 	});
 
 	test('returns empty errors for node with empty channels array', () => {
 		const channels: WorkflowChannel[] = [];
-		const node = makeNode({ agentId: 'agent-coder-id' });
+		const node = makeNode({ agents: [{ agentId: 'agent-coder-id', name: 'coder' }] });
 		expect(validateNodeChannels(node, allAgents, channels)).toEqual([]);
 	});
 
@@ -478,12 +425,12 @@ describe('validateNodeChannels', () => {
 		expect(errors.some((e) => e.includes('"unknown-agent-id"'))).toBe(true);
 	});
 
-	test('returns error from resolveNodeAgents when neither agentId nor agents provided', () => {
+	test('returns error from resolveNodeAgents when agents is empty', () => {
 		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
 		const node = makeNode({});
 		const errors = validateNodeChannels(node, allAgents, channels);
 		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain('neither agentId nor agents defined');
+		expect(errors[0]).toContain('no agents defined');
 	});
 
 	test('accumulates multiple errors', () => {
@@ -511,8 +458,8 @@ describe('validateNodeChannels', () => {
 		expect(errors.some((e) => e.includes('Duplicate names'))).toBe(true);
 	});
 
-	test('allows same agentId with different roles (no error)', () => {
-		// Same agent used twice with different roles — this is now permitted
+	test('allows same agentId with different names (no error)', () => {
+		// Same agent used twice with different names — this is permitted
 		const channels = [
 			{ from: 'strict-reviewer', to: 'quick-reviewer', direction: 'one-way' as const },
 		];
@@ -551,40 +498,51 @@ describe('validateNodeChannels', () => {
 });
 
 // ============================================================================
-// Backward compatibility
+// Multi-agent nodes
 // ============================================================================
 
-describe('backward compatibility (nodes with only agentId)', () => {
-	test('resolveNodeAgents works for legacy single-agent nodes', () => {
+describe('multi-agent nodes', () => {
+	test('resolveNodeAgents works for multi-agent nodes', () => {
 		const node: WorkflowNode = {
-			id: 'legacy-node',
-			name: 'Legacy Node',
-			agentId: 'agent-coder-id',
-			instructions: 'do stuff',
+			id: 'multi-node',
+			name: 'Multi Node',
+			agents: [
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+			],
 		};
 		const result = resolveNodeAgents(node);
-		expect(result).toHaveLength(1);
+		expect(result).toHaveLength(2);
 		expect(result[0].agentId).toBe('agent-coder-id');
-		expect(result[0].instructions).toBe('do stuff');
-		// Synthetic name = agentId for legacy shorthand
-		expect(result[0].name).toBe('agent-coder-id');
+		expect(result[0].name).toBe('coder');
 	});
 
-	test('resolveNodeChannels returns [] for legacy nodes with no channels', () => {
+	test('resolveNodeChannels works for multi-agent nodes', () => {
 		const node: WorkflowNode = {
-			id: 'legacy-node',
-			name: 'Legacy Node',
-			agentId: 'agent-coder-id',
+			id: 'multi-node',
+			name: 'Multi Node',
+			agents: [
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+			],
 		};
-		expect(resolveNodeChannels(node, [])).toEqual([]);
+		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
+		const result = resolveNodeChannels(node, channels);
+		expect(result).toHaveLength(1);
+		expect(result[0].fromAgentId).toBe('agent-coder-id');
+		expect(result[0].toAgentId).toBe('agent-reviewer-id');
 	});
 
-	test('validateNodeChannels returns no errors for legacy nodes with no channels', () => {
+	test('validateNodeChannels returns no errors for valid multi-agent nodes', () => {
 		const node: WorkflowNode = {
-			id: 'legacy-node',
-			name: 'Legacy Node',
-			agentId: 'agent-coder-id',
+			id: 'multi-node',
+			name: 'Multi Node',
+			agents: [
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+			],
 		};
-		expect(validateNodeChannels(node, allAgents, [])).toEqual([]);
+		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
+		expect(validateNodeChannels(node, allAgents, channels)).toEqual([]);
 	});
 });

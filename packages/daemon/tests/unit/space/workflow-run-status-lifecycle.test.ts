@@ -122,11 +122,11 @@ describe('canTransition', () => {
 	});
 
 	test('3. in_progress → completed is valid', () => {
-		expect(canTransition('in_progress', 'completed')).toBe(true);
+		expect(canTransition('in_progress', 'done')).toBe(true);
 	});
 
 	test('4. in_progress → needs_attention is valid', () => {
-		expect(canTransition('in_progress', 'needs_attention')).toBe(true);
+		expect(canTransition('in_progress', 'blocked')).toBe(true);
 	});
 
 	test('5. in_progress → cancelled is valid', () => {
@@ -134,23 +134,23 @@ describe('canTransition', () => {
 	});
 
 	test('6. needs_attention → in_progress is valid (human resolved)', () => {
-		expect(canTransition('needs_attention', 'in_progress')).toBe(true);
+		expect(canTransition('blocked', 'in_progress')).toBe(true);
 	});
 
 	test('7. needs_attention → cancelled is valid', () => {
-		expect(canTransition('needs_attention', 'cancelled')).toBe(true);
+		expect(canTransition('blocked', 'cancelled')).toBe(true);
 	});
 
 	test('8. completed → any status is invalid (terminal state)', () => {
 		const allStatuses: WorkflowRunStatus[] = [
 			'pending',
 			'in_progress',
-			'completed',
+			'done',
 			'cancelled',
-			'needs_attention',
+			'blocked',
 		];
 		for (const to of allStatuses) {
-			expect(canTransition('completed', to)).toBe(false);
+			expect(canTransition('done', to)).toBe(false);
 		}
 	});
 
@@ -160,7 +160,7 @@ describe('canTransition', () => {
 			'in_progress',
 			'completed',
 			'cancelled',
-			'needs_attention',
+			'blocked',
 		];
 		for (const to of allStatuses) {
 			expect(canTransition('cancelled', to)).toBe(false);
@@ -168,19 +168,19 @@ describe('canTransition', () => {
 	});
 
 	test('10. pending → completed is invalid (must go through in_progress)', () => {
-		expect(canTransition('pending', 'completed')).toBe(false);
+		expect(canTransition('pending', 'done')).toBe(false);
 	});
 
 	test('11. pending → needs_attention is invalid', () => {
-		expect(canTransition('pending', 'needs_attention')).toBe(false);
+		expect(canTransition('pending', 'blocked')).toBe(false);
 	});
 
 	test('VALID_TRANSITIONS contains all 5 lifecycle statuses', () => {
 		const statuses = Object.keys(VALID_TRANSITIONS);
 		expect(statuses).toContain('pending');
 		expect(statuses).toContain('in_progress');
-		expect(statuses).toContain('needs_attention');
-		expect(statuses).toContain('completed');
+		expect(statuses).toContain('blocked');
+		expect(statuses).toContain('done');
 		expect(statuses).toContain('cancelled');
 		expect(statuses).toHaveLength(5);
 	});
@@ -192,9 +192,7 @@ describe('canTransition', () => {
 
 describe('assertValidTransition', () => {
 	test('12. includes run ID in error message when provided', () => {
-		expect(() => assertValidTransition('completed', 'in_progress', 'run-abc')).toThrow(
-			/run run-abc/
-		);
+		expect(() => assertValidTransition('done', 'in_progress', 'run-abc')).toThrow(/run run-abc/);
 	});
 
 	test('13. error lists "none" when terminal state has no allowed transitions', () => {
@@ -203,8 +201,8 @@ describe('assertValidTransition', () => {
 
 	test('does not throw on valid transition', () => {
 		expect(() => assertValidTransition('pending', 'in_progress')).not.toThrow();
-		expect(() => assertValidTransition('in_progress', 'completed')).not.toThrow();
-		expect(() => assertValidTransition('needs_attention', 'in_progress')).not.toThrow();
+		expect(() => assertValidTransition('in_progress', 'done')).not.toThrow();
+		expect(() => assertValidTransition('blocked', 'in_progress')).not.toThrow();
 	});
 });
 
@@ -225,7 +223,7 @@ describe('SpaceWorkflowRunRepository.transitionStatus', () => {
 		const { runId } = createWorkflowAndRun(db, SPACE);
 		runRepo.transitionStatus(runId, 'in_progress');
 		const before = Date.now();
-		const updated = runRepo.transitionStatus(runId, 'completed');
+		const updated = runRepo.transitionStatus(runId, 'done');
 		const after = Date.now();
 		expect(updated.completedAt).toBeDefined();
 		expect(updated.completedAt!).toBeGreaterThanOrEqual(before);
@@ -261,12 +259,12 @@ describe('SpaceWorkflowRunRepository.transitionStatus', () => {
 	test('19. throws on invalid transition completed → in_progress (terminal state)', () => {
 		const { runId } = createWorkflowAndRun(db, SPACE);
 		runRepo.transitionStatus(runId, 'in_progress');
-		runRepo.transitionStatus(runId, 'completed');
+		runRepo.transitionStatus(runId, 'done');
 		expect(() => runRepo.transitionStatus(runId, 'in_progress')).toThrow(
 			/Invalid workflow run status transition/
 		);
 		// Status must remain completed (immutable terminal state)
-		expect(runRepo.getRun(runId)?.status).toBe('completed');
+		expect(runRepo.getRun(runId)?.status).toBe('done');
 	});
 });
 
@@ -285,7 +283,7 @@ describe('getRehydratableRuns', () => {
 	test('21. returns needs_attention runs (blocked at human gate, need executor after restart)', () => {
 		const { runId } = createWorkflowAndRun(db, SPACE);
 		runRepo.transitionStatus(runId, 'in_progress');
-		runRepo.transitionStatus(runId, 'needs_attention');
+		runRepo.transitionStatus(runId, 'blocked');
 		const runs = runRepo.getRehydratableRuns(SPACE);
 		expect(runs.map((r) => r.id)).toContain(runId);
 	});
@@ -296,7 +294,7 @@ describe('getRehydratableRuns', () => {
 
 		const { runId: completedId } = createWorkflowAndRun(db, SPACE);
 		runRepo.transitionStatus(completedId, 'in_progress');
-		runRepo.transitionStatus(completedId, 'completed');
+		runRepo.transitionStatus(completedId, 'done');
 
 		const { runId: cancelledId } = createWorkflowAndRun(db, SPACE);
 		runRepo.transitionStatus(cancelledId, 'cancelled');
@@ -311,7 +309,7 @@ describe('getRehydratableRuns', () => {
 	test('23. needs_attention → in_progress makes run processable again (tick-loop eligible)', () => {
 		const { runId } = createWorkflowAndRun(db, SPACE);
 		runRepo.transitionStatus(runId, 'in_progress');
-		runRepo.transitionStatus(runId, 'needs_attention');
+		runRepo.transitionStatus(runId, 'blocked');
 
 		// Human resolves the blocking issue
 		runRepo.transitionStatus(runId, 'in_progress');

@@ -268,8 +268,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			// Find the pending task for this step (created when the workflow node was activated)
+			// Filter by step name in the task title since workflowNodeId is no longer on SpaceTask.
 			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
-			const stepTasks = allRunTasks.filter((t) => t.workflowNodeId === step_id);
+			const stepTasks = allRunTasks.filter(
+				(t) => t.title.includes(step.name) || t.title.includes(step_id)
+			);
 			if (stepTasks.length === 0) {
 				return jsonResult({
 					success: false,
@@ -296,41 +299,22 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Ensure customAgentId is set — fall back to the primary node agent ID for preset agents.
-			// WorkflowExecutor sets customAgentId to undefined for coder/general preset roles,
-			// but those agents are still SpaceAgent records. Use resolveNodeAgents to get the
-			// correct primary agentId regardless of whether the step uses agentId or agents[].
+			// Use resolveNodeAgents to get the agent list for this step.
 			const nodeAgents = resolveNodeAgents(step);
 			const primaryAgentId = nodeAgents[0]?.agentId;
-			const effectiveTask = {
-				...stepTask,
-				customAgentId: stepTask.customAgentId ?? primaryAgentId,
+
+			// Build effectiveTask with optional instruction override
+			const effectiveTask = instructions ? { ...stepTask, description: instructions } : stepTask;
+
+			// Find the WorkflowNodeAgent slot for this step.
+			// Use the first slot as the primary agent.
+			const agentSlot = nodeAgents[0];
+
+			// Extract slot-level overrides (systemPrompt) if present.
+			// model is no longer on WorkflowNodeAgent; systemPrompt is now WorkflowNodeAgentOverride.
+			const slotOverrides: import('../agents/custom-agent').SlotOverrides = {
+				systemPrompt: agentSlot?.systemPrompt?.value,
 			};
-
-			// Apply optional instruction override
-			if (instructions) {
-				effectiveTask.description = instructions;
-			}
-
-			// Find the WorkflowNodeAgent slot that spawned this task.
-			// When agentName is stored on the task (migration 51+), use it for an exact match.
-			// This correctly handles nodes where the same agentId appears multiple times with
-			// different agent names (e.g. "strict-reviewer" and "quick-reviewer"): each task
-			// was created with its own agentName, so the lookup is unambiguous.
-			// For tasks created before migration 51 (no agentName), fall back to find-by-agentId,
-			// which always returns the first matching slot — acceptable for legacy data.
-
-			const agentSlot = effectiveTask.agentName
-				? nodeAgents.find((a) => a.name === effectiveTask.agentName)
-				: nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
-
-			// Extract slot-level overrides (model and systemPrompt) if present.
-			// Always construct the object; undefined values are handled downstream
-			// (createCustomAgentInit guards on !== undefined for each field).
-			// When agentSlot is undefined (stale agentName: the workflow was edited after
-			// the task was created and the slot no longer exists), both fields are undefined
-			// and no override is applied — the base agent config is used as-is.
-			const slotOverrides = { model: agentSlot?.model, systemPrompt: agentSlot?.systemPrompt };
 
 			// Generate a new session ID for the sub-session.
 			// Note: the factory may assign a different ID internally. All subsequent code
@@ -339,6 +323,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			const subSessionId = randomUUID();
 
 			// Resolve the agent session init, applying per-slot overrides when present.
+			if (!primaryAgentId) {
+				return jsonResult({ success: false, error: `No agent assigned to step "${step.name}"` });
+			}
 			let init: AgentSessionInit;
 			try {
 				init = resolveAgentInit({
@@ -350,6 +337,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					workflowRun: run,
 					workflow,
 					slotOverrides,
+					agentId: primaryAgentId,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -357,16 +345,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			// Resolve agent identity for group membership tracking.
-			// resolveAgentInit() already validated the agent exists, so this lookup
-			// should always succeed — null here would be a data inconsistency.
-			const agentForMember = agentManager.getById(effectiveTask.customAgentId!);
+			const agentForMember = agentManager.getById(primaryAgentId);
 
 			// Use the slot's name (WorkflowNodeAgent.name) for channel routing and group membership.
-			// This ensures that when the same agent appears multiple times in a node with different
-			// slot names (e.g. "strict-reviewer" and "quick-reviewer"), each session is registered
-			// with its unique slot name so ChannelResolver.canSend() checks work correctly.
-			// Falls back to the base agent's role, then 'agent' if neither is available.
-			const memberRole = agentSlot?.name ?? agentForMember?.role ?? 'agent';
+			// Falls back to agent name, then 'agent' if neither is available.
+			const memberRole = agentSlot?.name ?? agentForMember?.name ?? 'agent';
 
 			// Attach node agent peer communication MCP server if a factory is provided.
 			// The server is built with the slot role so it can validate channels using the
@@ -384,7 +367,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			let actualSessionId: string;
 			try {
 				actualSessionId = await sessionFactory.create(init, {
-					agentId: effectiveTask.customAgentId ?? undefined,
+					agentId: primaryAgentId,
 					role: memberRole,
 				});
 			} catch (err) {
@@ -402,21 +385,17 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// the subsequent message injection fails.
 			taskRepo.updateTask(stepTask.id, {
 				taskAgentSessionId: actualSessionId,
-				currentStep: `Running agent for step: ${step.name}`,
 			});
 
-			// Transition main task from pending → in_progress (first step spawn)
+			// Transition main task from open → in_progress (first step spawn)
 			const mainTask = taskRepo.getTask(taskId);
-			if (mainTask && mainTask.status === 'pending') {
+			if (mainTask && mainTask.status === 'open') {
 				try {
 					await taskManager.setTaskStatus(taskId, 'in_progress');
 				} catch {
 					// Non-fatal — task may have already been transitioned elsewhere
 				}
 			}
-
-			// Update main task's currentStep to reflect which step is being executed
-			taskRepo.updateTask(taskId, { currentStep: `Executing step: ${step.name}` });
 
 			// Build the task context message and inject it into the sub-session.
 			// This is non-fatal: if injection fails the sub-session still runs (and is
@@ -427,7 +406,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				// resolveAgentInit() already validated that the agent exists, so this
 				// getById() call should always succeed. If it somehow returns null after
 				// resolveAgentInit() passed, that is a data inconsistency worth surfacing.
-				const agent = agentManager.getById(effectiveTask.customAgentId!);
+				const agent = agentManager.getById(primaryAgentId);
 				if (!agent) {
 					return jsonResult({
 						success: true,
@@ -436,7 +415,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						stepName: step.name,
 						taskId: stepTask.id,
 						warning:
-							`Agent ${effectiveTask.customAgentId} not found when building task message — ` +
+							`Agent ${primaryAgentId} not found when building task message — ` +
 							`sub-session is running without initial task context. This should not happen.`,
 					});
 				}
@@ -495,10 +474,15 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Find task(s) for this step
-			const stepTasks = taskRepo
-				.listByWorkflowRun(workflowRunId)
-				.filter((t) => t.workflowNodeId === stepId);
+			// Find task(s) for this step (filter by step ID or name in task title)
+			const allStepTasks = taskRepo.listByWorkflowRun(workflowRunId);
+			const workflow = workflowManager.getWorkflow(
+				workflowRunRepo.getRun(workflowRunId)?.workflowId ?? ''
+			);
+			const stepNode = workflow?.nodes.find((n) => n.id === stepId);
+			const stepTasks = allStepTasks.filter(
+				(t) => (stepNode && t.title.includes(stepNode.name)) || t.title.includes(stepId)
+			);
 
 			if (stepTasks.length === 0) {
 				return jsonResult({
@@ -512,13 +496,13 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			const stepTask = stepTasks[stepTasks.length - 1];
 
-			// Fast path: task already marked completed by the completion callback
-			if (stepTask.status === 'completed') {
+			// Fast path: task already marked done by the completion callback
+			if (stepTask.status === 'done') {
 				return jsonResult({
 					success: true,
 					stepId,
 					taskId: stepTask.id,
-					taskStatus: 'completed',
+					taskStatus: 'done',
 					sessionStatus: 'completed',
 					message: 'Step has completed successfully.',
 				});
@@ -583,11 +567,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 *
 		 * Updates the main SpaceTask status to one of:
 		 *   completed        — task succeeded; summary records the result
-		 *   needs_attention  — task requires human intervention; error describes the issue
+		 *   blocked          — task requires human intervention
 		 *   cancelled        — task was cancelled
 		 */
 		async report_result(args: ReportResultInput): Promise<ToolResult> {
-			const { status, summary, error: errorDetail } = args;
+			const { status, summary } = args;
 
 			const mainTask = taskRepo.getTask(taskId);
 			if (!mainTask) {
@@ -597,7 +581,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			try {
 				await taskManager.setTaskStatus(taskId, status, {
 					result: summary,
-					error: errorDetail,
 				});
 
 				// Emit DaemonHub event so the Space Agent is notified of task completion/failure.
@@ -611,7 +594,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						workflowRunId,
 						taskTitle: mainTask.title,
 					};
-					const eventName = status === 'completed' ? 'space.task.completed' : 'space.task.failed';
+					const eventName = status === 'done' ? 'space.task.completed' : 'space.task.failed';
 					void daemonHub.emit(eventName, eventPayload).catch((err) => {
 						log.warn(
 							`Failed to emit ${eventName} for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
@@ -671,10 +654,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Agent calling report_workflow_done prematurely while agents are still
 			// running.
 			if (completionDetector) {
-				const wfDef = workflowManager.getWorkflow(run.workflowId);
-				const channels = wfDef?.channels ?? [];
-				const nodes = wfDef?.nodes ?? [];
-				if (!completionDetector.isComplete(workflowRunId, channels, nodes)) {
+				if (!completionDetector.isComplete(workflowRunId)) {
 					return jsonResult({
 						success: false,
 						error:
@@ -691,12 +671,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			try {
-				// Mark the workflow run as completed — SpaceRuntime tick will detect this
+				// Mark the workflow run as done — SpaceRuntime tick will detect this
 				// and emit workflow_run_completed via the notification sink.
-				workflowRunRepo.transitionStatus(workflowRunId, 'completed');
+				workflowRunRepo.transitionStatus(workflowRunId, 'done');
 
-				// Mark the main task as completed (mirrors report_result logic).
-				await taskManager.setTaskStatus(taskId, 'completed', {
+				// Mark the main task as done (mirrors report_result logic).
+				await taskManager.setTaskStatus(taskId, 'done', {
 					result: summary,
 				});
 
@@ -707,7 +687,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 							sessionId: 'global',
 							taskId,
 							spaceId: space.id,
-							status: 'completed',
+							status: 'done',
 							summary: summary ?? '',
 							workflowRunId,
 							taskTitle: mainTask.title,
@@ -751,11 +731,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * The Task Agent itself is listed as a member (role: 'task-agent').
 		 */
 		async list_group_members(_args: ListGroupMembersInput): Promise<ToolResult> {
-			// Build ChannelResolver from the active workflow run's config
-			const run = workflowRunRepo.getRun(workflowRunId);
-			const resolver = ChannelResolver.fromRunConfig(
-				run?.config as Record<string, unknown> | undefined
-			);
+			// Build ChannelResolver — run.config is no longer stored on SpaceWorkflowRun,
+			// so channel topology is not available here; resolver will be empty.
+			const resolver = ChannelResolver.fromRunConfig(undefined);
 
 			// Get all tasks for this workflow run with active sub-sessions
 			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
@@ -764,30 +742,30 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			const members = activeTasks.map((t) => {
 				const ts = t.status;
 				const memberStatus =
-					ts === 'completed'
+					ts === 'done'
 						? 'completed'
-						: ts === 'needs_attention' || ts === 'cancelled'
+						: ts === 'blocked' || ts === 'cancelled'
 							? 'failed'
 							: 'active';
 				return {
 					sessionId: t.taskAgentSessionId!,
-					role: t.agentName ?? 'agent',
-					agentId: t.customAgentId ?? null,
+					role: 'agent',
+					agentId: null as string | null,
 					status: memberStatus,
-					permittedTargets: resolver.getPermittedTargets(t.agentName ?? 'agent'),
+					permittedTargets: resolver.getPermittedTargets('agent'),
 					completionState: {
-						agentName: t.agentName ?? null,
+						agentName: null as string | null,
 						taskStatus: t.status,
-						completionSummary: t.completionSummary ?? null,
+						completionSummary: t.result ?? null,
 						completedAt: t.completedAt ?? null,
 					},
 				};
 			});
 
 			const nodeCompletionState = allRunTasks.map((t) => ({
-				agentName: t.agentName ?? null,
+				agentName: null as string | null,
 				taskStatus: t.status,
-				completionSummary: t.completionSummary ?? null,
+				completionSummary: t.result ?? null,
 				completedAt: t.completedAt ?? null,
 			}));
 
@@ -823,10 +801,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message } = args;
 
-			const run = workflowRunRepo.getRun(workflowRunId);
-			const resolver = ChannelResolver.fromRunConfig(
-				run?.config as Record<string, unknown> | undefined
-			);
+			// run.config is no longer stored on SpaceWorkflowRun; channel topology uses empty resolver.
+			const resolver = ChannelResolver.fromRunConfig(undefined);
 
 			// When no channel topology is declared, all send_message calls fail.
 			if (resolver.isEmpty()) {
@@ -880,7 +856,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			const sendPeers = taskRepo
 				.listByWorkflowRun(workflowRunId)
 				.filter((t) => t.taskAgentSessionId)
-				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.agentName ?? 'agent' }));
+				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: 'agent' }));
 			const delivered: Array<{ role: string; sessionId: string }> = [];
 			const notFound: string[] = [];
 			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
@@ -958,33 +934,23 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 			}
 
-			// Only transition to needs_attention from valid states.
-			// Valid transitions: in_progress → needs_attention, review → needs_attention.
-			const canTransition = mainTask.status === 'in_progress' || mainTask.status === 'review';
+			// Only transition to blocked from valid states.
+			// Valid transitions: in_progress → blocked.
+			const canTransition = mainTask.status === 'in_progress';
 
 			if (!canTransition) {
 				return jsonResult({
 					success: false,
 					error:
 						`Cannot request human input when task status is "${mainTask.status}". ` +
-						`Task must be in_progress or review.`,
+						`Task must be in_progress.`,
 				});
 			}
 
-			// The `error` field stores the full question + context for complete diagnostic context.
-			// The `currentStep` field stores just the bare question for UI display — it is
-			// intentionally shorter than `error` to fit the summary display in the task list.
-			const questionWithContext = questionContext
-				? `${question}\n\nContext: ${questionContext}`
-				: question;
-
 			try {
-				await taskManager.setTaskStatus(taskId, 'needs_attention', {
-					error: questionWithContext,
+				await taskManager.setTaskStatus(taskId, 'blocked', {
+					result: questionContext ? `${question}\n\nContext: ${questionContext}` : question,
 				});
-
-				// Update currentStep to the bare question for visible UI display
-				taskRepo.updateTask(taskId, { currentStep: question });
 
 				return jsonResult({
 					success: true,

@@ -124,15 +124,15 @@ class SpaceStore {
 	/** Tasks not associated with any workflow run */
 	readonly standaloneTasks = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
 
-	/** Tasks grouped by workflow node ID — used to show per-node agent completion state */
+	/** Tasks grouped by workflow run ID — used to show per-run agent completion state */
 	readonly tasksByNodeId = computed(() => {
 		const map = new Map<string, SpaceTask[]>();
 		for (const task of this.tasks.value) {
-			if (task.workflowNodeId) {
-				let arr = map.get(task.workflowNodeId);
+			if (task.workflowRunId) {
+				let arr = map.get(task.workflowRunId);
 				if (!arr) {
 					arr = [];
-					map.set(task.workflowNodeId, arr);
+					map.set(task.workflowRunId, arr);
 				}
 				arr.push(task);
 			}
@@ -270,7 +270,7 @@ class SpaceStore {
 					const idx = swt.findIndex((s) => s.id === event.spaceId);
 					if (idx >= 0) {
 						// Only add if not completed/cancelled
-						if (event.task.status !== 'completed' && event.task.status !== 'cancelled') {
+						if (event.task.status !== 'done' && event.task.status !== 'cancelled') {
 							this.spacesWithTasks.value = [
 								...swt.slice(0, idx),
 								{ ...swt[idx], tasks: [...swt[idx].tasks, event.task] },
@@ -294,7 +294,7 @@ class SpaceStore {
 						const spaceTasks = swt[idx].tasks;
 						const taskIdx = spaceTasks.findIndex((t) => t.id === event.task.id);
 						// If task was completed/cancelled, remove it
-						if (event.task.status === 'completed' || event.task.status === 'cancelled') {
+						if (event.task.status === 'done' || event.task.status === 'cancelled') {
 							if (taskIdx >= 0) {
 								const updated = spaceTasks.filter((t) => t.id !== event.task.id);
 								this.spacesWithTasks.value = [

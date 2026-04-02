@@ -186,7 +186,7 @@ describe('WorkflowExecutor', () => {
 			const { workflow, run } = createLinearWorkflow([
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
 			]);
-			const completedRun = { ...run, status: 'completed' as const };
+			const completedRun = { ...run, status: 'done' as const };
 			expect(makeExecutor(workflow, completedRun).isComplete()).toBe(true);
 		});
 

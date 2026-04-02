@@ -101,13 +101,13 @@ describe('CheckNodeStatusSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('TaskResultStatusSchema', () => {
-	test('accepts completed', () => {
-		const result = TaskResultStatusSchema.safeParse('completed');
+	test('accepts done', () => {
+		const result = TaskResultStatusSchema.safeParse('done');
 		expect(result.success).toBe(true);
 	});
 
 	test('accepts needs_attention', () => {
-		const result = TaskResultStatusSchema.safeParse('needs_attention');
+		const result = TaskResultStatusSchema.safeParse('blocked');
 		expect(result.success).toBe(true);
 	});
 
@@ -133,23 +133,23 @@ describe('TaskResultStatusSchema', () => {
 
 describe('ReportResultSchema', () => {
 	test('accepts completed status with summary', () => {
-		const result = ReportResultSchema.safeParse({ status: 'completed', summary: 'Task done.' });
+		const result = ReportResultSchema.safeParse({ status: 'done', summary: 'Task done.' });
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.status).toBe('completed');
+			expect(result.data.status).toBe('done');
 			expect(result.data.error).toBeUndefined();
 		}
 	});
 
 	test('accepts needs_attention status with summary and error', () => {
 		const result = ReportResultSchema.safeParse({
-			status: 'needs_attention',
+			status: 'blocked',
 			summary: 'Blocked on auth issue.',
 			error: 'OAuth token expired',
 		});
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.status).toBe('needs_attention');
+			expect(result.data.status).toBe('blocked');
 			expect(result.data.error).toBe('OAuth token expired');
 		}
 	});
@@ -173,7 +173,7 @@ describe('ReportResultSchema', () => {
 	});
 
 	test('rejects missing summary', () => {
-		const result = ReportResultSchema.safeParse({ status: 'completed' });
+		const result = ReportResultSchema.safeParse({ status: 'done' });
 		expect(result.success).toBe(false);
 	});
 
@@ -183,7 +183,7 @@ describe('ReportResultSchema', () => {
 	});
 
 	test('rejects non-string summary', () => {
-		const result = ReportResultSchema.safeParse({ status: 'completed', summary: 99 });
+		const result = ReportResultSchema.safeParse({ status: 'done', summary: 99 });
 		expect(result.success).toBe(false);
 	});
 

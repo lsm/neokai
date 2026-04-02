@@ -63,16 +63,14 @@ function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
 	channels: ResolvedChannel[]
-): string {
+): { runId: string; channels: ResolvedChannel[] } {
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const workflow = workflowRepo.createWorkflow({
 		spaceId,
 		name: 'Test Workflow',
 		description: '',
 		nodes: [],
-		transitions: [],
 		startNodeId: '',
-		rules: [],
 	});
 
 	const runRepo = new SpaceWorkflowRunRepository(db);
@@ -82,13 +80,9 @@ function seedWorkflowRunWithChannels(
 		title: 'Test Run',
 	});
 
-	if (channels.length > 0) {
-		runRepo.updateRun(run.id, {
-			config: { _resolvedChannels: channels },
-		});
-	}
-
-	return run.id;
+	// Channels are stored in-memory on SpaceRuntime and injected directly into AgentMessageRouter.
+	// They are no longer persisted in the run config.
+	return { runId: run.id, channels };
 }
 
 function makeResolvedChannel(fromRole: string, toRole: string): ResolvedChannel {
@@ -113,7 +107,6 @@ interface TestCtx {
 	dir: string;
 	spaceId: string;
 	spaceTaskRepo: SpaceTaskRepository;
-	workflowRunRepo: SpaceWorkflowRunRepository;
 	coderSessionId: string;
 	reviewerSessionId: string;
 }
@@ -122,7 +115,7 @@ function seedPeerTask(
 	db: BunDatabase,
 	spaceId: string,
 	workflowRunId: string,
-	nodeId: string,
+	_nodeId: string,
 	agentName: string,
 	sessionId: string
 ): void {
@@ -136,23 +129,14 @@ function seedPeerTask(
 			)
 			.get(spaceId) as { next: number }
 	).next;
+	// Note: agent_name and workflow_node_id were removed in M71.
+	// The AgentMessageRouter resolves peers by t.title (which stores the agent slot name).
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority, agent_name,
-        workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, '', 'in_progress', 'normal', ?, ?, ?, '[]', ?, ?, ?)`
-	).run(
-		id,
-		spaceId,
-		nextNumber,
-		`Task for ${agentName}`,
-		agentName,
-		workflowRunId,
-		nodeId,
-		sessionId,
-		now,
-		now
-	);
+       (id, space_id, task_number, title, description, status, priority,
+        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, '', 'in_progress', 'normal', ?, '[]', ?, ?, ?)`
+	).run(id, spaceId, nextNumber, agentName, workflowRunId, sessionId, now, now);
 	db.exec('PRAGMA foreign_keys = ON');
 }
 
@@ -163,7 +147,6 @@ function makeCtx(): TestCtx {
 	seedSpaceRow(db, spaceId);
 
 	const spaceTaskRepo = new SpaceTaskRepository(db);
-	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 
 	const coderSessionId = 'session-coder-unified';
 	const reviewerSessionId = 'session-reviewer-unified';
@@ -173,7 +156,6 @@ function makeCtx(): TestCtx {
 		dir,
 		spaceId,
 		spaceTaskRepo,
-		workflowRunRepo,
 		coderSessionId,
 		reviewerSessionId,
 	};
@@ -219,7 +201,7 @@ describe('send_message with ChannelRouter injected', () => {
 	});
 
 	test('agent name target → DM delivery via ChannelRouter', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -228,9 +210,8 @@ describe('send_message with ChannelRouter injected', () => {
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -245,7 +226,7 @@ describe('send_message with ChannelRouter injected', () => {
 	});
 
 	test('unknown target → clear error from ChannelRouter', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -254,9 +235,8 @@ describe('send_message with ChannelRouter injected', () => {
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -269,7 +249,7 @@ describe('send_message with ChannelRouter injected', () => {
 	});
 
 	test('unauthorized target → error from ChannelRouter', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('reviewer', 'coder'), // coder cannot send to reviewer
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -278,9 +258,8 @@ describe('send_message with ChannelRouter injected', () => {
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -293,7 +272,7 @@ describe('send_message with ChannelRouter injected', () => {
 	});
 
 	test("broadcast '*' → broadcast via AgentMessageRouter", async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -302,9 +281,8 @@ describe('send_message with ChannelRouter injected', () => {
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -336,7 +314,7 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 	});
 
 	test('role target → DM via legacy path', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -360,7 +338,7 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 	});
 
 	test("broadcast '*' → broadcast via legacy path", async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -404,7 +382,7 @@ describe('both paths produce same behavior for role-based DM', () => {
 	});
 
 	test('success result structure matches between legacy and ChannelRouter paths', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -429,9 +407,8 @@ describe('both paths produce same behavior for role-based DM', () => {
 		const routerBaseConfig = makeBaseConfig(ctx, workflowRunId, injectedRouter);
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: routerBaseConfig.messageInjector,
 		});
 		const routerHandlers = createNodeAgentToolHandlers({ ...routerBaseConfig, agentMessageRouter });
@@ -472,7 +449,7 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 	});
 
 	test('node name target fans out to all agents mapped to that node', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 			makeResolvedChannel('coder', 'security'),
 		]);
@@ -492,9 +469,8 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 		// Configure AgentMessageRouter with nodeGroups so 'review-node' expands to both roles
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 			nodeGroups: {
 				'review-node': ['reviewer', 'security'],
@@ -521,7 +497,7 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 	});
 
 	test('unknown node name returns an error when nodeGroups not configured', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -531,9 +507,8 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 		// No nodeGroups configured — node names are not resolvable
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -569,7 +544,7 @@ describe('send_message: cross-node delivery', () => {
 		// This simulates cross-node delivery: coder (Node A) → reviewer (Node B).
 		// Both agents are tasks in the same workflow run but can be on different nodes.
 		// The AgentMessageRouter resolves cross-node delivery by role (agentName).
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		// Reviewer is on NODE_ID (same node for this test — cross-node via nodeGroups)
@@ -579,9 +554,8 @@ describe('send_message: cross-node delivery', () => {
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -599,7 +573,7 @@ describe('send_message: cross-node delivery', () => {
 	});
 
 	test('cross-node delivery via fan-out: coder fans out to all agents across nodes', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 			makeResolvedChannel('coder', 'tester'),
 		]);
@@ -611,9 +585,8 @@ describe('send_message: cross-node delivery', () => {
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -648,7 +621,7 @@ describe('send_message: gate blocked via topology', () => {
 
 	test('send is blocked when no channel is declared from sender to target', async () => {
 		// Topology only declares reviewer→coder; coder has no outgoing channels
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('reviewer', 'coder'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -657,9 +630,8 @@ describe('send_message: gate blocked via topology', () => {
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -677,16 +649,15 @@ describe('send_message: gate blocked via topology', () => {
 	});
 
 	test('send is blocked when topology is empty (no channels declared)', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
 		const injected: Array<{ sessionId: string; message: string }> = [];
 		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -704,7 +675,7 @@ describe('send_message: gate blocked via topology', () => {
 
 	test('send is allowed when channel is declared in the correct direction', async () => {
 		// Topology declares coder→reviewer; send should succeed
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
@@ -713,9 +684,8 @@ describe('send_message: gate blocked via topology', () => {
 
 		const agentMessageRouter = new AgentMessageRouter({
 			spaceTaskRepo: ctx.spaceTaskRepo,
-			workflowNodeId: NODE_ID,
-			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
+			resolvedChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 

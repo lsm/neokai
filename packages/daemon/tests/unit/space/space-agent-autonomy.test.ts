@@ -261,9 +261,9 @@ describe('formatEventMessage — autonomy level in message', () => {
 	const spaceId = 'space-notify-test';
 	const TIMESTAMP = '2026-03-20T10:00:00.000Z';
 
-	test('task_needs_attention message includes supervised autonomy level', () => {
+	test('task_blocked message includes supervised autonomy level', () => {
 		const event: SpaceNotificationEvent = {
-			kind: 'task_needs_attention',
+			kind: 'task_blocked',
 			spaceId,
 			taskId: 'task-1',
 			reason: 'Build failed',
@@ -272,12 +272,12 @@ describe('formatEventMessage — autonomy level in message', () => {
 		const message = formatEventMessage(event, 'supervised');
 		expect(message).toContain('supervised');
 		expect(message).toContain('[TASK_EVENT]');
-		expect(message).toContain('task_needs_attention');
+		expect(message).toContain('task_blocked');
 	});
 
-	test('task_needs_attention message includes semi_autonomous autonomy level', () => {
+	test('task_blocked message includes semi_autonomous autonomy level', () => {
 		const event: SpaceNotificationEvent = {
-			kind: 'task_needs_attention',
+			kind: 'task_blocked',
 			spaceId,
 			taskId: 'task-2',
 			reason: 'Tests failing',
@@ -290,7 +290,7 @@ describe('formatEventMessage — autonomy level in message', () => {
 
 	test('autonomy level appears both as plain text and in JSON payload', () => {
 		const event: SpaceNotificationEvent = {
-			kind: 'task_needs_attention',
+			kind: 'task_blocked',
 			spaceId,
 			taskId: 'task-3',
 			reason: 'Timeout',
@@ -308,9 +308,9 @@ describe('formatEventMessage — autonomy level in message', () => {
 		expect(payload.autonomyLevel).toBe('supervised');
 	});
 
-	test('workflow_run_needs_attention message includes autonomy level in JSON payload', () => {
+	test('workflow_run_blocked message includes autonomy level in JSON payload', () => {
 		const event: SpaceNotificationEvent = {
-			kind: 'workflow_run_needs_attention',
+			kind: 'workflow_run_blocked',
 			spaceId,
 			runId: 'run-1',
 			reason: 'Transition condition failed',
@@ -343,7 +343,7 @@ describe('formatEventMessage — autonomy level in message', () => {
 			kind: 'workflow_run_completed',
 			spaceId,
 			runId: 'run-2',
-			status: 'completed',
+			status: 'done',
 			summary: 'All steps completed successfully',
 			timestamp: TIMESTAMP,
 		};
@@ -356,7 +356,7 @@ describe('formatEventMessage — autonomy level in message', () => {
 
 	test('autonomy level in message changes when level changes — same event, different level', () => {
 		const event: SpaceNotificationEvent = {
-			kind: 'task_needs_attention',
+			kind: 'task_blocked',
 			spaceId,
 			taskId: 'task-5',
 			reason: 'Error',
@@ -386,14 +386,14 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 	});
 
 	function createNeedsAttentionTask(ctx: TestCtx): string {
-		// Create a task directly in needs_attention status by inserting it via the DB
-		// (createStandaloneTask creates in draft→pending; we need needs_attention for retry_task)
+		// Create a task directly in blocked status by inserting it via the DB
+		// (createStandaloneTask creates in open status; we need blocked for retry_task)
 		const taskId = `task-retry-${Math.random().toString(36).slice(2)}`;
 		ctx.db
 			.prepare(
 				`INSERT INTO space_tasks
-         (id, space_id, task_number, title, description, status, priority, task_type, created_at, updated_at)
-         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, ?, 'needs_attention', 'normal', 'coding', ?, ?)`
+         (id, space_id, task_number, title, description, status, priority, created_at, updated_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, ?, 'blocked', 'normal', ?, ?)`
 			)
 			.run(
 				taskId,
@@ -419,7 +419,7 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 
 		expect(parsed.success).toBe(true);
 		expect(parsed.task.id).toBe(taskId);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('open');
 	});
 
 	test('retry_task with description update succeeds regardless of autonomy level', async () => {
@@ -433,7 +433,7 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('open');
 		expect(parsed.task.description).toBe('Updated description with root cause fix');
 	});
 

@@ -3,6 +3,8 @@
  *
  * Used by both space-agent-repository.test.ts and space-agent-manager.test.ts
  * to avoid duplicating schema setup and fixture insertion code.
+ *
+ * Keep in sync with the fully-migrated production schema (after M71).
  */
 
 import type { Database } from 'bun:sqlite';
@@ -30,7 +32,7 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
 	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
-	// Keep in sync with runMigration33 in migrations.ts and space-test-db.ts.
+	// Keep in sync with space-test-db.ts (post-M71 schema).
 	db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
@@ -40,12 +42,10 @@ export function createSpaceAgentSchema(db: Database): void {
 			model TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
 			system_prompt TEXT NOT NULL DEFAULT '',
-			config TEXT,
-			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
+			instructions TEXT,
+			provider TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			role TEXT NOT NULL,
-			provider TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -58,11 +58,10 @@ export function createSpaceAgentSchema(db: Database): void {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			start_node_id TEXT,
-			config TEXT,
+			end_node_id TEXT,
 			channels TEXT,
 			gates TEXT,
 			layout TEXT,
-			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -75,9 +74,8 @@ export function createSpaceAgentSchema(db: Database): void {
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			agent_id TEXT,
+			agents TEXT NOT NULL DEFAULT '[]',
 			order_index INTEGER NOT NULL,
-			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
@@ -106,7 +104,9 @@ export function insertWorkflowNode(
 	agentId: string | null
 ): void {
 	const now = Date.now();
+	// agents column stores a JSON array of {agentId, name} objects
+	const agentsJson = agentId ? JSON.stringify([{ agentId, name: `Node ${id}` }]) : '[]';
 	db.prepare(
-		`INSERT INTO space_workflow_nodes (id, workflow_id, name, agent_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	).run(id, workflowId, `Node ${id}`, agentId, 0, now, now);
+		`INSERT INTO space_workflow_nodes (id, workflow_id, name, agents, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+	).run(id, workflowId, `Node ${id}`, agentsJson, 0, now, now);
 }

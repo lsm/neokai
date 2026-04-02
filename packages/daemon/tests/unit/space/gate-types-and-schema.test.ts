@@ -262,7 +262,7 @@ describe('SpaceWorkflowRunRepository — failureReason', () => {
 
 		// Set failureReason
 		const updated = runRepo.updateRun(run.id, {
-			status: 'needs_attention',
+			status: 'blocked',
 			failureReason: 'maxIterationsReached',
 		});
 		expect(updated).not.toBeNull();

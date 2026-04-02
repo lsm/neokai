@@ -65,8 +65,8 @@ const mockRun: SpaceWorkflowRun = {
 	workflowId: 'workflow-1',
 	title: 'Test Run',
 	status: 'in_progress',
-	iterationCount: 0,
-	maxIterations: 5,
+	startedAt: null,
+	completedAt: null,
 	createdAt: NOW,
 	updatedAt: NOW,
 };
@@ -77,11 +77,12 @@ const mockTask: SpaceTask = {
 	taskNumber: 1,
 	title: 'Step One',
 	description: '',
-	status: 'pending',
+	status: 'open',
 	priority: 'normal',
+	labels: [],
 	workflowRunId: 'run-1',
-	workflowNodeId: 'step-1',
 	dependsOn: [],
+	result: null,
 	createdAt: NOW,
 	updatedAt: NOW,
 };
@@ -419,7 +420,7 @@ describe('space-workflow-run-handlers', () => {
 		});
 
 		it('filters runs by status when provided', async () => {
-			const completedRun: SpaceWorkflowRun = { ...mockRun, id: 'run-2', status: 'completed' };
+			const completedRun: SpaceWorkflowRun = { ...mockRun, id: 'run-2', status: 'done' };
 			setup({ runs: [mockRun, completedRun] });
 
 			const result = (await call('spaceWorkflowRun.list', {
@@ -501,12 +502,12 @@ describe('space-workflow-run-handlers', () => {
 			expect(runRepo.updateStatus).not.toHaveBeenCalled();
 		});
 
-		it('throws if trying to cancel a completed run', async () => {
-			const completedRun: SpaceWorkflowRun = { ...mockRun, status: 'completed' };
-			setup({ run: completedRun });
+		it('throws if trying to cancel a done run', async () => {
+			const doneRun: SpaceWorkflowRun = { ...mockRun, status: 'done' };
+			setup({ run: doneRun });
 
 			await expect(call('spaceWorkflowRun.cancel', { id: 'run-1' })).rejects.toThrow(
-				'Cannot cancel a completed workflow run'
+				'Cannot cancel a done workflow run'
 			);
 		});
 
@@ -525,29 +526,29 @@ describe('space-workflow-run-handlers', () => {
 			});
 		});
 
-		it('cancels pending and in_progress tasks before cancelling the run', async () => {
+		it('cancels open and in_progress tasks before cancelling the run', async () => {
 			const inProgressTask: SpaceTask = {
 				...mockTask,
 				id: 'task-2',
 				status: 'in_progress',
 			};
-			const completedTask: SpaceTask = {
+			const doneTask: SpaceTask = {
 				...mockTask,
 				id: 'task-3',
-				status: 'completed',
+				status: 'done',
 			};
-			setup({ tasks: [mockTask, inProgressTask, completedTask] });
+			setup({ tasks: [mockTask, inProgressTask, doneTask] });
 
 			await call('spaceWorkflowRun.cancel', { id: 'run-1' });
 
 			// Factory should have been called with the run's spaceId
 			expect(taskManagerFactory).toHaveBeenCalledWith('space-1');
 
-			// cancelTask should be called for pending and in_progress but not completed
+			// cancelTask should be called for open and in_progress but not done
 			expect(taskManager.cancelTask).toHaveBeenCalledTimes(2);
 			expect(taskManager.cancelTask).toHaveBeenCalledWith('task-1');
 			expect(taskManager.cancelTask).toHaveBeenCalledWith('task-2');
-			// completed task should not be cancelled
+			// done task should not be cancelled
 			const callArgs = (taskManager.cancelTask as ReturnType<typeof mock>).mock.calls.map(
 				(c) => c[0]
 			);
@@ -558,7 +559,7 @@ describe('space-workflow-run-handlers', () => {
 		});
 
 		it('continues cancelling remaining tasks even if one cancelTask fails', async () => {
-			const task2: SpaceTask = { ...mockTask, id: 'task-2', status: 'pending' };
+			const task2: SpaceTask = { ...mockTask, id: 'task-2', status: 'open' };
 			setup({ tasks: [mockTask, task2] });
 
 			// Make the first cancelTask fail

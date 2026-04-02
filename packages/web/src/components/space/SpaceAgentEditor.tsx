@@ -172,7 +172,7 @@ export function SpaceAgentEditor({
 	// Form state
 	const [name, setName] = useState(agent?.name ?? '');
 	const [description, setDescription] = useState(agent?.description ?? '');
-	const [role, setRole] = useState<string>(agent?.role ?? 'worker');
+	const [role, setRole] = useState<string>('worker');
 	const [model, setModel] = useState(agent?.model ?? '');
 	const [provider, setProvider] = useState(agent?.provider ?? '');
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);

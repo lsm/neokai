@@ -59,13 +59,13 @@ describe('SpaceNotificationEvent types', () => {
 			kind: 'workflow_run_completed',
 			spaceId: 'space-4',
 			runId: 'run-1',
-			status: 'completed',
+			status: 'done',
 			summary: 'All three steps finished successfully. PR #42 merged.',
 			timestamp: '2026-03-20T13:00:00.000Z',
 		};
 
 		expect(event.kind).toBe('workflow_run_completed');
-		expect(event.status).toBe('completed');
+		expect(event.status).toBe('done');
 		expect(event.summary).toBe('All three steps finished successfully. PR #42 merged.');
 	});
 
@@ -74,12 +74,12 @@ describe('SpaceNotificationEvent types', () => {
 			kind: 'workflow_run_completed',
 			spaceId: 'space-4',
 			runId: 'run-2',
-			status: 'needs_attention',
+			status: 'blocked',
 			timestamp: '2026-03-20T13:00:00.000Z',
 		};
 
 		expect(event.kind).toBe('workflow_run_completed');
-		expect(event.status).toBe('needs_attention');
+		expect(event.status).toBe('blocked');
 		expect(event.summary).toBeUndefined();
 	});
 
@@ -104,7 +104,7 @@ describe('SpaceNotificationEvent types', () => {
 				kind: 'workflow_run_completed',
 				spaceId: 's',
 				runId: 'r',
-				status: 'completed',
+				status: 'done',
 				timestamp: 'ts',
 			},
 		];
@@ -172,7 +172,7 @@ describe('NullNotificationSink', () => {
 			kind: 'workflow_run_completed',
 			spaceId: 's',
 			runId: 'r',
-			status: 'completed',
+			status: 'done',
 			timestamp: 'ts',
 		};
 

@@ -36,7 +36,7 @@ function freshDb(): Database {
 		`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES ('wf1', 'sp1', 'Test Workflow', ${now}, ${now})`
 	);
 	d.exec(
-		`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, iteration_count, max_iterations, created_at, updated_at) VALUES ('${RUN_ID}', 'sp1', 'wf1', 'Test Run', 'in_progress', 0, 5, ${now}, ${now})`
+		`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, started_at, completed_at, created_at, updated_at) VALUES ('${RUN_ID}', 'sp1', 'wf1', 'Test Run', 'in_progress', NULL, NULL, ${now}, ${now})`
 	);
 	return d;
 }

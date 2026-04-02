@@ -52,27 +52,33 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 		}
 	});
 
-	test('fresh DB has agent_name column (not slot_role) and completion_summary', () => {
+	test('fresh DB does NOT have agent_name or completion_summary (removed by M71)', () => {
+		// M51 added agent_name and completion_summary, but M71 later removed both columns.
+		// After a full migration, neither column exists on space_tasks.
 		runMigrations(db, () => {});
 		createTables(db);
 
-		expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(true);
-		expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(true);
+		expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(false);
+		expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(false);
 		expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
+		// M71 added labels column instead
+		expect(columnExists(db, 'space_tasks', 'labels')).toBe(true);
 	});
 
-	test('fresh DB has correct indexes after migration', () => {
+	test('fresh DB has correct indexes after M71 rebuild', () => {
+		// M71 rebuilt space_tasks removing old columns and their indexes.
 		runMigrations(db, () => {});
 		createTables(db);
 
 		const indexes = getIndexes(db, 'space_tasks');
 		expect(indexes).toContain('idx_space_tasks_space_id');
-		expect(indexes).toContain('idx_space_tasks_status');
 		expect(indexes).toContain('idx_space_tasks_workflow_run_id');
-		expect(indexes).toContain('idx_space_tasks_workflow_node_id');
-		expect(indexes).toContain('idx_space_tasks_goal_id');
-		expect(indexes).toContain('idx_space_tasks_custom_agent_id');
-		expect(indexes).toContain('idx_space_tasks_task_agent_session_id');
+		// Post-M71: these indexes were removed (their columns were dropped)
+		expect(indexes).not.toContain('idx_space_tasks_status');
+		expect(indexes).not.toContain('idx_space_tasks_workflow_node_id');
+		expect(indexes).not.toContain('idx_space_tasks_goal_id');
+		expect(indexes).not.toContain('idx_space_tasks_custom_agent_id');
+		expect(indexes).not.toContain('idx_space_tasks_task_agent_session_id');
 	});
 
 	test('existing DB with slot_role gets renamed to agent_name', () => {
@@ -235,6 +241,8 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				description TEXT NOT NULL DEFAULT '',
 				status TEXT NOT NULL DEFAULT 'pending',
 				priority TEXT NOT NULL DEFAULT 'normal',
+				task_type TEXT
+					CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
 				slot_role TEXT,
 				workflow_run_id TEXT,
 				workflow_node_id TEXT,
@@ -309,6 +317,8 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				description TEXT NOT NULL DEFAULT '',
 				status TEXT NOT NULL DEFAULT 'pending',
 				priority TEXT NOT NULL DEFAULT 'normal',
+				task_type TEXT
+					CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
 				slot_role TEXT,
 				workflow_run_id TEXT,
 				workflow_node_id TEXT,

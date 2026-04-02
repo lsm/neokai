@@ -43,7 +43,7 @@
 			}
 		},
 		{
-			"comment": "Task Agent lifecycle \u2014 report_result probe. Returns the full MCP tool name 'mcp__task-agent__report_result' with stop_reason 'tool_use' so the SDK dispatches the tool. This updates the task status to 'completed' and emits space.task.completed. bodyFragment substring matches 'probe_task_agent_report_complete_001' in the user message injected by the test.",
+			"comment": "Task Agent lifecycle \u2014 report_result probe. Returns the full MCP tool name 'mcp__task-agent__report_result' with stop_reason 'tool_use' so the SDK dispatches the tool. This updates the task status to 'done' and emits space.task.done. bodyFragment substring matches 'probe_task_agent_report_complete_001' in the user message injected by the test.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -75,7 +75,7 @@
 							"id": "toolu_report_lifecycle_001",
 							"name": "mcp__task-agent__report_result",
 							"input": {
-								"status": "completed",
+								"status": "done",
 								"summary": "Task completed successfully via probe_task_agent_report_complete_001 lifecycle test mock."
 							}
 						}

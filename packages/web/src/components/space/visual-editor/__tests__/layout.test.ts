@@ -7,7 +7,7 @@ function makeStep(id: string, name = id, options: Partial<WorkflowNode> = {}): W
 	return {
 		id,
 		name,
-		agentId: 'agent-1',
+		agents: [],
 		...options,
 	};
 }

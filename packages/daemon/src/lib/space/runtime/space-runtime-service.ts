@@ -231,7 +231,7 @@ export class SpaceRuntimeService {
 				agents: agents.map((a) => ({
 					id: a.id,
 					name: a.name,
-					role: a.role,
+
 					description: a.description,
 				})),
 			})

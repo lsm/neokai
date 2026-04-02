@@ -264,7 +264,7 @@ async function makeTask(taskManager: SpaceTaskManager): Promise<SpaceTask> {
 		title: 'Test task',
 		description: 'A test task',
 		taskType: 'coding',
-		status: 'pending',
+		status: 'open',
 	});
 }
 
@@ -459,7 +459,7 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 			expect(ctx.manager.getTaskWorktreePath(task.id)).toBe('/tmp/worktrees/test-task');
 		});
 
-		test('worktree path stored in workflow run config', async () => {
+		test('worktree path stored in in-memory taskWorktreePaths map', async () => {
 			const task = await makeTask(ctx.taskManager);
 
 			// Create a workflow run so we can check config
@@ -475,8 +475,8 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 
 			await ctx.manager.spawnTaskAgent(linkedTask, ctx.space, null, workflowRun);
 
-			const updatedRun = ctx.workflowRunRepo.getRun(workflowRun.id)!;
-			expect(updatedRun.config?.worktreePath).toBe('/tmp/worktrees/test-task');
+			// Worktree path is now stored in-memory (not in run config, which was removed in M71)
+			expect(ctx.manager.getTaskWorktreePath(linkedTask.id)).toBe('/tmp/worktrees/test-task');
 		});
 
 		test('falls back to space workspacePath when worktreeManager creation fails', async () => {
@@ -625,7 +625,7 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 				title: 'No worktree task',
 				description: '',
 				taskType: 'coding',
-				status: 'pending',
+				status: 'open',
 			});
 
 			const dbSessions2 = new Map<string, unknown>();
@@ -704,8 +704,8 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 			// Insert a task row so FK constraint is satisfied
 			bunDb2
 				.prepare(
-					`INSERT INTO space_tasks (id, space_id, title, description, task_type, status, task_number, created_at, updated_at)
-				 VALUES ('task-ttl-1', ?, 'TTL task', '', 'coding', 'completed', 1, ?, ?)`
+					`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_number, depends_on, created_at, updated_at)
+				 VALUES ('task-ttl-1', ?, 'TTL task', '', 'done', 'normal', 1, '[]', ?, ?)`
 				)
 				.run(spaceId2, Date.now(), Date.now());
 
@@ -749,8 +749,8 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 
 			bunDb2
 				.prepare(
-					`INSERT INTO space_tasks (id, space_id, title, description, task_type, status, task_number, created_at, updated_at)
-				 VALUES ('task-idem-1', ?, 'Idem task', '', 'coding', 'completed', 1, ?, ?)`
+					`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_number, depends_on, created_at, updated_at)
+				 VALUES ('task-idem-1', ?, 'Idem task', '', 'done', 'normal', 1, '[]', ?, ?)`
 				)
 				.run(spaceId2, Date.now(), Date.now());
 
@@ -784,8 +784,8 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 
 			bunDb2
 				.prepare(
-					`INSERT INTO space_tasks (id, space_id, title, description, task_type, status, task_number, created_at, updated_at)
-				 VALUES ('task-reap-1', ?, 'Reap task', '', 'coding', 'completed', 1, ?, ?)`
+					`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_number, depends_on, created_at, updated_at)
+				 VALUES ('task-reap-1', ?, 'Reap task', '', 'done', 'normal', 1, '[]', ?, ?)`
 				)
 				.run(spaceId2, Date.now(), Date.now());
 
@@ -819,9 +819,10 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 	// -------------------------------------------------------------------------
 
 	describe('rehydration restores worktree path from run config', () => {
-		test('rehydrate() reads worktreePath from run config and sets taskWorktreePaths', async () => {
-			// Simulate a daemon restart: seed DB with an in-progress task whose
-			// workflow run config already has a worktreePath stored by spawnTaskAgent.
+		test('rehydrate() does not restore worktreePath (in-memory only, lost on restart)', async () => {
+			// Since run.config was removed in M71, worktree paths are in-memory only.
+			// After a daemon restart, rehydration cannot restore worktree paths and falls back
+			// to space.workspacePath.
 			const sessionId = `session-rehydrate-${Date.now()}`;
 
 			const task = await makeTask(ctx.taskManager);
@@ -830,10 +831,6 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 				workflowId: 'workflow-rehydrate',
 				title: 'Rehydrate run',
 			});
-
-			// Store worktreePath in run config (as spawnTaskAgent would have done).
-			// Use '/tmp' — guaranteed to exist on disk so existsSync() passes.
-			ctx.workflowRunRepo.updateRun(workflowRun.id, { config: { worktreePath: '/tmp' } });
 
 			// Mark task as in_progress with a session id and workflow run link.
 			ctx.taskRepo.updateTask(task.id, {
@@ -857,12 +854,13 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 				restoreSpy.mockRestore();
 			}
 
-			// The critical assertion: rehydrateTaskAgent() should have read
-			// workflowRun.config.worktreePath and called taskWorktreePaths.set(taskId, '/tmp').
-			expect(ctx.manager.getTaskWorktreePath(task.id)).toBe('/tmp');
+			// Since worktree path is not persisted (removed in M71), rehydration cannot restore it.
+			expect(ctx.manager.getTaskWorktreePath(task.id)).toBeUndefined();
 		});
 
-		test('rehydrate() skips worktree path when stored path no longer exists on disk', async () => {
+		test('rehydrate() falls back to space.workspacePath when no stored path exists', async () => {
+			// With run.config removed in M71, there is no stored worktreePath to restore.
+			// Rehydration always falls back to space.workspacePath for the session's workspace.
 			const sessionId = `session-rehydrate-gone-${Date.now()}`;
 
 			const task = await makeTask(ctx.taskManager);
@@ -870,11 +868,6 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 				spaceId: ctx.spaceId,
 				workflowId: 'workflow-rehydrate-gone',
 				title: 'Rehydrate gone run',
-			});
-
-			// Use a path that definitely does not exist on disk.
-			ctx.workflowRunRepo.updateRun(workflowRun.id, {
-				config: { worktreePath: '/nonexistent/worktree/path/that/surely/does/not/exist' },
 			});
 
 			ctx.taskRepo.updateTask(task.id, {
@@ -896,7 +889,7 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 				restoreSpy.mockRestore();
 			}
 
-			// Path did not exist on disk → not stored in the map (falls back to space.workspacePath).
+			// No stored path → not stored in the map (falls back to space.workspacePath).
 			expect(ctx.manager.getTaskWorktreePath(task.id)).toBeUndefined();
 		});
 	});

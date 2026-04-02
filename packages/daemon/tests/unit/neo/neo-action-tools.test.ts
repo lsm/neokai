@@ -389,7 +389,7 @@ function makeWorkflowRunRepo(
 }
 
 function makeSpaceTask(overrides: Partial<NeoSpaceTask> = {}): NeoSpaceTask {
-	return { id: 'stask-1', status: 'pending', ...overrides };
+	return { id: 'stask-1', status: 'open', ...overrides };
 }
 
 function makeSpaceTaskManagerFactory(
@@ -1641,9 +1641,9 @@ describe('cancel_workflow_run', () => {
 		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
 		const runRepo = makeWorkflowRunRepo([run]);
 		const tasks = [
-			makeSpaceTask({ id: 'st-1', status: 'pending' }),
+			makeSpaceTask({ id: 'st-1', status: 'open' }),
 			makeSpaceTask({ id: 'st-2', status: 'in_progress' }),
-			makeSpaceTask({ id: 'st-3', status: 'completed' }),
+			makeSpaceTask({ id: 'st-3', status: 'done' }),
 		];
 		const taskFactory = makeSpaceTaskManagerFactory(tasks);
 		const config = makeConfig({
@@ -1655,7 +1655,7 @@ describe('cancel_workflow_run', () => {
 		const result = parseResult(await cancel_workflow_run({ run_id: 'run-1' }));
 		expect(result.success).toBe(true);
 		expect(result.runId).toBe('run-1');
-		// pending and in_progress should be cancelled; completed is skipped
+		// open and in_progress should be cancelled; done is skipped
 		expect(taskFactory._cancelledIds).toContain('st-1');
 		expect(taskFactory._cancelledIds).toContain('st-2');
 		expect(taskFactory._cancelledIds).not.toContain('st-3');
@@ -1678,7 +1678,7 @@ describe('cancel_workflow_run', () => {
 	});
 
 	it('returns error when run is completed', async () => {
-		const run = makeWorkflowRun({ id: 'run-1', status: 'completed' });
+		const run = makeWorkflowRun({ id: 'run-1', status: 'done' });
 		const runRepo = makeWorkflowRunRepo([run]);
 		const config = makeConfig({
 			securityMode: 'autonomous',
@@ -1731,7 +1731,7 @@ describe('cancel_workflow_run', () => {
 		const failingTaskFactory: NeoActionSpaceTaskManagerFactory = {
 			getTaskManager: () => ({
 				listTasksByWorkflowRun: async () => [
-					makeSpaceTask({ id: 'st-1', status: 'pending' }),
+					makeSpaceTask({ id: 'st-1', status: 'open' }),
 					makeSpaceTask({ id: 'st-2', status: 'in_progress' }),
 				],
 				cancelTask: async () => {
@@ -1980,7 +1980,7 @@ describe('approve_gate', () => {
 	it('transitions rejected run back to in_progress', async () => {
 		const run = makeWorkflowRun({
 			id: 'run-1',
-			status: 'needs_attention',
+			status: 'blocked',
 			failureReason: 'humanRejected',
 		});
 		const runRepo = makeWorkflowRunRepo([run]);
@@ -2017,7 +2017,7 @@ describe('approve_gate', () => {
 	});
 
 	it('returns error for terminal run status', async () => {
-		for (const status of ['completed', 'cancelled', 'pending']) {
+		for (const status of ['done', 'cancelled', 'pending']) {
 			const run = makeWorkflowRun({ id: 'run-1', status });
 			const config = makeConfig({
 				securityMode: 'autonomous',
@@ -2068,7 +2068,7 @@ describe('approve_gate', () => {
 		const run = makeWorkflowRun({
 			id: 'run-1',
 			spaceId: 'space-1',
-			status: 'needs_attention',
+			status: 'blocked',
 			failureReason: 'humanRejected',
 		});
 		const runUpdates: Array<{ spaceId: string; runId: string; status: string }> = [];
@@ -2120,7 +2120,7 @@ describe('approve_gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('reject_gate', () => {
-	it('writes rejected gate data and transitions run to needs_attention', async () => {
+	it('writes rejected gate data and transitions run to blocked', async () => {
 		const run = makeWorkflowRun({ id: 'run-1', status: 'in_progress' });
 		const runRepo = makeWorkflowRunRepo([run]);
 		const gateRepo = makeGateDataRepo();
@@ -2136,12 +2136,12 @@ describe('reject_gate', () => {
 		expect(result.success).toBe(true);
 		expect(result.gateData.approved).toBe(false);
 		expect(result.gateData.reason).toBe('Not ready');
-		expect(runRepo._runs.get('run-1')?.status).toBe('needs_attention');
+		expect(runRepo._runs.get('run-1')?.status).toBe('blocked');
 		expect(runRepo._runs.get('run-1')?.failureReason).toBe('humanRejected');
 	});
 
 	it('is idempotent when already rejected', async () => {
-		const run = makeWorkflowRun({ id: 'run-1', status: 'needs_attention' });
+		const run = makeWorkflowRun({ id: 'run-1', status: 'blocked' });
 		const gateRepo = makeGateDataRepo();
 		gateRepo.merge('run-1', 'gate-1', { approved: false, rejectedAt: 123 });
 		const config = makeConfig({
@@ -2155,8 +2155,8 @@ describe('reject_gate', () => {
 		expect(result.gateData.approved).toBe(false);
 	});
 
-	it('does not call transitionStatus when run is already needs_attention', async () => {
-		const run = makeWorkflowRun({ id: 'run-1', status: 'needs_attention' });
+	it('does not call transitionStatus when run is already blocked', async () => {
+		const run = makeWorkflowRun({ id: 'run-1', status: 'blocked' });
 		const runRepo = makeWorkflowRunRepo([run]);
 		const config = makeConfig({
 			securityMode: 'autonomous',
@@ -2165,8 +2165,8 @@ describe('reject_gate', () => {
 		});
 		const { reject_gate } = createNeoActionToolHandlers(config);
 		await reject_gate({ run_id: 'run-1', gate_id: 'gate-1' });
-		// Status remains needs_attention (not changed by the handler)
-		expect(runRepo._runs.get('run-1')?.status).toBe('needs_attention');
+		// Status remains blocked (not changed by the handler)
+		expect(runRepo._runs.get('run-1')?.status).toBe('blocked');
 		expect(runRepo._runs.get('run-1')?.failureReason).toBe('humanRejected');
 	});
 
@@ -2184,7 +2184,7 @@ describe('reject_gate', () => {
 	});
 
 	it('returns error for terminal run status', async () => {
-		for (const status of ['completed', 'cancelled', 'pending']) {
+		for (const status of ['done', 'cancelled', 'pending']) {
 			const run = makeWorkflowRun({ id: 'run-1', status });
 			const config = makeConfig({
 				securityMode: 'autonomous',
@@ -2240,7 +2240,7 @@ describe('reject_gate', () => {
 		const { reject_gate } = createNeoActionToolHandlers(config);
 		await reject_gate({ run_id: 'run-1', gate_id: 'gate-1', reason: 'Not ready' });
 		expect(runUpdates).toHaveLength(1);
-		expect(runUpdates[0].status).toBe('needs_attention');
+		expect(runUpdates[0].status).toBe('blocked');
 		expect(runUpdates[0].failureReason).toBe('humanRejected');
 		expect(gateUpdates).toHaveLength(1);
 		expect(gateUpdates[0].gateId).toBe('gate-1');

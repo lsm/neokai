@@ -26,7 +26,6 @@ export function buildEndpointNodeIdLookup(nodes: WorkflowNode[]): Map<string, st
 	for (const node of nodes) {
 		if (node.id) map.set(node.id, node.id);
 		if (node.name) map.set(node.name, node.id);
-		if (node.agentId) map.set(node.agentId, node.id);
 		for (const agent of node.agents ?? []) {
 			if (agent.name) map.set(agent.name, node.id);
 			if (agent.agentId) map.set(agent.agentId, node.id);

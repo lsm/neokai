@@ -76,8 +76,9 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
 		expect(columnExists(db, 'space_workflows', 'start_step_id')).toBe(false);
 
-		// space_tasks has workflow_node_id
-		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(true);
+		// space_tasks.workflow_node_id was added by M45 but removed by M71.
+		// After running all migrations, workflow_node_id does not exist.
+		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
 		expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
 
 		// space_workflow_runs: current_node_id was present after M45 but was later dropped by M60.
@@ -98,8 +99,12 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		expect(nodeIndexes).toContain('idx_space_workflow_nodes_workflow_id');
 
 		const taskIndexes = getIndexes(db, 'space_tasks');
-		expect(taskIndexes).toContain('idx_space_tasks_workflow_node_id');
-		expect(taskIndexes).toContain('idx_space_tasks_goal_id');
+		// Post-M71: workflow_node_id and goal_id columns were removed, so no indexes on them
+		expect(taskIndexes).not.toContain('idx_space_tasks_workflow_node_id');
+		expect(taskIndexes).not.toContain('idx_space_tasks_goal_id');
+		// These indexes do exist post-M71
+		expect(taskIndexes).toContain('idx_space_tasks_space_id');
+		expect(taskIndexes).toContain('idx_space_tasks_workflow_run_id');
 
 		// Note: idx_space_workflow_runs_goal_id was removed when M60 rebuilt the table
 		// without current_node_id — it no longer exists after the full migration chain.
@@ -310,18 +315,18 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
 		expect(columnExists(db, 'space_workflow_runs', 'current_step_id')).toBe(false);
 
-		// Verify column rename in space_tasks
-		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(true);
+		// space_tasks.workflow_node_id: M45 renamed workflow_step_id → workflow_node_id,
+		// but M71 later removed workflow_node_id entirely via table rebuild.
+		// After the full migration chain neither column exists.
+		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
 		expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
 
-		// Verify data preserved in space_tasks
-		const task = db
-			.prepare(`SELECT id, workflow_node_id FROM space_tasks WHERE id='task-1'`)
-			.get() as {
+		// Verify task row still exists (data preserved through rebuild)
+		const task = db.prepare(`SELECT id FROM space_tasks WHERE id='task-1'`).get() as {
 			id: string;
-			workflow_node_id: string | null;
-		};
-		expect(task.workflow_node_id).toBe('step-1');
+		} | null;
+		expect(task).toBeTruthy();
+		expect(task!.id).toBe('task-1');
 
 		// space_session_groups was dropped by M60 — table does not exist after full migration.
 	});
@@ -665,11 +670,16 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		// Run migration
 		runMigrations(db, () => {});
 
-		// FK from space_tasks to space_workflow_nodes should work
-		const task = db.prepare(`SELECT workflow_node_id FROM space_tasks WHERE id='task-1'`).get() as {
-			workflow_node_id: string | null;
-		};
-		expect(task.workflow_node_id).toBe('step-1');
+		// space_tasks.workflow_node_id was renamed from workflow_step_id by M45, then removed by M71.
+		// After the full migration chain, neither column exists.
+		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
+		expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
+
+		// Verify the task row itself still exists
+		const task = db.prepare(`SELECT id FROM space_tasks WHERE id='task-1'`).get() as {
+			id: string;
+		} | null;
+		expect(task).toBeTruthy();
 	});
 
 	test('preserves columns added by earlier migrations', () => {
@@ -851,19 +861,18 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		expect(wf.layout).toBe('{"nodes":{}}');
 		expect(wf.max_iterations).toBe(10);
 
-		// Verify M35 columns (iteration_count, max_iterations) preserved
-		const run = db
-			.prepare(
-				`SELECT iteration_count, max_iterations, goal_id FROM space_workflow_runs WHERE id='run-1'`
-			)
-			.get() as {
-			iteration_count: number;
-			max_iterations: number;
-			goal_id: string | null;
-		};
-		expect(run.iteration_count).toBe(3);
-		expect(run.max_iterations).toBe(10);
-		expect(run.goal_id).toBe('goal-1');
+		// M35 added iteration_count, max_iterations, goal_id to space_workflow_runs.
+		// M71 later removed all three columns via table rebuild.
+		// After the full migration chain, none of these columns exist.
+		expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(false);
+		expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(false);
+		expect(columnExists(db, 'space_workflow_runs', 'goal_id')).toBe(false);
+
+		// Verify run row still exists (data preserved through table rebuild where applicable)
+		const run = db.prepare(`SELECT id FROM space_workflow_runs WHERE id='run-1'`).get() as {
+			id: string;
+		} | null;
+		expect(run).toBeTruthy();
 
 		// Note: space_workflow_transitions was dropped by M59 — no M38 is_cyclic check here.
 		// Note: space_session_groups was dropped by M60 — no M40 status check here.

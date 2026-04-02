@@ -69,7 +69,7 @@ function makeTestAgent(id: string, name: string, overrides: Partial<SpaceAgent> 
 		id,
 		spaceId: 'space-1',
 		name,
-		role: 'coder',
+		instructions: null,
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -89,14 +89,12 @@ function makeWorkflowWithOverrides(): SpaceWorkflow {
 					{
 						agentId: 'agent-1',
 						name: 'strict-reviewer',
-						model: 'claude-opus-4-6',
-						systemPrompt: 'Review with extreme care.',
+						systemPrompt: { mode: 'override', value: 'Review with extreme care.' },
 					},
 					{
 						agentId: 'agent-2',
 						name: 'quick-reviewer',
-						model: 'claude-haiku-4-5',
-						systemPrompt: 'Review quickly.',
+						systemPrompt: { mode: 'override', value: 'Review quickly.' },
 					},
 					{
 						agentId: 'agent-1',
@@ -106,9 +104,7 @@ function makeWorkflowWithOverrides(): SpaceWorkflow {
 				],
 			},
 		],
-		transitions: [],
 		startNodeId: 'node-1',
-		rules: [],
 		tags: ['review'],
 		createdAt: 1000,
 		updatedAt: 2000,
@@ -130,9 +126,7 @@ function makeWorkflowWithoutOverrides(): SpaceWorkflow {
 				],
 			},
 		],
-		transitions: [],
 		startNodeId: 'node-1',
-		rules: [],
 		tags: [],
 		createdAt: 1000,
 		updatedAt: 2000,
@@ -148,7 +142,7 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 	const agent2 = makeTestAgent('agent-2', 'Reviewer Agent');
 	const agents = [agent1, agent2];
 
-	test('maps model override to WorkflowNodeInput agents', () => {
+	test('maps systemPrompt override to WorkflowNodeInput agents via export', () => {
 		const workflow = makeWorkflowWithOverrides();
 		const exported = exportWorkflow(workflow, agents);
 		const exportedWf = exported;
@@ -170,20 +164,20 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 		const nodeAgents = params.nodes[0].agents!;
 		expect(nodeAgents).toHaveLength(3);
 
-		// strict-reviewer slot has model override
+		// strict-reviewer slot has systemPrompt override
 		const strictReviewer = nodeAgents.find((a) => a.name === 'strict-reviewer');
 		expect(strictReviewer).toBeDefined();
-		expect(strictReviewer!.model).toBe('claude-opus-4-6');
+		expect(strictReviewer!.systemPrompt).toBeDefined();
 
-		// quick-reviewer slot has model override
+		// quick-reviewer slot has systemPrompt override
 		const quickReviewer = nodeAgents.find((a) => a.name === 'quick-reviewer');
 		expect(quickReviewer).toBeDefined();
-		expect(quickReviewer!.model).toBe('claude-haiku-4-5');
+		expect(quickReviewer!.systemPrompt).toBeDefined();
 
-		// coder slot has no model override
+		// coder slot has no overrides
 		const coder = nodeAgents.find((a) => a.name === 'coder');
 		expect(coder).toBeDefined();
-		expect(coder!.model).toBeUndefined();
+		expect(coder!.systemPrompt).toBeUndefined();
 	});
 
 	test('maps systemPrompt override to WorkflowNodeInput agents', () => {
@@ -207,10 +201,13 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 		const nodeAgents = params.nodes[0].agents!;
 
 		const strictReviewer = nodeAgents.find((a) => a.name === 'strict-reviewer');
-		expect(strictReviewer!.systemPrompt).toBe('Review with extreme care.');
+		expect(strictReviewer!.systemPrompt).toEqual({
+			mode: 'override',
+			value: 'Review with extreme care.',
+		});
 
 		const quickReviewer = nodeAgents.find((a) => a.name === 'quick-reviewer');
-		expect(quickReviewer!.systemPrompt).toBe('Review quickly.');
+		expect(quickReviewer!.systemPrompt).toEqual({ mode: 'override', value: 'Review quickly.' });
 
 		const coder = nodeAgents.find((a) => a.name === 'coder');
 		expect(coder!.systemPrompt).toBeUndefined();
@@ -401,7 +398,7 @@ describe('full round-trip: export → import → DB read-back', () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	test('per-slot model and systemPrompt persist after import', () => {
+	test('per-slot systemPrompt override persists after import', () => {
 		const agent1 = makeTestAgent('agent-1', 'Coder Agent', { spaceId: SPACE_ID });
 		const agent2 = makeTestAgent('agent-2', 'Reviewer Agent', { spaceId: SPACE_ID });
 		const agents = [agent1, agent2];
@@ -445,17 +442,17 @@ describe('full round-trip: export → import → DB read-back', () => {
 
 		const strictReviewer = nodeAgents.find((a) => a.name === 'strict-reviewer');
 		expect(strictReviewer).toBeDefined();
-		expect(strictReviewer!.model).toBe('claude-opus-4-6');
-		expect(strictReviewer!.systemPrompt).toBe('Review with extreme care.');
+		expect(strictReviewer!.systemPrompt).toEqual({
+			mode: 'override',
+			value: 'Review with extreme care.',
+		});
 
 		const quickReviewer = nodeAgents.find((a) => a.name === 'quick-reviewer');
 		expect(quickReviewer).toBeDefined();
-		expect(quickReviewer!.model).toBe('claude-haiku-4-5');
-		expect(quickReviewer!.systemPrompt).toBe('Review quickly.');
+		expect(quickReviewer!.systemPrompt).toEqual({ mode: 'override', value: 'Review quickly.' });
 
 		const coder = nodeAgents.find((a) => a.name === 'coder');
 		expect(coder).toBeDefined();
-		expect(coder!.model).toBeUndefined();
 		expect(coder!.systemPrompt).toBeUndefined();
 	});
 
@@ -499,14 +496,14 @@ describe('full round-trip: export → import → DB read-back', () => {
 		const nodeAgents = readBack!.nodes[0].agents!;
 		expect(nodeAgents).toHaveLength(2);
 
-		// No overrides stored — model and systemPrompt should be absent/undefined
+		// No overrides stored — systemPrompt and instructions should be absent/undefined
 		for (const a of nodeAgents) {
-			expect(a.model).toBeUndefined();
 			expect(a.systemPrompt).toBeUndefined();
+			expect(a.instructions).toBeUndefined();
 		}
 	});
 
-	test('same agent added multiple times with different roles and overrides', () => {
+	test('same agent added multiple times with different systemPrompt overrides', () => {
 		const agent1 = makeTestAgent('agent-1', 'Coder Agent', { spaceId: SPACE_ID });
 		const agents = [agent1];
 
@@ -523,21 +520,17 @@ describe('full round-trip: export → import → DB read-back', () => {
 						{
 							agentId: 'agent-1',
 							name: 'strict-coder',
-							model: 'claude-opus-4-6',
-							systemPrompt: 'Write perfect code.',
+							systemPrompt: { mode: 'override', value: 'Write perfect code.' },
 						},
 						{
 							agentId: 'agent-1',
 							name: 'fast-coder',
-							model: 'claude-haiku-4-5',
-							systemPrompt: 'Write quick code.',
+							systemPrompt: { mode: 'override', value: 'Write quick code.' },
 						},
 					],
 				},
 			],
-			transitions: [],
 			startNodeId: 'node-1',
-			rules: [],
 			tags: [],
 			createdAt: 1000,
 			updatedAt: 2000,
@@ -550,10 +543,16 @@ describe('full round-trip: export → import → DB read-back', () => {
 		expect(exportedAgents).toHaveLength(2);
 		expect(exportedAgents[0].agentRef).toBe('Coder Agent');
 		expect(exportedAgents[0].name).toBe('strict-coder');
-		expect(exportedAgents[0].model).toBe('claude-opus-4-6');
+		expect(exportedAgents[0].systemPrompt).toEqual({
+			mode: 'override',
+			value: 'Write perfect code.',
+		});
 		expect(exportedAgents[1].agentRef).toBe('Coder Agent');
 		expect(exportedAgents[1].name).toBe('fast-coder');
-		expect(exportedAgents[1].model).toBe('claude-haiku-4-5');
+		expect(exportedAgents[1].systemPrompt).toEqual({
+			mode: 'override',
+			value: 'Write quick code.',
+		});
 
 		// Build import params and persist
 		const importedNameToId = new Map([['Coder Agent', 'agent-1']]);
@@ -577,13 +576,11 @@ describe('full round-trip: export → import → DB read-back', () => {
 
 		const strictCoder = nodeAgents.find((a) => a.name === 'strict-coder');
 		expect(strictCoder!.agentId).toBe('agent-1');
-		expect(strictCoder!.model).toBe('claude-opus-4-6');
-		expect(strictCoder!.systemPrompt).toBe('Write perfect code.');
+		expect(strictCoder!.systemPrompt).toEqual({ mode: 'override', value: 'Write perfect code.' });
 
 		const fastCoder = nodeAgents.find((a) => a.name === 'fast-coder');
 		expect(fastCoder!.agentId).toBe('agent-1');
-		expect(fastCoder!.model).toBe('claude-haiku-4-5');
-		expect(fastCoder!.systemPrompt).toBe('Write quick code.');
+		expect(fastCoder!.systemPrompt).toEqual({ mode: 'override', value: 'Write quick code.' });
 	});
 
 	test('instructions per-slot override persists after import (DB round-trip)', () => {

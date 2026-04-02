@@ -57,7 +57,7 @@ function makeTask(overrides?: Partial<SpaceTask>): SpaceTask {
 		spaceId: 'space-1',
 		title: 'Test task',
 		description: 'A test task',
-		status: 'pending',
+		status: 'open',
 		priority: 'normal',
 		dependsOn: [],
 		createdAt: Date.now(),

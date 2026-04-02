@@ -112,22 +112,19 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.name).toBe('My Workflow');
 		expect(wf.nodes).toHaveLength(2);
 		expect(wf.nodes[0].name).toBe('Code');
-		expect(wf.nodes[0].agentId).toBe('agent-coder');
+		expect(wf.nodes[0].agents[0].agentId).toBe('agent-coder');
 		expect(wf.nodes[1].name).toBe('Plan');
 		expect(wf.tags).toEqual([]);
-		expect(wf.rules).toEqual([]);
 	});
 
-	test('createWorkflow stores tags and config', () => {
+	test('createWorkflow stores tags', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Tagged',
 			nodes: [coderNode],
 			tags: ['ci', 'deploy'],
-			config: { priority: 'high' },
 		});
 		expect(wf.tags).toEqual(['ci', 'deploy']);
-		expect(wf.config).toEqual({ priority: 'high' });
 	});
 
 	test('createWorkflow uses first node as startNodeId by default', () => {
@@ -160,19 +157,13 @@ describe('SpaceWorkflowRepository', () => {
 			description: 'A full workflow',
 			nodes: [coderNode, plannerNode],
 			startNodeId: coderNode.id,
-			rules: [{ name: 'Rule1', content: 'Follow TDD', appliesTo: [] }],
 			tags: ['a', 'b'],
-			config: { key: 'value' },
 		});
 
 		const fetched = repo.getWorkflow(created.id)!;
 		expect(fetched.name).toBe('Full');
 		expect(fetched.description).toBe('A full workflow');
 		expect(fetched.tags).toEqual(['a', 'b']);
-		expect(fetched.rules).toHaveLength(1);
-		expect(fetched.rules[0].name).toBe('Rule1');
-		expect(fetched.rules[0].id).toBeTruthy();
-		expect(fetched.config).toEqual({ key: 'value' });
 		expect(fetched.startNodeId).toBe(coderNode.id);
 	});
 
@@ -222,7 +213,7 @@ describe('SpaceWorkflowRepository', () => {
 			nodes: [{ id: 'step-review', name: 'Review', agentId: 'agent-general' }],
 		});
 		expect(updated?.nodes).toHaveLength(1);
-		expect(updated?.nodes[0].agentId).toBe('agent-general');
+		expect(updated?.nodes[0].agents[0].agentId).toBe('agent-general');
 	});
 
 	test('updateWorkflow returns null for missing id', () => {
@@ -379,59 +370,60 @@ describe('SpaceWorkflowRepository', () => {
 		});
 	});
 
-	test('round-trip: legacy single-agent step (agentId only) still works correctly', () => {
-		// Regression guard: ensure the multi-agent changes do not break the existing path.
+	test('round-trip: legacy single-agent step (agentId shorthand) normalises to agents[]', () => {
+		// Regression guard: ensure legacy agentId shorthand is normalised to agents[] on read-back.
 		seedAgent(db, 'agent-1', 'space-1', 'Alpha');
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Legacy Round-Trip',
-			nodes: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
+			nodes: [
+				{
+					id: 'step-1',
+					name: 'Step',
+					agentId: 'agent-1',
+				} as unknown as import('@neokai/shared').WorkflowNodeInput,
+			],
 		});
 
 		const read = repo.getWorkflow(wf.id);
 		expect(read).not.toBeNull();
 		const node = read!.nodes[0];
 
-		expect(node.agentId).toBe('agent-1');
-		expect(node.agents).toBeUndefined();
-		expect(node.channels).toBeUndefined();
+		// Legacy agentId shorthand is normalised to agents[] by insertNode
+		expect(node.agents[0].agentId).toBe('agent-1');
 	});
 
 	// -------------------------------------------------------------------------
 	// JSON round-trips
 	// -------------------------------------------------------------------------
 
-	test('JSON round-trip: rules with appliesTo', () => {
+	test('JSON round-trip: tags are persisted and restored', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
 			nodes: [coderNode],
-			rules: [
-				{ name: 'R1', content: 'Always test', appliesTo: ['step-id-1'] },
-				{ name: 'R2', content: 'No shortcuts' },
-			],
+			tags: ['ci', 'deploy'],
 		});
 		const fetched = repo.getWorkflow(wf.id)!;
-		expect(fetched.rules).toHaveLength(2);
-		expect(fetched.rules[0].appliesTo).toEqual(['step-id-1']);
-		expect(fetched.rules[1].appliesTo).toBeUndefined();
+		expect(fetched.tags).toEqual(['ci', 'deploy']);
 	});
 
-	test('JSON round-trip: agentId is stored in agent_id column and round-trips', () => {
+	test('JSON round-trip: legacy agentId shorthand normalises to agents[] on read-back', () => {
 		seedAgent(db, 'agent-99', 'space-1', 'MyAgent');
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Custom WF',
-			nodes: [{ id: 'step-99', name: 'Step', agentId: 'agent-99' }],
+			nodes: [
+				{
+					id: 'step-99',
+					name: 'Step',
+					agentId: 'agent-99',
+				} as unknown as import('@neokai/shared').WorkflowNodeInput,
+			],
 		});
 		const fetched = repo.getWorkflow(wf.id)!;
-		expect(fetched.nodes[0].agentId).toBe('agent-99');
-
-		// Verify agent_id column is set
-		const row = db
-			.prepare('SELECT agent_id FROM space_workflow_nodes WHERE workflow_id = ?')
-			.get(wf.id) as { agent_id: string };
-		expect(row.agent_id).toBe('agent-99');
+		// Legacy agentId shorthand is normalised to agents[] during insertNode
+		expect(fetched.nodes[0].agents[0].agentId).toBe('agent-99');
 	});
 
 	// -------------------------------------------------------------------------
@@ -634,9 +626,9 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			nodes: [{ name: 'Step', agentId: 'some-uuid' }],
+			nodes: [{ name: 'Step', agents: [{ agentId: 'some-uuid', name: 'agent' }] }],
 		});
-		expect(wf.nodes[0].agentId).toBe('some-uuid');
+		expect(wf.nodes[0].agents[0].agentId).toBe('some-uuid');
 	});
 
 	test('createWorkflow rejects empty agentId', () => {
@@ -663,15 +655,15 @@ describe('SpaceWorkflowManager', () => {
 		seedAgent(db, 'agent-1', 'space-1', 'MyAgent');
 		const lookup: SpaceAgentLookup = {
 			getAgentById: (_spaceId, id) =>
-				id === 'agent-1' ? { id: 'agent-1', name: 'MyAgent', role: 'coder' } : null,
+				id === 'agent-1' ? { id: 'agent-1', name: 'MyAgent' } : null,
 		};
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		const wf = mgr.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Custom WF',
-			nodes: [{ name: 'Step', agentId: 'agent-1' }],
+			nodes: [{ name: 'Step', agents: [{ agentId: 'agent-1', name: 'main' }] }],
 		});
-		expect(wf.nodes[0].agentId).toBe('agent-1');
+		expect(wf.nodes[0].agents[0].agentId).toBe('agent-1');
 	});
 
 	test('createWorkflow rejects agentId when agent does not exist in lookup', () => {
@@ -692,9 +684,9 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'No-Lookup WF',
-			nodes: [{ name: 'Step', agentId: 'anything' }],
+			nodes: [{ name: 'Step', agents: [{ agentId: 'anything', name: 'main' }] }],
 		});
-		expect(wf.nodes[0].agentId).toBe('anything');
+		expect(wf.nodes[0].agents[0].agentId).toBe('anything');
 	});
 
 	test('updateWorkflow rejects invalid agentId via lookup', () => {
@@ -1190,8 +1182,7 @@ describe('SpaceWorkflowManager', () => {
 		expect(workflows).toHaveLength(2);
 
 		const readSingle = manager.getWorkflow(single.id)!;
-		expect(readSingle.nodes[0].agentId).toBe('agent-coder');
-		expect(readSingle.nodes[0].agents).toBeUndefined();
+		expect(readSingle.nodes[0].agents[0].agentId).toBe('agent-coder');
 		expect(readSingle.channels).toBeUndefined();
 
 		const readMulti = manager.getWorkflow(multi.id)!;

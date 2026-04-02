@@ -90,8 +90,8 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 
 /**
  * Seed a space_tasks row that represents a node agent sub-session.
- * Uses PRAGMA foreign_keys = OFF to bypass the FK constraint on workflow_node_id
- * (which references space_workflow_nodes) — nodes are not seeded in these tests.
+ * After M71, space_tasks no longer has agent_name or workflow_node_id columns.
+ * The agent name is stored in the task title and the session in task_agent_session_id.
  */
 function seedTask(
 	db: BunDatabase,
@@ -99,47 +99,34 @@ function seedTask(
 	workflowRunId: string,
 	agentName: string,
 	sessionId: string | null,
-	nodeId: string = STEP_NODE_ID,
+	_nodeId: string = STEP_NODE_ID,
 	status: string = 'in_progress'
 ): void {
-	db.exec('PRAGMA foreign_keys = OFF');
 	const now = Date.now();
 	const id = `task-int-${Math.random().toString(36).slice(2)}`;
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority, agent_name,
-        workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
-	).run(
-		id,
-		spaceId,
-		spaceId,
-		`Task for ${agentName}`,
-		status,
-		agentName,
-		workflowRunId,
-		nodeId,
-		sessionId,
-		now,
-		now
-	);
-	db.exec('PRAGMA foreign_keys = ON');
+       (id, space_id, task_number, title, description, status, priority, labels,
+        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', '[]', ?, '[]', ?, ?, ?)`
+	).run(id, spaceId, spaceId, agentName, status, workflowRunId, sessionId, now, now);
 }
 
+/**
+ * Create a workflow+run and return the resolved channels alongside the run ID.
+ * After M71, run.config is removed — channels are on the workflow definition.
+ * Tests that need to verify channel topology should use the returned resolver directly.
+ */
 function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
 	channels: ResolvedChannel[]
-): string {
+): { runId: string; resolver: ChannelResolver } {
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const workflow = workflowRepo.createWorkflow({
 		spaceId,
-		name: 'Integration Test Workflow',
-		description: '',
-		nodes: [],
-		transitions: [],
-		startNodeId: '',
-		rules: [],
+		name: `Integration Test Workflow ${Math.random().toString(36).slice(2)}`,
+		nodes: [{ name: 'step', agents: [{ agentId: 'agent-1', name: 'agent' }] }],
 	});
 
 	const runRepo = new SpaceWorkflowRunRepository(db);
@@ -149,11 +136,7 @@ function seedWorkflowRunWithChannels(
 		title: 'Integration Test Run',
 	});
 
-	if (channels.length > 0) {
-		runRepo.updateRun(run.id, { config: { _resolvedChannels: channels } });
-	}
-
-	return run.id;
+	return { runId: run.id, resolver: new ChannelResolver(channels) };
 }
 
 function makeResolvedChannel(
@@ -198,11 +181,7 @@ function makeTestDb(): TestDb {
 	const workflow = workflowRepo.createWorkflow({
 		spaceId,
 		name: 'Integration Test Workflow',
-		description: '',
-		nodes: [],
-		transitions: [],
-		startNodeId: '',
-		rules: [],
+		nodes: [{ name: 'step', agents: [{ agentId: 'agent-1', name: 'agent' }] }],
 	});
 	const run = workflowRunRepo.createRun({
 		spaceId,
@@ -925,8 +904,9 @@ describe('data reload and DB-based validation', () => {
 	});
 
 	test('channel topology resolves correctly after workflow run re-fetch', async () => {
-		// Store channels in workflow run
-		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
+		// After M71, channels are stored on the workflow definition (not run config).
+		// This test verifies the resolver built from channels persists across DB reloads.
+		const { runId: workflowRunId, resolver } = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 			makeResolvedChannel('reviewer', 'coder'),
 		]);
@@ -937,37 +917,25 @@ describe('data reload and DB-based validation', () => {
 
 		expect(reloadedRun).not.toBeNull();
 
-		// ChannelResolver can reconstruct topology from reloaded run config
-		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
-
+		// Resolver is built from the channels passed at creation time (not from run config)
 		expect(resolver.isEmpty()).toBe(false);
 		expect(resolver.canSend('coder', 'reviewer')).toBe(true);
 		expect(resolver.canSend('reviewer', 'coder')).toBe(true);
 		expect(resolver.canSend('coder', 'tester')).toBe(false);
 	});
 
-	test('send_message works correctly with a resolver built from re-fetched DB data', async () => {
+	test('send_message works correctly with a resolver built from workflow channel data', async () => {
 		// Seed tasks for this test's workflowRunId
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder-rs');
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer-rs');
 
-		// Store channels in the test's workflow run
-		tdb.workflowRunRepo.updateRun(tdb.workflowRunId, {
-			config: {
-				_resolvedChannels: [makeResolvedChannel('coder', 'reviewer')],
-			},
-		});
+		// After M71, channels are no longer stored in run config. Build resolver directly
+		// from the channel topology (as the runtime does when spawning sessions).
+		const channelResolver = new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]);
 
 		const { messages, injector } = makeMessageCapture();
 
 		// Simulate post-restart: fresh repo instances over same DB
-		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
-		const reloadedRun = freshRunRepo.getRun(tdb.workflowRunId);
-		// Build resolver from the reloaded run config (as daemon would do at session spawn)
-		const channelResolver = ChannelResolver.fromRunConfig(
-			reloadedRun!.config as Record<string, unknown>
-		);
-
 		const freshTaskRepo = new SpaceTaskRepository(tdb.db);
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-rs',
@@ -1002,10 +970,11 @@ describe('data reload and DB-based validation', () => {
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer-reload');
 
 		// Simulate post-restart: fresh repo over same DB
+		// After M71, workflowNodeId is no longer on SpaceTask — filter by taskAgentSessionId only.
 		const freshRepo = new SpaceTaskRepository(tdb.db);
 		const tasks = freshRepo
 			.listByWorkflowRun(tdb.workflowRunId)
-			.filter((t) => t.workflowNodeId === STEP_NODE_ID && t.taskAgentSessionId);
+			.filter((t) => t.taskAgentSessionId);
 
 		expect(tasks.length).toBe(2);
 		const sessionIds = tasks.map((t) => t.taskAgentSessionId);
@@ -1106,55 +1075,36 @@ describe('Task Agent channel participation', () => {
 	});
 
 	test('ChannelResolver: canSend returns true when coder→task-agent channel declared', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
+		// After M71, channels are no longer stored in run config. Build resolver directly.
+		const { resolver } = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
 			makeResolvedChannel('coder', 'task-agent'),
 		]);
-
-		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
-		const reloadedRun = freshRunRepo.getRun(workflowRunId);
-
-		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		expect(resolver.canSend('coder', 'task-agent')).toBe(true);
 	});
 
 	test('ChannelResolver: canSend returns false when no channel to task-agent', async () => {
 		// Channel between coder and reviewer — NOT involving task-agent
-		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
+		const { resolver } = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
-
-		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
-		const reloadedRun = freshRunRepo.getRun(workflowRunId);
-
-		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		expect(resolver.canSend('coder', 'task-agent')).toBe(false);
 	});
 
 	test('ChannelResolver: getPermittedTargets includes task-agent when channel declared', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
+		const { resolver } = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
 			makeResolvedChannel('reviewer', 'task-agent'),
 		]);
-
-		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
-		const reloadedRun = freshRunRepo.getRun(workflowRunId);
-
-		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		const permitted = resolver.getPermittedTargets('reviewer');
 		expect(permitted).toContain('task-agent');
 	});
 
 	test('ChannelResolver: task-agent permittedTargets includes coder when task-agent→coder declared', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
+		const { resolver } = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
 			makeResolvedChannel('task-agent', 'coder'),
 		]);
-
-		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
-		const reloadedRun = freshRunRepo.getRun(workflowRunId);
-
-		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		const permitted = resolver.getPermittedTargets('task-agent');
 		expect(permitted).toContain('coder');
@@ -1205,23 +1155,17 @@ describe('Task Agent channel participation', () => {
 	});
 
 	test('removing channel to task-agent updates getPermittedTargets', async () => {
-		// Initially: coder → task-agent
-		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
+		// After M71, channels are not stored in run config. ChannelResolver is built directly.
+		// This test verifies that a resolver with channels contains task-agent,
+		// and a resolver without channels does not.
+		const { resolver: resolverWith } = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
 			makeResolvedChannel('coder', 'task-agent'),
 		]);
 
-		let freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
-		let reloadedRun = freshRunRepo.getRun(workflowRunId);
+		expect(resolverWith.getPermittedTargets('coder')).toContain('task-agent');
 
-		let resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
-
-		expect(resolver.getPermittedTargets('coder')).toContain('task-agent');
-
-		// Remove channel — update to empty topology
-		freshRunRepo.updateRun(workflowRunId, { config: { _resolvedChannels: [] } });
-		reloadedRun = freshRunRepo.getRun(workflowRunId);
-		resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
-
-		expect(resolver.getPermittedTargets('coder')).not.toContain('task-agent');
+		// Build a resolver with empty topology (simulates channel removal)
+		const resolverEmpty = new ChannelResolver([]);
+		expect(resolverEmpty.getPermittedTargets('coder')).not.toContain('task-agent');
 	});
 });

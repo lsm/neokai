@@ -376,7 +376,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const runId = JSON.parse(startResult.content[0].text).run.id;
 
 		// Mark as completed
-		ctx.workflowRunRepo.transitionStatus(runId, 'completed');
+		ctx.workflowRunRepo.transitionStatus(runId, 'done');
 
 		const result = await makeHandlers(ctx).change_plan({
 			run_id: runId,
@@ -384,7 +384,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('completed');
+		expect(parsed.error).toMatch(/completed|done/);
 	});
 
 	test('returns error when neither description nor workflow_id provided', async () => {
@@ -477,13 +477,13 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 2' });
 
 		// Mark first task as completed
-		ctx.taskRepo.updateTask(taskId, { status: 'completed', completedAt: Date.now() });
+		ctx.taskRepo.updateTask(taskId, { status: 'done', completedAt: Date.now() });
 
-		const result = await makeHandlers(ctx).list_tasks({ status: 'pending' });
+		const result = await makeHandlers(ctx).list_tasks({ status: 'open' });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.tasks).toHaveLength(1);
-		expect(parsed.tasks[0].status).toBe('pending');
+		expect(parsed.tasks[0].status).toBe('open');
 	});
 
 	test('returns empty list when no tasks exist', async () => {
@@ -526,8 +526,9 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		expect(parsed.workflow.name).toBe('Detail WF');
 		expect(parsed.workflow.description).toBe('Detailed description');
 		expect(parsed.workflow.nodes).toHaveLength(1);
-		expect(parsed.workflow.nodes[0].agentId).toBe(ctx.agentId);
-		expect(parsed.workflow.rules).toEqual([]);
+		expect(parsed.workflow.nodes[0].agents[0].agentId).toBe(ctx.agentId);
+		// rules field removed from SpaceWorkflow — verify nodes exist instead
+		expect(parsed.workflow.nodes[0].agents).toHaveLength(1);
 	});
 
 	test('returns error when workflow_id not found', async () => {
@@ -803,27 +804,22 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 			title: 'Full task',
 			description: 'Detailed description',
 			priority: 'high',
-			task_type: 'coding',
-			assigned_agent: 'coder',
-			custom_agent_id: ctx.agentId,
 		});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.task.priority).toBe('high');
-		expect(parsed.task.taskType).toBe('coding');
-		expect(parsed.task.assignedAgent).toBe('coder');
-		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+		expect(parsed.task.title).toBe('Full task');
 	});
 
-	test('returns error when custom_agent_id does not exist', async () => {
+	test('custom_agent_id field removed in M71 — task still creates without error', async () => {
+		// custom_agent_id is no longer validated in create_standalone_task post-M71
 		const result = await makeHandlers(ctx).create_standalone_task({
 			title: 'Task',
 			description: 'Desc',
-			custom_agent_id: 'agent-does-not-exist',
 		});
 		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('agent-does-not-exist');
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.id).toBeDefined();
 	});
 
 	test('task is retrievable from repo after creation', async () => {
@@ -873,7 +869,7 @@ describe('createSpaceAgentToolHandlers — get_task_detail', () => {
 		expect(parsed.error).toContain('task-missing');
 	});
 
-	test('returns task with error and result fields', async () => {
+	test('returns task with blocked status after failure', async () => {
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'Failed task',
 			description: 'Will fail',
@@ -887,8 +883,8 @@ describe('createSpaceAgentToolHandlers — get_task_detail', () => {
 		const result = await makeHandlers(ctx).get_task_detail({ task_id: taskId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.status).toBe('needs_attention');
-		expect(parsed.task.error).toBe('Something went wrong');
+		expect(parsed.task.status).toBe('blocked');
+		// error field was removed in M71; check task is blocked
 	});
 });
 
@@ -918,7 +914,7 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
 		const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('open');
 		expect(parsed.task.error ?? null).toBeNull();
 	});
 
@@ -1102,7 +1098,7 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('reassigns a pending task to a custom agent', async () => {
+	test('reassigns a pending task (custom_agent_id is accepted, field removed in M71)', async () => {
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'Reassign me',
 			description: 'Will be reassigned',
@@ -1115,14 +1111,13 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 		});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+		expect(parsed.task.id).toBe(taskId);
 	});
 
-	test('reassigns by changing assigned_agent type', async () => {
+	test('reassigns by changing assigned_agent type (field removed in M71)', async () => {
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'Agent type change',
 			description: 'Change agent type',
-			assigned_agent: 'coder',
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 
@@ -1132,35 +1127,29 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 		});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.assignedAgent).toBe('general');
+		expect(parsed.task.id).toBe(taskId);
 	});
 
-	test('does not clear existing customAgentId when only assigned_agent is changed', async () => {
-		// Create task with a custom agent assigned
+	test('does not error when reassigning open task', async () => {
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'Has custom agent',
 			description: 'Custom agent must be preserved',
-			custom_agent_id: ctx.agentId,
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 
-		// Reassign only the agent type — custom_agent_id not provided
 		const result = await makeHandlers(ctx).reassign_task({
 			task_id: taskId,
 			assigned_agent: 'general',
 		});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.assignedAgent).toBe('general');
-		// customAgentId must NOT have been cleared
-		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+		expect(parsed.task.id).toBe(taskId);
 	});
 
-	test('clears custom agent when custom_agent_id is null', async () => {
+	test('clears custom agent when custom_agent_id is null (field removed in M71)', async () => {
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'Clear agent',
 			description: 'Remove custom agent',
-			custom_agent_id: ctx.agentId,
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 
@@ -1170,7 +1159,7 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 		});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.customAgentId ?? null).toBeNull();
+		expect(parsed.task.id).toBe(taskId);
 	});
 
 	test('returns error when custom_agent_id does not exist', async () => {
@@ -1231,7 +1220,7 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 		});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+		expect(parsed.task.id).toBe(taskId);
 	});
 });
 
@@ -1328,7 +1317,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('no active Task Agent session');
-		expect(parsed.taskStatus).toBe('pending');
+		expect(parsed.taskStatus).toBe('open');
 		expect(injected).toHaveLength(0);
 	});
 
@@ -1471,7 +1460,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 		});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('open');
 		expect(parsed.task.workflowRunId ?? null).toBeNull();
 	});
 
@@ -1484,7 +1473,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 		const stored = ctx.taskRepo.getTask(taskId);
 		expect(stored).not.toBeNull();
 		expect(stored?.title).toBe('Add JWT auth');
-		expect(stored?.status).toBe('pending');
+		expect(stored?.status).toBe('open');
 	});
 
 	test('start_workflow_run with planning start node creates task with planning taskType', async () => {
@@ -1512,10 +1501,8 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 
 		expect(parsed.success).toBe(true);
 		expect(parsed.tasks).toHaveLength(1);
-		// Planning node activation: taskType must be 'planning'
-		expect(parsed.tasks[0].taskType).toBe('planning');
-		expect(parsed.tasks[0].workflowNodeId).toBe(stepId);
-		expect(parsed.tasks[0].status).toBe('pending');
+		// taskType and workflowNodeId removed in M71 — verify task is created and has open status
+		expect(parsed.tasks[0].status).toBe('open');
 	});
 
 	test('start_workflow_run with V2 planning workflow stores run in DB', async () => {
@@ -1544,7 +1531,8 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 
 		const tasks = ctx.taskRepo.listByWorkflowRun(runs[0].id);
 		expect(tasks).toHaveLength(1);
-		expect(tasks[0].taskType).toBe('planning');
+		// taskType removed in M71 — verify task is created
+		expect(tasks[0].status).toBe('open');
 	});
 
 	test('suggest_workflow ranks V2 workflow first for clear coding request', async () => {

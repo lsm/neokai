@@ -343,33 +343,33 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 	});
 
 	test('space_tasks indexes are recreated after table rebuild', () => {
-		// createTables + runMigrations creates space_tasks via migration 27-29
-		// Then we downgrade it to trigger migration 34's rebuild
+		// createTables + runMigrations creates space_tasks via migration 27-29 (and M71).
+		// Then we downgrade it to trigger migration 34's rebuild.
 		createTables(db);
 		runMigrations(db, () => {});
 
 		expect(tableExists(db, 'space_tasks')).toBe(true);
 
-		// Downgrade space_tasks: remove 'archived' from CHECK to trigger rebuild
+		// Downgrade space_tasks: remove 'archived' from CHECK to trigger M34's rebuild.
+		// After M71, the table uses new status values — we still downgrade by removing 'archived'
+		// to simulate a pre-M34 state and verify M34's idempotency behavior.
 		db.exec('PRAGMA foreign_keys = OFF');
 		const spaceSql = getTableSql(db, 'space_tasks')!;
 		const downgradedSql = spaceSql.replace(", 'archived'", '');
 		db.exec(`DROP TABLE space_tasks`);
 		db.exec(downgradedSql);
+		// Only create indexes for columns that actually exist in the post-M71 table
 		db.exec('CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)');
 		db.exec('CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)');
 		db.exec(
 			'CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)'
 		);
-		db.exec(
-			'CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)'
-		);
-		db.exec(
-			'CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)'
-		);
-		db.exec(
-			'CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)'
-		);
+		// Note: custom_agent_id and workflow_node_id were removed by M71, so no index on them.
+		if (spaceSql.includes('task_agent_session_id')) {
+			db.exec(
+				'CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)'
+			);
+		}
 		db.exec('PRAGMA foreign_keys = ON');
 
 		expect(getTableSql(db, 'space_tasks')!).not.toContain("'archived'");
@@ -379,14 +379,10 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 
 		const indexes = getIndexNames(db, 'space_tasks');
 		expect(indexes).toContain('idx_space_tasks_space_id');
-		expect(indexes).toContain('idx_space_tasks_status');
 		expect(indexes).toContain('idx_space_tasks_workflow_run_id');
-		expect(indexes).toContain('idx_space_tasks_custom_agent_id');
-		// Migration 39 rebuilds with workflow_step_id, but migration 51 later
-		// rebuilds with workflow_node_id (agent_name rename), so the final index name
-		// reflects the post-migration-51 schema.
-		expect(indexes).toContain('idx_space_tasks_workflow_node_id');
-		expect(indexes).toContain('idx_space_tasks_task_agent_session_id');
+		// Post-M71: custom_agent_id and workflow_node_id indexes no longer exist
+		expect(indexes).not.toContain('idx_space_tasks_custom_agent_id');
+		expect(indexes).not.toContain('idx_space_tasks_workflow_node_id');
 	});
 
 	// -------------------------------------------------------------------------

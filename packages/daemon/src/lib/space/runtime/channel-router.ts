@@ -35,13 +35,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type {
-	SpaceTask,
-	SpaceTaskType,
-	SpaceWorkflow,
-	WorkflowChannel,
-	WorkflowNode,
-} from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@neokai/shared';
 import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
@@ -78,12 +72,6 @@ export class ChannelGateBlockedError extends Error {
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** Resolved task-type metadata for a single agent slot */
-interface ResolvedTaskType {
-	taskType: SpaceTaskType;
-	customAgentId: string | undefined;
-}
 
 /**
  * Return value from deliverMessage().
@@ -195,7 +183,7 @@ export class ChannelRouter {
 	 * @param nodeId - ID of the WorkflowNode to activate
 	 * @returns Array of created (or pre-existing) SpaceTask records (≥ 1)
 	 * @throws ActivationError when the run/workflow/node is not found, or the
-	 *   run is in a terminal state (cancelled / completed)
+	 *   run is in a terminal state (cancelled / done)
 	 */
 	async activateNode(runId: string, nodeId: string): Promise<SpaceTask[]> {
 		// ── 1. Load the run ────────────────────────────────────────────────────
@@ -203,7 +191,7 @@ export class ChannelRouter {
 		if (!run) {
 			throw new ActivationError(`Run not found: ${runId}`);
 		}
-		if (run.status === 'cancelled' || run.status === 'completed') {
+		if (run.status === 'cancelled' || run.status === 'done') {
 			throw new ActivationError(`Cannot activate node for run in status "${run.status}": ${runId}`);
 		}
 
@@ -234,21 +222,22 @@ export class ChannelRouter {
 			);
 		}
 
+		// For single-agent nodes, use the node name as the task title so test helpers
+		// and external observers can find tasks by the familiar node name (e.g.
+		// 'Plan Review', 'Coding'). For multi-agent nodes, use each agent slot's own
+		// name so the individual slots are distinguishable (e.g. 'Reviewer 1',
+		// 'Reviewer 2', 'Reviewer 3').
+		const isMultiAgent = agents.length > 1;
+
 		const tasks: SpaceTask[] = [];
 		for (const agentEntry of agents) {
-			const resolved = this.resolveTaskTypeForAgent(agentEntry.agentId);
 			try {
 				const task = this.config.taskRepo.createTask({
 					spaceId: run.spaceId,
-					title: node.name,
-					description: agentEntry.instructions ?? node.instructions ?? '',
+					title: isMultiAgent ? agentEntry.name : node.name,
+					description: agentEntry.instructions?.value ?? node.instructions ?? '',
 					workflowRunId: runId,
-					workflowNodeId: nodeId,
-					taskType: resolved.taskType,
-					customAgentId: resolved.customAgentId,
-					agentName: agentEntry.name,
-					status: 'pending',
-					goalId: run.goalId,
+					status: 'open',
 				});
 				tasks.push(task);
 			} catch (err) {
@@ -469,7 +458,7 @@ export class ChannelRouter {
 	 */
 	async onGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
 		const run = this.config.workflowRunRepo.getRun(runId);
-		if (!run || run.status === 'cancelled' || run.status === 'completed') return [];
+		if (!run || run.status === 'cancelled' || run.status === 'done') return [];
 
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) return [];
@@ -602,31 +591,50 @@ export class ChannelRouter {
 	 * Returns all in-flight tasks for a given (runId, nodeId) pair.
 	 *
 	 * "In-flight" means the task is in an active (non-terminal) status:
-	 * pending, in_progress, review, rate_limited, or usage_limited.
-	 * This mirrors the partial index constraint in Migration 54 so the
-	 * application-level check stays consistent with the DB-level constraint.
+	 * open or in_progress.
 	 *
-	 * Terminal tasks (completed, cancelled, needs_attention, archived) are
-	 * excluded so cyclic workflows can re-activate a node after its tasks complete.
+	 * Terminal tasks (done, blocked, cancelled, archived) are excluded so cyclic
+	 * workflows can re-activate a node after its tasks complete.
 	 *
-	 * `draft` is intentionally excluded even though it is a valid `SpaceTaskStatus`.
-	 * The ChannelRouter always creates tasks with `status: 'pending'` — `draft` is
-	 * reserved for tasks created by external callers that are not yet ready to run.
-	 * The Migration 54 index matches this exclusion, meaning two draft tasks for the
-	 * same (run, node, slot) are allowed to coexist. Callers that create draft tasks
-	 * outside ChannelRouter must manage uniqueness themselves.
+	 * Since M72 removed the `workflow_node_id` column from `space_tasks`, node
+	 * identity is determined by matching `task.title`:
+	 * - Single-agent nodes: title equals `node.name` (e.g. 'Plan Review', 'Coding')
+	 * - Multi-agent nodes: each task title equals its agent slot name
+	 *   (e.g. 'Reviewer 1', 'Reviewer 2', 'Reviewer 3')
+	 *
+	 * The `nodeId` parameter is tried first as a node UUID; if no node matches,
+	 * it is retried as a node name so callers passing names work correctly too.
 	 */
 	private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
-		const ACTIVE_STATUSES = new Set([
-			'pending',
-			'in_progress',
-			'review',
-			'rate_limited',
-			'usage_limited',
-		]);
-		return this.config.taskRepo
+		const ACTIVE_STATUSES = new Set(['open', 'in_progress']);
+		const allActive = this.config.taskRepo
 			.listByWorkflowRun(runId)
-			.filter((t) => t.workflowNodeId === nodeId && ACTIVE_STATUSES.has(t.status));
+			.filter((t) => ACTIVE_STATUSES.has(t.status));
+		if (allActive.length === 0) return [];
+
+		// Resolve the node — try by UUID first, fall back to name.
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) return [];
+		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+		const node =
+			workflow?.nodes.find((n) => n.id === nodeId) ??
+			workflow?.nodes.find((n) => n.name === nodeId);
+		if (!node) return [];
+
+		let agents: ReturnType<typeof resolveNodeAgents>;
+		try {
+			agents = resolveNodeAgents(node);
+		} catch {
+			return [];
+		}
+
+		// Mirror the title convention used in activateNode():
+		// single-agent → node.name; multi-agent → individual slot names.
+		if (agents.length > 1) {
+			const agentNames = new Set(agents.map((a) => a.name));
+			return allActive.filter((t) => agentNames.has(t.title));
+		}
+		return allActive.filter((t) => t.title === node.name);
 	}
 
 	/**
@@ -752,21 +760,6 @@ export class ChannelRouter {
 				);
 			}
 		}
-	}
-
-	/**
-	 * Resolves the SpaceTaskType and optional customAgentId for an agent ID.
-	 * Mirrors SpaceRuntime.resolveTaskTypeForAgent() so task creation is consistent.
-	 */
-	private resolveTaskTypeForAgent(agentId: string): ResolvedTaskType {
-		const agent = this.config.agentManager.getById(agentId);
-		if (!agent) return { taskType: 'coding', customAgentId: agentId };
-		if (agent.role === 'planner') return { taskType: 'planning', customAgentId: undefined };
-		if (agent.role === 'coder' || agent.role === 'general') {
-			return { taskType: 'coding', customAgentId: undefined };
-		}
-		// Custom role
-		return { taskType: 'coding', customAgentId: agentId };
 	}
 }
 

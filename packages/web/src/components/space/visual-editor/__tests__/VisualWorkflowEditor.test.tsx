@@ -127,8 +127,8 @@ import { TEMPLATES } from '../../WorkflowEditor';
 // Fixtures
 // ============================================================================
 
-function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
-	return { id, spaceId: 'space-1', name, role, createdAt: 0, updatedAt: 0 };
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
+	return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
 }
 
 const STEP_1_ID = 'step-1';
@@ -141,11 +141,10 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		name: 'My Workflow',
 		description: 'A workflow description',
 		nodes: [
-			{ id: STEP_1_ID, name: 'Plan', agentId: 'agent-1', instructions: 'Plan it' },
-			{ id: STEP_2_ID, name: 'Code', agentId: 'agent-2', instructions: '' },
+			{ id: STEP_1_ID, name: 'Plan', agents: [{ agentId: 'agent-1', name: 'planner' }] },
+			{ id: STEP_2_ID, name: 'Code', agents: [{ agentId: 'agent-2', name: 'coder' }] },
 		],
 		startNodeId: STEP_1_ID,
-		rules: [],
 		tags: [],
 		createdAt: 0,
 		updatedAt: 0,

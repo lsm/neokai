@@ -219,16 +219,16 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			// Verify run starts without completedAt
 			const freshRun = workflowRunRepo.getRun(run.id);
-			expect(freshRun?.completedAt).toBeUndefined();
+			expect(freshRun?.completedAt).toBeNull();
 
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			// Capture time before tick to verify completedAt is recent
 			const beforeTick = Date.now();
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 			expect(completedRun?.completedAt).toBeDefined();
 			expect(typeof completedRun?.completedAt).toBe('number');
 			// Verify completedAt is set to a recent timestamp (within the tick's execution window)
@@ -253,7 +253,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(tasks).toHaveLength(1); // Only start node activated
 
 			// Complete the start node task
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			// Manually activate the second node and complete it
 			// (In production this would be done by ChannelRouter.activateNode)
@@ -265,20 +265,20 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				workflowNodeId: 'node-cd-2',
 				taskType: 'coding',
 				agentName: 'coder',
-				status: 'completed',
+				status: 'done',
 			});
 
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 			expect(completedRun?.completedAt).toBeDefined();
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 			if (completedEvents[0].kind === 'workflow_run_completed') {
 				expect(completedEvents[0].runId).toBe(run.id);
-				expect(completedEvents[0].status).toBe('completed');
+				expect(completedEvents[0].status).toBe('done');
 			}
 		});
 
@@ -292,7 +292,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// First node completed
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			// Second node cancelled
 			const taskManager = rt.getTaskManagerForSpace(SPACE_ID);
@@ -309,7 +309,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
@@ -325,7 +325,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// First node completed
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			// Second node in progress
 			const taskManager = rt.getTaskManagerForSpace(SPACE_ID);
@@ -362,17 +362,17 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			// Escalate to needs_attention
-			workflowRunRepo.transitionStatus(run.id, 'needs_attention');
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
 
 			// Set task to completed — normally this would trigger completion
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			await rt.executeTick();
 
 			// Run should still be needs_attention (not completed) because
 			// processRunTick returns early for needs_attention runs
 			const runAfter = workflowRunRepo.getRun(run.id);
-			expect(runAfter?.status).toBe('needs_attention');
+			expect(runAfter?.status).toBe('blocked');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(0);
@@ -387,10 +387,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// Complete the task and let tick mark run as completed
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			await rt.executeTick();
 
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('completed');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
 			expect(rt.executorCount).toBe(0);
 
 			// Reset the sink to track events after first tick
@@ -439,11 +439,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(run.status).toBe('in_progress');
 
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			await rt.executeTick();
 
 			const runAfter = workflowRunRepo.getRun(run.id);
-			expect(runAfter?.status).toBe('completed');
+			expect(runAfter?.status).toBe('done');
 		});
 
 		test('completed run cannot transition again — subsequent ticks are no-ops', async () => {
@@ -454,10 +454,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			await rt.executeTick();
 
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('completed');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
 			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 
 			// Multiple additional ticks
@@ -478,17 +478,17 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// Move to needs_attention
-			workflowRunRepo.transitionStatus(run.id, 'needs_attention');
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
 
 			// All tasks terminal
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			await rt.executeTick();
 
-			// Run stays needs_attention — processRunTick returns early
+			// Run stays blocked — processRunTick returns early
 			const runAfter = workflowRunRepo.getRun(run.id);
-			expect(runAfter?.status).toBe('needs_attention');
-			expect(runAfter?.completedAt).toBeUndefined();
+			expect(runAfter?.status).toBe('blocked');
+			expect(runAfter?.completedAt).toBeNull();
 		});
 
 		test('needs_attention → in_progress → completed lifecycle via resume', async () => {
@@ -500,20 +500,20 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// Step 1: escalate to needs_attention
-			workflowRunRepo.transitionStatus(run.id, 'needs_attention');
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('needs_attention');
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
 
 			// Step 2: human resolves → resume to in_progress
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 
 			// Step 3: complete all tasks
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			await rt.executeTick();
 
 			// Step 4: run should now be completed
 			const finalRun = workflowRunRepo.getRun(run.id);
-			expect(finalRun?.status).toBe('completed');
+			expect(finalRun?.status).toBe('done');
 			expect(finalRun?.completedAt).toBeDefined();
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
@@ -526,7 +526,12 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	// -------------------------------------------------------------------------
 
 	describe('pending-but-blocked via workflow channels', () => {
-		test('channel to unactivated node prevents completion in tick loop', async () => {
+		test('run completes when all active tasks are done (channel topology guard removed in M71)', async () => {
+			// NOTE: The channel-based pending-node-activation guard was removed as part of the M71
+			// schema migration (which dropped workflow_node_id from space_tasks).
+			// A replacement guard using endNodeId will be added in a subsequent task.
+			// This test verifies the CURRENT behavior: a run with all tasks done completes,
+			// even if a channel target node was never activated.
 			const rt = makeRuntimeWithTam();
 
 			// Create a workflow with channels: Plan → Code
@@ -535,13 +540,19 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				name: `Channeled Workflow ${Date.now()}`,
 				description: '',
 				nodes: [
-					{ id: 'chan-plan', name: 'planner', agentId: AGENT_B },
-					{ id: 'chan-code', name: 'coder', agentId: AGENT_A },
+					{
+						id: 'chan-plan',
+						name: 'planner',
+						agents: [{ agentId: AGENT_B, name: 'Planner' }],
+					},
+					{
+						id: 'chan-code',
+						name: 'coder',
+						agents: [{ agentId: AGENT_A, name: 'Coder' }],
+					},
 				],
 				startNodeId: 'chan-plan',
-				rules: [],
 				tags: [],
-				transitions: [],
 				channels: [{ from: 'planner', to: 'coder', direction: 'one-way' }],
 			});
 
@@ -549,19 +560,17 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(tasks).toHaveLength(1); // Only start node
 
 			// Complete the only node-agent task
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			await rt.executeTick();
 
-			// Run should NOT be completed because the channel from planner
-			// to coder targets the 'coder' node which was never activated.
-			// The workflow.channels array includes the channel definition,
-			// and processRunTick passes it to completionDetector.isComplete().
+			// Run DOES complete because all tasks are done (channel guard was removed in M71).
+			// When endNodeId-based completion guard is implemented, this test should be updated.
 			const runAfter = workflowRunRepo.getRun(run.id);
-			expect(runAfter?.status).toBe('in_progress');
+			expect(runAfter?.status).toBe('done');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
-			expect(completedEvents).toHaveLength(0);
+			expect(completedEvents).toHaveLength(1);
 		});
 
 		test('all channels satisfied — completion proceeds normally', async () => {
@@ -585,7 +594,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// Complete start node
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			// Manually activate second node and complete it
 			const taskManager = rt.getTaskManagerForSpace(SPACE_ID);
@@ -596,13 +605,13 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				workflowNodeId: 'full-code',
 				taskType: 'coding',
 				agentName: 'coder',
-				status: 'completed',
+				status: 'done',
 			});
 
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
@@ -620,14 +629,14 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// Complete start node only — second node never activated
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			await rt.executeTick();
 
 			// Without channels, CompletionDetector has no guard —
 			// only task statuses matter. Start node is terminal → complete.
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
@@ -650,12 +659,12 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
@@ -694,14 +703,14 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(tasks).toHaveLength(3);
 
 			// Complete all three tasks with different terminal statuses
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			taskRepo.updateTask(tasks[1].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			taskRepo.updateTask(tasks[1].id, { status: 'done' });
 			taskRepo.updateTask(tasks[2].id, { status: 'cancelled' });
 
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('completed');
+			expect(completedRun?.status).toBe('done');
 			expect(completedRun?.completedAt).toBeDefined();
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
@@ -732,7 +741,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
 
 			await rt.executeTick();
@@ -769,17 +778,17 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// Tick 1: first agent completes
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			await rt.executeTick();
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
 
 			// Tick 2: second agent completes
-			taskRepo.updateTask(tasks[1].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[1].id, { status: 'done' });
 			await rt.executeTick();
 
 			// Now the run should be completed
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('completed');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
 			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 
 			// Tick 3: no duplicate
@@ -801,20 +810,23 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			const taskId = tasks[0].id;
-			const dedupKey = `${taskId}:needs_attention`;
+			// M71: dedup key uses 'blocked' (renamed from 'needs_attention')
+			const dedupKey = `${taskId}:blocked`;
 
 			// Empty dedup set at start
 			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(false);
 
-			// Set task to needs_attention, tick to add dedup key
-			taskRepo.updateTask(taskId, { status: 'needs_attention', error: 'Fail' });
+			// Set task to blocked, tick to add dedup key
+			// M71: 'error' field removed from SpaceTask; task status 'blocked' triggers notification
+			taskRepo.updateTask(taskId, { status: 'blocked' });
 			await rt.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			// M71: event kind is 'task_blocked' (renamed from 'task_needs_attention')
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 			// Dedup entry was added
 			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(true);
 
 			// Now resolve the task and complete it
-			taskRepo.updateTask(taskId, { status: 'completed' });
+			taskRepo.updateTask(taskId, { status: 'done' });
 			await rt.executeTick();
 
 			// Run should be completed

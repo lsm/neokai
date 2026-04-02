@@ -22,10 +22,9 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	SpaceTask,
-	SpaceTaskType,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
-	WorkflowRule,
+	ResolvedChannel,
 	WorkflowNode,
 	WorkflowChannel,
 } from '@neokai/shared';
@@ -103,21 +102,12 @@ export interface SpaceRuntimeConfig {
 // Return types
 // ---------------------------------------------------------------------------
 
-/** Result of resolveTaskTypeForStep(): taskType + optional customAgentId */
+/** Result of resolveTaskTypeForAgent(): agentId for the resolved agent */
 export interface ResolvedTaskType {
 	/**
-	 * SpaceTaskType derived from the agent's role:
-	 *   planner → 'planning'
-	 *   coder | general → 'coding'
-	 *   custom role → 'coding'
+	 * The agent ID for this task's execution.
 	 */
-	taskType: SpaceTaskType;
-	/**
-	 * Set for custom-role agents (non-preset) so that the executor knows
-	 * exactly which SpaceAgent to use. Undefined for planner/coder/general
-	 * roles where the step's agentId is the authoritative reference.
-	 */
-	customAgentId: string | undefined;
+	agentId: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,12 +157,12 @@ export class SpaceRuntime {
 	private completionDetector: CompletionDetector;
 
 	/**
-	 * Deduplication set for notifications keyed by `taskId:status` (e.g. `task-1:needs_attention`
+	 * Deduplication set for notifications keyed by `taskId:status` (e.g. `task-1:blocked`
 	 * or `task-1:timeout`). Prevents re-notifying for the same task+status across ticks.
 	 * Entries are cleared when the task leaves the flagged state.
 	 *
 	 * Restart contract: this set is in-memory only and starts empty on every daemon restart.
-	 * Tasks already in `needs_attention` at restart time will be re-notified once on the first
+	 * Tasks already in `blocked` at restart time will be re-notified once on the first
 	 * tick. This is intentional: the Space Agent session is also new after restart and needs to
 	 * learn about outstanding issues. No DB persistence for dedup state is required.
 	 */
@@ -183,7 +173,7 @@ export class SpaceRuntime {
 	 *
 	 * Tracks how many times a task's agent session has been detected as dead.
 	 * When the count reaches MAX_TASK_AGENT_CRASH_RETRIES, the task is escalated
-	 * to `needs_attention` so a human can investigate. Below the limit, the task
+	 * to `blocked` so a human can investigate. Below the limit, the task
 	 * is reset to `pending` for re-spawn to tolerate transient startup failures.
 	 *
 	 * Reset contract: this map is in-memory only and starts empty on every daemon
@@ -192,6 +182,9 @@ export class SpaceRuntime {
 	 * retries before escalation.
 	 */
 	private taskCrashCounts = new Map<string, number>();
+
+	/** In-memory store of resolved channels per run ID. Replaces run.config._resolvedChannels. */
+	private resolvedChannelsMap = new Map<string, ResolvedChannel[]>();
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
@@ -307,7 +300,7 @@ export class SpaceRuntime {
 	 * On every call:
 	 * 1. Processes completed tasks and advances their workflows
 	 * 2. Cleans up executors for runs that have reached a terminal state
-	 * 3. Checks standalone tasks (no workflowRunId) for needs_attention and timeout
+	 * 3. Checks standalone tasks (no workflowRunId) for blocked and timeout
 	 */
 	async executeTick(): Promise<void> {
 		if (!this.rehydrated) {
@@ -337,7 +330,7 @@ export class SpaceRuntime {
 		workflowId: string,
 		title: string,
 		description?: string,
-		goalId?: string
+		_goalId?: string
 	): Promise<{ run: SpaceWorkflowRun; tasks: SpaceTask[] }> {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(workflowId);
 		if (!workflow) {
@@ -355,7 +348,6 @@ export class SpaceRuntime {
 			workflowId,
 			title,
 			description,
-			goalId,
 		});
 
 		const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
@@ -384,17 +376,11 @@ export class SpaceRuntime {
 		try {
 			const startAgents = resolveNodeAgents(startStep);
 			for (const agentEntry of startAgents) {
-				const resolved = this.resolveTaskTypeForAgent(agentEntry.agentId);
 				const task = await taskManager.createTask({
 					title: startStep.name,
-					description: agentEntry.instructions ?? startStep.instructions ?? '',
+					description: agentEntry.instructions?.value ?? startStep.instructions ?? '',
 					workflowRunId: run.id,
-					workflowNodeId: startStep.id,
-					taskType: resolved.taskType,
-					customAgentId: resolved.customAgentId,
-					agentName: agentEntry.name,
-					status: 'pending',
-					goalId: run.goalId,
+					status: 'open',
 				});
 				tasks.push(task);
 			}
@@ -418,47 +404,15 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Resolve the appropriate SpaceTaskType (and optional customAgentId) for a specific
-	 * agent ID. This is the canonical per-agent resolver used by the TaskTypeResolver
-	 * callback injected into WorkflowExecutor.
-	 *
-	 * Mapping rules:
-	 *   agent.role === 'planner'          → taskType: 'planning',  customAgentId: undefined
-	 *   agent.role === 'coder'|'general'  → taskType: 'coding',    customAgentId: undefined
-	 *   any other role (custom)           → taskType: 'coding',    customAgentId: agentId
-	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
+	 * Resolve the agent ID for a specific agent entry.
 	 */
 	resolveTaskTypeForAgent(agentId: string): ResolvedTaskType {
-		const agent = this.config.spaceAgentManager.getById(agentId);
-
-		if (!agent) {
-			// Unknown agent → treat as custom coding agent
-			return { taskType: 'coding', customAgentId: agentId };
-		}
-
-		if (agent.role === 'planner') {
-			return { taskType: 'planning', customAgentId: undefined };
-		}
-
-		if (agent.role === 'coder' || agent.role === 'general') {
-			return { taskType: 'coding', customAgentId: undefined };
-		}
-
-		// Custom role
-		return { taskType: 'coding', customAgentId: agentId };
+		return { agentId };
 	}
 
 	/**
 	 * Resolve per-agent task types for a workflow step.
-	 *
 	 * Returns one `ResolvedTaskType` per agent entry in the step (in order).
-	 * For single-agent steps (agentId shorthand), returns a one-element array.
-	 *
-	 * Mapping rules per agent:
-	 *   agent.role === 'planner'          → taskType: 'planning',  customAgentId: undefined
-	 *   agent.role === 'coder'|'general'  → taskType: 'coding',    customAgentId: undefined
-	 *   any other role (custom)           → taskType: 'coding',    customAgentId: agentId
-	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
 	 */
 	resolveTaskTypesForStep(step: WorkflowNode): ResolvedTaskType[] {
 		const nodeAgents = resolveNodeAgents(step);
@@ -466,33 +420,10 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Resolve the appropriate SpaceTaskType (and optional customAgentId) for
-	 * a workflow step, based on the primary agent's role.
-	 *
-	 * For backward compatibility: delegates to `resolveTaskTypesForStep()` and
-	 * returns the first entry (primary agent).
-	 *
-	 * For multi-agent steps (agents[] format), use `resolveTaskTypesForStep()`
-	 * to get per-agent results.
+	 * Resolve the ResolvedTaskType for a workflow step (first agent).
 	 */
 	resolveTaskTypeForStep(step: WorkflowNode): ResolvedTaskType {
 		return this.resolveTaskTypesForStep(step)[0];
-	}
-
-	/**
-	 * Returns workflow rules applicable to a given workflow step.
-	 *
-	 * A rule applies to a step when:
-	 *   - rule.appliesTo is empty/undefined (applies to ALL steps), OR
-	 *   - rule.appliesTo includes stepId
-	 */
-	getRulesForStep(workflowId: string, stepId: string): WorkflowRule[] {
-		const workflow = this.config.spaceWorkflowManager.getWorkflow(workflowId);
-		if (!workflow) return [];
-
-		return workflow.rules.filter(
-			(r) => !r.appliesTo || r.appliesTo.length === 0 || r.appliesTo.includes(stepId)
-		);
 	}
 
 	/**
@@ -546,9 +477,9 @@ export class SpaceRuntime {
 		const spaces = await this.config.spaceManager.listSpaces(false);
 
 		for (const space of spaces) {
-			// getRehydratableRuns returns 'in_progress' AND 'needs_attention' runs.
+			// getRehydratableRuns returns 'in_progress' AND 'blocked' runs.
 			// 'pending' is still excluded — it's transient (task creation may have failed).
-			// 'needs_attention' runs are included so a human-gate-blocked run gets its
+			// 'blocked' runs are included so a human-gate-blocked run gets its
 			// executor reloaded on restart, allowing it to advance once the gate is resolved.
 			const activeRuns = this.config.workflowRunRepo.getRehydratableRuns(space.id);
 
@@ -589,7 +520,7 @@ export class SpaceRuntime {
 
 	/**
 	 * For each active executor, processes the current step's tasks:
-	 * - Detects needs_attention and timeout conditions
+	 * - Detects blocked and timeout conditions
 	 * - Spawns Task Agent sessions for pending tasks
 	 * - Monitors agent liveness and resets dead agents
 	 *
@@ -624,11 +555,7 @@ export class SpaceRuntime {
 		// approval reset, external cancellation).
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
-		if (
-			run.status === 'needs_attention' ||
-			run.status === 'cancelled' ||
-			run.status === 'completed'
-		) {
+		if (run.status === 'blocked' || run.status === 'cancelled' || run.status === 'done') {
 			return;
 		}
 
@@ -643,38 +570,38 @@ export class SpaceRuntime {
 
 		// Refresh dedup entries: clear keys for tasks that have left their flagged state.
 		for (const task of allRunTasks) {
-			if (task.status !== 'needs_attention') {
-				this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+			if (task.status !== 'blocked') {
+				this.notifiedTaskSet.delete(`${task.id}:blocked`);
 			}
 			if (task.status !== 'in_progress') {
 				this.notifiedTaskSet.delete(`${task.id}:timeout`);
 			}
 		}
 
-		// Detect task-level needs_attention BEFORE the all-completed guard.
+		// Detect task-level blocked BEFORE the all-completed guard.
 		// This is an explicit check — not inferred from WorkflowTransitionError.
-		if (allRunTasks.some((t) => t.status === 'needs_attention')) {
+		if (allRunTasks.some((t) => t.status === 'blocked')) {
 			for (const task of allRunTasks) {
-				if (task.status !== 'needs_attention') continue;
-				const dedupKey = `${task.id}:needs_attention`;
+				if (task.status !== 'blocked') continue;
+				const dedupKey = `${task.id}:blocked`;
 				if (!this.notifiedTaskSet.has(dedupKey)) {
 					this.notifiedTaskSet.add(dedupKey);
 					await this.safeNotify({
-						kind: 'task_needs_attention',
+						kind: 'task_blocked',
 						spaceId: meta.spaceId,
 						taskId: task.id,
-						reason: task.error ?? 'Task requires attention',
+						reason: 'Task requires attention',
 						timestamp: new Date().toISOString(),
 					});
 				}
 			}
 
-			// Escalate the run to needs_attention for multi-agent steps when ALL tasks are terminal.
-			// Single-task steps: only task_needs_attention is emitted (backward compat).
+			// Escalate the run to blocked for multi-agent steps when ALL tasks are terminal.
+			// Single-task steps: only task_blocked is emitted (backward compat).
 			if (allRunTasks.length > 1 && this.areAllStepTasksTerminal(allRunTasks)) {
-				this.config.workflowRunRepo.transitionStatus(runId, 'needs_attention');
+				this.config.workflowRunRepo.transitionStatus(runId, 'blocked');
 				await this.safeNotify({
-					kind: 'workflow_run_needs_attention',
+					kind: 'workflow_run_blocked',
 					spaceId: meta.spaceId,
 					runId,
 					reason: 'One or more tasks require attention',
@@ -733,9 +660,9 @@ export class SpaceRuntime {
 				}
 
 				// Task Agent session is dead. Apply crash-retry logic:
-				//   - Below MAX_TASK_AGENT_CRASH_RETRIES: reset to pending for re-spawn
+				//   - Below MAX_TASK_AGENT_CRASH_RETRIES: reset to open for re-spawn
 				//     (tolerates transient startup failures, e.g. dev-proxy timing in CI).
-				//   - At or above limit: escalate to needs_attention so a human can
+				//   - At or above limit: escalate to blocked so a human can
 				//     investigate before further retries are attempted.
 				const crashCount = (this.taskCrashCounts.get(task.id) ?? 0) + 1;
 				this.taskCrashCounts.set(task.id, crashCount);
@@ -743,23 +670,23 @@ export class SpaceRuntime {
 				if (crashCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
 					log.warn(
 						`SpaceRuntime: task agent for task ${task.id} crashed ` +
-							`(session ${task.taskAgentSessionId}); resetting to pending for re-spawn ` +
+							`(session ${task.taskAgentSessionId}); resetting to open for re-spawn ` +
 							`(crash ${crashCount}/${MAX_TASK_AGENT_CRASH_RETRIES})`
 					);
 					this.config.taskRepo.updateTask(task.id, {
 						taskAgentSessionId: null,
-						status: 'pending',
+						status: 'open',
 					});
 				} else {
 					log.warn(
 						`SpaceRuntime: task agent for task ${task.id} crashed ` +
-							`(session ${task.taskAgentSessionId}); marking needs_attention ` +
+							`(session ${task.taskAgentSessionId}); marking blocked ` +
 							`after ${crashCount} crashes (limit: ${MAX_TASK_AGENT_CRASH_RETRIES})`
 					);
 					this.config.taskRepo.updateTask(task.id, {
 						taskAgentSessionId: null,
-						status: 'needs_attention',
-						error: `Agent session crashed ${crashCount} times consecutively`,
+						status: 'blocked',
+						result: `Agent session crashed ${crashCount} times consecutively`,
 					});
 					await this.safeNotify({
 						kind: 'agent_crash',
@@ -781,7 +708,7 @@ export class SpaceRuntime {
 				tam,
 				this.safeNotify.bind(this),
 				undefined,
-				(task) => resolveNodeTimeout(task.agentName ?? 'general')
+				(task) => resolveNodeTimeout(task.title ?? 'general')
 			);
 			if (autoCompleted.length > 0) {
 				log.warn(
@@ -794,10 +721,8 @@ export class SpaceRuntime {
 			// in the run has reached a terminal status. If so, mark the run as
 			// completed — cleanupTerminalExecutors() will emit the notification and
 			// remove the executor on the same tick.
-			if (
-				this.completionDetector.isComplete(runId, meta.workflow.channels ?? [], meta.workflow.nodes)
-			) {
-				this.config.workflowRunRepo.transitionStatus(runId, 'completed');
+			if (this.completionDetector.isComplete(runId)) {
+				this.config.workflowRunRepo.transitionStatus(runId, 'done');
 				return;
 			}
 
@@ -805,7 +730,7 @@ export class SpaceRuntime {
 			// Re-read from DB to pick up status resets applied in Step 1.
 			const pendingTasksNeedingAgent = this.config.taskRepo
 				.listByWorkflowRun(runId)
-				.filter((t) => t.status === 'pending' && !t.taskAgentSessionId);
+				.filter((t) => t.status === 'open' && !t.taskAgentSessionId);
 
 			if (pendingTasksNeedingAgent.length > 0) {
 				if (!space) {
@@ -910,7 +835,7 @@ export class SpaceRuntime {
 		// Look up completed tasks for terminal nodes and return the first result
 		const runTasks = this.config.taskRepo.listByWorkflowRun(runId);
 		for (const task of runTasks) {
-			if (task.workflowNodeId != null && terminalNodeIds.has(task.workflowNodeId) && task.result) {
+			if (task.status === 'done' && task.result) {
 				return task.result;
 			}
 		}
@@ -934,8 +859,8 @@ export class SpaceRuntime {
 	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
 			const run = this.config.workflowRunRepo.getRun(runId);
-			if (!run || run.status === 'completed' || run.status === 'cancelled') {
-				if (run?.status === 'completed') {
+			if (!run || run.status === 'done' || run.status === 'cancelled') {
+				if (run?.status === 'done') {
 					const meta = this.executorMeta.get(runId);
 					if (meta) {
 						const summary = this.resolveCompletionSummary(runId, meta.workflow);
@@ -943,7 +868,7 @@ export class SpaceRuntime {
 							kind: 'workflow_run_completed',
 							spaceId: meta.spaceId,
 							runId,
-							status: 'completed',
+							status: 'done',
 							summary,
 							timestamp: new Date().toISOString(),
 						});
@@ -954,7 +879,7 @@ export class SpaceRuntime {
 				// reappear in stepTasks, so the normal per-tick pruning loop
 				// (processRunTick) would never clear them otherwise.
 				for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
-					this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+					this.notifiedTaskSet.delete(`${task.id}:blocked`);
 					this.notifiedTaskSet.delete(`${task.id}:timeout`);
 				}
 				this.executors.delete(runId);
@@ -973,7 +898,7 @@ export class SpaceRuntime {
 
 	/**
 	 * Checks standalone tasks (tasks without a workflowRunId) across all spaces for:
-	 *   - `needs_attention` status → emit `task_needs_attention` notification
+	 *   - `blocked` status → emit `task_blocked` notification
 	 *   - `in_progress` timeout    → emit `task_timeout` notification
 	 *
 	 * Uses the shared `notifiedTaskSet` for deduplication so the same task+status pair
@@ -982,11 +907,11 @@ export class SpaceRuntime {
 	 *
 	 * Dedup cleanup includes archived tasks (fetched via includeArchived=true) to prevent
 	 * notifiedTaskSet from accumulating stale keys for tasks that were archived while in
-	 * a flagged state. Archived tasks can never re-enter needs_attention or in_progress,
+	 * a flagged state. Archived tasks can never re-enter blocked or in_progress,
 	 * so their dedup keys are always safe to remove.
 	 *
 	 * Restart contract: because `notifiedTaskSet` is in-memory only, tasks already in
-	 * `needs_attention` at daemon startup will re-notify once on the first tick. This is
+	 * `blocked` at daemon startup will re-notify once on the first tick. This is
 	 * intentional — the Space Agent session is new after restart and needs to be informed
 	 * of outstanding issues. See the `notifiedTaskSet` field comment for details.
 	 */
@@ -1007,25 +932,25 @@ export class SpaceRuntime {
 			// flagged state, so keeping their keys would be a permanent memory leak.
 			for (const task of allStandalone) {
 				const archived = !!task.archivedAt;
-				if (archived || task.status !== 'needs_attention') {
-					this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+				if (archived || task.status !== 'blocked') {
+					this.notifiedTaskSet.delete(`${task.id}:blocked`);
 				}
 				if (archived || task.status !== 'in_progress') {
 					this.notifiedTaskSet.delete(`${task.id}:timeout`);
 				}
 			}
 
-			// Emit task_needs_attention for active standalone tasks in needs_attention state.
+			// Emit task_blocked for active standalone tasks in blocked state.
 			for (const task of activeStandalone) {
-				if (task.status !== 'needs_attention') continue;
-				const dedupKey = `${task.id}:needs_attention`;
+				if (task.status !== 'blocked') continue;
+				const dedupKey = `${task.id}:blocked`;
 				if (!this.notifiedTaskSet.has(dedupKey)) {
 					this.notifiedTaskSet.add(dedupKey);
 					await this.safeNotify({
-						kind: 'task_needs_attention',
+						kind: 'task_blocked',
 						spaceId: space.id,
 						taskId: task.id,
-						reason: task.error ?? 'Task requires attention',
+						reason: 'Task requires attention',
 						timestamp: new Date().toISOString(),
 					});
 				}
@@ -1085,17 +1010,17 @@ export class SpaceRuntime {
 	/**
 	 * Returns true when every task in the step has reached a terminal state.
 	 *
-	 * Terminal statuses: completed, needs_attention, cancelled, archived.
+	 * Terminal statuses: completed, blocked, cancelled, archived.
 	 *
 	 * Used to implement the partial-failure gate: for multi-agent steps, the run
-	 * must not be escalated to needs_attention until every sibling task has settled.
-	 * The caller is already inside `if (stepTasks.some(needs_attention))`, so
+	 * must not be escalated to blocked until every sibling task has settled.
+	 * The caller is already inside `if (stepTasks.some(blocked))`, so
 	 * "any failed" is guaranteed true at the call site — no need to return it.
 	 *
 	 * @param stepTasks - Pre-fetched tasks for the current step.
 	 */
 	private areAllStepTasksTerminal(stepTasks: SpaceTask[]): boolean {
-		const TERMINAL = new Set<string>(['completed', 'needs_attention', 'cancelled', 'archived']);
+		const TERMINAL = new Set<string>(['done', 'blocked', 'cancelled', 'archived']);
 		return stepTasks.every((t) => TERMINAL.has(t.status));
 	}
 
@@ -1116,21 +1041,21 @@ export class SpaceRuntime {
 	 */
 	resolveAndStoreChannels(
 		runId: string,
-		spaceId: string,
+		_spaceId: string,
 		step: WorkflowNode,
 		channels: WorkflowChannel[]
 	): void {
-		const run = this.config.workflowRunRepo.getRun(runId);
-		if (!run) return;
-
-		const config = (run.config ?? {}) as Record<string, unknown>;
-
 		// Resolve user-declared channels from workflow-level channels array
 		const resolved = resolveNodeChannels(step, channels);
+		this.resolvedChannelsMap.set(runId, resolved);
+	}
 
-		this.config.workflowRunRepo.updateRun(runId, {
-			config: { ...config, _resolvedChannels: resolved },
-		});
+	/**
+	 * Returns the resolved channels for the given run ID.
+	 * Used by consumers that replaced ChannelResolver.fromRunConfig(run.config).
+	 */
+	getRunResolvedChannels(runId: string): ResolvedChannel[] {
+		return this.resolvedChannelsMap.get(runId) ?? [];
 	}
 
 	/**

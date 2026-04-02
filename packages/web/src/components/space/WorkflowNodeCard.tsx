@@ -76,7 +76,7 @@ export interface AgentTaskState {
 
 /** Returns true when all provided agent states have status === 'completed'. */
 export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
-	return states.length > 0 && states.every((s) => s.status === 'completed');
+	return states.length > 0 && states.every((s) => s.status === 'done');
 }
 
 // ============================================================================
@@ -143,7 +143,7 @@ function FailIcon({ title }: { title?: string }) {
 /** Renders the appropriate icon for an agent's task status. */
 export function AgentStatusIcon({ state }: { state: AgentTaskState }) {
 	const summary = state.completionSummary ?? undefined;
-	if (state.status === 'completed') {
+	if (state.status === 'done') {
 		return (
 			<span class="text-green-400 flex-shrink-0" title={summary ?? 'Done'}>
 				<CheckIcon title={summary ?? 'Done'} />
@@ -157,7 +157,7 @@ export function AgentStatusIcon({ state }: { state: AgentTaskState }) {
 			</span>
 		);
 	}
-	if (state.status === 'needs_attention' || state.status === 'cancelled') {
+	if (state.status === 'blocked' || state.status === 'cancelled') {
 		return (
 			<span class="text-red-400 flex-shrink-0" title={summary ?? state.status}>
 				<FailIcon title={summary ?? state.status} />
@@ -216,14 +216,14 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	}, []);
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
-		onUpdate({ ...node, agents: next, agentId: '' });
+		onUpdate({ ...node, agents: next });
 	}
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
 		// Guard against agents with empty role strings to avoid indistinguishable slot names
-		const baseRole = agentInfo?.role?.trim() || agentId;
+		const baseRole = agentInfo?.name?.trim() || agentId;
 		// Ensure the slot name is unique within this node. When the same agent is added
 		// multiple times, append a numeric suffix to distinguish the slots.
 		const usedRoles = new Set(nodeAgents.map((a) => a.name));
@@ -254,21 +254,33 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	function updateAgentInstructions(role: string, instructions: string) {
 		updateAgents(
 			nodeAgents.map((a) =>
-				a.name === role ? { ...a, instructions: instructions || undefined } : a
+				a.name === role
+					? {
+							...a,
+							instructions: instructions
+								? { mode: 'override' as const, value: instructions }
+								: undefined,
+						}
+					: a
 			)
 		);
 	}
 
-	function updateAgentModel(role: string, model: string) {
-		updateAgents(
-			nodeAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
-		);
+	function updateAgentModel(_role: string, _model: string) {
+		// model is no longer a property of WorkflowNodeAgent; this function is a no-op
 	}
 
 	function updateAgentSystemPrompt(role: string, systemPrompt: string) {
 		updateAgents(
 			nodeAgents.map((a) =>
-				a.name === role ? { ...a, systemPrompt: systemPrompt || undefined } : a
+				a.name === role
+					? {
+							...a,
+							systemPrompt: systemPrompt
+								? { mode: 'override' as const, value: systemPrompt }
+								: undefined,
+						}
+					: a
 			)
 		);
 	}
@@ -304,7 +316,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 			<div class="space-y-1.5">
 				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
-					const hasOverrides = !!(sa.model || sa.systemPrompt);
+					const hasOverrides = !!sa.instructions;
 					const isExpanded = expandedSlots.has(sa.name);
 					return (
 						<div
@@ -383,11 +395,15 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 								</button>
 							</div>
 							{/* Agent name (readonly) */}
-							<p class="text-xs text-gray-500">{agentInfo?.name ?? sa.agentId}</p>
+							<p class="text-xs text-gray-500">{agentInfo?.name ?? sa.agentId ?? ''}</p>
 							{/* Per-agent instructions */}
 							<input
 								type="text"
-								value={sa.instructions ?? ''}
+								value={
+									typeof sa.instructions === 'string'
+										? sa.instructions
+										: (sa.instructions?.value ?? '')
+								}
 								onInput={(e) =>
 									updateAgentInstructions(sa.name, (e.currentTarget as HTMLInputElement).value)
 								}
@@ -402,7 +418,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 										<label class="text-xs text-gray-600">Model</label>
 										<input
 											type="text"
-											value={sa.model ?? ''}
+											value={''}
 											onInput={(e) =>
 												updateAgentModel(sa.name, (e.currentTarget as HTMLInputElement).value)
 											}
@@ -414,7 +430,11 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 									<div class="space-y-0.5">
 										<label class="text-xs text-gray-600">System Prompt</label>
 										<textarea
-											value={sa.systemPrompt ?? ''}
+											value={
+												typeof sa.systemPrompt === 'string'
+													? sa.systemPrompt
+													: (sa.systemPrompt?.value ?? '')
+											}
 											onInput={(e) =>
 												updateAgentSystemPrompt(
 													sa.name,
@@ -447,7 +467,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 					<option value="">+ Add agent…</option>
 					{availableAgents.map((a) => (
 						<option key={a.id} value={a.id}>
-							{a.name} ({a.role})
+							{a.name}
 						</option>
 					))}
 				</select>
@@ -727,8 +747,8 @@ export function WorkflowNodeCard({
 						{multi ? (
 							<span class="flex items-center gap-1 flex-wrap">
 								{node.agents!.map((a) => {
-									const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId;
-									const hasOverrides = !!(a.model || a.systemPrompt);
+									const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId ?? '';
+									const hasOverrides = !!a.instructions;
 									const taskState = taskStateByAgent.get(a.name);
 									return (
 										<span
@@ -840,7 +860,7 @@ export function WorkflowNodeCard({
 									onClick={() => {
 										const firstId = node.agentId;
 										const firstAgentRole = firstId
-											? (agents.find((a) => a.id === firstId)?.role ?? firstId)
+											? (agents.find((a) => a.id === firstId)?.name ?? firstId)
 											: '';
 										const existing: WorkflowNodeAgent[] = firstId
 											? [{ agentId: firstId, name: firstAgentRole }]
@@ -863,7 +883,6 @@ export function WorkflowNodeCard({
 								{agents.map((a) => (
 									<option key={a.id} value={a.id}>
 										{a.name}
-										{` (${a.role})`}
 									</option>
 								))}
 							</select>

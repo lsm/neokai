@@ -251,7 +251,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 
 			expect(doneTask.title).toBe('Done');
 			expect(doneTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(doneTask.status);
+			expect(['open', 'in_progress']).toContain(doneTask.status);
 		},
 		TEST_TIMEOUT
 	);
@@ -298,7 +298,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 
 			expect(newCodingTask.title).toBe('Coding');
 			expect(newCodingTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(newCodingTask.status);
+			expect(['open', 'in_progress']).toContain(newCodingTask.status);
 
 			// Done must NOT have activated — happy path did not complete
 			const doneTasks = await getTasksForNode(daemon, spaceId, runId, 'Done');
@@ -392,7 +392,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 			// QA must NOT have re-activated — review-votes-gate is still blocked
 			const qaTasks = await getTasksForNode(daemon, spaceId, runId, 'QA');
 			const activeQaTasks = qaTasks.filter(
-				(t) => t.status === 'pending' || t.status === 'in_progress'
+				(t) => t.status === 'open' || t.status === 'in_progress'
 			);
 			expect(activeQaTasks.length).toBe(0);
 
@@ -481,7 +481,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 			await new Promise((resolve) => setTimeout(resolve, 500));
 			const qaTasksAfter = await getTasksForNode(daemon, spaceId, runId, 'QA');
 			const newQaTasks = qaTasksAfter.filter(
-				(t) => !preCheckQaIds.has(t.id) && (t.status === 'pending' || t.status === 'in_progress')
+				(t) => !preCheckQaIds.has(t.id) && (t.status === 'open' || t.status === 'in_progress')
 			);
 			expect(newQaTasks.length).toBe(0);
 		},
@@ -552,9 +552,9 @@ describe('Space Happy Path — QA Completion Flow', () => {
 				),
 			]);
 
-			expect(newR1.agentName).toBe('Reviewer 1');
-			expect(newR2.agentName).toBe('Reviewer 2');
-			expect(newR3.agentName).toBe('Reviewer 3');
+			expect(newR1.title).toBe('Reviewer 1');
+			expect(newR2.title).toBe('Reviewer 2');
+			expect(newR3.title).toBe('Reviewer 3');
 
 			// Complete all reviewer tasks
 			await mockAgentDone(daemon, spaceId, newR1.id);
@@ -585,7 +585,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 
 			expect(newQaTask.title).toBe('QA');
 			expect(newQaTask.workflowRunId).toBe(runId);
-			expect(['pending', 'in_progress']).toContain(newQaTask.status);
+			expect(['open', 'in_progress']).toContain(newQaTask.status);
 
 			// Run is still in_progress (QA hasn't produced a result yet)
 			const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
@@ -720,7 +720,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 				const codingTasks = await getTasksForNode(daemon, spaceId, runId, 'Coding');
 				unexpectedTask = codingTasks.find(
 					(t) =>
-						!codingTaskIdsBefore.has(t.id) && (t.status === 'pending' || t.status === 'in_progress')
+						!codingTaskIdsBefore.has(t.id) && (t.status === 'open' || t.status === 'in_progress')
 				);
 				if (unexpectedTask) break;
 				await new Promise((resolve) => setTimeout(resolve, 200));

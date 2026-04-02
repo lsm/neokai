@@ -85,7 +85,7 @@ describe('downloadBundle', () => {
 	it('creates a valid JSON blob', () => {
 		const bundle = makeBundle({
 			name: 'Test',
-			agents: [{ version: 1, type: 'agent', name: 'A', role: 'coder', tools: [] }],
+			agents: [{ version: 1, type: 'agent', name: 'A', tools: [] }],
 			workflows: [],
 		});
 		downloadBundle(bundle, 'space', 'agents');

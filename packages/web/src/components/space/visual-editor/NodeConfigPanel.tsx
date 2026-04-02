@@ -77,14 +77,14 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const nodeAgents = step.agents ?? [];
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
-		onUpdate({ ...step, agents: next, agentId: '', model: undefined });
+		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
-		// Guard against agents with empty role strings to avoid indistinguishable slot names
-		const baseRole = agentInfo?.role?.trim() || agentId;
+		// Use agent name as the base role name for the slot
+		const baseRole = agentInfo?.name?.trim() || agentId;
 		// Ensure the slot role is unique within this node. When the same agent is added
 		// multiple times, append a numeric suffix to distinguish the slots.
 		const usedRoles = new Set(nodeAgents.map((a) => a.name));
@@ -93,7 +93,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 			role = `${baseRole}-${i}`;
 		}
 		const next = [...nodeAgents, { agentId, name: role }];
-		onUpdate({ ...step, agents: next, agentId: '', model: undefined });
+		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
 	function removeAgent(role: string) {
@@ -106,8 +106,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 				...step,
 				agents: undefined,
 				agentId: removed?.agentId ?? '',
-				model: removed?.model,
-				systemPrompt: removed?.systemPrompt,
 				channels: undefined,
 			});
 		} else {
@@ -117,12 +115,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 
 	function updateAgentId(role: string, agentId: string) {
 		updateAgents(nodeAgents.map((a) => (a.name === role ? { ...a, agentId } : a)));
-	}
-
-	function updateAgentModel(role: string, model: string) {
-		updateAgents(
-			nodeAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
-		);
 	}
 
 	// All agents are available; same agent may be added multiple times with different roles.
@@ -139,11 +131,11 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 						data-testid="add-agent-button"
 						onClick={() => {
 							const firstId = step.agentId;
-							const firstAgentRole = firstId
-								? (agents.find((a) => a.id === firstId)?.role ?? firstId)
+							const firstAgentName = firstId
+								? (agents.find((a) => a.id === firstId)?.name ?? firstId)
 								: '';
 							const existing: WorkflowNodeAgent[] = firstId
-								? [{ agentId: firstId, name: firstAgentRole }]
+								? [{ agentId: firstId, name: firstAgentName }]
 								: [];
 							onUpdate({
 								...step,
@@ -170,7 +162,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 					{agents.map((a) => (
 						<option key={a.id} value={a.id}>
 							{a.name}
-							{` (${a.role})`}
 						</option>
 					))}
 				</select>
@@ -204,8 +195,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 								...step,
 								agents: undefined,
 								agentId: nodeAgents[0]?.agentId ?? '',
-								model: nodeAgents[0]?.model,
-								systemPrompt: nodeAgents[0]?.systemPrompt,
 								channels: undefined,
 							})
 						}
@@ -219,7 +208,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 			<div class="space-y-1.5" data-testid="agents-list">
 				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
-					const hasOverrides = !!sa.model;
+					const hasOverrides = !!(sa.systemPrompt || sa.instructions);
 					return (
 						<div
 							key={sa.name}
@@ -283,22 +272,10 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 									{agents.map((agent) => (
 										<option key={agent.id} value={agent.id}>
 											{agent.name}
-											{` (${agent.role})`}
 										</option>
 									))}
 								</select>
 								<p class="text-[11px] text-gray-600">{agentInfo?.name ?? sa.agentId}</p>
-							</div>
-							<div class="space-y-1">
-								<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
-									LLM Model
-								</label>
-								<WorkflowModelSelect
-									testId="agent-model-select"
-									value={sa.model}
-									onChange={(model) => updateAgentModel(sa.name, model ?? '')}
-									className="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
-								/>
 							</div>
 						</div>
 					);
@@ -318,7 +295,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 					<option value="">+ Add agent…</option>
 					{availableAgents.map((a) => (
 						<option key={a.id} value={a.id}>
-							{a.name} ({a.role})
+							{a.name}
 						</option>
 					))}
 				</select>

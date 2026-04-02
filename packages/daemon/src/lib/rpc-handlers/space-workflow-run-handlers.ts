@@ -6,7 +6,7 @@
  * - spaceWorkflowRun.list           - Lists runs for a space (optional status filter)
  * - spaceWorkflowRun.get            - Gets a run by ID
  * - spaceWorkflowRun.cancel         - Cancels a run and all pending tasks
- * - spaceWorkflowRun.markFailed     - Marks a run as needs_attention with a specific failure reason
+ * - spaceWorkflowRun.markFailed     - Marks a run as blocked with a specific failure reason
  * - spaceWorkflowRun.approveGate    - Approves or rejects a human approval gate
  * - spaceWorkflowRun.listGateData   - Returns all gate data records for a run
  * - spaceWorkflowRun.getGateArtifacts - Returns changed files and diff summary for a run's worktree
@@ -216,8 +216,8 @@ export function setupSpaceWorkflowRunHandlers(
 
 	// ─── spaceWorkflowRun.resume ─────────────────────────────────────────────
 	//
-	// Resumes a run that is in needs_attention state after a human has resolved the
-	// blocking issue. Transitions needs_attention → in_progress so the tick loop
+	// Resumes a run that is in blocked state after a human has resolved the
+	// blocking issue. Transitions blocked → in_progress so the tick loop
 	// will resume processing on the next cycle.
 	messageHub.onRequest('spaceWorkflowRun.resume', async (data) => {
 		const params = data as { id: string };
@@ -227,13 +227,13 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.id);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.id}`);
 
-		if (run.status !== 'needs_attention') {
+		if (run.status !== 'blocked') {
 			throw new Error(
-				`Cannot resume run ${params.id}: expected status 'needs_attention', got '${run.status}'`
+				`Cannot resume run ${params.id}: expected status 'blocked', got '${run.status}'`
 			);
 		}
 
-		// needs_attention → in_progress (human resolved the blocking issue)
+		// blocked → in_progress (human resolved the blocking issue)
 		const updated = workflowRunRepo.transitionStatus(params.id, 'in_progress');
 
 		daemonHub
@@ -252,11 +252,11 @@ export function setupSpaceWorkflowRunHandlers(
 
 	// ─── spaceWorkflowRun.markFailed ─────────────────────────────────────────
 	//
-	// Transitions a run to needs_attention with a specific failureReason.
+	// Transitions a run to blocked with a specific failureReason.
 	// Production RPC called by the Space Agent when it detects an unrecoverable
 	// failure in a task agent session: e.g. agentCrash (unexpected termination),
 	// maxIterationsReached, or nodeTimeout. Also used in integration tests to
-	// exercise the needs_attention path without a real LLM session.
+	// exercise the blocked path without a real LLM session.
 	messageHub.onRequest('spaceWorkflowRun.markFailed', async (data) => {
 		const params = data as {
 			id: string;
@@ -270,11 +270,11 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.id);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.id}`);
 
-		if (run.status === 'completed' || run.status === 'cancelled') {
+		if (run.status === 'done' || run.status === 'cancelled') {
 			throw new Error(`Cannot mark a ${run.status} workflow run as failed`);
 		}
-		if (run.status === 'needs_attention') {
-			// Already in needs_attention — just update failureReason
+		if (run.status === 'blocked') {
+			// Already in blocked — just update failureReason
 			const updated =
 				workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
@@ -292,8 +292,8 @@ export function setupSpaceWorkflowRunHandlers(
 			return { run: updated };
 		}
 
-		// Transition to needs_attention then set failureReason
-		workflowRunRepo.transitionStatus(params.id, 'needs_attention');
+		// Transition to blocked then set failureReason
+		workflowRunRepo.transitionStatus(params.id, 'blocked');
 		const updated =
 			workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
@@ -323,22 +323,22 @@ export function setupSpaceWorkflowRunHandlers(
 		if (run.status === 'cancelled') {
 			return { success: true };
 		}
-		if (run.status === 'completed') {
-			throw new Error('Cannot cancel a completed workflow run');
+		if (run.status === 'done') {
+			throw new Error('Cannot cancel a done workflow run');
 		}
 
 		// Cancel all pending tasks belonging to this run
 		const taskManager = taskManagerFactory(run.spaceId);
 		const tasks = await taskManager.listTasksByWorkflowRun(run.id);
 		for (const task of tasks) {
-			if (task.status === 'pending' || task.status === 'in_progress') {
+			if (task.status === 'open' || task.status === 'in_progress') {
 				await taskManager.cancelTask(task.id).catch((err: unknown) => {
 					log.warn(`Failed to cancel task ${task.id} for run ${run.id}:`, err);
 				});
 			}
 		}
 
-		// Cancel the run (pending/in_progress/needs_attention → cancelled)
+		// Cancel the run (pending/in_progress/blocked → cancelled)
 		const updated = workflowRunRepo.transitionStatus(params.id, 'cancelled');
 
 		daemonHub
@@ -359,7 +359,7 @@ export function setupSpaceWorkflowRunHandlers(
 	//
 	// Writes approval or rejection decision to gate data. Idempotent: calling
 	// approve on an already-approved gate returns the existing data unchanged.
-	// Rejection transitions the run to `needs_attention` with `humanRejected`
+	// Rejection transitions the run to `blocked` with `humanRejected`
 	// via the status machine. Approval after a prior rejection also transitions
 	// the run back to `in_progress` so the workflow resumes.
 	messageHub.onRequest('spaceWorkflowRun.approveGate', async (data) => {
@@ -379,7 +379,7 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
 			throw new Error(`Cannot modify gate on a ${run.status} workflow run`);
 		}
 
@@ -396,12 +396,12 @@ export function setupSpaceWorkflowRunHandlers(
 				approvedAt: Date.now(),
 			});
 
-			// If the run was previously rejected (needs_attention + humanRejected),
+			// If the run was previously rejected (blocked + humanRejected),
 			// approval overrides that — transition back to in_progress so the
 			// workflow executor picks it up again on the next tick, and clear
 			// the stale failureReason so the run appears clean to the UI.
 			let updatedRun = run;
-			if (run.status === 'needs_attention' && run.failureReason === 'humanRejected') {
+			if (run.status === 'blocked' && run.failureReason === 'humanRejected') {
 				workflowRunRepo.transitionStatus(params.runId, 'in_progress');
 				updatedRun = workflowRunRepo.updateRun(params.runId, { failureReason: null }) ?? run;
 			}
@@ -446,11 +446,11 @@ export function setupSpaceWorkflowRunHandlers(
 			});
 
 			// Enforce the state machine: only call transitionStatus when the run is
-			// not already in needs_attention (e.g. blocked by a different mechanism).
+			// not already in blocked (e.g. blocked by a different mechanism).
 			// In either case, write failureReason via a separate updateRun so it
 			// is always persisted regardless of whether the status changed.
-			if (run.status !== 'needs_attention') {
-				workflowRunRepo.transitionStatus(params.runId, 'needs_attention');
+			if (run.status !== 'blocked') {
+				workflowRunRepo.transitionStatus(params.runId, 'blocked');
 			}
 			const updated =
 				workflowRunRepo.updateRun(params.runId, { failureReason: 'humanRejected' }) ?? run;
@@ -505,7 +505,7 @@ export function setupSpaceWorkflowRunHandlers(
 			const run = workflowRunRepo.getRun(params.runId);
 			if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-			if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
+			if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
 				throw new Error(`Cannot write gate data on a ${run.status} workflow run`);
 			}
 
@@ -549,8 +549,7 @@ export function setupSpaceWorkflowRunHandlers(
 	// ─── spaceWorkflowRun.getGateArtifacts ───────────────────────────────────
 	//
 	// Returns the list of changed files and diff summary (additions, deletions)
-	// for the worktree associated with a workflow run. The worktree path is
-	// stored in `run.config.worktreePath` by TaskAgentManager at run start.
+	// for the workspace associated with a workflow run.
 	messageHub.onRequest('spaceWorkflowRun.getGateArtifacts', async (data) => {
 		const params = data as { runId: string };
 
@@ -559,9 +558,10 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		const worktreePath = run.config?.worktreePath as string | undefined;
+		const space = await spaceManager.getSpace(run.spaceId);
+		const worktreePath = space?.workspacePath;
 		if (!worktreePath) {
-			throw new Error(`No worktree path found for run: ${params.runId}`);
+			throw new Error(`No workspace path found for run: ${params.runId}`);
 		}
 
 		const baseRef = await getDiffBaseRef(worktreePath);
@@ -598,9 +598,10 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		const worktreePath = run.config?.worktreePath as string | undefined;
+		const space = await spaceManager.getSpace(run.spaceId);
+		const worktreePath = space?.workspacePath;
 		if (!worktreePath) {
-			throw new Error(`No worktree path found for run: ${params.runId}`);
+			throw new Error(`No workspace path found for run: ${params.runId}`);
 		}
 
 		const baseRef = await getDiffBaseRef(worktreePath);

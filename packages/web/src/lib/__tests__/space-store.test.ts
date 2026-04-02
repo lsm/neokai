@@ -52,7 +52,7 @@ function makeSpace(id = 'space-1'): Space {
 }
 
 let _taskCounter = 0;
-function makeTask(id: string, status = 'pending', workflowRunId?: string): SpaceTask {
+function makeTask(id: string, status = 'open', workflowRunId?: string): SpaceTask {
 	return {
 		id,
 		spaceId: 'space-1',
@@ -61,7 +61,12 @@ function makeTask(id: string, status = 'pending', workflowRunId?: string): Space
 		description: '',
 		status: status as SpaceTask['status'],
 		priority: 'normal',
+		labels: [],
 		dependsOn: [],
+		result: null,
+		startedAt: null,
+		completedAt: null,
+		archivedAt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...(workflowRunId ? { workflowRunId } : {}),
@@ -75,8 +80,8 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
 		workflowId: 'wf-1',
 		title: `Run ${id}`,
 		status: status as SpaceWorkflowRun['status'],
-		iterationCount: 0,
-		maxIterations: 5,
+		startedAt: null,
+		completedAt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -87,7 +92,7 @@ function makeAgent(id: string): SpaceAgent {
 		id,
 		spaceId: 'space-1',
 		name: `Agent ${id}`,
-		role: 'coder',
+		instructions: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -100,7 +105,6 @@ function makeWorkflow(id: string): SpaceWorkflow {
 		name: `Workflow ${id}`,
 		nodes: [],
 		startNodeId: '',
-		rules: [],
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -122,11 +126,6 @@ function makeTaskActivityRows(taskId = 't1'): SpaceTaskActivityMember[] {
 			taskId,
 			taskTitle: `Task ${taskId}`,
 			taskStatus: 'in_progress',
-			workflowNodeId: null,
-			agentName: 'task-agent',
-			currentStep: 'Working',
-			error: null,
-			completionSummary: null,
 			updatedAt: Date.now(),
 			lastMessageAt: Date.now(),
 		},
@@ -901,12 +900,11 @@ describe('SpaceStore — CRUD methods', () => {
 
 	it('createAgent calls spaceAgent.create RPC', async () => {
 		await spaceStore.selectSpace('space-1');
-		await spaceStore.createAgent({ name: 'Coder', role: 'coder' });
+		await spaceStore.createAgent({ name: 'Coder' });
 
 		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.create', {
 			spaceId: 'space-1',
 			name: 'Coder',
-			role: 'coder',
 		});
 	});
 
@@ -970,9 +968,7 @@ describe('SpaceStore — CRUD methods', () => {
 		);
 		await expect(spaceStore.archiveSpace()).rejects.toThrow('No space selected');
 		await expect(spaceStore.deleteSpace()).rejects.toThrow('No space selected');
-		await expect(spaceStore.createAgent({ name: 'A', role: 'coder' })).rejects.toThrow(
-			'No space selected'
-		);
+		await expect(spaceStore.createAgent({ name: 'A' })).rejects.toThrow('No space selected');
 		await expect(spaceStore.createWorkflow({ name: 'W' })).rejects.toThrow('No space selected');
 	});
 });

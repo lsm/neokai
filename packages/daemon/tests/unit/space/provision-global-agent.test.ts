@@ -470,7 +470,7 @@ describe('provisionGlobalSpacesAgent', () => {
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'E2E Run');
 		// Simulate task failure — set to needs_attention
 		const taskRepo = deps.taskRepo as SpaceTaskRepository;
-		taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Build failed' });
+		taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Build failed' });
 
 		// Trigger a manual tick — this should detect needs_attention tasks and emit notifications
 		await runtime.executeTick();
@@ -518,7 +518,7 @@ describe('provisionGlobalSpacesAgent', () => {
 		});
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Race Run');
 		const taskRepo = deps.taskRepo as SpaceTaskRepository;
-		taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Pre-wiring failure' });
+		taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Pre-wiring failure' });
 
 		// Simulate an early tick BEFORE provisioning — fires on NullNotificationSink, dedup key added
 		await runtime.executeTick();
@@ -786,7 +786,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 			sessionId: 'global',
 			taskId: 'task-001',
 			spaceId: 'space-001',
-			status: 'completed',
+			status: 'done',
 			summary: 'Feature implemented successfully.',
 			workflowRunId: 'run-001',
 			taskTitle: 'Implement login page',
@@ -815,7 +815,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 			sessionId: 'global',
 			taskId: 'task-002',
 			spaceId: 'space-001',
-			status: 'needs_attention',
+			status: 'blocked',
 			summary: 'Tests are failing.',
 			workflowRunId: 'run-002',
 			taskTitle: 'Fix authentication bug',
@@ -868,7 +868,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 				sessionId: 'global',
 				taskId: 'task-004',
 				spaceId: 'space-001',
-				status: 'completed',
+				status: 'done',
 				summary: 'Done.',
 				workflowRunId: 'run-004',
 				taskTitle: 'Some Task',

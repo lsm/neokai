@@ -53,7 +53,6 @@ import type {
 	SpaceAgent,
 	WorkflowNode,
 	WorkflowChannel,
-	WorkflowRule,
 	SessionFeatures,
 	Gate,
 } from '@neokai/shared';
@@ -98,24 +97,16 @@ function formatStep(step: WorkflowNode, agents: SpaceAgent[]): string {
 	let agentLabel: string;
 	if (nodeAgents.length === 1) {
 		const a = agents.find((ag) => ag.id === nodeAgents[0].agentId);
-		agentLabel = a ? `${a.name} (role: ${a.role})` : `agent id: ${nodeAgents[0].agentId}`;
+		agentLabel = a ? a.name : `agent id: ${nodeAgents[0].agentId}`;
 	} else {
 		const labels = nodeAgents.map((sa) => {
 			const a = agents.find((ag) => ag.id === sa.agentId);
-			return a ? `${a.name} (role: ${a.role})` : `agent id: ${sa.agentId}`;
+			return a ? a.name : `agent id: ${sa.agentId}`;
 		});
 		agentLabel = labels.join(', ');
 	}
 	const instructions = step.instructions ? `\n    Instructions: ${step.instructions}` : '';
 	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})${instructions}`;
-}
-
-function formatRule(rule: WorkflowRule): string {
-	const scope =
-		rule.appliesTo && rule.appliesTo.length > 0
-			? ` (steps: ${rule.appliesTo.join(', ')})`
-			: ' (all steps)';
-	return `- **${rule.name}**${scope}: ${rule.content}`;
 }
 
 function formatChannelGateLabel(ch: WorkflowChannel, gates: Gate[]): string {
@@ -420,13 +411,6 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 			parts.push(`\n_This workflow has no steps defined._`);
 		}
 
-		if (wf.rules && wf.rules.length > 0) {
-			parts.push(`\n### Workflow Rules\n`);
-			for (const rule of wf.rules) {
-				parts.push(formatRule(rule));
-			}
-		}
-
 		if (context.workflowRun) {
 			const run = context.workflowRun;
 			parts.push(`\n### Active Workflow Run\n`);
@@ -492,7 +476,7 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 		for (const agent of context.availableAgents) {
 			const desc = agent.description ? ` — ${agent.description}` : '';
 			const model = agent.model ? ` (model: ${agent.model})` : '';
-			parts.push(`- **${agent.name}** (id: \`${agent.id}\`, role: ${agent.role})${model}${desc}`);
+			parts.push(`- **${agent.name}** (id: \`${agent.id}\`)${model}${desc}`);
 		}
 	} else {
 		parts.push(`\n## Available Agents\n\n_No agents are configured in this Space._`);

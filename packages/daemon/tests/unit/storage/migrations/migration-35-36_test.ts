@@ -4,11 +4,13 @@
  * Migration 35: Add iteration_count and max_iterations columns to space_workflow_runs.
  * Migration 36: Add max_iterations column to space_workflows.
  *
+ * NOTE: These columns (iteration_count, max_iterations) were added in M35/M36 but
+ * subsequently removed in M71. After a full migration run the columns no longer exist.
+ * Tests that verify the final schema check for the absence of these columns.
+ *
  * Covers:
- * - Fresh DB: columns exist with correct defaults after full migration
  * - Idempotency: running migrations twice does not error
- * - Default values: iteration_count defaults to 0, max_iterations defaults to 5 for runs
- * - Nullable: space_workflows.max_iterations is nullable
+ * - Post-M71: iteration_count and max_iterations are absent on a fully-migrated DB
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -24,14 +26,6 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
 	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
 	return rows.some((r) => r.name === column);
-}
-
-function getColumnDefault(db: BunDatabase, table: string, column: string): string | null {
-	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-		name: string;
-		dflt_value: string | null;
-	}>;
-	return rows.find((r) => r.name === column)?.dflt_value ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,28 +57,19 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 		}
 	});
 
-	test('fresh DB: iteration_count column exists after full migration', () => {
+	test('fresh DB: iteration_count column is absent after M71 removed it', () => {
+		// M35 added iteration_count; M71 removed it via table rebuild.
 		runMigrations(db, () => {});
-		expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(true);
+		expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(false);
 	});
 
-	test('fresh DB: max_iterations column exists on space_workflow_runs', () => {
+	test('fresh DB: max_iterations column is absent on space_workflow_runs after M71', () => {
+		// M35 added max_iterations; M71 removed it via table rebuild.
 		runMigrations(db, () => {});
-		expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(true);
+		expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(false);
 	});
 
-	test('fresh DB: iteration_count has default value of 0', () => {
-		runMigrations(db, () => {});
-		expect(getColumnDefault(db, 'space_workflow_runs', 'iteration_count')).toBe('0');
-	});
-
-	test('fresh DB: max_iterations on runs has default value of 10 (updated by migration 59)', () => {
-		// Migration 35 originally set default to 5; migration 59 rebuilt the table with default 10.
-		runMigrations(db, () => {});
-		expect(getColumnDefault(db, 'space_workflow_runs', 'max_iterations')).toBe('10');
-	});
-
-	test('fresh DB: new runs default to iteration_count=0 and max_iterations=5', () => {
+	test('fresh DB: new runs can be inserted without iteration columns', () => {
 		runMigrations(db, () => {});
 
 		const now = Date.now();
@@ -94,26 +79,21 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 		db.prepare(
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
 		).run('wf-1', 'space-1', 'Test Workflow', now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('run-1', 'space-1', 'wf-1', 'Run #1', now, now);
-
-		const row = db
-			.prepare(`SELECT iteration_count, max_iterations FROM space_workflow_runs WHERE id = 'run-1'`)
-			.get() as { iteration_count: number; max_iterations: number };
-		expect(row.iteration_count).toBe(0);
-		// Migration 59 rebuilt space_workflow_runs with default max_iterations=10.
-		expect(row.max_iterations).toBe(10);
+		expect(() =>
+			db
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+				)
+				.run('run-1', 'space-1', 'wf-1', 'Run #1', now, now)
+		).not.toThrow();
 	});
 
 	test('idempotency: running migration twice does not error', () => {
 		runMigrations(db, () => {});
 		expect(() => runMigrations(db, () => {})).not.toThrow();
-		expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(true);
-		expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(true);
 	});
 
-	test('upgrade path: existing rows get default iteration_count=0 and max_iterations=5', () => {
+	test('upgrade path: migrations can run on older DB schema', () => {
 		// Simulate a pre-migration-35 database with the space_workflow_runs table
 		// but without iteration columns
 		db.exec(`
@@ -147,10 +127,6 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 			)
 		`);
 
-		// Confirm new columns are absent
-		expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(false);
-		expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(false);
-
 		// Insert existing rows before migration
 		const now = Date.now();
 		db.prepare(
@@ -162,24 +138,9 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 		db.prepare(
 			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
 		).run('run-1', 'space-1', 'wf-1', 'Old Run', 'in_progress', now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run('run-2', 'space-1', 'wf-1', 'Completed Run', 'completed', now, now);
 
-		// Run migrations
-		runMigrations(db, () => {});
-
-		// Verify columns now exist
-		expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(true);
-		expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(true);
-
-		// Verify existing rows got correct defaults
-		const rows = db
-			.prepare(`SELECT id, iteration_count, max_iterations FROM space_workflow_runs ORDER BY id`)
-			.all() as Array<{ id: string; iteration_count: number; max_iterations: number }>;
-		expect(rows).toHaveLength(2);
-		expect(rows[0]).toMatchObject({ id: 'run-1', iteration_count: 0, max_iterations: 5 });
-		expect(rows[1]).toMatchObject({ id: 'run-2', iteration_count: 0, max_iterations: 5 });
+		// Run migrations — should not throw
+		expect(() => runMigrations(db, () => {})).not.toThrow();
 	});
 });
 
@@ -208,53 +169,30 @@ describe('Migration 36: Add max_iterations to space_workflows', () => {
 		}
 	});
 
-	test('fresh DB: max_iterations column exists on space_workflows', () => {
+	test('fresh DB: max_iterations column exists on space_workflows (added by M36, not yet removed)', () => {
+		// M36 added max_iterations to space_workflows. The column has not been removed by any subsequent migration.
 		runMigrations(db, () => {});
 		expect(columnExists(db, 'space_workflows', 'max_iterations')).toBe(true);
 	});
 
-	test('fresh DB: max_iterations on workflows is nullable (no default)', () => {
-		runMigrations(db, () => {});
-		expect(getColumnDefault(db, 'space_workflows', 'max_iterations')).toBeNull();
-	});
-
-	test('fresh DB: new workflows default to max_iterations=NULL', () => {
+	test('fresh DB: new workflows can be inserted without max_iterations', () => {
 		runMigrations(db, () => {});
 
 		const now = Date.now();
 		db.prepare(
 			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
-		db.prepare(
-			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('wf-1', 'space-1', 'Test Workflow', now, now);
-
-		const row = db
-			.prepare(`SELECT max_iterations FROM space_workflows WHERE id = 'wf-1'`)
-			.get() as { max_iterations: number | null };
-		expect(row.max_iterations).toBeNull();
-	});
-
-	test('fresh DB: max_iterations can be set on workflows', () => {
-		runMigrations(db, () => {});
-
-		const now = Date.now();
-		db.prepare(
-			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
-		db.prepare(
-			`INSERT INTO space_workflows (id, space_id, name, max_iterations, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('wf-1', 'space-1', 'Cyclic Workflow', 3, now, now);
-
-		const row = db
-			.prepare(`SELECT max_iterations FROM space_workflows WHERE id = 'wf-1'`)
-			.get() as { max_iterations: number | null };
-		expect(row.max_iterations).toBe(3);
+		expect(() =>
+			db
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+				)
+				.run('wf-1', 'space-1', 'Test Workflow', now, now)
+		).not.toThrow();
 	});
 
 	test('idempotency: running migration twice does not error', () => {
 		runMigrations(db, () => {});
 		expect(() => runMigrations(db, () => {})).not.toThrow();
-		expect(columnExists(db, 'space_workflows', 'max_iterations')).toBe(true);
 	});
 });
