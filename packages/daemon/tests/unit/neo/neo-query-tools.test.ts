@@ -150,7 +150,7 @@ function makeRoomManager(
 			if (overview && overview.room.id === roomId) return overview;
 			const room = rooms.find((r) => r.id === roomId);
 			if (!room) return null;
-			return { room, sessions: [], activeTasks: [], allTasks: [] };
+			return { room, sessions: [] };
 		},
 	};
 }
@@ -589,14 +589,22 @@ describe('get_room_details', () => {
 			makeGoal({ id: 'g1', title: 'Goal 1', status: 'active', progress: 50 }),
 			makeGoal({ id: 'g2', title: 'Goal 2', status: 'completed', progress: 100 }),
 		];
-		const activeTasks = [{ id: 'task-1', title: 'Task 1', status: 'in_progress' }];
 		const sessions = [{ id: 'session-1', title: 'Session 1', status: 'active', lastActiveAt: NOW }];
-
-		const overview = { room, sessions, activeTasks, allTasks: activeTasks };
+		const overview = { room, sessions };
+		const tasks = [
+			makeTask({
+				id: 'task-1',
+				roomId: 'room-1',
+				title: 'Task 1',
+				status: 'in_progress',
+				priority: 'normal',
+			}),
+		];
 		const handlers = createNeoQueryToolHandlers(
 			makeConfig({
 				roomManager: makeRoomManager([room], overview),
 				goalRepository: makeGoalRepository({ 'room-1': goals }),
+				taskRepository: makeTaskRepository({ 'room-1': tasks }),
 			})
 		);
 

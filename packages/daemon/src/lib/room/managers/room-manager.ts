@@ -17,14 +17,7 @@ import { TaskRepository } from '../../../storage/repositories/task-repository';
 import { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { isWorkerSessionId } from '../session-utils';
-import type {
-	Room,
-	CreateRoomParams,
-	UpdateRoomParams,
-	RoomOverview,
-	TaskSummary,
-	NeoTask,
-} from '@neokai/shared';
+import type { Room, CreateRoomParams, UpdateRoomParams, RoomOverview } from '@neokai/shared';
 
 export class RoomManager {
 	private db: BunDatabase;
@@ -125,32 +118,6 @@ export class RoomManager {
 		const room = this.roomRepo.getRoom(roomId);
 		if (!room) return null;
 
-		// Get non-archived tasks for activeTasks
-		const tasks = this.taskRepo.listTasks(roomId);
-		// Get all tasks including archived for allTasks field
-		const allTasks = this.taskRepo.listTasks(roomId, { includeArchived: true });
-
-		const toSummary = (task: NeoTask): TaskSummary => ({
-			id: task.id,
-			shortId: task.shortId,
-			title: task.title,
-			status: task.status,
-			priority: task.priority,
-			progress: task.progress,
-			currentStep: task.currentStep,
-			dependsOn: task.dependsOn,
-			error: task.error,
-			activeSession: task.activeSession,
-			prUrl: task.prUrl,
-			prNumber: task.prNumber,
-			updatedAt: task.updatedAt,
-		});
-		const nonTerminal = tasks.filter(
-			(t) => t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'
-		);
-		const taskSummaries = nonTerminal.map(toSummary);
-		const allTaskSummaries = allTasks.map(toSummary);
-
 		// Build session summaries from actual session data (batch query to avoid N+1)
 		// Filter out room-specific sessions (chat, craft, lead) and archived (deleted) sessions
 		const workerIds = room.sessionIds.filter(isWorkerSessionId);
@@ -184,8 +151,6 @@ export class RoomManager {
 		return {
 			room,
 			sessions,
-			activeTasks: taskSummaries,
-			allTasks: allTaskSummaries,
 		};
 	}
 

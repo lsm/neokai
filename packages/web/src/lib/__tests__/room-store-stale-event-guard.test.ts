@@ -131,8 +131,7 @@ function makeGoal(id: string, overrides: Partial<RoomGoal> = {}): RoomGoal {
 
 function setupHubRequests(hub: MockHub): void {
 	hub.request.mockImplementation((method: string) => {
-		if (method === 'room.get')
-			return Promise.resolve({ room: { id: ROOM_ID }, sessions: [], allTasks: [] });
+		if (method === 'room.get') return Promise.resolve({ room: { id: ROOM_ID }, sessions: [] });
 		if (method === 'room.runtime.state') return Promise.reject(new Error('no runtime'));
 		return Promise.resolve({ ok: true });
 	});

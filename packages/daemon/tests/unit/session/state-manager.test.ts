@@ -669,7 +669,6 @@ describe('StateManager', () => {
 						sessionId: 'room:room-123',
 						room: { id: 'room-123', name: 'Test Room' },
 						sessions: [],
-						activeTasks: [],
 					};
 
 					handler!(data);

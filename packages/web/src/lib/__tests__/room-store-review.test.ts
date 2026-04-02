@@ -38,7 +38,7 @@ function makeMockHub() {
 		onConnection: vi.fn(() => () => {}),
 		request: vi.fn(async (method: string) => {
 			if (method === 'room.get') {
-				return { room: { id: ROOM_ID }, sessions: [], allTasks: [] };
+				return { room: { id: ROOM_ID }, sessions: [] };
 			}
 			if (method === 'room.runtime.state') throw new Error('no runtime');
 			return { ok: true };

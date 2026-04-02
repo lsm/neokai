@@ -109,8 +109,7 @@ function makeTask(id: string, overrides: Partial<NeoTask> = {}): NeoTask {
 
 function setupHubRequests(hub: MockHub): void {
 	hub.request.mockImplementation((method: string) => {
-		if (method === 'room.get')
-			return Promise.resolve({ room: { id: ROOM_ID }, sessions: [], allTasks: [] });
+		if (method === 'room.get') return Promise.resolve({ room: { id: ROOM_ID }, sessions: [] });
 		if (method === 'room.runtime.state') return Promise.reject(new Error('no runtime'));
 		// liveQuery.subscribe and liveQuery.unsubscribe return { ok: true }
 		return Promise.resolve({ ok: true });

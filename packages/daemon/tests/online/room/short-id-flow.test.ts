@@ -19,7 +19,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
-import type { NeoTask, RoomGoal, RoomOverview } from '@neokai/shared';
+import type { NeoTask, RoomGoal } from '@neokai/shared';
 import { createRoom, createGoal } from './room-test-helpers';
 
 describe('Short ID Full Flow Integration', () => {
@@ -122,30 +122,30 @@ describe('Short ID Full Flow Integration', () => {
 			}
 		});
 
-		test('room.overview includes shortId in task summaries', async () => {
-			const roomId = await createRoom(daemon, 'short-id-overview');
+		test('task.list returns tasks with shortId', async () => {
+			const roomId = await createRoom(daemon, 'short-id-list');
 
 			try {
-				const task1 = await createTask(roomId, 'Overview task 1');
-				const task2 = await createTask(roomId, 'Overview task 2');
+				const task1 = await createTask(roomId, 'List task 1');
+				const task2 = await createTask(roomId, 'List task 2');
 
 				expect(task1.shortId).toBe('t-1');
 				expect(task2.shortId).toBe('t-2');
 
-				const overview = await getRoomOverview(roomId);
+				const result = (await daemon.messageHub.request('task.list', {
+					roomId,
+				})) as { tasks: unknown[] };
 
-				// allTasks includes all tasks (activeTasks excludes terminal tasks)
-				const allTasks = overview.allTasks!;
-				expect(allTasks.length).toBeGreaterThanOrEqual(2);
+				expect(result.tasks.length).toBeGreaterThanOrEqual(2);
 
-				const summary1 = allTasks.find((t) => t.id === task1.id);
-				const summary2 = allTasks.find((t) => t.id === task2.id);
+				const found1 = result.tasks.find((t: any) => t.id === task1.id);
+				const found2 = result.tasks.find((t: any) => t.id === task2.id);
 
-				expect(summary1).toBeDefined();
-				expect(summary1?.shortId).toBe('t-1');
+				expect(found1).toBeDefined();
+				expect(found1?.shortId).toBe('t-1');
 
-				expect(summary2).toBeDefined();
-				expect(summary2?.shortId).toBe('t-2');
+				expect(found2).toBeDefined();
+				expect(found2?.shortId).toBe('t-2');
 			} finally {
 				await deleteRoom(roomId);
 			}
