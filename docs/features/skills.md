@@ -102,23 +102,25 @@ This skill is **opt-in**, not automatically enabled. Enable it in the global ski
 
 ### Playwright
 
-Enables Playwright browser automation as a built-in agent capability.
+Runs the NeoKai Playwright end-to-end test suite. Invoke with `/playwright` in a session.
 
 - **Name**: `playwright`
 - **Type**: Built-in (enabled by default)
-- **Command**: `playwright`
+- **Command file**: `.claude/commands/playwright.md`
+- **Usage**: `/playwright` — runs `make run-e2e` or `make self-test` depending on whether a dev server is already running
 
-This skill is **enabled by default** and is available immediately without additional configuration.
+This skill is **enabled by default**. The slash command definition lives at `.claude/commands/playwright.md` in the NeoKai repository root and is automatically discovered by the Claude Code SDK.
 
 ### Playwright Interactive
 
-Enables interactive Playwright browser automation with step-by-step control.
+Runs NeoKai's Playwright tests in interactive/headed mode for step-by-step debugging. Invoke with `/playwright-interactive` in a session.
 
 - **Name**: `playwright-interactive`
 - **Type**: Built-in (enabled by default)
-- **Command**: `playwright-interactive`
+- **Command file**: `.claude/commands/playwright-interactive.md`
+- **Usage**: `/playwright-interactive` — uses `make self-test` against a running dev server to watch and debug tests
 
-This skill is **enabled by default** and is available immediately without additional configuration.
+This skill is **enabled by default**. The slash command definition lives at `.claude/commands/playwright-interactive.md` in the NeoKai repository root and is automatically discovered by the Claude Code SDK.
 
 ## Skills Architecture
 
@@ -145,7 +147,7 @@ getMcpServersFromSkills() → SDK mcpServers{} config (mcp_server skills only)
 AgentSession initializes with skills injected
 ```
 
-Note: The `builtin` sourceType (slash commands from `.claude/commands/`) is defined in the type system but not currently injected by `QueryOptionsBuilder`. Only `plugin` and `mcp_server` skills are actively injected.
+Note: The `builtin` sourceType refers to slash commands backed by `.claude/commands/*.md` files in the NeoKai repository root. These are discovered automatically by the Claude Code SDK from the working directory — they do not need to be injected by `QueryOptionsBuilder`. Only `plugin` and `mcp_server` skills are injected via `QueryOptionsBuilder`.
 
 ### Key Files
 
