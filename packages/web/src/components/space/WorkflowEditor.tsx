@@ -382,7 +382,6 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				name,
 				agentId: '',
 				agents: agentSlots,
-				systemPrompt: step.systemPrompt?.trim() ?? undefined,
 				instructions: step.instructions?.trim() ?? '',
 			};
 		}
@@ -393,7 +392,6 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 			localId: makeLocalId(),
 			name,
 			agentId: assigned?.id ?? '',
-			systemPrompt: step.systemPrompt?.trim() ?? undefined,
 			instructions: step.instructions?.trim() ?? '',
 		};
 	});
@@ -420,6 +418,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 	tags: string[];
 	channels: WorkflowChannel[];
 	gates: Gate[];
+	endNodeId: string | undefined;
 } {
 	// Use node order from wf.nodes, placing startNodeId first if possible.
 	const stepMap = new Map(wf.nodes.map((s) => [s.id, s]));
@@ -466,6 +465,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 		tags: wf.tags ?? [],
 		channels: wf.channels ?? [],
 		gates: wf.gates ?? [],
+		endNodeId: wf.endNodeId,
 	};
 }
 
@@ -484,6 +484,8 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const isEditing = !!workflow;
 
 	const initial = workflow ? initFromWorkflow(workflow) : null;
+
+	const [endNodeId, setEndNodeId] = useState<string | undefined>(workflow?.endNodeId);
 
 	const [name, setName] = useState(workflow?.name ?? '');
 	const [description, setDescription] = useState(workflow?.description ?? '');
@@ -592,6 +594,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		if (newSteps.length === 0) return;
 
 		setSteps(newSteps);
+		setEndNodeId(undefined);
 		setTransitions(newSteps.slice(1).map(() => makeDefaultCondition()));
 		setChannels(
 			(template.channels ?? []).map((channel) => ({
@@ -670,6 +673,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					description: description.trim() || null,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
+					endNodeId: endNodeId ?? stepIds[stepIds.length - 1],
 					tags,
 					channels: channels.length > 0 ? channels : [],
 					gates: gates.length > 0 ? gates : [],
@@ -680,6 +684,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					description: description.trim() || undefined,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
+					endNodeId: endNodeId || stepIds[stepIds.length - 1],
 					tags,
 					channels: channels.length > 0 ? channels : undefined,
 					gates: gates.length > 0 ? gates : undefined,

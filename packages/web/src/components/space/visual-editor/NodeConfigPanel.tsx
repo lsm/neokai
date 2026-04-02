@@ -8,10 +8,11 @@
  * Features:
  * - Node Name input
  * - "Set as Start" button (disabled when the node is already the start node)
+ * - "Set as End" button (toggle to designate/end node designation)
  * - Agent dropdown
  * - Model dropdown for single-agent and multi-agent nodes
- * - System prompt drill-in editor
- * - Instructions textarea
+ * - System prompt inline editor (node-level override)
+ * - Instructions inline textarea
  * - Delete Node button with confirmation (disabled for start node)
  */
 
@@ -39,9 +40,12 @@ export interface NodeConfigPanelProps {
 	step: NodeDraft;
 	agents: SpaceAgent[];
 	isStartNode: boolean;
+	isEndNode: boolean;
 	onUpdate: (step: NodeDraft) => void;
 	/** Designates this step as the workflow start node */
 	onSetAsStart: (stepId: string) => void;
+	/** Designates this step as the workflow end node */
+	onSetAsEnd: (stepId: string) => void;
 	channelLinks?: NodeChannelLink[];
 	onOpenChannelLink?: (channelLinkId: string) => void;
 	selectedChannelRelation?: {
@@ -310,7 +314,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 
 type PanelView =
 	| { kind: 'main' }
-	| { kind: 'prompt-and-instructions' }
 	| { kind: 'channel-links' }
 	| { kind: 'gate-editor'; gateId: string };
 
@@ -318,8 +321,10 @@ export function NodeConfigPanel({
 	step,
 	agents,
 	isStartNode,
+	isEndNode,
 	onUpdate,
 	onSetAsStart,
+	onSetAsEnd,
 	channelLinks = [],
 	onOpenChannelLink,
 	selectedChannelRelation,
@@ -370,13 +375,6 @@ export function NodeConfigPanel({
 		setConfirmingDelete(false);
 	};
 
-	const updateNodePrompt = (systemPrompt: string) => {
-		onUpdate({
-			...step,
-			systemPrompt: systemPrompt || undefined,
-		});
-	};
-
 	const renderHeader = () => {
 		if (panelView.kind === 'main') {
 			return (
@@ -388,6 +386,14 @@ export function NodeConfigPanel({
 								class="text-xs font-bold text-green-400 uppercase tracking-wider flex-shrink-0"
 							>
 								START
+							</span>
+						)}
+						{isEndNode && (
+							<span
+								data-testid="end-node-badge"
+								class="text-xs font-bold text-purple-400 uppercase tracking-wider flex-shrink-0"
+							>
+								END
 							</span>
 						)}
 						<h3 class="text-sm font-semibold text-gray-100 truncate">
@@ -414,13 +420,11 @@ export function NodeConfigPanel({
 		}
 
 		const title =
-			panelView.kind === 'prompt-and-instructions'
-				? 'Prompt and Instructions'
-				: panelView.kind === 'channel-links'
-					? 'Channel Links'
-					: panelView.kind === 'gate-editor'
-						? 'Gate Editor'
-						: step.name || 'Unnamed Node';
+			panelView.kind === 'channel-links'
+				? 'Channel Links'
+				: panelView.kind === 'gate-editor'
+					? 'Gate Editor'
+					: step.name || 'Unnamed Node';
 
 		return (
 			<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0">
@@ -472,53 +476,6 @@ export function NodeConfigPanel({
 	};
 
 	const renderPanelBody = () => {
-		if (panelView.kind === 'prompt-and-instructions') {
-			return (
-				<div class="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-					<p class="text-xs text-gray-500">
-						Shared instructions are appended for every agent in this node. A shared system prompt
-						override applies to the assigned agent, or acts as the default prompt override for agent
-						slots that do not define their own override.
-					</p>
-					<div class="space-y-1.5">
-						<label class="text-xs font-medium text-gray-400">
-							System Prompt <span class="font-normal text-gray-600">(optional override)</span>
-						</label>
-						<textarea
-							data-testid="node-system-prompt-input"
-							value={step.systemPrompt ?? ''}
-							onInput={(e) => updateNodePrompt((e.currentTarget as HTMLTextAreaElement).value)}
-							placeholder="Leave blank to use the selected agent's default system prompt…"
-							rows={12}
-							class="w-full text-xs font-mono bg-dark-800 border border-dark-600 rounded px-3 py-2 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-						/>
-					</div>
-					<div class="space-y-1.5">
-						<label class="text-xs font-medium text-gray-400">
-							Instructions <span class="font-normal text-gray-600">(optional)</span>
-						</label>
-						<textarea
-							data-testid="instructions-textarea"
-							value={step.instructions}
-							onInput={(e) =>
-								onUpdate({
-									...step,
-									instructions: (e.currentTarget as HTMLTextAreaElement).value,
-								})
-							}
-							placeholder="Node-specific instructions appended to the agent prompt…"
-							rows={8}
-							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-						/>
-					</div>
-					<p class="text-[11px] text-gray-600">
-						This editor shows the current values for both the shared prompt override and the shared
-						instructions.
-					</p>
-				</div>
-			);
-		}
-
 		if (panelView.kind === 'gate-editor') {
 			const editingGate = channelRelationGates.find((g) => g.id === panelView.gateId);
 			if (!editingGate) return null;
@@ -581,30 +538,68 @@ export function NodeConfigPanel({
 						Set as Start Node
 					</button>
 				)}
+				{!isEndNode && (
+					<button
+						data-testid="set-as-end-button"
+						onClick={() => onSetAsEnd(step.localId)}
+						class="w-full text-xs font-medium py-1.5 px-3 rounded border border-purple-700 text-purple-400 hover:bg-purple-900/30 transition-colors"
+					>
+						Set as End Node
+					</button>
+				)}
+				{isEndNode && (
+					<button
+						data-testid="unset-as-end-button"
+						onClick={() => onSetAsEnd(step.localId)}
+						class="w-full text-xs font-medium py-1.5 px-3 rounded border border-purple-700/50 text-purple-500/60 hover:bg-purple-900/20 transition-colors"
+					>
+						Unset End Node
+					</button>
+				)}
 
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
 
-				<button
-					type="button"
-					data-testid="prompt-instructions-button"
-					onClick={() => setPanelView({ kind: 'prompt-and-instructions' })}
-					class="w-full rounded border border-dark-700 bg-dark-800 px-2.5 py-2 text-left hover:border-amber-500/40 hover:bg-dark-750 transition-colors"
-				>
-					<div class="flex items-center justify-between gap-2">
-						<span class="text-xs font-medium text-gray-200">Prompt and Instructions</span>
-						<div class="flex items-center gap-2 text-[11px] flex-shrink-0">
-							<span class={step.systemPrompt?.trim() ? 'text-amber-300' : 'text-gray-500'}>
-								{step.systemPrompt?.trim() ? 'Prompt set' : 'Prompt default'}
-							</span>
-							<span class={step.instructions?.trim() ? 'text-blue-300' : 'text-gray-500'}>
-								{step.instructions?.trim() ? 'Instructions set' : 'No instructions'}
-							</span>
-						</div>
+				{/* System Prompt (node-level override) */}
+				<div class="space-y-1.5">
+					<div class="flex items-center justify-between">
+						<label class="text-xs font-medium text-gray-400">
+							System Prompt <span class="font-normal text-gray-600">(node override)</span>
+						</label>
 					</div>
-					<p class="mt-1 text-[11px] text-gray-500">
-						Open the dedicated editor to review the shared prompt override and shared instructions.
-					</p>
-				</button>
+					<textarea
+						data-testid="node-system-prompt-input"
+						value={step.systemPrompt ?? ''}
+						onInput={(e) =>
+							onUpdate({
+								...step,
+								systemPrompt: (e.currentTarget as HTMLTextAreaElement).value || undefined,
+							})
+						}
+						placeholder="Leave blank to use agent defaults..."
+						rows={4}
+						class="w-full text-xs font-mono bg-dark-800 border border-dark-600 rounded px-3 py-2 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+					/>
+				</div>
+
+				{/* Instructions */}
+				<div class="space-y-1.5">
+					<label class="text-xs font-medium text-gray-400">
+						Instructions <span class="font-normal text-gray-600">(optional)</span>
+					</label>
+					<textarea
+						data-testid="instructions-textarea"
+						value={step.instructions}
+						onInput={(e) =>
+							onUpdate({
+								...step,
+								instructions: (e.currentTarget as HTMLTextAreaElement).value,
+							})
+						}
+						placeholder="Node-specific instructions appended to the agent prompt..."
+						rows={4}
+						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+					/>
+				</div>
 
 				<div class="space-y-1.5">
 					<div class="flex items-center justify-between">

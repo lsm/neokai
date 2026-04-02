@@ -3,9 +3,9 @@
  *
  * Coverage:
  * - workflowToVisualState: position restoration from layout, auto-layout fallback,
- *   empty edge initialization, startNodeId pass-through
+ *   empty edge initialization, startNodeId pass-through, endNodeId pass-through
  * - visualStateToCreateParams / visualStateToUpdateParams: round-trip,
- *   layout output, rules remapping
+ *   layout output, rules remapping, endNodeId pass-through
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -225,6 +225,35 @@ describe('workflowToVisualState', () => {
 		// Task Agent + 2 regular nodes = 3 unique localIds
 		expect(new Set(localIds).size).toBe(3);
 	});
+
+	it('passes endNodeId through when set', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1'), makeStep('s2')],
+			startNodeId: 's1',
+			endNodeId: 's2',
+		});
+		const state = workflowToVisualState(wf);
+		expect(state.endNodeId).toBe('s2');
+	});
+
+	it('endNodeId is undefined when not set on workflow', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1'), makeStep('s2')],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		expect(state.endNodeId).toBeUndefined();
+	});
+
+	it('endNodeId falls back to undefined when referencing nonexistent node', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1'), makeStep('s2')],
+			startNodeId: 's1',
+			endNodeId: 'nonexistent',
+		});
+		const state = workflowToVisualState(wf);
+		expect(state.endNodeId).toBeUndefined();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -405,6 +434,18 @@ describe('visualStateToCreateParams', () => {
 		expect(params.nodes).toHaveLength(0);
 		expect(params.startNodeId).toBeUndefined();
 	});
+
+	it('passes endNodeId through to create params', () => {
+		const state = makeState({ endNodeId: 's2' });
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		expect(params.endNodeId).toBe('s2');
+	});
+
+	it('endNodeId is undefined when not set on state', () => {
+		const state = makeState();
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		expect(params.endNodeId).toBeUndefined();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -424,8 +465,12 @@ describe('round-trip serialization', () => {
 		const params = visualStateToUpdateParams(visualState);
 
 		expect(params.nodes).toHaveLength(2);
-		expect(params.nodes![0]).toMatchObject({ id: 's1', name: 'Plan', agentId: 'agent-p' });
-		expect(params.nodes![1]).toMatchObject({ id: 's2', name: 'Code', agentId: 'agent-c' });
+		expect(params.nodes![0]).toMatchObject({ id: 's1', name: 'Plan' });
+		expect(params.nodes![0].agents).toHaveLength(1);
+		expect(params.nodes![0].agents[0].agentId).toBe('agent-p');
+		expect(params.nodes![1]).toMatchObject({ id: 's2', name: 'Code' });
+		expect(params.nodes![1].agents).toHaveLength(1);
+		expect(params.nodes![1].agents[0].agentId).toBe('agent-c');
 	});
 
 	it('preserves startNodeId after round-trip', () => {
@@ -525,6 +570,25 @@ describe('round-trip serialization', () => {
 		// Tags
 		expect(params.tags).toEqual(['coding']);
 	});
+
+	it('preserves endNodeId after round-trip', () => {
+		const original = makeWorkflow({
+			nodes: [makeStep('s1'), makeStep('s2')],
+			startNodeId: 's1',
+			endNodeId: 's2',
+		});
+		const params = visualStateToUpdateParams(workflowToVisualState(original));
+		expect(params.endNodeId).toBe('s2');
+	});
+
+	it('round-trip preserves endNodeId as null when not set', () => {
+		const original = makeWorkflow({
+			nodes: [makeStep('s1'), makeStep('s2')],
+			startNodeId: 's1',
+		});
+		const params = visualStateToUpdateParams(workflowToVisualState(original));
+		expect(params.endNodeId).toBeNull();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -575,6 +639,49 @@ describe('visualStateToUpdateParams', () => {
 		const params = visualStateToUpdateParams(state);
 		// rules no longer part of UpdateSpaceWorkflowParams
 		expect((params as Record<string, unknown>)['rules']).toBeUndefined();
+	});
+
+	it('passes endNodeId through to update params', () => {
+		const state: VisualEditorState = {
+			nodes: [
+				{
+					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
+					position: { x: 0, y: 0 },
+				},
+				{
+					step: { localId: 'l2', id: 's2', name: 'S2', agentId: 'a', instructions: '' },
+					position: { x: 200, y: 0 },
+				},
+			],
+			edges: [],
+			startNodeId: 's1',
+			endNodeId: 's2',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [],
+		};
+		const params = visualStateToUpdateParams(state);
+		expect(params.endNodeId).toBe('s2');
+	});
+
+	it('endNodeId is null when not set on state', () => {
+		const state: VisualEditorState = {
+			nodes: [
+				{
+					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
+					position: { x: 0, y: 0 },
+				},
+			],
+			edges: [],
+			startNodeId: 's1',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [],
+		};
+		const params = visualStateToUpdateParams(state);
+		expect(params.endNodeId).toBeNull();
 	});
 });
 
@@ -765,22 +872,24 @@ describe('multi-agent step serialization', () => {
 		expect(params.gates![0].id).toBe('review-votes-gate');
 	});
 
-	it('single-agent step round-trip: agentId set in NodeDraft, agents output in serialized params', () => {
+	it('single-agent step round-trip: agents preserved through workflowToVisualState and serialized output', () => {
 		const workflow = makeWorkflow({
 			nodes: [makeStep('s1', 'Code', 'agent-coder')],
 		});
 		const state = workflowToVisualState(workflow);
 		// Use find() — Task Agent virtual node is injected at index 0
 		const s1Node = state.nodes.find((n) => n.step.id === 's1')!;
-		expect(s1Node.step.agentId).toBe('agent-coder');
+		// workflowToVisualState sets agentId to '' and stores the agent in agents array
+		expect(s1Node.step.agents).toHaveLength(1);
+		expect(s1Node.step.agents![0].agentId).toBe('agent-coder');
 
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		// serialization builds agents array from agentId for single-agent steps
+		// serialization builds agents array from agents for single-agent steps
 		expect(params.nodes![0].agents).toHaveLength(1);
 		expect(params.nodes![0].agents[0].agentId).toBe('agent-coder');
 	});
 
-	it('full round-trip workflowToVisualState → visualStateToUpdateParams preserves multi-agent data', () => {
+	it('full round-trip workflowToVisualState -> visualStateToUpdateParams preserves multi-agent data', () => {
 		const workflow = makeWorkflow({
 			channels: [
 				{ from: 'coder', to: 'reviewer', direction: 'one-way' as const },
@@ -1024,7 +1133,7 @@ describe('per-slot agent overrides round-trip', () => {
 		expect(node.agents![1].systemPrompt).toBeUndefined();
 	});
 
-	it('full round-trip: workflow→visualState→createParams preserves all override fields', () => {
+	it('full round-trip: workflow->visualState->createParams preserves all override fields', () => {
 		const wf = makeWorkflow({
 			nodes: [
 				{
@@ -1105,7 +1214,7 @@ describe('per-slot agent overrides round-trip', () => {
 		});
 		const state = workflowToVisualState(wf);
 
-		// Simulate the user renaming 'coder' → 'lead-coder' via the role input
+		// Simulate the user renaming 'coder' -> 'lead-coder' via the role input
 		const nodeIdx = state.nodes.findIndex((n) => n.step.id === 's1');
 		state.nodes[nodeIdx].step.agents = [{ agentId: 'a1', name: 'lead-coder' }];
 

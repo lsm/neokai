@@ -81,6 +81,12 @@ export interface VisualEditorState {
 	 * start node. Managed explicitly by the user.
 	 */
 	startNodeId: string;
+	/**
+	 * The step key (step.id for existing, step.localId for new) of the
+	 * end node. Managed explicitly by the user. When set, the workflow
+	 * run auto-completes when the end node's execution calls `report_done`.
+	 */
+	endNodeId?: string;
 	rules: RuleDraft[];
 	tags: string[];
 	/** Directed messaging channels at the workflow level. */
@@ -152,11 +158,18 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 	const startKey =
 		workflow.nodes.find((s) => s.id === workflow.startNodeId)?.id ?? workflow.nodes[0]?.id ?? '';
 
+	// endNodeId: use the step.id directly (matches the edge keys).
+	// Undefined when the workflow has no endNodeId set.
+	const endKey = workflow.endNodeId
+		? (workflow.nodes.find((s) => s.id === workflow.endNodeId)?.id ?? undefined)
+		: undefined;
+
 	return {
 		// Task Agent node is always first — pinned to the top of the canvas.
 		nodes: [taskAgentNode, ...nodes],
 		edges,
 		startNodeId: startKey,
+		endNodeId: endKey,
 		rules: [],
 		tags: workflow.tags ?? [],
 		channels: workflow.channels ?? [],
@@ -179,6 +192,7 @@ interface BuiltWorkflowFields {
 		instructions?: string;
 	}>;
 	startNodeId: string;
+	endNodeId?: string;
 	layout: Record<string, { x: number; y: number }>;
 	tags: string[];
 	channels?: WorkflowChannel[];
@@ -283,6 +297,13 @@ function buildWorkflowFields(state: VisualEditorState): {
 			: null);
 	const startNodeId = startEntry?.persistedId ?? '';
 
+	// Resolve endNodeId — prefer exact key match, then localId match. Undefined when not set.
+	let endNodeId: string | undefined;
+	if (state.endNodeId) {
+		const endEntry = nodeMap.get(state.endNodeId) ?? localIdMap.get(state.endNodeId);
+		endNodeId = endEntry?.persistedId;
+	}
+
 	const referencedGateIds = new Set(
 		state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
 	);
@@ -292,6 +313,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 		fields: {
 			nodes,
 			startNodeId,
+			endNodeId,
 			layout,
 			tags: state.tags,
 			channels: state.channels,
@@ -323,6 +345,7 @@ export function visualStateToCreateParams(
 		description,
 		nodes: fields.nodes,
 		startNodeId: fields.startNodeId || undefined,
+		endNodeId: fields.endNodeId || undefined,
 		layout: fields.layout,
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
@@ -346,6 +369,7 @@ export function visualStateToUpdateParams(
 		...overrides,
 		nodes: fields.nodes,
 		startNodeId: fields.startNodeId || null,
+		endNodeId: fields.endNodeId ?? null,
 		layout: fields.layout,
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
