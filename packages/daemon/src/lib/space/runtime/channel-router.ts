@@ -188,21 +188,16 @@ export class ChannelRouter {
 	 * Global concurrency semaphore for script-based gate evaluations.
 	 * Only gates with scripts acquire the semaphore; field-only gates bypass it.
 	 */
-	private scriptSemaphore: { acquired: number; max: number; waiters: Array<() => void> };
+	private readonly scriptSemaphore: { acquired: number; max: number; waiters: Array<() => void> };
 
 	/**
 	 * Per-gate evaluation coalescing cache, keyed by `"${runId}:${gateId}"`.
 	 * Multiple concurrent callers evaluating the same gate share one in-flight
-	 * promise. The key format prevents cross-run state leakage.
+	 * promise. After the in-flight evaluation resolves, each coalesced caller
+	 * re-evaluates directly (via `doEvaluateGate`) to ensure fresh data.
+	 * The key format prevents cross-run state leakage.
 	 */
 	private readonly gateEvaluations = new Map<string, Promise<GateEvalResult>>();
-
-	/**
-	 * Dirty flags for coalesced evaluations, keyed by `"${runId}:${gateId}"`.
-	 * When a gate's data changes while an evaluation is in-flight, the flag is
-	 * set so the awaiting caller re-evaluates after the current one resolves.
-	 */
-	private readonly gateDirtyFlags = new Map<string, boolean>();
 
 	constructor(private readonly config: ChannelRouterConfig) {
 		this.scriptSemaphore = {
@@ -603,8 +598,10 @@ export class ChannelRouter {
 	 * `GateDataRepository`, and evaluates the condition.
 	 *
 	 * **Coalescing:** Multiple concurrent callers for the same `runId:gateId` share
-	 * one in-flight evaluation promise. If new data arrives while an evaluation is
-	 * running (dirty flag set), the result is discarded and re-evaluated.
+	 * one in-flight evaluation promise. After the in-flight evaluation completes,
+	 * each coalesced caller re-evaluates directly (`doEvaluateGate`) to ensure
+	 * fresh data — this avoids stale-result bugs when 3+ callers race on the same
+	 * key. The direct call bypasses coalescing to prevent infinite loops.
 	 *
 	 * **Concurrency:** Gates with scripts acquire the global semaphore (up to
 	 * `maxConcurrentScripts`). Field-only gates bypass the semaphore entirely.
@@ -626,24 +623,16 @@ export class ChannelRouter {
 	): Promise<GateEvalResult> {
 		const key = `${runId}:${gateId}`;
 
-		// Coalescing: if an evaluation is already in-flight, await it.
-		// Set the dirty flag to signal that data may have changed during the wait.
-		// The completing caller's finally block does NOT clear the dirty flag —
-		// we (the awaiting caller) are responsible for consuming it.
+		// Coalescing: if an evaluation is already in-flight, await it,
+		// then re-evaluate directly to ensure fresh data. This avoids
+		// stale-result bugs when 3+ callers race on the same key (where
+		// a dirty-flag approach would let later callers return stale data
+		// consumed by an earlier waiter).
 		const inflight = this.gateEvaluations.get(key);
 		if (inflight) {
-			this.gateDirtyFlags.set(key, true);
 			await inflight;
-			// After the in-flight evaluation completes, check if we need to re-evaluate.
-			// The finally block leaves the dirty flag for us to consume.
-			if (this.gateDirtyFlags.get(key)) {
-				this.gateDirtyFlags.delete(key);
-				// Re-evaluate directly (bypass coalescing to avoid infinite loops)
-				return this.doEvaluateGate(runId, gateId, workflow);
-			}
-			// Not dirty (flag already consumed by another awaiting caller) —
-			// return the in-flight result.
-			return inflight;
+			// Re-evaluate directly (bypass coalescing to avoid infinite loops)
+			return this.doEvaluateGate(runId, gateId, workflow);
 		}
 
 		// No in-flight evaluation — start a new one
@@ -653,8 +642,6 @@ export class ChannelRouter {
 		try {
 			return await evalPromise;
 		} finally {
-			// Clean up the inflight entry so the next caller starts fresh.
-			// Do NOT clear the dirty flag — awaiting caller(s) will consume it.
 			this.gateEvaluations.delete(key);
 		}
 	}
@@ -682,24 +669,19 @@ export class ChannelRouter {
 		const record = this.config.gateDataRepo?.get(runId, gateId);
 		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
-		// Build script executor and context for script-based gates
-		let scriptExecutor: GateScriptExecutorFn | undefined;
-		let scriptContext: GateScriptContext | undefined;
-		if (gateDef.script) {
-			scriptExecutor = executeGateScript;
-			scriptContext = {
-				workspacePath: this.config.workspacePath ?? process.cwd(),
-				gateId,
-				runId,
-			};
-		}
-
 		// Field-only gates skip the semaphore entirely
 		if (!gateDef.script) {
 			return evaluateGate(gateDef, runtimeData);
 		}
 
-		// Script-based gates acquire the semaphore
+		// Script-based gates acquire the semaphore and pass executor + context
+		const scriptExecutor: GateScriptExecutorFn = executeGateScript;
+		const scriptContext: GateScriptContext = {
+			workspacePath: this.config.workspacePath ?? process.cwd(),
+			gateId,
+			runId,
+		};
+
 		return this.withScriptSemaphore(async () => {
 			return evaluateGate(gateDef, runtimeData, scriptExecutor, scriptContext);
 		});
@@ -721,11 +703,11 @@ export class ChannelRouter {
 		}
 
 		// All slots taken — wait in queue
-		return new Promise<T>((resolve) => {
+		return new Promise<T>((resolve, reject) => {
 			sem.waiters.push(() => {
 				sem.acquired++;
 				fn()
-					.then(resolve)
+					.then(resolve, reject)
 					.finally(() => this.releaseSemaphore());
 			});
 		});
@@ -740,8 +722,6 @@ export class ChannelRouter {
 			next();
 		}
 	}
-
-	// incrementAndResetCyclicChannel is defined alongside findMatchingWorkflowChannel above
 
 	/**
 	 * Returns all in-flight tasks for a given (runId, nodeId) pair.
