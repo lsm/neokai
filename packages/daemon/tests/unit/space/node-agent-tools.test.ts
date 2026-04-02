@@ -2128,7 +2128,7 @@ describe('node-agent-tools: async gate evaluation', () => {
 		expect(data.reason).toContain('Script check failed');
 	});
 
-	test('write_gate stores _scriptResult in gate data when script fails', async () => {
+	test('write_gate persists _scriptResult to DB when script fails', async () => {
 		const gate: Gate = {
 			id: 'gate-script-result',
 			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
@@ -2146,8 +2146,10 @@ describe('node-agent-tools: async gate evaluation', () => {
 			error: 'some reason',
 		});
 
+		const gateDataRepo = new GateDataRepository(ctx.db);
 		const config = makeConfig(ctx, {
 			workflow,
+			gateDataRepo,
 			scriptExecutor: mockExecutor,
 			scriptContext: {
 				workspacePath: '/tmp',
@@ -2161,11 +2163,16 @@ describe('node-agent-tools: async gate evaluation', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.gateOpen).toBe(false);
-		// _scriptResult should be in updatedData — reason is the evalResult.reason
-		// which includes "Script check failed: " prefix from evaluateGate
 		const scriptResult = data.updatedData._scriptResult as { success: boolean; reason: string };
 		expect(scriptResult.success).toBe(false);
 		expect(scriptResult.reason).toContain('some reason');
+
+		// P0: _scriptResult should survive a DB re-fetch
+		const dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-script-result');
+		expect(dbRecord).not.toBeNull();
+		const dbScriptResult = dbRecord!.data._scriptResult as { success: boolean; reason: string };
+		expect(dbScriptResult.success).toBe(false);
+		expect(dbScriptResult.reason).toContain('some reason');
 	});
 
 	test('write_gate emits space.gateData.updated with _scriptResult when script fails', async () => {
@@ -2369,6 +2376,95 @@ describe('node-agent-tools: async gate evaluation', () => {
 		expect(receivedContext!.runId).toBe('run-123');
 		// gateId should be overridden per-gate from the handler
 		expect(receivedContext!.gateId).toBe('gate-context-check');
+	});
+
+	test('write_gate does not store _scriptResult on field failure without executor (P1)', async () => {
+		// Gate has both script and fields, but no scriptExecutor is wired.
+		// A field-check failure should NOT produce a _scriptResult because
+		// the script was never actually executed.
+		const gate: Gate = {
+			id: 'gate-p1-bug',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "never runs"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		// No scriptExecutor provided — falls back to field-only evaluation
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-p1-bug', data: { ready: false } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(false);
+		expect(data.reason).toContain('ready');
+		// _scriptResult should NOT be present — it's a field failure, not a script failure
+		expect(data.updatedData._scriptResult).toBeUndefined();
+
+		// Verify it's not in the DB either
+		const dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-p1-bug');
+		expect(dbRecord).not.toBeNull();
+		expect(dbRecord!.data._scriptResult).toBeUndefined();
+	});
+
+	test('write_gate cleans up stale _scriptResult on subsequent success', async () => {
+		const gate: Gate = {
+			id: 'gate-cleanup',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		let callCount = 0;
+		const mockExecutor = async () => {
+			callCount++;
+			if (callCount === 1) {
+				return { success: false, data: {}, error: 'first run fails' };
+			}
+			return { success: true, data: { ready: true }, error: undefined };
+		};
+
+		const config = makeConfig(ctx, {
+			workflow,
+			gateDataRepo,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-cleanup',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// First write: script fails, _scriptResult should be persisted
+		const result1 = await handlers.write_gate({ gateId: 'gate-cleanup', data: {} });
+		const data1 = JSON.parse(result1.content[0].text);
+		expect(data1.gateOpen).toBe(false);
+		expect(data1.updatedData._scriptResult).toBeDefined();
+		let dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-cleanup');
+		expect(dbRecord!.data._scriptResult).toBeDefined();
+
+		// Second write: script succeeds, _scriptResult should be cleaned up
+		const result2 = await handlers.write_gate({ gateId: 'gate-cleanup', data: {} });
+		const data2 = JSON.parse(result2.content[0].text);
+		expect(data2.gateOpen).toBe(true);
+		expect(data2.updatedData._scriptResult).toBeUndefined();
+		dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-cleanup');
+		expect(dbRecord!.data._scriptResult).toBeUndefined();
 	});
 
 	test('script-only gate does not crash at field authorization (no fields)', async () => {

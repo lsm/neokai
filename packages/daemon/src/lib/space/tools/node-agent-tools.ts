@@ -709,7 +709,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 
 			// Merge data into gate_data table
-			const updated = gateDataRepo.merge(workflowRunId, gateId, data);
+			let updated = gateDataRepo.merge(workflowRunId, gateId, data);
 
 			// Re-evaluate gate with updated data. Uses scriptExecutor when available for
 			// async script-based gates; otherwise falls back to field-only evaluation.
@@ -720,11 +720,24 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				scriptContext ? { ...scriptContext, gateId } : undefined
 			);
 
-			// Store script evaluation failure reason in gate data for frontend transport.
-			// This flows through the space.gateData.updated event to the UI (Task 4.6).
-			if (evalResult.reason && gateDef.script && !evalResult.open) {
-				updated.data._scriptResult = { success: false, reason: evalResult.reason };
+			// Persist script evaluation result to gate data for frontend transport.
+			// Only set _scriptResult when a scriptExecutor actually ran (not when a
+			// field-only check fails on a script-annotated gate without an executor).
+			// Persisted to DB so re-fetches include the result.
+			if (scriptExecutor && gateDef.script && !evalResult.open && evalResult.reason) {
+				updated = gateDataRepo.merge(workflowRunId, gateId, {
+					_scriptResult: { success: false, reason: evalResult.reason },
+				});
+			} else if (updated.data._scriptResult) {
+				// Clean up stale _scriptResult from a previous failed script evaluation
+				const { _scriptResult, ...rest } = updated.data;
+				updated = gateDataRepo.set(workflowRunId, gateId, rest);
 			}
+
+			// TODO (P2): evaluateGate deep-merges script output into a local copy of
+			// gateData, but the merged data is not returned to the caller. The event
+			// below emits pre-script data. To fix, evaluateGate should return
+			// { open, reason, mergedData? } so callers can persist/emit the merged state.
 
 			// Trigger re-evaluation and lazy node activation for channels referencing
 			// this gate (fire-and-forget — response is not delayed waiting for activation).

@@ -1778,6 +1778,7 @@ export class TaskAgentManager {
 			gateDataRepo: this.config.gateDataRepo,
 			onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
 			scriptExecutor: executeGateScript,
+			// gateId is overridden per-gate by the handler ({ ...scriptContext, gateId })
 			scriptContext: { workspacePath, runId: workflowRunId, gateId: '' },
 		});
 	}
