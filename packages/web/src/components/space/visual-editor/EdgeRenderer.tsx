@@ -85,6 +85,18 @@ export interface ResolvedWorkflowChannel {
 	 * Only set on bidirectional channels where the reverse direction has its own gate.
 	 */
 	reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+	/** Custom badge label for the forward gate. `undefined` → heuristic fallback. */
+	gateLabel?: string;
+	/** Custom badge color for the forward gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
+	gateColor?: string;
+	/** Whether the forward gate has a script-based pre-check. */
+	hasScript?: boolean;
+	/** Custom badge label for the reverse gate. `undefined` → heuristic fallback. */
+	reverseGateLabel?: string;
+	/** Custom badge color for the reverse gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
+	reverseGateColor?: string;
+	/** Whether the reverse gate has a script-based pre-check. */
+	reverseHasScript?: boolean;
 	/** Stable ID for selection -- typically the workflow-level channel array index as a string. */
 	id?: string;
 	/** Optional display label from WorkflowChannel.label */
@@ -111,6 +123,8 @@ const CHANNEL_GATE_ARROW_GAP = 4;
 const CHANNEL_GATE_ARROW_TOTAL = CHANNEL_GATE_ARROW_WIDTH + CHANNEL_GATE_ARROW_GAP;
 /** Extra horizontal padding added to badge width to give the arrow room to breathe */
 const CHANNEL_GATE_ARROW_EXTRA_PADDING = 2;
+const CHANNEL_GATE_SCRIPT_ICON_GAP = 4;
+const CHANNEL_GATE_SCRIPT_ICON_WIDTH = 11;
 const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
 const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
@@ -747,20 +761,30 @@ export function EdgeRenderer({
 				// For one-way or single-direction bidirectional: use whichever is set.
 				// For both-direction bidirectional: use forward gate type (gateType).
 				const effectiveGateType = channel.gateType ?? channel.reverseGateType ?? undefined;
-				const gateColor = effectiveGateType
-					? CHANNEL_GATE_BADGE_COLORS[effectiveGateType]
-					: CHANNEL_EDGE_COLOR;
-				const gateLabelBase = effectiveGateType
-					? CHANNEL_GATE_BADGE_LABELS[effectiveGateType]
-					: 'Gate';
-				const gateLabel = gateLabelBase;
+				// Prefer custom gate color, fall back to heuristic color from gateType.
+				const gateColor =
+					channel.gateColor ??
+					(effectiveGateType ? CHANNEL_GATE_BADGE_COLORS[effectiveGateType] : CHANNEL_EDGE_COLOR);
+				// Prefer custom gate label, fall back to heuristic label from gateType.
+				const gateLabel =
+					channel.gateLabel ??
+					(effectiveGateType ? CHANNEL_GATE_BADGE_LABELS[effectiveGateType] : 'Gate');
+				// Whether to show a script icon next to the badge.
+				// For bidirectional channels, use the forward direction's hasScript when available.
+				const effectiveHasScript = channel.gateType
+					? !!channel.hasScript
+					: !!channel.reverseHasScript;
 				// Arrow count determines badge width:
 				//   0 arrows (no gate):              base label width
 				//   1 arrow (one-way / single-dir):  label + ARROW_TOTAL
 				//   2 arrows (both-direction gate):  label + 2 * ARROW_TOTAL
 				const arrowCount = hasBothDirectionGates ? 2 : isGated ? 1 : 0;
+				const scriptIconExtra = effectiveHasScript
+					? CHANNEL_GATE_SCRIPT_ICON_WIDTH + CHANNEL_GATE_SCRIPT_ICON_GAP
+					: 0;
 				const gateBadgeWidth =
 					gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
+					scriptIconExtra +
 					CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2 +
 					(arrowCount > 0
 						? arrowCount * CHANNEL_GATE_ARROW_TOTAL + CHANNEL_GATE_ARROW_EXTRA_PADDING
@@ -908,7 +932,9 @@ export function EdgeRenderer({
 									</>
 								)}
 								<text
-									x={arrowCount === 1 ? singleArrowTextX : 0}
+									x={
+										arrowCount === 1 ? singleArrowTextX + scriptIconExtra / 2 : scriptIconExtra / 2
+									}
 									y="4"
 									textAnchor="middle"
 									fontSize="11"
@@ -918,6 +944,22 @@ export function EdgeRenderer({
 								>
 									{gateLabel}
 								</text>
+								{effectiveHasScript && (
+									<text
+										x={
+											arrowCount === 1
+												? singleArrowTextX - labelPixelWidth / 2 - CHANNEL_GATE_SCRIPT_ICON_GAP
+												: -labelPixelWidth / 2 - CHANNEL_GATE_SCRIPT_ICON_GAP
+										}
+										y="3"
+										textAnchor="middle"
+										fontSize="9"
+										fill={isSelected ? 'white' : gateColor}
+										opacity={0.7}
+									>
+										⚡
+									</text>
+								)}
 							</g>
 						)}
 						{loopBadgePosition && (

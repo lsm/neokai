@@ -366,6 +366,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			isCyclic?: boolean;
 			gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
 			reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+			gateLabel?: string;
+			gateColor?: string;
+			hasScript?: boolean;
+			reverseGateLabel?: string;
+			reverseGateColor?: string;
+			reverseHasScript?: boolean;
 			sourceSide?: 'top' | 'bottom' | 'left' | 'right';
 			targetSide?: 'top' | 'bottom' | 'left' | 'right';
 			id?: string;
@@ -378,6 +384,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			direction: edge.direction,
 			gateType: edge.gateType,
 			reverseGateType: edge.reverseGateType,
+			gateLabel: edge.gateLabel,
+			gateColor: edge.gateColor,
+			hasScript: edge.hasScript,
+			reverseGateLabel: edge.reverseGateLabel,
+			reverseGateColor: edge.reverseGateColor,
+			reverseHasScript: edge.reverseHasScript,
 			isCyclic: edge.hasCyclic,
 			sourceSide: edge.sourceSide,
 			targetSide: edge.targetSide,
