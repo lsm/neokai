@@ -329,8 +329,7 @@ export class SpaceRuntime {
 		spaceId: string,
 		workflowId: string,
 		title: string,
-		description?: string,
-		_goalId?: string
+		description?: string
 	): Promise<{ run: SpaceWorkflowRun; tasks: SpaceTask[] }> {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(workflowId);
 		if (!workflow) {

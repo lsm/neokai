@@ -74,6 +74,38 @@ describe('NodeExecutionRepository', () => {
 		});
 	}
 
+	// Helper to create a node execution with an explicit created_at timestamp
+	function createExecutionWithTimestamp(
+		overrides: Partial<import('@neokai/shared').CreateNodeExecutionParams> & { createdAt: number }
+	) {
+		const { createdAt, ...rest } = overrides;
+		const id = crypto.randomUUID();
+		const now = Date.now();
+		(db as any)
+			.prepare(
+				`INSERT INTO node_executions
+				    (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				     agent_session_id, status, result, created_at, started_at,
+				     completed_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				id,
+				workflowRunId,
+				'node-1',
+				rest.agentName ?? 'coder',
+				agentId,
+				null,
+				'pending',
+				null,
+				createdAt,
+				null,
+				null,
+				now
+			);
+		return repo.getById(id)!;
+	}
+
 	describe('create', () => {
 		it('creates a node execution with required fields', () => {
 			const exec = createExecution();
@@ -177,11 +209,13 @@ describe('NodeExecutionRepository', () => {
 
 		it('orders by created_at ASC', () => {
 			const e1 = createExecution({ agentName: 'first' });
-			const e2 = createExecution({ agentName: 'second' });
-			const e3 = createExecution({ agentName: 'third' });
+			// Advance time to ensure distinct created_at values across inserts
+			const base = Date.now();
+			const e2 = createExecutionWithTimestamp({ agentName: 'second', createdAt: base + 1 });
+			const e3 = createExecutionWithTimestamp({ agentName: 'third', createdAt: base + 2 });
 
 			const executions = repo.listByWorkflowRun(workflowRunId);
-			expect(executions.map((e) => e.id)).toEqual([e1.id, e2.id, e3.id]);
+			expect(executions.map((e) => e.agentName)).toEqual(['first', 'second', 'third']);
 		});
 	});
 

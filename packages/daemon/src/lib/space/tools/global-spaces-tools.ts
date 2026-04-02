@@ -27,6 +27,7 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
@@ -43,6 +44,8 @@ export interface GlobalSpacesToolsConfig {
 	workflowManager: SpaceWorkflowManager;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** Node execution repository for querying node execution records. */
+	nodeExecutionRepo: NodeExecutionRepository;
 	/** Database instance used to create SpaceTaskManager instances on demand. */
 	db: BunDatabase;
 }
@@ -85,6 +88,7 @@ export function createGlobalSpacesToolHandlers(
 		workflowManager,
 		taskRepo,
 		workflowRunRepo,
+		nodeExecutionRepo,
 		db,
 	} = config;
 
@@ -227,7 +231,6 @@ export function createGlobalSpacesToolHandlers(
 			workflow_id: string;
 			title: string;
 			description?: string;
-			goal_id?: string;
 		}): Promise<ToolResult> {
 			const resolved = resolveSpaceId(args.space_id);
 			if ('error' in resolved) return jsonResult({ success: false, error: resolved.error });
@@ -236,8 +239,7 @@ export function createGlobalSpacesToolHandlers(
 					resolved.spaceId,
 					args.workflow_id,
 					args.title,
-					args.description,
-					args.goal_id
+					args.description
 				);
 				return jsonResult({ success: true, space_id: resolved.spaceId, run, tasks });
 			} catch (err) {
@@ -251,8 +253,8 @@ export function createGlobalSpacesToolHandlers(
 			if (!run) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
-			const tasks = taskRepo.listByWorkflowRun(run.id);
-			return jsonResult({ success: true, run, tasks });
+			const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
+			return jsonResult({ success: true, run, executions });
 		},
 
 		async list_tasks(args?: {
@@ -601,7 +603,6 @@ export function createGlobalSpacesMcpServer(
 				workflow_id: z.string().describe('ID of the workflow to run'),
 				title: z.string().describe('Short title for this workflow run'),
 				description: z.string().optional().describe('Description of the work'),
-				goal_id: z.string().optional().describe('Goal/mission ID to associate with this run'),
 			},
 			(args) => handlers.start_workflow_run(args)
 		),
@@ -681,14 +682,6 @@ export function createGlobalSpacesMcpServer(
 					.enum(['low', 'normal', 'high', 'urgent'])
 					.optional()
 					.describe('Task priority (default: normal)'),
-				task_type: z
-					.enum(['planning', 'coding', 'research', 'design', 'review'])
-					.optional()
-					.describe('Task type for routing and display'),
-				assigned_agent: z
-					.enum(['coder', 'general'])
-					.optional()
-					.describe('Built-in agent type to assign (default: coder)'),
 				custom_agent_id: z
 					.string()
 					.optional()
@@ -716,7 +709,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'retry_task',
-			'Reset a failed (needs_attention) or cancelled task back to pending so it can be picked up again. Optionally update the description before retry.',
+			'Reset a failed (blocked) or cancelled task back to pending so it can be picked up again. Optionally update the description before retry.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
 				space_id: z
@@ -747,7 +740,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'reassign_task',
-			'Change the agent assigned to a task. Only allowed for tasks in pending, needs_attention, or cancelled status.',
+			'Change the agent assigned to a task. Only allowed for tasks in open, blocked, or cancelled status.',
 			{
 				task_id: z.string().describe('ID of the task to reassign'),
 				space_id: z

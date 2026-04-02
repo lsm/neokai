@@ -26,6 +26,7 @@ import { SpaceRuntimeService } from '../../../src/lib/space/runtime/space-runtim
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -209,6 +210,7 @@ function buildDeps(
 	spyService: SpySpaceRuntimeService;
 } {
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
 	const agentRepo = new SpaceAgentRepository(db);
 	const agentManager = new SpaceAgentManager(agentRepo);
@@ -249,6 +251,7 @@ function buildDeps(
 		sessionFactory,
 		taskRepo,
 		workflowRunRepo,
+		nodeExecutionRepo,
 		db,
 		state,
 		spyService,
@@ -277,6 +280,7 @@ function makeMinimalToolConfig(db: BunDatabase): GlobalSpacesToolsConfig {
 		} as unknown as ISpaceWorkflowManager,
 		taskRepo: new SpaceTaskRepository(db),
 		workflowRunRepo: new SpaceWorkflowRunRepository(db),
+		nodeExecutionRepo: new NodeExecutionRepository(db),
 		db,
 	};
 }

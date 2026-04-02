@@ -76,7 +76,9 @@ export class NodeExecutionRepository {
 	 */
 	listByWorkflowRun(workflowRunId: string): NodeExecution[] {
 		const rows = this.db
-			.prepare(`SELECT * FROM node_executions WHERE workflow_run_id = ? ORDER BY created_at ASC`)
+			.prepare(
+				`SELECT * FROM node_executions WHERE workflow_run_id = ? ORDER BY created_at ASC, id ASC`
+			)
 			.all(workflowRunId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToNodeExecution(r));
 	}
@@ -89,7 +91,7 @@ export class NodeExecutionRepository {
 			.prepare(
 				`SELECT * FROM node_executions
 				        WHERE workflow_run_id = ? AND workflow_node_id = ?
-				        ORDER BY created_at ASC`
+				        ORDER BY created_at ASC, id ASC`
 			)
 			.all(workflowRunId, workflowNodeId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToNodeExecution(r));
