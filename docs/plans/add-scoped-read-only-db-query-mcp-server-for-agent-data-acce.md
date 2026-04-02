@@ -126,6 +126,8 @@ db.exec('PRAGMA query_only = ON');
 
 Use a **column blacklist** per table instead of a whitelist. Blacklisted columns are excluded from `db_describe_table` output and from `SELECT *` expansion. New columns added by future migrations are automatically visible unless explicitly blacklisted.
 
+Blacklists are **global per-table**, not scope-dependent — a column blacklisted on `sessions` (e.g., `session_context`) is excluded regardless of whether the query runs under global, room, or space scope. The `getBlacklistedColumns(tableName)` function takes only the table name, not the scope type.
+
 **Blacklisted columns (all scopes):**
 - `session_context` (on `sessions`) -- JSON with IDs that could enable cross-session access
 - `config` (on `rooms`, `spaces`) -- may contain sensitive JSON blobs
@@ -232,7 +234,7 @@ Create `packages/daemon/src/lib/db-query/scope-config.ts` that defines which tab
    - `context.spaceId` -> `{ scopeType: 'space', scopeValue: spaceId }`
    - Neither -> `{ scopeType: 'global', scopeValue: '' }`
 6. Implement `getAccessibleTableNames(scopeType: DbScopeType): string[]`
-7. Implement `getBlacklistedColumns(tableName: string, scopeType: DbScopeType): string[]`
+7. Implement `getBlacklistedColumns(tableName: string): string[]` (blacklists are global per-table, not scope-dependent)
 8. Implement `buildScopeFilter(tableConfig: ScopeTableConfig, scopeValue: string): { whereClause: string; params: unknown[] }` that returns the WHERE clause for a given table's scope config:
    - Direct: `room_id = ?` or `space_id = ?` (with scopeValue as param)
    - Indirect: `goal_id IN (SELECT id FROM goals WHERE room_id = ?)` (with scopeValue as param)
@@ -359,7 +361,7 @@ Wire the `db-query` MCP server into all agent session types. Each session gets i
 1. Modify `packages/daemon/src/lib/neo/neo-agent-manager.ts`:
    - Add a private `dbPath: string | null = null` field and a public `setDbPath(dbPath: string): void` setter method (follows the same order-independent wiring pattern as `setToolsConfig`, `setActionToolsConfig`, `setActivityLogger`)
    - Call `deps.neoAgentManager.setDbPath(deps.db.getDatabasePath())` in `packages/daemon/src/lib/rpc-handlers/index.ts` alongside the existing `setToolsConfig()` call (lines 388 area) — `deps.db.getDatabasePath()` is already available in that scope
-   - In `attachTools()`: if `this.dbPath` is set, create `createDbQueryMcpServer({ dbPath: this.dbPath, scopeType: 'global', scopeValue: '' })` and merge it into the `setRuntimeMcpServers()` call alongside the existing `inProcessServers` and `registryMcpServers` under the key `'db-query'`
+   - In `attachTools()`: at the top, close any existing db-query server instance (`this.dbQueryServer?.close(); this.dbQueryServer = null;`) before creating a new one — this prevents connection leaks when `attachTools()` is called multiple times during mid-lifecycle resets (e.g., `destroyAndRecreate()`, `clearSession()`). Then if `this.dbPath` is set, create `createDbQueryMcpServer({ dbPath: this.dbPath, scopeType: 'global', scopeValue: '' })` and merge it into the `setRuntimeMcpServers()` call alongside the existing `inProcessServers` and `registryMcpServers` under the key `'db-query'`
    - Store a reference to the created server instance for cleanup (call `close()` on session teardown)
    - The Neo agent's session context has no `roomId` or `spaceId`, so it receives `global` scope (all non-sensitive tables, no WHERE filter injection)
 2. Modify `packages/daemon/src/lib/room/runtime/room-runtime-service.ts`:
