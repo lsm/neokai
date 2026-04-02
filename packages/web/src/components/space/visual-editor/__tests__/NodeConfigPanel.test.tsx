@@ -23,31 +23,36 @@ import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preac
 import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 
+const mockModelsResponse = {
+	models: [
+		{
+			id: 'claude-sonnet-4-6',
+			display_name: 'Claude Sonnet 4.6',
+			description: '',
+			provider: 'anthropic',
+		},
+		{
+			id: 'gpt-5.4',
+			display_name: 'GPT-5.4',
+			description: '',
+			provider: 'openai',
+		},
+	],
+};
+
+const mockHub = {
+	request: vi.fn(async (method: string) => {
+		if (method === 'models.list') {
+			return mockModelsResponse;
+		}
+		return {};
+	}),
+};
+
 vi.mock('../../../../lib/connection-manager', () => ({
 	connectionManager: {
-		getHubIfConnected: () => ({
-			request: vi.fn(async (method: string) => {
-				if (method === 'models.list') {
-					return {
-						models: [
-							{
-								id: 'claude-sonnet-4-6',
-								display_name: 'Claude Sonnet 4.6',
-								description: '',
-								provider: 'anthropic',
-							},
-							{
-								id: 'gpt-5.4',
-								display_name: 'GPT-5.4',
-								description: '',
-								provider: 'openai',
-							},
-						],
-					};
-				}
-				return {};
-			}),
-		}),
+		getHub: () => Promise.resolve(mockHub),
+		getHubIfConnected: () => mockHub,
 	},
 }));
 
@@ -137,8 +142,8 @@ describe('NodeConfigPanel', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
 			const select = getByTestId('agent-select') as HTMLSelectElement;
 			const options = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
-			expect(options).toContain('Planner (planner)');
-			expect(options).toContain('Coder (coder)');
+			expect(options).toContain('Planner');
+			expect(options).toContain('Coder');
 		});
 
 		it('shows currently selected agent in dropdown', () => {
@@ -563,34 +568,36 @@ describe('NodeConfigPanel', () => {
 
 		it('adding the same agent twice generates a unique slot role with numeric suffix', () => {
 			const onUpdate = vi.fn();
+			// Use the agent's actual name 'Coder' as the initial role so baseRole matches
+			// and the suffix logic activates (case-sensitive comparison in addAgent).
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-2', name: 'coder' }],
+				agents: [{ agentId: 'agent-2', name: 'Coder' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			// Add agent-2 (Coder) a second time
 			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
 			expect(updatedStep.agents).toHaveLength(2);
-			expect(updatedStep.agents[0].name).toBe('coder');
+			expect(updatedStep.agents[0].name).toBe('Coder');
 			// Second slot must get a unique suffix to avoid duplicate-role validation error
-			expect(updatedStep.agents[1].name).toBe('coder-2');
+			expect(updatedStep.agents[1].name).toBe('Coder-2');
 		});
 
-		it('adding the same agent three times produces coder, coder-2, coder-3', () => {
+		it('adding the same agent three times produces Coder, Coder-2, Coder-3', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
 				agents: [
-					{ agentId: 'agent-2', name: 'coder' },
-					{ agentId: 'agent-2', name: 'coder-2' },
+					{ agentId: 'agent-2', name: 'Coder' },
+					{ agentId: 'agent-2', name: 'Coder-2' },
 				],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
 			expect(updatedStep.agents).toHaveLength(3);
-			expect(updatedStep.agents[2].name).toBe('coder-3');
+			expect(updatedStep.agents[2].name).toBe('Coder-3');
 		});
 	});
 
@@ -650,18 +657,14 @@ describe('NodeConfigPanel', () => {
 			expect(queryByTestId('override-badge')).toBeNull();
 		});
 
-		it('shows model selector for each slot without extra expansion', async () => {
+		it('does not render per-slot model selector in multi-agent mode (model is node-level)', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
 			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			await waitFor(() =>
-				expect(
-					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
-				).toBeGreaterThan(1)
-			);
-			expect(getByTestId('agent-model-select')).toBeTruthy();
+			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			// Per-slot model selector was removed; model override is at the node level only
+			expect(queryByTestId('agent-model-select')).toBeNull();
 		});
 
 		it('editing agent selection calls onUpdate with updated agentId', () => {
@@ -674,43 +677,6 @@ describe('NodeConfigPanel', () => {
 			fireEvent.change(getByTestId('agent-slot-select'), { target: { value: 'agent-2' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
 			expect(updatedStep.agents[0].agentId).toBe('agent-2');
-		});
-
-		it('editing model selector is a no-op for agent slots (model removed from WorkflowNodeAgent)', async () => {
-			const onUpdate = vi.fn();
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner' }],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			await waitFor(() =>
-				expect(
-					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
-				).toBeGreaterThan(1)
-			);
-			fireEvent.change(getByTestId('agent-model-select'), { target: { value: 'gpt-5.4' } });
-			// model is no longer on WorkflowNodeAgent; the selector is a no-op
-			if (onUpdate.mock.calls.length > 0) {
-				const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-				expect((updatedStep.agents[0] as Record<string, unknown>)['model']).toBeUndefined();
-			}
-		});
-
-		it('clearing agent model selector is a no-op (model removed from WorkflowNodeAgent)', async () => {
-			const onUpdate = vi.fn();
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner' }],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			await waitFor(() =>
-				expect(
-					(getByTestId('agent-model-select') as HTMLSelectElement).options.length
-				).toBeGreaterThan(1)
-			);
-			fireEvent.change(getByTestId('agent-model-select'), { target: { value: '' } });
-			// no-op — model not on WorkflowNodeAgent
-			expect(true).toBeTruthy();
 		});
 
 		it('inline system prompt editor is used for multi-agent nodes too', () => {
@@ -742,7 +708,7 @@ describe('NodeConfigPanel', () => {
 			expect(roleInputs[1].value).toBe('coder-2');
 		});
 
-		it('each slot can independently have overrides — override-badge appears only on overridden slot', () => {
+		it('each slot can independently have overrides -- override-badge appears only on overridden slot', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [
@@ -757,7 +723,7 @@ describe('NodeConfigPanel', () => {
 			const { getAllByTestId, queryAllByTestId } = render(
 				<NodeConfigPanel {...makeProps({ step })} />
 			);
-			// One badge for the slot with model override
+			// One badge for the slot with instructions override
 			expect(getAllByTestId('override-badge')).toHaveLength(1);
 			// Confirm the overridden slot's entry has amber styling via data attribute
 			const entries = getAllByTestId('agent-entry');
