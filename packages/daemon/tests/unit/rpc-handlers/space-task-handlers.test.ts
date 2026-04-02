@@ -511,17 +511,16 @@ describe('space-task-handlers', () => {
 			});
 		});
 
-		it('passes result and error to setTaskStatus when provided with status', async () => {
+		it('passes result to setTaskStatus when provided with status', async () => {
 			await call('spaceTask.update', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				status: 'needs_attention',
-				error: 'Build failed',
+				status: 'blocked',
+				result: 'Build failed',
 			});
 
-			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'needs_attention', {
-				result: undefined,
-				error: 'Build failed',
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'blocked', {
+				result: 'Build failed',
 			});
 		});
 

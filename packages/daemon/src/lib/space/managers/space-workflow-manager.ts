@@ -165,6 +165,15 @@ export class SpaceWorkflowManager {
 	}
 
 	private validateNodeAgentRef(spaceId: string, node: WorkflowNodeInput, index: number): void {
+		// Backward compat: if `agents` is absent/empty but legacy `agentId` is set on the object,
+		// synthesize a single-agent array from it before validating.
+		const legacyAgentId = (node as unknown as Record<string, unknown>)['agentId'] as
+			| string
+			| undefined;
+		if ((!node.agents || node.agents.length === 0) && legacyAgentId) {
+			node.agents = [{ agentId: legacyAgentId, name: node.name }];
+		}
+
 		const hasAgents = node.agents && node.agents.length > 0;
 
 		if (!hasAgents) {

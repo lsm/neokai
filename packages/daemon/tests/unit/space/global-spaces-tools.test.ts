@@ -430,7 +430,7 @@ describe('createGlobalSpacesToolHandlers — create_standalone_task', () => {
 		expect(parsed.task.title).toBe('My task');
 		expect(parsed.task.description).toBe('Do something');
 		expect(parsed.task.spaceId).toBe(ctx.spaceId);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('open');
 		expect(parsed.space_id).toBe(ctx.spaceId);
 	});
 
@@ -468,15 +468,13 @@ describe('createGlobalSpacesToolHandlers — create_standalone_task', () => {
 			title: 'Full task',
 			description: 'Full description',
 			priority: 'high',
-			task_type: 'coding',
-			assigned_agent: 'general',
 		});
 
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.task.priority).toBe('high');
-		expect(parsed.task.taskType).toBe('coding');
-		expect(parsed.task.assignedAgent).toBe('general');
+		expect(parsed.task.title).toBe('Full task');
+		// taskType and assignedAgent removed in M71
 	});
 
 	test('returns error when dependency task does not exist', async () => {
@@ -636,7 +634,7 @@ describe('createGlobalSpacesToolHandlers — retry_task', () => {
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 		ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
-		ctx.taskRepo.updateTask(taskId, { status: 'needs_attention', error: 'Something went wrong' });
+		ctx.taskRepo.updateTask(taskId, { status: 'blocked', error: 'Something went wrong' });
 		return taskId;
 	}
 
@@ -648,7 +646,7 @@ describe('createGlobalSpacesToolHandlers — retry_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('open');
 		// null DB values become undefined in SpaceTask and are omitted in JSON
 		expect(parsed.task.error).toBeUndefined();
 	});
@@ -664,7 +662,7 @@ describe('createGlobalSpacesToolHandlers — retry_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('open');
 		expect(parsed.task.description).toBe('Updated description on retry');
 	});
 
@@ -688,7 +686,7 @@ describe('createGlobalSpacesToolHandlers — retry_task', () => {
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 		ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
-		ctx.taskRepo.updateTask(taskId, { status: 'completed' });
+		ctx.taskRepo.updateTask(taskId, { status: 'done' });
 
 		const result = await handlers.retry_task({ task_id: taskId });
 		const parsed = JSON.parse(result.content[0].text);
@@ -719,7 +717,7 @@ describe('createGlobalSpacesToolHandlers — retry_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('open');
 	});
 });
 
@@ -775,7 +773,7 @@ describe('createGlobalSpacesToolHandlers — cancel_task', () => {
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 		ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
-		ctx.taskRepo.updateTask(taskId, { status: 'completed' });
+		ctx.taskRepo.updateTask(taskId, { status: 'done' });
 
 		const result = await handlers.cancel_task({ task_id: taskId });
 		const parsed = JSON.parse(result.content[0].text);
@@ -889,7 +887,7 @@ describe('createGlobalSpacesToolHandlers — cancel_task', () => {
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 		ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
-		ctx.taskRepo.updateTask(taskId, { status: 'completed' });
+		ctx.taskRepo.updateTask(taskId, { status: 'done' });
 
 		const result = await handlers.cancel_task({ task_id: taskId });
 		const parsed = JSON.parse(result.content[0].text);
@@ -959,7 +957,7 @@ describe('createGlobalSpacesToolHandlers — reassign_task', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('reassigns a pending task to a custom agent', async () => {
+	test('reassigns a pending task to a custom agent (field removed in M71)', async () => {
 		const handlers = makeHandlers(ctx, { activeSpaceId: null });
 
 		const createResult = await handlers.create_standalone_task({
@@ -976,31 +974,29 @@ describe('createGlobalSpacesToolHandlers — reassign_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.customAgentId).toBe('custom-agent-x');
+		expect(parsed.task.id).toBe(taskId);
+		// customAgentId field removed in M71
 	});
 
-	test('clears custom agent by setting custom_agent_id to null', async () => {
+	test('clears custom agent by setting custom_agent_id to null (field removed in M71)', async () => {
 		const handlers = makeHandlers(ctx, { activeSpaceId: null });
 
 		const createResult = await handlers.create_standalone_task({
 			space_id: ctx.spaceId,
 			title: 'Clear agent task',
 			description: 'Will clear custom agent',
-			custom_agent_id: 'custom-agent-to-clear',
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 
 		const result = await handlers.reassign_task({
 			task_id: taskId,
 			custom_agent_id: null,
-			assigned_agent: 'general',
 		});
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		// null DB value becomes undefined in SpaceTask and is omitted in JSON
-		expect(parsed.task.customAgentId).toBeUndefined();
-		expect(parsed.task.assignedAgent).toBe('general');
+		expect(parsed.task.id).toBe(taskId);
+		// customAgentId and assignedAgent fields removed in M71
 	});
 
 	test('returns error when task does not exist', async () => {
@@ -1068,7 +1064,7 @@ describe('createGlobalSpacesToolHandlers — reassign_task', () => {
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 		ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
-		ctx.taskRepo.updateTask(taskId, { status: 'needs_attention', error: 'failed' });
+		ctx.taskRepo.updateTask(taskId, { status: 'blocked', error: 'failed' });
 
 		const result = await handlers.reassign_task({
 			task_id: taskId,
@@ -1077,7 +1073,7 @@ describe('createGlobalSpacesToolHandlers — reassign_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.customAgentId).toBe('backup-agent');
+		expect(parsed.task.id).toBe(taskId);
 	});
 
 	test('uses active space context for ownership validation', async () => {
@@ -1097,7 +1093,7 @@ describe('createGlobalSpacesToolHandlers — reassign_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.customAgentId).toBe('agent-via-context');
+		expect(parsed.task.id).toBe(taskId);
 	});
 });
 

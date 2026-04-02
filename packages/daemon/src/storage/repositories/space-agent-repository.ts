@@ -158,14 +158,15 @@ export class SpaceAgentRepository {
 	 * Empty array means safe to delete.
 	 */
 	isAgentReferenced(agentId: string): { referenced: boolean; workflowNames: string[] } {
+		// agents column is a JSON array of {agentId, name} objects; use LIKE for a simple existence check
 		const rows = this.db
 			.prepare(
 				`SELECT DISTINCT sw.name
 				FROM space_workflow_nodes sws
 				JOIN space_workflows sw ON sw.id = sws.workflow_id
-				WHERE sws.agent_id = ?`
+				WHERE sws.agents LIKE ?`
 			)
-			.all(agentId) as Array<{ name: string }>;
+			.all(`%"agentId":"${agentId}"%`) as Array<{ name: string }>;
 
 		const workflowNames = rows.map((r) => r.name);
 		return { referenced: workflowNames.length > 0, workflowNames };

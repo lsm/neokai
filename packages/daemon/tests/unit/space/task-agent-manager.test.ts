@@ -202,7 +202,7 @@ async function makeTask(taskManager: SpaceTaskManager): Promise<SpaceTask> {
 		title: 'Test task',
 		description: 'A test task',
 		taskType: 'coding',
-		status: 'pending',
+		status: 'open',
 	});
 }
 
@@ -465,12 +465,11 @@ describe('TaskAgentManager', () => {
 
 			const runTasks = ctx.taskRepo.listByWorkflowRun(run!.id);
 			const orchestratorTask = runTasks.find((t) => t.id === task.id);
-			const startStepTask = runTasks.find(
-				(t) => t.id !== task.id && t.workflowNodeId === fallbackStepId
-			);
+			// workflowNodeId was removed in M71 — verify there's at least one other task in the run
+			const startStepTask = runTasks.find((t) => t.id !== task.id);
 
 			expect(orchestratorTask).toBeDefined();
-			expect(orchestratorTask?.workflowNodeId).toBeUndefined();
+			// workflowNodeId was removed in M71
 			expect(startStepTask).toBeDefined();
 			expect(startStepTask?.taskAgentSessionId ?? null).toBeNull();
 		});
@@ -973,7 +972,7 @@ describe('TaskAgentManager', () => {
 
 			// Step task should now be 'completed'
 			const updated = ctx.taskRepo.getTask(stepTask.id);
-			expect(updated?.status).toBe('completed');
+			expect(updated?.status).toBe('done');
 		});
 
 		test('injects [STEP_COMPLETE] notification into Task Agent session', async () => {
@@ -1451,7 +1450,7 @@ describe('TaskAgentManager', () => {
 		 */
 		async function seedInProgressTask(
 			c: TestCtx,
-			status: 'in_progress' | 'needs_attention' = 'in_progress'
+			status: 'in_progress' | 'blocked' = 'in_progress'
 		) {
 			const task = await c.taskManager.createTask({
 				title: 'Rehydrate test task',
@@ -1481,7 +1480,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('restores Task Agent session for a needs_attention task', async () => {
-			const { task, agentSessionId } = await seedInProgressTask(ctx, 'needs_attention');
+			const { task, agentSessionId } = await seedInProgressTask(ctx, 'blocked');
 
 			await ctx.manager.rehydrate();
 
@@ -1617,7 +1616,7 @@ describe('TaskAgentManager', () => {
 				title: 'Completed task',
 				description: '',
 				taskType: 'coding',
-				status: 'completed',
+				status: 'done',
 			});
 			const agentSessionId = `space:${ctx.spaceId}:task:${completedTask.id}`;
 			ctx.taskRepo.updateTask(completedTask.id, { taskAgentSessionId: agentSessionId });
@@ -1672,7 +1671,7 @@ describe('TaskAgentManager', () => {
 
 		test('rehydrates multiple tasks independently', async () => {
 			const { task: task1 } = await seedInProgressTask(ctx);
-			const { task: task2 } = await seedInProgressTask(ctx, 'needs_attention');
+			const { task: task2 } = await seedInProgressTask(ctx, 'blocked');
 
 			await ctx.manager.rehydrate();
 

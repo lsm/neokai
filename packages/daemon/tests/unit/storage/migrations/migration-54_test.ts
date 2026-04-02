@@ -1,15 +1,15 @@
 /**
  * Migration 54 Tests
  *
- * Covers:
- * - Index is created on a fresh DB (workflow_node_id + agent_name present)
- * - Index is skipped when workflow_node_id is absent (graceful guard)
- * - Index is skipped when agent_name is absent (graceful guard)
- * - Index enforces uniqueness for active-status tuples
- * - Index allows duplicate (run, node, agent) when old row is completed
- * - Index allows duplicate (run, node, agent) when old row is cancelled
- * - Index allows NULL workflow_run_id / workflow_node_id / agent_name (legacy compat)
- * - Idempotent: calling runMigration54 twice does not error
+ * The uq_space_tasks_run_node_agent index was created by M54 but the columns it
+ * depends on (workflow_node_id, agent_name) were removed in M71. After a full
+ * migration run the columns no longer exist and the index is never created
+ * (M54's guard returns early).
+ *
+ * These tests verify that:
+ * - runMigration54 is idempotent (safe to call on a fully-migrated DB without throwing)
+ * - On a fully-migrated DB the index does NOT exist (columns were removed in M71)
+ * - The guard correctly skips when workflow_node_id is absent
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -44,58 +44,6 @@ function getIndexNames(db: BunDatabase, table: string): string[] {
 	return rows.map((r) => r.name);
 }
 
-function seedSpace(db: BunDatabase, spaceId = 'sp-1'): void {
-	db.prepare(
-		`INSERT OR IGNORE INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, status, created_at, updated_at)
-     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', 'active', ?, ?)`
-	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
-}
-
-function insertTask(
-	db: BunDatabase,
-	opts: {
-		id: string;
-		spaceId?: string;
-		runId?: string | null;
-		nodeId?: string | null;
-		agentName?: string | null;
-		status?: string;
-	}
-): void {
-	const now = Date.now();
-	// Disable FK checks for test fixture inserts so we can use arbitrary run/node IDs
-	// without needing to create all referenced parent rows.
-	db.exec('PRAGMA foreign_keys = OFF');
-	try {
-		const spaceId = opts.spaceId ?? 'sp-1';
-		const nextNumber = (
-			db
-				.prepare(
-					`SELECT COALESCE(MAX(task_number), 0) + 1 AS next FROM space_tasks WHERE space_id = ?`
-				)
-				.get(spaceId) as { next: number }
-		).next;
-		db.prepare(
-			`INSERT INTO space_tasks
-		 (id, space_id, task_number, title, description, status, priority, depends_on, workflow_run_id, workflow_node_id, agent_name, created_at, updated_at)
-		 VALUES (?, ?, ?, 'Task', '', ?, 'normal', '[]', ?, ?, ?, ?, ?)`
-		).run(
-			opts.id,
-			spaceId,
-			nextNumber,
-			opts.status ?? 'pending',
-			opts.runId ?? null,
-			opts.nodeId ?? null,
-			opts.agentName ?? null,
-			now,
-			now
-		);
-	} finally {
-		db.exec('PRAGMA foreign_keys = ON');
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -106,7 +54,6 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 
 	beforeEach(() => {
 		({ db, dir } = makeDb());
-		seedSpace(db);
 	});
 
 	afterEach(() => {
@@ -114,158 +61,16 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	test('index is created on a fresh migrated DB', () => {
+	test('index does NOT exist on a fully-migrated DB (workflow_node_id removed in M71)', () => {
+		// After M71, workflow_node_id and agent_name columns no longer exist, so M54
+		// guard returns early and the index is never created.
 		const indexes = getIndexNames(db, 'space_tasks');
-		expect(indexes).toContain('uq_space_tasks_run_node_agent');
+		expect(indexes).not.toContain('uq_space_tasks_run_node_agent');
 	});
 
-	test('idempotent: calling runMigration54 again does not error', () => {
+	test('idempotent: calling runMigration54 on a fully-migrated DB does not error', () => {
+		// M54's guard checks for the presence of workflow_node_id and returns early if absent.
 		expect(() => runMigration54(db)).not.toThrow();
-		const indexes = getIndexNames(db, 'space_tasks');
-		expect(indexes).toContain('uq_space_tasks_run_node_agent');
-	});
-
-	test('enforces uniqueness for two pending tasks with same run+node+slot', () => {
-		insertTask(db, {
-			id: 't-1',
-			runId: 'run-1',
-			nodeId: 'node-1',
-			agentName: 'coder',
-			status: 'pending',
-		});
-		expect(() =>
-			insertTask(db, {
-				id: 't-2',
-				runId: 'run-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				status: 'pending',
-			})
-		).toThrow(/UNIQUE constraint failed/);
-	});
-
-	test('enforces uniqueness for in_progress duplicate', () => {
-		insertTask(db, {
-			id: 't-1',
-			runId: 'run-1',
-			nodeId: 'node-1',
-			agentName: 'coder',
-			status: 'in_progress',
-		});
-		expect(() =>
-			insertTask(db, {
-				id: 't-2',
-				runId: 'run-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				status: 'pending',
-			})
-		).toThrow(/UNIQUE constraint failed/);
-	});
-
-	test('allows second pending task after first is completed', () => {
-		insertTask(db, {
-			id: 't-1',
-			runId: 'run-1',
-			nodeId: 'node-1',
-			agentName: 'coder',
-			status: 'completed',
-		});
-		expect(() =>
-			insertTask(db, {
-				id: 't-2',
-				runId: 'run-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				status: 'pending',
-			})
-		).not.toThrow();
-	});
-
-	test('allows second pending task after first is cancelled', () => {
-		insertTask(db, {
-			id: 't-1',
-			runId: 'run-1',
-			nodeId: 'node-1',
-			agentName: 'coder',
-			status: 'cancelled',
-		});
-		expect(() =>
-			insertTask(db, {
-				id: 't-2',
-				runId: 'run-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				status: 'pending',
-			})
-		).not.toThrow();
-	});
-
-	test('allows second pending task after first is needs_attention', () => {
-		insertTask(db, {
-			id: 't-1',
-			runId: 'run-1',
-			nodeId: 'node-1',
-			agentName: 'coder',
-			status: 'needs_attention',
-		});
-		expect(() =>
-			insertTask(db, {
-				id: 't-2',
-				runId: 'run-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				status: 'pending',
-			})
-		).not.toThrow();
-	});
-
-	test('allows two draft tasks with the same run+node+slot (draft excluded from index)', () => {
-		// draft is intentionally excluded from the partial index so that external callers
-		// can create draft tasks without being constrained by ChannelRouter's uniqueness guarantee.
-		// Two draft tasks for the same (run, node, slot) must NOT trigger a UNIQUE violation.
-		insertTask(db, {
-			id: 't-1',
-			runId: 'run-1',
-			nodeId: 'node-1',
-			agentName: 'coder',
-			status: 'draft',
-		});
-		expect(() =>
-			insertTask(db, {
-				id: 't-2',
-				runId: 'run-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				status: 'draft',
-			})
-		).not.toThrow();
-	});
-
-	test('allows multiple legacy tasks with NULL workflow_run_id', () => {
-		insertTask(db, { id: 't-1', runId: null, nodeId: null, agentName: null, status: 'pending' });
-		expect(() =>
-			insertTask(db, { id: 't-2', runId: null, nodeId: null, agentName: null, status: 'pending' })
-		).not.toThrow();
-	});
-
-	test('different slot roles on same run+node are allowed simultaneously', () => {
-		insertTask(db, {
-			id: 't-1',
-			runId: 'run-1',
-			nodeId: 'node-1',
-			agentName: 'coder',
-			status: 'pending',
-		});
-		expect(() =>
-			insertTask(db, {
-				id: 't-2',
-				runId: 'run-1',
-				nodeId: 'node-1',
-				agentName: 'planner',
-				status: 'pending',
-			})
-		).not.toThrow();
 	});
 
 	test('skips gracefully when workflow_node_id column is absent', () => {
@@ -280,10 +85,10 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 					space_id TEXT NOT NULL,
 					title TEXT NOT NULL DEFAULT '',
 					description TEXT NOT NULL DEFAULT '',
-					status TEXT NOT NULL DEFAULT 'pending',
+					status TEXT NOT NULL DEFAULT 'open',
 					priority TEXT NOT NULL DEFAULT 'normal',
-					agent_name TEXT,
 					workflow_run_id TEXT,
+					labels TEXT NOT NULL DEFAULT '[]',
 					depends_on TEXT NOT NULL DEFAULT '[]',
 					created_at INTEGER NOT NULL DEFAULT 0,
 					updated_at INTEGER NOT NULL DEFAULT 0

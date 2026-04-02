@@ -654,10 +654,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Agent calling report_workflow_done prematurely while agents are still
 			// running.
 			if (completionDetector) {
-				const wfDef = workflowManager.getWorkflow(run.workflowId);
-				const channels = wfDef?.channels ?? [];
-				const nodes = wfDef?.nodes ?? [];
-				if (!completionDetector.isComplete(workflowRunId, channels, nodes)) {
+				if (!completionDetector.isComplete(workflowRunId)) {
 					return jsonResult({
 						success: false,
 						error:

@@ -361,8 +361,18 @@ export class SpaceWorkflowRepository {
 	): void {
 		const nodeCfg: NodeConfigJson = {};
 		if (input.instructions) nodeCfg.instructions = input.instructions;
-		if (input.agents && input.agents.length > 0) {
-			nodeCfg.agents = input.agents;
+
+		// Normalize agents: use `agents` array if present, otherwise fall back to legacy
+		// `agentId` shorthand (still used in tests and older call-sites).
+		const legacyAgentId = (input as unknown as Record<string, unknown>)['agentId'] as
+			| string
+			| undefined;
+		let resolvedAgents = input.agents && input.agents.length > 0 ? input.agents : undefined;
+		if (!resolvedAgents && legacyAgentId) {
+			resolvedAgents = [{ agentId: legacyAgentId, name: input.name }];
+		}
+		if (resolvedAgents && resolvedAgents.length > 0) {
+			nodeCfg.agents = resolvedAgents;
 		}
 
 		this.db

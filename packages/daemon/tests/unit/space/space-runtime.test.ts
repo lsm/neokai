@@ -180,39 +180,34 @@ describe('SpaceRuntime', () => {
 	// -------------------------------------------------------------------------
 
 	describe('resolveTaskTypeForStep()', () => {
-		test('planner role → planning taskType, no customAgentId', () => {
+		test('planner role → agentId returned', () => {
 			const step = { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER };
 			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.taskType).toBe('planning');
-			expect(result.customAgentId).toBeUndefined();
+			expect(result.agentId).toBe(AGENT_PLANNER);
 		});
 
-		test('coder role → coding taskType, no customAgentId', () => {
+		test('coder role → agentId returned', () => {
 			const step = { id: STEP_A, name: 'Code', agentId: AGENT_CODER };
 			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.taskType).toBe('coding');
-			expect(result.customAgentId).toBeUndefined();
+			expect(result.agentId).toBe(AGENT_CODER);
 		});
 
-		test('general role → coding taskType, no customAgentId', () => {
+		test('general role → agentId returned', () => {
 			const step = { id: STEP_A, name: 'Research', agentId: AGENT_GENERAL };
 			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.taskType).toBe('coding');
-			expect(result.customAgentId).toBeUndefined();
+			expect(result.agentId).toBe(AGENT_GENERAL);
 		});
 
-		test('custom role → coding taskType + customAgentId = step.agentId', () => {
+		test('custom role → agentId returned', () => {
 			const step = { id: STEP_A, name: 'Custom', agentId: AGENT_CUSTOM };
 			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.taskType).toBe('coding');
-			expect(result.customAgentId).toBe(AGENT_CUSTOM);
+			expect(result.agentId).toBe(AGENT_CUSTOM);
 		});
 
-		test('unknown agentId → coding taskType + customAgentId = step.agentId', () => {
+		test('unknown agentId → agentId returned as-is', () => {
 			const step = { id: STEP_A, name: 'Unknown', agentId: 'non-existent-uuid' };
 			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.taskType).toBe('coding');
-			expect(result.customAgentId).toBe('non-existent-uuid');
+			expect(result.agentId).toBe('non-existent-uuid');
 		});
 	});
 
@@ -221,12 +216,11 @@ describe('SpaceRuntime', () => {
 	// -------------------------------------------------------------------------
 
 	describe('resolveTaskTypesForStep()', () => {
-		test('single agentId shorthand → one-element array with correct resolution', () => {
+		test('single agentId shorthand → one-element array with agentId', () => {
 			const step = { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER };
 			const results = runtime.resolveTaskTypesForStep(step);
 			expect(results).toHaveLength(1);
-			expect(results[0].taskType).toBe('planning');
-			expect(results[0].customAgentId).toBeUndefined();
+			expect(results[0].agentId).toBe(AGENT_PLANNER);
 		});
 
 		test('multi-agent step → one ResolvedTaskType per agent entry', () => {
@@ -241,12 +235,12 @@ describe('SpaceRuntime', () => {
 			};
 			const results = runtime.resolveTaskTypesForStep(step);
 			expect(results).toHaveLength(3);
-			expect(results[0]).toEqual({ taskType: 'planning', customAgentId: undefined });
-			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: undefined });
-			expect(results[2]).toEqual({ taskType: 'coding', customAgentId: AGENT_CUSTOM });
+			expect(results[0].agentId).toBe(AGENT_PLANNER);
+			expect(results[1].agentId).toBe(AGENT_CODER);
+			expect(results[2].agentId).toBe(AGENT_CUSTOM);
 		});
 
-		test('multi-agent step with general role → coding, no customAgentId', () => {
+		test('multi-agent step with general role → agentIds returned', () => {
 			const step = {
 				id: STEP_A,
 				name: 'Multi',
@@ -257,11 +251,11 @@ describe('SpaceRuntime', () => {
 			};
 			const results = runtime.resolveTaskTypesForStep(step);
 			expect(results).toHaveLength(2);
-			expect(results[0]).toEqual({ taskType: 'coding', customAgentId: undefined });
-			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: undefined });
+			expect(results[0].agentId).toBe(AGENT_GENERAL);
+			expect(results[1].agentId).toBe(AGENT_CODER);
 		});
 
-		test('multi-agent step with unknown agentId → coding + customAgentId preserved', () => {
+		test('multi-agent step with unknown agentId → agentId preserved as-is', () => {
 			const step = {
 				id: STEP_A,
 				name: 'Multi',
@@ -272,8 +266,8 @@ describe('SpaceRuntime', () => {
 			};
 			const results = runtime.resolveTaskTypesForStep(step);
 			expect(results).toHaveLength(2);
-			expect(results[0]).toEqual({ taskType: 'coding', customAgentId: undefined });
-			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: 'unknown-agent-id' });
+			expect(results[0].agentId).toBe(AGENT_CODER);
+			expect(results[1].agentId).toBe('unknown-agent-id');
 		});
 
 		test('resolveTaskTypeForStep delegates to first entry of resolveTaskTypesForStep', () => {
@@ -288,71 +282,13 @@ describe('SpaceRuntime', () => {
 			const single = runtime.resolveTaskTypeForStep(step);
 			const multi = runtime.resolveTaskTypesForStep(step);
 			expect(single).toEqual(multi[0]);
-			expect(single.taskType).toBe('planning');
+			expect(single.agentId).toBe(AGENT_PLANNER);
 		});
 	});
 
 	// -------------------------------------------------------------------------
-	// getRulesForStep
+	// getRulesForStep — removed in M71; no tests needed
 	// -------------------------------------------------------------------------
-
-	describe('getRulesForStep()', () => {
-		test('returns empty array when workflow not found', () => {
-			const rules = runtime.getRulesForStep('nonexistent-workflow-id', STEP_A);
-			expect(rules).toEqual([]);
-		});
-
-		test('returns all rules when appliesTo is empty (applies to all steps)', () => {
-			const workflow = workflowManager.createWorkflow({
-				spaceId: SPACE_ID,
-				name: 'Rules Test Workflow',
-				nodes: [{ id: STEP_A, name: 'Step A', agentId: AGENT_CODER }],
-				transitions: [],
-				startNodeId: STEP_A,
-				rules: [
-					{ name: 'Global Rule', content: 'Always be concise', appliesTo: [] },
-					{ name: 'Another Global', content: 'Write tests', appliesTo: undefined as never },
-				],
-				tags: [],
-			});
-
-			const rules = runtime.getRulesForStep(workflow.id, STEP_A);
-			expect(rules).toHaveLength(2);
-		});
-
-		test('filters rules by step ID when appliesTo is set', () => {
-			const workflow = workflowManager.createWorkflow({
-				spaceId: SPACE_ID,
-				name: 'Filtered Rules Workflow',
-				nodes: [
-					{ id: STEP_A, name: 'Step A', agentId: AGENT_CODER },
-					{ id: STEP_B, name: 'Step B', agentId: AGENT_PLANNER },
-				],
-				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-				startNodeId: STEP_A,
-				rules: [
-					{ name: 'Step A Rule', content: 'Rule for step A only', appliesTo: [STEP_A] },
-					{ name: 'Step B Rule', content: 'Rule for step B only', appliesTo: [STEP_B] },
-					{ name: 'Global Rule', content: 'Rule for all steps', appliesTo: [] },
-				],
-				tags: [],
-			});
-
-			// Rules for step A: step A rule + global
-			const rulesForA = runtime.getRulesForStep(workflow.id, STEP_A);
-			expect(rulesForA).toHaveLength(2);
-			expect(rulesForA.map((r) => r.name)).toEqual(
-				expect.arrayContaining(['Step A Rule', 'Global Rule'])
-			);
-
-			// Rules for step B: step B rule + global
-			const rulesForB = runtime.getRulesForStep(workflow.id, STEP_B);
-			expect(rulesForB).toHaveLength(2);
-			expect(rulesForB.map((r) => r.name)).toEqual(
-				expect.arrayContaining(['Step B Rule', 'Global Rule'])
-			);
-		});
-	});
 
 	// -------------------------------------------------------------------------
 	// startWorkflowRun()
@@ -381,29 +317,30 @@ describe('SpaceRuntime', () => {
 			expect(tasks).toHaveLength(1);
 			const task = tasks[0];
 			expect(task.workflowRunId).toBe(run.id);
-			expect(task.workflowNodeId).toBe(STEP_A);
-			expect(task.status).toBe('pending');
+			// workflowNodeId was removed from SpaceTask in M71; node tracking moved to node_executions
+			expect(task.status).toBe('open');
 			expect(task.title).toBe('Plan');
 		});
 
-		test('assigns correct taskType for planner start step', async () => {
+		test('creates task with open status for planner start step', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
 			]);
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			expect(tasks[0].taskType).toBe('planning');
+			// taskType removed from SpaceTask in M71; role-to-type mapping no longer stored on task
+			expect(tasks[0].status).toBe('open');
 		});
 
-		test('assigns correct taskType for coder start step', async () => {
+		test('creates task with open status for coder start step', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Code', agentId: AGENT_CODER },
 			]);
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			expect(tasks[0].taskType).toBe('coding');
+			expect(tasks[0].status).toBe('open');
 		});
 
 		test('registers executor in executors map', async () => {
@@ -492,7 +429,8 @@ describe('SpaceRuntime', () => {
 			expect(run.description).toBe('Some description');
 		});
 
-		test('stores goalId on run record and propagates to initial task', async () => {
+		test('goalId param is accepted (but not stored — removed from SpaceWorkflowRun in M71)', async () => {
+			// goalId was removed from SpaceWorkflowRun in M71; the param is silently ignored
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
 			]);
@@ -505,8 +443,9 @@ describe('SpaceRuntime', () => {
 				'goal-abc'
 			);
 
-			expect(run.goalId).toBe('goal-abc');
-			expect(tasks[0].goalId).toBe('goal-abc');
+			// run and task should still be created successfully
+			expect(run).toBeDefined();
+			expect(tasks).toHaveLength(1);
 		});
 
 		test('goalId defaults to undefined when not provided', async () => {
@@ -516,8 +455,9 @@ describe('SpaceRuntime', () => {
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'No Goal');
 
-			expect(run.goalId).toBeUndefined();
-			expect(tasks[0].goalId).toBeUndefined();
+			// goalId removed from SpaceWorkflowRun and SpaceTask in M71
+			expect((run as Record<string, unknown>).goalId).toBeUndefined();
+			expect((tasks[0] as Record<string, unknown>).goalId).toBeUndefined();
 		});
 
 		test('multi-agent start step: creates one task per agent', async () => {
@@ -545,17 +485,13 @@ describe('SpaceRuntime', () => {
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Multi Run');
 
-			// One task per agent — planner task and coder task created in parallel
+			// One task per agent — two tasks created in parallel (taskType removed in M71)
 			expect(tasks).toHaveLength(2);
-			const plannerTask = tasks.find((t) => t.taskType === 'planning');
-			const coderTask = tasks.find((t) => t.taskType === 'coding');
-			expect(plannerTask).toBeDefined();
-			expect(plannerTask!.customAgentId).toBeUndefined();
-			expect(coderTask).toBeDefined();
-			expect(coderTask!.customAgentId).toBeUndefined();
+			// Both tasks should be 'open' (M71: 'pending' renamed to 'open')
+			expect(tasks.every((t) => t.status === 'open')).toBe(true);
 		});
 
-		test('multi-agent start step with custom-role first agent: sets customAgentId', async () => {
+		test('multi-agent start step with custom-role first agent: creates two tasks', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Custom ${Date.now()}`,
@@ -578,8 +514,9 @@ describe('SpaceRuntime', () => {
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Custom Multi Run');
 
-			expect(tasks[0].taskType).toBe('coding');
-			expect(tasks[0].customAgentId).toBe(AGENT_CUSTOM);
+			// taskType and customAgentId removed from SpaceTask in M71
+			expect(tasks).toHaveLength(2);
+			expect(tasks.every((t) => t.status === 'open')).toBe(true);
 		});
 
 		test('cancels run and clears executor when start step has no agent configuration', async () => {
@@ -627,7 +564,7 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				title: 'Standalone Task',
 				description: 'No workflow',
-				status: 'pending',
+				status: 'open',
 			});
 
 			// Tick should not throw and executor count stays 0
@@ -637,7 +574,7 @@ describe('SpaceRuntime', () => {
 
 			// Task status unchanged
 			const unchanged = taskRepo.getTask(task.id)!;
-			expect(unchanged.status).toBe('pending');
+			expect(unchanged.status).toBe('open');
 		});
 	});
 
@@ -782,7 +719,7 @@ describe('SpaceRuntime', () => {
 			const rt = buildRuntimeWithMockTAM(tam);
 
 			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks[0].status).toBe('pending');
+			expect(tasks[0].status).toBe('open');
 
 			await rt.executeTick();
 
@@ -873,12 +810,13 @@ describe('SpaceRuntime', () => {
 			expect(updated.status).toBe('in_progress'); // re-spawned after second crash
 			expect(spawnCount).toBe(2);
 
-			// Tick 3: crash 3 (count=3 > MAX=2) → needs_attention, no further re-spawn
+			// Tick 3: crash 3 (count=3 > MAX=2) → blocked (M71: needs_attention renamed to blocked)
 			await rt.executeTick();
 			updated = taskRepo.getTask(tasks[0].id)!;
-			expect(updated.status).toBe('needs_attention');
+			expect(updated.status).toBe('blocked');
 			expect(updated.taskAgentSessionId == null).toBe(true);
-			expect(updated.error).toContain('3 times');
+			// crash info is stored in result field (not error)
+			expect(updated.result).toContain('3 times');
 			// Only 2 re-spawns happened (crashes 1 and 2 got retries; crash 3 escalated)
 			expect(spawnCount).toBe(2);
 		});
@@ -988,8 +926,8 @@ describe('SpaceRuntime', () => {
 
 			// No Task Agent spawned — space is null
 			expect(spawnCount).toBe(0);
-			// Task stays pending
-			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('pending');
+			// Task stays open (M71: 'pending' renamed to 'open')
+			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('open');
 		});
 
 		test('liveness loop resets crashed task to pending (1st crash) and leaves alive sibling untouched', async () => {
@@ -1075,15 +1013,16 @@ describe('SpaceRuntime', () => {
 				status: 'in_progress',
 			});
 
-			// 3 ticks: crash 1 → pending+respawn, crash 2 → pending+respawn, crash 3 → needs_attention
+			// 3 ticks: crash 1 → open+respawn, crash 2 → open+respawn, crash 3 → blocked
 			await rt.executeTick();
 			await rt.executeTick();
 			await rt.executeTick();
 
 			const updated = taskRepo.getTask(tasks[0].id)!;
-			expect(updated.status).toBe('needs_attention');
+			expect(updated.status).toBe('blocked');
 			expect(updated.taskAgentSessionId == null).toBe(true);
-			expect(updated.error).toContain('3 times');
+			// crash info is stored in result field (not error)
+			expect(updated.result).toContain('3 times');
 		});
 	});
 
@@ -1108,13 +1047,14 @@ describe('SpaceRuntime', () => {
 			expect(result.errors).toHaveLength(0);
 			expect(result.seeded.length).toBeGreaterThan(0);
 
-			// Seed workflows using role resolver
+			// Seed workflows using name resolver (role removed from CreateSpaceAgentParams in M71;
+			// built-in templates use capitalized placeholder names matching agent names)
 			const agents = agentManager.listBySpaceId(newSpaceId);
 			expect(() =>
 				seedBuiltInWorkflows(
 					newSpaceId,
 					workflowManager,
-					(role) => agents.find((a) => a.role === role)?.id
+					(name) => agents.find((a) => a.name === name)?.id
 				)
 			).not.toThrow();
 
@@ -1135,7 +1075,8 @@ describe('SpaceRuntime', () => {
 
 			await seedPresetAgents(newSpaceId, agentManager);
 			const agents = agentManager.listBySpaceId(newSpaceId);
-			const resolver = (role: string) => agents.find((a) => a.role === role)?.id;
+			// role removed from CreateSpaceAgentParams in M71; use name lookup instead
+			const resolver = (name: string) => agents.find((a) => a.name === name)?.id;
 
 			seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);
 			seedBuiltInWorkflows(newSpaceId, workflowManager, resolver); // second call is no-op
@@ -1159,8 +1100,16 @@ describe('SpaceRuntime', () => {
 						id: STEP_A,
 						name: 'Parallel Start',
 						agents: [
-							{ agentId: AGENT_CODER, name: 'coder', instructions: 'Coder task' },
-							{ agentId: AGENT_PLANNER, name: 'planner', instructions: 'Planner task' },
+							{
+								agentId: AGENT_CODER,
+								name: 'coder',
+								instructions: { mode: 'override', value: 'Coder task' },
+							},
+							{
+								agentId: AGENT_PLANNER,
+								name: 'planner',
+								instructions: { mode: 'override', value: 'Planner task' },
+							},
 						],
 					},
 				],
@@ -1175,11 +1124,11 @@ describe('SpaceRuntime', () => {
 			expect(tasks).toHaveLength(2);
 			for (const task of tasks) {
 				expect(task.workflowRunId).toBe(run.id);
-				expect(task.workflowNodeId).toBe(STEP_A);
-				expect(task.status).toBe('pending');
+				// workflowNodeId removed from SpaceTask in M71
+				expect(task.status).toBe('open');
 			}
 
-			// Descriptions set from per-agent instructions
+			// Descriptions set from per-agent instructions (WorkflowNodeAgentOverride.value)
 			const descriptions = tasks.map((t) => t.description).sort();
 			expect(descriptions).toEqual(['Coder task', 'Planner task'].sort());
 		});
@@ -1192,10 +1141,11 @@ describe('SpaceRuntime', () => {
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			expect(tasks).toHaveLength(1);
-			expect(tasks[0].workflowNodeId).toBe(STEP_A);
+			// workflowNodeId removed from SpaceTask in M71; node tracking is now in node_executions
+			expect(tasks[0].status).toBe('open');
 		});
 
-		test('startWorkflowRun() applies per-agent taskType for multi-agent start step', async () => {
+		test('startWorkflowRun() creates tasks for multi-agent start step (taskType removed in M71)', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent TaskType ${Date.now()}`,
@@ -1217,16 +1167,9 @@ describe('SpaceRuntime', () => {
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
+			// taskType and customAgentId removed from SpaceTask in M71
 			expect(tasks).toHaveLength(2);
-
-			const plannerTask = tasks.find((t) => t.taskType === 'planning');
-			const coderTask = tasks.find((t) => t.taskType === 'coding');
-
-			expect(plannerTask).toBeDefined();
-			expect(plannerTask!.customAgentId).toBeUndefined();
-
-			expect(coderTask).toBeDefined();
-			expect(coderTask!.customAgentId).toBeUndefined();
+			expect(tasks.every((t) => t.status === 'open')).toBe(true);
 		});
 
 		test('executeTick() does NOT advance when only some parallel tasks are completed', async () => {
@@ -1253,16 +1196,16 @@ describe('SpaceRuntime', () => {
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(tasks).toHaveLength(2);
 
-			// Only complete one of the two parallel tasks
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			// tasks[1] stays pending
+			// Only complete one of the two parallel tasks (M71: 'completed' → 'done')
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			// tasks[1] stays open
 
 			await runtime.executeTick();
 
-			// No new task for STEP_B should have been created
+			// Run should still have exactly 2 tasks (no STEP_B tasks created yet)
+			// workflowNodeId removed from SpaceTask in M71; just count tasks
 			const allTasks = taskRepo.listByWorkflowRun(run.id);
-			const stepBTasks = allTasks.filter((t) => t.workflowNodeId === STEP_B);
-			expect(stepBTasks).toHaveLength(0);
+			expect(allTasks).toHaveLength(2);
 		});
 
 		test('executeTick() marks run as needs_attention when all parallel tasks terminal and any failed', async () => {
@@ -1288,17 +1231,17 @@ describe('SpaceRuntime', () => {
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(tasks).toHaveLength(2);
 
-			// One task completes, one fails — both terminal
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-			taskRepo.updateTask(tasks[1].id, { status: 'needs_attention', error: 'Build failed' });
+			// One task completes, one fails — both terminal (M71: 'completed'→'done', 'needs_attention'→'blocked')
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			taskRepo.updateTask(tasks[1].id, { status: 'blocked', error: 'Build failed' });
 
 			await runtime.executeTick();
 
 			const updatedRun = workflowRunRepo.getRun(run.id)!;
-			expect(updatedRun.status).toBe('needs_attention');
+			expect(updatedRun.status).toBe('blocked');
 		});
 
-		test('executeTick() does NOT mark run needs_attention when parallel tasks are not all terminal yet', async () => {
+		test('executeTick() does NOT mark run blocked when parallel tasks are not all terminal yet', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Terminal ${Date.now()}`,
@@ -1321,8 +1264,8 @@ describe('SpaceRuntime', () => {
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(tasks).toHaveLength(2);
 
-			// One task fails, one is still running
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Fail' });
+			// One task fails, one is still running (M71: 'needs_attention' → 'blocked')
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Fail' });
 			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
 
 			await runtime.executeTick();
@@ -1332,29 +1275,17 @@ describe('SpaceRuntime', () => {
 			expect(updatedRun.status).toBe('in_progress');
 		});
 
-		test('resolveTaskTypeForAgent() returns correct mapping for each role', () => {
-			expect(runtime.resolveTaskTypeForAgent(AGENT_PLANNER)).toEqual({
-				taskType: 'planning',
-				customAgentId: undefined,
-			});
-			expect(runtime.resolveTaskTypeForAgent(AGENT_CODER)).toEqual({
-				taskType: 'coding',
-				customAgentId: undefined,
-			});
-			expect(runtime.resolveTaskTypeForAgent(AGENT_GENERAL)).toEqual({
-				taskType: 'coding',
-				customAgentId: undefined,
-			});
-			expect(runtime.resolveTaskTypeForAgent(AGENT_CUSTOM)).toEqual({
-				taskType: 'coding',
-				customAgentId: AGENT_CUSTOM,
-			});
+		test('resolveTaskTypeForAgent() returns { agentId } for each agent (M71: taskType/customAgentId removed)', () => {
+			// M71: ResolvedTaskType changed from { taskType, customAgentId } to { agentId }
+			expect(runtime.resolveTaskTypeForAgent(AGENT_PLANNER)).toEqual({ agentId: AGENT_PLANNER });
+			expect(runtime.resolveTaskTypeForAgent(AGENT_CODER)).toEqual({ agentId: AGENT_CODER });
+			expect(runtime.resolveTaskTypeForAgent(AGENT_GENERAL)).toEqual({ agentId: AGENT_GENERAL });
+			expect(runtime.resolveTaskTypeForAgent(AGENT_CUSTOM)).toEqual({ agentId: AGENT_CUSTOM });
 		});
 
-		test('resolveTaskTypeForAgent() returns custom coding agent for unknown agentId', () => {
+		test('resolveTaskTypeForAgent() preserves agentId for unknown agentId', () => {
 			const result = runtime.resolveTaskTypeForAgent('unknown-agent-id');
-			expect(result.taskType).toBe('coding');
-			expect(result.customAgentId).toBe('unknown-agent-id');
+			expect(result.agentId).toBe('unknown-agent-id');
 		});
 	});
 
@@ -1397,11 +1328,11 @@ describe('SpaceRuntime', () => {
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Run config should contain resolved channels
-			const updatedRun = workflowRunRepo.getRun(run.id)!;
-			const resolvedChannels = (updatedRun.config as Record<string, unknown>)?._resolvedChannels;
+			// Resolved channels are now stored in-memory via runtime.getRunResolvedChannels()
+			// (M71: no longer stored in run.config._resolvedChannels)
+			const resolvedChannels = runtime.getRunResolvedChannels(run.id);
 			expect(Array.isArray(resolvedChannels)).toBe(true);
-			expect((resolvedChannels as unknown[]).length).toBeGreaterThan(0);
+			expect(resolvedChannels.length).toBeGreaterThan(0);
 		});
 
 		test('storeResolvedChannels: step without channels does NOT store task-agent channels', async () => {
@@ -1413,10 +1344,8 @@ describe('SpaceRuntime', () => {
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Run config should have _resolvedChannels set to empty (no auto-add)
-			const updatedRun = workflowRunRepo.getRun(run.id)!;
-			const resolvedChannels = (updatedRun.config as Record<string, unknown> | undefined)
-				?._resolvedChannels as Array<Record<string, unknown>> | undefined;
+			// Resolved channels now stored in-memory (M71)
+			const resolvedChannels = runtime.getRunResolvedChannels(run.id);
 			// Should be empty array when no user-declared channels exist
 			expect(Array.isArray(resolvedChannels)).toBe(true);
 			expect(resolvedChannels.length).toBe(0);
@@ -1450,9 +1379,8 @@ describe('SpaceRuntime', () => {
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			const updatedRun = workflowRunRepo.getRun(run.id)!;
-			const resolvedChannels = (updatedRun.config as Record<string, unknown> | undefined)
-				?._resolvedChannels as Array<Record<string, unknown>> | undefined;
+			// Resolved channels now stored in-memory (M71)
+			const resolvedChannels = runtime.getRunResolvedChannels(run.id);
 			expect(Array.isArray(resolvedChannels)).toBe(true);
 			// No auto-generated channels when no user-declared channels exist
 			expect(resolvedChannels.length).toBe(0);

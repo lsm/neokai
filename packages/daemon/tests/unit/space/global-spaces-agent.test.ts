@@ -107,7 +107,7 @@ describe('buildGlobalSpacesAgentPrompt — task coordination tools', () => {
 
 	test('retry_task description includes needs_attention status', () => {
 		const prompt = buildGlobalSpacesAgentPrompt();
-		expect(prompt).toContain('needs_attention');
+		expect(prompt).toContain('blocked');
 	});
 
 	test('retry_task description includes cancelled status', () => {

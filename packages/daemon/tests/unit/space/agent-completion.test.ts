@@ -1,8 +1,8 @@
 /**
- * Tests for Task 2.2 (Migration 51) and Task 2.4 (Query Completion State Capability).
+ * Tests for Task 2.4 (Query Completion State Capability) — post-M71 schema.
  *
  * Covers:
- *   - Migration 51: rename slot_role → agent_name, add completion_summary to space_tasks
+ *   - Migration 71 schema: open/done/blocked/cancelled/archived statuses, labels column
  *   - list_peers: completionState per peer from space_tasks
  *   - list_group_members: completionState per member from space_tasks
  */
@@ -12,7 +12,6 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { runMigration51 } from '../../../src/storage/schema/migrations.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -65,33 +64,21 @@ function seedSpaceTask(
 	db: BunDatabase,
 	spaceId: string,
 	workflowRunId: string,
-	workflowNodeId: string,
+	_workflowNodeId: string,
 	agentName: string,
-	status: string = 'pending',
-	completionSummary: string | null = null
+	status: string = 'open',
+	result: string | null = null
 ): string {
 	const id = `task-${Math.random().toString(36).slice(2)}`;
 	const now = Date.now();
-	// Disable FK for seeding test data — workflow_node_id points to an arbitrary test node ID
+	// Use agentName as title so nodeCompletionState.agentName reflects the agent name
 	db.exec('PRAGMA foreign_keys = OFF');
 	db.prepare(
 		`INSERT INTO space_tasks
-         (id, space_id, task_number, title, description, status, priority, agent_name, completion_summary,
-          workflow_run_id, workflow_node_id, depends_on, created_at, updated_at)
-         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, ?, ?, '[]', ?, ?)`
-	).run(
-		id,
-		spaceId,
-		spaceId,
-		`Task for ${agentName}`,
-		status,
-		agentName,
-		completionSummary,
-		workflowRunId,
-		workflowNodeId,
-		now,
-		now
-	);
+         (id, space_id, task_number, title, description, status, priority,
+          workflow_run_id, result, depends_on, created_at, updated_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, '[]', ?, ?)`
+	).run(id, spaceId, spaceId, agentName, status, workflowRunId, result, now, now);
 	db.exec('PRAGMA foreign_keys = ON');
 	return id;
 }
@@ -150,7 +137,7 @@ function makeMockSessionFactory(): SubSessionFactory {
 }
 
 // ---------------------------------------------------------------------------
-// Tests: Migration 51
+// Tests: Migration 71 schema (post-M71 space_tasks schema)
 // ---------------------------------------------------------------------------
 
 describe('Migration 51 — rename slot_role → agent_name, add completion_summary', () => {
@@ -168,44 +155,20 @@ describe('Migration 51 — rename slot_role → agent_name, add completion_summa
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	test('space_tasks has agent_name column after migration', () => {
-		// Migration runs via runMigrations in makeDb(); verify agent_name exists
-		expect(() => db.prepare(`SELECT agent_name FROM space_tasks LIMIT 1`).all()).not.toThrow();
+	test('space_tasks has labels column after migration', () => {
+		expect(() => db.prepare(`SELECT labels FROM space_tasks LIMIT 1`).all()).not.toThrow();
 	});
 
-	test('space_tasks has completion_summary column after migration', () => {
-		expect(() =>
-			db.prepare(`SELECT completion_summary FROM space_tasks LIMIT 1`).all()
-		).not.toThrow();
+	test('space_tasks does not have agent_name column after M71 migration', () => {
+		expect(() => db.prepare(`SELECT agent_name FROM space_tasks LIMIT 1`).all()).toThrow();
 	});
 
-	test('space_tasks does not have slot_role column after migration', () => {
-		expect(() => db.prepare(`SELECT slot_role FROM space_tasks LIMIT 1`).all()).toThrow();
+	test('space_tasks does not have completion_summary column after M71 migration', () => {
+		expect(() => db.prepare(`SELECT completion_summary FROM space_tasks LIMIT 1`).all()).toThrow();
 	});
 
-	test('migration 51 is idempotent — runs twice without error', () => {
-		expect(() => runMigration51(db)).not.toThrow();
-		expect(() => runMigration51(db)).not.toThrow();
-	});
-
-	test('SpaceTaskRepository stores and retrieves agentName', () => {
-		const spaceId = 'space-m51-test';
-		seedSpaceRow(db, spaceId);
-		const repo = new SpaceTaskRepository(db);
-		const task = repo.createTask({
-			spaceId,
-			title: 'Test Task',
-			description: 'desc',
-			agentName: 'reviewer',
-		});
-		expect(task.agentName).toBe('reviewer');
-
-		const fetched = repo.getTask(task.id);
-		expect(fetched?.agentName).toBe('reviewer');
-	});
-
-	test('SpaceTaskRepository stores and retrieves completionSummary', () => {
-		const spaceId = 'space-m51-cs-test';
+	test('SpaceTaskRepository creates tasks with open status by default', () => {
+		const spaceId = 'space-m71-test';
 		seedSpaceRow(db, spaceId);
 		const repo = new SpaceTaskRepository(db);
 		const task = repo.createTask({
@@ -213,10 +176,25 @@ describe('Migration 51 — rename slot_role → agent_name, add completion_summa
 			title: 'Test Task',
 			description: 'desc',
 		});
-		repo.updateTask(task.id, { completionSummary: 'Task finished successfully' });
+		expect(task.status).toBe('open');
 
 		const fetched = repo.getTask(task.id);
-		expect(fetched?.completionSummary).toBe('Task finished successfully');
+		expect(fetched?.status).toBe('open');
+	});
+
+	test('SpaceTaskRepository stores and retrieves result', () => {
+		const spaceId = 'space-m71-result-test';
+		seedSpaceRow(db, spaceId);
+		const repo = new SpaceTaskRepository(db);
+		const task = repo.createTask({
+			spaceId,
+			title: 'Test Task',
+			description: 'desc',
+		});
+		repo.updateTask(task.id, { result: 'Task finished successfully' });
+
+		const fetched = repo.getTask(task.id);
+		expect(fetched?.result).toBe('Task finished successfully');
 	});
 });
 
@@ -269,7 +247,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		const nodeId = 'node-ncs';
 		const workflowRunId = seedWorkflowRun(db, spaceId);
 		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'completed', 'Done');
+		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'done', 'Done');
 
 		const handlers = createNodeAgentToolHandlers(
 			makeConfig({ workflowRunId, workflowNodeId: nodeId })
@@ -282,7 +260,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		const reviewerState = data.nodeCompletionState.find(
 			(s: { agentName: string }) => s.agentName === 'reviewer'
 		);
-		expect(reviewerState?.taskStatus).toBe('completed');
+		expect(reviewerState?.taskStatus).toBe('done');
 		expect(reviewerState?.completionSummary).toBe('Done');
 	});
 
@@ -310,7 +288,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 			workflowRunId,
 			nodeId,
 			'reviewer',
-			'completed',
+			'done',
 			'Review passed'
 		);
 		db.exec('PRAGMA foreign_keys = OFF');
@@ -329,7 +307,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		expect(data.success).toBe(true);
 		const reviewerPeer = data.peers.find((p: { role: string }) => p.role === 'reviewer');
 		expect(reviewerPeer).toBeDefined();
-		expect(reviewerPeer.completionState.taskStatus).toBe('completed');
+		expect(reviewerPeer.completionState.taskStatus).toBe('done');
 		expect(reviewerPeer.completionState.completionSummary).toBe('Review passed');
 		expect(reviewerPeer.completionState.agentName).toBe('reviewer');
 	});
@@ -404,7 +382,7 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 		const nodeId = 'node-lgm-ncs';
 		const workflowRunId = seedWorkflowRun(db, spaceId);
 		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'completed', 'Done');
+		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'done', 'Done');
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(workflowRunId));
 		const result = await handlers.list_group_members({});
@@ -435,7 +413,7 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 			workflowRunId,
 			nodeId,
 			'reviewer',
-			'completed',
+			'done',
 			'Approved'
 		);
 		// Give the task a sub-session so it shows up as a member
@@ -451,10 +429,12 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		const reviewerMember = data.members.find((m: { role: string }) => m.role === 'reviewer');
+		// list_group_members uses role: 'agent' for all members (task-agent-tools post-M71)
+		expect(data.members).toHaveLength(1);
+		const reviewerMember = data.members[0];
 		expect(reviewerMember).toBeDefined();
 		expect(reviewerMember.completionState).not.toBeNull();
-		expect(reviewerMember.completionState.taskStatus).toBe('completed');
+		expect(reviewerMember.completionState.taskStatus).toBe('done');
 		expect(reviewerMember.completionState.completionSummary).toBe('Approved');
 	});
 });

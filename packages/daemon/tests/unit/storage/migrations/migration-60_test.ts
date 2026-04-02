@@ -172,10 +172,12 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
 		// Run all migrations
 		runMigrations(db, () => {});
 
-		// Row should still exist with correct values
+		// Row should still exist with correct values.
+		// Note: iteration_count, max_iterations, goal_id are removed by Migration 72 —
+		// only the columns that survive all migrations are checked here.
 		const row = db
 			.prepare(
-				`SELECT id, space_id, workflow_id, title, status, iteration_count, max_iterations, goal_id FROM space_workflow_runs WHERE id = 'run-1'`
+				`SELECT id, space_id, workflow_id, title, status FROM space_workflow_runs WHERE id = 'run-1'`
 			)
 			.get() as {
 			id: string;
@@ -183,9 +185,6 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
 			workflow_id: string;
 			title: string;
 			status: string;
-			iteration_count: number;
-			max_iterations: number;
-			goal_id: string | null;
 		};
 
 		expect(row).toBeTruthy();
@@ -194,8 +193,5 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
 		expect(row.workflow_id).toBe('wf-1');
 		expect(row.title).toBe('Test Run');
 		expect(row.status).toBe('in_progress');
-		expect(row.iteration_count).toBe(3);
-		expect(row.max_iterations).toBe(10);
-		expect(row.goal_id).toBe('goal-abc');
 	});
 });

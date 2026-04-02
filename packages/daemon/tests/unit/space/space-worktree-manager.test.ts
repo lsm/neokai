@@ -79,7 +79,7 @@ function seedTask(db: BunDatabase, spaceId: string, taskId: string, taskNumber: 
 	db.prepare(
 		`INSERT INTO space_tasks
        (id, space_id, task_number, title, description, status, priority, depends_on, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', 'pending', 'normal', '[]', ?, ?)`
+     VALUES (?, ?, ?, ?, '', 'open', 'normal', '[]', ?, ?)`
 	).run(taskId, spaceId, taskNumber, `Task ${taskNumber}`, Date.now(), Date.now());
 	return taskId;
 }

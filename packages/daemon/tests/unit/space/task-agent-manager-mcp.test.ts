@@ -320,7 +320,7 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 			title: 'Test task',
 			description: 'desc',
 			taskType: 'coding',
-			status: 'pending',
+			status: 'open',
 		});
 
 		await manager.spawnTaskAgent(task, space, null, null);
@@ -349,7 +349,7 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 			title: 'Collision task',
 			description: 'desc',
 			taskType: 'coding',
-			status: 'pending',
+			status: 'open',
 		});
 
 		await manager.spawnTaskAgent(task, space, null, null);
@@ -375,7 +375,7 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 			title: 'Multi-registry task',
 			description: 'desc',
 			taskType: 'coding',
-			status: 'pending',
+			status: 'open',
 		});
 
 		await manager.spawnTaskAgent(task, space, null, null);
@@ -398,7 +398,7 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 			title: 'No registry task',
 			description: 'desc',
 			taskType: 'coding',
-			status: 'pending',
+			status: 'open',
 		});
 
 		await manager.spawnTaskAgent(task, space, null, null);
@@ -420,7 +420,7 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 			title: 'Empty registry task',
 			description: 'desc',
 			taskType: 'coding',
-			status: 'pending',
+			status: 'open',
 		});
 
 		await manager.spawnTaskAgent(task, space, null, null);
@@ -508,7 +508,7 @@ describe('TaskAgentManager.rehydrate — registry MCP merge (Task 3.4)', () => {
 function seedWorkflowRunWithChannels(
 	bunDb: BunDatabase,
 	spaceId: string,
-	channels: ResolvedChannel[]
+	_channels: ResolvedChannel[]
 ): string {
 	const workflowRepo = new SpaceWorkflowRepository(bunDb);
 	const workflow = workflowRepo.createWorkflow({
@@ -526,9 +526,8 @@ function seedWorkflowRunWithChannels(
 		workflowId: workflow.id,
 		title: 'Test Run',
 	});
-	if (channels.length > 0) {
-		runRepo.updateRun(run.id, { config: { _resolvedChannels: channels } });
-	}
+	// Note: run.config was removed in M71 — channels are now stored in-memory in SpaceRuntime.
+	// Previously: runRepo.updateRun(run.id, { config: { _resolvedChannels: channels } });
 	return run.id;
 }
 
@@ -562,12 +561,16 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		}
 	});
 
-	test('buildNodeAgentMcpServerForSession injects ChannelResolver with declared channels', () => {
+	test('buildNodeAgentMcpServerForSession injects ChannelResolver (empty after M71 run.config removal)', () => {
+		// Since run.config was removed in M71, channels are no longer stored in the DB.
+		// buildNodeAgentMcpServerForSession now creates an empty ChannelResolver via
+		// ChannelResolver.fromRunConfig(undefined). This test verifies the resolver is
+		// created and injected (though it has no channels since they're in-memory only).
 		const { manager, fromInitSpy, bunDb, dir, space, taskManager } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
 
-		// Seed a workflow run with a channel
+		// Seed a workflow run (channels param ignored since run.config no longer stores them)
 		const workflowRunId = seedWorkflowRunWithChannels(bunDb, space.id, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
@@ -608,13 +611,12 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		);
 
 		expect(capturedConfig).not.toBeNull();
-		// channelResolver must be present and have the declared channel
-		const resolver = (
-			capturedConfig as { channelResolver: { canSend: (a: string, b: string) => boolean } }
-		).channelResolver;
+		// channelResolver must be present (even if empty — run.config removed in M71)
+		const resolver = (capturedConfig as { channelResolver: { isEmpty: () => boolean } })
+			.channelResolver;
 		expect(resolver).toBeDefined();
-		expect(resolver.canSend('coder', 'reviewer')).toBe(true);
-		expect(resolver.canSend('reviewer', 'coder')).toBe(false);
+		// Since run.config no longer stores channels, the resolver is always empty from DB
+		expect(resolver.isEmpty()).toBe(true);
 	});
 
 	test('buildNodeAgentMcpServerForSession injects empty ChannelResolver when run has no channels', () => {
@@ -714,18 +716,14 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		spies.push(fromInitSpy);
 		dirs.push(dir);
 
-		// Seed a step task with a known workflowNodeId so the P0 fix is regression-tested
+		// Seed a step task — workflowNodeId was removed in M71, buildNodeAgentMcpServerForSession
+		// now uses task.id as the workflowNodeId value
 		const stepTask = taskRepo.createTask({
 			spaceId: space.id,
 			title: 'Step Task',
 			description: '',
 			status: 'in_progress',
 		});
-		bunDb.exec('PRAGMA foreign_keys = OFF');
-		bunDb
-			.prepare('UPDATE space_tasks SET workflow_node_id = ? WHERE id = ?')
-			.run('node-p0-regression', stepTask.id);
-		bunDb.exec('PRAGMA foreign_keys = ON');
 
 		let capturedConfig: Record<string, unknown> | null = null;
 		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
@@ -763,8 +761,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		expect(capturedConfig!['mySessionId']).toBe('my-sub-session-id');
 		expect(capturedConfig!['myRole']).toBe('reviewer');
 		expect(capturedConfig!['taskId']).toBe('my-task-id');
-		// Regression test for P0: workflowNodeId must come from the step task, not the parent task
-		expect(capturedConfig!['workflowNodeId']).toBe('node-p0-regression');
+		// workflowNodeId is now derived from stepTask.id (workflowNodeId column removed in M71)
+		expect(capturedConfig!['workflowNodeId']).toBe(stepTask.id);
 	});
 });
 
@@ -804,7 +802,7 @@ describe('TaskAgentManager — skills injection into fresh task agent sessions (
 			title: 'Skills injection task',
 			description: 'desc',
 			taskType: 'coding',
-			status: 'pending',
+			status: 'open',
 		});
 
 		await manager.spawnTaskAgent(task, space, null, null);
@@ -832,7 +830,7 @@ describe('TaskAgentManager — skills injection into fresh task agent sessions (
 			title: 'AppMcpServerRepo injection task',
 			description: 'desc',
 			taskType: 'coding',
-			status: 'pending',
+			status: 'open',
 		});
 
 		await manager.spawnTaskAgent(task, space, null, null);

@@ -77,6 +77,15 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 		return node.agents;
 	}
 
+	// Backward compatibility: if `agentId` shorthand is present on the node object
+	// (legacy test code and call-sites), synthesize a single-agent array.
+	const legacyAgentId = (node as unknown as Record<string, unknown>)['agentId'] as
+		| string
+		| undefined;
+	if (legacyAgentId) {
+		return [{ agentId: legacyAgentId, name: node.name }];
+	}
+
 	throw new Error(
 		`WorkflowNode "${node.name}" (id: ${node.id}) has no agents defined. ` +
 			'At least one agent must be provided.'

@@ -55,7 +55,7 @@ function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
 	channels: ResolvedChannel[]
-): string {
+): { runId: string; channels: ResolvedChannel[] } {
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const workflow = workflowRepo.createWorkflow({
 		spaceId,
@@ -74,13 +74,8 @@ function seedWorkflowRunWithChannels(
 		title: 'Test Run',
 	});
 
-	if (channels.length > 0) {
-		runRepo.updateRun(run.id, {
-			config: { _resolvedChannels: channels },
-		});
-	}
-
-	return run.id;
+	// Channels are now passed directly to AgentMessageRouter (not stored in run config)
+	return { runId: run.id, channels };
 }
 
 function makeResolvedChannel(
@@ -128,21 +123,10 @@ function seedPeerTask(
 	const id = `task-${Math.random().toString(36).slice(2)}`;
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority, agent_name,
-        workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', 'in_progress', 'normal', ?, ?, ?, '[]', ?, ?, ?)`
-	).run(
-		id,
-		spaceId,
-		spaceId,
-		`Task for ${agentName}`,
-		agentName,
-		workflowRunId,
-		nodeId,
-		sessionId,
-		now,
-		now
-	);
+       (id, space_id, task_number, title, description, status, priority,
+        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', 'in_progress', 'normal', ?, '[]', ?, ?, ?)`
+	).run(id, spaceId, spaceId, agentName, workflowRunId, sessionId, now, now);
 	db.exec('PRAGMA foreign_keys = ON');
 }
 
@@ -177,13 +161,13 @@ function makeRouter(
 	ctx: TestCtx,
 	workflowRunId: string,
 	injected: Array<{ sessionId: string; message: string }>,
+	channels: ResolvedChannel[] = [],
 	overrides: Partial<AgentMessageRouterConfig> = {}
 ): AgentMessageRouter {
 	return new AgentMessageRouter({
 		spaceTaskRepo: ctx.spaceTaskRepo,
-		workflowNodeId: ctx.nodeId,
-		workflowRunRepo: ctx.workflowRunRepo,
 		workflowRunId,
+		resolvedChannels: channels,
 		messageInjector: async (sessionId, message) => {
 			injected.push({ sessionId, message });
 		},
@@ -208,13 +192,15 @@ describe('AgentMessageRouter: agent name (role) target → DM', () => {
 	});
 
 	test('delivers message to single session with matching role', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
 		const injected: Array<{ sessionId: string; message: string }> = [];
-		const router = makeRouter(ctx, workflowRunId, injected);
+		const router = makeRouter(ctx, workflowRunId, injected, runChannels);
 
 		const result = await router.deliverMessage({
 			fromRole: 'coder',
@@ -248,14 +234,16 @@ describe('AgentMessageRouter: single agent per role (task-centric model)', () =>
 	});
 
 	test('delivers to the single session with the target role', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
 
 		const injected: Array<{ sessionId: string; message: string }> = [];
-		const router = makeRouter(ctx, workflowRunId, injected);
+		const router = makeRouter(ctx, workflowRunId, injected, runChannels);
 
 		const result = await router.deliverMessage({
 			fromRole: 'coder',
@@ -283,17 +271,18 @@ describe('AgentMessageRouter: broadcast * → all permitted targets', () => {
 	});
 
 	test('delivers to all topology-permitted targets', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-			makeResolvedChannel('coder', 'security'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer'), makeResolvedChannel('coder', 'security')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
 		// Add a security member
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'security', 'session-security');
 
 		const injected: string[] = [];
-		const router = makeRouter(ctx, workflowRunId, [], {
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
 			messageInjector: async (sid) => {
 				injected.push(sid);
 			},
@@ -313,11 +302,15 @@ describe('AgentMessageRouter: broadcast * → all permitted targets', () => {
 	});
 
 	test('returns error when role has no permitted targets', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('reviewer', 'coder'), // coder has no outgoing channels
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[
+				makeResolvedChannel('reviewer', 'coder'), // coder has no outgoing channels
+			]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-		const router = makeRouter(ctx, workflowRunId, []);
+		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
 			fromRole: 'coder',
@@ -344,12 +337,14 @@ describe('AgentMessageRouter: unknown target → clear error', () => {
 	});
 
 	test('returns error with "no agent or node found" when target unknown', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-		const router = makeRouter(ctx, workflowRunId, []);
+		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
 			fromRole: 'coder',
@@ -364,12 +359,14 @@ describe('AgentMessageRouter: unknown target → clear error', () => {
 	});
 
 	test('lists reachable targets in error when peers exist', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-		const router = makeRouter(ctx, workflowRunId, []);
+		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
 			fromRole: 'coder',
@@ -397,12 +394,14 @@ describe('AgentMessageRouter: unauthorized target → error with permitted targe
 
 	test('returns error when channel topology forbids the send', async () => {
 		// reviewer → coder channel only (coder cannot send to reviewer)
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('reviewer', 'coder'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('reviewer', 'coder')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-		const router = makeRouter(ctx, workflowRunId, []);
+		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
 			fromRole: 'coder',
@@ -431,12 +430,14 @@ describe('AgentMessageRouter: unauthorized target → error with structured fiel
 
 	test('populates unauthorizedRoles and permittedTargets structured fields on auth failure', async () => {
 		// reviewer → coder channel only (coder cannot send to reviewer)
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('reviewer', 'coder'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('reviewer', 'coder')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-		const router = makeRouter(ctx, workflowRunId, []);
+		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
 			fromRole: 'coder',
@@ -468,9 +469,13 @@ describe('AgentMessageRouter: empty topology → error', () => {
 
 	test('returns error when no channel topology is declared', async () => {
 		// No channels in run config
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-		const router = makeRouter(ctx, workflowRunId, []);
+		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
 			fromRole: 'coder',
@@ -513,13 +518,15 @@ describe('AgentMessageRouter: partial delivery failure → partial success', () 
 	test('returns false success when the single session fails', async () => {
 		// In the new model, each agent_name is unique per node — only one reviewer session.
 		// Failure to deliver to that session results in success=false, not partial.
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
 
-		const router = makeRouter(ctx, workflowRunId, [], {
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
 			messageInjector: async (_sid) => {
 				throw new Error('injection failed');
 			},
@@ -551,12 +558,14 @@ describe('AgentMessageRouter: all deliveries fail → false success', () => {
 	});
 
 	test('returns success: false when all injections fail', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-		const router = makeRouter(ctx, workflowRunId, [], {
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
 			messageInjector: async () => {
 				throw new Error('always fails');
 			},
@@ -588,17 +597,18 @@ describe('AgentMessageRouter: node name target with nodeGroups → fan-out', () 
 	});
 
 	test('delivers to all roles mapped to a node name', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-			makeResolvedChannel('coder', 'security'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer'), makeResolvedChannel('coder', 'security')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
 		// Add security member
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'security', 'session-security');
 
 		const injected: string[] = [];
-		const router = makeRouter(ctx, workflowRunId, [], {
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
 			messageInjector: async (sid) => {
 				injected.push(sid);
 			},
@@ -634,12 +644,14 @@ describe('AgentMessageRouter: node name target without nodeGroups → unknown ta
 	});
 
 	test('returns unknown target error when nodeGroups not configured', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-		const router = makeRouter(ctx, workflowRunId, []);
+		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 		// No nodeGroups configured
 
 		const result = await router.deliverMessage({
@@ -670,16 +682,17 @@ describe('AgentMessageRouter: notFoundRoles structured field', () => {
 	test('populates notFoundRoles on broadcast when some permitted roles have no active sessions', async () => {
 		// topology permits coder → reviewer and coder → ghost-role
 		// but ghost-role has no active sessions
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-			makeResolvedChannel('coder', 'ghost-role'),
-		]);
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'reviewer'), makeResolvedChannel('coder', 'ghost-role')]
+		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
 		// ghost-role has no task/session seeded
 
 		const injected: Array<{ sessionId: string; message: string }> = [];
-		const router = makeRouter(ctx, workflowRunId, injected);
+		const router = makeRouter(ctx, workflowRunId, injected, runChannels);
 
 		// Broadcast to all permitted targets — reviewer exists, ghost-role does not
 		const result = await router.deliverMessage({

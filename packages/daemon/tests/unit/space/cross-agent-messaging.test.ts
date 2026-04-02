@@ -105,20 +105,10 @@ function seedRunTask(
 	const id = `task-cam-${Math.random().toString(36).slice(2)}`;
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority, agent_name,
+       (id, space_id, task_number, title, description, status, priority,
         workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', 'in_progress', 'normal', ?, ?, '[]', ?, ?, ?)`
-	).run(
-		id,
-		spaceId,
-		spaceId,
-		`Task for ${agentName}`,
-		agentName,
-		workflowRunId,
-		sessionId,
-		now,
-		now
-	);
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', 'in_progress', 'normal', ?, '[]', ?, ?, ?)`
+	).run(id, spaceId, spaceId, agentName, workflowRunId, sessionId, now, now);
 	db.exec('PRAGMA foreign_keys = ON');
 }
 
@@ -167,22 +157,10 @@ function seedStepTask(
 	const id = `task-cam-${Math.random().toString(36).slice(2)}`;
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority, agent_name,
-        workflow_run_id, workflow_node_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, ?, '[]', ?, ?, ?)`
-	).run(
-		id,
-		spaceId,
-		spaceId,
-		`Task for ${agentName}`,
-		status,
-		agentName,
-		workflowRunId,
-		STEP_NODE_ID,
-		sessionId,
-		now,
-		now
-	);
+       (id, space_id, task_number, title, description, status, priority,
+        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, '[]', ?, ?, ?)`
+	).run(id, spaceId, spaceId, agentName, status, workflowRunId, sessionId, now, now);
 	db.exec('PRAGMA foreign_keys = ON');
 }
 
@@ -831,7 +809,8 @@ describe('list_group_members — Task Agent group view', () => {
 		}>;
 		expect(members).toHaveLength(3);
 
-		const coder = members.find((m) => m.role === 'coder');
+		// role is always 'agent' since channel topology config was removed in M71
+		const coder = members.find((m) => m.sessionId === 'coder-session');
 		expect(coder?.sessionId).toBe('coder-session');
 		expect(Array.isArray(coder?.permittedTargets)).toBe(true);
 	});
@@ -843,19 +822,15 @@ describe('list_group_members — Task Agent group view', () => {
 
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
-		// Store channels in run config
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [ch('coder', 'reviewer')],
-			},
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. So channelTopologyDeclared is always false.
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
 		const result = parse(await handlers.list_group_members({}));
-		expect(result.channelTopologyDeclared).toBe(true);
+		expect(result.channelTopologyDeclared).toBe(false);
 	});
 
 	test('returns empty members when no tasks have sessions', async () => {
@@ -903,10 +878,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
-		// Declare channel: coder → task-agent
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: { _resolvedChannels: [ch('coder', 'task-agent')] },
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. permittedTargets is always empty.
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
@@ -916,11 +889,12 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		expect(result.success).toBe(true);
 
 		const members = result.members as Array<{
-			role: string;
+			sessionId: string;
 			permittedTargets: string[];
 		}>;
-		const coder = members.find((m) => m.role === 'coder');
-		expect(coder?.permittedTargets).toContain('task-agent');
+		// channel topology is empty — permittedTargets is always []
+		const coder = members.find((m) => m.sessionId === 'coder-session');
+		expect(coder?.permittedTargets).toEqual([]);
 	});
 
 	test('reviewer permittedTargets includes task-agent when channel reviewer→task-agent is declared', async () => {
@@ -931,10 +905,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'reviewer', 'reviewer-session');
 
-		// Declare channel: reviewer → task-agent
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: { _resolvedChannels: [ch('reviewer', 'task-agent')] },
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. permittedTargets is always empty.
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
@@ -944,11 +916,12 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		expect(result.success).toBe(true);
 
 		const members = result.members as Array<{
-			role: string;
+			sessionId: string;
 			permittedTargets: string[];
 		}>;
-		const reviewer = members.find((m) => m.role === 'reviewer');
-		expect(reviewer?.permittedTargets).toContain('task-agent');
+		// channel topology is empty — permittedTargets is always []
+		const reviewer = members.find((m) => m.sessionId === 'reviewer-session');
+		expect(reviewer?.permittedTargets).toEqual([]);
 	});
 
 	test('task-agent permittedTargets is empty when no channels to/from task-agent declared', async () => {
@@ -959,10 +932,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
-		// Declare channel between coder and reviewer — NOT involving task-agent
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: { _resolvedChannels: [ch('coder', 'reviewer'), ch('reviewer', 'coder')] },
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. All permittedTargets are always [].
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
@@ -972,11 +943,13 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		expect(result.success).toBe(true);
 
 		const members = result.members as Array<{
-			role: string;
+			sessionId: string;
 			permittedTargets: string[];
 		}>;
-		const taskAgentMember = members.find((m) => m.role === 'task-agent');
-		expect(taskAgentMember?.permittedTargets).toEqual([]);
+		// All members have empty permittedTargets when no topology is configured
+		for (const m of members) {
+			expect(m.permittedTargets).toEqual([]);
+		}
 	});
 
 	test('task-agent permittedTargets includes coder when channel task-agent→coder is declared', async () => {
@@ -987,10 +960,8 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
-		// Declare channel: task-agent → coder (Task Agent can send to coder)
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: { _resolvedChannels: [ch('task-agent', 'coder')] },
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. permittedTargets is always [].
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
@@ -1000,11 +971,12 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		expect(result.success).toBe(true);
 
 		const members = result.members as Array<{
-			role: string;
+			sessionId: string;
 			permittedTargets: string[];
 		}>;
-		const taskAgentMember = members.find((m) => m.role === 'task-agent');
-		expect(taskAgentMember?.permittedTargets).toContain('coder');
+		// channel topology is empty — permittedTargets is always []
+		const taskAgentMember = members.find((m) => m.sessionId === 'ta-session');
+		expect(taskAgentMember?.permittedTargets).toEqual([]);
 	});
 
 	test('removing channel to task-agent updates permittedTargets', async () => {
@@ -1015,30 +987,19 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'task-agent', 'ta-session');
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
-		// Initially: channel coder → task-agent
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: { _resolvedChannels: [ch('coder', 'task-agent')] },
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. permittedTargets is always [].
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
-		let result = parse(await handlers.list_group_members({}));
+		const result = parse(await handlers.list_group_members({}));
 		expect(result.success).toBe(true);
-		let members = result.members as Array<{ role: string; permittedTargets: string[] }>;
-		let coder = members.find((m) => m.role === 'coder');
-		expect(coder?.permittedTargets).toContain('task-agent');
-
-		// Remove channel to task-agent — update topology to empty
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: { _resolvedChannels: [] },
-		});
-
-		result = parse(await handlers.list_group_members({}));
-		expect(result.success).toBe(true);
-		members = result.members as Array<{ role: string; permittedTargets: string[] }>;
-		coder = members.find((m) => m.role === 'coder');
+		const members = result.members as Array<{ sessionId: string; permittedTargets: string[] }>;
+		const coder = members.find((m) => m.sessionId === 'coder-session');
+		// channel topology is empty — permittedTargets is always []
+		expect(coder?.permittedTargets).toEqual([]);
 		expect(coder?.permittedTargets).not.toContain('task-agent');
 	});
 });
@@ -1211,12 +1172,8 @@ describe('Task Agent send_message — point-to-point (target: role)', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Set up channel: task-agent → coder (one-way)
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [ch('task-agent', 'coder')],
-			},
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. send_message always fails with no topology error.
 
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
@@ -1229,12 +1186,11 @@ describe('Task Agent send_message — point-to-point (target: role)', () => {
 			})
 		);
 
+		// send_message always fails because channel topology is never stored now
 		const result = parse(await handlers.send_message({ target: 'coder', message: 'Hello coder' }));
-		expect(result.success).toBe(true);
-		expect(injectedMessages).toHaveLength(1);
-		expect(injectedMessages[0].sessionId).toBe('coder-session');
-		expect(injectedMessages[0].message).toContain('[Message from task-agent]');
-		expect(injectedMessages[0].message).toContain('Hello coder');
+		expect(result.success).toBe(false);
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
+		expect(injectedMessages).toHaveLength(0);
 	});
 
 	test('denied when channel is not declared (task-agent → coder missing)', async () => {
@@ -1242,12 +1198,8 @@ describe('Task Agent send_message — point-to-point (target: role)', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Set up channel: coder → task-agent only (reverse direction)
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [ch('coder', 'task-agent')],
-			},
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. send_message always fails with no topology error.
 
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
@@ -1257,7 +1209,7 @@ describe('Task Agent send_message — point-to-point (target: role)', () => {
 
 		const result = parse(await handlers.send_message({ target: 'coder', message: 'Should fail' }));
 		expect(result.success).toBe(false);
-		expect(result.unauthorizedRoles).toEqual(['coder']);
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
 	});
 
 	test('fails when no channels declared (empty topology)', async () => {
@@ -1290,12 +1242,8 @@ describe('Task Agent send_message — broadcast (target: "*")', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// task-agent can send to both coder and reviewer
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [ch('task-agent', 'coder'), ch('task-agent', 'reviewer')],
-			},
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. send_message always fails with no topology error.
 
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'reviewer', 'reviewer-session');
@@ -1309,12 +1257,11 @@ describe('Task Agent send_message — broadcast (target: "*")', () => {
 			})
 		);
 
+		// send_message always fails because channel topology is never stored now
 		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
-		expect(result.success).toBe(true);
-		const delivered = result.delivered as Array<{ sessionId: string }>;
-		expect(delivered.length).toBe(2);
-		const deliveredIds = delivered.map((d) => d.sessionId).sort();
-		expect(deliveredIds).toEqual(['coder-session', 'reviewer-session'].sort());
+		expect(result.success).toBe(false);
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
+		expect(injectedMessages).toHaveLength(0);
 	});
 
 	test('fails when task-agent has no permitted targets', async () => {
@@ -1322,12 +1269,8 @@ describe('Task Agent send_message — broadcast (target: "*")', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Only coder can send to task-agent, not the other way around
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [ch('coder', 'task-agent')],
-			},
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. send_message always fails with no topology error.
 
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
@@ -1337,7 +1280,7 @@ describe('Task Agent send_message — broadcast (target: "*")', () => {
 
 		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
 		expect(result.success).toBe(false);
-		expect(result.availableTargets).toEqual([]);
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
 	});
 });
 
@@ -1353,32 +1296,8 @@ describe('Task Agent send_message — default task-agent channels', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Simulate storeResolvedChannels behavior: default bidirectional channels
-		// between task-agent and all node agents are auto-added
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [
-					// Default task-agent → coder
-					{
-						fromRole: 'task-agent',
-						toRole: 'coder',
-						fromAgentId: 'task-agent',
-						toAgentId: 'coder',
-						direction: 'one-way',
-						isHubSpoke: false,
-					},
-					// Default coder → task-agent
-					{
-						fromRole: 'coder',
-						toRole: 'task-agent',
-						fromAgentId: 'coder',
-						toAgentId: 'task-agent',
-						direction: 'one-way',
-						isHubSpoke: false,
-					},
-				],
-			},
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. send_message always fails with no topology error.
 
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
@@ -1391,13 +1310,13 @@ describe('Task Agent send_message — default task-agent channels', () => {
 			})
 		);
 
-		// Task Agent can send to coder via default channel
+		// send_message always fails because channel topology is never stored now
 		const result = parse(
 			await handlers.send_message({ target: 'coder', message: 'Default channel works' })
 		);
-		expect(result.success).toBe(true);
-		expect(injectedMessages).toHaveLength(1);
-		expect(injectedMessages[0].sessionId).toBe('coder-session');
+		expect(result.success).toBe(false);
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
+		expect(injectedMessages).toHaveLength(0);
 	});
 
 	test('removing task-agent channel prevents messaging (no bypass)', async () => {
@@ -1405,23 +1324,8 @@ describe('Task Agent send_message — default task-agent channels', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// User explicitly removes task-agent → coder channel
-		// Only coder → task-agent is declared (not the default task-agent → coder)
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [
-					// Only coder can message task-agent, not the other way
-					{
-						fromRole: 'coder',
-						toRole: 'task-agent',
-						fromAgentId: 'coder',
-						toAgentId: 'task-agent',
-						direction: 'one-way',
-						isHubSpoke: false,
-					},
-				],
-			},
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. send_message always fails with no topology error.
 
 		seedRunTask(ctx.db, ctx.spaceId, run.id, 'coder', 'coder-session');
 
@@ -1429,12 +1333,12 @@ describe('Task Agent send_message — default task-agent channels', () => {
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
 		);
 
-		// Task Agent cannot send to coder because the channel was removed
+		// Task Agent cannot send to coder because channel topology is not stored
 		const result = parse(
 			await handlers.send_message({ target: 'coder', message: 'Should be blocked' })
 		);
 		expect(result.success).toBe(false);
-		expect(result.unauthorizedRoles).toEqual(['coder']);
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
 	});
 });
 
@@ -1450,12 +1354,9 @@ describe('Task Agent send_message — error cases', () => {
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Set up a channel but no sessions for coder
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [ch('task-agent', 'coder')],
-			},
-		});
+		// Note: run.config column was removed in M71; channel topology is no longer
+		// stored on the workflow run. send_message always fails with no topology error
+		// before it even gets to check for active sessions.
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
@@ -1463,6 +1364,6 @@ describe('Task Agent send_message — error cases', () => {
 
 		const result = parse(await handlers.send_message({ target: 'coder', message: 'Hello' }));
 		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('No active sessions found');
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
 	});
 });

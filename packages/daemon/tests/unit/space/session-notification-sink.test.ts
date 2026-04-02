@@ -78,11 +78,11 @@ function makeSink(
 // ---------------------------------------------------------------------------
 
 describe('SessionNotificationSink', () => {
-	describe('task_needs_attention event', () => {
+	describe('task_blocked event', () => {
 		it('injects a message with [TASK_EVENT] prefix', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Agent reported an error',
@@ -93,13 +93,13 @@ describe('SessionNotificationSink', () => {
 
 			expect(factory.calls).toHaveLength(1);
 			const { message } = factory.calls[0];
-			expect(message).toContain('[TASK_EVENT] task_needs_attention');
+			expect(message).toContain('[TASK_EVENT] task_blocked');
 		});
 
 		it('injects into the correct session ID', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -114,7 +114,7 @@ describe('SessionNotificationSink', () => {
 		it('uses defer delivery mode', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -129,7 +129,7 @@ describe('SessionNotificationSink', () => {
 		it('message includes human-readable text with taskId, spaceId, and reason', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: SPACE_ID,
 				taskId: 'task-99',
 				reason: 'Unrecoverable build failure',
@@ -147,7 +147,7 @@ describe('SessionNotificationSink', () => {
 		it('message includes JSON payload with all event fields', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: SPACE_ID,
 				taskId: 'task-42',
 				reason: 'Timed out',
@@ -158,7 +158,7 @@ describe('SessionNotificationSink', () => {
 
 			const { message } = factory.calls[0];
 			const json = extractJson(message);
-			expect(json.kind).toBe('task_needs_attention');
+			expect(json.kind).toBe('task_blocked');
 			expect(json.spaceId).toBe(SPACE_ID);
 			expect(json.taskId).toBe('task-42');
 			expect(json.reason).toBe('Timed out');
@@ -168,7 +168,7 @@ describe('SessionNotificationSink', () => {
 		it('message includes autonomy level (default supervised)', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -186,7 +186,7 @@ describe('SessionNotificationSink', () => {
 		it('message includes semi_autonomous level when configured', async () => {
 			const { sink, factory } = makeSink(undefined, { autonomyLevel: 'semi_autonomous' });
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -202,11 +202,11 @@ describe('SessionNotificationSink', () => {
 		});
 	});
 
-	describe('workflow_run_needs_attention event', () => {
+	describe('workflow_run_blocked event', () => {
 		it('formats message correctly', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
-				kind: 'workflow_run_needs_attention',
+				kind: 'workflow_run_blocked',
 				spaceId: SPACE_ID,
 				runId: 'run-55',
 				reason: 'Transition condition failed: tests did not pass',
@@ -216,12 +216,12 @@ describe('SessionNotificationSink', () => {
 			await sink.notify(event);
 
 			const { message } = factory.calls[0];
-			expect(message).toContain('[TASK_EVENT] workflow_run_needs_attention');
+			expect(message).toContain('[TASK_EVENT] workflow_run_blocked');
 			expect(message).toContain('run-55');
 			expect(message).toContain('Transition condition failed: tests did not pass');
 
 			const json = extractJson(message);
-			expect(json.kind).toBe('workflow_run_needs_attention');
+			expect(json.kind).toBe('workflow_run_blocked');
 			expect(json.runId).toBe('run-55');
 			expect(json.autonomyLevel).toBe('supervised');
 		});
@@ -229,7 +229,7 @@ describe('SessionNotificationSink', () => {
 		it('uses defer delivery mode', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
-				kind: 'workflow_run_needs_attention',
+				kind: 'workflow_run_blocked',
 				spaceId: SPACE_ID,
 				runId: 'run-1',
 				reason: 'Failure',
@@ -289,7 +289,7 @@ describe('SessionNotificationSink', () => {
 				kind: 'workflow_run_completed',
 				spaceId: SPACE_ID,
 				runId: 'run-1',
-				status: 'completed',
+				status: 'done',
 				summary: 'All steps finished. PR #42 merged.',
 				timestamp: TIMESTAMP,
 			};
@@ -302,7 +302,7 @@ describe('SessionNotificationSink', () => {
 			expect(message).toContain('PR #42 merged.');
 
 			const json = extractJson(message);
-			expect(json.status).toBe('completed');
+			expect(json.status).toBe('done');
 			expect(json.summary).toBe('All steps finished. PR #42 merged.');
 			expect(json.autonomyLevel).toBe('supervised');
 		});
@@ -327,23 +327,23 @@ describe('SessionNotificationSink', () => {
 			expect(json.summary).toBeUndefined();
 		});
 
-		it('formats a needs_attention run', async () => {
+		it('formats a blocked run', async () => {
 			const { sink, factory } = makeSink();
 			const event: SpaceNotificationEvent = {
 				kind: 'workflow_run_completed',
 				spaceId: SPACE_ID,
 				runId: 'run-3',
-				status: 'needs_attention',
+				status: 'blocked',
 				timestamp: TIMESTAMP,
 			};
 
 			await sink.notify(event);
 
 			const { message } = factory.calls[0];
-			expect(message).toContain('needs attention');
+			expect(message).toContain('blocked');
 
 			const json = extractJson(message);
-			expect(json.status).toBe('needs_attention');
+			expect(json.status).toBe('blocked');
 		});
 
 		it('uses defer delivery mode', async () => {
@@ -352,7 +352,7 @@ describe('SessionNotificationSink', () => {
 				kind: 'workflow_run_completed',
 				spaceId: SPACE_ID,
 				runId: 'run-1',
-				status: 'completed',
+				status: 'done',
 				timestamp: TIMESTAMP,
 			};
 
@@ -369,7 +369,7 @@ describe('SessionNotificationSink', () => {
 			});
 
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -386,14 +386,14 @@ describe('SessionNotificationSink', () => {
 			const { sink } = makeSink({ injectError: new Error('Unexpected failure') });
 			const events: SpaceNotificationEvent[] = [
 				{
-					kind: 'task_needs_attention',
+					kind: 'task_blocked',
 					spaceId: SPACE_ID,
 					taskId: 't',
 					reason: 'r',
 					timestamp: TIMESTAMP,
 				},
 				{
-					kind: 'workflow_run_needs_attention',
+					kind: 'workflow_run_blocked',
 					spaceId: SPACE_ID,
 					runId: 'r',
 					reason: 'r',
@@ -410,7 +410,7 @@ describe('SessionNotificationSink', () => {
 					kind: 'workflow_run_completed',
 					spaceId: SPACE_ID,
 					runId: 'r',
-					status: 'completed',
+					status: 'done',
 					timestamp: TIMESTAMP,
 				},
 			];
@@ -424,7 +424,7 @@ describe('SessionNotificationSink', () => {
 	describe('formatEventMessage (exported helper)', () => {
 		it('produces consistent output for the same input', () => {
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: 'space-x',
 				taskId: 'task-x',
 				reason: 'test reason',
@@ -438,7 +438,7 @@ describe('SessionNotificationSink', () => {
 
 		it('differs by autonomy level', () => {
 			const event: SpaceNotificationEvent = {
-				kind: 'task_needs_attention',
+				kind: 'task_blocked',
 				spaceId: 'space-x',
 				taskId: 'task-x',
 				reason: 'test',
@@ -484,7 +484,7 @@ describe('formatEventMessage — agent_crash', () => {
 		const msg = formatEventMessage(event, 'supervised');
 		expect(msg).toContain('task-crashed');
 		expect(msg).toContain('space-crash');
-		expect(msg).toContain('needs_attention');
+		expect(msg).toContain('blocked');
 	});
 
 	it('includes failureReason: agentCrash in JSON payload', () => {

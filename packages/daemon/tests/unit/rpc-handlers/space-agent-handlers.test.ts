@@ -121,7 +121,7 @@ describe('Space Agent RPC Handlers', () => {
 			const result = await call<{ agent: { id: string; name: string } }>(
 				hubData.handlers,
 				'spaceAgent.create',
-				{ spaceId: 'space-1', name: 'MyAgent', role: 'coder' }
+				{ spaceId: 'space-1', name: 'MyAgent' }
 			);
 
 			expect(result.agent).toBeDefined();
@@ -139,7 +139,6 @@ describe('Space Agent RPC Handlers', () => {
 			}>(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
 				name: 'FullAgent',
-				role: 'planner',
 				description: 'A detailed agent',
 				model: 'claude-opus-4-5',
 				provider: 'anthropic',
@@ -155,7 +154,6 @@ describe('Space Agent RPC Handlers', () => {
 			await call(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
 				name: 'EventAgent',
-				role: 'coder',
 			});
 
 			// Allow microtask queue to flush
@@ -172,46 +170,36 @@ describe('Space Agent RPC Handlers', () => {
 		});
 
 		it('throws when spaceId is missing', async () => {
-			await expect(
-				call(hubData.handlers, 'spaceAgent.create', { name: 'A', role: 'coder' })
-			).rejects.toThrow('spaceId is required');
+			await expect(call(hubData.handlers, 'spaceAgent.create', { name: 'A' })).rejects.toThrow(
+				'spaceId is required'
+			);
 		});
 
 		it('throws when name is missing', async () => {
 			await expect(
-				call(hubData.handlers, 'spaceAgent.create', { spaceId: 'space-1', role: 'coder' })
+				call(hubData.handlers, 'spaceAgent.create', { spaceId: 'space-1' })
 			).rejects.toThrow('name is required');
 		});
 
-		it('throws when role is missing', async () => {
-			await expect(
-				call(hubData.handlers, 'spaceAgent.create', { spaceId: 'space-1', name: 'A' })
-			).rejects.toThrow('role is required');
-		});
-
-		it('accepts any string as role value', async () => {
-			for (const role of ['planner', 'coder', 'general', 'reviewer', 'custom-role'] as const) {
-				const result = await call<{ agent: { role: string } }>(
-					hubData.handlers,
-					'spaceAgent.create',
-					{ spaceId: 'space-1', name: `Agent-${role}`, role }
-				);
-				expect(result.agent.role).toBe(role);
-			}
+		it('creates an agent without a role (role field removed from schema)', async () => {
+			const result = await call<{ agent: { id: string; name: string } }>(
+				hubData.handlers,
+				'spaceAgent.create',
+				{ spaceId: 'space-1', name: 'SimpleAgent' }
+			);
+			expect(result.agent.name).toBe('SimpleAgent');
 		});
 
 		it('throws on duplicate name within the same space', async () => {
 			await call(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
 				name: 'Duplicate',
-				role: 'coder',
 			});
 
 			await expect(
 				call(hubData.handlers, 'spaceAgent.create', {
 					spaceId: 'space-1',
 					name: 'Duplicate',
-					role: 'coder',
 				})
 			).rejects.toThrow('"Duplicate" already exists');
 		});
@@ -235,12 +223,10 @@ describe('Space Agent RPC Handlers', () => {
 			await call(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
 				name: 'Alpha',
-				role: 'coder',
 			});
 			await call(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
 				name: 'Beta',
-				role: 'planner',
 			});
 
 			const result = await call<{ agents: { name: string }[] }>(
@@ -271,7 +257,7 @@ describe('Space Agent RPC Handlers', () => {
 			const created = await call<{ agent: { id: string; name: string } }>(
 				hubData.handlers,
 				'spaceAgent.create',
-				{ spaceId: 'space-1', name: 'GetMe', role: 'coder' }
+				{ spaceId: 'space-1', name: 'GetMe' }
 			);
 
 			const result = await call<{ agent: { id: string; name: string } }>(
@@ -303,7 +289,6 @@ describe('Space Agent RPC Handlers', () => {
 			const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
 				name: 'Original',
-				role: 'coder',
 			});
 			agentId = created.agent.id;
 			daemonData.emitMock.mockClear();
@@ -359,7 +344,6 @@ describe('Space Agent RPC Handlers', () => {
 			await call(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
 				name: 'OtherAgent',
-				role: 'coder',
 			});
 
 			await expect(
@@ -367,16 +351,16 @@ describe('Space Agent RPC Handlers', () => {
 			).rejects.toThrow('already exists');
 		});
 
-		it('accepts any string as role value', async () => {
-			const result = await call<{ agent: { role: string } }>(
+		it('updates agent name successfully', async () => {
+			const result = await call<{ agent: { name: string } }>(
 				hubData.handlers,
 				'spaceAgent.update',
 				{
 					id: agentId,
-					role: 'admin',
+					name: 'UpdatedName',
 				}
 			);
-			expect(result.agent.role).toBe('admin');
+			expect(result.agent.name).toBe('UpdatedName');
 		});
 	});
 
@@ -389,7 +373,6 @@ describe('Space Agent RPC Handlers', () => {
 			const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
 				name: 'ToDelete',
-				role: 'coder',
 			});
 			agentId = created.agent.id;
 			daemonData.emitMock.mockClear();
@@ -453,8 +436,8 @@ describe('Space Agent RPC Handlers', () => {
 			insertWorkflow(db, 'wf-3', 'space-1', 'Temp Workflow');
 			insertWorkflowNode(db, 'node-3', 'wf-3', agentId);
 
-			// Remove the node reference by setting agent_id to NULL
-			db.prepare(`UPDATE space_workflow_nodes SET agent_id = NULL WHERE id = 'node-3'`).run();
+			// Remove the node reference by clearing the agents JSON array
+			db.prepare(`UPDATE space_workflow_nodes SET agents = '[]' WHERE id = 'node-3'`).run();
 
 			const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
 				id: agentId,

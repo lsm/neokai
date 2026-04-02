@@ -307,7 +307,7 @@ function makeSpaceAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		id: 'agent-1',
 		spaceId: 'space-1',
 		name: 'Coder',
-		role: 'coder',
+		instructions: null,
 		createdAt: NOW - 5_000,
 		updatedAt: NOW,
 		...overrides,
@@ -321,7 +321,6 @@ function makeSpaceWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflo
 		name: 'Test Workflow',
 		nodes: [],
 		startNodeId: 'node-1',
-		rules: [],
 		tags: [],
 		createdAt: NOW - 5_000,
 		updatedAt: NOW,
@@ -335,9 +334,9 @@ function makeWorkflowRun(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkfl
 		spaceId: 'space-1',
 		workflowId: 'wf-1',
 		title: 'Test Run',
-		status: 'completed',
-		iterationCount: 0,
-		maxIterations: 10,
+		status: 'done',
+		startedAt: null,
+		completedAt: null,
 		createdAt: NOW - 3_000,
 		updatedAt: NOW,
 		...overrides,
@@ -351,7 +350,9 @@ function makeSpaceTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 		taskNumber: 1,
 		title: 'Test Task',
 		description: 'A test task',
-		status: 'pending',
+		status: 'open',
+		labels: [],
+		result: null,
 		priority: 'normal',
 		createdAt: NOW - 2_000,
 		updatedAt: NOW,
@@ -1110,13 +1111,13 @@ describe('get_space_status', () => {
 		const space = makeSpace({ autonomyLevel: 'supervised', defaultModel: 'claude-opus-4' });
 		const runs = [
 			makeWorkflowRun({ id: 'r1', status: 'in_progress' }),
-			makeWorkflowRun({ id: 'r2', status: 'needs_attention' }),
-			makeWorkflowRun({ id: 'r3', status: 'completed' }),
+			makeWorkflowRun({ id: 'r2', status: 'blocked' }),
+			makeWorkflowRun({ id: 'r3', status: 'done' }),
 		];
 		const tasks = [
-			makeSpaceTask({ id: 't1', status: 'pending' }),
-			makeSpaceTask({ id: 't2', status: 'pending' }),
-			makeSpaceTask({ id: 't3', status: 'completed' }),
+			makeSpaceTask({ id: 't1', status: 'open' }),
+			makeSpaceTask({ id: 't2', status: 'open' }),
+			makeSpaceTask({ id: 't3', status: 'done' }),
 		];
 		const handlers = createNeoQueryToolHandlers(
 			makeConfig({
@@ -1133,8 +1134,8 @@ describe('get_space_status', () => {
 		// in_progress + needs_attention = 2
 		expect(result.activeRunCount).toBe(2);
 		expect(result.totalTaskCount).toBe(3);
-		expect(result.taskCountByStatus.pending).toBe(2);
-		expect(result.taskCountByStatus.completed).toBe(1);
+		expect(result.taskCountByStatus.open).toBe(2);
+		expect(result.taskCountByStatus.done).toBe(1);
 		expect(result.autonomyLevel).toBe('supervised');
 		expect(result.defaultModel).toBe('claude-opus-4');
 	});
@@ -1170,10 +1171,10 @@ describe('get_space_details', () => {
 			backgroundContext: 'TypeScript monorepo',
 			allowedModels: ['claude-sonnet-4'],
 		});
-		const agents = [makeSpaceAgent({ name: 'Coder', role: 'coder' })];
+		const agents = [makeSpaceAgent({ name: 'Coder' })];
 		const workflows = [makeSpaceWorkflow({ name: 'Dev Workflow', nodes: [{ id: 'n1' } as never] })];
 		const runs = [
-			makeWorkflowRun({ id: 'r1', status: 'completed', createdAt: NOW - 1000 }),
+			makeWorkflowRun({ id: 'r1', status: 'done', createdAt: NOW - 1000 }),
 			makeWorkflowRun({ id: 'r2', status: 'in_progress', createdAt: NOW - 500 }),
 		];
 
@@ -1193,7 +1194,6 @@ describe('get_space_details', () => {
 		expect(result.allowedModels).toEqual(['claude-sonnet-4']);
 		expect(result.agents).toHaveLength(1);
 		expect(result.agents[0].name).toBe('Coder');
-		expect(result.agents[0].role).toBe('coder');
 		expect(result.workflows).toHaveLength(1);
 		expect(result.workflows[0].name).toBe('Dev Workflow');
 		expect(result.workflows[0].nodeCount).toBe(1);
@@ -1238,11 +1238,10 @@ describe('list_space_agents', () => {
 			makeSpaceAgent({
 				id: 'a1',
 				name: 'Coder',
-				role: 'coder',
 				model: 'claude-haiku-4-5',
 				description: 'Writes code',
 			}),
-			makeSpaceAgent({ id: 'a2', name: 'Planner', role: 'planner' }),
+			makeSpaceAgent({ id: 'a2', name: 'Planner' }),
 		];
 		const handlers = createNeoQueryToolHandlers(
 			makeConfig({
@@ -1255,7 +1254,6 @@ describe('list_space_agents', () => {
 		expect(result).toHaveLength(2);
 		expect(result[0].id).toBe('a1');
 		expect(result[0].name).toBe('Coder');
-		expect(result[0].role).toBe('coder');
 		expect(result[0].model).toBe('claude-haiku-4-5');
 		expect(result[0].description).toBe('Writes code');
 		expect(result[1].model).toBeNull();
@@ -1358,9 +1356,9 @@ describe('list_space_runs', () => {
 	it('filters runs by status', async () => {
 		const space = makeSpace();
 		const runs = [
-			makeWorkflowRun({ id: 'r1', status: 'completed' }),
+			makeWorkflowRun({ id: 'r1', status: 'done' }),
 			makeWorkflowRun({ id: 'r2', status: 'in_progress' }),
-			makeWorkflowRun({ id: 'r3', status: 'completed' }),
+			makeWorkflowRun({ id: 'r3', status: 'done' }),
 		];
 		const handlers = createNeoQueryToolHandlers(
 			makeConfig({
@@ -1370,24 +1368,22 @@ describe('list_space_runs', () => {
 		);
 
 		const result = parseResult(
-			await handlers.list_space_runs({ space_id: 'space-1', status: 'completed' })
+			await handlers.list_space_runs({ space_id: 'space-1', status: 'done' })
 		);
 		expect(result).toHaveLength(2);
-		expect(result.every((r: { status: string }) => r.status === 'completed')).toBe(true);
+		expect(result.every((r: { status: string }) => r.status === 'done')).toBe(true);
 	});
 
-	it('returns run fields including goalId and completedAt', async () => {
+	it('returns run fields including completedAt', async () => {
 		const space = makeSpace();
 		const runs = [
 			makeWorkflowRun({
 				id: 'r1',
 				title: 'My Run',
 				description: 'A run',
-				status: 'completed',
+				status: 'done',
 				workflowId: 'wf-1',
-				goalId: 'goal-1',
 				completedAt: NOW,
-				iterationCount: 2,
 			}),
 		];
 		const handlers = createNeoQueryToolHandlers(
@@ -1402,9 +1398,7 @@ describe('list_space_runs', () => {
 		expect(run.title).toBe('My Run');
 		expect(run.description).toBe('A run');
 		expect(run.workflowId).toBe('wf-1');
-		expect(run.goalId).toBe('goal-1');
 		expect(run.completedAt).toBe(NOW);
-		expect(run.iterationCount).toBe(2);
 	});
 
 	it('returns empty array when no runs exist', async () => {

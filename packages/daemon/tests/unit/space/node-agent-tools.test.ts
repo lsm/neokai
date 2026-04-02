@@ -61,42 +61,39 @@ function seedSpaceWorkflowRunRow(
 	const now = Date.now();
 	db.prepare(
 		`INSERT INTO space_workflow_runs
-     (id, space_id, workflow_id, title, description, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', 'pending', NULL, 0, 5, NULL, ?, ?)`
+     (id, space_id, workflow_id, title, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', 'pending', ?, ?)`
 	).run(runId, spaceId, workflowId, now, now);
+}
+
+/**
+ * Creates a fresh workflow run and returns its ID.
+ * Used by tests that need isolation from the default makeCtx() run.
+ */
+function makeFreshRunId(db: BunDatabase, spaceId: string): string {
+	const runId = `run-${Math.random().toString(36).slice(2)}`;
+	seedSpaceWorkflowRunRow(db, runId, spaceId, 'wf-seed');
+	return runId;
 }
 
 function seedSpaceTask(
 	db: BunDatabase,
 	spaceId: string,
 	workflowRunId: string,
-	workflowNodeId: string,
+	_workflowNodeId: string,
 	agentName: string,
-	status: string = 'pending',
-	completionSummary: string | null = null
+	status: string = 'in_progress',
+	result: string | null = null
 ): string {
 	const id = `task-${Math.random().toString(36).slice(2)}`;
 	const now = Date.now();
-	// Disable FK for seeding test data — workflow_node_id points to an arbitrary test node ID
 	db.exec('PRAGMA foreign_keys = OFF');
 	db.prepare(
 		`INSERT INTO space_tasks
-         (id, space_id, task_number, title, description, status, priority, agent_name, completion_summary,
-          workflow_run_id, workflow_node_id, depends_on, created_at, updated_at)
-         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, ?, ?, '[]', ?, ?)`
-	).run(
-		id,
-		spaceId,
-		spaceId,
-		`Task for ${agentName}`,
-		status,
-		agentName,
-		completionSummary,
-		workflowRunId,
-		workflowNodeId,
-		now,
-		now
-	);
+         (id, space_id, task_number, title, description, status, priority, result,
+          workflow_run_id, depends_on, created_at, updated_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, '[]', ?, ?)`
+	).run(id, spaceId, spaceId, agentName, status, result, workflowRunId, now, now);
 	db.exec('PRAGMA foreign_keys = ON');
 	return id;
 }
@@ -173,14 +170,14 @@ function makeCtx(): TestCtx {
 	// Set coder task's session ID
 	db.exec('PRAGMA foreign_keys = OFF');
 	db.prepare(
-		'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_run_id = ?'
+		'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
 	).run(coderSessionId, 'coder', workflowRunId);
 	db.exec('PRAGMA foreign_keys = ON');
 
 	seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'in_progress', null);
 	db.exec('PRAGMA foreign_keys = OFF');
 	db.prepare(
-		'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_run_id = ?'
+		'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
 	).run(reviewerSessionId, 'reviewer', workflowRunId);
 	db.exec('PRAGMA foreign_keys = ON');
 
@@ -301,14 +298,14 @@ describe('node-agent-tools: list_peers', () => {
 		expect(data.permittedTargets).toEqual(['reviewer']);
 	});
 
-	test('returns empty peer list when no peers in the node', async () => {
-		// Use a different nodeId that has no seeded tasks - only coder (self) but no reviewer
-		const isolatedNodeId = 'node-isolated';
+	test('returns empty peer list when no peers in the run', async () => {
+		// Use a fresh run that has only the coder task (self) — no reviewer
+		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
 		seedSpaceTask(
 			ctx.db,
 			ctx.spaceId,
-			ctx.workflowRunId,
-			isolatedNodeId,
+			isolatedRunId,
+			'node-isolated',
 			'coder',
 			'in_progress',
 			null
@@ -316,12 +313,12 @@ describe('node-agent-tools: list_peers', () => {
 		ctx.db.exec('PRAGMA foreign_keys = OFF');
 		ctx.db
 			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
 			)
-			.run(ctx.coderSessionId, 'coder', isolatedNodeId);
+			.run(ctx.coderSessionId, 'coder', isolatedRunId);
 		ctx.db.exec('PRAGMA foreign_keys = ON');
 
-		const config = makeConfig(ctx, { workflowNodeId: isolatedNodeId });
+		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
@@ -330,21 +327,13 @@ describe('node-agent-tools: list_peers', () => {
 		expect(data.peers).toHaveLength(0);
 	});
 
-	test('excludes pending task with no session from peers list', async () => {
-		// Seed a pending task with no session — should not appear in peers
-		const isolatedNodeId = 'node-no-session';
-		seedSpaceTask(
-			ctx.db,
-			ctx.spaceId,
-			ctx.workflowRunId,
-			isolatedNodeId,
-			'tester',
-			'pending',
-			null
-		);
+	test('excludes open task with no session from peers list', async () => {
+		// Seed an open task with no session — should not appear in peers
+		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
+		seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, 'node-no-session', 'tester', 'open', null);
 		// Do NOT set task_agent_session_id — simulates not-yet-spawned task
 
-		const config = makeConfig(ctx, { workflowNodeId: isolatedNodeId });
+		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
@@ -354,19 +343,19 @@ describe('node-agent-tools: list_peers', () => {
 	});
 
 	test('excludes failed task with no session from peers list', async () => {
-		// A needs_attention task that never got a session should also be excluded
-		const isolatedNodeId = 'node-failed-no-sess';
+		// A blocked task that never got a session should also be excluded
+		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
 		seedSpaceTask(
 			ctx.db,
 			ctx.spaceId,
-			ctx.workflowRunId,
-			isolatedNodeId,
+			isolatedRunId,
+			'node-failed-no-sess',
 			'tester',
-			'needs_attention',
+			'blocked',
 			'Failed before session'
 		);
 
-		const config = makeConfig(ctx, { workflowNodeId: isolatedNodeId });
+		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
@@ -375,21 +364,21 @@ describe('node-agent-tools: list_peers', () => {
 		expect(data.peers).toHaveLength(0);
 	});
 
-	test('includes completed task with no session in peers list', async () => {
-		// A completed task whose session was cleared should still appear for visibility
-		const isolatedNodeId = 'node-completed-no-sess';
+	test('includes done task with no session in peers list', async () => {
+		// A done task whose session was cleared should still appear for visibility
+		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
 		seedSpaceTask(
 			ctx.db,
 			ctx.spaceId,
-			ctx.workflowRunId,
-			isolatedNodeId,
+			isolatedRunId,
+			'node-done-no-sess',
 			'tester',
-			'completed',
+			'done',
 			'Done'
 		);
 		// Do NOT set task_agent_session_id — simulates post-session cleanup
 
-		const config = makeConfig(ctx, { workflowNodeId: isolatedNodeId });
+		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
@@ -517,9 +506,9 @@ describe('node-agent-tools: send_message', () => {
 		ctx.db.exec('PRAGMA foreign_keys = OFF');
 		ctx.db
 			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
 			)
-			.run('session-security', 'security', ctx.nodeId);
+			.run('session-security', 'security', ctx.workflowRunId);
 		ctx.db.exec('PRAGMA foreign_keys = ON');
 
 		const injected: string[] = [];
@@ -559,9 +548,9 @@ describe('node-agent-tools: send_message', () => {
 		ctx.db.exec('PRAGMA foreign_keys = OFF');
 		ctx.db
 			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
 			)
-			.run('session-security', 'security', ctx.nodeId);
+			.run('session-security', 'security', ctx.workflowRunId);
 		ctx.db.exec('PRAGMA foreign_keys = ON');
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([
@@ -604,9 +593,9 @@ describe('node-agent-tools: send_message', () => {
 		ctx.db.exec('PRAGMA foreign_keys = OFF');
 		ctx.db
 			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
 			)
-			.run('session-hub', 'hub', ctx.nodeId);
+			.run('session-hub', 'hub', ctx.workflowRunId);
 		ctx.db.exec('PRAGMA foreign_keys = ON');
 		const injected: string[] = [];
 		const config = makeConfig(ctx, {
@@ -686,9 +675,9 @@ describe('node-agent-tools: send_message', () => {
 		ctx.db.exec('PRAGMA foreign_keys = OFF');
 		ctx.db
 			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
 			)
-			.run('session-security', 'security', ctx.nodeId);
+			.run('session-security', 'security', ctx.workflowRunId);
 		ctx.db.exec('PRAGMA foreign_keys = ON');
 		let callCount = 0;
 		const config = makeConfig(ctx, {
@@ -747,9 +736,9 @@ describe('node-agent-tools: send_message', () => {
 		ctx.db.exec('PRAGMA foreign_keys = OFF');
 		ctx.db
 			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE agent_name = ? AND workflow_node_id = ?'
+				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
 			)
-			.run('session-security', 'security', ctx.nodeId);
+			.run('session-security', 'security', ctx.workflowRunId);
 		ctx.db.exec('PRAGMA foreign_keys = ON');
 
 		let callCount = 0;
@@ -825,7 +814,7 @@ describe('node-agent-tools: report_done', () => {
 		expect(data.message).toContain('completed');
 
 		const updated = ctx.taskRepo.getTask(ctx.stepTaskId);
-		expect(updated?.status).toBe('completed');
+		expect(updated?.status).toBe('done');
 		expect(updated?.completedAt).toBeDefined();
 	});
 
@@ -863,7 +852,7 @@ describe('node-agent-tools: report_done', () => {
 		expect(payload.spaceId).toBe(ctx.spaceId);
 		expect(payload.sessionId).toBe('global');
 		const task = payload.task as Record<string, unknown>;
-		expect(task.status).toBe('completed');
+		expect(task.status).toBe('done');
 	});
 
 	test('does not emit event when daemonHub is absent', async () => {
@@ -887,7 +876,7 @@ describe('node-agent-tools: report_done', () => {
 
 	test('returns error on invalid status transition', async () => {
 		// Move step task to completed first
-		await ctx.taskManager.setTaskStatus(ctx.stepTaskId, 'completed');
+		await ctx.taskManager.setTaskStatus(ctx.stepTaskId, 'done');
 
 		const config = makeConfig(ctx);
 		const handlers = createNodeAgentToolHandlers(config);
@@ -921,7 +910,7 @@ describe('node-agent-tools: report_done', () => {
 
 		// DB state should reflect completion
 		const updated = ctx.taskRepo.getTask(ctx.stepTaskId);
-		expect(updated?.status).toBe('completed');
+		expect(updated?.status).toBe('done');
 	});
 
 	test('daemonHub not called when task update fails', async () => {
@@ -1946,7 +1935,7 @@ describe('list_peers — completion state', () => {
 			workflowRunId,
 			workflowNodeId,
 			'reviewer',
-			'completed',
+			'done',
 			'All looks good!'
 		);
 
@@ -1963,7 +1952,7 @@ describe('list_peers — completion state', () => {
 		const reviewerPeer = data.peers.find((p: { role: string }) => p.role === 'reviewer');
 		expect(reviewerPeer).toBeDefined();
 		expect(reviewerPeer.completionState).not.toBeNull();
-		expect(reviewerPeer.completionState.taskStatus).toBe('completed');
+		expect(reviewerPeer.completionState.taskStatus).toBe('done');
 		expect(reviewerPeer.completionState.completionSummary).toBe('All looks good!');
 		expect(reviewerPeer.completionState.agentName).toBe('reviewer');
 	});
@@ -1980,7 +1969,7 @@ describe('list_peers — completion state', () => {
 			workflowRunId,
 			workflowNodeId,
 			'reviewer',
-			'completed',
+			'done',
 			'Review done'
 		);
 
@@ -2007,7 +1996,7 @@ describe('list_peers — completion state', () => {
 			(s: { agentName: string }) => s.agentName === 'reviewer'
 		);
 		expect(reviewerState).toBeDefined();
-		expect(reviewerState.taskStatus).toBe('completed');
+		expect(reviewerState.taskStatus).toBe('done');
 		expect(reviewerState.completionSummary).toBe('Review done');
 	});
 

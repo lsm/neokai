@@ -40,15 +40,15 @@ describe('SpaceTaskManager', () => {
 
 	describe('isValidSpaceTaskTransition', () => {
 		it('allows valid transitions', () => {
-			expect(isValidSpaceTaskTransition('pending', 'in_progress')).toBe(true);
-			expect(isValidSpaceTaskTransition('in_progress', 'completed')).toBe(true);
-			expect(isValidSpaceTaskTransition('in_progress', 'review')).toBe(true);
-			expect(isValidSpaceTaskTransition('review', 'completed')).toBe(true);
+			expect(isValidSpaceTaskTransition('open', 'in_progress')).toBe(true);
+			expect(isValidSpaceTaskTransition('in_progress', 'done')).toBe(true);
+			expect(isValidSpaceTaskTransition('in_progress', 'blocked')).toBe(true);
+			expect(isValidSpaceTaskTransition('done', 'in_progress')).toBe(true);
 		});
 
 		it('rejects invalid transitions', () => {
-			expect(isValidSpaceTaskTransition('completed', 'pending')).toBe(false);
-			expect(isValidSpaceTaskTransition('pending', 'completed')).toBe(false);
+			expect(isValidSpaceTaskTransition('done', 'open')).toBe(false);
+			expect(isValidSpaceTaskTransition('open', 'done')).toBe(false);
 		});
 	});
 
@@ -57,7 +57,7 @@ describe('SpaceTaskManager', () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			expect(task.spaceId).toBe(spaceId);
 			expect(task.title).toBe('T');
-			expect(task.status).toBe('pending');
+			expect(task.status).toBe('open');
 		});
 
 		it('creates a task with dependencies', async () => {
@@ -99,51 +99,46 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('setTaskStatus', () => {
-		it('transitions pending -> in_progress', async () => {
+		it('transitions open -> in_progress', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			const updated = await manager.setTaskStatus(task.id, 'in_progress');
 			expect(updated.status).toBe('in_progress');
 		});
 
-		it('transitions in_progress -> completed with result', async () => {
+		it('transitions in_progress -> done with result', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			const done = await manager.setTaskStatus(task.id, 'completed', { result: 'Done!' });
-			expect(done.status).toBe('completed');
-			expect(done.progress).toBe(100);
+			const done = await manager.setTaskStatus(task.id, 'done', { result: 'Done!' });
+			expect(done.status).toBe('done');
 			expect(done.result).toBe('Done!');
 		});
 
 		it('throws for invalid transition', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
-			await expect(manager.setTaskStatus(task.id, 'completed')).rejects.toThrow(
+			await expect(manager.setTaskStatus(task.id, 'done')).rejects.toThrow(
 				'Invalid status transition'
 			);
 		});
 
-		it('clears error and result when restarting from needs_attention', async () => {
+		it('clears result when restarting from blocked', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'needs_attention', { error: 'Oops' });
+			await manager.setTaskStatus(task.id, 'blocked');
 
-			const restarted = await manager.setTaskStatus(task.id, 'pending');
-			expect(restarted.error).toBeUndefined();
-			expect(restarted.result).toBeUndefined();
-			expect(restarted.progress).toBeUndefined();
+			const restarted = await manager.setTaskStatus(task.id, 'open');
+			expect(restarted.result).toBeNull();
 		});
 
-		it('clears error and result when restarting from cancelled -> pending', async () => {
+		it('clears result when restarting from cancelled -> open', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'needs_attention', { error: 'Failed' });
+			await manager.setTaskStatus(task.id, 'blocked');
 			await manager.setTaskStatus(task.id, 'in_progress');
 			await manager.cancelTask(task.id);
 
-			const restarted = await manager.setTaskStatus(task.id, 'pending');
-			expect(restarted.status).toBe('pending');
-			expect(restarted.error).toBeUndefined();
-			expect(restarted.result).toBeUndefined();
-			expect(restarted.progress).toBeUndefined();
+			const restarted = await manager.setTaskStatus(task.id, 'open');
+			expect(restarted.status).toBe('open');
+			expect(restarted.result).toBeNull();
 		});
 
 		it('clears fields when restarting from cancelled -> in_progress', async () => {
@@ -154,7 +149,6 @@ describe('SpaceTaskManager', () => {
 			const restarted = await manager.setTaskStatus(task.id, 'in_progress');
 			expect(restarted.status).toBe('in_progress');
 			expect(restarted.error).toBeUndefined();
-			expect(restarted.progress).toBeUndefined();
 		});
 
 		it('throws for unknown task', async () => {
@@ -175,20 +169,19 @@ describe('SpaceTaskManager', () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			const done = await manager.completeTask(task.id, 'All done');
-			expect(done.status).toBe('completed');
+			expect(done.status).toBe('done');
 		});
 
-		it('fails a task', async () => {
+		it('fails a task (marks as blocked)', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			const failed = await manager.failTask(task.id, 'Something went wrong');
-			expect(failed.status).toBe('needs_attention');
-			expect(failed.error).toBe('Something went wrong');
+			expect(failed.status).toBe('blocked');
 		});
 	});
 
 	describe('cancelTask', () => {
-		it('cancels a task and cascades to pending dependents', async () => {
+		it('cancels a task and cascades to open dependents', async () => {
 			const t1 = await manager.createTask({ title: 'T1', description: '' });
 			const t2 = await manager.createTask({
 				title: 'T2',
@@ -204,36 +197,22 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('reviewTask', () => {
-		it('moves task to review with PR info', async () => {
+		it('records PR metadata without changing status', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
-			const reviewed = await manager.reviewTask(task.id, 'https://github.com/org/repo/pull/42');
-			expect(reviewed.status).toBe('review');
-			expect(reviewed.prUrl).toBe('https://github.com/org/repo/pull/42');
-			expect(reviewed.prNumber).toBe(42);
-		});
-	});
-
-	describe('updateTaskProgress', () => {
-		it('updates progress and current step', async () => {
-			const task = await manager.createTask({ title: 'T', description: '' });
-			const updated = await manager.updateTaskProgress(task.id, 50, 'halfway');
-			expect(updated.progress).toBe(50);
-			expect(updated.currentStep).toBe('halfway');
-		});
-
-		it('clamps progress to 0-100', async () => {
-			const task = await manager.createTask({ title: 'T', description: '' });
-			expect((await manager.updateTaskProgress(task.id, 150)).progress).toBe(100);
-			expect((await manager.updateTaskProgress(task.id, -10)).progress).toBe(0);
+			const updated = await manager.reviewTask(task.id, 'https://github.com/org/repo/pull/42');
+			// reviewTask no longer changes status — task remains in_progress
+			expect(updated.status).toBe('in_progress');
+			expect(updated.prUrl).toBe('https://github.com/org/repo/pull/42');
+			expect(updated.prNumber).toBe(42);
 		});
 	});
 
 	describe('archiveTask', () => {
-		it('archives a completed task and sets both status and archivedAt', async () => {
+		it('archives a done task and sets both status and archivedAt', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'completed');
+			await manager.setTaskStatus(task.id, 'done');
 			const archived = await manager.archiveTask(task.id);
 			expect(archived.status).toBe('archived');
 			expect(archived.archivedAt).toBeDefined();
@@ -250,21 +229,19 @@ describe('SpaceTaskManager', () => {
 			expect(typeof archived.archivedAt).toBe('number');
 		});
 
-		it('archives a needs_attention task and sets both status and archivedAt', async () => {
+		it('archives a blocked task and sets both status and archivedAt', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'needs_attention', { error: 'err' });
+			await manager.setTaskStatus(task.id, 'blocked');
 			const archived = await manager.archiveTask(task.id);
 			expect(archived.status).toBe('archived');
 			expect(archived.archivedAt).toBeDefined();
 			expect(typeof archived.archivedAt).toBe('number');
 		});
 
-		it('throws when archiving a task in pending status', async () => {
+		it('throws when archiving a task in open status', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
-			await expect(manager.archiveTask(task.id)).rejects.toThrow(
-				"Cannot archive task in 'pending'"
-			);
+			await expect(manager.archiveTask(task.id)).rejects.toThrow("Cannot archive task in 'open'");
 		});
 
 		it('throws when archiving a task in in_progress status', async () => {
@@ -294,7 +271,7 @@ describe('SpaceTaskManager', () => {
 			expect(await manager.areDependenciesMet(task)).toBe(true);
 		});
 
-		it('returns false when dependency is not completed', async () => {
+		it('returns false when dependency is not done', async () => {
 			const dep = await manager.createTask({ title: 'Dep', description: '' });
 			const task = await manager.createTask({
 				title: 'Child',
@@ -304,7 +281,7 @@ describe('SpaceTaskManager', () => {
 			expect(await manager.areDependenciesMet(task)).toBe(false);
 		});
 
-		it('returns true when all dependencies are completed', async () => {
+		it('returns true when all dependencies are done', async () => {
 			const dep = await manager.createTask({ title: 'Dep', description: '' });
 			await manager.startTask(dep.id);
 			await manager.completeTask(dep.id, 'done');
@@ -319,16 +296,14 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('retryTask', () => {
-		it('retries a needs_attention task -> pending', async () => {
+		it('retries a blocked task -> open', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			await manager.failTask(task.id, 'Something went wrong');
 
 			const retried = await manager.retryTask(task.id);
-			expect(retried.status).toBe('pending');
-			expect(retried.error).toBeUndefined();
-			expect(retried.result).toBeUndefined();
-			expect(retried.progress).toBeUndefined();
+			expect(retried.status).toBe('open');
+			expect(retried.result).toBeNull();
 		});
 
 		it('retries a cancelled task -> in_progress (reactivation)', async () => {
@@ -341,7 +316,7 @@ describe('SpaceTaskManager', () => {
 			expect(retried.error).toBeUndefined();
 		});
 
-		it('retries a completed task -> in_progress (reactivation)', async () => {
+		it('retries a done task -> in_progress (reactivation)', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			await manager.completeTask(task.id, 'done');
@@ -350,7 +325,7 @@ describe('SpaceTaskManager', () => {
 			expect(retried.status).toBe('in_progress');
 		});
 
-		it('clears stale result and progress when retrying a completed task', async () => {
+		it('clears stale result when retrying a done task', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			await manager.completeTask(task.id, 'previous result');
@@ -358,12 +333,10 @@ describe('SpaceTaskManager', () => {
 			// Verify fields are set before retry
 			const completed = await manager.getTask(task.id);
 			expect(completed!.result).toBe('previous result');
-			expect(completed!.progress).toBe(100);
 
 			const retried = await manager.retryTask(task.id);
 			expect(retried.status).toBe('in_progress');
-			expect(retried.result).toBeUndefined();
-			expect(retried.progress).toBeUndefined();
+			expect(retried.result).toBeNull();
 		});
 
 		it('updates description when provided', async () => {
@@ -372,7 +345,7 @@ describe('SpaceTaskManager', () => {
 			await manager.failTask(task.id, 'error');
 
 			const retried = await manager.retryTask(task.id, { description: 'updated description' });
-			expect(retried.status).toBe('pending');
+			expect(retried.status).toBe('open');
 			expect(retried.description).toBe('updated description');
 		});
 
@@ -385,18 +358,10 @@ describe('SpaceTaskManager', () => {
 			);
 		});
 
-		it('throws when task is pending', async () => {
+		it('throws when task is open', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 
-			await expect(manager.retryTask(task.id)).rejects.toThrow("Cannot retry task in 'pending'");
-		});
-
-		it('throws when task is in review', async () => {
-			const task = await manager.createTask({ title: 'T', description: '' });
-			await manager.startTask(task.id);
-			await manager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
-
-			await expect(manager.retryTask(task.id)).rejects.toThrow("Cannot retry task in 'review'");
+			await expect(manager.retryTask(task.id)).rejects.toThrow("Cannot retry task in 'open'");
 		});
 
 		it('throws for unknown task', async () => {
@@ -405,40 +370,21 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('reassignTask', () => {
-		it('reassigns a pending task to a custom agent', async () => {
+		it('reassigns a task from open status', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 
 			const reassigned = await manager.reassignTask(task.id, 'custom-agent-123');
-			expect(reassigned.customAgentId).toBe('custom-agent-123');
+			// reassignTask is currently a no-op (agent fields removed), returns task unchanged
+			expect(reassigned.id).toBe(task.id);
 		});
 
-		it('reassigns with assignedAgent type', async () => {
-			const task = await manager.createTask({ title: 'T', description: '' });
-
-			const reassigned = await manager.reassignTask(task.id, 'custom-agent-456', 'general');
-			expect(reassigned.customAgentId).toBe('custom-agent-456');
-			expect(reassigned.assignedAgent).toBe('general');
-		});
-
-		it('clears customAgentId when null is provided', async () => {
-			const task = await manager.createTask({
-				title: 'T',
-				description: '',
-				customAgentId: 'old-agent',
-			});
-
-			const reassigned = await manager.reassignTask(task.id, null);
-			expect(reassigned.customAgentId).toBeUndefined();
-		});
-
-		it('reassigns a needs_attention task', async () => {
+		it('reassigns a blocked task', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			await manager.failTask(task.id, 'error');
 
 			const reassigned = await manager.reassignTask(task.id, 'new-agent', 'coder');
-			expect(reassigned.customAgentId).toBe('new-agent');
-			expect(reassigned.status).toBe('needs_attention');
+			expect(reassigned.status).toBe('blocked');
 		});
 
 		it('reassigns a cancelled task', async () => {
@@ -446,7 +392,6 @@ describe('SpaceTaskManager', () => {
 			await manager.cancelTask(task.id);
 
 			const reassigned = await manager.reassignTask(task.id, 'another-agent');
-			expect(reassigned.customAgentId).toBe('another-agent');
 			expect(reassigned.status).toBe('cancelled');
 		});
 
@@ -459,32 +404,13 @@ describe('SpaceTaskManager', () => {
 			);
 		});
 
-		it('reassigns a completed task', async () => {
+		it('reassigns a done task', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			await manager.completeTask(task.id, 'done');
 
 			const reassigned = await manager.reassignTask(task.id, 'new-agent');
-			expect(reassigned.customAgentId).toBe('new-agent');
-			expect(reassigned.status).toBe('completed');
-		});
-
-		it('throws when task is in review (has open PR)', async () => {
-			const task = await manager.createTask({ title: 'T', description: '' });
-			await manager.startTask(task.id);
-			await manager.reviewTask(task.id, 'https://github.com/org/repo/pull/5');
-
-			await expect(manager.reassignTask(task.id, 'new-agent')).rejects.toThrow(
-				"Cannot reassign task in 'review'"
-			);
-		});
-
-		it('throws when task is in draft', async () => {
-			const task = await manager.createTask({ title: 'T', description: '', status: 'draft' });
-
-			await expect(manager.reassignTask(task.id, 'new-agent')).rejects.toThrow(
-				"Cannot reassign task in 'draft'"
-			);
+			expect(reassigned.status).toBe('done');
 		});
 
 		it('throws when task is archived', async () => {
@@ -506,22 +432,20 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('completion does not prevent reactivation', () => {
-		it('completed task can be reactivated to in_progress', async () => {
+		it('done task can be reactivated to in_progress', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			await manager.completeTask(task.id, 'done');
 
-			// Verify completed state
+			// Verify done state
 			const completed = await manager.getTask(task.id);
-			expect(completed!.status).toBe('completed');
+			expect(completed!.status).toBe('done');
 			expect(completed!.result).toBe('done');
-			expect(completed!.progress).toBe(100);
 
 			// Reactivate — should succeed without any cleanup blocking it
 			const reactivated = await manager.setTaskStatus(task.id, 'in_progress');
 			expect(reactivated.status).toBe('in_progress');
-			expect(reactivated.result).toBeUndefined();
-			expect(reactivated.progress).toBeUndefined();
+			expect(reactivated.result).toBeNull();
 		});
 
 		it('cancelled task can be reactivated to in_progress', async () => {
@@ -534,55 +458,49 @@ describe('SpaceTaskManager', () => {
 			expect(reactivated.error).toBeUndefined();
 		});
 
-		it('completed task can be retried via retryTask()', async () => {
+		it('done task can be retried via retryTask()', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.startTask(task.id);
 			await manager.completeTask(task.id, 'previous result');
 
 			const retried = await manager.retryTask(task.id);
 			expect(retried.status).toBe('in_progress');
-			expect(retried.result).toBeUndefined();
-			expect(retried.progress).toBeUndefined();
+			expect(retried.result).toBeNull();
 		});
 	});
 
 	describe('VALID_SPACE_TASK_TRANSITIONS', () => {
-		it('completed allows reactivation and archival', () => {
-			expect(VALID_SPACE_TASK_TRANSITIONS.completed).toEqual(['in_progress', 'archived']);
+		it('done allows reactivation and archival', () => {
+			expect(VALID_SPACE_TASK_TRANSITIONS.done).toEqual(['in_progress', 'archived']);
 		});
 
-		it('cancelled allows restart, completion, and archival', () => {
+		it('cancelled allows restart, reactivation, done, and archival', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.cancelled).toEqual([
-				'pending',
+				'open',
 				'in_progress',
-				'completed',
+				'done',
 				'archived',
 			]);
 		});
 
-		it('needs_attention allows restart and archival', () => {
-			expect(VALID_SPACE_TASK_TRANSITIONS.needs_attention).toEqual([
-				'pending',
-				'in_progress',
-				'review',
-				'archived',
-			]);
+		it('blocked allows restart and archival', () => {
+			expect(VALID_SPACE_TASK_TRANSITIONS.blocked).toEqual(['open', 'in_progress', 'archived']);
 		});
 
 		it('archived is a true terminal state with no transitions', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.archived).toEqual([]);
 		});
 
-		it('draft can only go to pending', () => {
-			expect(VALID_SPACE_TASK_TRANSITIONS.draft).toEqual(['pending']);
+		it('open allows in_progress and cancelled', () => {
+			expect(VALID_SPACE_TASK_TRANSITIONS.open).toEqual(['in_progress', 'cancelled']);
 		});
 	});
 
 	describe('archived status transitions', () => {
-		it('transitions completed -> archived', async () => {
+		it('transitions done -> archived', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'completed', { result: 'done' });
+			await manager.setTaskStatus(task.id, 'done', { result: 'done' });
 			const archived = await manager.setTaskStatus(task.id, 'archived');
 			expect(archived.status).toBe('archived');
 		});
@@ -595,18 +513,18 @@ describe('SpaceTaskManager', () => {
 			expect(archived.status).toBe('archived');
 		});
 
-		it('transitions cancelled -> completed (e.g. PR merged after cancellation)', async () => {
+		it('transitions cancelled -> done (e.g. PR merged after cancellation)', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
 			await manager.cancelTask(task.id);
-			const completed = await manager.setTaskStatus(task.id, 'completed');
-			expect(completed.status).toBe('completed');
+			const done = await manager.setTaskStatus(task.id, 'done');
+			expect(done.status).toBe('done');
 		});
 
-		it('transitions needs_attention -> archived', async () => {
+		it('transitions blocked -> archived', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'needs_attention', { error: 'err' });
+			await manager.setTaskStatus(task.id, 'blocked');
 			const archived = await manager.setTaskStatus(task.id, 'archived');
 			expect(archived.status).toBe('archived');
 		});
@@ -614,18 +532,18 @@ describe('SpaceTaskManager', () => {
 		it('rejects transition from archived to any status', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'completed');
+			await manager.setTaskStatus(task.id, 'done');
 			await manager.setTaskStatus(task.id, 'archived');
 
 			await expect(manager.setTaskStatus(task.id, 'in_progress')).rejects.toThrow(
 				'Invalid status transition'
 			);
-			await expect(manager.setTaskStatus(task.id, 'pending')).rejects.toThrow(
+			await expect(manager.setTaskStatus(task.id, 'open')).rejects.toThrow(
 				'Invalid status transition'
 			);
 		});
 
-		it('rejects transition from pending -> archived', async () => {
+		it('rejects transition from open -> archived', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await expect(manager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
 				'Invalid status transition'
@@ -640,35 +558,17 @@ describe('SpaceTaskManager', () => {
 			);
 		});
 
-		it('rejects transition from review -> archived', async () => {
-			const task = await manager.createTask({ title: 'T', description: '' });
-			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
-			await expect(manager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
-				'Invalid status transition'
-			);
-		});
-
-		it('rejects transition from draft -> archived', async () => {
-			const task = await manager.createTask({ title: 'T', description: '', status: 'draft' });
-			await expect(manager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
-				'Invalid status transition'
-			);
-		});
-
 		it('rejects archived -> every status (exhaustive)', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'completed');
+			await manager.setTaskStatus(task.id, 'done');
 			await manager.setTaskStatus(task.id, 'archived');
 
 			const allStatuses = [
-				'draft',
-				'pending',
+				'open',
 				'in_progress',
-				'review',
-				'completed',
-				'needs_attention',
+				'done',
+				'blocked',
 				'cancelled',
 				'archived',
 			] as const;
@@ -679,12 +579,12 @@ describe('SpaceTaskManager', () => {
 			}
 		});
 
-		it('allows cancelled -> pending transition (restart)', async () => {
+		it('allows cancelled -> open transition (restart)', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
 			await manager.cancelTask(task.id);
-			const restarted = await manager.setTaskStatus(task.id, 'pending');
-			expect(restarted.status).toBe('pending');
+			const restarted = await manager.setTaskStatus(task.id, 'open');
+			expect(restarted.status).toBe('open');
 		});
 
 		it('allows cancelled -> in_progress transition (reactivation)', async () => {
@@ -695,20 +595,20 @@ describe('SpaceTaskManager', () => {
 			expect(reactivated.status).toBe('in_progress');
 		});
 
-		it('allows completed -> in_progress transition (reactivation)', async () => {
+		it('allows done -> in_progress transition (reactivation)', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'completed', { result: 'done' });
+			await manager.setTaskStatus(task.id, 'done', { result: 'done' });
 			const reactivated = await manager.setTaskStatus(task.id, 'in_progress');
 			expect(reactivated.status).toBe('in_progress');
 		});
 
-		it('allows needs_attention -> pending transition (restart)', async () => {
+		it('allows blocked -> open transition (restart)', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
-			await manager.setTaskStatus(task.id, 'needs_attention', { error: 'err' });
-			const restarted = await manager.setTaskStatus(task.id, 'pending');
-			expect(restarted.status).toBe('pending');
+			await manager.setTaskStatus(task.id, 'blocked');
+			const restarted = await manager.setTaskStatus(task.id, 'open');
+			expect(restarted.status).toBe('open');
 		});
 	});
 

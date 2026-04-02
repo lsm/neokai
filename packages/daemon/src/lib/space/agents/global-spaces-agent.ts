@@ -70,7 +70,7 @@ export function buildGlobalSpacesAgentPrompt(): string {
 			`ad-hoc work that does not fit an existing workflow structure.\n` +
 			`- **\`get_task_detail\`** — Retrieve full task details including agent output, PR status, ` +
 			`and error information. Use this before deciding how to handle a failed or stuck task.\n` +
-			`- **\`retry_task\`** — Reset a \`needs_attention\` or \`cancelled\` task back to pending, ` +
+			`- **\`retry_task\`** — Reset a \`blocked\` or \`cancelled\` task back to pending, ` +
 			`optionally with an updated description. Use this when the failure was transient or when ` +
 			`you want to give the task a fresh start with clarified instructions.\n` +
 			`- **\`cancel_task\`** — Cancel a task and optionally cancel its entire workflow run. Use ` +
@@ -81,7 +81,7 @@ export function buildGlobalSpacesAgentPrompt(): string {
 
 	sections.push(
 		`\n## Task Coordination Decision Guide\n` +
-			`\nWhen a task enters the \`needs_attention\` state, use the following decision tree:\n` +
+			`\nWhen a task enters the \`blocked\` state, use the following decision tree:\n` +
 			`\n1. **Get the full context first**: Call \`get_task_detail\` to read the error output ` +
 			`and understand why the task failed.\n` +
 			`\n2. **Choose the right action:**\n` +

@@ -42,8 +42,8 @@ describe('seedPresetAgents', () => {
 	it('creates agents with correct roles', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
-		const roles = seeded.map((a) => a.role).sort();
-		expect(roles).toEqual(['coder', 'general', 'planner', 'qa', 'reviewer']);
+		const names = seeded.map((a) => a.name.toLowerCase()).sort();
+		expect(names).toEqual(['coder', 'general', 'planner', 'qa', 'reviewer']);
 	});
 
 	it('creates agents with correct names', async () => {
@@ -64,7 +64,7 @@ describe('seedPresetAgents', () => {
 
 	it('reviewer has restricted tools (no Write or Edit)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
-		const reviewer = seeded.find((a) => a.role === 'reviewer');
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
 		expect(reviewer).toBeDefined();
 		expect(reviewer?.tools).not.toContain('Write');
@@ -75,7 +75,7 @@ describe('seedPresetAgents', () => {
 
 	it('coder has full coding toolset', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
-		const coder = seeded.find((a) => a.role === 'coder');
+		const coder = seeded.find((a) => a.name === 'Coder');
 
 		expect(coder?.tools).toContain('Read');
 		expect(coder?.tools).toContain('Write');
@@ -152,7 +152,7 @@ describe('seedPresetAgents', () => {
 
 	it('General agent has restricted tools (no Write or Edit) — read-only Done node', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
-		const general = seeded.find((a) => a.role === 'general');
+		const general = seeded.find((a) => a.name === 'General');
 
 		expect(general).toBeDefined();
 		expect(general?.tools).not.toContain('Write');
@@ -165,7 +165,7 @@ describe('seedPresetAgents', () => {
 
 	it('QA agent has restricted tools (no Write or Edit)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
-		const qa = seeded.find((a) => a.role === 'qa');
+		const qa = seeded.find((a) => a.name === 'QA');
 
 		expect(qa).toBeDefined();
 		expect(qa?.tools).not.toContain('Write');
@@ -178,7 +178,7 @@ describe('seedPresetAgents', () => {
 
 	it('QA agent does not seed a hidden system prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
-		const qa = seeded.find((a) => a.role === 'qa');
+		const qa = seeded.find((a) => a.name === 'QA');
 
 		expect(qa).toBeDefined();
 		expect(qa?.systemPrompt).toBeUndefined();
@@ -186,7 +186,7 @@ describe('seedPresetAgents', () => {
 
 	it('General agent does not seed a hidden system prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
-		const general = seeded.find((a) => a.role === 'general');
+		const general = seeded.find((a) => a.name === 'General');
 
 		expect(general).toBeDefined();
 		expect(general?.systemPrompt).toBeUndefined();

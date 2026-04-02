@@ -721,9 +721,7 @@ export class SpaceRuntime {
 			// in the run has reached a terminal status. If so, mark the run as
 			// completed — cleanupTerminalExecutors() will emit the notification and
 			// remove the executor on the same tick.
-			if (
-				this.completionDetector.isComplete(runId, meta.workflow.channels ?? [], meta.workflow.nodes)
-			) {
+			if (this.completionDetector.isComplete(runId)) {
 				this.config.workflowRunRepo.transitionStatus(runId, 'done');
 				return;
 			}

@@ -70,16 +70,17 @@ function seedTask(
 		taskAgentSessionId?: string | null;
 		startedAt?: number | null;
 		workflowRunId?: string;
-		workflowNodeId?: string;
+		workflowNodeId?: string; // kept for compat but ignored — removed from space_tasks in M71
 	} = {}
 ): void {
 	const now = Date.now();
+	// M71: workflow_node_id removed from space_tasks; node tracking moved to node_executions
 	db.prepare(
 		`INSERT INTO space_tasks
        (id, space_id, task_number, title, description, status, priority, depends_on,
-        task_agent_session_id, started_at, workflow_run_id, workflow_node_id,
+        task_agent_session_id, started_at, workflow_run_id,
         created_at, updated_at)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, ?, ?, 'normal', '[]', ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, ?, ?, 'normal', '[]', ?, ?, ?, ?, ?)`
 	).run(
 		id,
 		spaceId,
@@ -90,7 +91,6 @@ function seedTask(
 		overrides.taskAgentSessionId ?? null,
 		overrides.startedAt !== undefined ? overrides.startedAt : now,
 		overrides.workflowRunId ?? null,
-		overrides.workflowNodeId ?? null,
 		now,
 		now
 	);
@@ -171,7 +171,8 @@ describe('autoCompleteStuckAgents', () => {
 	});
 
 	test('skips tasks not in in_progress status', async () => {
-		for (const status of ['pending', 'completed', 'needs_attention', 'cancelled'] as const) {
+		// M71: 'pending'→'open', 'completed'→'done'
+		for (const status of ['open', 'done', 'blocked', 'cancelled'] as const) {
 			const taskId = `task-${status}`;
 			seedTask(db, taskId, spaceId, {
 				status,
@@ -180,7 +181,7 @@ describe('autoCompleteStuckAgents', () => {
 			});
 		}
 
-		const tasks = ['pending', 'completed', 'needs_attention', 'cancelled'].map(
+		const tasks = ['open', 'done', 'blocked', 'cancelled'].map(
 			(s) => taskRepo.getTask(`task-${s}`)!
 		);
 		const tam = makeMockTAM(new Set(tasks.map((t) => t.id)));
@@ -286,7 +287,7 @@ describe('autoCompleteStuckAgents', () => {
 
 		// Task is now completed
 		const updated = taskRepo.getTask('task-stuck')!;
-		expect(updated.status).toBe('completed');
+		expect(updated.status).toBe('done');
 		expect(updated.completedAt).toBeDefined();
 		expect(updated.result).toContain('Auto-completed');
 		expect(updated.result).toContain('report_done');
@@ -374,7 +375,7 @@ describe('autoCompleteStuckAgents', () => {
 		const result = await autoCompleteStuckAgents([patchedTask], spaceId, taskRepo, tam, spy.notify);
 
 		expect(result).toHaveLength(1);
-		expect(taskRepo.getTask('task-nostartdate')!.status).toBe('completed');
+		expect(taskRepo.getTask('task-nostartdate')!.status).toBe('done');
 	});
 
 	test('handles multiple tasks — only completes the stuck ones', async () => {
@@ -416,7 +417,7 @@ describe('autoCompleteStuckAgents', () => {
 		expect(result).toHaveLength(1);
 		expect(result[0].taskId).toBe('task-stuck-a');
 
-		expect(taskRepo.getTask('task-stuck-a')!.status).toBe('completed');
+		expect(taskRepo.getTask('task-stuck-a')!.status).toBe('done');
 		expect(taskRepo.getTask('task-fresh-b')!.status).toBe('in_progress');
 		expect(taskRepo.getTask('task-dead-c')!.status).toBe('in_progress');
 		expect(taskRepo.getTask('task-no-session-d')!.status).toBe('in_progress');
@@ -445,7 +446,7 @@ describe('autoCompleteStuckAgents', () => {
 		expect(result).toHaveLength(3);
 		expect(spy.events).toHaveLength(3);
 		for (const id of ['task-s1', 'task-s2', 'task-s3']) {
-			expect(taskRepo.getTask(id)!.status).toBe('completed');
+			expect(taskRepo.getTask(id)!.status).toBe('done');
 		}
 	});
 
@@ -491,7 +492,7 @@ describe('autoCompleteStuckAgents', () => {
 		// Only task-short should be auto-completed
 		expect(result).toHaveLength(1);
 		expect(result[0].taskId).toBe('task-short');
-		expect(taskRepo.getTask('task-short')!.status).toBe('completed');
+		expect(taskRepo.getTask('task-short')!.status).toBe('done');
 		expect(taskRepo.getTask('task-long')!.status).toBe('in_progress');
 		expect(spy.events).toHaveLength(1);
 	});

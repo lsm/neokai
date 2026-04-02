@@ -50,8 +50,8 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(run.workflowId).toBe(WORKFLOW_ID);
 			expect(run.title).toBe('Run #1');
 			expect(run.status).toBe('pending');
-			expect(run.config).toBeUndefined();
-			expect(run.completedAt).toBeUndefined();
+			expect(run.completedAt).toBeNull();
+			expect(run.startedAt).toBeNull();
 		});
 
 		it('creates a run with description', () => {
@@ -91,7 +91,7 @@ describe('SpaceWorkflowRunRepository', () => {
 	});
 
 	describe('getActiveRuns', () => {
-		it('returns only in_progress runs (excludes pending and completed)', () => {
+		it('returns only in_progress runs (excludes pending and done)', () => {
 			// 'pending' is a transient state that should NOT appear in active runs
 			repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Pending' });
 
@@ -99,9 +99,9 @@ describe('SpaceWorkflowRunRepository', () => {
 			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Active' });
 			repo.transitionStatus(r2.id, 'in_progress');
 
-			// 'completed' — should not appear
-			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
-			repo.updateStatusUnchecked(r3.id, 'completed');
+			// 'done' — should not appear
+			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Done' });
+			repo.updateStatusUnchecked(r3.id, 'done');
 
 			const active = repo.getActiveRuns(spaceId);
 			expect(active).toHaveLength(1);
@@ -110,7 +110,7 @@ describe('SpaceWorkflowRunRepository', () => {
 	});
 
 	describe('getRehydratableRuns', () => {
-		it('returns in_progress and needs_attention runs; excludes pending, completed, cancelled', () => {
+		it('returns in_progress and blocked runs; excludes pending, done, cancelled', () => {
 			// 'pending' — excluded (transient creation state)
 			repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Pending' });
 
@@ -118,13 +118,13 @@ describe('SpaceWorkflowRunRepository', () => {
 			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'InProgress' });
 			repo.transitionStatus(r2.id, 'in_progress');
 
-			// 'needs_attention' (human gate blocked) — included so gate can be resolved after restart
-			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'NeedsAttention' });
-			repo.updateStatusUnchecked(r3.id, 'needs_attention');
+			// 'blocked' (human gate blocked) — included so gate can be resolved after restart
+			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Blocked' });
+			repo.updateStatusUnchecked(r3.id, 'blocked');
 
-			// 'completed' — excluded
-			const r4 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
-			repo.updateStatusUnchecked(r4.id, 'completed');
+			// 'done' — excluded
+			const r4 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Done' });
+			repo.updateStatusUnchecked(r4.id, 'done');
 
 			// 'cancelled' — excluded
 			const r5 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Cancelled' });
@@ -133,7 +133,7 @@ describe('SpaceWorkflowRunRepository', () => {
 			const rehydratable = repo.getRehydratableRuns(spaceId);
 			expect(rehydratable).toHaveLength(2);
 			const titles = rehydratable.map((r) => r.title).sort();
-			expect(titles).toEqual(['InProgress', 'NeedsAttention']);
+			expect(titles).toEqual(['Blocked', 'InProgress']);
 		});
 	});
 
@@ -145,9 +145,9 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(updated!.description).toBe('New desc');
 		});
 
-		it('sets completedAt when status is completed', () => {
+		it('sets completedAt when status is done', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
-			const updated = repo.updateRun(run.id, { status: 'completed' });
+			const updated = repo.updateRun(run.id, { status: 'done' });
 			expect(updated!.completedAt).toBeDefined();
 		});
 
@@ -156,6 +156,12 @@ describe('SpaceWorkflowRunRepository', () => {
 			const updated = repo.updateRun(run.id, { status: 'cancelled' });
 			expect(updated!.completedAt).toBeDefined();
 		});
+
+		it('sets startedAt when status is in_progress', () => {
+			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+			const updated = repo.updateRun(run.id, { status: 'in_progress' });
+			expect(updated!.startedAt).toBeDefined();
+		});
 	});
 
 	describe('updateStatusUnchecked', () => {
@@ -163,26 +169,6 @@ describe('SpaceWorkflowRunRepository', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
 			const updated = repo.updateStatusUnchecked(run.id, 'in_progress');
 			expect(updated!.status).toBe('in_progress');
-		});
-	});
-
-	describe('iteration tracking', () => {
-		it('defaults iterationCount to 0 and maxIterations to 5 (deprecated DB defaults)', () => {
-			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
-			// These are deprecated columns with DB-level defaults; still populated for backward compat
-			expect(run.iterationCount).toBe(0);
-			expect(run.maxIterations).toBe(5);
-		});
-
-		it('round-trips deprecated iteration fields through create → get', () => {
-			const run = repo.createRun({
-				spaceId,
-				workflowId: WORKFLOW_ID,
-				title: 'Round-trip',
-			});
-			const fetched = repo.getRun(run.id)!;
-			expect(fetched.iterationCount).toBe(0);
-			expect(fetched.maxIterations).toBe(5);
 		});
 	});
 
@@ -198,97 +184,25 @@ describe('SpaceWorkflowRunRepository', () => {
 		});
 	});
 
-	describe('goalId', () => {
-		it('creates a run with goalId and persists it', () => {
+	describe('startedAt field', () => {
+		it('starts as null', () => {
 			const run = repo.createRun({
 				spaceId,
 				workflowId: WORKFLOW_ID,
-				title: 'Goal Run',
-				goalId: 'goal-123',
+				title: 'R',
 			});
+			expect(run.startedAt).toBeNull();
+		});
 
-			expect(run.goalId).toBe('goal-123');
-
-			// Verify persistence via re-fetch
+		it('is set when transitioning to in_progress', () => {
+			const run = repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'Round-trip',
+			});
+			repo.transitionStatus(run.id, 'in_progress');
 			const fetched = repo.getRun(run.id)!;
-			expect(fetched.goalId).toBe('goal-123');
-		});
-
-		it('creates a run without goalId — maps to undefined', () => {
-			const run = repo.createRun({
-				spaceId,
-				workflowId: WORKFLOW_ID,
-				title: 'No Goal',
-			});
-
-			expect(run.goalId).toBeUndefined();
-
-			// Re-fetch from DB to confirm persistence
-			expect(repo.getRun(run.id)!.goalId).toBeUndefined();
-		});
-
-		it('goalId survives status and step updates', () => {
-			const run = repo.createRun({
-				spaceId,
-				workflowId: WORKFLOW_ID,
-				title: 'Goal Persist',
-				goalId: 'goal-456',
-			});
-
-			repo.transitionStatus(run.id, 'in_progress');
-
-			const updated = repo.getRun(run.id)!;
-			expect(updated.goalId).toBe('goal-456');
-			expect(updated.status).toBe('in_progress');
-		});
-
-		it('goalId is included when listing runs by space', () => {
-			repo.createRun({
-				spaceId,
-				workflowId: WORKFLOW_ID,
-				title: 'G1',
-				goalId: 'goal-a',
-			});
-			repo.createRun({
-				spaceId,
-				workflowId: WORKFLOW_ID,
-				title: 'G2',
-			});
-
-			const runs = repo.listBySpace(spaceId);
-			expect(runs).toHaveLength(2);
-			const withGoal = runs.find((r) => r.title === 'G1')!;
-			const withoutGoal = runs.find((r) => r.title === 'G2')!;
-			expect(withGoal.goalId).toBe('goal-a');
-			expect(withoutGoal.goalId).toBeUndefined();
-		});
-
-		it('goalId is included in getActiveRuns results', () => {
-			const run = repo.createRun({
-				spaceId,
-				workflowId: WORKFLOW_ID,
-				title: 'Active Goal',
-				goalId: 'goal-active',
-			});
-			repo.transitionStatus(run.id, 'in_progress');
-
-			const active = repo.getActiveRuns(spaceId);
-			expect(active).toHaveLength(1);
-			expect(active[0].goalId).toBe('goal-active');
-		});
-
-		it('goalId is included in getRehydratableRuns results', () => {
-			const run = repo.createRun({
-				spaceId,
-				workflowId: WORKFLOW_ID,
-				title: 'Needs Attn',
-				goalId: 'goal-rehydrate',
-			});
-			repo.updateStatusUnchecked(run.id, 'needs_attention');
-
-			const rehydratable = repo.getRehydratableRuns(spaceId);
-			expect(rehydratable).toHaveLength(1);
-			expect(rehydratable[0].goalId).toBe('goal-rehydrate');
+			expect(fetched.startedAt).not.toBeNull();
 		});
 	});
 });

@@ -58,11 +58,10 @@ describe('SpaceAgentManager', () => {
 
 	describe('create', () => {
 		it('creates an agent with minimal params', async () => {
-			const result = await manager.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
+			const result = await manager.create({ spaceId: 'space-1', name: 'Coder' });
 			expect(result.ok).toBe(true);
 			if (!result.ok) throw new Error('expected ok');
 			expect(result.value.name).toBe('Coder');
-			expect(result.value.role).toBe('coder');
 		});
 
 		it('creates agents with all valid roles', async () => {
@@ -74,21 +73,20 @@ describe('SpaceAgentManager', () => {
 					role,
 				});
 				expect(result.ok).toBe(true);
-				if (result.ok) expect(result.value.role).toBe(role);
 			}
 		});
 
 		it('rejects duplicate name (case-insensitive) within same space', async () => {
-			await manager.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
-			const dup = await manager.create({ spaceId: 'space-1', name: 'coder', role: 'coder' });
+			await manager.create({ spaceId: 'space-1', name: 'Coder' });
+			const dup = await manager.create({ spaceId: 'space-1', name: 'coder' });
 			expect(dup.ok).toBe(false);
 			if (!dup.ok) expect(dup.error).toMatch(/already exists/i);
 		});
 
 		it('allows same name in different spaces', async () => {
 			insertSpace(db, 'space-2');
-			await manager.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
-			const result = await manager.create({ spaceId: 'space-2', name: 'Coder', role: 'coder' });
+			await manager.create({ spaceId: 'space-1', name: 'Coder' });
+			const result = await manager.create({ spaceId: 'space-2', name: 'Coder' });
 			expect(result.ok).toBe(true);
 		});
 
@@ -96,7 +94,6 @@ describe('SpaceAgentManager', () => {
 			const result = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent',
-				role: 'coder',
 				model: 'some-future-model',
 			});
 			expect(result.ok).toBe(true);
@@ -109,7 +106,6 @@ describe('SpaceAgentManager', () => {
 			const bad = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent',
-				role: 'coder',
 				model: 'gpt-4',
 			});
 			expect(bad.ok).toBe(false);
@@ -118,7 +114,6 @@ describe('SpaceAgentManager', () => {
 			const good = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent2',
-				role: 'coder',
 				model: 'sonnet',
 			});
 			expect(good.ok).toBe(true);
@@ -133,7 +128,6 @@ describe('SpaceAgentManager', () => {
 			const result = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent',
-				role: 'coder',
 				model: 'claude-3-5-sonnet-20241022',
 			});
 			expect(result.ok).toBe(true);
@@ -155,7 +149,6 @@ describe('SpaceAgentManager', () => {
 			const bad = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent',
-				role: 'coder',
 				model: 'glm-4-flash',
 				provider: 'anthropic',
 			});
@@ -166,7 +159,6 @@ describe('SpaceAgentManager', () => {
 			const good = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent2',
-				role: 'coder',
 				model: 'glm-4-flash',
 				provider: 'glm',
 			});
@@ -180,32 +172,30 @@ describe('SpaceAgentManager', () => {
 
 	describe('update', () => {
 		it('updates fields', async () => {
-			const created = await manager.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
+			const created = await manager.create({ spaceId: 'space-1', name: 'Agent' });
 			if (!created.ok) throw new Error('create failed');
 
 			const result = await manager.update(created.value.id, {
 				name: 'Renamed',
 				description: 'New desc',
-				role: 'planner',
 			});
 			expect(result.ok).toBe(true);
 			if (result.ok) {
 				expect(result.value.name).toBe('Renamed');
 				expect(result.value.description).toBe('New desc');
-				expect(result.value.role).toBe('planner');
 			}
 		});
 
 		it('allows keeping the same name on update', async () => {
-			const created = await manager.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
+			const created = await manager.create({ spaceId: 'space-1', name: 'Agent' });
 			if (!created.ok) throw new Error('create failed');
 			const result = await manager.update(created.value.id, { name: 'Agent' });
 			expect(result.ok).toBe(true);
 		});
 
 		it('rejects renaming to an existing name', async () => {
-			await manager.create({ spaceId: 'space-1', name: 'Agent A', role: 'coder' });
-			const b = await manager.create({ spaceId: 'space-1', name: 'Agent B', role: 'planner' });
+			await manager.create({ spaceId: 'space-1', name: 'Agent A' });
+			const b = await manager.create({ spaceId: 'space-1', name: 'Agent B' });
 			if (!b.ok) throw new Error('create failed');
 
 			const result = await manager.update(b.value.id, { name: 'Agent A' });
@@ -217,7 +207,6 @@ describe('SpaceAgentManager', () => {
 			const created = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent',
-				role: 'coder',
 				model: 'opus',
 				provider: 'anthropic',
 			});
@@ -237,7 +226,6 @@ describe('SpaceAgentManager', () => {
 			const created = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent',
-				role: 'coder',
 				model: 'sonnet',
 				provider: 'anthropic',
 			});
@@ -261,7 +249,7 @@ describe('SpaceAgentManager', () => {
 
 	describe('delete', () => {
 		it('deletes an unreferenced agent', async () => {
-			const created = await manager.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
+			const created = await manager.create({ spaceId: 'space-1', name: 'Agent' });
 			if (!created.ok) throw new Error('create failed');
 
 			const result = manager.delete(created.value.id);
@@ -270,7 +258,7 @@ describe('SpaceAgentManager', () => {
 		});
 
 		it('blocks deletion when agent is referenced by workflow nodes', async () => {
-			const created = await manager.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
+			const created = await manager.create({ spaceId: 'space-1', name: 'Agent' });
 			if (!created.ok) throw new Error('create failed');
 
 			insertWorkflow(db, 'wf-1', 'space-1', 'Release Workflow');
@@ -298,8 +286,8 @@ describe('SpaceAgentManager', () => {
 
 	describe('listBySpaceId', () => {
 		it('returns all agents for a space', async () => {
-			await manager.create({ spaceId: 'space-1', name: 'A', role: 'coder' });
-			await manager.create({ spaceId: 'space-1', name: 'B', role: 'planner' });
+			await manager.create({ spaceId: 'space-1', name: 'A' });
+			await manager.create({ spaceId: 'space-1', name: 'B' });
 			const agents = manager.listBySpaceId('space-1');
 			expect(agents).toHaveLength(2);
 		});
@@ -307,8 +295,8 @@ describe('SpaceAgentManager', () => {
 
 	describe('getAgentsByIds', () => {
 		it('returns only requested agents', async () => {
-			const a = await manager.create({ spaceId: 'space-1', name: 'A', role: 'coder' });
-			await manager.create({ spaceId: 'space-1', name: 'B', role: 'planner' });
+			const a = await manager.create({ spaceId: 'space-1', name: 'A' });
+			await manager.create({ spaceId: 'space-1', name: 'B' });
 			if (!a.ok) throw new Error('create failed');
 
 			const result = manager.getAgentsByIds([a.value.id]);
@@ -326,7 +314,6 @@ describe('SpaceAgentManager', () => {
 			const result = await manager.create({
 				spaceId: 'space-1',
 				name: 'ToolAgent',
-				role: 'coder',
 				tools: ['Read', 'Write', 'Bash'],
 			});
 			expect(result.ok).toBe(true);
@@ -337,7 +324,6 @@ describe('SpaceAgentManager', () => {
 			const result = await manager.create({
 				spaceId: 'space-1',
 				name: 'BadTool',
-				role: 'coder',
 				tools: ['Read', 'FakeTool'],
 			});
 			expect(result.ok).toBe(false);
@@ -351,7 +337,6 @@ describe('SpaceAgentManager', () => {
 			const result = await manager.create({
 				spaceId: 'space-1',
 				name: 'MultiBad',
-				role: 'coder',
 				tools: ['NotATool', 'AlsoNotATool'],
 			});
 			expect(result.ok).toBe(false);
@@ -365,7 +350,6 @@ describe('SpaceAgentManager', () => {
 			const result = await manager.create({
 				spaceId: 'space-1',
 				name: 'NoTools',
-				role: 'coder',
 				tools: undefined,
 			});
 			expect(result.ok).toBe(true);
@@ -374,7 +358,7 @@ describe('SpaceAgentManager', () => {
 
 	describe('update — tools validation', () => {
 		it('accepts valid tool names on update', async () => {
-			const created = await manager.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
+			const created = await manager.create({ spaceId: 'space-1', name: 'Agent' });
 			if (!created.ok) throw new Error('create failed');
 
 			const result = await manager.update(created.value.id, { tools: ['Bash', 'Glob'] });
@@ -383,7 +367,7 @@ describe('SpaceAgentManager', () => {
 		});
 
 		it('rejects invalid tool names on update', async () => {
-			const created = await manager.create({ spaceId: 'space-1', name: 'Agent2', role: 'coder' });
+			const created = await manager.create({ spaceId: 'space-1', name: 'Agent2' });
 			if (!created.ok) throw new Error('create failed');
 
 			const result = await manager.update(created.value.id, { tools: ['InvalidTool'] });
@@ -395,7 +379,6 @@ describe('SpaceAgentManager', () => {
 			const created = await manager.create({
 				spaceId: 'space-1',
 				name: 'Agent3',
-				role: 'coder',
 				tools: ['Read'],
 			});
 			if (!created.ok) throw new Error('create failed');

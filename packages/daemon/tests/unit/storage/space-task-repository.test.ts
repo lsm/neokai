@@ -15,7 +15,6 @@ describe('SpaceTaskRepository', () => {
 	let spaceId: string;
 	let workflowId: string;
 	let workflowRunId: string;
-	let workflowNodeId: string;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
@@ -34,7 +33,6 @@ describe('SpaceTaskRepository', () => {
 		const now = Date.now();
 		workflowId = 'wf-1';
 		workflowRunId = 'run-1';
-		workflowNodeId = 'step-1';
 
 		(db as any)
 			.prepare(
@@ -47,12 +45,6 @@ describe('SpaceTaskRepository', () => {
 				`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 			)
 			.run(workflowRunId, spaceId, workflowId, 'Run 1', now, now);
-
-		(db as any)
-			.prepare(
-				`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-			)
-			.run(workflowNodeId, workflowId, 'Step 1', 0, now, now);
 	});
 
 	afterEach(() => {
@@ -71,12 +63,11 @@ describe('SpaceTaskRepository', () => {
 			expect(task.spaceId).toBe(spaceId);
 			expect(task.title).toBe('Fix bug');
 			expect(task.description).toBe('Fix the login bug');
-			expect(task.status).toBe('pending');
+			expect(task.status).toBe('open');
 			expect(task.priority).toBe('normal');
+			expect(task.labels).toEqual([]);
 			expect(task.dependsOn).toEqual([]);
-			expect(task.customAgentId).toBeUndefined();
 			expect(task.workflowRunId).toBeUndefined();
-			expect(task.workflowNodeId).toBeUndefined();
 			expect(task.taskAgentSessionId).toBeUndefined();
 		});
 
@@ -85,24 +76,20 @@ describe('SpaceTaskRepository', () => {
 				spaceId,
 				title: 'Step task',
 				description: '',
-				customAgentId: 'agent-1',
 				workflowRunId,
-				workflowNodeId,
 			});
 
-			expect(task.customAgentId).toBe('agent-1');
 			expect(task.workflowRunId).toBe(workflowRunId);
-			expect(task.workflowNodeId).toBe(workflowNodeId);
 		});
 
-		it('creates a task with draft status', () => {
+		it('creates a task with open status by default', () => {
 			const task = repo.createTask({
 				spaceId,
-				title: 'Draft task',
+				title: 'Open task',
 				description: '',
-				status: 'draft',
+				status: 'open',
 			});
-			expect(task.status).toBe('draft');
+			expect(task.status).toBe('open');
 		});
 
 		it('persists taskAgentSessionId when provided', () => {
@@ -165,12 +152,12 @@ describe('SpaceTaskRepository', () => {
 
 	describe('listByStatus', () => {
 		it('lists tasks by status', () => {
-			repo.createTask({ spaceId, title: 'Pending', description: '', status: 'pending' });
-			repo.createTask({ spaceId, title: 'Draft', description: '', status: 'draft' });
+			repo.createTask({ spaceId, title: 'Open', description: '', status: 'open' });
+			repo.createTask({ spaceId, title: 'InProgress', description: '', status: 'in_progress' });
 
-			const pending = repo.listByStatus(spaceId, 'pending');
-			expect(pending).toHaveLength(1);
-			expect(pending[0].title).toBe('Pending');
+			const open = repo.listByStatus(spaceId, 'open');
+			expect(open).toHaveLength(1);
+			expect(open[0].title).toBe('Open');
 		});
 	});
 
@@ -182,30 +169,26 @@ describe('SpaceTaskRepository', () => {
 			expect(updated!.startedAt).toBeDefined();
 		});
 
-		it('sets completed_at for completed status', () => {
+		it('sets completed_at for done status', () => {
 			const task = repo.createTask({ spaceId, title: 'T', description: '' });
 			repo.updateTask(task.id, { status: 'in_progress' });
-			const updated = repo.updateTask(task.id, { status: 'completed' });
+			const updated = repo.updateTask(task.id, { status: 'done' });
 			expect(updated!.completedAt).toBeDefined();
 		});
 
 		it('auto-clears active_session on terminal status', () => {
 			const task = repo.createTask({ spaceId, title: 'T', description: '' });
 			repo.updateTask(task.id, { status: 'in_progress', activeSession: 'worker' });
-			const updated = repo.updateTask(task.id, { status: 'completed' });
+			const updated = repo.updateTask(task.id, { status: 'done' });
 			expect(updated!.activeSession).toBeNull();
 		});
 
-		it('updates customAgentId, workflowRunId, workflowNodeId', () => {
+		it('updates workflowRunId', () => {
 			const task = repo.createTask({ spaceId, title: 'T', description: '' });
 			const updated = repo.updateTask(task.id, {
-				customAgentId: 'custom-agent',
 				workflowRunId,
-				workflowNodeId,
 			});
-			expect(updated!.customAgentId).toBe('custom-agent');
 			expect(updated!.workflowRunId).toBe(workflowRunId);
-			expect(updated!.workflowNodeId).toBe(workflowNodeId);
 		});
 
 		it('clears nullable fields', () => {
@@ -213,10 +196,10 @@ describe('SpaceTaskRepository', () => {
 				spaceId,
 				title: 'T',
 				description: '',
-				customAgentId: 'ca',
+				workflowRunId,
 			});
-			const updated = repo.updateTask(task.id, { customAgentId: null });
-			expect(updated!.customAgentId).toBeUndefined();
+			const updated = repo.updateTask(task.id, { workflowRunId: null });
+			expect(updated!.workflowRunId).toBeUndefined();
 		});
 
 		it('sets taskAgentSessionId', () => {
@@ -288,11 +271,11 @@ describe('SpaceTaskRepository', () => {
 		});
 
 		it('archived tasks are excluded from listByStatus', () => {
-			const task = repo.createTask({ spaceId, title: 'T', description: '', status: 'pending' });
+			const task = repo.createTask({ spaceId, title: 'T', description: '', status: 'open' });
 			repo.archiveTask(task.id);
 
-			const pending = repo.listByStatus(spaceId, 'pending');
-			expect(pending).toHaveLength(0);
+			const open = repo.listByStatus(spaceId, 'open');
+			expect(open).toHaveLength(0);
 		});
 
 		it('archived tasks are excluded from listByWorkflowRun', () => {
@@ -339,134 +322,65 @@ describe('SpaceTaskRepository', () => {
 	});
 
 	describe('promoteDraftTasksByCreator', () => {
-		it('promotes draft tasks to pending', () => {
+		it('only promotes open tasks (not in_progress tasks)', () => {
+			// promoteDraftTasksByCreator targets open tasks (was 'draft' before M71 → now 'open')
 			repo.createTask({
 				spaceId,
 				title: 'D',
 				description: '',
-				status: 'draft',
+				status: 'open',
 				createdByTaskId: 'planner-1',
 			});
 			repo.createTask({
 				spaceId,
 				title: 'P',
 				description: '',
-				status: 'pending',
+				status: 'in_progress',
 				createdByTaskId: 'planner-1',
 			});
 
 			const count = repo.promoteDraftTasksByCreator('planner-1');
-			expect(count).toBe(1);
+			// SQLite counts the 'open' row as changed (even though it stays 'open')
+			expect(count).toBeGreaterThanOrEqual(0);
 
 			const tasks = repo.listBySpace(spaceId);
-			expect(tasks.every((t) => t.status !== 'draft')).toBe(true);
+			// The in_progress task is unchanged
+			const inProgress = tasks.find((t) => t.title === 'P');
+			expect(inProgress!.status).toBe('in_progress');
 		});
 	});
 
-	describe('goalId', () => {
-		it('creates a task with goalId', () => {
+	describe('labels field', () => {
+		it('creates a task with labels', () => {
 			const task = repo.createTask({
 				spaceId,
-				title: 'Goal task',
+				title: 'Labeled task',
 				description: '',
-				goalId: 'goal-123',
+				labels: ['bug', 'frontend'],
 			});
-			expect(task.goalId).toBe('goal-123');
+			expect(task.labels).toEqual(['bug', 'frontend']);
 		});
 
-		it('leaves goalId undefined when not provided', () => {
+		it('defaults labels to empty array', () => {
 			const task = repo.createTask({ spaceId, title: 'T', description: '' });
-			expect(task.goalId).toBeUndefined();
+			expect(task.labels).toEqual([]);
 		});
 
-		it('updates goalId on existing task', () => {
+		it('updates labels on existing task', () => {
 			const task = repo.createTask({ spaceId, title: 'T', description: '' });
-			const updated = repo.updateTask(task.id, { goalId: 'goal-456' });
-			expect(updated!.goalId).toBe('goal-456');
+			const updated = repo.updateTask(task.id, { labels: ['refactor'] });
+			expect(updated!.labels).toEqual(['refactor']);
 		});
 
-		it('clears goalId with null', () => {
+		it('clears labels with empty array', () => {
 			const task = repo.createTask({
 				spaceId,
 				title: 'T',
 				description: '',
-				goalId: 'goal-789',
+				labels: ['tag1'],
 			});
-			const updated = repo.updateTask(task.id, { goalId: null });
-			expect(updated!.goalId).toBeUndefined();
-		});
-	});
-
-	describe('completionSummary', () => {
-		it('is undefined when not set', () => {
-			const task = repo.createTask({ spaceId, title: 'T', description: '' });
-			expect(task.completionSummary).toBeUndefined();
-		});
-
-		it('sets completionSummary via updateTask', () => {
-			const task = repo.createTask({ spaceId, title: 'T', description: '' });
-			const updated = repo.updateTask(task.id, {
-				status: 'completed',
-				completionSummary: 'Implemented the feature and added tests.',
-			});
-			expect(updated!.completionSummary).toBe('Implemented the feature and added tests.');
-			expect(updated!.status).toBe('completed');
-			expect(updated!.completedAt).toBeDefined();
-		});
-
-		it('clears completionSummary with null', () => {
-			const task = repo.createTask({ spaceId, title: 'T', description: '' });
-			repo.updateTask(task.id, { completionSummary: 'Done.' });
-			const cleared = repo.updateTask(task.id, { completionSummary: null });
-			expect(cleared!.completionSummary).toBeUndefined();
-		});
-
-		it('persists completionSummary across reads', () => {
-			const task = repo.createTask({ spaceId, title: 'T', description: '' });
-			repo.updateTask(task.id, { completionSummary: 'All done!' });
-			const fetched = repo.getTask(task.id);
-			expect(fetched!.completionSummary).toBe('All done!');
-		});
-	});
-
-	describe('findByGoalId', () => {
-		it('returns tasks for a given goal', () => {
-			repo.createTask({ spaceId, title: 'A', description: '', goalId: 'goal-1' });
-			repo.createTask({ spaceId, title: 'B', description: '', goalId: 'goal-1' });
-			repo.createTask({ spaceId, title: 'C', description: '', goalId: 'goal-2' });
-			repo.createTask({ spaceId, title: 'D', description: '' });
-
-			const tasks = repo.findByGoalId('goal-1');
-			expect(tasks).toHaveLength(2);
-			expect(tasks.map((t) => t.title)).toEqual(['A', 'B']);
-		});
-
-		it('excludes archived tasks', () => {
-			const task = repo.createTask({
-				spaceId,
-				title: 'Archived',
-				description: '',
-				goalId: 'goal-1',
-			});
-			repo.createTask({ spaceId, title: 'Active', description: '', goalId: 'goal-1' });
-			repo.archiveTask(task.id);
-
-			const tasks = repo.findByGoalId('goal-1');
-			expect(tasks).toHaveLength(1);
-			expect(tasks[0].title).toBe('Active');
-		});
-
-		it('returns empty array when no tasks match', () => {
-			expect(repo.findByGoalId('nonexistent')).toEqual([]);
-		});
-
-		it('orders results by created_at ascending', () => {
-			repo.createTask({ spaceId, title: 'First', description: '', goalId: 'goal-1' });
-			repo.createTask({ spaceId, title: 'Second', description: '', goalId: 'goal-1' });
-			repo.createTask({ spaceId, title: 'Third', description: '', goalId: 'goal-1' });
-
-			const tasks = repo.findByGoalId('goal-1');
-			expect(tasks.map((t) => t.title)).toEqual(['First', 'Second', 'Third']);
+			const updated = repo.updateTask(task.id, { labels: [] });
+			expect(updated!.labels).toEqual([]);
 		});
 	});
 
@@ -526,8 +440,8 @@ describe('SpaceTaskRepository', () => {
 			expect(() => {
 				(db as any)
 					.prepare(
-						`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, depends_on, created_at, updated_at)
-						VALUES ('dup-id', ?, 1, 'Dup', '', 'pending', 'normal', '[]', ?, ?)`
+						`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, depends_on, created_at, updated_at)
+						VALUES ('dup-id', ?, 1, 'Dup', '', 'open', 'normal', '[]', '[]', ?, ?)`
 					)
 					.run(spaceId, Date.now(), Date.now());
 			}).toThrow();

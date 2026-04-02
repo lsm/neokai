@@ -8,8 +8,7 @@
  * Non-terminal statuses (block completion): open, in_progress.
  */
 
-import type { SpaceTaskStatus, WorkflowChannel, WorkflowNode } from '@neokai/shared';
-import { resolveNodeAgents } from '@neokai/shared';
+import type { SpaceTaskStatus } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 
 /**
@@ -34,28 +33,17 @@ export class CompletionDetector {
 	 *
 	 * Completion conditions (all must hold):
 	 * 1. At least one task exists — workflow has started ("no tasks" → false).
-	 * 2. Every task has a terminal status — none in draft/pending/in_progress/review.
-	 * 3. Pending-but-blocked guard (only when channels + nodes are provided):
-	 *    no outbound channel targets a node that has not yet been activated.
-	 *    An unactivated downstream node means activation is still pending,
-	 *    so the run is NOT complete.
+	 * 2. Every task has a terminal status — none in open/in_progress.
 	 *
-	 * Nodes with no tasks are excluded from the check — they were never activated
-	 * and are not treated as blocking unless a channel explicitly points to them.
+	 * Note: the pending-but-blocked node activation guard (which previously checked
+	 * channel targets against activated workflow nodes) has been removed as part of
+	 * the schema migration that dropped `workflow_node_id` from `space_tasks`.
+	 * A replacement guard using `endNodeId` will be added in a subsequent task.
 	 *
 	 * @param workflowRunId  Workflow run to inspect.
-	 * @param channels       Workflow-level channel declarations. When provided
-	 *                       together with `nodes`, enables the pending-but-blocked
-	 *                       node activation guard.
-	 * @param nodes          All nodes in the workflow definition. Required when
-	 *                       `channels` is provided for the guard to function.
 	 */
-	isComplete(
-		workflowRunId: string,
-		channels: WorkflowChannel[] = [],
-		nodes: WorkflowNode[] = []
-	): boolean {
-		// Consider all tasks in the run.
+	isComplete(workflowRunId: string): boolean {
+		// Consider all tasks in the run (archived tasks are excluded by the repository).
 		const tasks = this.taskRepo.listByWorkflowRun(workflowRunId);
 
 		// Workflow has not started yet — no node tasks created
@@ -64,53 +52,6 @@ export class CompletionDetector {
 		// Any non-terminal task prevents completion
 		if (tasks.some((t) => !TERMINAL_TASK_STATUSES.has(t.status))) return false;
 
-		// Pending-but-blocked guard: check whether any channel targets an
-		// unactivated node. If so, the run is not yet complete.
-		if (channels.length > 0 && nodes.length > 0) {
-			// workflowNodeId is no longer tracked; skip node activation guard
-			const activatedNodeIds = new Set<string>();
-
-			for (const channel of channels) {
-				const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
-				for (const target of targets) {
-					const targetNodeId = this.resolveTargetNodeId(target, nodes);
-					if (targetNodeId !== undefined && !activatedNodeIds.has(targetNodeId)) {
-						return false;
-					}
-				}
-			}
-		}
-
 		return true;
-	}
-
-	/**
-	 * Resolves a channel `to` address string to the target node's ID.
-	 *
-	 * Handles three address formats:
-	 * - `"*"` — wildcard broadcast; returns undefined (skipped in guard).
-	 * - `"nodeId/agentName"` — cross-node DM; the nodeId prefix is the target.
-	 * - plain string — either a node name (fan-out) or an agent name (within/
-	 *   cross-node DM); scanned against `nodes`.
-	 *
-	 * Returns undefined when the address is a wildcard or cannot be resolved.
-	 */
-	private resolveTargetNodeId(to: string, nodes: WorkflowNode[]): string | undefined {
-		if (to === '*') return undefined;
-
-		// Cross-node format: "nodeId/agentName"
-		const slashIdx = to.indexOf('/');
-		if (slashIdx !== -1) {
-			return to.substring(0, slashIdx);
-		}
-
-		// Plain name — match by node name (fan-out) or agent name within a node
-		for (const node of nodes) {
-			if (node.name === to) return node.id;
-			const agents = resolveNodeAgents(node);
-			if (agents.some((a) => a.name === to)) return node.id;
-		}
-
-		return undefined;
 	}
 }
