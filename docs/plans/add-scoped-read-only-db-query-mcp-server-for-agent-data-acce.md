@@ -153,6 +153,7 @@ For the initial implementation, rely on `PRAGMA busy_timeout = 5000` for lock co
 ## Files to Modify
 
 - `packages/daemon/src/lib/neo/neo-agent-manager.ts` -- Inject `db-query` MCP server into Neo agent session (global scope)
+- `packages/daemon/src/lib/rpc-handlers/index.ts` -- Wire `dbPath` into NeoAgentManager via `setDbPath()`
 - `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` -- Inject `db-query` MCP server into room chat, worker, and leader sessions
 - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- Inject `db-query` MCP server into task agent sessions
 - `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` -- Inject `db-query` MCP server into space chat sessions
@@ -356,7 +357,9 @@ Wire the `db-query` MCP server into all agent session types. Each session gets i
 
 **Subtasks:**
 1. Modify `packages/daemon/src/lib/neo/neo-agent-manager.ts`:
-   - In `attachTools()`: create `createDbQueryMcpServer({ dbPath, scopeType: 'global', scopeValue: '' })` and merge it into the `setRuntimeMcpServers()` call alongside the existing `inProcessServers` and `registryMcpServers` under the key `'db-query'`
+   - Add a private `dbPath: string | null = null` field and a public `setDbPath(dbPath: string): void` setter method (follows the same order-independent wiring pattern as `setToolsConfig`, `setActionToolsConfig`, `setActivityLogger`)
+   - Call `deps.neoAgentManager.setDbPath(deps.db.getDatabasePath())` in `packages/daemon/src/lib/rpc-handlers/index.ts` alongside the existing `setToolsConfig()` call (lines 388 area) — `deps.db.getDatabasePath()` is already available in that scope
+   - In `attachTools()`: if `this.dbPath` is set, create `createDbQueryMcpServer({ dbPath: this.dbPath, scopeType: 'global', scopeValue: '' })` and merge it into the `setRuntimeMcpServers()` call alongside the existing `inProcessServers` and `registryMcpServers` under the key `'db-query'`
    - Store a reference to the created server instance for cleanup (call `close()` on session teardown)
    - The Neo agent's session context has no `roomId` or `spaceId`, so it receives `global` scope (all non-sensitive tables, no WHERE filter injection)
 2. Modify `packages/daemon/src/lib/room/runtime/room-runtime-service.ts`:
