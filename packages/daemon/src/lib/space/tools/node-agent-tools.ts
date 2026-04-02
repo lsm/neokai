@@ -31,7 +31,11 @@ import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
-import { evaluateGate } from '../runtime/gate-evaluator';
+import {
+	evaluateGate,
+	type GateScriptExecutorFn,
+	type GateScriptExecutorContext,
+} from '../runtime/gate-evaluator';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
@@ -135,6 +139,18 @@ export interface NodeAgentToolsConfig {
 	 * When absent, nodes are activated at the next `deliverMessage` call instead.
 	 */
 	onGateDataChanged?: (runId: string, gateId: string) => Promise<unknown>;
+	/**
+	 * Optional script executor for async gate evaluation.
+	 * When provided, `write_gate` and `read_gate` run gate scripts before
+	 * field evaluation. When absent, script-based gates report as open
+	 * (sync-only path — documented limitation for `list_gates`).
+	 */
+	scriptExecutor?: GateScriptExecutorFn;
+	/**
+	 * Context for gate script execution (workspace path, gate/run IDs).
+	 * Required when `scriptExecutor` is provided.
+	 */
+	scriptContext?: GateScriptExecutorContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +179,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		workflow,
 		gateDataRepo,
 		onGateDataChanged,
+		scriptExecutor,
+		scriptContext,
 	} = config;
 
 	return {
@@ -609,8 +627,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const record = gateDataRepo.get(workflowRunId, gateId);
 			const currentData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
-			// Evaluate current gate status (no scriptExecutor — script-based gates report as open)
-			const evalResult = await evaluateGate(gateDef, currentData);
+			// Evaluate current gate status. Uses scriptExecutor when available for
+			// async script-based gates; otherwise falls back to field-only evaluation.
+			const evalResult = await evaluateGate(
+				gateDef,
+				currentData,
+				scriptExecutor,
+				scriptContext ? { ...scriptContext, gateId } : undefined
+			);
 
 			return jsonResult({
 				success: true,
@@ -687,8 +711,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			// Merge data into gate_data table
 			const updated = gateDataRepo.merge(workflowRunId, gateId, data);
 
-			// Re-evaluate gate with updated data (no scriptExecutor — script-based gates report as open)
-			const evalResult = await evaluateGate(gateDef, updated.data);
+			// Re-evaluate gate with updated data. Uses scriptExecutor when available for
+			// async script-based gates; otherwise falls back to field-only evaluation.
+			const evalResult = await evaluateGate(
+				gateDef,
+				updated.data,
+				scriptExecutor,
+				scriptContext ? { ...scriptContext, gateId } : undefined
+			);
+
+			// Store script evaluation failure reason in gate data for frontend transport.
+			// This flows through the space.gateData.updated event to the UI (Task 4.6).
+			if (evalResult.reason && gateDef.script && !evalResult.open) {
+				updated.data._scriptResult = { success: false, reason: evalResult.reason };
+			}
 
 			// Trigger re-evaluation and lazy node activation for channels referencing
 			// this gate (fire-and-forget — response is not delayed waiting for activation).

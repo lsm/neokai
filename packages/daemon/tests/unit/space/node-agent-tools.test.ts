@@ -2022,3 +2022,391 @@ describe('list_peers — completion state', () => {
 		}
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: async gate evaluation (scriptExecutor + scriptContext)
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: async gate evaluation', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	function makeWorkflowWithGate(gate: Gate, spaceId: string): SpaceWorkflow {
+		return {
+			id: 'wf-1',
+			spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+	}
+
+	test('write_gate uses scriptExecutor when provided (script passes)', async () => {
+		const gate: Gate = {
+			id: 'gate-script-pass',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		// Script executor that returns success with merged data
+		const mockExecutor = async () => ({
+			success: true,
+			data: { ready: true },
+			error: undefined,
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-script-pass',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-script-pass', data: {} });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+	});
+
+	test('write_gate uses scriptExecutor when provided (script fails)', async () => {
+		const gate: Gate = {
+			id: 'gate-script-fail',
+			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: 'exit 1',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: false,
+			data: {},
+			error: 'Script check failed: exit code 1',
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-script-fail',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-script-fail', data: {} });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(false);
+		expect(data.reason).toContain('Script check failed');
+	});
+
+	test('write_gate stores _scriptResult in gate data when script fails', async () => {
+		const gate: Gate = {
+			id: 'gate-script-result',
+			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "fail"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: false,
+			data: {},
+			error: 'some reason',
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-script-result',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-script-result', data: {} });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(false);
+		// _scriptResult should be in updatedData — reason is the evalResult.reason
+		// which includes "Script check failed: " prefix from evaluateGate
+		const scriptResult = data.updatedData._scriptResult as { success: boolean; reason: string };
+		expect(scriptResult.success).toBe(false);
+		expect(scriptResult.reason).toContain('some reason');
+	});
+
+	test('write_gate emits space.gateData.updated with _scriptResult when script fails', async () => {
+		const gate: Gate = {
+			id: 'gate-event',
+			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: 'exit 1',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: false,
+			data: {},
+			error: 'Script failed',
+		});
+
+		const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
+		const fakeDaemonHub = {
+			emit: async (name: string, payload: unknown) => {
+				emitted.push({ name, payload: payload as Record<string, unknown> });
+			},
+		};
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: 'gate-event' },
+			daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		await handlers.write_gate({ gateId: 'gate-event', data: {} });
+
+		// Allow microtasks to flush
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(emitted).toHaveLength(1);
+		expect(emitted[0].name).toBe('space.gateData.updated');
+		const payload = emitted[0].payload;
+		expect(payload.gateId).toBe('gate-event');
+		// _scriptResult should be in the emitted data
+		expect(payload.data).toBeDefined();
+		const gateData = payload.data as Record<string, unknown>;
+		expect(gateData._scriptResult).toEqual({
+			success: false,
+			reason: expect.stringContaining('Script failed'),
+		});
+	});
+
+	test('write_gate does not store _scriptResult when script passes', async () => {
+		const gate: Gate = {
+			id: 'gate-no-result',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: true,
+			data: { ready: true },
+			error: undefined,
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: 'gate-no-result' },
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-no-result', data: {} });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+		expect(data.updatedData._scriptResult).toBeUndefined();
+	});
+
+	test('read_gate uses scriptExecutor when provided', async () => {
+		const gate: Gate = {
+			id: 'gate-read-script',
+			fields: [],
+			script: {
+				interpreter: 'bash',
+				source: 'exit 1',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: false,
+			data: {},
+			error: 'Script failed',
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-read-script',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.read_gate({ gateId: 'gate-read-script' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(false);
+		expect(data.reason).toContain('Script check failed');
+	});
+
+	test('read_gate without scriptExecutor reports script-only gate as open', async () => {
+		const gate: Gate = {
+			id: 'gate-read-no-exec',
+			fields: [],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "should not run"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		// No scriptExecutor provided — script-only gates report as open (documented limitation)
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.read_gate({ gateId: 'gate-read-no-exec' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+	});
+
+	test('write_gate without scriptExecutor reports script-only gate as open', async () => {
+		const gate: Gate = {
+			id: 'gate-write-no-exec',
+			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "should not run"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		// No scriptExecutor provided — script check is skipped
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-write-no-exec', data: { x: true } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// Gate should be open because script is skipped and field check passes
+		expect(data.gateOpen).toBe(true);
+	});
+
+	test('scriptExecutor receives correct context with gateId', async () => {
+		const gate: Gate = {
+			id: 'gate-context-check',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		let receivedContext: { workspacePath: string; runId: string; gateId: string } | null = null;
+		const mockExecutor = async (
+			_script: import('@neokai/shared').GateScript,
+			context: { workspacePath: string; runId: string; gateId: string }
+		) => {
+			receivedContext = context;
+			return { success: true, data: { ready: true }, error: undefined };
+		};
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: { workspacePath: '/my-workspace', runId: 'run-123', gateId: '' },
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		await handlers.write_gate({ gateId: 'gate-context-check', data: {} });
+
+		expect(receivedContext).not.toBeNull();
+		expect(receivedContext!.workspacePath).toBe('/my-workspace');
+		expect(receivedContext!.runId).toBe('run-123');
+		// gateId should be overridden per-gate from the handler
+		expect(receivedContext!.gateId).toBe('gate-context-check');
+	});
+
+	test('script-only gate does not crash at field authorization (no fields)', async () => {
+		// Script-only gate (no fields) — any write attempt should be rejected at
+		// the field authorization layer (fieldMap will be empty), not crash.
+		const gate: Gate = {
+			id: 'gate-script-only-no-crash',
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: true,
+			data: {},
+			error: undefined,
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-script-only-no-crash',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({
+			gateId: 'gate-script-only-no-crash',
+			data: { anyKey: 'val' },
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not declared');
+	});
+});
