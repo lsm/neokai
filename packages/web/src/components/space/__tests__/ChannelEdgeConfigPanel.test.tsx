@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Unit tests for ChannelEdgeConfigPanel — gate summary section
  *
@@ -11,6 +10,7 @@
  * - Gate with label, color, and script shows all three indicators
  * - Gate with script but no fields does NOT show "No fields defined yet"
  * - Gate with no fields and no script shows "No fields defined yet"
+ * - Gate with both fields and script renders field rows
  * - No gate shows "No gate — always open" text
  */
 
@@ -195,6 +195,25 @@ describe('ChannelEdgeConfigPanel — gate summary', () => {
 			<ChannelEdgeConfigPanel {...defaultProps({ channel, gates: [gate] })} />
 		);
 		expect(getByText('No fields defined yet')).toBeTruthy();
+	});
+
+	it('renders field rows when gate has both fields and script', () => {
+		const gate = makeGate({
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+				{ name: 'score', type: 'number', writers: ['*'], check: { op: 'exists' } },
+			],
+			script: { interpreter: 'bash', source: 'true' },
+		});
+		const channel = makeChannel({ gateId: gate.id });
+		const { getByText, getByTestId, queryByText } = render(
+			<ChannelEdgeConfigPanel {...defaultProps({ channel, gates: [gate] })} />
+		);
+		// Field rows should still be rendered alongside the script indicator
+		expect(getByText('approved')).toBeTruthy();
+		expect(getByText('score')).toBeTruthy();
+		expect(queryByText('No fields defined yet')).toBeNull();
+		expect(getByTestId('gate-script-indicator')).toBeTruthy();
 	});
 
 	it('does not show label badge color when gate has label but no color', () => {
