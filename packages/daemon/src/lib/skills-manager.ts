@@ -5,6 +5,9 @@
  * Enforces input validation for security-sensitive fields before persisting.
  */
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { generateUUID } from '@neokai/shared';
 import type {
 	AppSkill,
@@ -18,6 +21,39 @@ import type { SkillRepository } from '../storage/repositories/skill-repository';
 import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-server-repository';
 import type { JobQueueRepository } from '../storage/repositories/job-queue-repository';
 import { SKILL_VALIDATE } from './job-queue-constants';
+
+/**
+ * Convert a GitHub tree/blob URL to a raw content URL.
+ *
+ * Accepts:
+ * - GitHub tree URLs: https://github.com/{owner}/{repo}/tree/{branch}/{path}
+ *   → https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}/SKILL.md
+ * - GitHub blob URLs: https://github.com/{owner}/{repo}/blob/{branch}/{path}
+ *   → https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}
+ * - Raw URLs (returned unchanged)
+ */
+export function resolveSkillRawUrl(url: string): string {
+	// Already a raw URL
+	if (url.startsWith('https://raw.githubusercontent.com/')) {
+		return url;
+	}
+
+	// GitHub tree URL: https://github.com/{owner}/{repo}/tree/{branch}/{path}
+	const treeMatch = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/);
+	if (treeMatch) {
+		const [, owner, repo, branch, path] = treeMatch;
+		return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}/SKILL.md`;
+	}
+
+	// GitHub blob URL: https://github.com/{owner}/{repo}/blob/{branch}/{path}
+	const blobMatch = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/);
+	if (blobMatch) {
+		const [, owner, repo, branch, path] = blobMatch;
+		return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+	}
+
+	throw new Error(`Cannot resolve raw content URL from: ${url}`);
+}
 
 export class SkillsManager {
 	private jobQueue: JobQueueRepository | null = null;
@@ -123,6 +159,68 @@ export class SkillsManager {
 
 	getEnabledSkills(): AppSkill[] {
 		return this.repo.findEnabled();
+	}
+
+	/**
+	 * Install a skill from a git repository URL.
+	 *
+	 * Accepts GitHub tree URLs like:
+	 *   https://github.com/openai/skills/tree/main/skills/.curated/playwright
+	 *
+	 * Fetches the SKILL.md (converted via resolveSkillRawUrl) from the repo,
+	 * stores it at ~/.neokai/skills/{commandName}/SKILL.md,
+	 * writes it to {workspaceRoot}/.claude/commands/{commandName}.md (if provided),
+	 * and registers a builtin skill entry in the DB.
+	 *
+	 * Idempotent: if a skill with the same name already exists, returns it unchanged.
+	 */
+	async installSkillFromGit(
+		repoUrl: string,
+		commandName: string,
+		workspaceRoot?: string
+	): Promise<AppSkill> {
+		const rawUrl = resolveSkillRawUrl(repoUrl);
+
+		const response = await fetch(rawUrl);
+		if (!response.ok) {
+			throw new Error(
+				`Failed to fetch skill from ${rawUrl}: ${response.status} ${response.statusText}`
+			);
+		}
+		const content = await response.text();
+
+		// Store to ~/.neokai/skills/{commandName}/
+		const skillsDir = join(homedir(), '.neokai', 'skills', commandName);
+		await mkdir(skillsDir, { recursive: true });
+		await writeFile(join(skillsDir, 'SKILL.md'), content, 'utf-8');
+
+		// Write to workspace .claude/commands/ if workspaceRoot provided
+		if (workspaceRoot) {
+			const commandsDir = join(workspaceRoot, '.claude', 'commands');
+			await mkdir(commandsDir, { recursive: true });
+			await writeFile(join(commandsDir, `${commandName}.md`), content, 'utf-8');
+		}
+
+		// Return existing skill if already registered (idempotent)
+		const existing = this.repo.getByName(commandName);
+		if (existing) {
+			return existing;
+		}
+
+		const skill: AppSkill = {
+			id: generateUUID(),
+			name: commandName,
+			displayName: commandName,
+			description: `Skill installed from ${repoUrl}`,
+			sourceType: 'builtin',
+			config: { type: 'builtin', commandName },
+			enabled: true,
+			builtIn: false, // user-installed, can be deleted
+			validationStatus: 'valid',
+			createdAt: Date.now(),
+		};
+		this.repo.insert(skill);
+		return this.repo.get(skill.id)!;
 	}
 
 	/**

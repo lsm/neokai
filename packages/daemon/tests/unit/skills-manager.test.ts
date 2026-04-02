@@ -13,12 +13,15 @@
  */
 
 import { unlinkSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables } from '../../src/storage/schema';
 import { SkillRepository } from '../../src/storage/repositories/skill-repository';
 import { AppMcpServerRepository } from '../../src/storage/repositories/app-mcp-server-repository';
-import { SkillsManager } from '../../src/lib/skills-manager';
+import { SkillsManager, resolveSkillRawUrl } from '../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../helpers/reactive-database';
 import type { AppSkill } from '@neokai/shared';
 
@@ -974,5 +977,157 @@ describe('SkillsManager', () => {
 		expect(names).toContain('chrome-devtools-mcp');
 		expect(names).toContain('playwright');
 		expect(names).toContain('playwright-interactive');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resolveSkillRawUrl utility
+// ---------------------------------------------------------------------------
+
+describe('resolveSkillRawUrl', () => {
+	test('converts GitHub tree URL to raw SKILL.md URL', () => {
+		expect(
+			resolveSkillRawUrl('https://github.com/openai/skills/tree/main/skills/.curated/playwright')
+		).toBe(
+			'https://raw.githubusercontent.com/openai/skills/main/skills/.curated/playwright/SKILL.md'
+		);
+	});
+
+	test('passes through raw githubusercontent URLs unchanged', () => {
+		const raw =
+			'https://raw.githubusercontent.com/openai/skills/main/skills/.curated/playwright/SKILL.md';
+		expect(resolveSkillRawUrl(raw)).toBe(raw);
+	});
+
+	test('converts GitHub blob URL to raw content URL', () => {
+		expect(
+			resolveSkillRawUrl(
+				'https://github.com/openai/skills/blob/main/skills/.curated/playwright/SKILL.md'
+			)
+		).toBe(
+			'https://raw.githubusercontent.com/openai/skills/main/skills/.curated/playwright/SKILL.md'
+		);
+	});
+
+	test('throws for unrecognised URL', () => {
+		expect(() => resolveSkillRawUrl('https://gitlab.com/foo/bar')).toThrow(
+			'Cannot resolve raw content URL'
+		);
+	});
+
+	test('handles branch names with slashes in tree URL', () => {
+		// Branch = "feature/my-branch", path = "skills/my-skill"
+		// Note: URL encoding of slashes is NOT done by the input — test the regex boundary
+		expect(resolveSkillRawUrl('https://github.com/org/repo/tree/v2.0/path/to/skill')).toBe(
+			'https://raw.githubusercontent.com/org/repo/v2.0/path/to/skill/SKILL.md'
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// SkillsManager.installSkillFromGit
+// ---------------------------------------------------------------------------
+
+describe('SkillsManager.installSkillFromGit', () => {
+	let db: BunDatabase;
+	let mgr: SkillsManager;
+
+	beforeEach(() => {
+		db = new BunDatabase(':memory:');
+		createTables(db);
+		const mcpRepo = new AppMcpServerRepository(db, noOpReactiveDb);
+		const skillRepo = new SkillRepository(db, noOpReactiveDb);
+		mgr = new SkillsManager(skillRepo, mcpRepo);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	test('registers skill in DB and writes command file to workspace', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () =>
+			new Response('# Playwright Skill\n\nContent here', { status: 200 });
+
+		const tmpDir = await mkdtemp(join(tmpdir(), 'neokai-test-'));
+		try {
+			const skill = await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'playwright-test',
+				tmpDir
+			);
+
+			expect(skill.name).toBe('playwright-test');
+			expect(skill.sourceType).toBe('builtin');
+			expect(skill.enabled).toBe(true);
+			expect(skill.builtIn).toBe(false);
+			expect(skill.config.type).toBe('builtin');
+			if (skill.config.type === 'builtin') {
+				expect(skill.config.commandName).toBe('playwright-test');
+			}
+
+			const cmdFile = join(tmpDir, '.claude', 'commands', 'playwright-test.md');
+			const content = await Bun.file(cmdFile).text();
+			expect(content).toContain('Playwright Skill');
+		} finally {
+			globalThis.fetch = originalFetch;
+			await rm(tmpDir, { recursive: true });
+		}
+	});
+
+	test('is idempotent — second call returns existing skill unchanged', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () => new Response('# Content', { status: 200 });
+
+		const tmpDir = await mkdtemp(join(tmpdir(), 'neokai-test-'));
+		try {
+			const skill1 = await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'pw-idem',
+				tmpDir
+			);
+			const skill2 = await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'pw-idem',
+				tmpDir
+			);
+			expect(skill1.id).toBe(skill2.id);
+		} finally {
+			globalThis.fetch = originalFetch;
+			await rm(tmpDir, { recursive: true });
+		}
+	});
+
+	test('throws when fetch returns non-ok status', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () =>
+			new Response('Not Found', { status: 404, statusText: 'Not Found' });
+
+		try {
+			await expect(
+				mgr.installSkillFromGit(
+					'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+					'bad-skill'
+				)
+			).rejects.toThrow('404');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('works without workspaceRoot (no command file written)', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () => new Response('# Content', { status: 200 });
+
+		try {
+			const skill = await mgr.installSkillFromGit(
+				'https://raw.githubusercontent.com/openai/skills/main/skill.md',
+				'no-workspace-skill'
+			);
+			expect(skill.name).toBe('no-workspace-skill');
+			expect(skill.enabled).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 });

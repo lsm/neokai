@@ -2,12 +2,13 @@
  * Skills RPC Handlers
  *
  * Exposes the application-level Skills registry via RPC:
- * - skill.list       — list all skills
- * - skill.get        — get a single skill by id
- * - skill.create     — add a new skill, emit skills.changed
- * - skill.update     — update a skill, emit skills.changed
- * - skill.delete     — remove a skill, emit skills.changed
- * - skill.setEnabled — toggle enabled flag, emit skills.changed
+ * - skill.list           — list all skills
+ * - skill.get            — get a single skill by id
+ * - skill.create         — add a new skill, emit skills.changed
+ * - skill.update         — update a skill, emit skills.changed
+ * - skill.delete         — remove a skill, emit skills.changed
+ * - skill.setEnabled     — toggle enabled flag, emit skills.changed
+ * - skill.installFromGit — install a skill from a git repository URL, emit skills.changed
  */
 
 import type { MessageHub } from '@neokai/shared';
@@ -35,7 +36,8 @@ function emitChanged(daemonHub: DaemonHub): void {
 export function registerSkillHandlers(
 	messageHub: MessageHub,
 	skillsManager: SkillsManager,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	workspaceRoot?: string
 ): void {
 	// skill.list — returns AppSkill[]
 	messageHub.onRequest('skill.list', async () => {
@@ -118,6 +120,23 @@ export function registerSkillHandlers(
 		const skill = skillsManager.setSkillEnabled(id, enabled);
 		emitChanged(daemonHub);
 		log.info(`skill.setEnabled: set ${id} enabled=${enabled}`);
+		return { skill } satisfies { skill: AppSkill };
+	});
+
+	// skill.installFromGit — fetch a SKILL.md from a git repo URL and register it
+	messageHub.onRequest('skill.installFromGit', async (data) => {
+		const { repoUrl, commandName } = data as { repoUrl: string; commandName: string };
+
+		if (!repoUrl) {
+			throw new Error('skill.installFromGit requires repoUrl');
+		}
+		if (!commandName) {
+			throw new Error('skill.installFromGit requires commandName');
+		}
+
+		const skill = await skillsManager.installSkillFromGit(repoUrl, commandName, workspaceRoot);
+		emitChanged(daemonHub);
+		log.info(`skill.installFromGit: installed "${skill.name}" from ${repoUrl}`);
 		return { skill } satisfies { skill: AppSkill };
 	});
 }

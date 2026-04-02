@@ -6,6 +6,8 @@
 import { createDaemonApp } from '@neokai/daemon/app';
 import type { Config } from '@neokai/daemon/config';
 import { createLogger } from '@neokai/shared';
+import { mkdir, writeFile, access } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
 	createCorsPreflightResponse,
 	isWebSocketPath,
@@ -13,7 +15,7 @@ import {
 	shouldHaveImmutableCache,
 	isHtmlFile,
 } from './cli-utils';
-import { embeddedAssets } from './embedded-assets';
+import { embeddedAssets, embeddedBuiltinCommands } from './embedded-assets';
 
 const log = createLogger('kai:cli:prod-server');
 
@@ -66,6 +68,25 @@ export async function startProdServer(config: Config) {
 
 	process.on('SIGINT', () => shutdown('SIGINT'));
 	process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+	// Extract embedded built-in command files to the workspace .claude/commands/ dir.
+	// This makes slash commands available to the SDK when running as a compiled binary.
+	// Existing user-customized files are not overwritten.
+	if (config.workspaceRoot && embeddedBuiltinCommands.size > 0) {
+		const commandsDir = join(config.workspaceRoot, '.claude', 'commands');
+		await mkdir(commandsDir, { recursive: true });
+		for (const [name, filePath] of embeddedBuiltinCommands) {
+			const dest = join(commandsDir, `${name}.md`);
+			const exists = await access(dest)
+				.then(() => true)
+				.catch(() => false);
+			if (!exists) {
+				const content = await Bun.file(filePath).text();
+				await writeFile(dest, content);
+			}
+		}
+		log.info(`Extracted ${embeddedBuiltinCommands.size} built-in commands to ${commandsDir}`);
+	}
 
 	// Create daemon app (returns Bun server)
 	try {
