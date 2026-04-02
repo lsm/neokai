@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type {
+	NodeExecution,
 	Space,
 	SpaceTask,
 	SpaceWorkflowRun,
@@ -175,6 +176,7 @@ function makeMockHub() {
 			// spaceWorkflow handlers return wrapped { workflow }
 			if (method === 'spaceWorkflow.create') return { workflow: makeWorkflow('new-wf') };
 			if (method === 'spaceWorkflow.update') return { workflow: makeWorkflow('wf1') };
+			if (method === 'nodeExecution.list') return { executions: [] };
 			// space.listWithTasks returns array of spaces enriched with tasks
 			if (method === 'space.listWithTasks')
 				return [
@@ -1135,5 +1137,268 @@ describe('SpaceStore — refresh', () => {
 		await spaceStore.refresh();
 
 		expect(mockHub.request).not.toHaveBeenCalledWith('space.overview', expect.anything());
+	});
+});
+
+// -------------------------------------------------------
+// Helper: create NodeExecution fixtures
+// -------------------------------------------------------
+
+function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
+	return {
+		id: overrides.id ?? 'exec-1',
+		workflowRunId: overrides.workflowRunId ?? 'run-1',
+		workflowNodeId: overrides.workflowNodeId ?? 'node-1',
+		agentName: overrides.agentName ?? 'coder',
+		agentId: overrides.agentId ?? 'agent-1',
+		agentSessionId: overrides.agentSessionId ?? null,
+		status: overrides.status ?? ('pending' as NodeExecution['status']),
+		result: overrides.result ?? null,
+		createdAt: overrides.createdAt ?? Date.now(),
+		startedAt: overrides.startedAt ?? null,
+		completedAt: overrides.completedAt ?? null,
+		updatedAt: overrides.updatedAt ?? Date.now(),
+	};
+}
+
+describe('SpaceStore — node execution LiveQuery subscriptions', () => {
+	beforeEach(resetStore);
+	afterEach(() => vi.clearAllMocks());
+
+	it('subscribes to LiveQuery when workflowRun.created fires', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		const run = makeRun('run-1');
+		handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
+
+		expect(spaceStore.workflowRuns.value).toContainEqual(run);
+		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+			queryName: 'nodeExecutions.byRun',
+			params: ['run-1'],
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+		});
+	});
+
+	it('does not subscribe to LiveQuery if spaceId does not match', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		const run = makeRun('run-2');
+		handler({ spaceId: 'space-other', runId: run.id, run, sessionId: 's1' });
+
+		expect(spaceStore.workflowRuns.value).not.toContainEqual(run);
+		expect(mockHub.request).not.toHaveBeenCalledWith(
+			'liveQuery.subscribe',
+			expect.objectContaining({ params: ['run-2'] })
+		);
+	});
+
+	it('applies LiveQuery snapshot to nodeExecutions signal', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		const run = makeRun('run-1');
+		handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
+
+		const exec1 = makeNodeExecution({
+			id: 'exec-1',
+			workflowRunId: 'run-1',
+			workflowNodeId: 'node-a',
+		});
+		const exec2 = makeNodeExecution({
+			id: 'exec-2',
+			workflowRunId: 'run-1',
+			workflowNodeId: 'node-b',
+		});
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			rows: [exec1, exec2],
+			version: 1,
+		});
+
+		expect(spaceStore.nodeExecutions.value).toEqual([exec1, exec2]);
+	});
+
+	it('applies LiveQuery delta (add/update/remove) to nodeExecutions signal', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		const run = makeRun('run-1');
+		handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
+
+		const exec1 = makeNodeExecution({ id: 'exec-1', status: 'pending' });
+		const exec2 = makeNodeExecution({ id: 'exec-2', status: 'pending' });
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			rows: [exec1, exec2],
+			version: 1,
+		});
+
+		const exec1Updated = { ...exec1, status: 'done' as const, result: 'All good' };
+		const exec3 = makeNodeExecution({ id: 'exec-3', workflowNodeId: 'node-c' });
+		fireMockEvent('liveQuery.delta', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			updated: [exec1Updated],
+			removed: [exec2],
+			added: [exec3],
+			version: 2,
+		});
+
+		expect(spaceStore.nodeExecutions.value).toHaveLength(2);
+		expect(spaceStore.nodeExecutions.value).toContainEqual(exec1Updated);
+		expect(spaceStore.nodeExecutions.value).toContainEqual(exec3);
+		expect(spaceStore.nodeExecutions.value).not.toContainEqual(exec2);
+	});
+
+	it('replaces snapshot data for a specific run without affecting other runs', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+		handler({ spaceId: 'space-1', runId: 'run-2', run: makeRun('run-2'), sessionId: 's1' });
+
+		const exec1 = makeNodeExecution({ id: 'exec-1', workflowRunId: 'run-1' });
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			rows: [exec1],
+			version: 1,
+		});
+
+		const exec2 = makeNodeExecution({ id: 'exec-2', workflowRunId: 'run-2' });
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-2',
+			rows: [exec2],
+			version: 1,
+		});
+
+		expect(spaceStore.nodeExecutions.value).toHaveLength(2);
+
+		const exec1New = makeNodeExecution({ id: 'exec-1-new', workflowRunId: 'run-1' });
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			rows: [exec1New],
+			version: 2,
+		});
+
+		expect(spaceStore.nodeExecutions.value).toHaveLength(2);
+		expect(spaceStore.nodeExecutions.value).toContainEqual(exec1New);
+		expect(spaceStore.nodeExecutions.value).toContainEqual(exec2);
+	});
+
+	it('handles empty snapshot (clears executions for that run)', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+
+		const exec1 = makeNodeExecution({ id: 'exec-1', workflowRunId: 'run-1' });
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			rows: [exec1],
+			version: 1,
+		});
+		expect(spaceStore.nodeExecutions.value).toHaveLength(1);
+
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			rows: [],
+			version: 2,
+		});
+		expect(spaceStore.nodeExecutions.value).toHaveLength(0);
+	});
+
+	it('computes nodeExecutionsByNodeId correctly', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+
+		const exec1 = makeNodeExecution({
+			id: 'exec-1',
+			workflowRunId: 'run-1',
+			workflowNodeId: 'node-a',
+		});
+		const exec2 = makeNodeExecution({
+			id: 'exec-2',
+			workflowRunId: 'run-1',
+			workflowNodeId: 'node-a',
+		});
+		const exec3 = makeNodeExecution({
+			id: 'exec-3',
+			workflowRunId: 'run-1',
+			workflowNodeId: 'node-b',
+		});
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			rows: [exec1, exec2, exec3],
+			version: 1,
+		});
+
+		const byNode = spaceStore.nodeExecutionsByNodeId.value;
+		expect(byNode.get('node-a')).toEqual([exec1, exec2]);
+		expect(byNode.get('node-b')).toEqual([exec3]);
+		expect(byNode.get('node-nonexistent')).toBeUndefined();
+	});
+
+	it('ignores snapshot events for wrong subscriptionId', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+
+		const exec1 = makeNodeExecution({ id: 'exec-1' });
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'wrong-subscription-id',
+			rows: [exec1],
+			version: 1,
+		});
+
+		expect(spaceStore.nodeExecutions.value).toHaveLength(0);
+	});
+
+	it('clears nodeExecutions on space switch', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+
+		const exec1 = makeNodeExecution({ id: 'exec-1' });
+		fireMockEvent('liveQuery.snapshot', {
+			subscriptionId: 'nodeExecutions-byRun-run-1',
+			rows: [exec1],
+			version: 1,
+		});
+		expect(spaceStore.nodeExecutions.value).toHaveLength(1);
+
+		// Override mock for space-2
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview')
+				return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
+			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceWorkflow.list') return { workflows: [] };
+			if (method === 'nodeExecution.list') return { executions: [] };
+			return {};
+		});
+		await spaceStore.selectSpace('space-2');
+
+		expect(spaceStore.nodeExecutions.value).toHaveLength(0);
+	});
+
+	it('does not duplicate subscription when workflowRun.created fires twice for same run', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.workflowRun.created')!;
+		const run = makeRun('run-1');
+
+		handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
+		handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
+
+		const subscribeCalls = mockHub.request.mock.calls.filter(
+			(c: unknown[]) =>
+				c[0] === 'liveQuery.subscribe' &&
+				(c[1] as Record<string, unknown>)?.queryName === 'nodeExecutions.byRun'
+		);
+		expect(subscribeCalls).toHaveLength(1);
 	});
 });

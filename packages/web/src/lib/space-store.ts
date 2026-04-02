@@ -922,6 +922,7 @@ class SpaceStore {
 		runId: string
 	): void {
 		const subscriptionId = `nodeExecutions-byRun-${runId}`;
+		if (this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
 		this.activeNodeExecSubscriptionIds.add(subscriptionId);
 
 		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
