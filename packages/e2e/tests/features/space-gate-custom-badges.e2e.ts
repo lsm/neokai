@@ -101,6 +101,9 @@ async function setupWorkflowWithChannel(page: Page): Promise<void> {
 	const step2Input = step2.getByTestId('port-input');
 	await step1Output.dragTo(step2Input);
 
+	// Verify an edge now renders on the canvas between the two nodes
+	await expect(editor.locator('[data-testid^="channel-edge-"]')).toHaveCount(1, { timeout: 5000 });
+
 	// Verify the channel was created: step 1 should now show a channel-links entry
 	await step1.click();
 	const verifyPanel = editor.getByTestId('node-config-panel');
@@ -162,6 +165,8 @@ function getFirstGateBadge(page: Page) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Gate Custom Badges', () => {
+	// Serial mode is required because tests share describe-scoped spaceId state
+	// via beforeEach/afterEach, and parallel execution causes workspace_path collisions.
 	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
@@ -216,8 +221,14 @@ test.describe('Gate Custom Badges', () => {
 		await expect(badgePreview).toContainText('Approve');
 
 		// ── Step 4: Set custom color #ff5500 ────────────────────────────────
+		// Use evaluate to set the color value and dispatch an input event.
+		// Preact maps onChange to the DOM input event (not change), so .fill()
+		// works but evaluate gives us explicit control over the event type.
 		const colorInput = gatePanel.getByTestId('gate-editor-color');
-		await colorInput.fill('#ff5500');
+		await colorInput.evaluate((el: HTMLInputElement, val) => {
+			el.value = val;
+			el.dispatchEvent(new Event('input', { bubbles: true }));
+		}, '#ff5500');
 
 		// Badge preview should reflect the custom color
 		// (canvas badge text uses white fill when edge is selected)
@@ -233,7 +244,8 @@ test.describe('Gate Custom Badges', () => {
 		// Badge should fall back to heuristic "Human" label
 		await expect(gateBadge).toContainText('Human', { timeout: 3000 });
 
-		// Badge preview should also fall back to "Gate" (default for empty label)
+		// Badge preview falls back to "Gate" (raw default: gate.label ?? 'Gate')
+		// whereas the canvas badge uses the heuristic from gateType ("Human" for type 'human').
 		await expect(badgePreview).toContainText('Gate');
 	});
 
