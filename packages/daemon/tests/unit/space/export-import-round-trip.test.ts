@@ -24,7 +24,7 @@ import {
 	validateExportBundle,
 } from '../../../src/lib/space/export-format.ts';
 import { buildWorkflowCreateParams } from '../../../src/lib/rpc-handlers/space-export-import-handlers.ts';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB setup helpers
@@ -344,7 +344,8 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 		const nodeAgents = params.nodes[0].agents!;
 
 		const coder = nodeAgents.find((a) => a.name === 'coder');
-		expect(coder!.instructions).toBe('Focus on auth module only.');
+		// Legacy plain-string instructions are normalized to { mode: 'override', value }
+		expect(coder!.instructions).toEqual({ mode: 'override', value: 'Focus on auth module only.' });
 
 		const reviewer = nodeAgents.find((a) => a.name === 'reviewer');
 		expect(reviewer!.instructions).toBeUndefined();
@@ -369,6 +370,169 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 		expect(warnings.length).toBeGreaterThan(0);
 		expect(warnings[0]).toContain('Reviewer Agent');
 	});
+});
+
+// -------------------------------------------------------------------------
+// legacy plain-string overrides — import normalization
+// -------------------------------------------------------------------------
+
+test('normalizes legacy plain-string systemPrompt to { mode: "override", value } on import', () => {
+	const legacyExported: ExportedSpaceWorkflow = {
+		version: 1,
+		type: 'workflow',
+		name: 'Legacy Workflow',
+		nodes: [
+			{
+				name: 'Step',
+				agents: [{ agentRef: 'Coder Agent', name: 'coder', systemPrompt: 'Be strict.' }],
+			},
+		],
+		startNode: 'Step',
+		tags: [],
+	};
+
+	const importedNameToId = new Map([['Coder Agent', 'new-agent-1']]);
+	const existingNameToId = new Map<string, string>();
+
+	const { params, warnings } = buildWorkflowCreateParams(
+		'space-import',
+		'Legacy Workflow',
+		legacyExported,
+		importedNameToId,
+		existingNameToId
+	);
+
+	expect(warnings).toHaveLength(0);
+	const nodeAgents = params.nodes[0].agents!;
+	expect(nodeAgents[0].systemPrompt).toEqual({ mode: 'override', value: 'Be strict.' });
+});
+
+test('normalizes legacy plain-string instructions to { mode: "override", value } on import', () => {
+	const legacyExported: ExportedSpaceWorkflow = {
+		version: 1,
+		type: 'workflow',
+		name: 'Legacy Workflow',
+		nodes: [
+			{
+				name: 'Step',
+				agents: [
+					{ agentRef: 'Reviewer Agent', name: 'reviewer', instructions: 'Review carefully.' },
+				],
+			},
+		],
+		startNode: 'Step',
+		tags: [],
+	};
+
+	const importedNameToId = new Map([['Reviewer Agent', 'new-agent-2']]);
+	const existingNameToId = new Map<string, string>();
+
+	const { params, warnings } = buildWorkflowCreateParams(
+		'space-import',
+		'Legacy Workflow',
+		legacyExported,
+		importedNameToId,
+		existingNameToId
+	);
+
+	expect(warnings).toHaveLength(0);
+	const nodeAgents = params.nodes[0].agents!;
+	expect(nodeAgents[0].instructions).toEqual({ mode: 'override', value: 'Review carefully.' });
+});
+
+test('{ mode: "expand", value } objects pass through unchanged', () => {
+	const legacyExported: ExportedSpaceWorkflow = {
+		version: 1,
+		type: 'workflow',
+		name: 'Modern Workflow',
+		nodes: [
+			{
+				name: 'Step',
+				agents: [
+					{
+						agentRef: 'Coder Agent',
+						name: 'coder',
+						systemPrompt: { mode: 'expand', value: 'Extra context.' },
+						instructions: { mode: 'override', value: 'Follow these rules.' },
+					},
+				],
+			},
+		],
+		startNode: 'Step',
+		tags: [],
+	};
+
+	const importedNameToId = new Map([['Coder Agent', 'new-agent-1']]);
+	const existingNameToId = new Map<string, string>();
+
+	const { params, warnings } = buildWorkflowCreateParams(
+		'space-import',
+		'Modern Workflow',
+		legacyExported,
+		importedNameToId,
+		existingNameToId
+	);
+
+	expect(warnings).toHaveLength(0);
+	const nodeAgents = params.nodes[0].agents!;
+	expect(nodeAgents[0].systemPrompt).toEqual({ mode: 'expand', value: 'Extra context.' });
+	expect(nodeAgents[0].instructions).toEqual({ mode: 'override', value: 'Follow these rules.' });
+});
+
+test('mix of plain strings and { mode, value } objects in the same node normalize correctly', () => {
+	const legacyExported: ExportedSpaceWorkflow = {
+		version: 1,
+		type: 'workflow',
+		name: 'Mixed Workflow',
+		nodes: [
+			{
+				name: 'Step',
+				agents: [
+					{
+						agentRef: 'Coder Agent',
+						name: 'coder',
+						systemPrompt: 'Plain string prompt',
+						instructions: { mode: 'expand', value: 'Modern instructions' },
+					},
+					{
+						agentRef: 'Reviewer Agent',
+						name: 'reviewer',
+						systemPrompt: { mode: 'override', value: 'Modern prompt' },
+						instructions: 'Plain string instructions',
+					},
+				],
+			},
+		],
+		startNode: 'Step',
+		tags: [],
+	};
+
+	const importedNameToId = new Map([
+		['Coder Agent', 'new-agent-1'],
+		['Reviewer Agent', 'new-agent-2'],
+	]);
+	const existingNameToId = new Map<string, string>();
+
+	const { params, warnings } = buildWorkflowCreateParams(
+		'space-import',
+		'Mixed Workflow',
+		legacyExported,
+		importedNameToId,
+		existingNameToId
+	);
+
+	expect(warnings).toHaveLength(0);
+	const nodeAgents = params.nodes[0].agents!;
+
+	// coder: plain string systemPrompt normalized, { mode, value } instructions passed through
+	const coder = nodeAgents.find((a) => a.name === 'coder')!;
+	expect(coder.systemPrompt).toEqual({ mode: 'override', value: 'Plain string prompt' });
+	expect(coder.instructions).toEqual({ mode: 'expand', value: 'Modern instructions' });
+
+	// reviewer: { mode, value } systemPrompt passed through, plain string instructions normalized
+	const reviewer = nodeAgents.find((a) => a.name === 'reviewer')!;
+	expect(reviewer.systemPrompt).toEqual({ mode: 'override', value: 'Modern prompt' });
+	expect(reviewer.instructions).toEqual({ mode: 'override', value: 'Plain string instructions' });
 });
 
 // ---------------------------------------------------------------------------
@@ -640,7 +804,8 @@ describe('full round-trip: export → import → DB read-back', () => {
 
 		const nodeAgents = readBack!.nodes[0].agents!;
 		const coder = nodeAgents.find((a) => a.name === 'coder');
-		expect(coder!.instructions).toBe('Focus on auth module only.');
+		// Legacy plain-string instructions are normalized to { mode: 'override', value }
+		expect(coder!.instructions).toEqual({ mode: 'override', value: 'Focus on auth module only.' });
 
 		const reviewer = nodeAgents.find((a) => a.name === 'reviewer');
 		expect(reviewer!.instructions).toBeUndefined();
