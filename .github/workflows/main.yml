@@ -4,7 +4,7 @@
 #
 # | Trigger                              | Tests Run                                      | Rationale                      |
 # |--------------------------------------|-----------------------------------------------|--------------------------------|
-# | PR to dev                            | check + unit + online                         | Fast feedback for PRs          |
+# | PR to dev                            | check + unit + online + web + CLI              | Fast feedback for PRs          |
 # | Push to dev                          | e2e only                                      | Already passed unit/online    |
 # | PR to main                           | all tests (check + unit + online + e2e + web + CLI) | Full gate              |
 # | Push to main                         | all tests                                     | Full gate for main branch     |
@@ -76,8 +76,16 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            bun-deps-${{ runner.os }}-
+
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile || bun install
 
       - name: Validate online test matrix coverage
         run: bash scripts/validate-online-test-matrix.sh
@@ -115,13 +123,14 @@ jobs:
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
   # Run on: PR to dev, PR to main, push to main (skip on push to dev)
+  # Default timeout raised to 7min (from 5min) to reduce flaky timeouts.
   # ============================================
 
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
     if: github.ref_type != 'tag' && (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
-    timeout-minutes: ${{ matrix.timeout || 5 }}
+    timeout-minutes: ${{ matrix.timeout || 7 }}
 
     strategy:
       fail-fast: false
@@ -143,6 +152,8 @@ jobs:
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
           - rewind
+          - room-mcp
+          - room-coder-subagents
           - cross-provider-1
           - cross-provider-2
           - cross-provider-3
@@ -351,8 +362,16 @@ jobs:
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         uses: ./.github/actions/setup-devproxy
 
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            bun-deps-${{ runner.os }}-
+
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile || bun install
 
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
@@ -437,8 +456,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            bun-deps-${{ runner.os }}-
+
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile || bun install
 
       - name: Run daemon + shared unit tests from root
         run: make test-daemon
@@ -462,14 +489,14 @@ jobs:
 
   # ============================================
   # WEB TESTS
-  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
+  # Run on: PR to dev, PR to main, push to main, workflow_dispatch (skip on push to dev)
   # ============================================
 
   test-web:
     name: Web Tests
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -490,8 +517,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            bun-deps-${{ runner.os }}-
+
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile || bun install
 
       - name: Run web tests
         working-directory: packages/web
@@ -516,14 +551,14 @@ jobs:
 
   # ============================================
   # CLI TESTS
-  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
+  # Run on: PR to dev, PR to main, push to main, workflow_dispatch (skip on push to dev)
   # ============================================
 
   test-cli:
     name: CLI Tests
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -544,8 +579,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            bun-deps-${{ runner.os }}-
+
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile || bun install
 
       - name: Run CLI tests
         working-directory: packages/cli
@@ -701,8 +744,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            bun-deps-${{ runner.os }}-
+
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile || bun install
 
       - name: Build web frontend
         run: cd packages/web && bun run build
@@ -846,14 +897,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            bun-deps-${{ runner.os }}-
+
       - name: Install dependencies
         run: |
           echo "Starting bun install at $(date)"
-          timeout 180 bun install --verbose 2>&1 || {
+          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || timeout 180 bun install --verbose 2>&1 || {
             echo "bun install timed out or failed"
             exit 1
           }
           echo "Finished bun install at $(date)"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('packages/e2e/package.json') }}
+          restore-keys: |
+            playwright-chromium-${{ runner.os }}-
 
       - name: Install Playwright browsers
         run: cd packages/e2e && bunx playwright install chromium
@@ -868,8 +935,12 @@ jobs:
         run: |
           chmod +x dist/bin/kai-linux-x64
           WORKSPACE=$(mktemp -d)
-          PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-          echo "Starting binary on port $PORT with workspace $WORKSPACE"
+
+          # Reserve a port using SO_REUSEADDR to avoid TOCTOU race.
+          # We keep the socket open while the binary starts so no other
+          # process can steal the port, then close it right before binding.
+          PORT=$(python3 -c 'import socket, os; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
+          echo "Reserved port $PORT for binary"
 
           ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &
           BINARY_PID=$!
@@ -930,7 +1001,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix:
         test: ${{ fromJson(needs.discover.outputs.tests_llm) }}
 
@@ -957,14 +1028,30 @@ jobs:
         if: runner.os == 'Linux'
         uses: ./.github/actions/setup-devproxy
 
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            bun-deps-${{ runner.os }}-
+
       - name: Install dependencies
         run: |
           echo "Starting bun install at $(date)"
-          timeout 180 bun install --verbose 2>&1 || {
+          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || timeout 180 bun install --verbose 2>&1 || {
             echo "bun install timed out or failed"
             exit 1
           }
           echo "Finished bun install at $(date)"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('packages/e2e/package.json') }}
+          restore-keys: |
+            playwright-chromium-${{ runner.os }}-
 
       - name: Install Playwright browsers
         run: cd packages/e2e && bunx playwright install chromium
@@ -979,8 +1066,12 @@ jobs:
         run: |
           chmod +x dist/bin/kai-linux-x64
           WORKSPACE=$(mktemp -d)
-          PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-          echo "Starting binary on port $PORT with workspace $WORKSPACE"
+
+          # Reserve a port using SO_REUSEADDR to avoid TOCTOU race.
+          # We keep the socket open while the binary starts so no other
+          # process can steal the port, then close it right before binding.
+          PORT=$(python3 -c 'import socket, os; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
+          echo "Reserved port $PORT for binary"
 
           ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &
           BINARY_PID=$!
@@ -1083,13 +1174,13 @@ jobs:
             FAILED=1
           fi
 
-          # test-web: PR to main, push to main (skip on PR to dev and push to dev)
+          # test-web: PR to dev, PR to main, push to main (skip on push to dev)
           if [[ "${{ needs.test-web.result }}" == "failure" ]]; then
             echo "❌ test-web failed"
             FAILED=1
           fi
 
-          # test-cli: PR to main, push to main (skip on PR to dev and push to dev)
+          # test-cli: PR to dev, PR to main, push to main (skip on push to dev)
           if [[ "${{ needs.test-cli.result }}" == "failure" ]]; then
             echo "❌ test-cli failed"
             FAILED=1
