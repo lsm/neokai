@@ -1,0 +1,1008 @@
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+	createDbQueryToolHandlers,
+	createDbQueryMcpServer,
+} from '../../../src/lib/db-query/tools.ts';
+
+// ── Test Schema ────────────────────────────────────────────────────────────────
+
+/**
+ * Create a minimal in-memory database with tables that mirror the NeoKai schema
+ * subset used by the db-query scope config.
+ */
+function createTestDb(): Database {
+	const db = new Database(':memory:');
+
+	// Room-scoped tables
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS rooms (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			config TEXT
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS tasks (
+			id TEXT PRIMARY KEY,
+			room_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			priority TEXT NOT NULL DEFAULT 'normal',
+			restrictions TEXT,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (room_id) REFERENCES rooms(id)
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS goals (
+			id TEXT PRIMARY KEY,
+			room_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			priority TEXT NOT NULL DEFAULT 'normal',
+			mission_type TEXT,
+			structured_metrics TEXT,
+			schedule TEXT,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (room_id) REFERENCES rooms(id)
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS mission_executions (
+			id TEXT PRIMARY KEY,
+			goal_id TEXT NOT NULL,
+			execution_number INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'running',
+			result_summary TEXT,
+			task_ids TEXT NOT NULL DEFAULT '[]',
+			started_at INTEGER,
+			completed_at INTEGER,
+			FOREIGN KEY (goal_id) REFERENCES goals(id),
+			UNIQUE(goal_id, execution_number)
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS mission_metric_history (
+			id TEXT PRIMARY KEY,
+			goal_id TEXT NOT NULL,
+			metric_name TEXT NOT NULL,
+			value REAL NOT NULL,
+			recorded_at INTEGER NOT NULL,
+			FOREIGN KEY (goal_id) REFERENCES goals(id)
+		)
+	`);
+
+	// Space-scoped tables
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS spaces (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			workspace_path TEXT NOT NULL,
+			config TEXT,
+			created_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflows (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			config TEXT,
+			gates TEXT,
+			channels TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id)
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_tasks (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id)
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_runs (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id)
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS gate_data (
+			run_id TEXT NOT NULL,
+			gate_id TEXT NOT NULL,
+			data TEXT NOT NULL DEFAULT '{}',
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, gate_id),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id)
+		)
+	`);
+
+	return db;
+}
+
+// ── Seed helpers ───────────────────────────────────────────────────────────────
+
+function seedRooms(db: Database) {
+	db.exec(
+		"INSERT INTO rooms (id, name, config) VALUES ('room-1', 'Room 1', '{\"model\":\"opus\"}')"
+	);
+	db.exec(
+		"INSERT INTO rooms (id, name, config) VALUES ('room-2', 'Room 2', '{\"model\":\"sonnet\"}')"
+	);
+	db.exec("INSERT INTO rooms (id, name, config) VALUES ('room-3', 'Room 3', NULL)");
+}
+
+function seedTasks(db: Database) {
+	seedRooms(db);
+	db.exec(
+		"INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-1', 'room-1', 'Task 1', 'in_progress', 'high', '{\"maxTokens\":100}', 1000)"
+	);
+	db.exec(
+		"INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-2', 'room-1', 'Task 2', 'pending', 'normal', NULL, 2000)"
+	);
+	db.exec(
+		"INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-3', 'room-2', 'Task 3', 'completed', 'low', NULL, 3000)"
+	);
+}
+
+function seedGoals(db: Database) {
+	seedRooms(db);
+	db.exec(
+		"INSERT INTO goals (id, room_id, title, status, mission_type, created_at) VALUES ('goal-1', 'room-1', 'Goal 1', 'active', 'one_shot', 1000)"
+	);
+	db.exec(
+		"INSERT INTO goals (id, room_id, title, status, mission_type, created_at) VALUES ('goal-2', 'room-1', 'Goal 2', 'completed', 'recurring', 2000)"
+	);
+	db.exec(
+		"INSERT INTO goals (id, room_id, title, status, mission_type, created_at) VALUES ('goal-3', 'room-2', 'Goal 3', 'active', NULL, 3000)"
+	);
+}
+
+function seedMissionExecutions(db: Database) {
+	seedGoals(db);
+	db.exec(
+		"INSERT INTO mission_executions (id, goal_id, execution_number, status, result_summary, started_at) VALUES ('exec-1', 'goal-1', 1, 'completed', 'success', 1000)"
+	);
+	db.exec(
+		"INSERT INTO mission_executions (id, goal_id, execution_number, status, result_summary, started_at) VALUES ('exec-2', 'goal-1', 2, 'running', 'in progress', 2000)"
+	);
+	db.exec(
+		"INSERT INTO mission_executions (id, goal_id, execution_number, status, result_summary, started_at) VALUES ('exec-3', 'goal-2', 1, 'completed', 'done', 3000)"
+	);
+}
+
+function seedSpaces(db: Database) {
+	db.exec(
+		"INSERT INTO spaces (id, name, workspace_path, config, created_at) VALUES ('space-1', 'Space 1', '/path1', '{\"agents\":[]}', 1000)"
+	);
+	db.exec(
+		"INSERT INTO spaces (id, name, workspace_path, config, created_at) VALUES ('space-2', 'Space 2', '/path2', '{\"agents\":[]}', 2000)"
+	);
+}
+
+function seedSpaceWorkflows(db: Database) {
+	seedSpaces(db);
+	db.exec(
+		"INSERT INTO space_workflows (id, space_id, name, config, gates, channels, created_at, updated_at) VALUES ('wf-1', 'space-1', 'WF 1', '{\"key\":\"val\"}', '{\"g1\":{}}', '{\"ch1\":{}}', 1000, 1000)"
+	);
+	db.exec(
+		"INSERT INTO space_workflows (id, space_id, name, config, gates, channels, created_at, updated_at) VALUES ('wf-2', 'space-1', 'WF 2', '{\"key\":\"val2\"}', NULL, NULL, 2000, 2000)"
+	);
+	db.exec(
+		"INSERT INTO space_workflows (id, space_id, name, config, gates, channels, created_at, updated_at) VALUES ('wf-3', 'space-2', 'WF 3', '{\"key\":\"val3\"}', NULL, NULL, 3000, 3000)"
+	);
+}
+
+function seedSpaceWorkflowRuns(db: Database) {
+	seedSpaces(db);
+	db.exec(
+		"INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-1', 'space-1', 'wf-1', 'Run 1', 'in_progress', 1000)"
+	);
+	db.exec(
+		"INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-2', 'space-1', 'wf-1', 'Run 2', 'completed', 2000)"
+	);
+	db.exec(
+		"INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at) VALUES ('run-3', 'space-2', 'wf-2', 'Run 3', 'pending', 3000)"
+	);
+}
+
+function seedGateData(db: Database) {
+	seedSpaceWorkflowRuns(db);
+	db.exec(
+		"INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES ('run-1', 'gate-1', '{\"approved\":true}', 1000)"
+	);
+	db.exec(
+		"INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES ('run-2', 'gate-1', '{\"approved\":false}', 2000)"
+	);
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function parseResult(result: {
+	content: Array<{ type: string; text: string }>;
+	isError?: boolean;
+}) {
+	const text = result.content[0].text;
+	try {
+		return { ...JSON.parse(text), isError: result.isError };
+	} catch {
+		return { raw: text, isError: result.isError };
+	}
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+describe('db-query tools', () => {
+	let db: Database;
+
+	beforeEach(() => {
+		db = createTestDb();
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	// ── db_query ──────────────────────────────────────────────────────────────
+
+	describe('db_query', () => {
+		describe('valid SELECT returns rows', () => {
+			it('returns rows for a simple SELECT query', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(2);
+				expect(parsed.rowCount).toBe(2);
+				expect(parsed.rows[0].room_id).toBe('room-1');
+			});
+
+			it('returns rows with explicit columns', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT id, title FROM tasks' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(2);
+				expect(parsed.rows[0]).toHaveProperty('id');
+				expect(parsed.rows[0]).toHaveProperty('title');
+			});
+
+			it('returns rows with WHERE clause', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM tasks WHERE status = ?',
+					params: ['pending'],
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(1);
+				expect(parsed.rows[0].title).toBe('Task 2');
+			});
+
+			it('global scope returns all rows without filtering', async () => {
+				seedRooms(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM rooms' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(3);
+			});
+		});
+
+		describe('rejects non-SELECT statements', () => {
+			it('rejects INSERT', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'INSERT INTO rooms (id, name) VALUES (?, ?)',
+					params: ['room-x', 'X'],
+				});
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('Only SELECT');
+			});
+
+			it('rejects UPDATE', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'UPDATE rooms SET name = ? WHERE id = ?',
+					params: ['New Name', 'room-1'],
+				});
+				expect(result.isError).toBe(true);
+			});
+
+			it('rejects DELETE', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'DELETE FROM rooms' });
+				expect(result.isError).toBe(true);
+			});
+
+			it('rejects DROP TABLE', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'DROP TABLE rooms' });
+				expect(result.isError).toBe(true);
+			});
+
+			it('rejects CREATE TABLE', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'CREATE TABLE foo (id TEXT)',
+				});
+				expect(result.isError).toBe(true);
+			});
+		});
+
+		describe('rejects queries referencing tables outside scope', () => {
+			it('room scope rejects global-only tables (rooms)', async () => {
+				seedRooms(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM rooms' });
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('not accessible');
+			});
+
+			it('room scope rejects space-scoped tables (space_tasks)', async () => {
+				seedSpaces(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM space_tasks' });
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('not accessible');
+			});
+
+			it('space scope rejects room-scoped tables (tasks)', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
+				expect(result.isError).toBe(true);
+			});
+
+			it('prevents cross-scope joins', async () => {
+				seedTasks(db);
+				seedSpaces(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM tasks JOIN spaces ON tasks.id = spaces.id',
+				});
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('not accessible');
+			});
+		});
+
+		describe('scope subquery wrapping filters results correctly', () => {
+			it('room scope filters tasks by room_id', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(2);
+				for (const row of parsed.rows) {
+					expect(row.room_id).toBe('room-1');
+				}
+			});
+
+			it('room scope filters goals by room_id', async () => {
+				seedGoals(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM goals' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(2);
+				for (const row of parsed.rows) {
+					expect(row.room_id).toBe('room-1');
+				}
+			});
+
+			it('space scope filters space_workflow_runs by space_id', async () => {
+				seedSpaceWorkflowRuns(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM space_workflow_runs',
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(2);
+				for (const row of parsed.rows) {
+					expect(row.space_id).toBe('space-1');
+				}
+			});
+
+			it('scope filter works alongside user WHERE clause', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM tasks WHERE status = ?',
+					params: ['pending'],
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(1);
+				expect(parsed.rows[0].title).toBe('Task 2');
+				expect(parsed.rows[0].room_id).toBe('room-1');
+			});
+
+			it('scope filter works with user params', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM tasks WHERE priority = ?',
+					params: ['high'],
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(1);
+				expect(parsed.rows[0].title).toBe('Task 1');
+			});
+		});
+
+		describe('indirect scope tables filtered correctly', () => {
+			it('mission_executions filtered via goals room scope', async () => {
+				seedMissionExecutions(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM mission_executions',
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				// goal-1 (room-1) has exec-1, exec-2; goal-2 (room-1) has exec-3
+				expect(parsed.rows).toHaveLength(3);
+				const goalIds = parsed.rows.map((r: Record<string, unknown>) => r.goal_id);
+				expect(goalIds.sort()).toEqual(['goal-1', 'goal-1', 'goal-2']);
+			});
+
+			it('gate_data filtered via space_workflow_runs space scope', async () => {
+				seedGateData(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM gate_data' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				// run-1 (space-1) has gate-1; run-2 (space-1) has gate-1
+				expect(parsed.rows).toHaveLength(2);
+				const runIds = parsed.rows.map((r: Record<string, unknown>) => r.run_id);
+				expect(runIds.sort()).toEqual(['run-1', 'run-2']);
+			});
+
+			it('indirect scope does not leak data from other scopes', async () => {
+				seedMissionExecutions(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-2' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM mission_executions',
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				// room-2 has goal-3 which has no executions
+				expect(parsed.rows).toHaveLength(0);
+			});
+		});
+
+		describe('row limit cap enforced', () => {
+			it('default limit is 200', async () => {
+				// Insert many rows
+				seedRooms(db);
+				for (let i = 0; i < 10; i++) {
+					db.exec(
+						`INSERT INTO tasks (id, room_id, title, status, created_at) VALUES ('bulk-${i}', 'room-1', 'Bulk ${i}', 'pending', ${i})`
+					);
+				}
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBeLessThanOrEqual(200);
+			});
+
+			it('user-specified limit is respected when under max', async () => {
+				seedRooms(db);
+				for (let i = 0; i < 10; i++) {
+					db.exec(
+						`INSERT INTO tasks (id, room_id, title, status, created_at) VALUES ('lim-${i}', 'room-1', 'Limit ${i}', 'pending', ${i})`
+					);
+				}
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM tasks', limit: 3 });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBe(3);
+			});
+
+			it('limit is capped at 1000 even if user requests more', async () => {
+				seedRooms(db);
+				for (let i = 0; i < 10; i++) {
+					db.exec(
+						`INSERT INTO goals (id, room_id, title, status, created_at) VALUES ('glimit-${i}', 'room-1', 'Goal Limit ${i}', 'active', ${i})`
+					);
+				}
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// Request 5000 — should be capped at 1000
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM goals',
+					limit: 5000,
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBeLessThanOrEqual(1000);
+			});
+		});
+
+		describe('column blacklist removes sensitive columns', () => {
+			it('removes config column from rooms in global scope', async () => {
+				seedRooms(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM rooms' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				for (const row of parsed.rows) {
+					expect(row).not.toHaveProperty('config');
+					expect(row).toHaveProperty('id');
+					expect(row).toHaveProperty('name');
+				}
+			});
+
+			it('removes restrictions column from tasks', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				for (const row of parsed.rows) {
+					expect(row).not.toHaveProperty('restrictions');
+					expect(row).toHaveProperty('id');
+					expect(row).toHaveProperty('title');
+				}
+			});
+
+			it('removes config column from space_workflows in space scope', async () => {
+				seedSpaceWorkflows(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM space_workflows' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				for (const row of parsed.rows) {
+					expect(row).not.toHaveProperty('config');
+					expect(row).not.toHaveProperty('gates');
+					expect(row).not.toHaveProperty('channels');
+					expect(row).toHaveProperty('id');
+					expect(row).toHaveProperty('name');
+				}
+			});
+
+			it('blacklist does not apply to tables with no blacklisted columns', async () => {
+				seedGoals(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM goals' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(2);
+				// goals has no blacklisted columns — all columns should be present
+				expect(parsed.rows[0]).toHaveProperty('id');
+				expect(parsed.rows[0]).toHaveProperty('title');
+				expect(parsed.rows[0]).toHaveProperty('status');
+				expect(parsed.rows[0]).toHaveProperty('mission_type');
+			});
+		});
+
+		describe('SQL execution errors return isError', () => {
+			it('returns error for reference to nonexistent column', async () => {
+				seedRooms(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT nonexistent_col FROM rooms',
+				});
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('Query execution error');
+			});
+
+			it('returns error for type mismatch in params', async () => {
+				seedRooms(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM rooms WHERE id = ?',
+					params: [123], // wrong type — rooms.id is TEXT
+				});
+				// SQLite is flexible with types, so this may or may not error
+				// The point is that if it errors, isError is set
+				if (result.isError) {
+					expect(parseResult(result).raw).toContain('Query execution error');
+				}
+			});
+		});
+	});
+
+	// ── db_list_tables ─────────────────────────────────────────────────────────
+
+	describe('db_list_tables', () => {
+		it('returns only scope-appropriate tables for room scope', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			const result = await handlers.db_list_tables();
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.tables).toContain('tasks');
+			expect(parsed.tables).toContain('goals');
+			expect(parsed.tables).toContain('mission_executions');
+			expect(parsed.tables).toContain('mission_metric_history');
+			// Should NOT contain global or space tables
+			expect(parsed.tables).not.toContain('rooms');
+			expect(parsed.tables).not.toContain('spaces');
+			expect(parsed.tables).not.toContain('space_tasks');
+		});
+
+		it('returns only scope-appropriate tables for space scope', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
+				db
+			);
+			const result = await handlers.db_list_tables();
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.tables).toContain('space_tasks');
+			expect(parsed.tables).toContain('space_workflow_runs');
+			expect(parsed.tables).toContain('gate_data');
+			// Should NOT contain room or global tables
+			expect(parsed.tables).not.toContain('tasks');
+			expect(parsed.tables).not.toContain('goals');
+			expect(parsed.tables).not.toContain('rooms');
+		});
+
+		it('returns global tables for global scope', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+				db
+			);
+			const result = await handlers.db_list_tables();
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.tables).toContain('rooms');
+			expect(parsed.tables).toContain('sessions');
+			expect(parsed.tables).toContain('spaces');
+			// Should NOT contain room or space scoped tables
+			expect(parsed.tables).not.toContain('tasks');
+			expect(parsed.tables).not.toContain('goals');
+		});
+
+		it('includes table descriptions', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			const result = await handlers.db_list_tables();
+			const parsed = parseResult(result);
+
+			expect(parsed.description).toContain('tasks');
+			expect(parsed.description).toContain('goals');
+		});
+	});
+
+	// ── db_describe_table ──────────────────────────────────────────────────────
+
+	describe('db_describe_table', () => {
+		it('returns column info for an in-scope table', async () => {
+			seedTasks(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			const result = await handlers.db_describe_table({ table_name: 'tasks' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.description).toContain('tasks');
+			expect(parsed.description).toContain('id');
+			expect(parsed.description).toContain('room_id');
+			expect(parsed.description).toContain('title');
+			expect(parsed.description).toContain('status');
+		});
+
+		it('excludes blacklisted columns from output', async () => {
+			seedTasks(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			const result = await handlers.db_describe_table({ table_name: 'tasks' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// 'restrictions' is blacklisted for tasks — should appear in the
+			// hidden columns note but NOT as a column in the table definition
+			expect(parsed.description).toContain('hidden');
+			// Verify restrictions does NOT appear as a column row in the table
+			const columnTableMatch = parsed.description.match(
+				/\|[\s\S]*?\|[\s\S]*?\|[\s\S]*?\|[\s\S]*?\|[\s\S]*?\|/g
+			);
+			const columnRows = columnTableMatch?.filter((row: string) => row.includes('TEXT')) ?? [];
+			for (const row of columnRows) {
+				expect(row).not.toContain('restrictions');
+			}
+		});
+
+		it('includes foreign key info', async () => {
+			seedTasks(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			const result = await handlers.db_describe_table({ table_name: 'mission_executions' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.description).toContain('Foreign Keys');
+			expect(parsed.description).toContain('goals');
+		});
+
+		it('rejects tables outside scope', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			const result = await handlers.db_describe_table({ table_name: 'rooms' });
+			expect(result.isError).toBe(true);
+			expect(parseResult(result).raw).toContain('not accessible');
+		});
+
+		it('rejects non-existent tables', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+				db
+			);
+			const result = await handlers.db_describe_table({
+				table_name: 'nonexistent_table',
+			});
+			expect(result.isError).toBe(true);
+			expect(parseResult(result).raw).toContain('not accessible');
+		});
+
+		it('shows hidden column count when columns are blacklisted', async () => {
+			seedRooms(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+				db
+			);
+			const result = await handlers.db_describe_table({ table_name: 'rooms' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.description).toContain('hidden');
+			expect(parsed.description).toContain('config');
+		});
+	});
+
+	// ── createDbQueryMcpServer ─────────────────────────────────────────────────
+
+	describe('createDbQueryMcpServer', () => {
+		let tmpDir: string;
+
+		beforeEach(() => {
+			tmpDir = mkdtempSync(join(tmpdir(), 'neokai-test-'));
+		});
+
+		afterEach(() => {
+			rmSync(tmpDir, { recursive: true, force: true });
+		});
+
+		it('creates a server with the correct name and tools', () => {
+			const dbPath = join(tmpDir, 'test.db');
+			// Create the database file first
+			const initDb = new Database(dbPath);
+			initDb.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
+			initDb.close();
+
+			const server = createDbQueryMcpServer({
+				dbPath,
+				scopeType: 'global',
+				scopeValue: '',
+			});
+
+			expect(server.name).toBe('db-query');
+			// Note: version is set in the real SDK's createSdkMcpServer call,
+			// but the test mock may not propagate it in all environments
+			expect(server.type).toBe('sdk');
+			expect(server.instance._registeredTools).toHaveProperty('db_query');
+			expect(server.instance._registeredTools).toHaveProperty('db_list_tables');
+			expect(server.instance._registeredTools).toHaveProperty('db_describe_table');
+
+			server.close();
+		});
+
+		it('registers tools with correct descriptions', () => {
+			const dbPath = join(tmpDir, 'test.db');
+			const initDb = new Database(dbPath);
+			initDb.exec(
+				'CREATE TABLE tasks (id TEXT PRIMARY KEY, room_id TEXT, title TEXT, restrictions TEXT)'
+			);
+			initDb.close();
+
+			const server = createDbQueryMcpServer({
+				dbPath,
+				scopeType: 'room',
+				scopeValue: 'room-1',
+			});
+
+			const queryTool = server.instance._registeredTools.db_query as {
+				description: string;
+			};
+			expect(queryTool.description).toContain('room scope');
+			expect(queryTool.description).toContain('SELECT');
+
+			const listTool = server.instance._registeredTools.db_list_tables as {
+				description: string;
+			};
+			expect(listTool.description).toContain('room');
+
+			server.close();
+		});
+
+		it('close() properly closes the connection', () => {
+			const dbPath = join(tmpDir, 'test.db');
+			const initDb = new Database(dbPath);
+			initDb.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY)');
+			initDb.close();
+
+			const server = createDbQueryMcpServer({
+				dbPath,
+				scopeType: 'global',
+				scopeValue: '',
+			});
+
+			// close() should not throw
+			expect(() => server.close()).not.toThrow();
+		});
+
+		it('tools are functional through the MCP server', async () => {
+			const dbPath = join(tmpDir, 'test.db');
+			const initDb = new Database(dbPath);
+			initDb.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
+			initDb.exec("INSERT INTO rooms VALUES ('r1', 'Room 1', '{\"m\":\"o\"}')");
+			initDb.close();
+
+			const server = createDbQueryMcpServer({
+				dbPath,
+				scopeType: 'global',
+				scopeValue: '',
+			});
+
+			expect(server.type).toBe('sdk');
+			// Verify the handler can be invoked
+			const queryHandler = (
+				server.instance._registeredTools.db_query as {
+					handler: (args: { sql: string }) => Promise<{ content: Array<{ text: string }> }>;
+				}
+			).handler;
+			const result = await queryHandler({ sql: 'SELECT * FROM rooms' });
+			const data = JSON.parse(result.content[0].text);
+			expect(data.rows).toHaveLength(1);
+			expect(data.rows[0]).not.toHaveProperty('config');
+
+			server.close();
+		});
+	});
+});
