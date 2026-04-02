@@ -309,7 +309,7 @@ export class ChannelRouter {
 
 		// ── Gate condition evaluation ────────────────────────────────────────
 		if (channel.gateId) {
-			const gateResult = this.evaluateGateById(runId, channel.gateId, workflow);
+			const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
 			return { allowed: gateResult.open, reason: gateResult.reason };
 		}
 
@@ -383,7 +383,7 @@ export class ChannelRouter {
 
 			// Gate evaluation via separated Gate entity
 			if (channel.gateId) {
-				const gateResult = this.evaluateGateById(runId, channel.gateId, workflow);
+				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
 				if (!gateResult.open) {
 					throw new ChannelGateBlockedError(
 						gateResult.reason ??
@@ -470,7 +470,7 @@ export class ChannelRouter {
 		if (channels.length === 0) return [];
 
 		// Evaluate the gate once (shared across all channels referencing it)
-		const gateResult = this.evaluateGateById(runId, gateId, workflow);
+		const gateResult = await this.evaluateGateById(runId, gateId, workflow);
 		if (!gateResult.open) return [];
 
 		// Determine if any of these channels are cyclic — if so, enforce the per-channel cap
@@ -565,11 +565,11 @@ export class ChannelRouter {
 	 * - The gate is not found in `workflow.gates` (misconfiguration)
 	 * - The condition fails against the runtime (or default) data
 	 */
-	private evaluateGateById(
+	private async evaluateGateById(
 		runId: string,
 		gateId: string,
 		workflow: SpaceWorkflow
-	): { open: boolean; reason?: string } {
+	): Promise<{ open: boolean; reason?: string }> {
 		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
 		if (!gateDef) {
 			return {
@@ -582,6 +582,9 @@ export class ChannelRouter {
 		const record = this.config.gateDataRepo?.get(runId, gateId);
 		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
+		// TODO: Wire scriptExecutor (from ChannelRouterConfig) and construct
+		// GateScriptContext with workspacePath/runId. Without it, script-based
+		// gates silently fall through to field evaluation only.
 		return evaluateGate(gateDef, runtimeData);
 	}
 

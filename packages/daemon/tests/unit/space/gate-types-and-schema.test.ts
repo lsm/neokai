@@ -1184,19 +1184,19 @@ describe('computeGateDefaults with optional fields', () => {
 // ---------------------------------------------------------------------------
 
 describe('evaluateGate with optional fields', () => {
-	test('Gate with no fields evaluates as open', () => {
+	test('Gate with no fields evaluates as open', async () => {
 		const gate: Gate = {
 			id: 'gate-empty',
 			resetOnCycle: false,
 		};
-		const result = evaluateGate(gate, {});
+		const result = await evaluateGate(gate, {});
 		expect(result.open).toBe(true);
 	});
 
-	test('Gate with script-only (no fields) evaluates as open', () => {
-		// Note: evaluateGate does not execute gate.script — it only checks field-based
-		// conditions. A script-only gate opens trivially because there are no fields to
-		// fail. Script execution will be implemented in a follow-up task.
+	test('Gate with script-only (no fields) evaluates as open', async () => {
+		// Note: evaluateGate does not execute gate.script when no scriptExecutor
+		// is provided. A script-only gate opens trivially because there are no
+		// fields to fail.
 		const gate: Gate = {
 			id: 'gate-script-only',
 			script: {
@@ -1205,11 +1205,11 @@ describe('evaluateGate with optional fields', () => {
 			},
 			resetOnCycle: false,
 		};
-		const result = evaluateGate(gate, {});
+		const result = await evaluateGate(gate, {});
 		expect(result.open).toBe(true);
 	});
 
-	test('Gate with fields still evaluates normally', () => {
+	test('Gate with fields still evaluates normally', async () => {
 		const gate: Gate = {
 			id: 'gate-with-fields',
 			fields: [
@@ -1222,9 +1222,9 @@ describe('evaluateGate with optional fields', () => {
 			],
 			resetOnCycle: false,
 		};
-		const result = evaluateGate(gate, { approved: false });
+		const result = await evaluateGate(gate, { approved: false });
 		expect(result.open).toBe(false);
-		const result2 = evaluateGate(gate, { approved: true });
+		const result2 = await evaluateGate(gate, { approved: true });
 		expect(result2.open).toBe(true);
 	});
 });

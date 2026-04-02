@@ -1,17 +1,32 @@
 /**
- * Unified Gate Evaluator — field-based
+ * Unified Gate Evaluator — script-based + field-based
  *
- * `evaluateGate(gate, data)` walks `gate.fields` and checks each field against
- * the runtime data store. The gate opens when ALL fields pass their checks.
+ * `evaluateGate(gate, data, scriptExecutor?)` optionally runs a gate script
+ * (when `gate.script` is defined and `scriptExecutor` is provided), then walks
+ * `gate.fields` and checks each field against the runtime data store. The gate
+ * opens when ALL checks pass.
+ *
+ * Evaluation order:
+ *   1. If script exists + scriptExecutor provided → run script
+ *      - On failure: gate blocked immediately
+ *      - On success: deep-merge script output data into `data`
+ *   2. Field-based evaluation (existing logic)
+ *   3. No script, no fields → gate open
  *
  * Field check types:
  *   scalar (boolean/string/number) — ops: exists / == / !=
  *   map — op: count (count entries matching a value, check >= min)
  *
- * Channels without a gate are always open — use `isChannelOpen()` as the entry point.
+ * Channels without a gate are always open — use `isChannelOpen()` as the entry
+ * point. `isChannelOpen()` remains synchronous (no script execution).
  */
 
-import type { Gate, GateField, GateFieldCheck, Channel } from '@neokai/shared';
+import type { Gate, GateField, GateFieldCheck, GateScript, Channel } from '@neokai/shared';
+import {
+	deepMergeWithDepthLimit,
+	type GateScriptContext,
+	type GateScriptResult,
+} from './gate-script-executor';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -24,6 +39,25 @@ export interface GateEvalResult {
 	/** Human-readable explanation when the gate is closed. */
 	reason?: string;
 }
+
+// Re-export executor types from gate-script-executor for consumer convenience.
+export type {
+	GateScriptContext as GateScriptExecutorContext,
+	GateScriptResult as GateScriptExecutorResult,
+};
+
+/**
+ * Callback type for executing gate scripts.
+ *
+ * The gate evaluator calls this when `gate.script` is defined. Implementations
+ * are responsible for spawning the process, enforcing timeouts, and returning
+ * the result. See `executeGateScript()` in `gate-script-executor.ts` for the
+ * reference implementation.
+ */
+export type GateScriptExecutorFn = (
+	script: GateScript,
+	context: GateScriptContext
+) => Promise<GateScriptResult>;
 
 // ---------------------------------------------------------------------------
 // Runtime validation
@@ -266,8 +300,12 @@ export function validateGate(gate: unknown): string[] {
  *   (missing gate = misconfiguration, fail closed).
  *
  * @param channel  The channel to check.
- * @param gates    Map of gate ID -> Gate (gate definitions, not runtime data).
- * @param gateData Map of gate ID -> runtime data.
+ * @param gates    Map of gate ID -> Gate definition (declared in the workflow).
+ * @param gateData Map of gate ID -> current gate data. Loaded from the
+ *                 `gate_data` SQLite table by `GateDataRepository`. Agents
+ *                 write to this data via the `write_gate` MCP tool. When
+ *                 absent, the gate is evaluated against an empty object
+ *                 (no fields satisfied).
  */
 export function isChannelOpen(
 	channel: Channel,
@@ -299,7 +337,7 @@ export function isChannelOpen(
 		if (d) data = d;
 	}
 
-	return evaluateGate(gate, data);
+	return evaluateFields(gate, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -307,19 +345,76 @@ export function isChannelOpen(
 // ---------------------------------------------------------------------------
 
 /**
- * Evaluates a Gate's fields against the provided runtime data store.
+ * Evaluates a Gate's declared fields against current gate data.
  *
- * Stateless — no I/O or side effects. The gate opens when ALL fields pass.
+ * Pure function — no I/O or side effects. The gate opens when ALL fields pass.
+ * Used internally by `evaluateGate()` (after script pre-check) and by
+ * `isChannelOpen()` (which remains synchronous).
  *
- * @param gate The gate definition (fields, checks).
- * @param data Runtime data from the `gate_data` table.
+ * @param gate     The gate definition (fields, checks).
+ * @param gateData Current runtime data for this gate. Sourced from the
+ *                 `gate_data` SQLite table via `GateDataRepository`, or
+ *                 computed by `computeGateDefaults()` when no record exists.
+ *                 Agents write to this data via the `write_gate` MCP tool.
  */
-export function evaluateGate(gate: Gate, data: Record<string, unknown>): GateEvalResult {
+export function evaluateFields(gate: Gate, gateData: Record<string, unknown>): GateEvalResult {
 	for (const field of gate.fields ?? []) {
-		const result = evaluateFieldCheck(field, data);
+		const result = evaluateFieldCheck(field, gateData);
 		if (!result.open) return result;
 	}
 	return { open: true };
+}
+
+/**
+ * Evaluates a gate: optionally runs a script pre-check, then evaluates fields.
+ *
+ * Evaluation flow:
+ *   1. If `gate.script` is defined AND `scriptExecutor` + `context` are
+ *      provided → the script executor is called.
+ *      - On failure → gate blocked immediately with script error.
+ *      - On success → script output data is deep-merged into `gateData`,
+ *        then fields are evaluated against the merged data.
+ *   2. If no script or no executor → fields are evaluated directly
+ *      (synchronously under the hood).
+ *   3. No script, no fields → gate open.
+ *
+ * @param gate           The gate definition (script, fields, checks).
+ * @param gateData       Current runtime data for this gate. Sourced from the
+ *                       `gate_data` SQLite table via `GateDataRepository`,
+ *                       or computed by `computeGateDefaults()` when no record
+ *                       exists. Agents write to this data via the `write_gate`
+ *                       MCP tool. When a script executor is provided, script
+ *                       output is deep-merged into this data before field
+ *                       evaluation.
+ * @param scriptExecutor Optional callback to execute gate scripts.
+ * @param context        Execution context for the script (workspace path,
+ *                       gate ID, run ID). Required when `scriptExecutor`
+ *                       is provided.
+ */
+export async function evaluateGate(
+	gate: Gate,
+	gateData: Record<string, unknown>,
+	scriptExecutor?: GateScriptExecutorFn,
+	context?: GateScriptContext
+): Promise<GateEvalResult> {
+	// ── Script pre-check ──────────────────────────────────────────────────
+	if (gate.script && scriptExecutor && context) {
+		const scriptResult = await scriptExecutor(gate.script, context);
+		if (!scriptResult.success) {
+			return {
+				open: false,
+				reason: `Script check failed: ${scriptResult.error ?? 'unknown error'}`,
+			};
+		}
+
+		// Deep-merge script output into gateData (spread avoids mutating caller's object)
+		if (scriptResult.data && Object.keys(scriptResult.data).length > 0) {
+			gateData = deepMergeWithDepthLimit({ ...gateData }, scriptResult.data);
+		}
+	}
+
+	// ── Field evaluation ──────────────────────────────────────────────────
+	return evaluateFields(gate, gateData);
 }
 
 /**
