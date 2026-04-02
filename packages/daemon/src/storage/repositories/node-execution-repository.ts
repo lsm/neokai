@@ -48,6 +48,7 @@ export class NodeExecutionRepository {
 				params.agentId,
 				params.agentSessionId ?? null,
 				params.status ?? 'pending',
+				// result is only set via update() after the agent calls report_done
 				null,
 				now,
 				null,
@@ -105,13 +106,16 @@ export class NodeExecutionRepository {
 			fields.push('status = ?');
 			values.push(params.status);
 
-			if (params.status === 'in_progress') {
+			// Auto-stamp timestamps only when the caller does NOT provide
+			// an explicit value — avoids duplicate SET entries in the SQL.
+			if (params.status === 'in_progress' && params.startedAt === undefined) {
 				fields.push('started_at = ?');
 				values.push(Date.now());
 			} else if (
-				params.status === 'done' ||
-				params.status === 'blocked' ||
-				params.status === 'cancelled'
+				(params.status === 'done' ||
+					params.status === 'blocked' ||
+					params.status === 'cancelled') &&
+				params.completedAt === undefined
 			) {
 				fields.push('completed_at = ?');
 				values.push(Date.now());
@@ -185,7 +189,7 @@ export class NodeExecutionRepository {
 			workflowRunId: row.workflow_run_id as string,
 			workflowNodeId: row.workflow_node_id as string,
 			agentName: row.agent_name as string,
-			agentId: (row.agent_id as string | null) ?? '',
+			agentId: (row.agent_id as string | null) ?? null,
 			agentSessionId: (row.agent_session_id as string | null) ?? null,
 			status: row.status as NodeExecutionStatus,
 			result: (row.result as string | null) ?? null,

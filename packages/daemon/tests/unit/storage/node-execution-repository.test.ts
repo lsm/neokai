@@ -253,6 +253,31 @@ describe('NodeExecutionRepository', () => {
 			expect(updated!.completedAt).not.toBeNull();
 		});
 
+		it('explicit startedAt overrides auto-stamp when status is in_progress', () => {
+			const exec = createExecution();
+			const explicitTime = 1000000;
+			const updated = repo.update(exec.id, {
+				status: 'in_progress',
+				startedAt: explicitTime,
+			});
+
+			expect(updated!.status).toBe('in_progress');
+			// Explicit value should win, not auto-stamped Date.now()
+			expect(updated!.startedAt).toBe(explicitTime);
+		});
+
+		it('explicit completedAt overrides auto-stamp when status is done', () => {
+			const exec = createExecution();
+			const explicitTime = 2000000;
+			const updated = repo.update(exec.id, {
+				status: 'done',
+				completedAt: explicitTime,
+			});
+
+			expect(updated!.status).toBe('done');
+			expect(updated!.completedAt).toBe(explicitTime);
+		});
+
 		it('updates agentSessionId', () => {
 			const exec = createExecution();
 			const updated = repo.update(exec.id, { agentSessionId: 'session-xyz' });
@@ -428,15 +453,15 @@ describe('NodeExecutionRepository', () => {
 			expect(repo.listByWorkflowRun(workflowRunId)).toHaveLength(0);
 		});
 
-		it('sets agent_id to empty string when agent is deleted (FK SET NULL)', () => {
+		it('sets agentId to null when agent is deleted (FK SET NULL)', () => {
 			const exec = createExecution({ agentId });
 			expect(exec.agentId).toBe(agentId);
 
-			// Delete the agent — FK ON DELETE SET NULL maps null to ''
+			// Delete the agent — FK ON DELETE SET NULL
 			(db as any).prepare(`DELETE FROM space_agents WHERE id = ?`).run(agentId);
 
 			const updated = repo.getById(exec.id)!;
-			expect(updated.agentId).toBe('');
+			expect(updated.agentId).toBeNull();
 		});
 	});
 
@@ -478,8 +503,8 @@ describe('NodeExecutionRepository', () => {
 
 	describe('multi-agent node support', () => {
 		it('supports multiple agent slots on the same node', () => {
-			const e1 = createExecution({ workflowNodeId: 'review-node', agentName: 'strict-reviewer' });
-			const e2 = createExecution({ workflowNodeId: 'review-node', agentName: 'quick-reviewer' });
+			createExecution({ workflowNodeId: 'review-node', agentName: 'strict-reviewer' });
+			createExecution({ workflowNodeId: 'review-node', agentName: 'quick-reviewer' });
 
 			const nodeExecs = repo.listByNode(workflowRunId, 'review-node');
 			expect(nodeExecs).toHaveLength(2);
@@ -488,12 +513,12 @@ describe('NodeExecutionRepository', () => {
 		});
 
 		it('allows same agent on different nodes', () => {
-			const e1 = createExecution({ workflowNodeId: 'node-A', agentName: 'coder' });
-			const e2 = createExecution({ workflowNodeId: 'node-B', agentName: 'coder' });
+			const nodeA = createExecution({ workflowNodeId: 'node-A', agentName: 'coder' });
+			const nodeB = createExecution({ workflowNodeId: 'node-B', agentName: 'coder' });
 
-			expect(e1.id).not.toBe(e2.id);
-			expect(e1.workflowNodeId).toBe('node-A');
-			expect(e2.workflowNodeId).toBe('node-B');
+			expect(nodeA.id).not.toBe(nodeB.id);
+			expect(nodeA.workflowNodeId).toBe('node-A');
+			expect(nodeB.workflowNodeId).toBe('node-B');
 		});
 	});
 });
