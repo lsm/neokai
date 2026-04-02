@@ -15,6 +15,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
 	evaluateGate,
+	evaluateFieldsSync,
 	evaluateFieldCheck,
 	isChannelOpen,
 	validateGateFields,
@@ -22,8 +23,11 @@ import {
 	validateGateLabel,
 	validateGateScript,
 	validateGate,
+	type GateScriptExecutorFn,
+	type GateScriptExecutorContext,
+	type GateScriptExecutorResult,
 } from '../../../src/lib/space/runtime/gate-evaluator.ts';
-import type { Gate, GateField, Channel } from '@neokai/shared';
+import type { Gate, GateField, GateScript, Channel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Scalar field — op: '==' (default comparison)
@@ -283,7 +287,7 @@ describe('GateEvaluator — map field (count op)', () => {
 // ---------------------------------------------------------------------------
 
 describe('GateEvaluator — evaluateGate (multiple fields)', () => {
-	test('opens when all fields pass', () => {
+	test('opens when all fields pass', async () => {
 		const gate: Gate = {
 			id: 'g1',
 			fields: [
@@ -292,7 +296,348 @@ describe('GateEvaluator — evaluateGate (multiple fields)', () => {
 			],
 			resetOnCycle: false,
 		};
-		expect(evaluateGate(gate, { approved: true, result: 'passed' }).open).toBe(true);
+		const result = await evaluateGate(gate, { approved: true, result: 'passed' });
+		expect(result.open).toBe(true);
+	});
+
+	test('closed when any field fails', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				{ name: 'result', type: 'string', writers: ['*'], check: { op: '==', value: 'passed' } },
+			],
+			resetOnCycle: false,
+		};
+		const result = await evaluateGate(gate, { approved: true, result: 'failed' });
+		expect(result.open).toBe(false);
+	});
+
+	test('opens with empty fields (no checks)', async () => {
+		const gate: Gate = { id: 'g1', fields: [], resetOnCycle: false };
+		const result = await evaluateGate(gate, {});
+		expect(result.open).toBe(true);
+	});
+
+	test('short-circuits on first failed field', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'x', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				{ name: 'y', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		};
+		const result = await evaluateGate(gate, { x: false, y: true });
+		expect(result.open).toBe(false);
+		expect(result.reason).toContain('x');
+	});
+
+	test('gate without script evaluates synchronously under the hood', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		// No script, no scriptExecutor — should still work
+		const result = await evaluateGate(gate, { done: true });
+		expect(result.open).toBe(true);
+	});
+
+	test('gate without script ignores scriptExecutor parameter', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const executor: GateScriptExecutorFn = async () => {
+			throw new Error('should not be called');
+		};
+		const result = await evaluateGate(gate, { done: true }, executor, {
+			workspacePath: '/tmp',
+			gateId: 'g1',
+			runId: 'r1',
+		});
+		expect(result.open).toBe(true);
+	});
+
+	test('gate with script but no scriptExecutor skips script', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: { interpreter: 'bash', source: 'echo test' },
+			resetOnCycle: false,
+		};
+		// No scriptExecutor → script is ignored, falls through to fields
+		const result = await evaluateGate(gate, { done: true });
+		expect(result.open).toBe(true);
+	});
+
+	test('gate with script but no context skips script', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: { interpreter: 'bash', source: 'echo test' },
+			resetOnCycle: false,
+		};
+		const executor: GateScriptExecutorFn = async () => {
+			throw new Error('should not be called');
+		};
+		// No context → script is ignored
+		const result = await evaluateGate(gate, { done: true }, executor);
+		expect(result.open).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// evaluateGate — script pre-check
+// ---------------------------------------------------------------------------
+
+describe('GateEvaluator — evaluateGate (script pre-check)', () => {
+	const mockContext: GateScriptExecutorContext = {
+		workspacePath: '/workspace',
+		gateId: 'g1',
+		runId: 'run-1',
+	};
+
+	test('script success with data merge opens gate when fields satisfied', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: { interpreter: 'node', source: 'process.exit(0)' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: { approved: true },
+		});
+
+		const result = await evaluateGate(gate, {}, executor, mockContext);
+		expect(result.open).toBe(true);
+	});
+
+	test('script success with data merge — field still fails', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: { interpreter: 'node', source: 'process.exit(0)' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: { approved: false },
+		});
+
+		const result = await evaluateGate(gate, {}, executor, mockContext);
+		expect(result.open).toBe(false);
+		expect(result.reason).toContain('approved');
+	});
+
+	test('script failure blocks gate immediately', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: { interpreter: 'bash', source: 'exit 1' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: false,
+			data: {},
+			error: 'tests failed: 3 of 10',
+		});
+
+		const result = await evaluateGate(gate, {}, executor, mockContext);
+		expect(result.open).toBe(false);
+		expect(result.reason).toBe('Script check failed: tests failed: 3 of 10');
+	});
+
+	test('script failure with no error message provides default reason', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: { interpreter: 'bash', source: 'exit 1' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: false,
+			data: {},
+		});
+
+		const result = await evaluateGate(gate, {}, executor, mockContext);
+		expect(result.open).toBe(false);
+		expect(result.reason).toBe('Script check failed: unknown error');
+	});
+
+	test('script success deep-merges data with existing data', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+				{ name: 'result', type: 'string', writers: ['*'], check: { op: '==', value: 'passed' } },
+			],
+			script: { interpreter: 'node', source: 'process.exit(0)' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: { approved: true },
+		});
+
+		// Existing data has 'result', script adds 'approved'
+		const result = await evaluateGate(gate, { result: 'passed' }, executor, mockContext);
+		expect(result.open).toBe(true);
+	});
+
+	test('script success with empty data does not overwrite existing data', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: { interpreter: 'node', source: 'process.exit(0)' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: {},
+		});
+
+		const result = await evaluateGate(gate, { approved: true }, executor, mockContext);
+		expect(result.open).toBe(true);
+	});
+
+	test('script-only gate (no fields, script present) returns based on script result', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			script: { interpreter: 'node', source: 'process.exit(0)' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: {},
+		});
+
+		const result = await evaluateGate(gate, {}, executor, mockContext);
+		expect(result.open).toBe(true);
+	});
+
+	test('script-only gate fails when script fails', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			script: { interpreter: 'bash', source: 'false' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: false,
+			data: {},
+			error: 'command not found',
+		});
+
+		const result = await evaluateGate(gate, {}, executor, mockContext);
+		expect(result.open).toBe(false);
+		expect(result.reason).toBe('Script check failed: command not found');
+	});
+
+	test('script-only gate with script but no executor passes through', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			script: { interpreter: 'bash', source: 'false' },
+			resetOnCycle: false,
+		};
+
+		// No executor, no fields → gate open (script ignored)
+		const result = await evaluateGate(gate, {});
+		expect(result.open).toBe(true);
+	});
+
+	test('script executor receives correct context', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			script: { interpreter: 'bash', source: 'echo hi' },
+			resetOnCycle: false,
+		};
+
+		const script = gate.script!;
+		let receivedScript: GateScript | undefined;
+		let receivedContext: GateScriptExecutorContext | undefined;
+
+		const executor: GateScriptExecutorFn = async (s, ctx) => {
+			receivedScript = s;
+			receivedContext = ctx;
+			return { success: true, data: {} };
+		};
+
+		await evaluateGate(gate, {}, executor, mockContext);
+		expect(receivedScript).toBe(script);
+		expect(receivedContext).toEqual(mockContext);
+	});
+
+	test('script data merge overrides matching keys in existing data', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'status', type: 'string', writers: ['*'], check: { op: '==', value: 'passed' } },
+			],
+			script: { interpreter: 'node', source: 'process.exit(0)' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: { status: 'passed' },
+		});
+
+		// Existing data has status: 'failed', script overrides it to 'passed'
+		const result = await evaluateGate(gate, { status: 'failed' }, executor, mockContext);
+		expect(result.open).toBe(true);
+	});
+
+	test('script data does not mutate original data object', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'extra', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: { interpreter: 'node', source: 'process.exit(0)' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: { extra: true },
+		});
+
+		const originalData: Record<string, unknown> = {};
+		await evaluateGate(gate, originalData, executor, mockContext);
+		expect(originalData).toEqual({});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// evaluateFieldsSync
+// ---------------------------------------------------------------------------
+
+describe('GateEvaluator — evaluateFieldsSync', () => {
+	test('opens when all fields pass', () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		};
+		const result = evaluateFieldsSync(gate, { approved: true });
+		expect(result.open).toBe(true);
 	});
 
 	test('closed when any field fails', () => {
@@ -300,16 +645,17 @@ describe('GateEvaluator — evaluateGate (multiple fields)', () => {
 			id: 'g1',
 			fields: [
 				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
-				{ name: 'result', type: 'string', writers: ['*'], check: { op: '==', value: 'passed' } },
 			],
 			resetOnCycle: false,
 		};
-		expect(evaluateGate(gate, { approved: true, result: 'failed' }).open).toBe(false);
+		const result = evaluateFieldsSync(gate, { approved: false });
+		expect(result.open).toBe(false);
 	});
 
 	test('opens with empty fields (no checks)', () => {
 		const gate: Gate = { id: 'g1', fields: [], resetOnCycle: false };
-		expect(evaluateGate(gate, {}).open).toBe(true);
+		const result = evaluateFieldsSync(gate, {});
+		expect(result.open).toBe(true);
 	});
 
 	test('short-circuits on first failed field', () => {
@@ -321,9 +667,15 @@ describe('GateEvaluator — evaluateGate (multiple fields)', () => {
 			],
 			resetOnCycle: false,
 		};
-		const result = evaluateGate(gate, { x: false, y: true });
+		const result = evaluateFieldsSync(gate, { x: false, y: true });
 		expect(result.open).toBe(false);
 		expect(result.reason).toContain('x');
+	});
+
+	test('handles undefined fields (defaults to empty array)', () => {
+		const gate: Gate = { id: 'g1', resetOnCycle: false };
+		const result = evaluateFieldsSync(gate, {});
+		expect(result.open).toBe(true);
 	});
 });
 

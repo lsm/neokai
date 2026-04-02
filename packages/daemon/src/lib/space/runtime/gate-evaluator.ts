@@ -1,17 +1,28 @@
 /**
- * Unified Gate Evaluator — field-based
+ * Unified Gate Evaluator — script-based + field-based
  *
- * `evaluateGate(gate, data)` walks `gate.fields` and checks each field against
- * the runtime data store. The gate opens when ALL fields pass their checks.
+ * `evaluateGate(gate, data, scriptExecutor?)` optionally runs a gate script
+ * (when `gate.script` is defined and `scriptExecutor` is provided), then walks
+ * `gate.fields` and checks each field against the runtime data store. The gate
+ * opens when ALL checks pass.
+ *
+ * Evaluation order:
+ *   1. If script exists + scriptExecutor provided → run script
+ *      - On failure: gate blocked immediately
+ *      - On success: deep-merge script output data into `data`
+ *   2. Field-based evaluation (existing logic)
+ *   3. No script, no fields → gate open
  *
  * Field check types:
  *   scalar (boolean/string/number) — ops: exists / == / !=
  *   map — op: count (count entries matching a value, check >= min)
  *
- * Channels without a gate are always open — use `isChannelOpen()` as the entry point.
+ * Channels without a gate are always open — use `isChannelOpen()` as the entry
+ * point. `isChannelOpen()` remains synchronous (no script execution).
  */
 
-import type { Gate, GateField, GateFieldCheck, Channel } from '@neokai/shared';
+import type { Gate, GateField, GateFieldCheck, GateScript, Channel } from '@neokai/shared';
+import { deepMergeWithDepthLimit } from './gate-script-executor';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -24,6 +35,39 @@ export interface GateEvalResult {
 	/** Human-readable explanation when the gate is closed. */
 	reason?: string;
 }
+
+/** Context passed to the script executor callback. */
+export interface GateScriptExecutorContext {
+	/** Absolute path to the workspace root. */
+	workspacePath: string;
+	/** The gate ID this script belongs to. */
+	gateId: string;
+	/** The current workflow run ID. */
+	runId: string;
+}
+
+/** Result of a script executor callback. */
+export interface GateScriptExecutorResult {
+	/** Whether the script passed. */
+	success: boolean;
+	/** Data to merge into the gate evaluation data (on success). */
+	data: Record<string, unknown>;
+	/** Human-readable error string on failure. */
+	error?: string;
+}
+
+/**
+ * Callback type for executing gate scripts.
+ *
+ * The gate evaluator calls this when `gate.script` is defined. Implementations
+ * are responsible for spawning the process, enforcing timeouts, and returning
+ * the result. See `executeGateScript()` in `gate-script-executor.ts` for the
+ * reference implementation.
+ */
+export type GateScriptExecutorFn = (
+	script: GateScript,
+	context: GateScriptExecutorContext
+) => Promise<GateScriptExecutorResult>;
 
 // ---------------------------------------------------------------------------
 // Runtime validation
@@ -299,7 +343,7 @@ export function isChannelOpen(
 		if (d) data = d;
 	}
 
-	return evaluateGate(gate, data);
+	return evaluateFieldsSync(gate, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,17 +353,61 @@ export function isChannelOpen(
 /**
  * Evaluates a Gate's fields against the provided runtime data store.
  *
- * Stateless — no I/O or side effects. The gate opens when ALL fields pass.
+ * Synchronous — no I/O or side effects. The gate opens when ALL fields pass.
  *
  * @param gate The gate definition (fields, checks).
  * @param data Runtime data from the `gate_data` table.
  */
-export function evaluateGate(gate: Gate, data: Record<string, unknown>): GateEvalResult {
+export function evaluateFieldsSync(gate: Gate, data: Record<string, unknown>): GateEvalResult {
 	for (const field of gate.fields ?? []) {
 		const result = evaluateFieldCheck(field, data);
 		if (!result.open) return result;
 	}
 	return { open: true };
+}
+
+/**
+ * Evaluates a gate: optionally runs a script pre-check, then evaluates fields.
+ *
+ * When `gate.script` is defined and `scriptExecutor` is provided:
+ *   1. The script executor is called.
+ *   2. On failure → returns `{ open: false, reason: 'Script check failed: ...' }`.
+ *   3. On success → script result data is deep-merged into `data`, then fields
+ *      are evaluated against the merged data.
+ *
+ * When `gate.script` is undefined or `scriptExecutor` is not provided:
+ *   Falls through directly to field evaluation (synchronously under the hood).
+ *
+ * `GateEvalResult` remains a plain synchronous type.
+ *
+ * @param gate           The gate definition (script, fields, checks).
+ * @param data           Runtime data from the `gate_data` table.
+ * @param scriptExecutor Optional callback to execute gate scripts.
+ */
+export async function evaluateGate(
+	gate: Gate,
+	data: Record<string, unknown>,
+	scriptExecutor?: GateScriptExecutorFn,
+	context?: GateScriptExecutorContext
+): Promise<GateEvalResult> {
+	// ── Script pre-check ──────────────────────────────────────────────────
+	if (gate.script && scriptExecutor && context) {
+		const scriptResult = await scriptExecutor(gate.script, context);
+		if (!scriptResult.success) {
+			return {
+				open: false,
+				reason: `Script check failed: ${scriptResult.error ?? 'unknown error'}`,
+			};
+		}
+
+		// Deep-merge script output data into the evaluation data
+		if (scriptResult.data && Object.keys(scriptResult.data).length > 0) {
+			data = deepMergeWithDepthLimit({ ...data }, scriptResult.data);
+		}
+	}
+
+	// ── Field evaluation ──────────────────────────────────────────────────
+	return evaluateFieldsSync(gate, data);
 }
 
 /**

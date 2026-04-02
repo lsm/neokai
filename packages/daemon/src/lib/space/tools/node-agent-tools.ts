@@ -621,7 +621,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const currentData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
 			// Evaluate current gate status
-			const evalResult = evaluateGate(gateDef, currentData);
+			const evalResult = await evaluateGate(gateDef, currentData);
 
 			return jsonResult({
 				success: true,
@@ -699,7 +699,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const updated = gateDataRepo.merge(workflowRunId, gateId, data);
 
 			// Re-evaluate gate with updated data
-			const evalResult = evaluateGate(gateDef, updated.data);
+			const evalResult = await evaluateGate(gateDef, updated.data);
 
 			// Trigger re-evaluation and lazy node activation for channels referencing
 			// this gate (fire-and-forget — response is not delayed waiting for activation).
