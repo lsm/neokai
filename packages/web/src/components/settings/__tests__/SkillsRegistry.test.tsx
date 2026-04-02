@@ -15,6 +15,7 @@ const {
 	mockUpdateSkill,
 	mockRemoveSkill,
 	mockSetEnabled,
+	mockInstallSkillFromGit,
 	mockToastError,
 	mockToastSuccess,
 	mockSubscribe,
@@ -32,6 +33,7 @@ const {
 		mockUpdateSkill: vi.fn(),
 		mockRemoveSkill: vi.fn(),
 		mockSetEnabled: vi.fn(),
+		mockInstallSkillFromGit: vi.fn(),
 		mockToastError: vi.fn(),
 		mockToastSuccess: vi.fn(),
 		mockSubscribe: vi.fn().mockResolvedValue(undefined),
@@ -50,6 +52,7 @@ vi.mock('../../../lib/skills-store.ts', () => ({
 		updateSkill: (...args: unknown[]) => mockUpdateSkill(...args),
 		removeSkill: (...args: unknown[]) => mockRemoveSkill(...args),
 		setEnabled: (...args: unknown[]) => mockSetEnabled(...args),
+		installSkillFromGit: (...args: unknown[]) => mockInstallSkillFromGit(...args),
 	},
 }));
 
@@ -311,6 +314,11 @@ describe('SkillsRegistry', () => {
 			render(<SkillsRegistry />);
 			expect(screen.getByText('Add Skill')).toBeTruthy();
 		});
+
+		it('should show Install from Git button', () => {
+			render(<SkillsRegistry />);
+			expect(screen.getByText('Install from Git')).toBeTruthy();
+		});
 	});
 
 	describe('Toggle', () => {
@@ -432,6 +440,17 @@ describe('SkillsRegistry', () => {
 
 			expect(screen.getByTestId('modal')).toBeTruthy();
 			expect(screen.getByTestId('modal-title').textContent).toBe('Add Skill');
+		});
+	});
+
+	describe('Open Install from Git Dialog', () => {
+		it('should open InstallSkillFromGitDialog when Install from Git button is clicked', () => {
+			render(<SkillsRegistry />);
+
+			fireEvent.click(screen.getByText('Install from Git'));
+
+			expect(screen.getByTestId('modal')).toBeTruthy();
+			expect(screen.getByTestId('modal-title').textContent).toBe('Install Skill from Git');
 		});
 	});
 

@@ -6,6 +6,9 @@
 import { createDaemonApp } from '@neokai/daemon/app';
 import type { Config } from '@neokai/daemon/config';
 import { createLogger } from '@neokai/shared';
+import { homedir } from 'node:os';
+import { mkdir, writeFile, access } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import {
 	createCorsPreflightResponse,
 	isWebSocketPath,
@@ -13,7 +16,7 @@ import {
 	shouldHaveImmutableCache,
 	isHtmlFile,
 } from './cli-utils';
-import { embeddedAssets } from './embedded-assets';
+import { embeddedAssets, embeddedBuiltinSkills } from './embedded-assets';
 
 const log = createLogger('kai:cli:prod-server');
 
@@ -66,6 +69,25 @@ export async function startProdServer(config: Config) {
 
 	process.on('SIGINT', () => shutdown('SIGINT'));
 	process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+	// Extract embedded built-in skill files to ~/.neokai/skills/.
+	// Each key is a relative path like "playwright/SKILL.md"; the full directory
+	// structure is preserved. Existing user-customized files are not overwritten.
+	if (embeddedBuiltinSkills.size > 0) {
+		const neoSkillsDir = join(homedir(), '.neokai', 'skills');
+		for (const [relativePath, filePath] of embeddedBuiltinSkills) {
+			const dest = join(neoSkillsDir, relativePath);
+			const exists = await access(dest)
+				.then(() => true)
+				.catch(() => false);
+			if (!exists) {
+				await mkdir(dirname(dest), { recursive: true });
+				const content = await Bun.file(filePath).text();
+				await writeFile(dest, content);
+			}
+		}
+		log.info(`Extracted ${embeddedBuiltinSkills.size} built-in skill files to ${neoSkillsDir}`);
+	}
 
 	// Create daemon app (returns Bun server)
 	try {

@@ -61,4 +61,6 @@ browser-coverage.lcov
 # Dev Proxy runtime files
 .devproxy/.devproxy.pid
 .devproxy/devproxy.log
+
+# Claude Code — ignore everything under .claude/
 .claude/

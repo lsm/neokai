@@ -110,6 +110,16 @@ export interface RoomSkillOverride {
 	enabled: boolean;
 }
 
+/**
+ * Params for the skill.installFromGit RPC handler.
+ */
+export interface InstallSkillFromGitParams {
+	/** GitHub tree/blob URL or raw content URL for the skill directory or file. */
+	repoUrl: string;
+	/** Name to register the skill under (also used as the command file name). */
+	commandName: string;
+}
+
 // ---------------------------------------------------------------------------
 // Type guards
 // ---------------------------------------------------------------------------
