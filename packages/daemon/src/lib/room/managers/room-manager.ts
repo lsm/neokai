@@ -151,10 +151,13 @@ export class RoomManager {
 		const taskSummaries = nonTerminal.map(toSummary);
 		const allTaskSummaries = allTasks.map(toSummary);
 
-		// Build session summaries from actual session data
+		// Build session summaries from actual session data (batch query to avoid N+1)
 		// Filter out room-specific sessions (chat, craft, lead) and archived (deleted) sessions
-		const sessions = room.sessionIds.filter(isWorkerSessionId).flatMap((id) => {
-			const session = this.sessionRepo.getSession(id);
+		const workerIds = room.sessionIds.filter(isWorkerSessionId);
+		const sessionsMap =
+			workerIds.length > 0 ? this.sessionRepo.getSessionsByIds(workerIds) : new Map();
+		const sessions = workerIds.flatMap((id) => {
+			const session = sessionsMap.get(id);
 			if (!session) {
 				return [
 					{
@@ -207,11 +210,11 @@ export class RoomManager {
 	getGlobalStatus() {
 		const rooms = this.roomRepo.listRooms(false); // Only active rooms
 
-		const roomStatuses = rooms.map((room) => this.getRoomStatus(room.id)).filter(Boolean);
+		const roomStatuses = this.roomRepo.getRoomStatusesBatch(rooms.map((r) => r.id));
 
 		return {
 			rooms: roomStatuses,
-			totalActiveTasks: roomStatuses.reduce((sum, r) => sum + (r?.activeTaskCount ?? 0), 0),
+			totalActiveTasks: roomStatuses.reduce((sum, r) => sum + r.activeTaskCount, 0),
 		};
 	}
 }

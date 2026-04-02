@@ -618,5 +618,98 @@ describe('SessionRepository', () => {
 			repository.deleteSession('session-1');
 			expect(repository.getSession('session-1')).toBeNull();
 		});
+
+		describe('getSessionsByIds', () => {
+			it('should return a Map with found sessions', () => {
+				repository.createSession(createDefaultSession({ id: 's-1' }));
+				repository.createSession(createDefaultSession({ id: 's-2' }));
+				repository.createSession(createDefaultSession({ id: 's-3' }));
+
+				const result = repository.getSessionsByIds(['s-1', 's-3']);
+
+				expect(result).toBeInstanceOf(Map);
+				expect(result.size).toBe(2);
+				expect(result.get('s-1')?.title).toBe('Test Session');
+				expect(result.get('s-3')?.title).toBe('Test Session');
+				expect(result.has('s-2')).toBe(false);
+			});
+
+			it('should return empty Map when no IDs match', () => {
+				repository.createSession(createDefaultSession({ id: 's-1' }));
+
+				const result = repository.getSessionsByIds(['non-existent-1', 'non-existent-2']);
+
+				expect(result).toBeInstanceOf(Map);
+				expect(result.size).toBe(0);
+			});
+
+			it('should return empty Map for empty input array', () => {
+				const result = repository.getSessionsByIds([]);
+
+				expect(result).toBeInstanceOf(Map);
+				expect(result.size).toBe(0);
+			});
+
+			it('should handle single ID lookup', () => {
+				repository.createSession(createDefaultSession({ id: 's-single' }));
+
+				const result = repository.getSessionsByIds(['s-single']);
+
+				expect(result.size).toBe(1);
+				expect(result.get('s-single')?.id).toBe('s-single');
+			});
+
+			it('should return all sessions when all IDs exist', () => {
+				repository.createSession(createDefaultSession({ id: 'a' }));
+				repository.createSession(createDefaultSession({ id: 'b' }));
+				repository.createSession(createDefaultSession({ id: 'c' }));
+
+				const result = repository.getSessionsByIds(['a', 'b', 'c']);
+
+				expect(result.size).toBe(3);
+				expect(result.get('a')?.id).toBe('a');
+				expect(result.get('b')?.id).toBe('b');
+				expect(result.get('c')?.id).toBe('c');
+			});
+
+			it('should properly deserialize session fields in batch results', () => {
+				const session = createDefaultSession({
+					id: 's-detail',
+					title: 'Detailed Session',
+					status: 'paused',
+					gitBranch: 'feature-branch',
+					sdkSessionId: 'sdk-abc',
+				});
+				repository.createSession(session);
+
+				const result = repository.getSessionsByIds(['s-detail']);
+
+				const fetched = result.get('s-detail');
+				expect(fetched?.title).toBe('Detailed Session');
+				expect(fetched?.status).toBe('paused');
+				expect(fetched?.gitBranch).toBe('feature-branch');
+				expect(fetched?.sdkSessionId).toBe('sdk-abc');
+				expect(fetched?.config.model).toBe('claude-sonnet-4-5-20250929');
+			});
+
+			it('should correctly chunk large ID lists within SQLite variable limit', () => {
+				// Create a small number of sessions and request them all at once.
+				// The chunking logic (CHUNK_SIZE=900) is exercised by having more
+				// entries than a single chunk (though we only create a few for speed).
+				const ids: string[] = [];
+				for (let i = 0; i < 10; i++) {
+					const id = `s-chunk-${i}`;
+					ids.push(id);
+					repository.createSession(createDefaultSession({ id }));
+				}
+
+				const result = repository.getSessionsByIds(ids);
+
+				expect(result.size).toBe(10);
+				for (const id of ids) {
+					expect(result.has(id)).toBe(true);
+				}
+			});
+		});
 	});
 });

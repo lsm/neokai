@@ -148,13 +148,13 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('session-1', 'Test Session 1', '/workspace', now, now, 'active', '{}', '{}');
 			dbRaw
 				.prepare(
 					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('session-2', 'Test Session 2', '/workspace', now, now, 'paused', '{}', '{}');
 
@@ -181,13 +181,13 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('session-active', 'Active Session', '/workspace', now, now, 'active', '{}', '{}');
 			dbRaw
 				.prepare(
 					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					'session-archived',
@@ -233,7 +233,7 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					'task-1',
@@ -248,7 +248,7 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					'task-2',
@@ -279,7 +279,7 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, short_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					'task-short-1',
@@ -297,7 +297,7 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					'task-no-short',
@@ -331,7 +331,7 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, short_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					'task-done',
@@ -351,6 +351,88 @@ describe('RoomManager', () => {
 			expect(overview?.activeTasks).toHaveLength(0);
 			const inAll = overview?.allTasks?.find((t) => t.id === 'task-done');
 			expect(inAll?.shortId).toBe('t-2');
+		});
+
+		it('should batch-fetch sessions for multiple worker session IDs', () => {
+			const room = roomManager.createRoom({ name: 'Room Multi Worker' });
+			const dbRaw = db.getDatabase();
+			const now = new Date().toISOString();
+
+			// Create 5 worker sessions
+			for (let i = 1; i <= 5; i++) {
+				dbRaw
+					.prepare(
+						`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+					)
+					.run(`worker-${i}`, `Worker ${i}`, '/workspace', now, now, 'active', '{}', '{}');
+				roomManager.assignSession(room.id, `worker-${i}`);
+			}
+
+			const overview = roomManager.getRoomOverview(room.id);
+
+			expect(overview?.sessions).toHaveLength(5);
+			const ids = overview?.sessions.map((s) => s.id).sort();
+			expect(ids).toEqual(['worker-1', 'worker-2', 'worker-3', 'worker-4', 'worker-5']);
+		});
+
+		it('should filter out room-specific session types (chat, lead) from batch results', () => {
+			const room = roomManager.createRoom({ name: 'Room With Internal' });
+			const dbRaw = db.getDatabase();
+			const now = new Date().toISOString();
+
+			// Create a worker and an internal room:chat session
+			dbRaw
+				.prepare(
+					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run('worker-abc', 'Worker', '/workspace', now, now, 'active', '{}', '{}');
+			dbRaw
+				.prepare(
+					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run('room:chat:some-id', 'Chat Session', '/workspace', now, now, 'active', '{}', '{}');
+
+			roomManager.assignSession(room.id, 'worker-abc');
+			roomManager.assignSession(room.id, 'room:chat:some-id');
+
+			const overview = roomManager.getRoomOverview(room.id);
+
+			// Only the worker session should appear; room:chat: is filtered out
+			expect(overview?.sessions).toHaveLength(1);
+			expect(overview?.sessions[0].id).toBe('worker-abc');
+		});
+
+		it('should not include terminal-status tasks in activeTasks but include in allTasks', () => {
+			const room = roomManager.createRoom({ name: 'Room Terminal Tasks' });
+			const dbRaw = db.getDatabase();
+
+			// Create tasks with terminal statuses
+			const terminalStatuses = ['completed', 'needs_attention', 'cancelled'];
+			for (const status of terminalStatuses) {
+				dbRaw
+					.prepare(
+						`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+					)
+					.run(
+						`task-${status}`,
+						room.id,
+						`Task ${status}`,
+						'D',
+						status,
+						'normal',
+						'[]',
+						Date.now()
+					);
+			}
+
+			const overview = roomManager.getRoomOverview(room.id);
+
+			expect(overview?.activeTasks).toHaveLength(0);
+			expect(overview?.allTasks).toHaveLength(3);
 		});
 	});
 
@@ -545,25 +627,25 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('task-1', room.id, 'Pending', 'Desc', 'pending', 'normal', '[]', Date.now());
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('task-2', room.id, 'In Progress', 'Desc', 'in_progress', 'normal', '[]', Date.now());
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('task-3', room.id, 'Completed', 'Desc', 'completed', 'normal', '[]', Date.now());
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('task-4', room.id, 'Failed', 'Desc', 'needs_attention', 'normal', '[]', Date.now());
 
@@ -591,13 +673,13 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('task-1', room1.id, 'Task 1', 'Desc', 'pending', 'normal', '[]', Date.now());
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('task-2', room1.id, 'Task 2', 'Desc', 'in_progress', 'normal', '[]', Date.now());
 
@@ -605,7 +687,7 @@ describe('RoomManager', () => {
 			dbRaw
 				.prepare(
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run('task-3', room2.id, 'Task 3', 'Desc', 'pending', 'normal', '[]', Date.now());
 
@@ -635,6 +717,39 @@ describe('RoomManager', () => {
 				roomId: room.id,
 				activeTaskCount: 0,
 			});
+		});
+
+		it('should include rooms with 0 active tasks in batch result', () => {
+			const room1 = roomManager.createRoom({ name: 'Room With Tasks' });
+			const room2 = roomManager.createRoom({ name: 'Room Without Tasks' });
+			const room3 = roomManager.createRoom({ name: 'Another Empty' });
+			const dbRaw = db.getDatabase();
+
+			// Only room1 has a task
+			dbRaw
+				.prepare(
+					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run('task-a', room1.id, 'Task A', 'D', 'pending', 'normal', '[]', Date.now());
+
+			const status = roomManager.getGlobalStatus();
+
+			expect(status.rooms).toHaveLength(3);
+			expect(status.totalActiveTasks).toBe(1);
+
+			// Each room should appear exactly once
+			const roomIds = status.rooms.map((r) => r.roomId);
+			expect(roomIds).toContain(room1.id);
+			expect(roomIds).toContain(room2.id);
+			expect(roomIds).toContain(room3.id);
+
+			const r1 = status.rooms.find((r) => r.roomId === room1.id);
+			const r2 = status.rooms.find((r) => r.roomId === room2.id);
+			const r3 = status.rooms.find((r) => r.roomId === room3.id);
+			expect(r1?.activeTaskCount).toBe(1);
+			expect(r2?.activeTaskCount).toBe(0);
+			expect(r3?.activeTaskCount).toBe(0);
 		});
 	});
 

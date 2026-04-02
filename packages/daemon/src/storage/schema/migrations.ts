@@ -292,6 +292,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// JSON object {"expression":"@daily","timezone":"UTC"}. This wraps bare strings
 	// into the proper CronSchedule shape.
 	runMigration71(db);
+	// Migration 72: Add missing performance indexes for rooms, sessions, and goals tables.
+	// - rooms: index on (status, updated_at) for room.list ORDER BY updated_at DESC WHERE status='active'
+	// - sessions: index on (type) for listSessionsByType, findByRoomId
+	// - sessions: index on (status, last_active_at) for listSessions ORDER BY last_active_at DESC
+	runMigration72(db);
 }
 
 /**
@@ -4612,5 +4617,40 @@ export function runMigration71(db: BunDatabase): void {
 			const fixedVal = JSON.stringify({ expression: row.schedule, timezone: 'UTC' });
 			update.run(fixedVal, row.id);
 		}
+	}
+}
+
+/**
+ * Migration 72: Add missing performance indexes.
+ *
+ * These indexes optimize the most common query patterns:
+ * - room.list: SELECT * FROM rooms WHERE status = 'active' ORDER BY updated_at DESC
+ * - listSessions: SELECT * FROM sessions WHERE status != 'archived' ORDER BY last_active_at DESC
+ * - listSessionsByType: SELECT * FROM sessions WHERE type = ? ORDER BY last_active_at DESC
+ * - findByRoomId: SELECT * FROM sessions WHERE type = 'room' AND json_extract(session_context, '$.roomId') = ?
+ *
+ * Idempotent: CREATE INDEX IF NOT EXISTS ensures safe re-runs.
+ * Guards: tableHasColumn checks handle test-contrived partial schemas (e.g.,
+ * migration-42 tests that create rooms without a status column) as well as
+ * fresh in-memory databases where tables may not yet exist.
+ */
+export function runMigration72(db: BunDatabase): void {
+	if (tableExists(db, 'rooms') && tableHasColumn(db, 'rooms', 'status')) {
+		// Rooms: composite index for listRooms ORDER BY updated_at DESC WHERE status = 'active'
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_rooms_status_updated ON rooms(status, updated_at DESC)`
+		);
+	}
+
+	if (tableExists(db, 'sessions') && tableHasColumn(db, 'sessions', 'type')) {
+		// Sessions: index on type for listSessionsByType, findByRoomId
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(type)`);
+	}
+
+	if (tableExists(db, 'sessions') && tableHasColumn(db, 'sessions', 'status')) {
+		// Sessions: composite index for listSessions ORDER BY last_active_at DESC WHERE status != 'archived'
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sessions_status_last_active ON sessions(status, last_active_at DESC)`
+		);
 	}
 }

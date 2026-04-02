@@ -376,12 +376,19 @@ export class GoalRepository {
 	 * Get goals that have a specific task linked.
 	 * Applies the same lazy short ID backfill as listGoals so callers always
 	 * receive goals with shortId populated.
+	 *
+	 * Uses SQLite's json_each() to properly query the linked_task_ids JSON array
+	 * instead of the fragile LIKE '%id%' pattern (which could match partial strings
+	 * and cannot use indexes).
 	 */
 	getGoalsForTask(taskId: string): RoomGoal[] {
-		const stmt = this.db.prepare(
-			`SELECT * FROM goals WHERE linked_task_ids LIKE ? ORDER BY created_at ASC`
-		);
-		const rows = stmt.all(`%"${taskId}"%`) as Record<string, unknown>[];
+		const stmt = this.db.prepare(`
+			SELECT g.*
+			FROM goals g, json_each(g.linked_task_ids) AS task_id
+			WHERE task_id.value = ?
+			ORDER BY g.created_at ASC
+		`);
+		const rows = stmt.all(taskId) as Record<string, unknown>[];
 		return rows.map((row) => {
 			const goal = this.rowToGoal(row);
 			if (!goal.shortId && this.shortIdAllocator) {

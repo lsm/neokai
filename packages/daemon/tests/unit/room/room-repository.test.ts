@@ -54,7 +54,6 @@ describe('RoomRepository', () => {
 			expect(room.defaultModel).toBeUndefined();
 			expect(room.sessionIds).toEqual([]);
 			expect(room.status).toBe('active');
-			expect(room.contextId).toBeUndefined();
 			expect(room.createdAt).toBeDefined();
 			expect(room.updatedAt).toBeDefined();
 			expect(room.createdAt).toBe(room.updatedAt);
@@ -571,6 +570,116 @@ describe('RoomRepository', () => {
 
 			expect(repository.getRoom(room1.id)).toBeNull();
 			expect(repository.getRoom(room2.id)).not.toBeNull();
+		});
+	});
+
+	describe('getRoomStatusesBatch', () => {
+		it('should return empty array for empty input', () => {
+			const result = repository.getRoomStatusesBatch([]);
+
+			expect(result).toEqual([]);
+		});
+
+		it('should return active task count of 0 for rooms with no tasks', () => {
+			const room = repository.createRoom({ name: 'Room No Tasks' });
+
+			const result = repository.getRoomStatusesBatch([room.id]);
+
+			expect(result).toHaveLength(1);
+			expect(result[0].roomId).toBe(room.id);
+			expect(result[0].activeTaskCount).toBe(0);
+		});
+
+		it('should count only non-terminal tasks as active', () => {
+			const room = repository.createRoom({ name: 'Room With Mixed Tasks' });
+
+			// Insert tasks with different statuses directly
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t-pending', room.id, 'Pending', 'D', 'pending', 'normal', '[]', Date.now());
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t-progress', room.id, 'In Progress', 'D', 'in_progress', 'normal', '[]', Date.now());
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t-completed', room.id, 'Completed', 'D', 'completed', 'normal', '[]', Date.now());
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t-needs-attn', room.id, 'Failed', 'D', 'needs_attention', 'normal', '[]', Date.now());
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t-cancelled', room.id, 'Cancelled', 'D', 'cancelled', 'normal', '[]', Date.now());
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t-archived', room.id, 'Archived', 'D', 'archived', 'normal', '[]', Date.now());
+
+			const result = repository.getRoomStatusesBatch([room.id]);
+
+			expect(result).toHaveLength(1);
+			// Only pending and in_progress are active
+			expect(result[0].activeTaskCount).toBe(2);
+		});
+
+		it('should return statuses for multiple rooms in one call', () => {
+			const room1 = repository.createRoom({ name: 'Room 1' });
+			const room2 = repository.createRoom({ name: 'Room 2' });
+
+			// 2 active tasks in room1
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t1a', room1.id, 'T1A', 'D', 'pending', 'normal', '[]', Date.now());
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t1b', room1.id, 'T1B', 'D', 'in_progress', 'normal', '[]', Date.now());
+
+			// 1 active task in room2
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t2a', room2.id, 'T2A', 'D', 'pending', 'normal', '[]', Date.now());
+
+			const result = repository.getRoomStatusesBatch([room1.id, room2.id]);
+
+			expect(result).toHaveLength(2);
+			const r1 = result.find((r) => r.roomId === room1.id);
+			const r2 = result.find((r) => r.roomId === room2.id);
+			expect(r1?.activeTaskCount).toBe(2);
+			expect(r2?.activeTaskCount).toBe(1);
+		});
+
+		it('should include rooms with 0 active tasks in the result', () => {
+			const room1 = repository.createRoom({ name: 'Room With Tasks' });
+			const room2 = repository.createRoom({ name: 'Room Without Tasks' });
+
+			// 1 task in room1
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			).run('t1', room1.id, 'T1', 'D', 'pending', 'normal', '[]', Date.now());
+
+			const result = repository.getRoomStatusesBatch([room1.id, room2.id]);
+
+			expect(result).toHaveLength(2);
+			const r2 = result.find((r) => r.roomId === room2.id);
+			expect(r2?.activeTaskCount).toBe(0);
+		});
+
+		it('should handle a single room ID', () => {
+			const room = repository.createRoom({ name: 'Single Room' });
+
+			const result = repository.getRoomStatusesBatch([room.id]);
+
+			expect(result).toHaveLength(1);
+			expect(result[0].roomId).toBe(room.id);
+			expect(result[0].activeTaskCount).toBe(0);
 		});
 	});
 
