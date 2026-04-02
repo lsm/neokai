@@ -73,7 +73,7 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
 		const url = form.repoUrl.trim();
 		if (!url) {
 			errs.repoUrl = 'Repository URL is required';
-		} else if (!/^https?:\/\//i.test(url)) {
+		} else if (!/^https:\/\//i.test(url)) {
 			errs.repoUrl = 'URL must start with https://';
 		}
 		const name = form.commandName.trim();

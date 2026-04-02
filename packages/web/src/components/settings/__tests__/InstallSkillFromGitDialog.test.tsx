@@ -179,13 +179,31 @@ describe('InstallSkillFromGitDialog', () => {
 		expect(mockInstallSkillFromGit).not.toHaveBeenCalled();
 	});
 
-	it('should show error when URL does not start with https://', async () => {
+	it('should show error when URL does not start with https:// (git protocol)', async () => {
 		render(<InstallSkillFromGitDialog isOpen onClose={onClose} />);
 
 		const urlInput = screen.getByPlaceholderText(
 			'https://github.com/owner/repo/tree/main/skills/my-skill'
 		);
 		fireEvent.input(urlInput, { target: { value: 'git@github.com:openai/skills.git' } });
+
+		fireEvent.click(screen.getByTestId('button-primary'));
+
+		await waitFor(() => {
+			expect(screen.getByText('URL must start with https://')).toBeTruthy();
+		});
+		expect(mockInstallSkillFromGit).not.toHaveBeenCalled();
+	});
+
+	it('should show error when URL uses http:// (not https://)', async () => {
+		render(<InstallSkillFromGitDialog isOpen onClose={onClose} />);
+
+		const urlInput = screen.getByPlaceholderText(
+			'https://github.com/owner/repo/tree/main/skills/my-skill'
+		);
+		fireEvent.input(urlInput, {
+			target: { value: 'http://github.com/openai/skills/tree/main/skill' },
+		});
 
 		fireEvent.click(screen.getByTestId('button-primary'));
 
