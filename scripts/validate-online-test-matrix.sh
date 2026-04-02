@@ -2,7 +2,7 @@
 # Validates that all daemon online test files are covered by the CI matrix.
 #
 # The CI matrix in .github/workflows/main.yml splits some modules (rpc, room,
-# features, space) into shards with explicit file lists. This script catches new test
+# features, rewind, space) into shards with explicit file lists. This script catches new test
 # files that were added but not included in any shard.
 #
 # NOTE: providers-anthropic-to-codex-bridge shard is disabled (requires OPENAI_API_KEY).
@@ -84,6 +84,11 @@ CROSS_PROVIDER_FILES=(
   glm-to-anthropic-resume.test.ts
 )
 
+REWIND_FILES=(
+  rewind-feature.test.ts
+  selective-rewind.test.ts
+)
+
 SPACE_FILES=(
   space-agent-coordination.test.ts
   space-chat-session.test.ts
@@ -139,6 +144,7 @@ check_split_module "room" "${ROOM_FILES[@]}"
 check_split_module "features" "${FEATURES_FILES[@]}"
 check_split_module "providers" "${PROVIDERS_FILES[@]}"
 check_split_module "cross-provider" "${CROSS_PROVIDER_FILES[@]}"
+check_split_module "rewind" "${REWIND_FILES[@]}"
 check_split_module "space" "${SPACE_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---

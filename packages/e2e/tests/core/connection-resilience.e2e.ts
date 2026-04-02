@@ -21,8 +21,14 @@ import {
 	waitForWebSocketConnected,
 	createSessionViaUI,
 	cleanupTestSession,
+	waitForAssistantResponse,
 } from '../helpers/wait-helpers';
-import { closeWebSocket, restoreWebSocket } from '../helpers/connection-helpers';
+import {
+	closeWebSocket,
+	restoreWebSocket,
+	waitForOfflineStatus,
+	waitForOnlineStatus,
+} from '../helpers/connection-helpers';
 
 test.describe('Reconnection - Basic Message Sync', () => {
 	let sessionId: string | null = null;
@@ -56,8 +62,11 @@ test.describe('Reconnection - Basic Message Sync', () => {
 		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
-		// 3. Wait for agent to start processing
-		await page.waitForTimeout(2000);
+		// 3. Wait for agent to start processing (wait for assistant message to appear)
+		await page.waitForFunction(
+			() => document.querySelectorAll('[data-message-role="assistant"]').length > 0,
+			{ timeout: 15000 }
+		);
 
 		// 4. Count messages before disconnection
 		const messagesBeforeDisconnect = await page.locator('[data-message-role]').count();
@@ -67,18 +76,29 @@ test.describe('Reconnection - Basic Message Sync', () => {
 		await closeWebSocket(page);
 
 		// 6. Verify offline status
-		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
-			timeout: 5000,
-		});
+		await waitForOfflineStatus(page);
 
-		// 7. Wait while agent processes in background (6 seconds should generate more messages)
-		await page.waitForTimeout(6000);
+		// 7. Wait while agent processes in background — use event-based polling
+		// instead of a fixed timeout. Poll every 500ms for up to 10s.
+		await page
+			.waitForFunction(
+				(expectedBefore) => {
+					const current = document.querySelectorAll('[data-message-role]').length;
+					return current > expectedBefore;
+				},
+				messagesBeforeDisconnect,
+				{ timeout: 10000, polling: 500 }
+			)
+			.catch(() => {
+				// If no new messages appeared during disconnect, that's okay —
+				// the test still validates reconnection preserves existing messages.
+			});
 
 		// 8. Come back online
 		await restoreWebSocket(page);
 
-		// 9. Wait for reconnection and state sync to complete
-		await page.waitForTimeout(3000);
+		// 9. Wait for reconnection to complete (event-based)
+		await waitForOnlineStatus(page);
 
 		// 10. Count messages after reconnection
 		const messagesAfterReconnect = await page.locator('[data-message-role]').count();
@@ -135,32 +155,31 @@ test.describe('Reconnection - Multiple Cycles', () => {
 		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
-		// 2. Wait for initial response
-		await page.waitForTimeout(3000);
+		// 2. Wait for initial response (event-based)
+		await waitForAssistantResponse(page, { timeout: 60000 });
 
 		// 3. First disconnect cycle
 		await closeWebSocket(page);
-		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
-			timeout: 5000,
-		});
-		await page.waitForTimeout(2000);
+		await waitForOfflineStatus(page);
+
+		// Wait briefly for disconnect state to stabilize
+		await page.waitForTimeout(500);
 
 		// Come back online
 		await restoreWebSocket(page);
-		await page.waitForTimeout(3000);
+		await waitForOnlineStatus(page);
 
 		const messagesAfterCycle1 = await page.locator('[data-message-role]').count();
 
 		// 4. Second disconnect cycle
 		await closeWebSocket(page);
-		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
-			timeout: 5000,
-		});
-		await page.waitForTimeout(2000);
+		await waitForOfflineStatus(page);
+
+		await page.waitForTimeout(500);
 
 		// Come back online
 		await restoreWebSocket(page);
-		await page.waitForTimeout(3000);
+		await waitForOnlineStatus(page);
 
 		const messagesAfterCycle2 = await page.locator('[data-message-role]').count();
 
@@ -215,19 +234,33 @@ test.describe('Reconnection - Long Disconnection Period', () => {
 		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
-		// 3. Wait for processing to start
-		await page.waitForTimeout(2000);
+		// 3. Wait for message to be sent
+		await page.waitForFunction(
+			() => document.querySelectorAll('[data-message-role="user"]').length > 0,
+			{ timeout: 10000 }
+		);
 
 		// 4. Go offline for extended period
 		await closeWebSocket(page);
-		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
-			timeout: 5000,
-		});
-		await page.waitForTimeout(5000);
+		await waitForOfflineStatus(page);
+
+		// Wait for agent to process while offline — poll for new messages
+		// with a short timeout. If no new messages appear, that's fine;
+		// the test validates that existing messages survive the disconnect.
+		const messagesBeforeOffline = await page.locator('[data-message-role]').count();
+		await page
+			.waitForFunction(
+				(before) => document.querySelectorAll('[data-message-role]').length > before,
+				messagesBeforeOffline,
+				{ timeout: 5000, polling: 500 }
+			)
+			.catch(() => {
+				// No new messages during disconnect — acceptable
+			});
 
 		// 5. Come back online
 		await restoreWebSocket(page);
-		await page.waitForTimeout(3000);
+		await waitForOnlineStatus(page);
 
 		// 6. Verify messages are still present
 		const messageCount = await page.locator('[data-message-role]').count();
@@ -280,8 +313,11 @@ test.describe('Reconnection - Message Order', () => {
 		const sendButton = page.locator('button[aria-label="Send message"]').first();
 		await sendButton.click();
 
-		// 2. Wait for some messages
-		await page.waitForTimeout(3000);
+		// 2. Wait for some messages (event-based)
+		await page.waitForFunction(
+			() => document.querySelectorAll('[data-message-role="assistant"]').length > 0,
+			{ timeout: 15000 }
+		);
 
 		// 3. Get message timestamps before disconnect
 		const timestampsBeforeDisconnect = await page.evaluate(() => {
@@ -294,14 +330,13 @@ test.describe('Reconnection - Message Order', () => {
 
 		// 4. Go offline
 		await closeWebSocket(page);
-		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
-			timeout: 5000,
-		});
-		await page.waitForTimeout(2000);
+		await waitForOfflineStatus(page);
+
+		await page.waitForTimeout(500);
 
 		// 5. Come back online
 		await restoreWebSocket(page);
-		await page.waitForTimeout(3000);
+		await waitForOnlineStatus(page);
 
 		// 6. Get message timestamps after reconnect
 		const timestampsAfterReconnect = await page.evaluate(() => {
@@ -359,19 +394,17 @@ test.describe('Connection - Input Blocking', () => {
 
 		// Go offline
 		await closeWebSocket(page);
-		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
-			timeout: 5000,
-		});
+		await waitForOfflineStatus(page);
 
 		// Brief wait for disconnect to process
 		await page.waitForTimeout(300);
 
 		// Come back online
 		await restoreWebSocket(page);
-		await page.waitForTimeout(3000);
+		await waitForOnlineStatus(page);
 
 		// After reconnect, textarea should be enabled again
-		await expect(textarea).toBeEnabled();
+		await expect(textarea).toBeEnabled({ timeout: 5000 });
 	});
 });
 
@@ -414,13 +447,11 @@ test.describe('Connection - State Transitions', () => {
 
 		// Go offline
 		await closeWebSocket(page);
-		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
-			timeout: 5000,
-		});
+		await waitForOfflineStatus(page);
 
 		// Come back online
 		await restoreWebSocket(page);
-		await page.waitForTimeout(3000);
+		await waitForOnlineStatus(page);
 
 		// Verify messages are still present (session data maintained)
 		const messagesAfterReconnect = await page.locator('[data-message-role]').count();
