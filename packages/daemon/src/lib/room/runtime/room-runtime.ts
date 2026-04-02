@@ -3505,8 +3505,9 @@ export class RoomRuntime {
 	 * Sets `nextRunAt` to now and starts a new execution (if no active execution exists),
 	 * bypassing the normal tick schedule check. Respects overlap prevention guards.
 	 *
-	 * Returns the updated goal with the new nextRunAt.
-	 * Throws if the goal is not recurring, is paused, or already has an active execution.
+	 * Returns the updated goal (fetched fresh from DB after execution starts).
+	 * Throws if the goal is not recurring, is paused, is not active, has no schedule,
+	 * or already has an active execution.
 	 */
 	async triggerNow(goalId: string): Promise<RoomGoal> {
 		const goal = await this.goalManager.getGoal(goalId);
@@ -3535,9 +3536,8 @@ export class RoomRuntime {
 			);
 		}
 
-		// Set nextRunAt to now so the next tick sees it as due (as a fallback),
-		// then immediately trigger the execution.
-		const nowSec = Math.floor(Date.now() / 1000);
+		// Calculate next cron-scheduled time. startExecution writes this atomically
+		// in the same transaction as the execution row insert — no separate update needed.
 		const tz = goal.schedule.timezone ?? 'UTC';
 		const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
 
@@ -3587,8 +3587,10 @@ export class RoomRuntime {
 			await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
 		}
 
-		// Update nextRunAt to now for display purposes (so the UI shows "due now")
-		const updatedGoal = await this.goalManager.updateNextRunAt(goal.id, nowSec);
+		// Return the goal fresh from DB — startExecution already wrote the correct
+		// nextRunAt atomically, so no separate update is needed.
+		const updatedGoal = await this.goalManager.getGoal(goal.id);
+		if (!updatedGoal) throw new Error(`Goal ${goalId} disappeared after execution start`);
 		return updatedGoal;
 	}
 

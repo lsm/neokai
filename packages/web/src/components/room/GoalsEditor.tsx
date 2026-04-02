@@ -34,6 +34,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Skeleton } from '../ui/Skeleton';
+import { toast } from '../../lib/toast';
 
 // ─── Create Form Types ────────────────────────────────────────────────────────
 
@@ -1240,6 +1241,8 @@ function GoalItem({
 		setIsTriggering(true);
 		try {
 			await onTriggerNow(goal.id);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to trigger mission');
 		} finally {
 			setIsTriggering(false);
 		}
@@ -1254,6 +1257,8 @@ function GoalItem({
 			await onScheduleNext(goal.id, timestamp);
 			setShowSchedulePicker(false);
 			setScheduleDateTime('');
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to schedule mission');
 		} finally {
 			setIsUpdating(false);
 		}

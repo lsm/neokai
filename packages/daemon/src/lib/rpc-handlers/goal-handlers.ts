@@ -621,6 +621,11 @@ export function setupGoalHandlers(
 			throw new Error('nextRunAt must be a positive Unix timestamp in seconds');
 		}
 
+		const nowSec = Math.floor(Date.now() / 1000);
+		if (params.nextRunAt <= nowSec) {
+			throw new Error('nextRunAt must be in the future');
+		}
+
 		const goalManager = goalManagerFactory(params.roomId);
 		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.getGoal(goalId);
@@ -628,6 +633,11 @@ export function setupGoalHandlers(
 		if (goal.missionType !== 'recurring') {
 			throw new Error(
 				`Goal ${params.goalId} is not a recurring mission (missionType=${goal.missionType ?? 'one_shot'})`
+			);
+		}
+		if (goal.status !== 'active') {
+			throw new Error(
+				`Goal ${params.goalId} is not active (status=${goal.status}). Only active missions can be scheduled.`
 			);
 		}
 

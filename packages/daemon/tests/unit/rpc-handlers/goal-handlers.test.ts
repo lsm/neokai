@@ -1851,6 +1851,25 @@ describe('Goal RPC Handlers', () => {
 				handler!({ roomId: 'room-123', goalId: 'goal-123', nextRunAt: 9999999999 }, {})
 			).rejects.toThrow('not a recurring mission');
 		});
+
+		it('throws when nextRunAt is in the past', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			const pastTimestamp = Math.floor(Date.now() / 1000) - 60;
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', nextRunAt: pastTimestamp }, {})
+			).rejects.toThrow('nextRunAt must be in the future');
+		});
+
+		it('throws when goal is not active', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				...recurringGoal,
+				status: 'completed' as const,
+			});
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', nextRunAt: 9999999999 }, {})
+			).rejects.toThrow('not active');
+		});
 	});
 
 	describe('short ID support', () => {
