@@ -635,6 +635,9 @@ describe('evaluateGate with optional fields', () => {
 	});
 
 	test('Gate with script-only (no fields) evaluates as open', () => {
+		// Note: evaluateGate does not execute gate.script — it only checks field-based
+		// conditions. A script-only gate opens trivially because there are no fields to
+		// fail. Script execution will be implemented in a follow-up task.
 		const gate: Gate = {
 			id: 'gate-script-only',
 			script: {

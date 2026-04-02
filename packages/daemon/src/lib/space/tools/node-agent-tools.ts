@@ -666,7 +666,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				});
 			}
 
-			// Field-level authorization: check each key in data against field declarations
+			// Field-level authorization: check each key in data against field declarations.
+			// For script-only gates (no fields), any data write is rejected since there are
+			// no declared fields to validate against. Script execution populates gate data
+			// internally; agents should not write to script-only gates directly.
 			const fieldMap = new Map((gateDef.fields ?? []).map((f) => [f.name, f]));
 			for (const key of Object.keys(data)) {
 				const fieldDef = fieldMap.get(key);

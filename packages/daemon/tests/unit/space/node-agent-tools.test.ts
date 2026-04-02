@@ -1589,6 +1589,39 @@ describe('node-agent-tools: write_gate', () => {
 		const data = JSON.parse(result.content[0].text);
 		expect(data.success).toBe(true);
 	});
+
+	test('rejects write_gate on script-only gate (no declared fields)', async () => {
+		// Script-only gates have no declared fields, so any data write is rejected
+		// at the field authorization layer. This is intentional — script execution
+		// populates gate data internally; agents should not write directly.
+		const gate: Gate = {
+			id: 'gate-script-only',
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-script-only', data: { x: 1 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not declared');
+	});
 });
 
 describe('node-agent-tools: list_reachable_agents', () => {
