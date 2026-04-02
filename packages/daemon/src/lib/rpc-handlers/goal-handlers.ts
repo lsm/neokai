@@ -13,6 +13,8 @@
  * - goal.listExecutions - List execution history for a recurring mission
  * - goal.recordMetric - Record a metric value for a measurable mission
  * - goal.getMetrics - Get current metric state for a goal
+ * - goal.triggerNow - Manually trigger a recurring mission execution immediately
+ * - goal.scheduleNext - Set nextRunAt to a specific datetime for a recurring mission
  * - task.approve - Human approves a task PR (resumes worker for phase 2)
  */
 
@@ -581,4 +583,58 @@ export function setupGoalHandlers(
 
 	// task.approve - Task-scoped RPC name
 	messageHub.onRequest('task.approve', approveTaskHandler);
+
+	// goal.triggerNow - Manually trigger a recurring mission execution immediately
+	messageHub.onRequest('goal.triggerNow', async (data) => {
+		const params = data as { roomId: string; goalId: string };
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+		if (!runtimeService) {
+			throw new Error('Runtime service is required for goal.triggerNow');
+		}
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const goal = await runtime.triggerNow(goalId);
+		log.info(`Manually triggered recurring mission ${goalId} in room ${params.roomId}`);
+		return { goal };
+	});
+
+	// goal.scheduleNext - Set nextRunAt to a specific datetime for a recurring mission
+	messageHub.onRequest('goal.scheduleNext', async (data) => {
+		const params = data as {
+			roomId: string;
+			goalId: string;
+			nextRunAt: number; // Unix timestamp in seconds
+		};
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+		if (typeof params.nextRunAt !== 'number' || params.nextRunAt <= 0) {
+			throw new Error('nextRunAt must be a positive Unix timestamp in seconds');
+		}
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+		if (goal.missionType !== 'recurring') {
+			throw new Error(
+				`Goal ${params.goalId} is not a recurring mission (missionType=${goal.missionType ?? 'one_shot'})`
+			);
+		}
+
+		const updatedGoal = await goalManager.updateNextRunAt(goalId, params.nextRunAt);
+		log.info(
+			`Scheduled next run for recurring mission ${goalId} at ${new Date(params.nextRunAt * 1000).toISOString()}`
+		);
+		return { goal: updatedGoal };
+	});
 }

@@ -253,6 +253,12 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 										autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
 										onDismissNotification={(taskId) => roomStore.dismissAutoCompleted(taskId)}
 										onListExecutions={(goalId) => roomStore.listExecutions(goalId)}
+										onTriggerNow={async (goalId) => {
+											await roomStore.triggerNow(goalId);
+										}}
+										onScheduleNext={async (goalId, nextRunAt) => {
+											await roomStore.scheduleNext(goalId, nextRunAt);
+										}}
 									/>
 								</div>
 							)}
