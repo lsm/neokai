@@ -313,4 +313,32 @@ export class SessionRepository {
 
 		return rows.map((r) => this.rowToSession(r));
 	}
+
+	/**
+	 * Batch-fetch sessions by their IDs.
+	 * Returns a Map<id, Session> for the found sessions.
+	 * Uses a single SQL query with IN clause to avoid N+1 lookups.
+	 * Falls back to individual queries when the list is empty or too large
+	 * for SQLite's variable limit (999).
+	 */
+	getSessionsByIds(ids: string[]): Map<string, Session> {
+		const result = new Map<string, Session>();
+		if (ids.length === 0) return result;
+
+		// SQLite has a default limit of 999 variables per statement.
+		// Batch in chunks to stay within this limit.
+		const CHUNK_SIZE = 900;
+		for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+			const chunk = ids.slice(i, i + CHUNK_SIZE);
+			const placeholders = chunk.map(() => '?').join(', ');
+			const stmt = this.db.prepare(`SELECT * FROM sessions WHERE id IN (${placeholders})`);
+			const rows = stmt.all(...chunk) as Record<string, unknown>[];
+			for (const row of rows) {
+				const session = this.rowToSession(row);
+				result.set(session.id, session);
+			}
+		}
+
+		return result;
+	}
 }

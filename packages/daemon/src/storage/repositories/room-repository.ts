@@ -183,6 +183,47 @@ export class RoomRepository {
 	}
 
 	/**
+	 * Batch-fetch active task counts for multiple rooms.
+	 * Uses a single SQL GROUP BY query instead of N individual COUNT queries.
+	 * Returns an array of { roomId, activeTaskCount } for all requested rooms
+	 * (rooms with 0 active tasks are included).
+	 */
+	getRoomStatusesBatch(roomIds: string[]): Array<{ roomId: string; activeTaskCount: number }> {
+		if (roomIds.length === 0) return [];
+
+		const CHUNK_SIZE = 900;
+		const results: Array<{ roomId: string; activeTaskCount: number }> = [];
+
+		for (let i = 0; i < roomIds.length; i += CHUNK_SIZE) {
+			const chunk = roomIds.slice(i, i + CHUNK_SIZE);
+			const placeholders = chunk.map(() => '?').join(', ');
+
+			// LEFT JOIN to include rooms with 0 active tasks
+			const stmt = this.db.prepare(`
+				SELECT
+					r.id AS roomId,
+					COALESCE(tc.cnt, 0) AS activeTaskCount
+				FROM rooms r
+				LEFT JOIN (
+					SELECT room_id, COUNT(*) AS cnt
+					FROM tasks
+					WHERE room_id IN (${placeholders})
+						AND status NOT IN ('completed', 'needs_attention', 'cancelled', 'archived')
+					GROUP BY room_id
+				) tc ON tc.room_id = r.id
+				WHERE r.id IN (${placeholders})
+			`);
+			const rows = stmt.all(...chunk, ...chunk) as Array<{
+				roomId: string;
+				activeTaskCount: number;
+			}>;
+			results.push(...rows);
+		}
+
+		return results;
+	}
+
+	/**
 	 * Add a path to the room's allowed paths
 	 */
 	addPath(id: string, path: string, description?: string): Room | null {
