@@ -155,9 +155,9 @@ Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields`
 **Files to update (comprehensive list from codebase audit):**
 
 **Frontend:**
-- `packages/web/src/components/space/WorkflowCanvas.tsx` — lines 124, 127, 131, 142 (`gate.fields.length`, `gate.fields.every()`, `gate.fields.find()`, `for (const field of gate.fields)`)
+- `packages/web/src/components/space/WorkflowCanvas.tsx` — lines 124, 127, 131, 142, 1210, 1212 (`gate.fields.length`, `gate.fields.every()`, `gate.fields.find()`, `for (const field of gate.fields)`, `isHumanApprovalGate(gate.fields)`, `computeVoteCount(gate.fields, gateData)`)
+- `packages/web/src/components/space/WorkflowEditor.tsx` — line 606 (`fields: [...gate.fields]` spread)
 - `packages/web/src/components/space/visual-editor/GateEditorPanel.tsx` — lines 41, 53, 54, 58, 71, 81, 149, 152 (spread, filter, map, length on `gate.fields`)
-- `packages/web/src/components/space/visual-editor/ChannelEdgeConfigPanel.tsx` — lines 173, 177 (if any `gate.fields` access)
 - `packages/web/src/components/space/visual-editor/VisualWorkflowEditor.tsx` — lines 124, 1013 (`gate.fields` spread in presets/copy)
 - `packages/web/src/components/space/visual-editor/semanticWorkflowGraph.ts` — line 59 (`gate.fields; if (fields.length === 0)`)
 
@@ -355,8 +355,8 @@ Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields`
    - Add `rehydrateWorkspacePath` to the rehydration `ChannelRouterConfig`
 3. **`task-agent-manager.ts` line 1755** (`buildNodeAgentMcpServerForSession()`):
    - **Problem:** The method signature `(taskId, subSessionId, role, spaceId, workflowRunId, stepTaskId, taskManager)` does NOT include `workspacePath` or a space object
-   - **Solution:** Look up the workspace path via `this.getWorkspacePathForTask(taskId)` (an existing private method on `TaskAgentManager`, around line 1370-1425) which returns `space.workspacePath` or the worktree path for the task
-   - Add `workspacePath` parameter to `buildNodeAgentMcpServerForSession()`, or compute it internally via `this.getWorkspacePathForTask(taskId)`, then pass to `ChannelRouterConfig`
+   - **Solution:** Compute workspace path using the existing `getTaskWorktreePath(taskId)` public method (line 862) which returns `string | undefined` from the `taskWorktreePaths` map, then fall back to `space.workspacePath`. The lookup chain: `this.getTaskWorktreePath(taskId) ?? this.config.spaceManager.getSpace(spaceId).workspacePath`. Note: `getTaskWorktreePath` does NOT fall back to `space.workspacePath` on its own — it returns `undefined` when no worktree exists. The fallback to `space.workspacePath` must be done explicitly. Since `spaceId` is already a parameter, look up the space object to get the base workspace path.
+   - Add `workspacePath` parameter to `buildNodeAgentMcpServerForSession()`, or compute it internally, then pass to `ChannelRouterConfig`
    - This is called from 3 sites (lines 651, 1470, 1561) — all have `taskId` available
 4. **`space-runtime-service.ts` line 309** (`notifyGateDataChanged()`):
    - **Problem:** The method signature `(runId: string, gateId: string)` has no space object or workspace path in scope
@@ -718,8 +718,8 @@ Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields`
 ## Changes from v2 (reviewer feedback)
 
 ### P1 fixes
-- **New Task 1.4**: Comprehensive audit of ALL `gate.fields` access sites across frontend and backend, adding `?? []` guards. Verified against codebase: 6 frontend files (WorkflowCanvas, GateEditorPanel, ChannelEdgeConfigPanel, VisualWorkflowEditor, semanticWorkflowGraph) and 3 backend files (gate-evaluator, task-agent, node-agent-tools). Without this, making `fields` optional would cause `TypeError` crashes at runtime for script-only gates.
-- **Task 3.3 subtask 3**: Described how `workspacePath` reaches `buildNodeAgentMcpServerForSession` — it is NOT in scope; solution is to compute it via `this.getWorkspacePathForTask(taskId)`.
+- **New Task 1.4**: Comprehensive audit of ALL `gate.fields` access sites across frontend and backend, adding `?? []` guards. Verified against codebase: 5 frontend files (WorkflowCanvas lines 124/127/131/142/1210/1212, WorkflowEditor line 606, GateEditorPanel, VisualWorkflowEditor, semanticWorkflowGraph) and 3 backend files (gate-evaluator, task-agent, node-agent-tools). Without this, making `fields` optional would cause `TypeError` crashes at runtime for script-only gates.
+- **Task 3.3 subtask 3**: Described how `workspacePath` reaches `buildNodeAgentMcpServerForSession` — it is NOT in scope; solution is to use `this.getTaskWorktreePath(taskId)` (line 862, returns `string | undefined`) then fall back to `space.workspacePath` via `spaceId` parameter lookup.
 - **Task 3.3 subtask 4**: Described the full lookup chain for `notifyGateDataChanged`: `runId → workflowRunRepo.getRun() → run.spaceId → spaceManager.getSpace() → space.workspacePath`.
 - **Task 3.4 subtask 2**: Explicitly guarded `node-agent-tools.ts` lines 670 and 678 (`gateDef.fields.map(...)`) for script-only gates.
 - **Task 1.2**: Clarified that `validateGate()` is only applied to new/updated gates, not on load. Existing gates with `fields: []` remain valid at runtime.
@@ -732,3 +732,11 @@ Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields`
 
 ### P3 fixes
 - **Task 4.3**: Added inline validation using `validateGate()` to gate editor.
+
+## Changes from v3 (reviewer feedback)
+
+### P1 fixes
+- **Task 1.4**: Added `WorkflowEditor.tsx` line 606 (`fields: [...gate.fields]` spread) and `WorkflowCanvas.tsx` lines 1210, 1212 (`isHumanApprovalGate(gate.fields)`, `computeVoteCount(gate.fields, gateData)`) to the guard list. Removed phantom `ChannelEdgeConfigPanel.tsx` entry (no `gate.fields` accesses exist in that file).
+
+### P3 fixes
+- **Task 3.3 subtask 3**: Fixed incorrect method name — `getWorkspacePathForTask` does not exist. Correct method is `getTaskWorktreePath(taskId)` (line 862, public, returns `string | undefined`). Documented that it does NOT fall back to `space.workspacePath` automatically; the fallback must be done explicitly via `spaceId` lookup.
