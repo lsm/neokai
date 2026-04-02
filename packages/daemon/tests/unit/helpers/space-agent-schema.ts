@@ -4,7 +4,7 @@
  * Used by both space-agent-repository.test.ts and space-agent-manager.test.ts
  * to avoid duplicating schema setup and fixture insertion code.
  *
- * Keep in sync with the fully-migrated production schema (after M71).
+ * Keep in sync with the fully-migrated production schema (after M74).
  */
 
 import type { Database } from 'bun:sqlite';
@@ -32,7 +32,7 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
 	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
-	// Keep in sync with space-test-db.ts (post-M71 schema).
+	// Keep in sync with space-test-db.ts (post-M74 schema).
 	db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
@@ -59,6 +59,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			description TEXT NOT NULL DEFAULT '',
 			start_node_id TEXT,
 			end_node_id TEXT,
+			tags TEXT NOT NULL DEFAULT '[]',
 			channels TEXT,
 			gates TEXT,
 			layout TEXT,
@@ -74,8 +75,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			agents TEXT NOT NULL DEFAULT '[]',
-			order_index INTEGER NOT NULL,
+			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
@@ -104,9 +104,9 @@ export function insertWorkflowNode(
 	agentId: string | null
 ): void {
 	const now = Date.now();
-	// agents column stores a JSON array of {agentId, name} objects
-	const agentsJson = agentId ? JSON.stringify([{ agentId, name: `Node ${id}` }]) : '[]';
+	// config stores JSON: { agents?: [{ agentId, name }] }
+	const configJson = agentId ? JSON.stringify({ agents: [{ agentId, name: `Node ${id}` }] }) : null;
 	db.prepare(
-		`INSERT INTO space_workflow_nodes (id, workflow_id, name, agents, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	).run(id, workflowId, `Node ${id}`, agentsJson, 0, now, now);
+		`INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+	).run(id, workflowId, `Node ${id}`, configJson, now, now);
 }
