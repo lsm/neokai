@@ -16,6 +16,7 @@ import type {
 	AppSkill,
 	CreateSkillParams,
 	UpdateSkillParams,
+	InstallSkillFromGitParams,
 	LiveQuerySnapshotEvent,
 	LiveQueryDeltaEvent,
 } from '@neokai/shared';
@@ -239,6 +240,18 @@ class SkillsStore {
 	async setEnabled(id: string, enabled: boolean): Promise<AppSkill> {
 		const hub = await connectionManager.getHub();
 		const response = await hub.request<{ skill: AppSkill }>('skill.setEnabled', { id, enabled });
+		return response.skill;
+	}
+
+	/**
+	 * Install a skill from a git repository URL. Downloads the skill directory
+	 * from GitHub (or a raw URL) and registers it as a builtin skill.
+	 *
+	 * The LiveQuery subscription will push the new skill back via a delta event.
+	 */
+	async installSkillFromGit(params: InstallSkillFromGitParams): Promise<AppSkill> {
+		const hub = await connectionManager.getHub();
+		const response = await hub.request<{ skill: AppSkill }>('skill.installFromGit', params);
 		return response.skill;
 	}
 }

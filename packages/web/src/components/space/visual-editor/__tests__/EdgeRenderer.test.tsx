@@ -861,6 +861,353 @@ describe('EdgeRenderer — channel edge rendering', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Gate badge: custom label, color, and hasScript
+// ---------------------------------------------------------------------------
+
+describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
+	it('renders custom gateLabel when set on one-way channel', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				gateLabel: 'Custom Gate',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Custom Gate');
+	});
+
+	it('falls back to heuristic label when gateLabel is not set', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'human',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Human');
+	});
+
+	it('renders custom gateColor on badge text when set', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				gateColor: '#ff6600',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeText = container.querySelector('g[data-testid="channel-gate-step-1-step-2"] text');
+		expect(badgeText?.getAttribute('fill')).toBe('#ff6600');
+	});
+
+	it('falls back to heuristic color when gateColor is not set', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeText = container.querySelector('g[data-testid="channel-gate-step-1-step-2"] text');
+		// check gate type heuristic color is #60a5fa
+		expect(badgeText?.getAttribute('fill')).toBe('#60a5fa');
+	});
+
+	it('applies custom gateColor to arrow polygon fills', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'condition',
+				gateColor: '#00ff88',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const arrow = container.querySelector(
+			'polygon[data-testid="channel-gate-arrow-step-1-step-2"]'
+		);
+		expect(arrow?.getAttribute('fill')).toBe('#00ff88');
+	});
+
+	it('selected state overrides custom gateColor with white on text', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				id: 'custom:gate',
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				gateColor: '#ff6600',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ selectedChannelId: 'custom:gate', channels });
+		const badgeText = container.querySelector('g[data-testid="channel-gate-step-1-step-2"] text');
+		expect(badgeText?.getAttribute('fill')).toBe('white');
+	});
+
+	it('selected state overrides custom gateColor with white on arrow polygon', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				id: 'custom:gate',
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				gateColor: '#ff6600',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ selectedChannelId: 'custom:gate', channels });
+		const arrow = container.querySelector(
+			'polygon[data-testid="channel-gate-arrow-step-1-step-2"]'
+		);
+		expect(arrow?.getAttribute('fill')).toBe('white');
+	});
+
+	it('renders script icon (⚡) when hasScript is true', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				hasScript: true,
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeTexts = container.querySelectorAll(
+			'g[data-testid="channel-gate-step-1-step-2"] text'
+		);
+		// Should have two text elements: label + script icon
+		expect(badgeTexts).toHaveLength(2);
+		const scriptIconText = badgeTexts[1];
+		expect(scriptIconText.textContent).toBe('⚡');
+		expect(scriptIconText.getAttribute('opacity')).toBe('0.7');
+	});
+
+	it('does not render script icon when hasScript is false', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				hasScript: false,
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeTexts = container.querySelectorAll(
+			'g[data-testid="channel-gate-step-1-step-2"] text'
+		);
+		// Should only have the label text element
+		expect(badgeTexts).toHaveLength(1);
+	});
+
+	it('does not render script icon when hasScript is undefined', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				// hasScript not set
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeTexts = container.querySelectorAll(
+			'g[data-testid="channel-gate-step-1-step-2"] text'
+		);
+		expect(badgeTexts).toHaveLength(1);
+	});
+
+	it('script icon uses gateColor when hasScript is true', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				gateColor: '#ff6600',
+				hasScript: true,
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeTexts = container.querySelectorAll(
+			'g[data-testid="channel-gate-step-1-step-2"] text'
+		);
+		const scriptIconText = badgeTexts[1];
+		expect(scriptIconText.getAttribute('fill')).toBe('#ff6600');
+	});
+
+	it('script icon becomes white when selected', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				id: 'script:gate',
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'one-way',
+				gateType: 'check',
+				hasScript: true,
+			},
+		];
+		const { container } = renderEdgesWithChannels({ selectedChannelId: 'script:gate', channels });
+		const badgeTexts = container.querySelectorAll(
+			'g[data-testid="channel-gate-step-1-step-2"] text'
+		);
+		const scriptIconText = badgeTexts[1];
+		expect(scriptIconText.getAttribute('fill')).toBe('white');
+	});
+
+	it('custom gateLabel on bidirectional forward gate renders correctly', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				gateType: 'human',
+				gateLabel: 'Approve',
+				reverseGateType: 'check',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Approve');
+	});
+
+	it('custom gateColor on bidirectional both-direction gates applies to both arrows', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				gateType: 'check',
+				gateColor: '#00ccff',
+				reverseGateType: 'check',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const forwardArrow = container.querySelector(
+			'polygon[data-testid="channel-gate-arrow-step-1-step-2"]'
+		);
+		const reverseArrow = container.querySelector(
+			'polygon[data-testid="channel-gate-reverse-arrow-step-1-step-2"]'
+		);
+		expect(forwardArrow?.getAttribute('fill')).toBe('#00ccff');
+		expect(reverseArrow?.getAttribute('fill')).toBe('#00ccff');
+	});
+
+	it('loop badge is unaffected by gateLabel/gateColor', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-2',
+				toStepId: 'step-1',
+				direction: 'one-way',
+				isCyclic: true,
+				gateType: 'check',
+				gateLabel: 'Custom',
+				gateColor: '#ff0000',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		// Loop badge should still show "Loop"
+		expect(getByTestId('channel-loop-step-2-step-1').textContent).toBe('Loop');
+	});
+
+	it('uses reverseHasScript when only reverse gate is set on bidirectional', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				reverseGateType: 'check',
+				reverseHasScript: true,
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeTexts = container.querySelectorAll(
+			'g[data-testid="channel-gate-step-1-step-2"] text'
+		);
+		// Should have label + script icon
+		expect(badgeTexts).toHaveLength(2);
+		expect(badgeTexts[1].textContent).toBe('⚡');
+	});
+
+	it('uses reverseGateLabel when only reverse gate is set on bidirectional', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				reverseGateType: 'human',
+				reverseGateLabel: 'Reverse Label',
+			},
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Reverse Label');
+	});
+
+	it('uses reverseGateColor when only reverse gate is set on bidirectional', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				reverseGateType: 'check',
+				reverseGateColor: '#00ff00',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const badgeText = container.querySelector('g[data-testid="channel-gate-step-1-step-2"] text');
+		expect(badgeText?.getAttribute('fill')).toBe('#00ff00');
+	});
+
+	it('forward gateLabel/gateColor takes precedence over reverse on bidirectional with both gates', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				gateType: 'human',
+				gateLabel: 'Forward',
+				gateColor: '#ff0000',
+				reverseGateType: 'check',
+				reverseGateLabel: 'Reverse',
+				reverseGateColor: '#00ff00',
+			},
+		];
+		const { container, getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Forward');
+		const badgeText = container.querySelector('g[data-testid="channel-gate-step-1-step-2"] text');
+		expect(badgeText?.getAttribute('fill')).toBe('#ff0000');
+	});
+
+	it('reverseGateColor on arrow polygon when only reverse gate is set', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{
+				fromStepId: 'step-1',
+				toStepId: 'step-2',
+				direction: 'bidirectional',
+				reverseGateType: 'check',
+				reverseGateColor: '#aa00ff',
+			},
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const arrow = container.querySelector(
+			'polygon[data-testid="channel-gate-arrow-step-1-step-2"]'
+		);
+		expect(arrow?.getAttribute('fill')).toBe('#aa00ff');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // getOrthogonalPathMidpointWithAngle
 // ---------------------------------------------------------------------------
 

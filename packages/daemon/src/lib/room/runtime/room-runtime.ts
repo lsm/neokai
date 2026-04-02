@@ -640,7 +640,16 @@ export class RoomRuntime {
 
 		// Check if worker is waiting for user input (asked a question)
 		// Pause routing to leader — task resumes when question is answered
+		// Guard: skip if already waiting — SessionObserver is a stateless relay that fires
+		// on every session.updated event (e.g. draft saves), so we must not append duplicate
+		// group events each time.
 		if (terminalState.kind === 'waiting_for_input') {
+			if (group.waitingForQuestion && group.waitingSession === 'worker') {
+				log.debug(
+					`Worker ${group.workerSessionId} already waiting for input — skipping duplicate event`
+				);
+				return;
+			}
 			log.info(`Worker ${group.workerSessionId} is waiting for user input - pausing task`);
 			this.groupRepo.setWaitingForQuestion(groupId, true, 'worker');
 			this.appendGroupEvent(groupId, 'status', {
@@ -1042,7 +1051,16 @@ export class RoomRuntime {
 
 		// Check if leader is waiting for user input (asked a question)
 		// Pause — task resumes when question is answered
+		// Guard: skip if already waiting — SessionObserver is a stateless relay that fires
+		// on every session.updated event (e.g. draft saves), so we must not append duplicate
+		// group events each time.
 		if (terminalState.kind === 'waiting_for_input') {
+			if (group.waitingForQuestion && group.waitingSession === 'leader') {
+				log.debug(
+					`Leader ${group.leaderSessionId} already waiting for input — skipping duplicate event`
+				);
+				return;
+			}
 			log.info(`Leader ${group.leaderSessionId} is waiting for user input - pausing task`);
 			this.groupRepo.setWaitingForQuestion(groupId, true, 'leader');
 			this.appendGroupEvent(groupId, 'status', {

@@ -2,6 +2,8 @@ import { createDaemonApp } from '@neokai/daemon/app';
 import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { createLogger } from '@neokai/shared';
 import {
 	findAvailablePort,
@@ -10,6 +12,7 @@ import {
 	createJsonErrorResponse,
 	printServerUrls,
 } from './cli-utils';
+import { ensureBuiltinSkills } from './skill-utils';
 
 const log = createLogger('kai:cli:dev-server');
 
@@ -79,6 +82,14 @@ export async function startDevServer(config: Config) {
 
 	process.on('SIGINT', () => shutdown('SIGINT'));
 	process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+	// Sync built-in skill files from packages/skills/ to ~/.neokai/skills/.
+	// In dev mode the source files live in the monorepo; in the compiled binary they
+	// are embedded and extracted by prod-server-embedded.ts instead. Both end up at
+	// ~/.neokai/skills/{commandName}/ which QueryOptionsBuilder injects as SDK plugins.
+	const skillsSourceDir = resolve(import.meta.dir, '../../skills');
+	const skillsDestDir = join(homedir(), '.neokai', 'skills');
+	await ensureBuiltinSkills(skillsSourceDir, skillsDestDir);
 
 	// Create daemon app in embedded mode (no root route)
 	daemonContext = await createDaemonApp({

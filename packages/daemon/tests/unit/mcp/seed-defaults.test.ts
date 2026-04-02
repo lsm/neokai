@@ -2,8 +2,8 @@
  * seedDefaultMcpEntries Unit Tests
  *
  * Verifies:
- * - fetch-mcp and brave-search are created on a fresh registry.
- * - fetch-mcp is enabled; brave-search is disabled.
+ * - fetch-mcp, brave-search, and chrome-devtools are created on a fresh registry.
+ * - fetch-mcp is enabled; brave-search and chrome-devtools are disabled.
  * - Calling seedDefaultMcpEntries a second time does not create duplicates.
  * - Pre-existing entries (same name) are not overwritten.
  */
@@ -100,10 +100,10 @@ describe('seedDefaultMcpEntries', () => {
 		expect(braveEntries).toHaveLength(1);
 	});
 
-	test('total registry size is exactly 2 after seeding', () => {
+	test('total registry size is exactly 3 after seeding', () => {
 		seedDefaultMcpEntries(db);
 
-		expect(repo.list()).toHaveLength(2);
+		expect(repo.list()).toHaveLength(3);
 	});
 
 	test('does not overwrite a pre-existing fetch-mcp entry', () => {
@@ -148,6 +148,56 @@ describe('seedDefaultMcpEntries', () => {
 		seedDefaultMcpEntries(db);
 
 		const entry = repo.getByName('brave-search');
+		expect(entry!.description).toBeTruthy();
+	});
+
+	test('creates chrome-devtools entry on a fresh registry', () => {
+		seedDefaultMcpEntries(db);
+
+		const entry = repo.getByName('chrome-devtools');
+		expect(entry).not.toBeNull();
+		expect(entry!.name).toBe('chrome-devtools');
+		expect(entry!.sourceType).toBe('stdio');
+		expect(entry!.command).toBe('bunx');
+		expect(entry!.args).toEqual(['chrome-devtools-mcp@latest', '--isolated']);
+		expect(entry!.enabled).toBe(false);
+	});
+
+	test('chrome-devtools is disabled by default', () => {
+		seedDefaultMcpEntries(db);
+
+		const entry = repo.getByName('chrome-devtools');
+		expect(entry!.enabled).toBe(false);
+	});
+
+	test('chrome-devtools is idempotent — calling twice does not create duplicates', () => {
+		seedDefaultMcpEntries(db);
+		seedDefaultMcpEntries(db);
+
+		const all = repo.list();
+		const entries = all.filter((e) => e.name === 'chrome-devtools');
+		expect(entries).toHaveLength(1);
+	});
+
+	test('does not overwrite a pre-existing chrome-devtools entry', () => {
+		repo.create({
+			name: 'chrome-devtools',
+			sourceType: 'stdio',
+			command: 'custom-chrome',
+			enabled: true,
+		});
+
+		seedDefaultMcpEntries(db);
+
+		const entry = repo.getByName('chrome-devtools');
+		expect(entry!.command).toBe('custom-chrome');
+		expect(entry!.enabled).toBe(true);
+	});
+
+	test('chrome-devtools has a non-empty description', () => {
+		seedDefaultMcpEntries(db);
+
+		const entry = repo.getByName('chrome-devtools');
 		expect(entry!.description).toBeTruthy();
 	});
 });

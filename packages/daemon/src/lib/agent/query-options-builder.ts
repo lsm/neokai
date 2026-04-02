@@ -121,7 +121,10 @@ export class QueryOptionsBuilder {
 		const hooks = this.buildHooks();
 		const permissionMode = this.getPermissionMode();
 		const mcpServers = this.getMcpServers();
-		const pluginsFromSkills = this.buildPluginsFromSkills();
+		const pluginsFromSkills = [
+			...this.buildPluginsFromSkills(),
+			...this.buildPluginsFromBuiltinSkills(),
+		];
 		const mcpServersFromSkills = this.getMcpServersFromSkills();
 		const mergedEnv = this.getMergedEnvironmentVars();
 		const sdkCliPath = this.getSDKCliPath();
@@ -861,6 +864,33 @@ CRITICAL RULES:
 			if (roomDisabled.has(skill.id)) continue;
 			if (skill.sourceType === 'plugin' && skill.config.type === 'plugin') {
 				plugins.push({ type: 'local', path: skill.config.pluginPath });
+			}
+		}
+
+		return plugins;
+	}
+
+	/**
+	 * Build plugin entries from enabled skills with sourceType === 'builtin'.
+	 * Each builtin skill's commandName resolves to ~/.neokai/skills/{commandName}/
+	 * which is populated at startup (by the prod binary extraction step or the dev
+	 * server sync step). These directories are registered as local SDK plugins so
+	 * the SDK discovers their SKILL.md content as slash commands.
+	 *
+	 * Room overrides with enabled=false exclude the skill even if globally enabled.
+	 */
+	private buildPluginsFromBuiltinSkills(): Array<{ type: 'local'; path: string }> {
+		if (!this.ctx.skillsManager) return [];
+
+		const skills = this.ctx.skillsManager.getEnabledSkills();
+		const roomDisabled = this.getRoomDisabledSkillIds();
+		const plugins: Array<{ type: 'local'; path: string }> = [];
+
+		for (const skill of skills) {
+			if (roomDisabled.has(skill.id)) continue;
+			if (skill.sourceType === 'builtin' && skill.config.type === 'builtin') {
+				const skillDir = join(homedir(), '.neokai', 'skills', skill.config.commandName);
+				plugins.push({ type: 'local', path: skillDir });
 			}
 		}
 

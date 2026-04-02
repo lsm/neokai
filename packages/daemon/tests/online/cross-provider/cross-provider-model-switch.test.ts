@@ -740,7 +740,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const initialModel = initialSystemInit.model as string | undefined;
 			expect(initialModel).toBeDefined();
 
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			// --- Phase 2: Switch model (cross-provider GLM → MiniMax) ---
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -757,7 +757,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 
 			const postSwitchModel = postSwitchSystemInit.model as string | undefined;
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			expect(postSwitchModel).toBeDefined();
 			expect(postSwitchModel).not.toBe(initialModel);

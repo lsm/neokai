@@ -13,12 +13,18 @@
  */
 
 import { unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables } from '../../src/storage/schema';
 import { SkillRepository } from '../../src/storage/repositories/skill-repository';
 import { AppMcpServerRepository } from '../../src/storage/repositories/app-mcp-server-repository';
-import { SkillsManager } from '../../src/lib/skills-manager';
+import {
+	SkillsManager,
+	resolveSkillRawUrl,
+	resolveGitHubApiContentsUrl,
+	validateCommandName,
+} from '../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../helpers/reactive-database';
 import type { AppSkill } from '@neokai/shared';
 
@@ -776,6 +782,651 @@ describe('SkillsManager', () => {
 		expect(skill.config.type).toBe('mcp_server');
 		if (skill.config.type === 'mcp_server') {
 			expect(skill.config.appMcpServerId).toBe(seeded.id);
+		}
+	});
+
+	// --- playwright built-in ---
+
+	test('initializeBuiltins registers playwright skill', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright');
+		expect(skill).toBeDefined();
+		expect(skill!.displayName).toBe('Playwright');
+		expect(skill!.sourceType).toBe('builtin');
+		expect(skill!.builtIn).toBe(true);
+		expect(skill!.enabled).toBe(true);
+		expect(skill!.validationStatus).toBe('valid');
+	});
+
+	test('initializeBuiltins playwright has correct commandName', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright')!;
+		expect(skill.config.type).toBe('builtin');
+		if (skill.config.type === 'builtin') {
+			expect(skill.config.commandName).toBe('playwright');
+		}
+	});
+
+	test('initializeBuiltins playwright is included in getEnabledSkills', () => {
+		mgr.initializeBuiltins();
+
+		const enabled = mgr.getEnabledSkills();
+		expect(enabled.some((s) => s.name === 'playwright')).toBe(true);
+	});
+
+	test('initializeBuiltins playwright cannot be deleted (builtIn guard)', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright')!;
+		expect(mgr.removeSkill(skill.id)).toBe(false);
+		expect(mgr.getSkill(skill.id)).not.toBeNull();
+	});
+
+	test('initializeBuiltins playwright is idempotent', () => {
+		mgr.initializeBuiltins();
+		mgr.initializeBuiltins();
+
+		const skills = mgr.listSkills().filter((s) => s.name === 'playwright');
+		expect(skills).toHaveLength(1);
+	});
+
+	// --- playwright-interactive built-in ---
+
+	test('initializeBuiltins registers playwright-interactive skill', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive');
+		expect(skill).toBeDefined();
+		expect(skill!.displayName).toBe('Playwright Interactive');
+		expect(skill!.sourceType).toBe('builtin');
+		expect(skill!.builtIn).toBe(true);
+		expect(skill!.enabled).toBe(true);
+		expect(skill!.validationStatus).toBe('valid');
+	});
+
+	test('initializeBuiltins playwright-interactive has correct commandName', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive')!;
+		expect(skill.config.type).toBe('builtin');
+		if (skill.config.type === 'builtin') {
+			expect(skill.config.commandName).toBe('playwright-interactive');
+		}
+	});
+
+	test('initializeBuiltins playwright-interactive is included in getEnabledSkills', () => {
+		mgr.initializeBuiltins();
+
+		const enabled = mgr.getEnabledSkills();
+		expect(enabled.some((s) => s.name === 'playwright-interactive')).toBe(true);
+	});
+
+	test('initializeBuiltins playwright-interactive cannot be deleted (builtIn guard)', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'playwright-interactive')!;
+		expect(mgr.removeSkill(skill.id)).toBe(false);
+		expect(mgr.getSkill(skill.id)).not.toBeNull();
+	});
+
+	test('initializeBuiltins playwright-interactive is idempotent', () => {
+		mgr.initializeBuiltins();
+		mgr.initializeBuiltins();
+
+		const skills = mgr.listSkills().filter((s) => s.name === 'playwright-interactive');
+		expect(skills).toHaveLength(1);
+	});
+
+	// --- chrome-devtools-mcp built-in ---
+
+	test('initializeBuiltins registers chrome-devtools-mcp skill', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp');
+		expect(skill).toBeDefined();
+		expect(skill!.displayName).toBe('Chrome DevTools (MCP)');
+		expect(skill!.sourceType).toBe('mcp_server');
+		expect(skill!.builtIn).toBe(true);
+		expect(skill!.enabled).toBe(false);
+		expect(skill!.validationStatus).toBe('valid');
+	});
+
+	test('initializeBuiltins creates backing app_mcp_servers entry chrome-devtools if absent', () => {
+		mgr.initializeBuiltins();
+
+		const server = mcpRepo.getByName('chrome-devtools');
+		expect(server).not.toBeNull();
+		expect(server!.command).toBe('bunx');
+		expect(server!.sourceType).toBe('stdio');
+		expect(server!.args).toEqual(['chrome-devtools-mcp@latest', '--isolated']);
+	});
+
+	test('initializeBuiltins chrome-devtools-mcp skill config references the app_mcp_servers entry', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
+		const server = mcpRepo.getByName('chrome-devtools');
+		expect(skill).toBeDefined();
+		expect(server).not.toBeNull();
+
+		expect(skill.config.type).toBe('mcp_server');
+		if (skill.config.type === 'mcp_server') {
+			expect(skill.config.appMcpServerId).toBe(server!.id);
+		}
+	});
+
+	test('initializeBuiltins chrome-devtools-mcp is disabled by default', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
+		expect(skill.enabled).toBe(false);
+
+		const enabled = mgr.getEnabledSkills();
+		expect(enabled.some((s) => s.name === 'chrome-devtools-mcp')).toBe(false);
+	});
+
+	test('initializeBuiltins chrome-devtools-mcp cannot be deleted (builtIn guard)', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
+		expect(mgr.removeSkill(skill.id)).toBe(false);
+		expect(mgr.getSkill(skill.id)).not.toBeNull();
+	});
+
+	test('initializeBuiltins chrome-devtools-mcp is idempotent', () => {
+		mgr.initializeBuiltins();
+		mgr.initializeBuiltins();
+
+		const skills = mgr.listSkills().filter((s) => s.name === 'chrome-devtools-mcp');
+		expect(skills).toHaveLength(1);
+		const servers = mcpRepo.list().filter((s) => s.name === 'chrome-devtools');
+		expect(servers).toHaveLength(1);
+	});
+
+	test('initializeBuiltins reuses pre-existing chrome-devtools app_mcp_servers entry', () => {
+		const seeded = mcpRepo.create({
+			name: 'chrome-devtools',
+			description: 'Seeded by seed-defaults',
+			sourceType: 'stdio',
+			command: 'bunx',
+			args: ['chrome-devtools-mcp@latest', '--isolated'],
+			env: {},
+			enabled: false,
+		});
+
+		mgr.initializeBuiltins();
+
+		const servers = mcpRepo.list().filter((s) => s.name === 'chrome-devtools');
+		expect(servers).toHaveLength(1);
+
+		const skill = mgr.listSkills().find((s) => s.name === 'chrome-devtools-mcp')!;
+		expect(skill.config.type).toBe('mcp_server');
+		if (skill.config.type === 'mcp_server') {
+			expect(skill.config.appMcpServerId).toBe(seeded.id);
+		}
+	});
+
+	// --- total built-in count ---
+
+	test('initializeBuiltins registers all four built-in skills total', () => {
+		mgr.initializeBuiltins();
+
+		const builtIns = mgr.listSkills().filter((s) => s.builtIn);
+		expect(builtIns).toHaveLength(4);
+		const names = builtIns.map((s) => s.name);
+		expect(names).toContain('web-search-mcp');
+		expect(names).toContain('chrome-devtools-mcp');
+		expect(names).toContain('playwright');
+		expect(names).toContain('playwright-interactive');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resolveSkillRawUrl utility
+// ---------------------------------------------------------------------------
+
+describe('resolveSkillRawUrl', () => {
+	test('converts GitHub tree URL to raw SKILL.md URL', () => {
+		expect(
+			resolveSkillRawUrl('https://github.com/openai/skills/tree/main/skills/.curated/playwright')
+		).toBe(
+			'https://raw.githubusercontent.com/openai/skills/main/skills/.curated/playwright/SKILL.md'
+		);
+	});
+
+	test('passes through raw githubusercontent URLs unchanged', () => {
+		const raw =
+			'https://raw.githubusercontent.com/openai/skills/main/skills/.curated/playwright/SKILL.md';
+		expect(resolveSkillRawUrl(raw)).toBe(raw);
+	});
+
+	test('converts GitHub blob URL to raw content URL', () => {
+		expect(
+			resolveSkillRawUrl(
+				'https://github.com/openai/skills/blob/main/skills/.curated/playwright/SKILL.md'
+			)
+		).toBe(
+			'https://raw.githubusercontent.com/openai/skills/main/skills/.curated/playwright/SKILL.md'
+		);
+	});
+
+	test('throws for unrecognised URL', () => {
+		expect(() => resolveSkillRawUrl('https://gitlab.com/foo/bar')).toThrow(
+			'Cannot resolve raw content URL'
+		);
+	});
+
+	test('handles branch name with dots (e.g. v2.0) in tree URL', () => {
+		// Branch = "v2.0", path = "path/to/skill"
+		expect(resolveSkillRawUrl('https://github.com/org/repo/tree/v2.0/path/to/skill')).toBe(
+			'https://raw.githubusercontent.com/org/repo/v2.0/path/to/skill/SKILL.md'
+		);
+	});
+
+	test('throws when tree URL has no path after branch', () => {
+		expect(() => resolveSkillRawUrl('https://github.com/org/repo/tree/main')).toThrow(
+			'Cannot resolve raw content URL'
+		);
+	});
+
+	test('throws when blob URL has no path after branch', () => {
+		expect(() => resolveSkillRawUrl('https://github.com/org/repo/blob/main')).toThrow(
+			'Cannot resolve raw content URL'
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validateCommandName utility
+// ---------------------------------------------------------------------------
+
+describe('validateCommandName', () => {
+	test('accepts valid command names', () => {
+		expect(() => validateCommandName('playwright')).not.toThrow();
+		expect(() => validateCommandName('playwright-interactive')).not.toThrow();
+		expect(() => validateCommandName('my-skill-v2')).not.toThrow();
+		expect(() => validateCommandName('web_search')).not.toThrow();
+	});
+
+	test('throws for empty string', () => {
+		expect(() => validateCommandName('')).toThrow('must not be empty');
+	});
+
+	test('throws for whitespace-only string', () => {
+		expect(() => validateCommandName('   ')).toThrow('must not be empty');
+	});
+
+	test('throws for path with forward slash (path traversal prevention)', () => {
+		expect(() => validateCommandName('../../etc/passwd')).toThrow('path separators');
+	});
+
+	test('throws for path with backslash', () => {
+		expect(() => validateCommandName('foo\\bar')).toThrow('path separators');
+	});
+
+	test('throws for string containing null byte', () => {
+		expect(() => validateCommandName('foo\0bar')).toThrow('null bytes');
+	});
+
+	test('throws for bare "." name', () => {
+		expect(() => validateCommandName('.')).toThrow('"." or ".."');
+	});
+
+	test('throws for bare ".." name', () => {
+		expect(() => validateCommandName('..')).toThrow('"." or ".."');
+	});
+
+	test('throws for name starting with a dot', () => {
+		expect(() => validateCommandName('.hidden')).toThrow('must not start with a dot');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resolveGitHubApiContentsUrl utility
+// ---------------------------------------------------------------------------
+
+describe('resolveGitHubApiContentsUrl', () => {
+	test('converts a GitHub tree URL to GitHub API contents URL', () => {
+		expect(
+			resolveGitHubApiContentsUrl(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright'
+			)
+		).toBe(
+			'https://api.github.com/repos/openai/skills/contents/skills/.curated/playwright?ref=main'
+		);
+	});
+
+	test('handles nested paths correctly', () => {
+		expect(
+			resolveGitHubApiContentsUrl('https://github.com/owner/repo/tree/main/some/deep/path')
+		).toBe('https://api.github.com/repos/owner/repo/contents/some/deep/path?ref=main');
+	});
+
+	test('throws for non-github.com URL', () => {
+		expect(() => resolveGitHubApiContentsUrl('https://gitlab.com/foo/bar')).toThrow(
+			'expected a github.com URL'
+		);
+	});
+
+	test('throws for github.com URL without /tree/', () => {
+		expect(() => resolveGitHubApiContentsUrl('https://github.com/openai/skills')).toThrow('/tree/');
+	});
+
+	test('throws for tree URL without a path after branch', () => {
+		expect(() => resolveGitHubApiContentsUrl('https://github.com/openai/skills/tree/main')).toThrow(
+			'path after the branch'
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// SkillsManager.installSkillFromGit
+// ---------------------------------------------------------------------------
+
+describe('SkillsManager.installSkillFromGit', () => {
+	let db: BunDatabase;
+	let mgr: SkillsManager;
+
+	beforeEach(() => {
+		db = new BunDatabase(':memory:');
+		createTables(db);
+		const mcpRepo = new AppMcpServerRepository(db, noOpReactiveDb);
+		const skillRepo = new SkillRepository(db, noOpReactiveDb);
+		mgr = new SkillsManager(skillRepo, mcpRepo);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	/**
+	 * Helper: mock fetch for GitHub API + download_url pattern.
+	 * Returns a directory listing for api.github.com URLs and file content for raw URLs.
+	 */
+	function makeGitHubApiFetch(fileContent: string = '# Playwright Skill\n\nContent here') {
+		return async (url: string | URL | Request) => {
+			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: 'SKILL.md',
+							type: 'file',
+							download_url: 'https://raw.githubusercontent.com/mock/SKILL.md',
+							url: '',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			// download_url fetch
+			return new Response(fileContent, { status: 200 });
+		};
+	}
+
+	test('registers skill in DB and writes SKILL.md to ~/.neokai/skills/', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = makeGitHubApiFetch() as typeof globalThis.fetch;
+
+		try {
+			const skill = await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'playwright-test'
+			);
+
+			expect(skill.name).toBe('playwright-test');
+			expect(skill.sourceType).toBe('builtin');
+			expect(skill.enabled).toBe(true);
+			expect(skill.builtIn).toBe(false);
+			expect(skill.config.type).toBe('builtin');
+			if (skill.config.type === 'builtin') {
+				expect(skill.config.commandName).toBe('playwright-test');
+			}
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('is idempotent — second call returns existing skill unchanged', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = makeGitHubApiFetch() as typeof globalThis.fetch;
+
+		try {
+			const skill1 = await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'pw-idem'
+			);
+			const skill2 = await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'pw-idem'
+			);
+			expect(skill1.id).toBe(skill2.id);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws for commandName with path traversal characters', async () => {
+		await expect(
+			mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'../../etc/passwd'
+			)
+		).rejects.toThrow('path separators');
+	});
+
+	test('throws for commandName starting with a dot', async () => {
+		await expect(
+			mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'.hidden-skill'
+			)
+		).rejects.toThrow('must not start with a dot');
+	});
+
+	test('is truly idempotent — does not call fetch on second call', async () => {
+		let fetchCalls = 0;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			fetchCalls++;
+			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: 'SKILL.md',
+							type: 'file',
+							download_url: 'https://raw.githubusercontent.com/mock/SKILL.md',
+							url: '',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			return new Response('# Content', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'idem-fetch-test'
+			);
+			// Expect 2 fetches: 1 for API directory listing, 1 for SKILL.md download
+			const firstCallCount = fetchCalls;
+			expect(firstCallCount).toBeGreaterThan(0);
+
+			// Second call should NOT fetch again — skill already in DB
+			await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'idem-fetch-test'
+			);
+			expect(fetchCalls).toBe(firstCallCount); // still same count
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when GitHub API returns non-ok status', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			new Response('Not Found', {
+				status: 404,
+				statusText: 'Not Found',
+			})) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit(
+					'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+					'bad-skill'
+				)
+			).rejects.toThrow('404');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('falls back to single SKILL.md fetch for raw URL', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			new Response('# Content', { status: 200 })) as typeof globalThis.fetch;
+
+		try {
+			const skill = await mgr.installSkillFromGit(
+				'https://raw.githubusercontent.com/openai/skills/main/skill.md',
+				'no-workspace-skill'
+			);
+			expect(skill.name).toBe('no-workspace-skill');
+			expect(skill.enabled).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when GitHub API returns an entry with path traversal in its name', async () => {
+		const originalFetch = globalThis.fetch;
+		// Simulate a malicious API response with a traversal entry name
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: '../../etc/cron.d/backdoor',
+							type: 'file',
+							download_url: 'https://raw.githubusercontent.com/mock/backdoor',
+							url: '',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			return new Response('malicious content', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit(
+					'https://github.com/evil/repo/tree/main/skills/malicious',
+					'safe-name'
+				)
+			).rejects.toThrow('Unsafe entry name');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when GitHub API returns an entry with a leading-dot name', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: '.env',
+							type: 'file',
+							download_url: 'https://raw.githubusercontent.com/mock/.env',
+							url: '',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			return new Response('SECRET=bad', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit(
+					'https://github.com/evil/repo/tree/main/skills/dotenv',
+					'dot-entry-skill'
+				)
+			).rejects.toThrow('Unsafe entry name');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when directory nesting exceeds max depth', async () => {
+		const originalFetch = globalThis.fetch;
+		// Each API call returns a single nested subdirectory, forcing infinite recursion
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+			if (urlStr.includes('api.github.com') || urlStr.includes('deep')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: 'deep',
+							type: 'dir',
+							download_url: null,
+							url: 'https://api.github.com/repos/mock/repo/contents/deep',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			return new Response('', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit('https://github.com/mock/repo/tree/main/skills/deep', 'deep-skill')
+			).rejects.toThrow('maximum nesting depth');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when total file count exceeds max files', async () => {
+		const originalFetch = globalThis.fetch;
+		// Return 101 files in the directory listing
+		const manyFiles = Array.from({ length: 101 }, (_, i) => ({
+			name: `file${i}.md`,
+			type: 'file',
+			download_url: `https://raw.githubusercontent.com/mock/file${i}.md`,
+			url: '',
+		}));
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(JSON.stringify(manyFiles), { status: 200 });
+			}
+			return new Response('# content', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit('https://github.com/mock/repo/tree/main/skills/huge', 'huge-skill')
+			).rejects.toThrow('maximum file count');
+		} finally {
+			globalThis.fetch = originalFetch;
 		}
 	});
 });

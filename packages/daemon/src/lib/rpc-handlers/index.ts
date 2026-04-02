@@ -326,7 +326,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.db);
 
 	// Skills registry RPC handlers
-	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub);
+	registerSkillHandlers(
+		deps.messageHub,
+		deps.skillsManager,
+		deps.daemonHub,
+		deps.config.workspaceRoot
+	);
 
 	// Neo global agent RPC handlers
 	// The PendingActionStore is created here (application lifecycle) so it is
