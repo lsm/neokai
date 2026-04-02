@@ -513,6 +513,77 @@ describe('db-query tools', () => {
 			});
 		});
 
+		describe('same-scope JOIN queries', () => {
+			it('JOINs two room-scoped tables with deduplicated scope filter', async () => {
+				seedRooms(db);
+				// Insert goals and tasks without re-seeding rooms
+				db.exec(
+					"INSERT INTO goals (id, room_id, title, status, mission_type, created_at) VALUES ('goal-1', 'room-1', 'Goal 1', 'active', 'one_shot', 1000)"
+				);
+				db.exec(
+					"INSERT INTO goals (id, room_id, title, status, mission_type, created_at) VALUES ('goal-2', 'room-1', 'Goal 2', 'completed', 'recurring', 2000)"
+				);
+				db.exec(
+					"INSERT INTO tasks (id, room_id, title, status, restrictions, created_at) VALUES ('task-1', 'room-1', 'Task 1', 'in_progress', NULL, 3000)"
+				);
+				db.exec(
+					"INSERT INTO tasks (id, room_id, title, status, restrictions, created_at) VALUES ('task-2', 'room-1', 'Task 2', 'pending', NULL, 4000)"
+				);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// Both tasks and goals have scopeColumn 'room_id' — the wrapper
+				// should deduplicate the filter to a single _dbq.room_id = ?
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM tasks JOIN goals ON tasks.room_id = goals.room_id',
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				// room-1 has 2 tasks and 2 goals — cross join on room_id = room_id
+				expect(parsed.rows).toHaveLength(4);
+				for (const row of parsed.rows) {
+					// SQLite suffixes duplicate column names with :1
+					expect(['Goal 1', 'Goal 2']).toContain(row['title:1']);
+				}
+			});
+		});
+
+		describe('CTE queries', () => {
+			it('handles CTE with scoped table reference', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'WITH active AS (SELECT * FROM tasks WHERE status = ?) SELECT * FROM active',
+					params: ['in_progress'],
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rows).toHaveLength(1);
+				expect(parsed.rows[0].title).toBe('Task 1');
+			});
+
+			it('CTE name is excluded from table-ref scope validation', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// "active" is a CTE name, not a real table — should not trigger
+				// a "not accessible in scope" error
+				const result = await handlers.db_query({
+					sql: 'WITH active AS (SELECT id, title FROM tasks) SELECT * FROM active',
+				});
+				expect(result.isError).toBeFalsy();
+				expect(parseResult(result).rowCount).toBe(2);
+			});
+		});
+
 		describe('indirect scope tables filtered correctly', () => {
 			it('mission_executions filtered via goals room scope', async () => {
 				seedMissionExecutions(db);
@@ -623,6 +694,44 @@ describe('db-query tools', () => {
 
 				expect(parsed.isError).toBeFalsy();
 				expect(parsed.rowCount).toBeLessThanOrEqual(1000);
+			});
+		});
+
+		describe('truncated flag', () => {
+			it('truncated flag is true when results hit the default limit', async () => {
+				seedRooms(db);
+				// Insert enough rows to exceed the default limit (200)
+				for (let i = 0; i < 250; i++) {
+					db.exec(
+						`INSERT INTO goals (id, room_id, title, status, created_at) VALUES ('trunc-${i}', 'room-1', 'Truncation Test ${i}', 'active', ${i})`
+					);
+				}
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// No explicit limit — default 200 should apply
+				const result = await handlers.db_query({ sql: 'SELECT * FROM goals' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBe(200);
+				expect(parsed.truncated).toBe(true);
+			});
+
+			it('truncated flag is false when results fit within limit', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// Only 2 tasks in room-1, well under the limit
+				const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBe(2);
+				expect(parsed.truncated).toBe(false);
 			});
 		});
 

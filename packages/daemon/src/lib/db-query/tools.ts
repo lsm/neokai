@@ -99,120 +99,108 @@ function findTopLevelKeyword(sql: string, keyword: string): number {
 }
 
 /**
- * Find the position of the main SELECT keyword (the one after any WITH/CTE block).
- * Returns the position relative to the start of the input string.
+ * Rewrite ALL SELECT column lists to `*` so that all columns
+/**
+ * Rewrite ALL SELECT column lists to `*` so that all columns
+ * (including scope columns needed by the outer filter) are available.
+ * This handles both the main SELECT and SELECTs inside CTE bodies,
+ * subqueries, and nested parentheses.
+ *
+ * Strategy: collect all (selectPos, fromPos) pairs in a single forward pass
+ * (at any depth, respecting string literals), then replace from right to
+ * left to preserve string positions.
  */
-function findMainSelectPos(sql: string): number {
-	const trimmed = sql.trimStart();
-	const offset = sql.length - trimmed.length;
+function rewriteSelectToStar(sql: string): string {
+	// Collect all SELECT→FROM pairs at any depth (except inside string literals)
+	const pairs: Array<{ selectStart: number; selectEnd: number; fromStart: number }> = [];
+	const upper = sql.toUpperCase();
+	let depth = 0;
+	let inString = false;
 
-	if (!/^[Ww][Ii][Tt][Hh]\b/.test(trimmed)) {
-		// No CTE — main SELECT is at the start (after any leading whitespace)
-		return offset;
-	}
+	for (let i = 0; i < sql.length; i++) {
+		const ch = sql[i];
 
-	// Skip past the WITH block
-	let pos = 4; // skip "WITH"
-	const len = trimmed.length;
-
-	while (pos < len && /\s/.test(trimmed[pos])) pos++;
-
-	// Skip optional RECURSIVE
-	if (pos + 8 <= len && trimmed.slice(pos, pos + 9).toLowerCase() === 'recursive') {
-		pos += 9;
-		while (pos < len && /\s/.test(trimmed[pos])) pos++;
-	}
-
-	// Skip CTE definitions
-	while (pos < len) {
-		// Skip CTE name
-		while (pos < len && /[\p{L}\p{N}_]/u.test(trimmed[pos])) pos++;
-		while (pos < len && /\s/.test(trimmed[pos])) pos++;
-
-		// Skip optional column list
-		if (pos < len && trimmed[pos] === '(') {
-			let depth = 1;
-			pos++;
-			while (pos < len && depth > 0) {
-				if (trimmed[pos] === '(') depth++;
-				else if (trimmed[pos] === ')') depth--;
-				pos++;
+		if (inString) {
+			if (ch === "'" && i + 1 < sql.length && sql[i + 1] === "'") {
+				i++;
+				continue;
 			}
-			while (pos < len && /\s/.test(trimmed[pos])) pos++;
+			if (ch === "'") {
+				inString = false;
+			}
+			continue;
 		}
 
-		// Skip AS keyword
+		if (ch === "'") {
+			inString = true;
+			continue;
+		}
+		if (ch === '(') {
+			depth++;
+			continue;
+		}
+		if (ch === ')') {
+			depth--;
+			continue;
+		}
+
+		// Check for SELECT keyword at any depth (CTE bodies, subqueries, etc.)
 		if (
-			pos + 1 < len &&
-			trimmed[pos].toLowerCase() === 'a' &&
-			trimmed[pos + 1].toLowerCase() === 's'
+			upper.slice(i, i + 6) === 'SELECT' &&
+			(i === 0 || /\s/.test(sql[i - 1]) || sql[i - 1] === '(')
 		) {
-			pos += 2;
-		} else {
-			break;
-		}
-		while (pos < len && /\s/.test(trimmed[pos])) pos++;
+			const afterChar = i + 6 < sql.length ? sql[i + 6] : ' ';
+			if (/\s/.test(afterChar) || afterChar === '(') {
+				const selectEnd = i + 6;
+				const targetDepth = depth;
 
-		// Skip CTE body (parenthesized)
-		if (pos < len && trimmed[pos] === '(') {
-			let depth = 1;
-			pos++;
-			while (pos < len && depth > 0) {
-				if (trimmed[pos] === '(') {
-					depth++;
-					pos++;
-				} else if (trimmed[pos] === ')') {
-					depth--;
-					pos++;
-				} else if (trimmed[pos] === "'") {
-					pos++;
-					while (pos < len) {
-						if (trimmed[pos] === "'" && pos + 1 < len && trimmed[pos + 1] === "'") {
-							pos += 2;
-						} else if (trimmed[pos] === "'") {
-							pos++;
-							break;
-						} else {
-							pos++;
+				// Find matching FROM at the same depth as this SELECT
+				let fDepth = depth;
+				let fInString = false;
+				let fromStart = -1;
+				for (let j = selectEnd; j < sql.length; j++) {
+					const c = sql[j];
+					if (fInString) {
+						if (c === "'" && j + 1 < sql.length && sql[j + 1] === "'") {
+							j++;
+							continue;
 						}
+						if (c === "'") fInString = false;
+						continue;
 					}
-				} else {
-					pos++;
+					if (c === "'") {
+						fInString = true;
+						continue;
+					}
+					if (c === '(') fDepth++;
+					if (c === ')') fDepth--;
+					if (fDepth !== targetDepth) continue;
+					if (
+						upper.slice(j, j + 4) === 'FROM' &&
+						(j === 0 || /\s/.test(sql[j - 1])) &&
+						(j + 4 >= sql.length || /\s/.test(sql[j + 4]))
+					) {
+						fromStart = j;
+						break;
+					}
+				}
+				if (fromStart !== -1) {
+					pairs.push({ selectStart: i, selectEnd, fromStart });
 				}
 			}
 		}
-
-		while (pos < len && /\s/.test(trimmed[pos])) pos++;
-
-		// Comma = more CTEs; anything else = end of WITH block
-		if (pos < len && trimmed[pos] === ',') {
-			pos++;
-			while (pos < len && /\s/.test(trimmed[pos])) pos++;
-		} else {
-			break;
-		}
 	}
 
-	return offset + pos;
-}
+	if (pairs.length === 0) return sql;
 
-/**
- * Rewrite the main SELECT's column list to `*` so that all columns
- * (including scope columns) are available in the subquery wrapper.
- */
-function rewriteSelectToStar(sql: string): string {
-	const mainSelectPos = findMainSelectPos(sql);
-	const remaining = sql.slice(mainSelectPos);
+	// Replace from right to left to preserve positions
+	let result = sql;
+	for (let p = pairs.length - 1; p >= 0; p--) {
+		const { selectStart, fromStart } = pairs[p];
+		result = `${result.slice(0, selectStart)}SELECT * ${result.slice(fromStart)}`;
+	}
 
-	// Skip "SELECT" keyword and whitespace
-	const selectKwLen = remaining.match(/^[Ss][Ee][Ll][Ee][Cc][Tt]\b/)?.[0].length ?? 6;
-	const afterSelect = remaining.slice(selectKwLen);
-
-	// Find the FROM keyword (top-level only) in the remaining SQL
-	const fromPos = findTopLevelKeyword(afterSelect, 'FROM');
-	if (fromPos === -1) return sql; // no FROM — return as-is
-
-	return `${sql.slice(0, mainSelectPos)}SELECT * ${afterSelect.slice(fromPos)}`;
+	return result;
 }
 
 /**
@@ -281,36 +269,47 @@ function rewriteScopedQuery(
 	scopeValue: string,
 	tableConfigs: Map<string, ScopeTableConfig>,
 	userLimit?: number
-): { sql: string; params: unknown[] } {
+): { sql: string; params: unknown[]; cappedLimit: number } {
 	const cappedLimit = Math.min(userLimit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
-	// Build scope filters for all referenced tables
-	const scopeFilters: Array<{ whereClause: string; params: unknown[] }> = [];
+	// Build scope filters for all referenced tables, deduplicating identical
+	// clauses to avoid ambiguous column references when multiple tables share
+	// the same scope column (e.g. tasks JOIN goals both have room_id).
+	const scopeFilterSet = new Map<string, unknown[]>();
 	for (const config of tableConfigs.values()) {
 		const filter = buildPrefixedScopeFilter(config, scopeValue);
-		if (filter.whereClause) {
-			scopeFilters.push(filter);
+		if (filter.whereClause && !scopeFilterSet.has(filter.whereClause)) {
+			scopeFilterSet.set(filter.whereClause, filter.params);
 		}
 	}
 
 	// No scope filters needed (global scope or all tables unscoped)
-	if (scopeFilters.length === 0) {
+	if (scopeFilterSet.size === 0) {
 		const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
 		const effectiveLimit = Math.min(existingLimit ?? DEFAULT_LIMIT, MAX_LIMIT);
-		return { sql: `${strippedSql} LIMIT ${effectiveLimit}`, params: userParams };
+		return {
+			sql: `${strippedSql} LIMIT ${effectiveLimit}`,
+			params: userParams,
+			cappedLimit: effectiveLimit,
+		};
 	}
 
 	// Scope-aware wrapping
-	const combinedWhere = scopeFilters.map((f) => f.whereClause).join(' AND ');
-	const scopeParams = scopeFilters.flatMap((f) => f.params);
+	const combinedWhere = [...scopeFilterSet.keys()].join(' AND ');
+	const scopeParams = [...scopeFilterSet.values()].flat();
 
-	// Strip user's LIMIT and rewrite inner SELECT to *
+	// Strip user's LIMIT
 	const { sql: strippedSql } = stripLimit(sql);
+
+	// Rewrite all SELECTs (including CTE bodies) to * for the inner query
+	// so scope columns are available. The outer SELECT also uses * because
+	// qualified column names (table.column) and aliases become invalid in
+	// the subquery wrapper context — only _dbq is a valid table reference.
 	const innerSql = rewriteSelectToStar(strippedSql);
 
 	const wrappedSql = `SELECT * FROM (${innerSql}) AS _dbq WHERE ${combinedWhere} LIMIT ${cappedLimit}`;
 
-	return { sql: wrappedSql, params: [...userParams, ...scopeParams] };
+	return { sql: wrappedSql, params: [...userParams, ...scopeParams], cappedLimit };
 }
 
 /**
@@ -393,14 +392,11 @@ export function createDbQueryToolHandlers(config: DbQueryToolsConfig, db: Databa
 			}
 
 			// Step 4-6: Rewrite query with scope filter wrapping and LIMIT cap
-			const { sql: wrappedSql, params: allParams } = rewriteScopedQuery(
-				sql,
-				params,
-				scopeType,
-				scopeValue,
-				tableConfigs,
-				limit
-			);
+			const {
+				sql: wrappedSql,
+				params: allParams,
+				cappedLimit,
+			} = rewriteScopedQuery(sql, params, scopeType, scopeValue, tableConfigs, limit);
 
 			// Step 7: Execute the rewritten query
 			try {
@@ -410,10 +406,9 @@ export function createDbQueryToolHandlers(config: DbQueryToolsConfig, db: Databa
 				// Step 8: Apply column blacklist
 				const filteredRows = removeBlacklistedColumns(rows, tableConfigs);
 
-				// Step 9: Return result
-				const truncated =
-					rows.length > filteredRows.length ||
-					(limit !== undefined && rows.length >= Math.min(limit, MAX_LIMIT));
+				// Step 9: Return result — truncated is true when the result set
+				// hit the applied LIMIT cap, meaning more rows may exist
+				const truncated = rows.length >= cappedLimit;
 
 				return jsonResult({
 					rows: filteredRows,
@@ -532,6 +527,10 @@ export function createDbQueryToolHandlers(config: DbQueryToolsConfig, db: Databa
  * // TODO: Add query timeout — AbortController-based cancellation or a
  * // worker thread with sqlite3_interrupt() could handle pathological queries.
  * // For now, PRAGMA busy_timeout = 5000 handles lock contention only.
+ *
+ * // TODO: Wire into agent sessions — createDbQueryMcpServer is not yet integrated
+ * // into query-options-builder.ts or agent-session.ts. This is intentional
+ * // (follow-up task) but should be connected before the db-query server is usable.
  */
 export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpServer {
 	// Create a dedicated read-only connection
