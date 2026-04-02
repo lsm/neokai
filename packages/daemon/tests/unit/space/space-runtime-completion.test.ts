@@ -29,6 +29,7 @@ import type {
 } from '../../../src/lib/space/runtime/notification-sink.ts';
 import type { SpaceWorkflow, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../src/lib/space/runtime/task-agent-manager.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 
 // ---------------------------------------------------------------------------
 // MockNotificationSink
@@ -155,6 +156,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	const AGENT_C = 'agent-cd-c';
 
 	function makeRuntimeWithTam(extraConfig?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
+		const nodeExecutionRepo = new NodeExecutionRepository(db);
 		const config: SpaceRuntimeConfig = {
 			db,
 			spaceManager,
@@ -162,6 +164,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
+			nodeExecutionRepo,
 			notificationSink: sink,
 			taskAgentManager: new MockTaskAgentManager() as unknown as TaskAgentManager,
 			...extraConfig,

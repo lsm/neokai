@@ -36,6 +36,7 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import {
 	createTaskAgentToolHandlers,
 	type SubSessionFactory,
@@ -180,6 +181,7 @@ interface TestCtx {
 	workflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
@@ -205,6 +207,7 @@ function makeCtx(): TestCtx {
 
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
 
@@ -215,6 +218,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 
 	const space = makeSpace(spaceId, workspacePath);
@@ -229,6 +233,7 @@ function makeCtx(): TestCtx {
 		workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 		taskManager,
 		agentManager,
 		runtime,
@@ -371,7 +376,7 @@ describe('Task Agent — full collaboration flow', () => {
 						completedAt: Date.now(),
 					});
 				},
-				completionDetector: new CompletionDetector(ctx.taskRepo),
+				completionDetector: new CompletionDetector(ctx.nodeExecutionRepo),
 			})
 		);
 
@@ -435,7 +440,7 @@ describe('Task Agent — full collaboration flow', () => {
 		});
 
 		const factory = makeMockSessionFactory();
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, {
@@ -659,7 +664,7 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		expect(stepTasks.length).toBeGreaterThan(0);
 		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'blocked' });
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
@@ -687,7 +692,7 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		const stepTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
 		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'in_progress' });
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
@@ -765,7 +770,7 @@ describe('Task Agent — multi-agent node collaboration', () => {
 		const nodeTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
 		expect(nodeTasks).toHaveLength(2);
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })

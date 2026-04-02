@@ -81,6 +81,7 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import {
 	createTaskAgentToolHandlers,
 	createTaskAgentMcpServer,
@@ -294,6 +295,7 @@ interface TestCtx {
 	workflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
@@ -317,6 +319,7 @@ function makeCtx(): TestCtx {
 
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
 
@@ -327,6 +330,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 
 	const space = makeSpace(spaceId, workspacePath);
@@ -340,6 +344,7 @@ function makeCtx(): TestCtx {
 		workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 		taskManager,
 		agentManager,
 		runtime,
@@ -2019,7 +2024,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
 
 		// The step task is still 'pending' — not terminal
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
@@ -2041,7 +2046,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		const stepTask = ctx.taskRepo.listByWorkflowRun(run.id)[0];
 		ctx.taskRepo.updateTask(stepTask!.id, { status: 'in_progress' });
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
@@ -2071,7 +2076,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 			status: 'in_progress',
 		});
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
@@ -2101,7 +2106,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 			status: 'in_progress',
 		});
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
