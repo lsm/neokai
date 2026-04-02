@@ -85,9 +85,9 @@ describe('RoomRuntime — triggerNow', () => {
 
 	it('creates execution and advances nextRunAt to next cron time (not now)', async () => {
 		const goal = await ctx.goalManager.createGoal({
-			title: 'Daily runner',
+			title: 'Hourly runner',
 			missionType: 'recurring',
-			schedule: { expression: '@daily', timezone: 'UTC' },
+			schedule: { expression: '@hourly', timezone: 'UTC' },
 		});
 
 		ctx.runtime.start();
@@ -99,17 +99,16 @@ describe('RoomRuntime — triggerNow', () => {
 		expect(executions).toHaveLength(1);
 		expect(executions[0].status).toBe('running');
 
-		// nextRunAt should be the NEXT cron time (tomorrow for @daily),
+		// nextRunAt should be the NEXT cron time (next hourly slot),
 		// NOT the current time — this is the P0 regression check.
+		// @hourly from UTC: next slot is always 0–3600s away, so nextRunAt
+		// must be strictly greater than now (not "now" or in the past).
 		const nowSec = Math.floor(Date.now() / 1000);
 		expect(result.nextRunAt).toBeGreaterThan(nowSec);
 
-		// Verify nextRunAt is in the future by at least 1 hour (not "now")
-		// and at most 25 hours (next daily slot from any timezone).
-		// We use a wide tolerance because @daily from UTC depends on current time.
+		// Upper bound: next hourly slot plus a few seconds of grace
 		const secondsUntilNext = result.nextRunAt! - nowSec;
-		expect(secondsUntilNext).toBeGreaterThan(3600);
-		expect(secondsUntilNext).toBeLessThan(25 * 3600);
+		expect(secondsUntilNext).toBeLessThan(3700);
 
 		// A planner session should have been spawned for execution #1
 		const plannerCalls = ctx.sessionFactory.calls.filter(
@@ -137,16 +136,9 @@ describe('RoomRuntime — triggerNow', () => {
 
 		await ctx.runtime.triggerNow(goal.id);
 
-		// updateNextRunAt should NOT be called by triggerNow —
-		// startExecution handles it atomically.
-		// (It may be called by other paths, but triggerNow itself should not call it.)
-		// We check by counting calls before vs after — but since we can't
-		// easily isolate, the key assertion is that nextRunAt is correct
-		// (tested in the previous test), not that updateNextRunAt was called
-		// with the wrong value.
-
-		const result = await ctx.goalManager.getGoal(goal.id);
-		expect(result?.nextRunAt).toBeDefined();
-		expect(result!.nextRunAt!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+		// triggerNow must NOT call updateNextRunAt — startExecution handles
+		// nextRunAt atomically in its transaction. This catches regressions
+		// where someone re-adds the separate updateNextRunAt call.
+		expect(updateNextRunAtCalls).toBe(0);
 	});
 });

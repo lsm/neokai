@@ -1206,6 +1206,8 @@ function GoalItem({
 		}
 	}, [isExpanded, missionType, onListExecutions, goal.id, executions]);
 
+	const hasActiveExecution = executions?.some((e) => e.status === 'running') ?? false;
+
 	const handleStatusChange = async (newStatus: GoalStatus) => {
 		setIsUpdating(true);
 		try {
@@ -1502,7 +1504,12 @@ function GoalItem({
 											variant="primary"
 											size="sm"
 											onClick={handleTriggerNow}
-											disabled={isTriggering || goal.schedulePaused}
+											disabled={isTriggering || goal.schedulePaused || hasActiveExecution}
+											title={
+												hasActiveExecution
+													? 'An execution is already running — wait for it to complete'
+													: undefined
+											}
 											loading={isTriggering}
 											data-testid="run-now-btn"
 										>
