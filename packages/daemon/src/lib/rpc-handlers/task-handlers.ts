@@ -28,6 +28,7 @@ import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { resolveTaskId } from '../id-resolution';
+import { toTaskSummary } from '../task-utils';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
@@ -1124,32 +1125,17 @@ export function setupTaskHandlers(
 	// that only reads task rows (no session/overview overhead).
 	messageHub.onRequest('inbox.reviewTasks', async () => {
 		const rooms = roomManager.listRooms(false);
+		const taskRepo = makeTaskRepo();
 		const reviewTasks: Array<{ task: TaskSummary; roomId: string; roomTitle: string }> = [];
 
 		for (const room of rooms) {
-			const tasks = makeTaskRepo().listTasks(room.id);
+			const tasks = taskRepo.listTasks(room.id, { status: 'review' });
 			for (const task of tasks) {
-				if (task.status === 'review') {
-					reviewTasks.push({
-						task: {
-							id: task.id,
-							shortId: task.shortId,
-							title: task.title,
-							status: task.status,
-							priority: task.priority,
-							progress: task.progress,
-							currentStep: task.currentStep,
-							dependsOn: task.dependsOn,
-							error: task.error,
-							activeSession: task.activeSession,
-							prUrl: task.prUrl,
-							prNumber: task.prNumber,
-							updatedAt: task.updatedAt,
-						},
-						roomId: room.id,
-						roomTitle: room.name,
-					});
-				}
+				reviewTasks.push({
+					task: toTaskSummary(task),
+					roomId: room.id,
+					roomTitle: room.name,
+				});
 			}
 		}
 

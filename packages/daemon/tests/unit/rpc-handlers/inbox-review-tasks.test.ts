@@ -111,7 +111,13 @@ describe('inbox.reviewTasks RPC handler', () => {
 
 		const allFn = mock((...params: unknown[]) => {
 			const roomId = params[0] as string;
-			return taskRowsByRoom.get(roomId) ?? [];
+			let rows = taskRowsByRoom.get(roomId) ?? [];
+			// Simulate SQL-level status filtering (mirrors TaskRepository.listTasks)
+			if (params.length > 1 && params[1]) {
+				const status = params[1] as string;
+				rows = rows.filter((r) => r.status === status);
+			}
+			return rows;
 		});
 
 		const stmt = {

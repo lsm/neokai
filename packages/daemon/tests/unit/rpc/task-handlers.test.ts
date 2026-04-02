@@ -142,7 +142,6 @@ function createMockRoomManager(): {
 	const getRoomOverviewMock = mock(() => ({
 		room: { id: 'room-123', name: 'Test Room' },
 		sessions: [],
-		activeTasks: [],
 	}));
 
 	const roomManager = {

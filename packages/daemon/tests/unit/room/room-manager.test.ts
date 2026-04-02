@@ -121,7 +121,7 @@ describe('RoomManager', () => {
 	});
 
 	describe('getRoomOverview', () => {
-		it('should return room overview with empty sessions ', () => {
+		it('should return room overview with empty sessions', () => {
 			const room = roomManager.createRoom({ name: 'Overview Room' });
 			const overview = roomManager.getRoomOverview(room.id);
 

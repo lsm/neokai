@@ -84,6 +84,14 @@ describe('InboxStore', () => {
 			expect(await inboxStore.approveTask('t1', 'r')).toBe(true);
 			expect(mockHub.request).toHaveBeenCalledWith('inbox.reviewTasks', {});
 		});
+
+		it('should show toast.error and return false when approveTask fails', async () => {
+			const mockHub = { request: vi.fn().mockRejectedValueOnce(new Error('Network error')) };
+			mockGetHub.mockResolvedValue(mockHub);
+			const result = await inboxStore.approveTask('task-1', 'room-1');
+			expect(result).toBe(false);
+			expect(mockToastError).toHaveBeenCalledWith('Network error');
+		});
 	});
 
 	describe('rejectTask()', () => {
@@ -97,6 +105,14 @@ describe('InboxStore', () => {
 			mockGetHub.mockResolvedValue(mockHub);
 			expect(await inboxStore.rejectTask('t1', 'r', 'feedback')).toBe(true);
 			expect(mockHub.request).toHaveBeenCalledWith('inbox.reviewTasks', {});
+		});
+
+		it('should show toast.error and return false when rejectTask fails', async () => {
+			const mockHub = { request: vi.fn().mockRejectedValueOnce(new Error('Network error')) };
+			mockGetHub.mockResolvedValue(mockHub);
+			const result = await inboxStore.rejectTask('task-1', 'room-1', 'needs work');
+			expect(result).toBe(false);
+			expect(mockToastError).toHaveBeenCalledWith('Network error');
 		});
 	});
 

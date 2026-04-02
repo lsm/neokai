@@ -35,7 +35,6 @@ import type {
 	AuthStatus,
 	Room,
 	RoomGoal,
-	TaskSummary,
 	AppMcpServer,
 	AppSkill,
 	Space,
@@ -47,6 +46,7 @@ import type {
 	MissionExecution,
 } from '@neokai/shared';
 import { isWorkerSessionId } from '../../room/session-utils';
+import { toTaskSummary } from '../../task-utils';
 
 // ---------------------------------------------------------------------------
 // Minimal interfaces — only the surface used by these tools
@@ -290,28 +290,12 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				linkedTaskCount: g.linkedTaskIds.length,
 			}));
 
-			const toSummary = (task: NeoTask): TaskSummary => ({
-				id: task.id,
-				shortId: task.shortId,
-				title: task.title,
-				status: task.status,
-				priority: task.priority,
-				progress: task.progress,
-				currentStep: task.currentStep,
-				dependsOn: task.dependsOn,
-				error: task.error,
-				activeSession: task.activeSession,
-				prUrl: task.prUrl,
-				prNumber: task.prNumber,
-				updatedAt: task.updatedAt,
-			});
-
 			const allTasks = taskRepository.listTasks(room.id, { includeArchived: true });
 			const nonTerminal = allTasks.filter(
 				(t) =>
 					t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'
 			);
-			const activeTasks = nonTerminal.map(toSummary);
+			const activeTasks = nonTerminal.map(toTaskSummary);
 
 			return jsonResult({
 				id: room.id,
