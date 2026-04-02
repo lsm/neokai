@@ -76,16 +76,18 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
 /**
  * Coding Workflow
  *
- * Two-node linear graph: Code → Review.
- * Simple Coder → Reviewer pipeline with no gates, no loops.
- * Used for quick tasks that don't need a full plan-review-QA cycle.
+ * Two-node iterative graph: Code ↔ Review (with cycle).
+ * - Code → Review: gated — Coder must write `pr_created` and `worktree_clean`.
+ * - Review → Code: ungated — Reviewer sends back for changes without any gate.
+ *   When satisfied, Reviewer calls `report_done()` on the Review node (endNodeId)
+ *   which signals workflow completion.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding Workflow',
 	description:
-		'Simple two-step coding workflow. Coder implements the task, then Reviewer reviews the changes. No gates or loops.',
+		'Iterative coding workflow with Code ↔ Review loop. Coder implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
 	nodes: [
 		{
 			id: CODING_CODE_STEP,
@@ -103,12 +105,36 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
+	gates: [
+		{
+			id: 'code-ready-gate',
+			description: 'Coder has opened a PR and cleaned the worktree',
+			fields: [
+				{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
+				{
+					name: 'worktree_clean',
+					type: 'boolean',
+					writers: ['coder'],
+					check: { op: 'exists' },
+				},
+			],
+			resetOnCycle: true,
+		},
+	],
 	channels: [
 		{
 			from: 'Code',
 			to: 'Review',
 			direction: 'one-way',
+			gateId: 'code-ready-gate',
 			label: 'Code → Review',
+		},
+		{
+			from: 'Review',
+			to: 'Code',
+			direction: 'one-way',
+			maxCycles: 5,
+			label: 'Review → Code (changes requested)',
 		},
 	],
 };

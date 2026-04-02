@@ -90,13 +90,24 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.nodes[1].agents[0]?.name).toBe('reviewer');
 	});
 
-	test('has one channel (Code → Review) with no gate', () => {
-		expect(CODING_WORKFLOW.channels).toHaveLength(1);
-		const ch = CODING_WORKFLOW.channels![0];
-		expect(ch.from).toBe('Code');
-		expect(ch.to).toBe('Review');
-		expect(ch.direction).toBe('one-way');
-		expect(ch.gateId).toBeUndefined();
+	test('has two channels', () => {
+		expect(CODING_WORKFLOW.channels).toHaveLength(2);
+	});
+
+	test('Code → Review channel is gated by code-ready-gate', () => {
+		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
+		expect(ch).toBeDefined();
+		expect(ch!.gateId).toBe('code-ready-gate');
+		expect(ch!.direction).toBe('one-way');
+		expect(ch!.maxCycles).toBeUndefined();
+	});
+
+	test('Review → Code channel is ungated with maxCycles', () => {
+		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
+		expect(ch).toBeDefined();
+		expect(ch!.gateId).toBeUndefined();
+		expect(ch!.direction).toBe('one-way');
+		expect(ch!.maxCycles).toBe(5);
 	});
 
 	test('all channels have direction one-way', () => {
@@ -113,8 +124,32 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('has no gates', () => {
-		expect(CODING_WORKFLOW.gates ?? []).toHaveLength(0);
+	test('has one gate with two fields', () => {
+		expect(CODING_WORKFLOW.gates).toHaveLength(1);
+		const gate = CODING_WORKFLOW.gates![0];
+		expect(gate.id).toBe('code-ready-gate');
+		expect(gate.fields).toHaveLength(2);
+	});
+
+	test('code-ready-gate has pr_created exists field with coder writer', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		const prField = gate.fields.find((f) => f.name === 'pr_created')!;
+		expect(prField.type).toBe('boolean');
+		expect(prField.writers).toContain('coder');
+		expect(prField.check.op).toBe('exists');
+	});
+
+	test('code-ready-gate has worktree_clean exists field with coder writer', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		const cleanField = gate.fields.find((f) => f.name === 'worktree_clean')!;
+		expect(cleanField.type).toBe('boolean');
+		expect(cleanField.writers).toContain('coder');
+		expect(cleanField.check.op).toBe('exists');
+	});
+
+	test('code-ready-gate resets on cycle', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		expect(gate.resetOnCycle).toBe(true);
 	});
 
 	test('startNodeId points to the Code step', () => {
@@ -667,14 +702,27 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer);
 	});
 
-	test('CODING_WORKFLOW seeded with one channel (Code → Review, no gate)', async () => {
+	test('CODING_WORKFLOW seeded with two channels (gated Code→Review, ungated Review→Code)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-		expect(wf.channels).toHaveLength(1);
-		const ch = wf.channels![0];
-		expect(ch.from).toBe('Code');
-		expect(ch.to).toBe('Review');
-		expect(ch.gateId).toBeUndefined();
+		expect(wf.channels).toHaveLength(2);
+
+		const codeToReview = wf.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
+		expect(codeToReview).toBeDefined();
+		expect(codeToReview!.gateId).toBe('code-ready-gate');
+
+		const reviewToCode = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
+		expect(reviewToCode).toBeDefined();
+		expect(reviewToCode!.gateId).toBeUndefined();
+		expect(reviewToCode!.maxCycles).toBe(5);
+	});
+
+	test('CODING_WORKFLOW seeded with one gate (code-ready-gate)', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		expect(wf.gates).toHaveLength(1);
+		const gateIds = wf.gates!.map((g) => g.id);
+		expect(gateIds).toContain('code-ready-gate');
 	});
 
 	test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
@@ -1025,17 +1073,18 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(result.ok).toBe(true);
 	});
 
-	test('exported Coding Workflow has single Code → Review channel with no gates', () => {
+	test('exported Coding Workflow preserves two channels and Review→Code cycle', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
 		const exported = exportWorkflow(wf, mockAgents);
 		expect(exported.channels).toBeDefined();
+		// gateId is stripped during export (gates are separate entities)
+		expect(exported.channels).toHaveLength(2);
 
-		const codeToReview = exported.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
-		expect(codeToReview).toBeDefined();
-		expect(codeToReview!.gateId).toBeUndefined();
-		expect(codeToReview!.maxCycles).toBeUndefined();
+		const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
+		expect(reviewToCode).toBeDefined();
+		expect(reviewToCode!.maxCycles).toBe(5);
 	});
 
 	test('exported Coding Workflow channels do not include gate field (gates are separate entities)', () => {
@@ -1088,12 +1137,15 @@ describe('Coding Workflow export/import round-trip', () => {
 			.find((w) => w.name === CODING_WORKFLOW.name)!;
 		expect(reimported).toBeDefined();
 		expect(reimported.nodes).toHaveLength(2);
-		expect(reimported.channels).toHaveLength(1);
+		expect(reimported.channels).toHaveLength(2);
 
-		// Single Code → Review channel preserved
+		// Code → Review channel preserved
 		const codeToReview = reimported.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
 		expect(codeToReview).toBeDefined();
-		expect(codeToReview!.gateId).toBeUndefined();
-		expect(codeToReview!.maxCycles).toBeUndefined();
+
+		// Review → Code channel preserved with maxCycles
+		const reviewToCode = reimported.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
+		expect(reviewToCode).toBeDefined();
+		expect(reviewToCode!.maxCycles).toBe(5);
 	});
 });
