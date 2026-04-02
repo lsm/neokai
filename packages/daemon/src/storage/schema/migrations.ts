@@ -1846,6 +1846,10 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
+	// Existing databases created by early Space previews may be missing this column.
+	if (!tableHasColumn(db, 'space_tasks', 'custom_agent_id')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN custom_agent_id TEXT`);
+	}
 	if (tableHasColumn(db, 'space_tasks', 'custom_agent_id')) {
 		db.exec(
 			`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
