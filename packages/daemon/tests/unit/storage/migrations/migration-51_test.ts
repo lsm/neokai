@@ -241,6 +241,8 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				description TEXT NOT NULL DEFAULT '',
 				status TEXT NOT NULL DEFAULT 'pending',
 				priority TEXT NOT NULL DEFAULT 'normal',
+				task_type TEXT
+					CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
 				slot_role TEXT,
 				workflow_run_id TEXT,
 				workflow_node_id TEXT,
@@ -315,6 +317,8 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				description TEXT NOT NULL DEFAULT '',
 				status TEXT NOT NULL DEFAULT 'pending',
 				priority TEXT NOT NULL DEFAULT 'normal',
+				task_type TEXT
+					CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
 				slot_role TEXT,
 				workflow_run_id TEXT,
 				workflow_node_id TEXT,
