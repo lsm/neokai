@@ -22,6 +22,7 @@ import { borderColors } from '../../lib/design-tokens.ts';
 import { ViaNeoIndicator } from '../neo/ViaNeoIndicator.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { TaskViewModelSelector } from './TaskViewModelSelector.tsx';
+import type { TaskViewVersionContext } from './TaskViewToggle.tsx';
 
 /**
  * Map session status to a CSS color class.
@@ -60,6 +61,8 @@ function formatTimestamp(ms: number): string {
 
 export interface TaskInfoPanelProps {
 	isOpen: boolean;
+	/** View version toggle context (optional — enables V1/V2 toggle in the panel) */
+	viewVersion?: TaskViewVersionContext;
 	/** Room ID for routing task session model switches through RoomRuntimeService */
 	roomId?: string;
 	/** Full task ID */
@@ -113,6 +116,7 @@ export interface TaskInfoPanelProps {
 
 export function TaskInfoPanel({
 	isOpen,
+	viewVersion,
 	roomId,
 	taskId,
 	groupId,
@@ -166,6 +170,31 @@ export function TaskInfoPanel({
 			data-testid="task-info-panel"
 		>
 			<div class="px-4 py-3 flex flex-col gap-3">
+				{/* View toggle section */}
+				{viewVersion && (
+					<div class="flex items-center justify-between">
+						<span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">View</span>
+						<button
+							data-testid="task-view-toggle"
+							onClick={viewVersion.onToggleVersion}
+							class="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors bg-dark-700 hover:bg-dark-600 text-gray-300 hover:text-gray-100"
+							aria-label={`Switch to ${viewVersion.version === 'v1' ? 'V2 turn-based' : 'V1 timeline'} view`}
+						>
+							{viewVersion.version === 'v1' ? (
+								<>
+									<span>V1</span>
+									<span class="text-gray-500">→ V2</span>
+								</>
+							) : (
+								<>
+									<span class="text-gray-500">V1 ←</span>
+									<span>V2</span>
+								</>
+							)}
+						</button>
+					</div>
+				)}
+
 				{/* Info section */}
 				{hasWorktreeInfo && (
 					<div>

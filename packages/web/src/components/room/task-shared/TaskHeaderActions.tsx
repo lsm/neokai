@@ -24,7 +24,7 @@ export function TaskHeaderActions({
 			{/* Stop (interrupt) button - quick action outside dropdown */}
 			{canInterrupt && (
 				<button
-					class="p-1.5 rounded text-amber-400 hover:text-amber-300 hover:bg-dark-700 transition-colors disabled:opacity-50"
+					class="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded text-amber-400 hover:text-amber-300 hover:bg-dark-700 transition-colors disabled:opacity-50"
 					onClick={onInterrupt}
 					title="Interrupt generation (task stays active, type your suggestions)"
 					disabled={interrupting}
@@ -63,7 +63,7 @@ export function TaskHeaderActions({
 			)}
 			{/* Gear button - toggles info panel below header */}
 			<button
-				class={`p-1.5 rounded transition-colors ${
+				class={`p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded transition-colors ${
 					isInfoPanelOpen
 						? 'bg-blue-600 text-white'
 						: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
