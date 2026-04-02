@@ -108,6 +108,55 @@ describe('Migration 29: Space system tables', () => {
 		expect(columnExists(db, 'space_tasks', 'custom_agent_id')).toBe(false);
 	});
 
+	test('legacy space_tasks without custom_agent_id is upgraded safely', () => {
+		// Simulate an early preview schema missing custom_agent_id.
+		db.exec(`
+			CREATE TABLE space_tasks (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				task_type TEXT
+					CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
+				assigned_agent TEXT
+					CHECK(assigned_agent IN ('coder', 'general')),
+				workflow_run_id TEXT,
+				workflow_step_id TEXT,
+				created_by_task_id TEXT,
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				input_draft TEXT,
+				active_session TEXT
+					CHECK(active_session IN ('worker', 'leader')),
+				task_agent_session_id TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER,
+				archived_at INTEGER,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
+				FOREIGN KEY (workflow_step_id) REFERENCES space_workflow_steps(id) ON DELETE SET NULL
+			)
+		`);
+
+		// M29 should add the missing column so intermediate migrations (M30–M70) work.
+		// After M71 runs, it removes the column — but M29 must not throw in the process.
+		expect(() => runMigrations(db, () => {})).not.toThrow();
+		// M71 removes custom_agent_id, so it should NOT exist after all migrations.
+		expect(columnExists(db, 'space_tasks', 'custom_agent_id')).toBe(false);
+	});
+
 	test('space_tasks has workflow_run_id column', () => {
 		runMigrations(db, () => {});
 		expect(columnExists(db, 'space_tasks', 'workflow_run_id')).toBe(true);
