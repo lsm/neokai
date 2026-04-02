@@ -1,0 +1,385 @@
+/**
+ * Gate Script Executor
+ *
+ * Executes optional gate scripts (bash/node/python3) as imperative pre-checks
+ * before declarative field evaluation. Scripts run in a restricted environment
+ * with credential stripping, prototype-pollution-safe JSON stdout merging,
+ * streaming maxBuffer enforcement, and timeout-based SIGKILL.
+ *
+ * Exit 0 → parse JSON stdout, deep-merge into gate data → continue
+ * Non-zero / timeout → gate blocked (stderr as reason)
+ */
+
+import type { GateScript } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/** Result of executing a gate script. */
+export interface GateScriptResult {
+	/** Whether the script passed (exit 0 with parseable stdout). */
+	success: boolean;
+	/** Parsed JSON data from stdout (deep-merged). Empty object when no JSON. */
+	data: Record<string, unknown>;
+	/** Human-readable error string on failure (stderr or timeout message). */
+	error?: string;
+}
+
+/** Context provided to the script executor. */
+export interface GateScriptContext {
+	/** Absolute path to the workspace root (used as cwd). */
+	workspacePath: string;
+	/** The gate ID this script belongs to. */
+	gateId: string;
+	/** The current workflow run ID. */
+	runId: string;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Default timeout for gate scripts (30 seconds). */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Maximum stdout/stderr buffer size (1 MB). */
+const MAX_BUFFER_BYTES = 1_048_576;
+
+/**
+ * Environment variable prefixes that are stripped from the restricted env.
+ * These carry credentials, auth tokens, and internal secrets.
+ */
+const RESTRICTED_ENV_PREFIXES = [
+	'ANTHROPIC_',
+	'CLAUDE_',
+	'GLM_',
+	'ZHIPU_',
+	'COPILOT_',
+	'NEOKAI_SECRET_',
+];
+
+/**
+ * Environment variable keys matching this regex are stripped from the restricted env.
+ * Catches keys like `MY_SECRET`, `API_TOKEN`, `DB_PASSWORD`, `AWS_CREDENTIAL`.
+ */
+const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
+
+/**
+ * Environment variables that are always allowed regardless of the prefix/key pattern.
+ */
+const ALLOWED_ENV_KEYS = new Set(['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'TERM', 'TMPDIR']);
+
+/** Keys that are rejected during deep-merge to prevent prototype pollution. */
+const PROTO_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+// ---------------------------------------------------------------------------
+// Environment filtering
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a restricted environment object from the current process environment.
+ *
+ * Strips variables whose names match restricted prefixes or patterns while
+ * always allowing a safe allowlist. Then injects gate-specific variables.
+ */
+export function buildRestrictedEnv(
+	context: GateScriptContext,
+	scriptEnv?: Record<string, string>
+): Record<string, string> {
+	const env: Record<string, string> = {};
+
+	for (const [key, value] of Object.entries(process.env)) {
+		if (value === undefined) continue;
+
+		if (ALLOWED_ENV_KEYS.has(key)) {
+			env[key] = value;
+			continue;
+		}
+
+		const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+		if (isPrefixRestricted) continue;
+
+		const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+		if (isKeyRestricted) continue;
+
+		env[key] = value;
+	}
+
+	// Inject gate-specific environment variables
+	env['NEOKAI_GATE_ID'] = context.gateId;
+	env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
+	env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
+
+	// Merge user-specified env (lowest priority — can be overridden by injected vars)
+	if (scriptEnv) {
+		for (const [key, value] of Object.entries(scriptEnv)) {
+			// User env cannot override gate-injected vars
+			if (
+				key === 'NEOKAI_GATE_ID' ||
+				key === 'NEOKAI_WORKFLOW_RUN_ID' ||
+				key === 'NEOKAI_WORKSPACE_PATH'
+			) {
+				continue;
+			}
+			// User env cannot carry credentials
+			const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+			if (isPrefixRestricted) continue;
+			const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+			if (isKeyRestricted) continue;
+
+			env[key] = value;
+		}
+	}
+
+	return env;
+}
+
+// ---------------------------------------------------------------------------
+// Deep merge with depth limit (prototype-pollution safe)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deep-merges `source` into `target` with a configurable depth limit.
+ *
+ * Rejects `__proto__`, `constructor`, and `prototype` keys at every level
+ * to prevent prototype pollution attacks from malicious script output.
+ *
+ * @param target  The target object to merge into.
+ * @param source  The source object to merge from.
+ * @param maxDepth  Maximum recursion depth (default 5).
+ * @returns The merged target object.
+ */
+export function deepMergeWithDepthLimit(
+	target: Record<string, unknown>,
+	source: unknown,
+	maxDepth = 5
+): Record<string, unknown> {
+	return _deepMerge(target, source, 0, maxDepth);
+}
+
+function _deepMerge(
+	target: Record<string, unknown>,
+	source: unknown,
+	currentDepth: number,
+	maxDepth: number
+): Record<string, unknown> {
+	if (
+		currentDepth >= maxDepth ||
+		source === null ||
+		typeof source !== 'object' ||
+		Array.isArray(source)
+	) {
+		return target;
+	}
+
+	const sourceRecord = source as Record<string, unknown>;
+
+	for (const [key, value] of Object.entries(sourceRecord)) {
+		// Block prototype pollution keys
+		if (PROTO_POLLUTION_KEYS.has(key)) {
+			continue;
+		}
+
+		const existing = target[key];
+
+		if (
+			value !== null &&
+			typeof value === 'object' &&
+			!Array.isArray(value) &&
+			existing !== null &&
+			typeof existing === 'object' &&
+			!Array.isArray(existing)
+		) {
+			target[key] = _deepMerge(
+				existing as Record<string, unknown>,
+				value,
+				currentDepth + 1,
+				maxDepth
+			);
+		} else {
+			target[key] = value;
+		}
+	}
+
+	return target;
+}
+
+// ---------------------------------------------------------------------------
+// JSON stdout parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses raw stdout from a script as JSON.
+ *
+ * Returns the parsed object on success, or `null` if the output is empty,
+ * whitespace-only, or not valid JSON. Errors are silently swallowed so that
+ * non-JSON output does not block the gate.
+ */
+export function parseJsonStdout(raw: string): Record<string, unknown> | null {
+	const trimmed = raw.trim();
+	if (trimmed.length === 0) {
+		return null;
+	}
+
+	try {
+		const parsed = JSON.parse(trimmed);
+		if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+		// Valid JSON but not an object (e.g., string, number, array) — ignore
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Stream helper — collect with maxBuffer enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Collects chunks from a ReadableStream, enforcing a maximum byte limit.
+ * Once the limit is exceeded, the stream continues draining to avoid pipe
+ * deadlock, but no further data is appended.
+ */
+async function collectWithMaxBuffer(
+	stream: ReadableStream<Uint8Array> | null,
+	maxBytes: number
+): Promise<{ text: string; truncated: boolean }> {
+	if (!stream) {
+		return { text: '', truncated: false };
+	}
+
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	const chunks: string[] = [];
+	let totalBytes = 0;
+	let truncated = false;
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+
+			if (truncated) {
+				// Already exceeded limit — keep draining to avoid deadlock
+				continue;
+			}
+
+			if (totalBytes + value.length > maxBytes) {
+				// Take only what fits up to the limit
+				const remaining = maxBytes - totalBytes;
+				if (remaining > 0) {
+					chunks.push(decoder.decode(value.subarray(0, remaining), { stream: true }));
+				}
+				totalBytes = maxBytes;
+				truncated = true;
+			} else {
+				chunks.push(decoder.decode(value, { stream: true }));
+				totalBytes += value.length;
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	return { text: chunks.join(''), truncated };
+}
+
+// ---------------------------------------------------------------------------
+// Script executor
+// ---------------------------------------------------------------------------
+
+/**
+ * Executes a gate script and returns the result.
+ *
+ * Uses `Bun.spawn()` in array form (never shell interpolation). Supports bash,
+ * node, and python3 interpreters. Runs in a restricted environment with
+ * credential stripping, streaming maxBuffer enforcement, and timeout-based
+ * SIGKILL.
+ *
+ * @param script   The gate script definition.
+ * @param context  Execution context (workspace path, gate ID, run ID).
+ * @param env      Optional user-specified environment variables (filtered).
+ */
+export async function executeGateScript(
+	script: GateScript,
+	context: GateScriptContext,
+	env?: Record<string, string>
+): Promise<GateScriptResult> {
+	const timeoutMs = script.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+	// Build the command args array based on interpreter
+	let args: string[];
+	switch (script.interpreter) {
+		case 'bash':
+			args = ['bash', '-c', script.source];
+			break;
+		case 'node':
+			args = ['node', '-e', script.source];
+			break;
+		case 'python3':
+			args = ['python3', '-c', script.source];
+			break;
+		default:
+			return {
+				success: false,
+				data: {},
+				error: `Unknown interpreter: ${script.interpreter as string}`,
+			};
+	}
+
+	const restrictedEnv = buildRestrictedEnv(context, env);
+
+	const proc = Bun.spawn(args, {
+		cwd: context.workspacePath,
+		env: restrictedEnv,
+		stdout: 'pipe',
+		stderr: 'pipe',
+	});
+
+	// Drain stdout and stderr concurrently with proc.exited to avoid pipe deadlock
+	const [stdoutResult, stderrResult, exitCode] = await Promise.all([
+		collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
+		collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
+		(async () => {
+			let killed = false;
+			const killTimer = setTimeout(() => {
+				killed = true;
+				proc.kill('SIGKILL');
+			}, timeoutMs);
+
+			const code = await proc.exited;
+			clearTimeout(killTimer);
+
+			return { code, timedOut: killed };
+		})(),
+	]);
+
+	if (exitCode.timedOut) {
+		return {
+			success: false,
+			data: {},
+			error: `Script timed out after ${timeoutMs}ms`,
+		};
+	}
+
+	if (exitCode.code !== 0) {
+		const stderrText = stderrResult.text.trim();
+		return {
+			success: false,
+			data: {},
+			error: stderrText || `Script exited with code ${exitCode.code}`,
+		};
+	}
+
+	// Exit 0 — parse JSON stdout and merge
+	const parsed = parseJsonStdout(stdoutResult.text);
+	const data = parsed ? deepMergeWithDepthLimit({}, parsed) : {};
+
+	return {
+		success: true,
+		data,
+	};
+}
