@@ -591,7 +591,7 @@ export class ChannelRouter {
 
 		// Load runtime data from DB; fall back to computed defaults from fields
 		const record = this.config.gateDataRepo?.get(runId, gateId);
-		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields);
+		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
 		return evaluateGate(gateDef, runtimeData);
 	}
@@ -725,7 +725,7 @@ export class ChannelRouter {
 		if (this.config.db && this.config.gateDataRepo && cyclicGates.length > 0) {
 			const transaction = this.config.db.transaction(() => {
 				for (const gate of cyclicGates) {
-					this.config.gateDataRepo!.reset(runId, gate.id, computeGateDefaults(gate.fields));
+					this.config.gateDataRepo!.reset(runId, gate.id, computeGateDefaults(gate.fields ?? []));
 				}
 				return this.config.channelCycleRepo!.incrementCycleCount(runId, channelIndex, maxCycles);
 			});
@@ -738,7 +738,7 @@ export class ChannelRouter {
 		} else {
 			if (this.config.gateDataRepo) {
 				for (const gate of cyclicGates) {
-					this.config.gateDataRepo.reset(runId, gate.id, computeGateDefaults(gate.fields));
+					this.config.gateDataRepo.reset(runId, gate.id, computeGateDefaults(gate.fields ?? []));
 				}
 			}
 			const incremented = this.config.channelCycleRepo.incrementCycleCount(

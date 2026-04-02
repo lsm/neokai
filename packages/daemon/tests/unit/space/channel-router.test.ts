@@ -1547,6 +1547,56 @@ describe('ChannelRouter', () => {
 			expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
 		});
 
+		test('resetOnCycle: gate with undefined fields (script-only gate) resets to empty object', async () => {
+			// Gate has no fields — simulates a script-only gate where fields is undefined
+			const gate: Gate = {
+				id: 'script-only-gate',
+				resetOnCycle: true,
+			};
+			const channels: WorkflowChannel[] = [
+				{ from: 'coder', to: 'planner', direction: 'one-way' },
+				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Script-Only Gate Reset Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Seed arbitrary data (simulating script output written to gate data)
+			gateDataRepo.set(run.id, 'script-only-gate', {
+				scriptResult: true,
+				timestamp: '2025-01-01T00:00:00Z',
+			});
+
+			// Traverse the cyclic (backward) channel: planner → coder
+			await router.deliverMessage(run.id, 'planner', 'coder', 'iterating');
+
+			// Gate data should have been reset to empty object (no fields to compute defaults from)
+			const afterReset = gateDataRepo.get(run.id, 'script-only-gate');
+			expect(afterReset).not.toBeNull();
+			expect(afterReset!.data).toEqual({});
+
+			// Cycle count should have been incremented
+			expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
+		});
+
 		test('resetOnCycle: gates with resetOnCycle=false are preserved on cyclic traversal', async () => {
 			const resetGate: Gate = {
 				id: 'review-reject-gate',

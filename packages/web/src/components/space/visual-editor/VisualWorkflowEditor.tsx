@@ -121,7 +121,7 @@ function buildTemplateCanvasSignature(
 		.map((gate) => ({
 			id: gate.id,
 			description: gate.description ?? null,
-			fields: gate.fields,
+			fields: gate.fields ?? [],
 			resetOnCycle: gate.resetOnCycle,
 		}))
 		.sort((a, b) => a.id.localeCompare(b.id));
