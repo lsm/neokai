@@ -157,6 +157,48 @@ describe('buildCustomAgentTaskMessage', () => {
 		expect(message).not.toContain('Push your changes to update this PR');
 		expect(message).not.toContain('Focus on the current step first');
 	});
+
+	it('applies instructions override in override mode', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				customAgent: makeAgent({ instructions: 'Base instructions' }),
+				slotOverrides: {
+					instructions: { mode: 'override', value: 'Override instructions' },
+				},
+			})
+		);
+
+		expect(message).toContain('## Instructions');
+		expect(message).toContain('Override instructions');
+		expect(message).not.toContain('Base instructions');
+	});
+
+	it('applies instructions override in expand mode', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				customAgent: makeAgent({ instructions: 'Base instructions' }),
+				slotOverrides: {
+					instructions: { mode: 'expand', value: 'Additional context' },
+				},
+			})
+		);
+
+		expect(message).toContain('## Instructions');
+		expect(message).toContain('Base instructions');
+		expect(message).toContain('Additional context');
+		expect(message).toContain('Base instructions\n\nAdditional context');
+	});
+
+	it('uses agent instructions when no slot override is provided', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				customAgent: makeAgent({ instructions: 'Agent own instructions' }),
+			})
+		);
+
+		expect(message).toContain('## Instructions');
+		expect(message).toContain('Agent own instructions');
+	});
 });
 
 describe('createCustomAgentInit', () => {

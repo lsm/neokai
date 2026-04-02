@@ -27,9 +27,15 @@ import type {
  * Wildcard and array `to` declarations are expanded into one entry per resolved pair.
  */
 export interface ResolvedChannel {
-	/** Name of the sending agent (matches WorkflowNodeAgent.name) */
+	/**
+	 * Name of the sending agent (matches WorkflowNodeAgent.name).
+	 * Note: field name is historical — stores agent name, not role.
+	 */
 	fromRole: string;
-	/** Name of the receiving agent (matches WorkflowNodeAgent.name) */
+	/**
+	 * Name of the receiving agent (matches WorkflowNodeAgent.name).
+	 * Note: field name is historical — stores agent name, not role.
+	 */
 	toRole: string;
 	/** Agent ID of the sender */
 	fromAgentId: string;
