@@ -62,6 +62,6 @@ browser-coverage.lcov
 .devproxy/.devproxy.pid
 .devproxy/devproxy.log
 
-# Claude Code local settings (not commands — .claude/commands/ is tracked)
-.claude/settings.local.json
-.claude/worktrees/
+# Claude Code — ignore everything except .claude/commands/ (slash command definitions)
+.claude/*
+!.claude/commands/
