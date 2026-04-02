@@ -17,7 +17,7 @@ describe('validateSql — valid SELECT queries', () => {
 	});
 
 	test('SELECT with WHERE clause', () => {
-		const result = validateSql('SELECT * FROM tasks WHERE status = ?', ['active']);
+		const result = validateSql('SELECT * FROM tasks WHERE status = ?');
 		expect(result.valid).toBe(true);
 		expect(result.tableRefs).toEqual(['tasks']);
 	});
@@ -33,6 +33,38 @@ describe('validateSql — valid SELECT queries', () => {
 	test('SELECT with LEFT JOIN', () => {
 		const result = validateSql(
 			'SELECT * FROM tasks LEFT JOIN sessions ON tasks.session_id = sessions.id'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
+	});
+
+	test('SELECT with RIGHT JOIN', () => {
+		const result = validateSql(
+			'SELECT * FROM tasks RIGHT JOIN sessions ON tasks.session_id = sessions.id'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
+	});
+
+	test('SELECT with FULL JOIN', () => {
+		const result = validateSql(
+			'SELECT * FROM tasks FULL JOIN sessions ON tasks.session_id = sessions.id'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
+	});
+
+	test('SELECT with FULL OUTER JOIN', () => {
+		const result = validateSql(
+			'SELECT * FROM tasks FULL OUTER JOIN sessions ON tasks.session_id = sessions.id'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
+	});
+
+	test('SELECT with LEFT OUTER JOIN', () => {
+		const result = validateSql(
+			'SELECT * FROM tasks LEFT OUTER JOIN sessions ON tasks.session_id = sessions.id'
 		);
 		expect(result.valid).toBe(true);
 		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
@@ -100,6 +132,60 @@ describe('validateSql — valid SELECT queries', () => {
 		expect(result.valid).toBe(true);
 		expect(result.tableRefs).toEqual(['tasks']);
 	});
+
+	test('lowercase join keywords', () => {
+		const result = validateSql(
+			'SELECT * FROM tasks left join sessions on tasks.session_id = sessions.id'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
+	});
+
+	test('lowercase join prefix keywords', () => {
+		const result = validateSql(
+			'SELECT * FROM tasks inner join sessions on tasks.session_id = sessions.id'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
+	});
+
+	test('lowercase full join', () => {
+		const result = validateSql(
+			'SELECT * FROM tasks full outer join sessions on tasks.session_id = sessions.id'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
+	});
+});
+
+// ============ Schema-qualified table names ============
+
+describe('validateSql — schema-qualified table names', () => {
+	test('main.tasks extracts tasks as table ref', () => {
+		const result = validateSql('SELECT * FROM main.tasks');
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+	});
+
+	test('temp.tasks extracts tasks as table ref', () => {
+		const result = validateSql('SELECT * FROM temp.tasks');
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+	});
+
+	test('schema-qualified in JOIN', () => {
+		const result = validateSql(
+			'SELECT * FROM main.tasks JOIN temp.sessions ON tasks.id = sessions.task_id'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
+	});
+
+	test('mix of qualified and unqualified', () => {
+		const result = validateSql('SELECT * FROM main.tasks JOIN rooms ON tasks.room_id = rooms.id');
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks', 'rooms']);
+	});
 });
 
 // ============ Rejected non-SELECT statements ============
@@ -164,6 +250,12 @@ describe('validateSql — semicolons rejected', () => {
 		const result = validateSql('SELECT * FROM tasks; DROP TABLE tasks');
 		expect(result.valid).toBe(false);
 		expect(result.error).toBe('Semicolons are not allowed (single statement only)');
+	});
+
+	test('allows semicolon inside string literal', () => {
+		const result = validateSql("SELECT * FROM tasks WHERE description = 'step 1; step 2'");
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
 	});
 });
 
@@ -268,10 +360,57 @@ describe('validateSql — CTE handling', () => {
 		expect(result.tableRefs).not.toContain('parsed');
 	});
 
+	test('CTE with escaped quotes in string literal', () => {
+		const result = validateSql(
+			"WITH escaped AS (SELECT * FROM tasks WHERE name = 'O''Brien''s task') SELECT * FROM escaped"
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+		expect(result.tableRefs).not.toContain('escaped');
+	});
+
 	test('non-SELECT after WITH is rejected', () => {
 		const result = validateSql('WITH x AS (SELECT 1) INSERT INTO tasks VALUES (1)');
 		expect(result.valid).toBe(false);
 		expect(result.error).toBe('Only SELECT statements are allowed');
+	});
+});
+
+// ============ WITH RECURSIVE ============
+
+describe('validateSql — WITH RECURSIVE', () => {
+	test('simple WITH RECURSIVE is accepted', () => {
+		const result = validateSql(
+			'WITH RECURSIVE cnt(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM cnt WHERE n < 5) SELECT * FROM cnt'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual([]);
+		expect(result.tableRefs).not.toContain('cnt');
+	});
+
+	test('WITH RECURSIVE with real table reference', () => {
+		const result = validateSql(
+			'WITH RECURSIVE hierarchy(id, name, depth) AS (SELECT id, name, 0 FROM rooms WHERE parent_id IS NULL UNION ALL SELECT r.id, r.name, h.depth + 1 FROM rooms r JOIN hierarchy h ON r.parent_id = h.id) SELECT * FROM hierarchy'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['rooms']);
+		expect(result.tableRefs).not.toContain('hierarchy');
+	});
+
+	test('WITH RECURSIVE lowercase', () => {
+		const result = validateSql('with recursive x as (select 1) select * from x');
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual([]);
+	});
+
+	test('WITH RECURSIVE with multiple CTEs', () => {
+		const result = validateSql(
+			'WITH RECURSIVE cnt(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM cnt WHERE n < 5), doubled AS (SELECT n * 2 AS val FROM cnt) SELECT * FROM doubled'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual([]);
+		expect(result.tableRefs).not.toContain('cnt');
+		expect(result.tableRefs).not.toContain('doubled');
 	});
 });
 
@@ -298,6 +437,42 @@ describe('validateSql — subqueries', () => {
 		);
 		expect(result.valid).toBe(true);
 		expect(result.tableRefs).toEqual(['rooms', 'sessions', 'tasks']);
+	});
+});
+
+// ============ String literal edge cases ============
+
+describe('validateSql — string literal handling', () => {
+	test('FROM/JOIN inside string literal not extracted as table ref', () => {
+		const result = validateSql(
+			"SELECT * FROM tasks WHERE description = 'results FROM other_table'"
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+	});
+
+	test('JOIN keyword inside string literal not extracted', () => {
+		const result = validateSql("SELECT * FROM tasks WHERE notes = '%LEFT JOIN sessions%'");
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+	});
+
+	test('escaped quotes in string literals handled correctly', () => {
+		const result = validateSql("SELECT * FROM tasks WHERE name = 'it''s a test'");
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+	});
+
+	test('semicolon inside string literal allowed', () => {
+		const result = validateSql("SELECT * FROM tasks WHERE description = 'step 1; step 2; step 3'");
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+	});
+
+	test('FROM keyword in block comment not extracted', () => {
+		const result = validateSql('SELECT * FROM tasks /* FROM other_table */');
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
 	});
 });
 
