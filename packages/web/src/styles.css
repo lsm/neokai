@@ -588,3 +588,18 @@ a:focus-visible {
 .pb-bottom-bar {
 	padding-bottom: var(--bottom-bar-height, 0px);
 }
+
+/*
+ * Virtual keyboard open state.
+ *
+ * The `keyboard-open` class is toggled on `<html>` by the useViewportSafety hook
+ * when it detects a virtual keyboard (via visualViewport.height < window.innerHeight).
+ *
+ * When the keyboard is open:
+ * - The BottomTabBar (position: fixed; bottom: 0) is hidden behind the keyboard
+ *   on mobile — translate it offscreen for clean visual behavior
+ * - The ContextPanel sidebar (position: fixed on mobile) should also stay hidden
+ */
+html.keyboard-open [data-testid="bottom-tab-bar"] {
+	transform: translateY(100%);
+}
