@@ -61,6 +61,7 @@ const COLUMN_BLACKLISTS: Record<string, string[]> = {
 	job_queue: ['payload'],
 	space_agents: ['system_prompt'],
 	space_workflows: ['config', 'gates', 'channels'],
+	tasks: ['restrictions'], // internal use — agent-imposed task constraints
 	space_workflow_nodes: ['config'],
 };
 
@@ -98,6 +99,9 @@ const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
 	{
 		tableName: 'skills',
 		blacklistedColumns: [],
+		// Note: skills.config stores structured config (McpServerSkillConfig with appMcpServerId UUID,
+		// PluginSkillConfig with local path) — no raw credentials. If credential-bearing config is
+		// ever added to skill configs, it must be blacklisted here and in COLUMN_BLACKLISTS.
 		description:
 			'Available skills (plugins, MCP servers, built-ins) with config, enablement, and validation status.',
 	},
@@ -133,7 +137,7 @@ const ROOM_SCOPE_TABLES: ScopeTableConfig[] = [
 	{
 		tableName: 'tasks',
 		scopeColumn: 'room_id',
-		blacklistedColumns: [],
+		blacklistedColumns: COLUMN_BLACKLISTS.tasks,
 		description:
 			'Room tasks with title, status, priority, dependencies, PR tracking, and agent assignments.',
 	},
@@ -275,8 +279,10 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'session_groups',
 	'session_group_members',
 	'task_group_events',
-	// Node execution tracking (internal infrastructure)
+	// Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
 	'node_executions',
+	// Dynamically created tables (managed by FilterConfigManager, not part of static schema)
+	'github_filter_configs',
 	// Dropped tables (no longer exist in schema)
 	'space_session_groups',
 	'space_session_group_members',

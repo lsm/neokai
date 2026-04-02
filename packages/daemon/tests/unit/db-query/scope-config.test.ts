@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { createTables, runMigrations } from '../../../src/storage/schema/index.ts';
 import {
 	buildScopeFilter,
 	getAccessibleTableNames,
@@ -92,6 +94,11 @@ describe('scope-config', () => {
 			expect(rooms.blacklistedColumns).toEqual(['config']);
 		});
 
+		it('tasks blacklist excludes restrictions (internal use)', () => {
+			const tasks = getScopeConfig('room').find((t) => t.tableName === 'tasks')!;
+			expect(tasks.blacklistedColumns).toContain('restrictions');
+		});
+
 		it('app_mcp_servers blacklist excludes env', () => {
 			const mcp = getScopeConfig('global').find((t) => t.tableName === 'app_mcp_servers')!;
 			expect(mcp.blacklistedColumns).toEqual(['env']);
@@ -117,7 +124,7 @@ describe('scope-config', () => {
 
 		it('getBlacklistedColumns returns empty array for tables with no blacklist', () => {
 			expect(getBlacklistedColumns('skills')).toEqual([]);
-			expect(getBlacklistedColumns('tasks')).toEqual([]);
+			expect(getBlacklistedColumns('goals')).toEqual([]);
 			expect(getBlacklistedColumns('nonexistent_table')).toEqual([]);
 		});
 
@@ -127,6 +134,7 @@ describe('scope-config', () => {
 			expect(getBlacklistedColumns('space_agents')).toContain('system_prompt');
 			expect(getBlacklistedColumns('neo_activity_log')).toContain('undo_data');
 			expect(getBlacklistedColumns('job_queue')).toContain('payload');
+			expect(getBlacklistedColumns('tasks')).toContain('restrictions');
 		});
 	});
 
@@ -259,6 +267,11 @@ describe('scope-config', () => {
 			expect(excluded).toContain('space_workflow_transitions');
 			expect(excluded).toContain('messages');
 			expect(excluded).toContain('tool_calls');
+		});
+
+		it('includes dynamically created tables', () => {
+			const excluded = getExcludedTableNames();
+			expect(excluded).toContain('github_filter_configs');
 		});
 
 		it('returns a non-empty array', () => {
@@ -417,6 +430,30 @@ describe('scope-config', () => {
 		});
 	});
 
+	// ── Scope filter enforcement ──────────────────────────────────────────────
+
+	describe('scope filter enforcement', () => {
+		it('every room-scoped table has scopeColumn or scopeJoin', () => {
+			const unfiltered: string[] = [];
+			for (const table of getScopeConfig('room')) {
+				if (!table.scopeColumn && !table.scopeJoin) {
+					unfiltered.push(table.tableName);
+				}
+			}
+			expect(unfiltered).toEqual([]);
+		});
+
+		it('every space-scoped table has scopeColumn or scopeJoin', () => {
+			const unfiltered: string[] = [];
+			for (const table of getScopeConfig('space')) {
+				if (!table.scopeColumn && !table.scopeJoin) {
+					unfiltered.push(table.tableName);
+				}
+			}
+			expect(unfiltered).toEqual([]);
+		});
+	});
+
 	// ── Cross-cutting: no duplicate table names across scopes ─────────────────
 
 	describe('table name uniqueness', () => {
@@ -437,6 +474,50 @@ describe('scope-config', () => {
 				}
 			}
 			expect(duplicates).toEqual([]);
+		});
+	});
+
+	// ── Schema evolution: every actual DB table is accounted for ──────────────
+
+	describe('schema evolution', () => {
+		it('every table in the actual schema is either in a scope config or in the excluded list', () => {
+			// Create a fresh in-memory database with the full schema
+			const db = new Database(':memory:');
+			runMigrations(db, () => {});
+			createTables(db);
+
+			// Query sqlite_master for all actual table names
+			const rows = db
+				.query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+				.all() as {
+				name: string;
+			}[];
+			const actualTables = new Set(
+				rows
+					.map((r) => r.name)
+					// Filter out internal SQLite tables (sqlite_sequence is auto-created for AUTOINCREMENT)
+					.filter((name) => !name.startsWith('sqlite_'))
+			);
+
+			// Collect all tables that are either in a scope config or excluded
+			const accountedFor = new Set<string>();
+			for (const scopeType of ['global', 'room', 'space'] as const) {
+				for (const name of getAccessibleTableNames(scopeType)) {
+					accountedFor.add(name);
+				}
+			}
+			for (const name of getExcludedTableNames()) {
+				accountedFor.add(name);
+			}
+
+			// Every actual table must be accounted for
+			const unaccounted: string[] = [];
+			for (const tableName of actualTables) {
+				if (!accountedFor.has(tableName)) {
+					unaccounted.push(tableName);
+				}
+			}
+			expect(unaccounted).toEqual([]);
 		});
 	});
 });
