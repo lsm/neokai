@@ -188,6 +188,8 @@ export interface TaskAgentManagerConfig {
 	 * (maps `AppSkill.config.appMcpServerId` → `AppMcpServer` entry for the SDK config).
 	 */
 	appMcpServerRepo: AppMcpServerRepository;
+	/** Node execution repository — for CompletionDetector to query workflow-internal execution state */
+	nodeExecutionRepo: NodeExecutionRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -623,9 +625,7 @@ export class TaskAgentManager {
 				db: this.config.db.getDatabase(),
 				workspacePath,
 			});
-			const completionDetector = new CompletionDetector(
-				new NodeExecutionRepository(this.config.db.getDatabase())
-			);
+			const completionDetector = new CompletionDetector(this.config.nodeExecutionRepo);
 
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
@@ -1444,9 +1444,7 @@ export class TaskAgentManager {
 			db: this.config.db.getDatabase(),
 			workspacePath: rehydrateWorkspacePath,
 		});
-		const rehydrateCompletionDetector = new CompletionDetector(
-			new NodeExecutionRepository(this.config.db.getDatabase())
-		);
+		const rehydrateCompletionDetector = new CompletionDetector(this.config.nodeExecutionRepo);
 
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,

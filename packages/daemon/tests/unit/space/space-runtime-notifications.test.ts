@@ -102,6 +102,25 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
+function seedNodeExec(
+	db: BunDatabase,
+	workflowRunId: string,
+	workflowNodeId: string,
+	agentName: string,
+	status: string
+): string {
+	const id = `exec-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	const now = Date.now();
+	db.prepare(
+		`INSERT INTO node_executions
+	     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+	      agent_session_id, status, result, created_at, started_at,
+	      completed_at, updated_at)
+	     VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, ?, NULL, NULL, ?)`
+	).run(id, workflowRunId, workflowNodeId, agentName, status, now, now);
+	return id;
+}
+
 function buildLinearWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
@@ -1219,6 +1238,7 @@ describe('SpaceRuntime — notification events', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-cd-a', 'step-a', 'done');
 
 			await rt.executeTick();
 
@@ -1260,6 +1280,8 @@ describe('SpaceRuntime — notification events', () => {
 			expect(tasks).toHaveLength(2);
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			taskRepo.updateTask(tasks[1].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-multi-cd', 'coder', 'done');
+			seedNodeExec(db, run.id, 'step-multi-cd', 'planner', 'done');
 
 			await rt.executeTick();
 
@@ -1328,8 +1350,9 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: 'step-dedup-cd', name: 'Step A', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-dedup-cd', 'step-a', 'done');
 
 			// First tick — emits completion and removes executor
 			await rt.executeTick();
@@ -1388,6 +1411,8 @@ describe('SpaceRuntime — notification events', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			taskRepo.updateTask(tasks[0].id, { status: 'cancelled' });
 			taskRepo.updateTask(tasks[1].id, { status: 'cancelled' });
+			seedNodeExec(db, run.id, 'step-cancel-cd', 'coder', 'cancelled');
+			seedNodeExec(db, run.id, 'step-cancel-cd', 'planner', 'cancelled');
 
 			await rt.executeTick();
 
@@ -1449,6 +1474,8 @@ describe('SpaceRuntime — notification events', () => {
 				'## Workflow Complete\n\n### Pull Request\n- **PR URL:** https://github.com/owner/repo/pull/42';
 			taskRepo.updateTask(coderTask.id, { status: 'done' });
 			taskRepo.updateTask(doneTask.id, { status: 'done', result: doneSummary });
+			seedNodeExec(db, run.id, 'step-coder-sum', 'coder', 'done');
+			seedNodeExec(db, run.id, 'step-done-sum', 'done', 'done');
 
 			await rt.executeTick();
 
@@ -1474,10 +1501,12 @@ describe('SpaceRuntime — notification events', () => {
 
 			// startWorkflowRun creates the task for the start node
 			const {
+				run,
 				tasks: [doneTask],
 			} = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			// Complete without a result
 			taskRepo.updateTask(doneTask.id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-nosummary', 'done', 'done');
 
 			await rt.executeTick();
 
@@ -1534,6 +1563,8 @@ describe('SpaceRuntime — notification events', () => {
 				status: 'done',
 				result: 'Terminal Done summary',
 			});
+			seedNodeExec(db, run.id, 'step-upstream-prio', 'coding', 'done');
+			seedNodeExec(db, run.id, 'step-terminal-prio', 'done', 'done');
 
 			await rt.executeTick();
 
@@ -1590,6 +1621,8 @@ describe('SpaceRuntime — notification events', () => {
 
 			taskRepo.updateTask(tasks[0].id, { status: 'done', result: 'Result A' });
 			taskRepo.updateTask(taskB.id, { status: 'done', result: 'Result B' });
+			seedNodeExec(db, run.id, 'step-nt-a', 'nodea', 'done');
+			seedNodeExec(db, run.id, 'step-nt-b', 'nodeb', 'done');
 
 			await rt.executeTick();
 
@@ -1656,6 +1689,9 @@ describe('SpaceRuntime — notification events', () => {
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			taskRepo.updateTask(taskDone1.id, { status: 'done', result: 'Summary from Done1' });
 			taskRepo.updateTask(taskDone2.id, { status: 'done', result: 'Summary from Done2' });
+			seedNodeExec(db, run.id, 'step-mt-start', 'start', 'done');
+			seedNodeExec(db, run.id, 'step-mt-done1', 'done1', 'done');
+			seedNodeExec(db, run.id, 'step-mt-done2', 'done2', 'done');
 
 			await rt.executeTick();
 
@@ -1722,6 +1758,9 @@ describe('SpaceRuntime — notification events', () => {
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			taskRepo.updateTask(taskDone1.id, { status: 'done' });
 			taskRepo.updateTask(taskDone2.id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-mtnr-start', 'start', 'done');
+			seedNodeExec(db, run.id, 'step-mtnr-done1', 'done1', 'done');
+			seedNodeExec(db, run.id, 'step-mtnr-done2', 'done2', 'done');
 
 			await rt.executeTick();
 
@@ -1743,9 +1782,10 @@ describe('SpaceRuntime — notification events', () => {
 				tags: [],
 			});
 
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			// Set result to empty string — should not be treated as a valid summary
 			taskRepo.updateTask(tasks[0].id, { status: 'done', result: '' });
+			seedNodeExec(db, run.id, 'step-empty-res', 'done', 'done');
 
 			await rt.executeTick();
 
@@ -1794,6 +1834,8 @@ describe('SpaceRuntime — notification events', () => {
 
 			taskRepo.updateTask(tasks[0].id, { status: 'done', result: 'Result A' });
 			taskRepo.updateTask(taskB.id, { status: 'done', result: 'Result B' });
+			seedNodeExec(db, run.id, 'step-bidi-a', 'alpha', 'done');
+			seedNodeExec(db, run.id, 'step-bidi-b', 'beta', 'done');
 
 			await rt.executeTick();
 
@@ -1857,6 +1899,9 @@ describe('SpaceRuntime — notification events', () => {
 				taskRepo.updateTask(t.id, { status: 'done' });
 			}
 			taskRepo.updateTask(doneTask.id, { status: 'done', result: doneSummary });
+			seedNodeExec(db, run.id, 'step-slot-parallel', 'coder-slot', 'done');
+			seedNodeExec(db, run.id, 'step-slot-parallel', 'reviewer-slot', 'done');
+			seedNodeExec(db, run.id, 'step-slot-done', 'done', 'done');
 
 			await rt.executeTick();
 

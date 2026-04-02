@@ -20,10 +20,6 @@
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 
-// Re-export for backward compatibility — TERMINAL_TASK_STATUSES is the old name
-/** @deprecated Use TERMINAL_NODE_EXECUTION_STATUSES from node-execution-manager instead */
-export const TERMINAL_TASK_STATUSES = TERMINAL_NODE_EXECUTION_STATUSES;
-
 export interface CompletionOptions {
 	/** Workflow run to inspect */
 	workflowRunId: string;

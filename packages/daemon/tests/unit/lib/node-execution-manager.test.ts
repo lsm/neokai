@@ -214,7 +214,7 @@ describe('isNodeExecutionTerminal', () => {
 describe('NodeExecutionManager.setExecutionStatus', () => {
 	test('19. pending → in_progress persists and stamps startedAt', async () => {
 		const id = seedExecution(db, { status: 'pending' });
-		const result = await manager.setExecutionStatus(id, 'in_progress');
+		const result = manager.setExecutionStatus(id, 'in_progress');
 		expect(result.status).toBe('in_progress');
 		expect(result.startedAt).not.toBeNull();
 	});
@@ -222,7 +222,7 @@ describe('NodeExecutionManager.setExecutionStatus', () => {
 	test('20. in_progress → done stamps completedAt', async () => {
 		const id = seedExecution(db, { status: 'in_progress' });
 		const before = Date.now();
-		const result = await manager.setExecutionStatus(id, 'done');
+		const result = manager.setExecutionStatus(id, 'done');
 		const after = Date.now();
 		expect(result.status).toBe('done');
 		expect(result.completedAt).not.toBeNull();
@@ -232,39 +232,39 @@ describe('NodeExecutionManager.setExecutionStatus', () => {
 
 	test('21. in_progress → blocked stamps completedAt', async () => {
 		const id = seedExecution(db, { status: 'in_progress' });
-		const result = await manager.setExecutionStatus(id, 'blocked');
+		const result = manager.setExecutionStatus(id, 'blocked');
 		expect(result.status).toBe('blocked');
 		expect(result.completedAt).not.toBeNull();
 	});
 
 	test('22. in_progress → cancelled stamps completedAt', async () => {
 		const id = seedExecution(db, { status: 'in_progress' });
-		const result = await manager.setExecutionStatus(id, 'cancelled');
+		const result = manager.setExecutionStatus(id, 'cancelled');
 		expect(result.status).toBe('cancelled');
 		expect(result.completedAt).not.toBeNull();
 	});
 
 	test('23. done → in_progress (reactivation) allows re-running', async () => {
 		const id = seedExecution(db, { status: 'done' });
-		const result = await manager.setExecutionStatus(id, 'in_progress');
+		const result = manager.setExecutionStatus(id, 'in_progress');
 		expect(result.status).toBe('in_progress');
 	});
 
 	test('24. blocked → in_progress (retry)', async () => {
 		const id = seedExecution(db, { status: 'blocked' });
-		const result = await manager.setExecutionStatus(id, 'in_progress');
+		const result = manager.setExecutionStatus(id, 'in_progress');
 		expect(result.status).toBe('in_progress');
 	});
 
 	test('25. throws on not-found execution', async () => {
-		await expect(manager.setExecutionStatus('nonexistent-id', 'in_progress')).rejects.toThrow(
+		expect(() => manager.setExecutionStatus('nonexistent-id', 'in_progress')).toThrow(
 			/NodeExecution not found/
 		);
 	});
 
 	test('26. throws on invalid transition (pending → done)', async () => {
 		const id = seedExecution(db, { status: 'pending' });
-		await expect(manager.setExecutionStatus(id, 'done')).rejects.toThrow(
+		expect(() => manager.setExecutionStatus(id, 'done')).toThrow(
 			/Invalid node execution status transition/
 		);
 		// Status must remain unchanged

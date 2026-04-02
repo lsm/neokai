@@ -34,7 +34,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { TaskAgentManager } from './task-agent-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';

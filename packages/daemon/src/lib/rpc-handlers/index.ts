@@ -477,6 +477,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		worktreeManager: spaceWorktreeManager,
 		skillsManager: deps.skillsManager,
 		appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
+		nodeExecutionRepo,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn

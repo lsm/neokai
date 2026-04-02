@@ -84,12 +84,14 @@ export class SpaceRuntimeService {
 	private readonly unsubscribers: Array<() => void> = [];
 	/** Reference to TaskAgentManager, stored when injected via setTaskAgentManager(). */
 	private taskAgentManager: TaskAgentManager | null = null;
+	/** Resolved nodeExecutionRepo — created from db if not provided in config. */
+	private readonly nodeExecutionRepo: NodeExecutionRepository;
 
 	constructor(private readonly config: SpaceRuntimeServiceConfig) {
 		// Ensure nodeExecutionRepo is available — create from db if not provided.
-		const nodeExecutionRepo =
+		this.nodeExecutionRepo =
 			this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
-		this.runtime = new SpaceRuntime({ ...config, nodeExecutionRepo });
+		this.runtime = new SpaceRuntime({ ...config, nodeExecutionRepo: this.nodeExecutionRepo });
 	}
 
 	/**
@@ -215,7 +217,7 @@ export class SpaceRuntimeService {
 			runtime: this.runtime,
 			workflowManager: spaceWorkflowManager,
 			taskRepo,
-			nodeExecutionRepo: this.config.nodeExecutionRepo ?? new NodeExecutionRepository(db),
+			nodeExecutionRepo: this.nodeExecutionRepo,
 			workflowRunRepo,
 			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,

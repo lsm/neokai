@@ -96,7 +96,7 @@ export class NodeExecutionManager {
 	 *
 	 * @throws {Error} when the transition is invalid or the execution is not found.
 	 */
-	async setExecutionStatus(id: string, newStatus: NodeExecutionStatus): Promise<NodeExecution> {
+	setExecutionStatus(id: string, newStatus: NodeExecutionStatus): NodeExecution {
 		const execution = this.repo.getById(id);
 		if (!execution) {
 			throw new Error(`NodeExecution not found: ${id}`);

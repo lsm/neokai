@@ -23,17 +23,16 @@
  *  19.  Multiple terminal (done + cancelled) in one run → true
  *  20.  TERMINAL_NODE_EXECUTION_STATUSES — size=2 (done, cancelled)
  *  21.  TERMINAL_NODE_EXECUTION_STATUSES — does not contain non-terminal statuses
- *  22.  Backward compat: TERMINAL_TASK_STATUSES equals TERMINAL_NODE_EXECUTION_STATUSES
- *  23.  End-node short-circuit: end node done → true (other nodes still running)
- *  24.  End-node short-circuit: end node cancelled → true (other nodes still running)
- *  25.  End-node short-circuit: end node in_progress → false
- *  26.  End-node short-circuit: end node blocked → false
- *  27.  End-node short-circuit: no execution for end node → falls through to all-agents-done
- *  28.  End-node short-circuit: endNodeId not provided → all-agents-done fallback
- *  29.  All-agents-done fallback: all terminal with no endNodeId → true
- *  30.  All-agents-done fallback: some non-terminal with no endNodeId → false
- *  31.  No executions with endNodeId → false
- *  32.  End-node short-circuit: end node pending → false
+ *  22.  End-node short-circuit: end node done → true (other nodes still running)
+ *  23.  End-node short-circuit: end node cancelled → true (other nodes still running)
+ *  24.  End-node short-circuit: end node in_progress → false
+ *  25.  End-node short-circuit: end node blocked → false
+ *  26.  End-node short-circuit: no execution for end node → falls through to all-agents-done
+ *  27.  End-node short-circuit: endNodeId not provided → all-agents-done fallback
+ *  28.  All-agents-done fallback: all terminal with no endNodeId → true
+ *  29.  All-agents-done fallback: some non-terminal with no endNodeId → false
+ *  30.  No executions with endNodeId → false
+ *  31.  End-node short-circuit: end node pending → false
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -42,10 +41,7 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
-import {
-	CompletionDetector,
-	TERMINAL_TASK_STATUSES,
-} from '../../../src/lib/space/runtime/completion-detector.ts';
+import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../../src/lib/space/managers/node-execution-manager.ts';
 
 // ---------------------------------------------------------------------------
@@ -275,103 +271,99 @@ describe('CompletionDetector', () => {
 			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('blocked')).toBe(false);
 		});
 
-		test('22. backward compat: TERMINAL_TASK_STATUSES equals TERMINAL_NODE_EXECUTION_STATUSES', () => {
-			expect(TERMINAL_TASK_STATUSES).toBe(TERMINAL_NODE_EXECUTION_STATUSES);
-		});
-	});
+		// ---- End-node short-circuit ----
 
-	// ---- End-node short-circuit ----
+		describe('end-node short-circuit', () => {
+			const END_NODE_ID = 'end-node';
 
-	describe('end-node short-circuit', () => {
-		const END_NODE_ID = 'end-node';
-
-		test('23. end node done → true (other nodes still running)', () => {
-			seedExecution(db, {
-				workflowRunId: RUN,
-				workflowNodeId: 'start-node',
-				status: 'in_progress',
+			test('22. end node done → true (other nodes still running)', () => {
+				seedExecution(db, {
+					workflowRunId: RUN,
+					workflowNodeId: 'start-node',
+					status: 'in_progress',
+				});
+				seedExecution(db, {
+					workflowRunId: RUN,
+					workflowNodeId: END_NODE_ID,
+					status: 'done',
+				});
+				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true);
 			});
-			seedExecution(db, {
-				workflowRunId: RUN,
-				workflowNodeId: END_NODE_ID,
-				status: 'done',
+
+			test('23. end node cancelled → true (other nodes still running)', () => {
+				seedExecution(db, {
+					workflowRunId: RUN,
+					workflowNodeId: 'start-node',
+					status: 'in_progress',
+				});
+				seedExecution(db, {
+					workflowRunId: RUN,
+					workflowNodeId: END_NODE_ID,
+					status: 'cancelled',
+				});
+				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true);
 			});
-			expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true);
-		});
 
-		test('24. end node cancelled → true (other nodes still running)', () => {
-			seedExecution(db, {
-				workflowRunId: RUN,
-				workflowNodeId: 'start-node',
-				status: 'in_progress',
+			test('24. end node in_progress → false', () => {
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
+				seedExecution(db, {
+					workflowRunId: RUN,
+					workflowNodeId: END_NODE_ID,
+					status: 'in_progress',
+				});
+				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
 			});
-			seedExecution(db, {
-				workflowRunId: RUN,
-				workflowNodeId: END_NODE_ID,
-				status: 'cancelled',
+
+			test('25. end node blocked → false', () => {
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
+				seedExecution(db, {
+					workflowRunId: RUN,
+					workflowNodeId: END_NODE_ID,
+					status: 'blocked',
+				});
+				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
 			});
-			expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true);
-		});
 
-		test('25. end node in_progress → false', () => {
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
-			seedExecution(db, {
-				workflowRunId: RUN,
-				workflowNodeId: END_NODE_ID,
-				status: 'in_progress',
+			test('26. no execution for end node → falls through to all-agents-done', () => {
+				// Only a start-node execution exists; end node has none.
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
+				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true); // Falls through: all executions are terminal
 			});
-			expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
-		});
 
-		test('26. end node blocked → false', () => {
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
-			seedExecution(db, {
-				workflowRunId: RUN,
-				workflowNodeId: END_NODE_ID,
-				status: 'blocked',
+			test('27. endNodeId not provided → all-agents-done fallback', () => {
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: END_NODE_ID, status: 'done' });
+				expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
 			});
-			expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
-		});
 
-		test('27. no execution for end node → falls through to all-agents-done', () => {
-			// Only a start-node execution exists; end node has none.
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
-			expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true); // Falls through: all executions are terminal
-		});
-
-		test('28. endNodeId not provided → all-agents-done fallback', () => {
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: END_NODE_ID, status: 'done' });
-			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
-		});
-
-		test('31. no executions with endNodeId → false', () => {
-			expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
-		});
-
-		test('32. end node pending → false', () => {
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
-			seedExecution(db, {
-				workflowRunId: RUN,
-				workflowNodeId: END_NODE_ID,
-				status: 'pending',
+			test('28. no executions with endNodeId → false', () => {
+				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
 			});
-			expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
+
+			test('29. end node pending → false', () => {
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
+				seedExecution(db, {
+					workflowRunId: RUN,
+					workflowNodeId: END_NODE_ID,
+					status: 'pending',
+				});
+				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
+			});
 		});
-	});
 
-	// ---- All-agents-done fallback (no endNodeId) ----
+		// ---- All-agents-done fallback (no endNodeId) ----
 
-	describe('all-agents-done fallback', () => {
-		test('29. all terminal with no endNodeId → true', () => {
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'done' });
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'cancelled' });
-			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
-		});
+		describe('all-agents-done fallback', () => {
+			test('30. all terminal with no endNodeId → true', () => {
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'cancelled' });
+				expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+			});
 
-		test('30. some non-terminal with no endNodeId → false', () => {
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'done' });
-			seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'blocked' });
-			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+			test('31. some non-terminal with no endNodeId → false', () => {
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'blocked' });
+				expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+			});
 		});
 	});
 });
