@@ -2,10 +2,9 @@
  * Script Gate Configuration E2E Tests
  *
  * Tests script-based gate configuration in the visual workflow editor:
- * - Create a workflow with a script gate on a channel via the visual editor
  * - Configure interpreter to "node" and set script source
  * - Verify the gate badge shows the script icon ⚡ on the canvas
- * - Verify gate configuration persists after save and reopen
+ * - Verify gate configuration persists after save and reopen (including timeout)
  *
  * Architecture notes:
  *   Gate evaluation (script execution, open/blocked state) is handled by the backend
@@ -15,7 +14,7 @@
  *   of save/reopen persistence for script gate configuration.
  *
  * Setup:
- *   - Space is created with agents via RPC in beforeEach (infrastructure).
+ *   - Space is created via RPC in beforeEach (infrastructure).
  *
  * Cleanup:
  *   - Space is deleted via RPC in afterEach.
@@ -48,42 +47,10 @@ import {
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
-// ─── Script configurations ────────────────────────────────────────────────────
+// ─── Script configuration ─────────────────────────────────────────────────────
 
 const SCRIPT_SOURCE = 'console.log(JSON.stringify({ done: true }))';
-
-// ─── RPC helpers (infrastructure only — used in beforeEach / afterEach) ──────
-
-/**
- * Creates a space with two agents for script gate test scenarios.
- * Agents are needed so the workflow can have steps with assigned agents.
- */
-async function createTestSpace(page: Page): Promise<string> {
-	const spaceName = `E2E Script Gate ${Date.now()}`;
-	const spaceId = await createSpace(page, spaceName);
-
-	await page.evaluate(
-		async ({ sid }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			await hub.request('spaceAgent.create', {
-				spaceId: sid,
-				name: 'Planner Agent',
-				role: 'planner',
-				description: 'Planning agent for script gate tests',
-			});
-			await hub.request('spaceAgent.create', {
-				spaceId: sid,
-				name: 'Coder Agent',
-				role: 'coder',
-				description: 'Coding agent for script gate tests',
-			});
-		},
-		{ sid: spaceId }
-	);
-
-	return spaceId;
-}
+const DEFAULT_SCRIPT_TIMEOUT = '30';
 
 // ─── UI action helpers ────────────────────────────────────────────────────────
 
@@ -91,11 +58,11 @@ async function createTestSpace(page: Page): Promise<string> {
  * Sets up a workflow with two steps connected by a channel that has a script gate.
  *
  * Preconditions:
- *   - Space is created with agents
+ *   - Space is created
  *   - Page is navigated to the space
  *
  * Postconditions:
- *   - Visual workflow editor is open with 2 named steps with agents assigned
+ *   - Visual workflow editor is open with 2 named steps
  *   - A one-way channel exists from step 1 (Plan Step) to step 2 (Code Step)
  *   - A script gate is configured on the channel with the given interpreter and source
  *   - NodeConfigPanel is closed
@@ -120,7 +87,7 @@ async function setupWorkflowWithScriptGate(
 		editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
 	await expect(regularNodes()).toHaveCount(1, { timeout: 3000 });
 
-	// Name step 1 and assign an agent
+	// Name step 1
 	const step1 = regularNodes().first();
 	await step1.click();
 	const panel1 = editor.getByTestId('node-config-panel');
@@ -134,7 +101,7 @@ async function setupWorkflowWithScriptGate(
 	await editor.getByTestId('add-step-button').click();
 	await expect(regularNodes()).toHaveCount(2, { timeout: 3000 });
 
-	// Name step 2 and assign an agent
+	// Name step 2
 	const step2 = regularNodes().nth(1);
 	await step2.click();
 	const panel2 = editor.getByTestId('node-config-panel');
@@ -145,11 +112,7 @@ async function setupWorkflowWithScriptGate(
 	await expect(panel2).not.toBeVisible({ timeout: 2000 });
 
 	// Create a channel by dragging from step 1's output port to step 2's input port
-	const step1Output = step1.getByTestId('port-output');
-	const step2Input = step2.getByTestId('port-input');
-	await step1Output.dragTo(step2Input);
-
-	// Verify an edge now renders on the canvas
+	await step1.getByTestId('port-output').dragTo(step2.getByTestId('port-input'));
 	await expect(editor.locator('[data-testid^="channel-edge-"]')).toHaveCount(1, { timeout: 5000 });
 
 	// Open GateEditorPanel for the channel
@@ -174,12 +137,10 @@ async function setupWorkflowWithScriptGate(
 	await scriptToggle.click();
 	await expect(scriptToggle).toHaveAttribute('aria-checked', 'true');
 
-	// Set interpreter
 	const interpreterSelect = gatePanel.getByTestId('gate-editor-script-interpreter');
 	await expect(interpreterSelect).toBeVisible({ timeout: 3000 });
 	await interpreterSelect.selectOption({ value: interpreter });
 
-	// Set script source
 	const sourceTextarea = gatePanel.getByTestId('gate-editor-script-source');
 	await expect(sourceTextarea).toBeVisible({ timeout: 2000 });
 	await sourceTextarea.fill(scriptSource);
@@ -216,7 +177,29 @@ test.describe('Script Gate Configuration', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await resetEditorModeStorage(page);
-		spaceId = await createTestSpace(page);
+		const spaceName = `E2E Script Gate ${Date.now()}`;
+		spaceId = await createSpace(page, spaceName);
+
+		// Create two agents so workflow steps can be assigned (required for save).
+		await page.evaluate(
+			async ({ sid }) => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				if (!hub?.request) throw new Error('MessageHub not available');
+				await hub.request('spaceAgent.create', {
+					spaceId: sid,
+					name: 'Planner Agent',
+					role: 'planner',
+					description: 'Planning agent for script gate tests',
+				});
+				await hub.request('spaceAgent.create', {
+					spaceId: sid,
+					name: 'Coder Agent',
+					role: 'coder',
+					description: 'Coding agent for script gate tests',
+				});
+			},
+			{ sid: spaceId }
+		);
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -226,15 +209,15 @@ test.describe('Script Gate Configuration', () => {
 		}
 	});
 
-	// ─── Test 1: Script gate configuration and badge rendering ───────────────
+	// ─── Test: Script gate configuration and save/reopen persistence ─────────
 
-	test('script gate with node interpreter shows script icon on badge and saves correctly', async ({
+	test('script gate with node interpreter shows badge and configuration persists after save and reopen', async ({
 		page,
 	}) => {
 		await navigateToSpace(page, spaceId);
 		const workflowName = await setupWorkflowWithScriptGate(page, SCRIPT_SOURCE);
 
-		// ── Verify badge shows on canvas with script icon ⚡ ──────────────────
+		// ── Verify badge shows on canvas with script icon ⚡ (pre-save) ───────
 		const gateBadge = getFirstGateBadge(page);
 		await expect(gateBadge).toBeVisible({ timeout: 5000 });
 		await expect(gateBadge).toContainText('\u26A1');
@@ -242,18 +225,8 @@ test.describe('Script Gate Configuration', () => {
 		// ── Save the workflow ─────────────────────────────────────────────────
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('save-button').click();
-		await expect(page.locator(`text=${workflowName}`)).toBeVisible({ timeout: 5000 });
-	});
-
-	// ─── Test 2: Script gate configuration persists after save and reopen ────
-
-	test('script gate configuration persists after save and reopen', async ({ page }) => {
-		await navigateToSpace(page, spaceId);
-		const workflowName = await setupWorkflowWithScriptGate(page, SCRIPT_SOURCE);
-
-		// ── Save the workflow ─────────────────────────────────────────────────
-		const editor = page.getByTestId('visual-workflow-editor');
-		await editor.getByTestId('save-button').click();
+		// Verify the editor closed (not just that the name appears somewhere on page)
+		await expect(page.getByTestId('visual-workflow-editor')).not.toBeVisible({ timeout: 5000 });
 		await expect(page.locator(`text=${workflowName}`)).toBeVisible({ timeout: 5000 });
 
 		// ── Reopen the workflow for editing ────────────────────────────────────
@@ -263,9 +236,9 @@ test.describe('Script Gate Configuration', () => {
 		await expect(reopenedEditor).toBeVisible({ timeout: 5000 });
 
 		// ── Verify gate badge still shows script icon ⚡ ──────────────────────
-		const gateBadge = getFirstGateBadge(page);
-		await expect(gateBadge).toBeVisible({ timeout: 5000 });
-		await expect(gateBadge).toContainText('\u26A1');
+		const reopenedBadge = getFirstGateBadge(page);
+		await expect(reopenedBadge).toBeVisible({ timeout: 5000 });
+		await expect(reopenedBadge).toContainText('\u26A1');
 
 		// ── Verify gate configuration by opening the gate editor ───────────────
 		const regularNodes = () =>
@@ -290,18 +263,19 @@ test.describe('Script Gate Configuration', () => {
 		await expect(gatePanel).toBeVisible({ timeout: 5000 });
 
 		// ── Verify script settings are preserved ──────────────────────────────
-		// Script should still be enabled
 		const scriptToggle = gatePanel.getByTestId('gate-editor-script-enabled');
 		await expect(scriptToggle).toHaveAttribute('aria-checked', 'true');
 
-		// Interpreter should be "node"
 		const interpreterSelect = gatePanel.getByTestId('gate-editor-script-interpreter');
 		await expect(interpreterSelect).toHaveValue('node');
 
-		// Source should match what was configured
 		const sourceTextarea = gatePanel.getByTestId('gate-editor-script-source');
 		const sourceValue = await sourceTextarea.inputValue();
 		expect(sourceValue).toBe(SCRIPT_SOURCE);
+
+		// Verify timeout persists (default value)
+		const timeoutInput = gatePanel.getByTestId('gate-editor-script-timeout');
+		await expect(timeoutInput).toHaveValue(DEFAULT_SCRIPT_TIMEOUT);
 
 		// No gate completeness error
 		const gateError = gatePanel.getByTestId('gate-editor-gate-error');
