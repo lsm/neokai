@@ -43,7 +43,9 @@ import type { GateDataRepository } from '../../../storage/repositories/gate-data
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import { evaluateGate } from './gate-evaluator';
+import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
+import type { GateScriptContext } from './gate-script-executor';
+import { executeGateScript } from './gate-script-executor';
 
 // ---------------------------------------------------------------------------
 // Gate result types (formerly in channel-gate-evaluator.ts)
@@ -157,14 +159,58 @@ export interface ChannelRouterConfig {
 	 * single-process use cases but not ACID-atomic on crash).
 	 */
 	db?: BunDatabase;
+	/**
+	 * Workspace root path for script execution (used as cwd and
+	 * injected as `NEOKAI_WORKSPACE_PATH` into script environments).
+	 * When omitted, script-based gates are evaluated without a workspace
+	 * context (scripts that depend on filesystem access will fail).
+	 */
+	workspacePath?: string;
+	/**
+	 * Global concurrency cap for script-based gate evaluations.
+	 * When multiple gates with scripts are evaluated concurrently, only this
+	 * many scripts run at a time; others wait in a FIFO queue.
+	 * Gates without scripts bypass the semaphore entirely.
+	 * @default 4
+	 */
+	maxConcurrentScripts?: number;
 }
 
 // ---------------------------------------------------------------------------
 // ChannelRouter
 // ---------------------------------------------------------------------------
 
+/** Default concurrency cap for script-based gate evaluations. */
+const DEFAULT_MAX_CONCURRENT_SCRIPTS = 4;
+
 export class ChannelRouter {
-	constructor(private readonly config: ChannelRouterConfig) {}
+	/**
+	 * Global concurrency semaphore for script-based gate evaluations.
+	 * Only gates with scripts acquire the semaphore; field-only gates bypass it.
+	 */
+	private scriptSemaphore: { acquired: number; max: number; waiters: Array<() => void> };
+
+	/**
+	 * Per-gate evaluation coalescing cache, keyed by `"${runId}:${gateId}"`.
+	 * Multiple concurrent callers evaluating the same gate share one in-flight
+	 * promise. The key format prevents cross-run state leakage.
+	 */
+	private readonly gateEvaluations = new Map<string, Promise<GateEvalResult>>();
+
+	/**
+	 * Dirty flags for coalesced evaluations, keyed by `"${runId}:${gateId}"`.
+	 * When a gate's data changes while an evaluation is in-flight, the flag is
+	 * set so the awaiting caller re-evaluates after the current one resolves.
+	 */
+	private readonly gateDirtyFlags = new Map<string, boolean>();
+
+	constructor(private readonly config: ChannelRouterConfig) {
+		this.scriptSemaphore = {
+			acquired: 0,
+			max: config.maxConcurrentScripts ?? DEFAULT_MAX_CONCURRENT_SCRIPTS,
+			waiters: [],
+		};
+	}
 
 	// -------------------------------------------------------------------------
 	// Public API
@@ -556,6 +602,13 @@ export class ChannelRouter {
 	 * Looks up the gate definition in `workflow.gates`, loads the runtime data from
 	 * `GateDataRepository`, and evaluates the condition.
 	 *
+	 * **Coalescing:** Multiple concurrent callers for the same `runId:gateId` share
+	 * one in-flight evaluation promise. If new data arrives while an evaluation is
+	 * running (dirty flag set), the result is discarded and re-evaluated.
+	 *
+	 * **Concurrency:** Gates with scripts acquire the global semaphore (up to
+	 * `maxConcurrentScripts`). Field-only gates bypass the semaphore entirely.
+	 *
 	 * **Fallback behavior when `gateDataRepo` is absent or no DB record exists:**
 	 * Evaluates against the gate's default `data` (as declared in the workflow definition).
 	 * This means a gate can open on first evaluation if its default data satisfies the
@@ -564,12 +617,59 @@ export class ChannelRouter {
 	 * Returns `{ open: false }` with a descriptive reason when:
 	 * - The gate is not found in `workflow.gates` (misconfiguration)
 	 * - The condition fails against the runtime (or default) data
+	 * - A script pre-check fails
 	 */
 	private async evaluateGateById(
 		runId: string,
 		gateId: string,
 		workflow: SpaceWorkflow
-	): Promise<{ open: boolean; reason?: string }> {
+	): Promise<GateEvalResult> {
+		const key = `${runId}:${gateId}`;
+
+		// Coalescing: if an evaluation is already in-flight, await it.
+		// Set the dirty flag to signal that data may have changed during the wait.
+		// The completing caller's finally block does NOT clear the dirty flag —
+		// we (the awaiting caller) are responsible for consuming it.
+		const inflight = this.gateEvaluations.get(key);
+		if (inflight) {
+			this.gateDirtyFlags.set(key, true);
+			await inflight;
+			// After the in-flight evaluation completes, check if we need to re-evaluate.
+			// The finally block leaves the dirty flag for us to consume.
+			if (this.gateDirtyFlags.get(key)) {
+				this.gateDirtyFlags.delete(key);
+				// Re-evaluate directly (bypass coalescing to avoid infinite loops)
+				return this.doEvaluateGate(runId, gateId, workflow);
+			}
+			// Not dirty (flag already consumed by another awaiting caller) —
+			// return the in-flight result.
+			return inflight;
+		}
+
+		// No in-flight evaluation — start a new one
+		const evalPromise = this.doEvaluateGate(runId, gateId, workflow);
+		this.gateEvaluations.set(key, evalPromise);
+
+		try {
+			return await evalPromise;
+		} finally {
+			// Clean up the inflight entry so the next caller starts fresh.
+			// Do NOT clear the dirty flag — awaiting caller(s) will consume it.
+			this.gateEvaluations.delete(key);
+		}
+	}
+
+	/**
+	 * Core gate evaluation logic with semaphore wrapping for script-based gates.
+	 *
+	 * - Field-only gates: evaluate synchronously (no semaphore overhead).
+	 * - Script gates: acquire semaphore → execute script → evaluate fields → release.
+	 */
+	private async doEvaluateGate(
+		runId: string,
+		gateId: string,
+		workflow: SpaceWorkflow
+	): Promise<GateEvalResult> {
 		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
 		if (!gateDef) {
 			return {
@@ -582,10 +682,63 @@ export class ChannelRouter {
 		const record = this.config.gateDataRepo?.get(runId, gateId);
 		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
-		// TODO: Wire scriptExecutor (from ChannelRouterConfig) and construct
-		// GateScriptContext with workspacePath/runId. Without it, script-based
-		// gates silently fall through to field evaluation only.
-		return evaluateGate(gateDef, runtimeData);
+		// Build script executor and context for script-based gates
+		let scriptExecutor: GateScriptExecutorFn | undefined;
+		let scriptContext: GateScriptContext | undefined;
+		if (gateDef.script) {
+			scriptExecutor = executeGateScript;
+			scriptContext = {
+				workspacePath: this.config.workspacePath ?? process.cwd(),
+				gateId,
+				runId,
+			};
+		}
+
+		// Field-only gates skip the semaphore entirely
+		if (!gateDef.script) {
+			return evaluateGate(gateDef, runtimeData);
+		}
+
+		// Script-based gates acquire the semaphore
+		return this.withScriptSemaphore(async () => {
+			return evaluateGate(gateDef, runtimeData, scriptExecutor, scriptContext);
+		});
+	}
+
+	/**
+	 * Acquires the global script semaphore, runs `fn`, then releases.
+	 * If all slots are taken, the caller blocks until a slot is available.
+	 */
+	private async withScriptSemaphore<T>(fn: () => Promise<T>): Promise<T> {
+		const sem = this.scriptSemaphore;
+		if (sem.acquired < sem.max) {
+			sem.acquired++;
+			try {
+				return await fn();
+			} finally {
+				this.releaseSemaphore();
+			}
+		}
+
+		// All slots taken — wait in queue
+		return new Promise<T>((resolve) => {
+			sem.waiters.push(() => {
+				sem.acquired++;
+				fn()
+					.then(resolve)
+					.finally(() => this.releaseSemaphore());
+			});
+		});
+	}
+
+	/** Releases one semaphore slot and wakes the next waiter if any. */
+	private releaseSemaphore(): void {
+		const sem = this.scriptSemaphore;
+		sem.acquired--;
+		if (sem.waiters.length > 0) {
+			const next = sem.waiters.shift()!;
+			next();
+		}
 	}
 
 	// incrementAndResetCyclicChannel is defined alongside findMatchingWorkflowChannel above
