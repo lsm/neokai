@@ -502,7 +502,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [showTemplates, setShowTemplates] = useState(false);
 
 	const agents = filterAgents(spaceStore.agents.value);
-	const tasksByNodeId = spaceStore.tasksByNodeId.value;
+	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
 	// Determine which workflow run to use for completion indicators.
 	// Prefer an active run; fall back to the most recently updated run.
@@ -814,17 +814,17 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 
 					<div class="space-y-2">
 						{steps.map((step, i) => {
-							// Derive per-agent completion states from live task data for this node,
+							// Derive per-agent completion states from node execution data for this node,
 							// scoped to the most relevant workflow run to avoid mixing state from
 							// past runs with the current one.
-							const allNodeTasks = step.id ? (tasksByNodeId.get(step.id) ?? []) : [];
-							const nodeTasks = relevantRunId
-								? allNodeTasks.filter((t) => t.workflowRunId === relevantRunId)
-								: allNodeTasks;
-							const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
-								agentName: null,
-								status: t.status,
-								completionSummary: t.result ?? null,
+							const allNodeExecs = step.id ? (nodeExecutionsByNodeId.get(step.id) ?? []) : [];
+							const nodeExecs = relevantRunId
+								? allNodeExecs.filter((e) => e.workflowRunId === relevantRunId)
+								: allNodeExecs;
+							const nodeTaskStates: AgentTaskState[] = nodeExecs.map((e) => ({
+								agentName: e.agentName || null,
+								status: e.status,
+								completionSummary: e.result ?? null,
 							}));
 							return (
 								<WorkflowNodeCard

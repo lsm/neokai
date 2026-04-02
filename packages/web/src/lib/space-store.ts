@@ -26,6 +26,7 @@ import type {
 	SpaceWorkflowRun,
 	SpaceAgent,
 	SpaceWorkflow,
+	NodeExecution,
 	RuntimeState,
 	SpaceTaskActivityMember,
 	LiveQuerySnapshotEvent,
@@ -124,18 +125,33 @@ class SpaceStore {
 	/** Tasks not associated with any workflow run */
 	readonly standaloneTasks = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
 
-	/** Tasks grouped by workflow run ID — used to show per-run agent completion state */
-	readonly tasksByNodeId = computed(() => {
-		const map = new Map<string, SpaceTask[]>();
-		for (const task of this.tasks.value) {
-			if (task.workflowRunId) {
-				let arr = map.get(task.workflowRunId);
-				if (!arr) {
-					arr = [];
-					map.set(task.workflowRunId, arr);
-				}
-				arr.push(task);
+	/** Node executions for this space — fetched per workflow run */
+	readonly nodeExecutions = signal<NodeExecution[]>([]);
+
+	/** Node executions grouped by workflow node ID */
+	readonly nodeExecutionsByNodeId = computed(() => {
+		const map = new Map<string, NodeExecution[]>();
+		for (const exec of this.nodeExecutions.value) {
+			let arr = map.get(exec.workflowNodeId);
+			if (!arr) {
+				arr = [];
+				map.set(exec.workflowNodeId, arr);
 			}
+			arr.push(exec);
+		}
+		return map;
+	});
+
+	/** Node executions grouped by workflow run ID */
+	readonly nodeExecutionsByRun = computed(() => {
+		const map = new Map<string, NodeExecution[]>();
+		for (const exec of this.nodeExecutions.value) {
+			let arr = map.get(exec.workflowRunId);
+			if (!arr) {
+				arr = [];
+				map.set(exec.workflowRunId, arr);
+			}
+			arr.push(exec);
 		}
 		return map;
 	});
@@ -389,6 +405,7 @@ class SpaceStore {
 		this.workflowRuns.value = [];
 		this.agents.value = [];
 		this.workflows.value = [];
+		this.nodeExecutions.value = [];
 		this.runtimeState.value = null;
 		this.taskActivity.value = new Map();
 		this.error.value = null;
@@ -672,8 +689,12 @@ class SpaceStore {
 
 		const resolvedId = overview.space.id;
 
-		// Fetch agents and workflows in parallel
-		await Promise.all([this.fetchAgents(hub, resolvedId), this.fetchWorkflows(hub, resolvedId)]);
+		// Fetch agents, workflows, and node executions in parallel
+		await Promise.all([
+			this.fetchAgents(hub, resolvedId),
+			this.fetchWorkflows(hub, resolvedId),
+			this.fetchNodeExecutions(hub, resolvedId),
+		]);
 
 		return resolvedId;
 	}
@@ -709,6 +730,42 @@ class SpaceStore {
 			this.workflows.value = result?.workflows ?? [];
 		} catch (err) {
 			logger.error('Failed to fetch workflows:', err);
+		}
+	}
+
+	/**
+	 * Fetch node executions for all workflow runs in the space.
+	 * Calls nodeExecution.list for each run and aggregates the results.
+	 */
+	private async fetchNodeExecutions(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): Promise<void> {
+		try {
+			const runs = this.workflowRuns.value;
+			if (runs.length === 0) {
+				this.nodeExecutions.value = [];
+				return;
+			}
+			const results = await Promise.allSettled(
+				runs.map((run) =>
+					hub
+						.request<{ executions: NodeExecution[] }>('nodeExecution.list', {
+							workflowRunId: run.id,
+							spaceId,
+						})
+						.then((r) => r.executions ?? [])
+				)
+			);
+			const allExecs: NodeExecution[] = [];
+			for (const result of results) {
+				if (result.status === 'fulfilled') {
+					allExecs.push(...result.value);
+				}
+			}
+			this.nodeExecutions.value = allExecs;
+		} catch (err) {
+			logger.error('Failed to fetch node executions:', err);
 		}
 	}
 

@@ -67,7 +67,7 @@ const TASK_MOCK = {
 	spaceId: 'space-1',
 	title: 'Test task',
 	description: '',
-	status: 'pending',
+	status: 'open',
 	priority: 'normal',
 	taskType: 'coding',
 	dependsOn: [],
