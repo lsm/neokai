@@ -104,7 +104,7 @@ export const TEMPLATES: WorkflowTemplate[] = [
 		stepRoles: ['coder'],
 	},
 	{
-		label: 'Coding Workflow V2',
+		label: 'Full-Cycle Coding Workflow',
 		description: 'Plan, review, code, then parallel code review (3 reviewers) and QA before done.',
 		steps: [
 			{

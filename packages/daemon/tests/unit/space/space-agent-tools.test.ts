@@ -702,7 +702,7 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 			ctx.spaceId,
 			ctx.workflowManager,
 			ctx.agentId,
-			'Coding Workflow V2',
+			'Full-Cycle Coding Workflow',
 			['coding', 'v2', 'parallel-review', 'default'],
 			'For writing code with parallel review'
 		);
@@ -715,7 +715,7 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflows).toHaveLength(2);
 		// V2 must be ranked first (tiebreaker: 'v2' tag)
-		expect(parsed.workflows[0].name).toBe('Coding Workflow V2');
+		expect(parsed.workflows[0].name).toBe('Full-Cycle Coding Workflow');
 		expect(parsed.workflows[1].name).toBe('Coding Workflow');
 	});
 
@@ -1509,7 +1509,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 		const stepId = 'v2-planning-step';
 		const wf = ctx.workflowManager.createWorkflow({
 			spaceId: ctx.spaceId,
-			name: 'Coding Workflow V2',
+			name: 'Full-Cycle Coding Workflow',
 			description: 'Full-cycle coding workflow with plan review',
 			nodes: [{ id: stepId, name: 'Planning', agentId: 'agent-planner-2' }],
 			transitions: [],
@@ -1546,7 +1546,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 			ctx.spaceId,
 			ctx.workflowManager,
 			ctx.agentId,
-			'Coding Workflow V2',
+			'Full-Cycle Coding Workflow',
 			['coding', 'v2', 'default'],
 			'Full-cycle coding with plan review and parallel reviewers'
 		);
@@ -1558,7 +1558,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 
 		expect(parsed.success).toBe(true);
 		// V2 must rank first — it has the 'v2' tiebreaker tag
-		expect(parsed.workflows[0].name).toBe('Coding Workflow V2');
+		expect(parsed.workflows[0].name).toBe('Full-Cycle Coding Workflow');
 	});
 });
 

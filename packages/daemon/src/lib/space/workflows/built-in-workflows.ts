@@ -93,11 +93,17 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			id: CODING_CODE_STEP,
 			name: 'Code',
 			agents: [{ agentId: 'Coder', name: 'coder' }],
+			instructions:
+				'Implement the task. When done, open a pull request and ensure the worktree is clean. ' +
+				'Write `pr_created: true` and `worktree_clean: true` to the code-ready-gate to notify the reviewer.',
 		},
 		{
 			id: CODING_REVIEW_STEP,
 			name: 'Review',
 			agents: [{ agentId: 'Reviewer', name: 'reviewer' }],
+			instructions:
+				'Review the pull request for correctness and quality. If changes are needed, send feedback to Code. ' +
+				'When satisfied, call report_done() to complete the workflow.',
 		},
 	],
 	startNodeId: CODING_CODE_STEP,

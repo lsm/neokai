@@ -969,14 +969,14 @@ describe('VisualWorkflowEditor', () => {
 			expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
 		});
 
-		it('shows Coding Workflow V2 template and creates 6 workflow nodes', () => {
+		it('shows Full-Cycle Coding Workflow template and creates 6 workflow nodes', () => {
 			const { getByTestId, getAllByTestId, container } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const v2Option = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding Workflow V2'
+				(el) => el.getAttribute('data-template-label') === 'Full-Cycle Coding Workflow'
 			);
 			expect(v2Option).toBeTruthy();
 			fireEvent.click(v2Option!);
@@ -993,7 +993,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const v2Option = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding Workflow V2'
+				(el) => el.getAttribute('data-template-label') === 'Full-Cycle Coding Workflow'
 			);
 			fireEvent.click(v2Option!);
 
@@ -1151,7 +1151,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const v2Option = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding Workflow V2'
+				(el) => el.getAttribute('data-template-label') === 'Full-Cycle Coding Workflow'
 			);
 			fireEvent.click(v2Option!);
 
