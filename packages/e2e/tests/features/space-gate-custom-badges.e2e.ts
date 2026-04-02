@@ -45,8 +45,9 @@ const ROLE_A = 'coder';
 const ROLE_B = 'reviewer';
 const AGENT_A_NAME = 'Coder Agent';
 const AGENT_B_NAME = 'Reviewer Agent';
-const AGENT_A_OPTION = `${AGENT_A_NAME} (${ROLE_A})`;
-const AGENT_B_OPTION = `${AGENT_B_NAME} (${ROLE_B})`;
+// Agent select dropdown shows only the name (not "name (role)").
+const AGENT_A_OPTION = AGENT_A_NAME;
+const AGENT_B_OPTION = AGENT_B_NAME;
 
 // ─── RPC helpers (infrastructure only) ───────────────────────────────────────
 
