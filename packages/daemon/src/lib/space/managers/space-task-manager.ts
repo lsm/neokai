@@ -3,7 +3,7 @@
  *
  * Handles:
  * - Creating space tasks with dependency validation
- * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review -> archived)
+ * - Status transitions (open -> in_progress -> done/blocked/cancelled -> archived)
  * - Task assignment and progress tracking
  */
 
@@ -293,8 +293,8 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Retry a failed, cancelled, or completed task.
-	 * Completed/cancelled tasks are reactivated to in_progress; needs_attention tasks reset to pending.
+	 * Retry a failed, cancelled, or done task.
+	 * Done/cancelled tasks are reactivated to in_progress; blocked tasks reset to open.
 	 * Optionally updates the description on retry.
 	 *
 	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).

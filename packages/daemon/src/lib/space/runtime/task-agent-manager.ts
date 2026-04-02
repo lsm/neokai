@@ -1188,7 +1188,7 @@ export class TaskAgentManager {
 
 	/**
 	 * Called by the MCP onSubSessionComplete callback (registered in spawn_node_agent).
-	 * Updates the step task status to 'completed' and notifies the Task Agent.
+	 * Updates the step task status to 'done' and notifies the Task Agent.
 	 */
 	private async handleSubSessionComplete(
 		taskId: string,
@@ -1287,7 +1287,7 @@ export class TaskAgentManager {
 					await taskManager.setTaskStatus(failedStepTask.id, 'blocked');
 				} catch (err) {
 					log.warn(
-						`TaskAgentManager: failed to mark step task ${failedStepTask.id} as needs_attention after session.error:`,
+						`TaskAgentManager: failed to mark step task ${failedStepTask.id} as blocked after session.error:`,
 						err
 					);
 				}

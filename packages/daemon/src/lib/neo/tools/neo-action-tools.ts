@@ -1022,15 +1022,15 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					if (run.status === 'cancelled') {
 						return successResult({ runId: args.run_id, alreadyCancelled: true });
 					}
-					if (run.status === 'completed') {
+					if (run.status === 'done') {
 						return errorResult('Cannot cancel a completed workflow run');
 					}
 
-					// Cancel all pending/in_progress tasks for this run (best-effort)
+					// Cancel all open/in_progress tasks for this run (best-effort)
 					const taskManager = spaceTaskManagerFactory.getTaskManager(run.spaceId);
 					const tasks = await taskManager.listTasksByWorkflowRun(run.id);
 					for (const task of tasks) {
-						if (task.status === 'pending' || task.status === 'in_progress') {
+						if (task.status === 'open' || task.status === 'in_progress') {
 							await taskManager.cancelTask(task.id).catch(() => {
 								/* best-effort — individual task failures do not abort run cancellation */
 							});
@@ -1064,11 +1064,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					if (!run) {
 						return errorResult(`Workflow run not found: ${args.run_id}`);
 					}
-					if (
-						run.status === 'completed' ||
-						run.status === 'cancelled' ||
-						run.status === 'pending'
-					) {
+					if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
 						return errorResult(`Cannot approve gate on a ${run.status} workflow run`);
 					}
 
@@ -1089,7 +1085,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 
 					// If previously rejected, transition back to in_progress and clear failure reason
 					let currentRun = run;
-					if (run.status === 'needs_attention' && run.failureReason === 'humanRejected') {
+					if (run.status === 'blocked' && run.failureReason === 'humanRejected') {
 						currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
 						currentRun =
 							workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
@@ -1546,7 +1542,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				if (!run) {
 					return errorResult(`Workflow run not found: ${args.run_id}`);
 				}
-				if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'pending') {
+				if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
 					return errorResult(`Cannot reject gate on a ${run.status} workflow run`);
 				}
 
@@ -1566,8 +1562,8 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					reason: args.reason ?? null,
 				});
 
-				if (run.status !== 'needs_attention') {
-					workflowRunRepo.transitionStatus(args.run_id, 'needs_attention');
+				if (run.status !== 'blocked') {
+					workflowRunRepo.transitionStatus(args.run_id, 'blocked');
 				}
 				const updatedRun =
 					workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' }) ?? run;

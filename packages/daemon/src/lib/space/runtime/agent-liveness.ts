@@ -49,7 +49,7 @@ export interface AutoCompletedAgent {
  * their configured timeout and auto-completes them.
  *
  * For each stuck agent found:
- *   - Sets task status to `'completed'` with a system-generated result.
+ *   - Sets task status to `'done'` with a system-generated result.
  *   - Emits an `agent_auto_completed` notification event.
  *
  * @param stepTasks      Tasks belonging to the current workflow step.
@@ -101,7 +101,7 @@ export async function autoCompleteStuckAgents(
 		// Agent is alive but has not called report_done within the timeout window.
 		//
 		// Note: no notifiedTaskSet dedup is needed here because the status transition
-		// to 'completed' means this task will never satisfy the `status === 'in_progress'`
+		// to 'done' means this task will never satisfy the `status === 'in_progress'`
 		// guard again. Contrast with task_timeout, which is a warning-only notification
 		// that does not change task status and thus requires dedup to avoid re-emitting
 		// on every subsequent tick while the task remains in_progress.

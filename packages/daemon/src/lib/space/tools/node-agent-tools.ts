@@ -732,7 +732,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		/**
 		 * Signal that this node agent has completed its work.
 		 *
-		 * Marks the step's SpaceTask as 'completed', persists the optional summary
+		 * Marks the step's SpaceTask as 'done', persists the optional summary
 		 * as the task result, and emits a `space.task.updated` event for real-time UI.
 		 *
 		 * After calling this tool, the node agent should stop and not perform

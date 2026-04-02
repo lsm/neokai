@@ -137,7 +137,7 @@ export class WorkflowExecutor {
 
 	/**
 	 * Returns true when the run has reached a terminal state
-	 * (status is 'completed' or 'cancelled').
+	 * (status is 'done', 'blocked', or 'cancelled').
 	 */
 	isComplete(): boolean {
 		return this.run.status === 'done' || this.run.status === 'cancelled';
