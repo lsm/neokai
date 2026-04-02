@@ -107,6 +107,153 @@ export function validateGateFields(fields: unknown, path = 'fields'): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Gate creation/modification validators
+// ---------------------------------------------------------------------------
+
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const VALID_INTERPRETERS = new Set(['bash', 'node', 'python3']);
+
+/**
+ * Validates a gate badge color.
+ *
+ * @param color  The color value to validate.
+ * @returns Array of human-readable error strings. Empty array = valid.
+ */
+export function validateGateColor(color: unknown): string[] {
+	const errors: string[] = [];
+
+	if (color === undefined || color === null) {
+		return errors;
+	}
+
+	if (typeof color !== 'string') {
+		errors.push(`color: expected string, got ${typeof color}`);
+		return errors;
+	}
+
+	if (!HEX_COLOR_RE.test(color)) {
+		errors.push(`color: expected hex format #rrggbb, got "${color}"`);
+	}
+
+	return errors;
+}
+
+/**
+ * Validates a gate label.
+ *
+ * @param label  The label value to validate.
+ * @returns Array of human-readable error strings. Empty array = valid.
+ */
+export function validateGateLabel(label: unknown): string[] {
+	const errors: string[] = [];
+
+	if (label === undefined || label === null) {
+		return errors;
+	}
+
+	if (typeof label !== 'string') {
+		errors.push(`label: expected string, got ${typeof label}`);
+		return errors;
+	}
+
+	if (label.length > 20) {
+		errors.push(`label: must be at most 20 characters, got ${label.length}`);
+	}
+
+	return errors;
+}
+
+/**
+ * Validates a gate script configuration.
+ *
+ * @param script  The script object to validate.
+ * @returns Array of human-readable error strings. Empty array = valid.
+ */
+export function validateGateScript(script: unknown): string[] {
+	const errors: string[] = [];
+
+	if (script === undefined || script === null) {
+		return errors;
+	}
+
+	if (typeof script !== 'object') {
+		errors.push(`script: expected object, got ${typeof script}`);
+		return errors;
+	}
+
+	const s = script as Record<string, unknown>;
+
+	if (typeof s.interpreter !== 'string' || !VALID_INTERPRETERS.has(s.interpreter)) {
+		errors.push(
+			`script.interpreter: expected one of [bash, node, python3], got ${JSON.stringify(s.interpreter)}`
+		);
+	}
+
+	if (typeof s.source !== 'string' || s.source.length === 0) {
+		errors.push('script.source: expected non-empty string');
+	}
+
+	if (s.timeoutMs !== undefined) {
+		if (typeof s.timeoutMs !== 'number') {
+			errors.push(`script.timeoutMs: expected number, got ${typeof s.timeoutMs}`);
+		} else if (s.timeoutMs <= 0) {
+			errors.push(`script.timeoutMs: must be positive, got ${s.timeoutMs}`);
+		} else if (s.timeoutMs > 120000) {
+			errors.push(`script.timeoutMs: must be at most 120000ms (120s), got ${s.timeoutMs}`);
+		}
+	}
+
+	return errors;
+}
+
+/**
+ * Validates a gate definition for creation or modification.
+ *
+ * This validator enforces structural rules on new/updated gates:
+ *   - At least one of `fields` (non-empty) or `script` must be present.
+ *   - When `fields` is present, existing field validation runs (handles non-array gracefully).
+ *   - Optional `color`, `label`, and `script` are validated when provided.
+ *
+ * **Important:** This validator should only be applied to new/updated gates
+ * (e.g. via `GateEditorPanel` or MCP tool handlers), never to existing gates
+ * loaded from storage. Existing gates with `fields: []` remain valid at runtime.
+ *
+ * TODO: Wire into RPC handlers and GateEditorPanel in follow-on tasks.
+ *
+ * @param gate  The gate object to validate.
+ * @returns Array of human-readable error strings. Empty array = valid.
+ */
+export function validateGate(gate: unknown): string[] {
+	const errors: string[] = [];
+
+	if (!gate || typeof gate !== 'object') {
+		errors.push(`gate: expected object, got ${typeof gate}`);
+		return errors;
+	}
+
+	const g = gate as Record<string, unknown>;
+
+	// Validate optional fields — sub-validators handle null/undefined gracefully
+	errors.push(...validateGateColor(g.color));
+	errors.push(...validateGateLabel(g.label));
+	errors.push(...validateGateScript(g.script));
+
+	// Validate fields when present (validateGateFields handles non-array gracefully)
+	if (g.fields !== undefined && g.fields !== null) {
+		errors.push(...validateGateFields(g.fields));
+	}
+
+	// At least one of fields (non-empty array) or script must be present
+	const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
+	const hasScript = g.script !== undefined && g.script !== null;
+	if (!hasFields && !hasScript) {
+		errors.push('gate: must have at least one non-empty "fields" array or a "script"');
+	}
+
+	return errors;
+}
+
+// ---------------------------------------------------------------------------
 // Channel helper
 // ---------------------------------------------------------------------------
 

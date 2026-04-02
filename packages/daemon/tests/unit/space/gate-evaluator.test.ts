@@ -18,6 +18,10 @@ import {
 	evaluateFieldCheck,
 	isChannelOpen,
 	validateGateFields,
+	validateGateColor,
+	validateGateLabel,
+	validateGateScript,
+	validateGate,
 } from '../../../src/lib/space/runtime/gate-evaluator.ts';
 import type { Gate, GateField, Channel } from '@neokai/shared';
 
@@ -453,5 +457,394 @@ describe('validateGateFields', () => {
 			{ name: 'votes', type: 'map', writers: ['*'], check: { op: 'count', min: 1 } },
 		]);
 		expect(errors.length).toBeGreaterThan(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validateGateColor
+// ---------------------------------------------------------------------------
+
+describe('validateGateColor', () => {
+	test('accepts valid hex color', () => {
+		expect(validateGateColor('#ff5500')).toHaveLength(0);
+	});
+
+	test('accepts uppercase hex color', () => {
+		expect(validateGateColor('#FF5500')).toHaveLength(0);
+		expect(validateGateColor('#AABBCC')).toHaveLength(0);
+	});
+
+	test('accepts mixed-case hex color', () => {
+		expect(validateGateColor('#aAbBcC')).toHaveLength(0);
+	});
+
+	test('accepts null (optional field)', () => {
+		expect(validateGateColor(null)).toHaveLength(0);
+	});
+
+	test('accepts undefined (optional field)', () => {
+		expect(validateGateColor(undefined)).toHaveLength(0);
+	});
+
+	test('rejects named color "red"', () => {
+		const errors = validateGateColor('red');
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('#rrggbb');
+	});
+
+	test('rejects hex without hash prefix', () => {
+		const errors = validateGateColor('ff5500');
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('rejects 3-digit hex shorthand', () => {
+		const errors = validateGateColor('#f50');
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('rejects 8-digit hex with alpha', () => {
+		const errors = validateGateColor('#ff5500ff');
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('rejects non-string type', () => {
+		const errors = validateGateColor(42);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected string');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validateGateLabel
+// ---------------------------------------------------------------------------
+
+describe('validateGateLabel', () => {
+	test('accepts valid label', () => {
+		expect(validateGateLabel('approval')).toHaveLength(0);
+	});
+
+	test('accepts empty string', () => {
+		expect(validateGateLabel('')).toHaveLength(0);
+	});
+
+	test('accepts null (optional field)', () => {
+		expect(validateGateLabel(null)).toHaveLength(0);
+	});
+
+	test('accepts undefined (optional field)', () => {
+		expect(validateGateLabel(undefined)).toHaveLength(0);
+	});
+
+	test('accepts label at exactly 20 characters', () => {
+		expect(validateGateLabel('12345678901234567890')).toHaveLength(0);
+	});
+
+	test('rejects label longer than 20 characters', () => {
+		const errors = validateGateLabel('123456789012345678901');
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('20 characters');
+	});
+
+	test('rejects non-string type', () => {
+		const errors = validateGateLabel(42);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected string');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validateGateScript
+// ---------------------------------------------------------------------------
+
+describe('validateGateScript', () => {
+	test('accepts valid bash script', () => {
+		expect(validateGateScript({ interpreter: 'bash', source: 'echo hello' })).toHaveLength(0);
+	});
+
+	test('accepts valid node script', () => {
+		expect(validateGateScript({ interpreter: 'node', source: 'process.exit(0)' })).toHaveLength(0);
+	});
+
+	test('accepts valid python3 script', () => {
+		expect(validateGateScript({ interpreter: 'python3', source: 'print("hello")' })).toHaveLength(
+			0
+		);
+	});
+
+	test('accepts script with timeoutMs', () => {
+		expect(
+			validateGateScript({ interpreter: 'bash', source: 'echo hi', timeoutMs: 5000 })
+		).toHaveLength(0);
+	});
+
+	test('accepts null (optional field)', () => {
+		expect(validateGateScript(null)).toHaveLength(0);
+	});
+
+	test('accepts undefined (optional field)', () => {
+		expect(validateGateScript(undefined)).toHaveLength(0);
+	});
+
+	test('rejects invalid interpreter "ruby"', () => {
+		const errors = validateGateScript({ interpreter: 'ruby', source: 'puts "hi"' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('interpreter');
+		expect(errors[0]).toContain('bash');
+	});
+
+	test('rejects invalid interpreter "javascript"', () => {
+		const errors = validateGateScript({ interpreter: 'javascript', source: 'true' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('interpreter');
+	});
+
+	test('rejects empty source string', () => {
+		const errors = validateGateScript({ interpreter: 'bash', source: '' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('source');
+		expect(errors[0]).toContain('non-empty');
+	});
+
+	test('rejects non-string source', () => {
+		const errors = validateGateScript({ interpreter: 'bash', source: 42 });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('source');
+	});
+
+	test('rejects non-object input', () => {
+		const errors = validateGateScript('not an object');
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected object');
+	});
+
+	test('rejects false as script', () => {
+		const errors = validateGateScript(false);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected object');
+	});
+
+	test('rejects 0 as script', () => {
+		const errors = validateGateScript(0);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected object');
+	});
+
+	test('rejects timeoutMs exceeding 120000', () => {
+		const errors = validateGateScript({
+			interpreter: 'bash',
+			source: 'echo hi',
+			timeoutMs: 200000,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('120000');
+	});
+
+	test('rejects timeoutMs at exactly 120001', () => {
+		const errors = validateGateScript({
+			interpreter: 'bash',
+			source: 'echo hi',
+			timeoutMs: 120001,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('accepts timeoutMs at exactly 120000', () => {
+		expect(
+			validateGateScript({ interpreter: 'bash', source: 'echo hi', timeoutMs: 120000 })
+		).toHaveLength(0);
+	});
+
+	test('rejects negative timeoutMs', () => {
+		const errors = validateGateScript({ interpreter: 'bash', source: 'echo hi', timeoutMs: -1000 });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('positive');
+	});
+
+	test('rejects zero timeoutMs', () => {
+		const errors = validateGateScript({ interpreter: 'bash', source: 'echo hi', timeoutMs: 0 });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('positive');
+	});
+
+	test('rejects non-number timeoutMs', () => {
+		const errors = validateGateScript({
+			interpreter: 'bash',
+			source: 'echo hi',
+			timeoutMs: '30s',
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('timeoutMs');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validateGate
+// ---------------------------------------------------------------------------
+
+describe('validateGate', () => {
+	test('gate with empty fields and no script returns errors', () => {
+		const errors = validateGate({ id: 'g1', fields: [], resetOnCycle: false });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('at least one'))).toBe(true);
+	});
+
+	test('gate with only non-empty fields is valid', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test('gate with only script is valid', () => {
+		const errors = validateGate({
+			id: 'g1',
+			script: { interpreter: 'node', source: 'process.exit(0)' },
+			resetOnCycle: false,
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test('gate with both fields and script is valid', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: { interpreter: 'bash', source: 'echo hi' },
+			resetOnCycle: false,
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test('gate with no fields and no script returns error', () => {
+		const errors = validateGate({ id: 'g1', resetOnCycle: false });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('at least one'))).toBe(true);
+	});
+
+	test('gate with invalid color produces error', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			color: 'red',
+			resetOnCycle: false,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('color'))).toBe(true);
+	});
+
+	test('gate with valid color passes', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			color: '#ff5500',
+			resetOnCycle: false,
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test('gate with label longer than 20 chars produces error', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			label: 'this label is way too long for the limit',
+			resetOnCycle: false,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('label'))).toBe(true);
+	});
+
+	test('gate with valid label passes', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			label: 'approval gate',
+			resetOnCycle: false,
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test('gate with invalid script interpreter produces error', () => {
+		const errors = validateGate({
+			id: 'g1',
+			script: { interpreter: 'ruby', source: 'puts "hi"' },
+			resetOnCycle: false,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('interpreter'))).toBe(true);
+	});
+
+	test('gate with empty script source produces error', () => {
+		const errors = validateGate({
+			id: 'g1',
+			script: { interpreter: 'bash', source: '' },
+			resetOnCycle: false,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('source'))).toBe(true);
+	});
+
+	test('gate with script timeoutMs exceeding 120000 produces error', () => {
+		const errors = validateGate({
+			id: 'g1',
+			script: { interpreter: 'bash', source: 'echo hi', timeoutMs: 200000 },
+			resetOnCycle: false,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('timeoutMs'))).toBe(true);
+	});
+
+	test('rejects non-object gate input', () => {
+		const errors = validateGate('not an object');
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected object');
+	});
+
+	test('rejects null gate input', () => {
+		const errors = validateGate(null);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected object');
+	});
+
+	test('runs validateGateFields when fields are present and non-empty', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: '', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		// Should include the field-level error for empty name
+		expect(errors.some((e) => e.includes('name'))).toBe(true);
+	});
+
+	test('does not run validateGateFields when fields is empty array', () => {
+		const errors = validateGate({ id: 'g1', fields: [], resetOnCycle: false });
+		// Should only have the "at least one" error, no field-level errors
+		expect(errors.every((e) => !e.includes('[0]'))).toBe(true);
+	});
+
+	test('runs validateGateFields for non-array fields value', () => {
+		const errors = validateGate({ id: 'g1', fields: 'bad', resetOnCycle: false });
+		// Should have both the "expected an array" error and the "at least one" error
+		expect(errors.some((e) => e.includes('expected an array'))).toBe(true);
+		expect(errors.some((e) => e.includes('at least one'))).toBe(true);
+	});
+
+	test('collects all errors from color, label, script, and fields', () => {
+		const errors = validateGate({
+			id: 'g1',
+			color: 'red',
+			label: 'a label that is definitely way too long for this',
+			script: { interpreter: 'ruby', source: '' },
+			fields: [],
+			resetOnCycle: false,
+		});
+		// script is present so "at least one" check passes, but color/label/script have errors
+		expect(errors.some((e) => e.includes('color'))).toBe(true);
+		expect(errors.some((e) => e.includes('label'))).toBe(true);
+		expect(errors.some((e) => e.includes('interpreter'))).toBe(true);
+		expect(errors.some((e) => e.includes('source'))).toBe(true);
+		// No "at least one" error because script is present
+		expect(errors.some((e) => e.includes('at least one'))).toBe(false);
 	});
 });
