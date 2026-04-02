@@ -35,8 +35,8 @@ const SCRIPT_PRESETS = {
 	},
 	typecheck: {
 		label: 'Type Check',
-		interpreter: 'node' as const,
-		source: 'console.log(JSON.stringify({passed: true}))',
+		interpreter: 'bash' as const,
+		source: 'npx tsc --noEmit 2>/dev/null && echo \'{"passed":true}\' || echo \'{"passed":false}\'',
 	},
 } as const;
 
@@ -65,16 +65,26 @@ function validateScriptInterpreter(value: string | undefined): string {
 	return '';
 }
 
+// NOTE: Frontend trims whitespace before checking for empty source, which is
+// stricter than the backend `validateGateScript` (which only checks
+// source.length === 0). This intentional divergence rejects whitespace-only
+// scripts in the UI before they reach the daemon.
 function validateScriptSource(value: string | undefined): string {
 	if (!value || value.trim().length === 0) return 'source: script body is required';
 	return '';
 }
 
-function validateScriptTimeout(value: number | undefined): string {
-	if (value === undefined || value === null) return '';
-	if (typeof value !== 'number' || isNaN(value)) return 'timeout: must be a number';
+function validateScriptTimeout(value: number): string {
+	if (isNaN(value)) return 'timeout: must be a number';
 	if (value < 1) return 'timeout: must be at least 1 second';
 	if (value > SCRIPT_TIMEOUT_MAX) return `timeout: must be at most ${SCRIPT_TIMEOUT_MAX} seconds`;
+	return '';
+}
+
+function validateGateCompleteness(hasFields: boolean, hasScript: boolean): string {
+	if (!hasFields && !hasScript) {
+		return 'gate: must have at least one field or a script check';
+	}
 	return '';
 }
 
@@ -110,6 +120,13 @@ export function GateEditorPanel({
 	const scriptTimeoutSec = gate.script?.timeoutMs
 		? Math.round(gate.script.timeoutMs / 1000)
 		: SCRIPT_TIMEOUT_DEFAULT;
+
+	// Gate-level validation: must have at least one of fields or script
+	const hasFields = (gate.fields ?? []).length > 0;
+	const gateError = useMemo(
+		() => validateGateCompleteness(hasFields, scriptEnabled),
+		[hasFields, scriptEnabled]
+	);
 
 	// Script validation errors (only shown when script is enabled)
 	const scriptInterpreterError = useMemo(
@@ -196,6 +213,8 @@ export function GateEditorPanel({
 		updateGate({ script: { ...current, ...partial } });
 	}
 
+	// NOTE: Presets reset timeout to the default (30s). If the user has
+	// customized the timeout, clicking a preset will overwrite it.
 	function applyScriptPreset(key: keyof typeof SCRIPT_PRESETS) {
 		const preset = SCRIPT_PRESETS[key];
 		updateGate({
@@ -369,11 +388,20 @@ export function GateEditorPanel({
 				<span class="text-xs text-gray-400">Reset on cycle</span>
 			</label>
 
+			{/* Gate-level validation error */}
+			{gateError && (
+				<p data-testid="gate-editor-gate-error" class="text-[10px] text-red-400">
+					{gateError}
+				</p>
+			)}
+
 			{/* Fields */}
 			<div class="space-y-2">
 				<label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Fields</label>
 				{(gate.fields ?? []).length === 0 && (
-					<p class="text-xs text-gray-600 italic">No fields — gate always opens</p>
+					<p class="text-xs text-gray-600 italic">
+						{scriptEnabled ? 'No fields defined' : 'No fields — gate always opens'}
+					</p>
 				)}
 				{(gate.fields ?? []).map((field, i) => (
 					<FieldCard
@@ -515,6 +543,7 @@ export function GateEditorPanel({
 								max={SCRIPT_TIMEOUT_MAX}
 								onInput={(e) => {
 									const val = Number((e.currentTarget as HTMLInputElement).value);
+									if (isNaN(val)) return;
 									const clamped = Math.max(1, Math.min(SCRIPT_TIMEOUT_MAX, val));
 									updateScriptPartial({ timeoutMs: clamped * 1000 });
 								}}
