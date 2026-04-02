@@ -344,7 +344,11 @@ export function NodeConfigPanel({
 
 	useEffect(() => {
 		if (selectedChannelRelation) {
-			setPanelView({ kind: 'channel-links' });
+			// Only navigate to channel-links from main view — don't override
+			// gate-editor view which is a deeper navigation (main → channel-links → gate-editor).
+			// Gate updates cause selectedChannelRelation to change reference,
+			// which would otherwise snap the panel back to channel-links.
+			setPanelView((prev) => (prev.kind === 'gate-editor' ? prev : { kind: 'channel-links' }));
 			return;
 		}
 		setPanelView((prev) =>
