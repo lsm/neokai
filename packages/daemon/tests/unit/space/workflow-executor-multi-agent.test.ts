@@ -57,18 +57,11 @@ function seedSpace(db: BunDatabase, spaceId: string, workspacePath = '/tmp/ws'):
 	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgent(
-	db: BunDatabase,
-	agentId: string,
-	spaceId: string,
-	name: string,
-	role = 'coder'
-): void {
+function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt,
-     config, created_at, updated_at, role)
-     VALUES (?, ?, ?, '', null, '[]', '', null, ?, ?, ?)`
-	).run(agentId, spaceId, name, Date.now(), Date.now(), role);
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -109,9 +102,9 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 	beforeEach(() => {
 		({ db, dir } = makeDb());
 		seedSpace(db, SPACE_ID, WORKSPACE);
-		seedAgent(db, AGENT_CODER, SPACE_ID, 'Coder', 'coder');
-		seedAgent(db, AGENT_PLANNER, SPACE_ID, 'Planner', 'planner');
-		seedAgent(db, AGENT_CUSTOM, SPACE_ID, 'Custom', 'my-custom-role');
+		seedAgent(db, AGENT_CODER, SPACE_ID, 'Coder');
+		seedAgent(db, AGENT_PLANNER, SPACE_ID, 'Planner');
+		seedAgent(db, AGENT_CUSTOM, SPACE_ID, 'Custom');
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
@@ -390,7 +383,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 	test('marks run needs_attention when two of three tasks complete but one fails', async () => {
 		const AGENT_EXTRA = 'agent-rt-extra';
-		seedAgent(db, AGENT_EXTRA, SPACE_ID, 'Extra', 'extra-role');
+		seedAgent(db, AGENT_EXTRA, SPACE_ID, 'Extra');
 
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
@@ -712,9 +705,9 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 	beforeEach(() => {
 		({ db, dir } = makeDb());
 		seedSpace(db, SPACE_ID, WORKSPACE);
-		seedAgent(db, AGENT_CODER, SPACE_ID, 'Coder', 'coder');
-		seedAgent(db, AGENT_PLANNER, SPACE_ID, 'Planner', 'planner');
-		seedAgent(db, AGENT_REVIEWER, SPACE_ID, 'Reviewer', 'reviewer');
+		seedAgent(db, AGENT_CODER, SPACE_ID, 'Coder');
+		seedAgent(db, AGENT_PLANNER, SPACE_ID, 'Planner');
+		seedAgent(db, AGENT_REVIEWER, SPACE_ID, 'Reviewer');
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		taskRepo = new SpaceTaskRepository(db);

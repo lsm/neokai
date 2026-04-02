@@ -54,18 +54,11 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgentRow(
-	db: BunDatabase,
-	agentId: string,
-	spaceId: string,
-	name: string,
-	role: string
-): void {
+function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, name, role, Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -134,10 +127,10 @@ describe('SpaceRuntime', () => {
 		seedSpaceRow(db, SPACE_ID, WORKSPACE);
 
 		// Seed agents with different roles
-		seedAgentRow(db, AGENT_PLANNER, SPACE_ID, 'Planner', 'planner');
-		seedAgentRow(db, AGENT_CODER, SPACE_ID, 'Coder', 'coder');
-		seedAgentRow(db, AGENT_GENERAL, SPACE_ID, 'General', 'general');
-		seedAgentRow(db, AGENT_CUSTOM, SPACE_ID, 'Custom', 'my-custom-role');
+		seedAgentRow(db, AGENT_PLANNER, SPACE_ID, 'Planner');
+		seedAgentRow(db, AGENT_CODER, SPACE_ID, 'Coder');
+		seedAgentRow(db, AGENT_GENERAL, SPACE_ID, 'General');
+		seedAgentRow(db, AGENT_CUSTOM, SPACE_ID, 'Custom');
 
 		// Build managers and repos
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -1297,7 +1290,7 @@ describe('SpaceRuntime', () => {
 		test('storeResolvedChannels: step with channels stores resolved channels in run config', async () => {
 			// Need two agents with different roles for channel resolution
 			const AGENT_REVIEWER = 'agent-reviewer';
-			seedAgentRow(db, AGENT_REVIEWER, SPACE_ID, 'Reviewer', 'reviewer');
+			seedAgentRow(db, AGENT_REVIEWER, SPACE_ID, 'Reviewer');
 
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
@@ -1356,7 +1349,7 @@ describe('SpaceRuntime', () => {
 			// even if the step has multiple agents with the same role.
 			// M3 auto-generation has been removed.
 			const AGENT_CODER_2 = 'agent-coder-2-duplicate-role';
-			seedAgentRow(db, AGENT_CODER_2, SPACE_ID, 'Coder 2', 'coder');
+			seedAgentRow(db, AGENT_CODER_2, SPACE_ID, 'Coder 2');
 
 			const stepId = `step-dedup-${Date.now()}`;
 			const workflow = workflowManager.createWorkflow({

@@ -52,18 +52,11 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgentRow(
-	db: BunDatabase,
-	agentId: string,
-	spaceId: string,
-	name: string,
-	role: string
-): void {
+function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, name, role, Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +109,7 @@ function makeCtx(): TestCtx {
 	seedSpaceRow(db, spaceId, workspacePath);
 
 	const agentId = 'agent-coder-1';
-	seedAgentRow(db, agentId, spaceId, 'Coder', 'coder');
+	seedAgentRow(db, agentId, spaceId, 'Coder');
 
 	const agentRepo = new SpaceAgentRepository(db);
 	const agentManager = new SpaceAgentManager(agentRepo);
@@ -1478,7 +1471,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 
 	test('start_workflow_run with planning start node creates task with planning taskType', async () => {
 		// Seed a planner agent so resolveTaskTypeForAgent returns 'planning'
-		seedAgentRow(ctx.db, 'agent-planner-1', ctx.spaceId, 'Planner', 'planner');
+		seedAgentRow(ctx.db, 'agent-planner-1', ctx.spaceId, 'Planner');
 
 		const stepId = 'planning-step-1';
 		const wf = ctx.workflowManager.createWorkflow({
@@ -1506,7 +1499,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 	});
 
 	test('start_workflow_run with V2 planning workflow stores run in DB', async () => {
-		seedAgentRow(ctx.db, 'agent-planner-2', ctx.spaceId, 'Planner', 'planner');
+		seedAgentRow(ctx.db, 'agent-planner-2', ctx.spaceId, 'Planner');
 
 		const stepId = 'v2-planning-step';
 		const wf = ctx.workflowManager.createWorkflow({

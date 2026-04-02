@@ -237,10 +237,9 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, `Agent ${agentId}`, 'coder', Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
 function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {

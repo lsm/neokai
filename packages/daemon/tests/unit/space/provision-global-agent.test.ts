@@ -111,10 +111,9 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, `Agent ${agentId}`, 'coder', Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +218,7 @@ function buildDeps(
 		getAgentById(spaceId: string, id: string) {
 			const agent = agentRepo.getById(id);
 			if (!agent || agent.spaceId !== spaceId) return null;
-			return { id: agent.id, name: agent.name, role: agent.role };
+			return { id: agent.id, name: agent.name };
 		},
 	};
 	const workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);

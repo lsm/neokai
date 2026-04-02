@@ -295,18 +295,11 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgentRow(
-	db: BunDatabase,
-	agentId: string,
-	spaceId: string,
-	name: string,
-	role: string
-): void {
+function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, name, role, Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
 function buildSingleStepWorkflow(
@@ -351,7 +344,7 @@ function makeCtx(): TestCtx {
 	seedSpaceRow(db, otherSpaceId, '/tmp/other-workspace');
 
 	const agentId = 'agent-coder-1';
-	seedAgentRow(db, agentId, spaceId, 'Coder', 'coder');
+	seedAgentRow(db, agentId, spaceId, 'Coder');
 
 	const agentRepo = new SpaceAgentRepository(db);
 	const spaceAgentManager = new SpaceAgentManager(agentRepo);
