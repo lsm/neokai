@@ -28,22 +28,30 @@ Key design decisions:
 - Default timeout: 30s, `killSignal: 'SIGKILL'`
 - `maxBuffer: 1MB` on stdout — enforced via chunk-by-chunk byte counting during streaming read, not by buffering everything then checking size
 - Restricted env (no API keys or credentials) — scripts are **trusted** (workspace-author-configured), but env is restricted as defense-in-depth to prevent accidental credential leakage
-- Per-gate evaluation coalescing with re-run-if-dirty pattern: concurrent evaluations for the same gateId share one in-flight result, but if new gate data arrives during execution, a follow-up re-evaluation is scheduled
+- Per-gate evaluation coalescing with re-run-if-dirty pattern: concurrent evaluations for the same gate share one in-flight result (keyed by `${runId}:${gateId}`), but if new gate data arrives during execution, a follow-up re-evaluation is scheduled
 - Deep merge of JSON stdout with depth limit (max 5 levels), rejecting `__proto__`/`constructor`/`prototype` keys
 
 ### Part C: Async Migration
 
-`evaluateGate()` becomes async to support script execution. A private sync helper (`evaluateFieldsSync`) preserves the pure declarative path for gates without scripts. The **frontend** retains its own independent `evaluateGateStatus()` function in `WorkflowCanvas.tsx` (which is sync and field-only) — it is not affected by the backend async migration.
+`evaluateGate()` becomes async to support script execution. A private sync helper (`evaluateFieldsSync`) preserves the pure declarative path for gates without scripts. The **frontend** retains its own independent `evaluateGateStatus()` function in `WorkflowCanvas.tsx` (which is sync and field-only) — it is not affected by the backend async migration, **but** it does access `gate.fields` directly and needs a `?? []` guard (see Task 1.4).
 
 `isChannelOpen()` remains **synchronous** — it is a convenience function for checking gate status from data already in hand, not for triggering script execution. It has no `scriptExecutor` context.
 
 ### Part D: Concurrency
 
-Per-gate evaluation coalescing prevents overlapping evaluations for the same gate (deduplication). A global concurrency semaphore (default: 4) caps the total number of simultaneous script processes across all gates to prevent resource exhaustion.
+Per-gate evaluation coalescing prevents overlapping evaluations for the same gate+run pair (deduplication). Maps are keyed by composite `${runId}:${gateId}` to prevent cross-run state leakage. A global concurrency semaphore (default: 4) caps the total number of simultaneous script processes across all gates to prevent resource exhaustion.
+
+### Part E: Script Error Transport to Frontend
+
+The frontend currently receives gate data changes via `space.gateData.updated` events (payload: `{ runId, gateId, data }`). `GateEvalResult.reason` (backend-only) is not available to the frontend. To surface script errors in the UI, the `write_gate` MCP tool will store the evaluation result (including `reason`) in a special `_scriptResult` key within the gate data itself. The frontend can then read `gateData._scriptResult.reason` to display error information.
+
+### Part F: `fields` Optional Safety
+
+Making `fields` optional on `Gate` introduces `undefined` at every `gate.fields` access site. Task 1.4 provides a comprehensive audit and guard addition across the entire codebase (frontend + backend).
 
 ---
 
-## Milestone 1: Shared Type Changes (Gate Interface + Validation)
+## Milestone 1: Shared Type Changes (Gate Interface + Validation + Safety)
 
 ### Task 1.1: Extend Gate interface with label, color, script fields
 
@@ -65,7 +73,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 3. Make `fields` optional on `Gate` (change `fields: GateField[]` to `fields?: GateField[]`)
 4. Update `computeGateDefaults()` signature to accept `fields?: GateField[]` — internally treat `undefined` as `[]`
 5. Export `GateScript` from the shared module barrel
-6. **Update all `computeGateDefaults` call sites** that pass `gate.fields` or `gateDef.fields` — since `fields` is now optional, these call sites remain valid because `computeGateDefaults` accepts `undefined`. Verify by checking:
+6. Update all `computeGateDefaults` call sites — since `fields` is now optional, these call sites remain valid because `computeGateDefaults` accepts `undefined`. Verify:
    - `channel-router.ts` lines 594, 728, 741
    - `node-agent-tools.ts` lines 585, 621
    - `gate-data-repository.ts` documentation (line 112)
@@ -76,7 +84,6 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - `computeGateDefaults(undefined)` returns `{}`
 - `computeGateDefaults([])` returns `{}`
 - `computeGateDefaults(someFields)` returns the same result as before
-- No existing code breaks — all `computeGateDefaults(gate.fields)` call sites still work because `gate.fields` is `GateField[] | undefined` and the function now accepts that
 - `GateScript` type is exported from `@neokai/shared`
 
 **Dependencies:** None
@@ -96,12 +103,13 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
    - `source` is a non-empty string
    - `timeoutMs` is positive number if present (max 120000)
 4. Add `validateGate(gate: unknown): string[]` — top-level validator that:
-   - Calls `validateGateFields()` when `fields` is present
+   - Calls `validateGateFields()` when `fields` is present and non-empty
    - Calls `validateGateColor()`, `validateGateLabel()`, `validateGateScript()`
    - Validates that at least one of `fields` (non-empty) or `script` is present
+   - **Important:** This validator is only applied to **new/updated gates** (via `GateEditorPanel` and MCP tool handlers), never to existing gates loaded from storage. Existing gates with `fields: []` remain valid at runtime — the strict rule only gates creation/modification.
 
 **Acceptance criteria:**
-- `validateGate({ id: 'g1', fields: [], resetOnCycle: false })` returns errors (empty fields, no script)
+- `validateGate({ id: 'g1', fields: [], resetOnCycle: false })` returns errors (empty fields, no script) — this is a **creation-time** validation failure
 - `validateGate({ id: 'g1', fields: [{ ... }], resetOnCycle: false })` returns `[]`
 - `validateGate({ id: 'g1', script: { interpreter: 'node', source: '...' }, resetOnCycle: false })` returns `[]`
 - Invalid color `'red'` produces error
@@ -110,6 +118,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - Empty `source` produces error
 - `timeoutMs: 200000` produces error (exceeds 120s max)
 - Label longer than 20 chars produces error
+- Existing gates with `fields: []` in the DB are NOT re-validated on load
 
 **Dependencies:** Task 1.1
 **Agent type:** coder
@@ -126,6 +135,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 3. Add tests for `Gate` with `fields` omitted (script-only gate) persisting correctly
 4. Add tests for `computeGateDefaults` with `undefined` and `[]` fields
 5. Verify backward compatibility: existing gates without `label`/`color`/`script` round-trip unchanged
+6. Verify that `validateGate` is a **creation-time** validator, not applied on load — existing gates with `fields: []` deserialize from storage without errors
 
 **Acceptance criteria:**
 - All new tests pass
@@ -134,6 +144,44 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - Gate with only script (no fields) persists and round-trips correctly
 
 **Dependencies:** Task 1.1, Task 1.2
+**Agent type:** coder
+
+---
+
+### Task 1.4: Add `?? []` safety guards for optional `gate.fields`
+
+**Rationale:** Making `fields` optional on `Gate` means every bare `gate.fields` access can produce `undefined`. A comprehensive audit is needed to add `?? []` fallback guards at every access site across the entire codebase. This is a **separate task** from Task 1.1 because the scope spans many files in both frontend and backend.
+
+**Files to update (comprehensive list from codebase audit):**
+
+**Frontend:**
+- `packages/web/src/components/space/WorkflowCanvas.tsx` — lines 124, 127, 131, 142 (`gate.fields.length`, `gate.fields.every()`, `gate.fields.find()`, `for (const field of gate.fields)`)
+- `packages/web/src/components/space/visual-editor/GateEditorPanel.tsx` — lines 41, 53, 54, 58, 71, 81, 149, 152 (spread, filter, map, length on `gate.fields`)
+- `packages/web/src/components/space/visual-editor/ChannelEdgeConfigPanel.tsx` — lines 173, 177 (if any `gate.fields` access)
+- `packages/web/src/components/space/visual-editor/VisualWorkflowEditor.tsx` — lines 124, 1013 (`gate.fields` spread in presets/copy)
+- `packages/web/src/components/space/visual-editor/semanticWorkflowGraph.ts` — line 59 (`gate.fields; if (fields.length === 0)`)
+
+**Backend:**
+- `packages/daemon/src/lib/space/runtime/gate-evaluator.ts` — line 171 (`for (const field of gate.fields)`)
+- `packages/daemon/src/lib/space/agents/task-agent.ts` — line 138 (`gate.fields.map(...)`)
+- `packages/daemon/src/lib/space/tools/node-agent-tools.ts` — lines 498, 583, 621, 629, 670, 678
+
+**Subtasks:**
+1. For each file listed above, replace every bare `gate.fields` or `gateDef.fields` with `(gate.fields ?? [])` or `(gateDef.fields ?? [])`
+2. For iteration patterns (`for...of`, `.map()`, `.filter()`, `.every()`, `.find()`, `.some()`, `.length`), wrap with `?? []` at the point of access
+3. For spread patterns (`...gate.fields`), wrap with `...(gate.fields ?? [])`
+4. In `evaluateFieldsSync` (extracted in Task 3.1): use `(gate.fields ?? [])` for the field iteration loop
+5. In `node-agent-tools.ts` lines 670, 678 specifically: `new Map((gateDef.fields ?? []).map(...))` and `(gateDef.fields ?? []).map(...)` — these crash for script-only gates if unguarded
+6. Run full typecheck after changes to verify no `undefined` errors
+
+**Acceptance criteria:**
+- `grep -rn 'gate\.fields\b' packages/` returns zero instances of bare `gate.fields` (all accesses guarded with `?? []`)
+- `grep -rn 'gateDef\.fields\b' packages/` returns zero instances of bare `gateDef.fields`
+- TypeScript compiles with no errors
+- Script-only gates (no `fields`) do not crash at any access site
+- Field-based gates continue to work as before
+
+**Dependencies:** Task 1.1
 **Agent type:** coder
 
 ---
@@ -155,7 +203,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
    ```
 2. Define `RESTRICTED_ENV_PATTERNS` — list of env var prefixes/keys to strip. **Threat model:** scripts are trusted (workspace-author-configured) but env is restricted as defense-in-depth:
    - Prefixes: `ANTHROPIC_`, `CLAUDE_`, `GLM_`, `ZHIPU_`, `COPILOT_`, `NEOKAI_SECRET_`
-   - Exact keys: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `GITHUB_TOKEN`, `NPM_TOKEN`, `DATABASE_URL`, `PRIVATE_KEY`, any key matching `/SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i`
+   - Pattern: any key matching `/SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i`
    - Always allow: `PATH`, `HOME`, `USER`, `SHELL`, `LANG`, `TERM`, `TMPDIR`
 3. Implement `buildRestrictedEnv(): Record<string, string | undefined>`:
    - Start with `process.env` copy
@@ -173,7 +221,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
    - Set `cwd` to `context.workspacePath`
    - Determine interpreter binary: `bash` -> `['bash', '-c', script.source]`, `node` -> `['node', '-e', script.source]`, `python3` -> `['python3', '-c', script.source]`
    - Spawn with `Bun.spawn()`, capture stdout + stderr
-   - Apply `timeoutMs` (default 30000) — if Bun.spawn `timeout` option works reliably, use it; otherwise use `setTimeout` + `process.kill(pid, 'SIGKILL')` as fallback
+   - Apply `timeoutMs` (default 30000) — use `setTimeout` + `process.kill(pid, 'SIGKILL')` for deterministic timeout handling
    - **`maxBuffer` enforcement via streaming**: read stdout chunk-by-chunk from `proc.stdout` using a loop (e.g., `proc.stdout.getReader()` or `for await (const chunk of proc.stdout)`), accumulating byte count. If accumulated bytes exceed 1MB, kill the process and return failure. This avoids buffering everything before checking size.
    - On exit code 0: parse stdout as JSON, deep-merge with depth limit into empty object, return `{ success: true, data }`
    - On non-zero exit or timeout: return `{ success: false, error: stderr.trim() || 'exit code N' }`
@@ -227,6 +275,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 
 **Subtasks:**
 1. Extract sync field evaluation into private helper `evaluateFieldsSync(gate: Gate, data: Record<string, unknown>): GateEvalResult`
+   - Use `(gate.fields ?? [])` for the iteration — script-only gates with no fields will immediately return `{ open: true }`
 2. Make `evaluateGate()` async: `async evaluateGate(gate: Gate, data: Record<string, unknown>, scriptExecutor?: GateScriptExecutorFn): Promise<GateEvalResult>`
    - `GateScriptExecutorFn` type: `(script: GateScript, context: { workspacePath: string; gateId: string; runId: string }) => Promise<GateScriptResult>`
 3. If `gate.script` is defined and `scriptExecutor` is provided:
@@ -238,7 +287,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 6. **Keep `isChannelOpen()` synchronous** — it is a convenience function for checking gate status from data already in hand, not for triggering script execution. It does not need a `scriptExecutor` parameter. It continues to call `evaluateFieldsSync` directly.
 7. `GateEvalResult` remains a plain synchronous type (the async is only in evaluation, not the result type)
 
-**Frontend note:** `packages/web/src/components/space/WorkflowCanvas.tsx` has its own independent `evaluateGateStatus()` function (line 123) that is sync and field-only. It is **not** affected by this backend change — it does not import or call the backend `evaluateGate`. No changes needed in `WorkflowCanvas.tsx`.
+**Frontend note:** `packages/web/src/components/space/WorkflowCanvas.tsx` has its own independent `evaluateGateStatus()` function (line 123) that is sync and field-only. It does **not** import or call the backend `evaluateGate`. However, it accesses `gate.fields` directly (line 124: `gate.fields.length === 0`), which needs a `?? []` guard — this is handled by Task 1.4.
 
 **Acceptance criteria:**
 - Existing tests for `evaluateGate` continue to pass (with `await` added since it is now async)
@@ -247,8 +296,9 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - Gate with script runs script before field evaluation
 - Script failure blocks the gate immediately
 - Script success merges stdout data before field checks
+- Script-only gate (no fields, script present) with `scriptExecutor` returns based on script result alone
 
-**Dependencies:** Task 1.1, Task 2.1
+**Dependencies:** Task 1.1, Task 1.4, Task 2.1
 **Agent type:** coder
 
 ---
@@ -259,29 +309,31 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 
 **Subtasks:**
 1. Import `executeGateScript` and the `GateScriptExecutorFn` type
-2. Add `workspacePath?: string` to `ChannelRouterConfig` — **this is critical** because `ChannelRouter` currently has no workspace path, and scripts must run from the space workspace directory. Without this, scripts would run from `process.cwd()` (the daemon working directory) and silently break workspace-relative checks.
-3. Add `maxConcurrentScripts?: number` to `ChannelRouterConfig` (default: 4) — global concurrency cap for script executions across all gates to prevent resource exhaustion.
+2. Add `workspacePath?: string` to `ChannelRouterConfig` — **critical** because `ChannelRouter` currently has no workspace path. Scripts must run from the space workspace directory. Without this, scripts would run from `process.cwd()` (the daemon working directory) and silently break workspace-relative checks.
+3. Add `maxConcurrentScripts?: number` to `ChannelRouterConfig` (default: 4) — global concurrency cap for script executions across all gates.
 4. Implement a global concurrency semaphore (simple counter-based, not a library):
    ```ts
    private scriptSemaphore: { acquired: number; waiters: Array<() => void> }
    ```
-5. Implement per-gate evaluation coalescing **with re-run-if-dirty**:
-   - `gateEvaluations: Map<string, Promise<GateEvalResult>>` — tracks in-flight evaluations
-   - `gateDirtyFlags: Map<string, boolean>` — marks gates that need re-evaluation after current eval completes
-   - In `evaluateGateById()`: if an evaluation is in-flight for this gateId, set the dirty flag and await the in-flight result. After the in-flight result resolves, if dirty flag is set, clear it and start a new evaluation.
+5. Implement per-gate evaluation coalescing **with re-run-if-dirty**, keyed by composite `${runId}:${gateId}`:
+   - `gateEvaluations: Map<string, Promise<GateEvalResult>>` — tracks in-flight evaluations, key = `"${runId}:${gateId}"`
+   - `gateDirtyFlags: Map<string, boolean>` — marks gates that need re-evaluation after current eval completes, same key format
+   - **Important:** Using just `gateId` as the key would cause cross-run state leakage when two concurrent workflow runs share the same gate definition (same workflow template, different run instances)
+   - In `evaluateGateById(runId, gateId)`: build `key = "${runId}:${gateId}"`; if an evaluation is in-flight for this key, set the dirty flag and await the in-flight result. After the in-flight result resolves, if dirty flag is set, clear it and start a new evaluation.
 6. Update `evaluateGateById()` to async: wrap script execution in semaphore acquire/release, pass `scriptExecutor` to `evaluateGate()`
-7. Update `canDeliver()` and `deliverMessage()` to await the async `evaluateGateById()` (these methods are already async, so this is minimal)
+7. Update `canDeliver()` and `deliverMessage()` to await the async `evaluateGateById()` (these methods are already async)
 8. Update `onGateDataChanged()` to await the async `evaluateGateById()` with re-run-if-dirty support
 
 **Acceptance criteria:**
 - `canDeliver()`, `deliverMessage()`, `onGateDataChanged()` work correctly with async script evaluation
-- Concurrent `onGateDataChanged()` calls for the same gateId are coalesced (share one result), but if new data arrives during execution, a re-evaluation is triggered
+- Concurrent `onGateDataChanged()` for the same `${runId}:${gateId}` are coalesced, but new data triggers re-evaluation
+- Two concurrent runs with the same gateId do NOT share evaluation state
 - Different gateIds can evaluate concurrently (up to `maxConcurrentScripts` limit)
 - Gates without scripts continue to evaluate without semaphore overhead
 - `workspacePath` is available in the config and passed to `executeGateScript`
 - Existing ChannelRouter tests pass (updated for async where needed)
 
-**Dependencies:** Task 2.1, Task 3.1
+**Dependencies:** Task 1.4, Task 2.1, Task 3.1
 **Agent type:** coder
 
 ---
@@ -292,22 +344,32 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` (lines 622, 1440, 1755)
 - `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` (line 309)
 
+**Context:** `workspacePath` is not always directly in scope at every `new ChannelRouter(...)` call. This task describes how to obtain it at each site.
+
 **Subtasks:**
-1. **`task-agent-manager.ts` line 622** (main task ChannelRouter): add `workspacePath` to `ChannelRouterConfig`. `workspacePath` is already available in scope at line 636 (passed to `createTaskAgentMcpServer`). Import `executeGateScript` and pass it as the script executor function.
-2. **`task-agent-manager.ts` line 1440** (rehydration ChannelRouter): add `workspacePath` to config. The workspace path is available via `this.config.space.workspacePath`.
-3. **`task-agent-manager.ts` line 1755** (node agent ChannelRouter): add `workspacePath` to config. This is where `createNodeAgentMcpServer` is called, and `workspacePath` is available via the space object. **This is the critical injection point** — the node agent's `write_gate` MCP tool triggers `onGateDataChanged()` which evaluates gates. Without wiring `workspacePath` here, gate scripts in node agent workflows would fail.
-4. **`space-runtime-service.ts` line 309**: add `workspacePath` to config. The workspace path is available via `space.workspacePath`.
-5. At each site, create a thin script executor wrapper that binds the workspace path:
-   ```ts
-   const scriptExecutor = (script: GateScript, ctx: ScriptContext) =>
-     executeGateScript(script, { ...ctx, workspacePath });
-   ```
-   (Or pass `executeGateScript` directly if the ChannelRouter can bind `workspacePath` internally.)
+1. **`task-agent-manager.ts` line 622** (main task `spawnTaskAgent()`):
+   - `workspacePath` is already in scope as a local variable (computed from `space.workspacePath` or worktree path, around line 556-593)
+   - Add `workspacePath` to the `ChannelRouterConfig` object
+2. **`task-agent-manager.ts` line 1440** (rehydration in `rehydrate()`):
+   - `rehydrateWorkspacePath` is computed at lines 1410-1425 from `space.workspacePath` or stored worktree path
+   - Add `rehydrateWorkspacePath` to the rehydration `ChannelRouterConfig`
+3. **`task-agent-manager.ts` line 1755** (`buildNodeAgentMcpServerForSession()`):
+   - **Problem:** The method signature `(taskId, subSessionId, role, spaceId, workflowRunId, stepTaskId, taskManager)` does NOT include `workspacePath` or a space object
+   - **Solution:** Look up the workspace path via `this.getWorkspacePathForTask(taskId)` (an existing private method on `TaskAgentManager`, around line 1370-1425) which returns `space.workspacePath` or the worktree path for the task
+   - Add `workspacePath` parameter to `buildNodeAgentMcpServerForSession()`, or compute it internally via `this.getWorkspacePathForTask(taskId)`, then pass to `ChannelRouterConfig`
+   - This is called from 3 sites (lines 651, 1470, 1561) — all have `taskId` available
+4. **`space-runtime-service.ts` line 309** (`notifyGateDataChanged()`):
+   - **Problem:** The method signature `(runId: string, gateId: string)` has no space object or workspace path in scope
+   - **Solution:** Perform a lookup chain: `runId → workflowRunRepo.getRun(runId) → run.spaceId → spaceManager.getSpace(spaceId) → space.workspacePath`
+   - The `SpaceRuntimeService` has both `this.config.spaceManager` and `this.config.workflowRunRepo` available
+   - This lookup only runs when a gate evaluation is needed (script present), so the overhead is acceptable
+5. At each site, construct a `scriptExecutor` function that wraps `executeGateScript` with the resolved `workspacePath`
 
 **Acceptance criteria:**
 - All four `new ChannelRouter(...)` call sites include `workspacePath` in their config
+- `buildNodeAgentMcpServerForSession` receives or computes `workspacePath` correctly
+- `notifyGateDataChanged` performs the run→space lookup to obtain `workspacePath`
 - Node agent MCP server's `write_gate` tool can trigger script evaluation with correct workspace path
-- Rehydration ChannelRouter preserves script evaluation capability
 - No TypeScript errors at any call site
 
 **Dependencies:** Task 2.1, Task 3.2
@@ -320,26 +382,40 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 **File:** `packages/daemon/src/lib/space/tools/node-agent-tools.ts`
 
 **Subtasks:**
-1. Update the two `evaluateGate()` call sites (lines 624 and 699) to `await evaluateGate()`
-   - Line 624 is in `list_gates` — reports gate status. Since `list_gates` does not have a `scriptExecutor`, it uses the sync-only path (no script execution in listing). This is acceptable — gate status shown in listing reflects field evaluation only; script status would be shown separately.
-   - Line 699 is in `write_gate` — the hot path invoked by agents. This call site already has the ChannelRouter context which now supports async. Update to `await`.
-2. Pass `scriptExecutor` if available in the tools config (from the ChannelRouter)
-3. Update `NodeAgentToolsConfig` if needed to carry `scriptExecutor`
+1. Update `evaluateGate()` call sites to `await evaluateGate()`:
+   - **Line 624** is in `list_gates` — reports gate status. No `scriptExecutor` available → uses sync-only path. **Important note:** for a script-only gate (no fields) with no `scriptExecutor`, `evaluateGate` returns `{ open: true }` because the field loop over `(gate.fields ?? [])` immediately passes. This is a known limitation — `list_gates` shows field-based status only, and script-only gates will appear as "open" in listing even if the script would block. This is acceptable because `list_gates` is a status snapshot, not an evaluation trigger. The actual blocking happens in `write_gate` and `ChannelRouter`.
+   - **Line 699** is in `write_gate` — the hot path. This has `scriptExecutor` via ChannelRouter. Update to `await`.
+2. **Guard lines 670 and 678 for script-only gates:**
+   - Line 670: `new Map(gateDef.fields.map(...))` → `new Map((gateDef.fields ?? []).map(...))`
+   - Line 678: `gateDef.fields.map(...)` → `(gateDef.fields ?? []).map(...)`
+   - **These are covered by Task 1.4 but listed here as critical verification points** — without these guards, script-only gates crash in `write_gate` before any evaluation can happen
+3. **Store script evaluation result in gate data for frontend transport** (addresses script error surfacing):
+   - After evaluation in `write_gate`, if `evalResult.reason` exists (script failure), store it in the gate data under a `_scriptResult` key:
+     ```ts
+     if (evalResult.reason) {
+       updated.data._scriptResult = { success: false, reason: evalResult.reason };
+     }
+     ```
+   - This data flows through the existing `space.gateData.updated` event to the frontend, where Task 4.6 reads it
+4. Pass `scriptExecutor` if available in the tools config
+5. Update `NodeAgentToolsConfig` if needed to carry `scriptExecutor`
 
 **Acceptance criteria:**
-- `list_gates` tool works correctly (shows field-based gate status, no script execution)
+- `list_gates` tool works correctly for field-based gates; script-only gates show `{ open: true }` (documented limitation)
 - `write_gate` tool correctly triggers async gate evaluation including script execution
-- Gate status in `list_reachable_agents` includes field-based evaluation results
+- Script-only gates do NOT crash at lines 670/678
+- Script evaluation result (`reason`) is stored in gate data under `_scriptResult` key
+- `space.gateData.updated` event payload includes `_scriptResult` when script fails
 - No breaking changes to existing tool behavior
 
-**Dependencies:** Task 3.2, Task 3.3
+**Dependencies:** Task 1.4, Task 3.2, Task 3.3
 **Agent type:** coder
 
 ---
 
 ### Task 3.5: Unit tests for async gate evaluation + migration
 
-**Files:**
+**Files:** (additions to existing test files)
 - `packages/daemon/tests/unit/space/gate-evaluator.test.ts`
 - `packages/daemon/tests/unit/space/channel-router.test.ts`
 
@@ -352,10 +428,12 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
    - Script passes but field check still fails
    - Script returns non-JSON stdout → field evaluation proceeds with original data
    - No scriptExecutor provided → falls back to sync field evaluation
+   - Script-only gate (no fields) with scriptExecutor → gate opens/closes based on script result alone
 3. Add tests for per-gate evaluation coalescing in ChannelRouter:
-   - Concurrent `onGateDataChanged()` for same gateId shares one in-flight result
+   - Concurrent `onGateDataChanged()` for same `${runId}:${gateId}` shares one in-flight result
    - New data arriving during execution triggers re-evaluation (dirty flag)
-   - Different gateIds evaluate concurrently
+   - Different `${runId}:${gateId}` keys evaluate independently
+   - Two runs with same gateId do NOT share evaluation state
 4. Add tests for global concurrency semaphore:
    - More than `maxConcurrentScripts` gates with scripts → excess gates wait
    - After one completes, next one starts
@@ -366,6 +444,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - All existing gate evaluator tests pass (updated for async)
 - All new async evaluation tests pass
 - Per-gate coalescing tests verify shared-result + dirty-flag re-run behavior
+- Cross-run isolation tests verify composite key prevents state leakage
 - Semaphore tests verify concurrency cap
 - `isChannelOpen` tests confirm no async changes
 
@@ -394,6 +473,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 5. In `buildSemanticWorkflowEdges()`: update the aggregate logic (lines 164-186) and collapse logic (lines 193-210) to propagate `label`, `color`, and `hasScript` alongside `gateType`:
    - For bidirectional edges: `lowToHighGateLabel`/`highToLowGateLabel` and `lowToHighGateColor`/`highToLowGateColor` each track their respective direction's gate label/color
    - In the collapse (lines 193-210): set `gateLabel`/`gateColor`/`hasScript` from `lowToHigh*` fields, and `reverseGateLabel`/`reverseGateColor`/`reverseHasScript` from `highToLow*` fields
+6. Use `(gate.fields ?? [])` for the fields access in `resolveSemanticGateType()` (line 59) — covered by Task 1.4 but verified here
 
 **Acceptance criteria:**
 - `SemanticWorkflowEdge` includes `gateLabel`, `gateColor`, `hasScript` and their `reverse*` counterparts
@@ -403,7 +483,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - `PairAggregate` intermediate type fully tracks label/color/hasScript per direction
 - Existing semantic graph tests pass (updated for new return type)
 
-**Dependencies:** Task 1.1
+**Dependencies:** Task 1.1, Task 1.4
 **Agent type:** coder
 
 ---
@@ -452,6 +532,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
    - On change: `updateGate({ color: value })`
    - Add a "Reset" button to clear the custom color and revert to heuristic
 3. Show a preview of the badge with the current label and color next to the inputs
+4. Apply `validateGate()` (from Task 1.2) to gate changes before accepting — show validation errors inline
 
 **Acceptance criteria:**
 - Label input accepts up to 20 characters with count indicator
@@ -460,8 +541,9 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - Reset button clears custom color
 - Badge preview updates in real-time
 - `gate.label` and `gate.color` are correctly propagated to parent via `onChange`
+- Validation errors shown inline (e.g., "Label must be 20 characters or less")
 
-**Dependencies:** Task 1.1
+**Dependencies:** Task 1.1, Task 1.2
 **Agent type:** coder
 
 ---
@@ -479,9 +561,10 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
      - Timeout input (number, seconds, default 30, max 120) (`data-testid="gate-editor-script-timeout"`)
    - When disabled, clear `gate.script`
 2. Provide simple presets for common scripts:
-   - "Lint Check" — `bash` with `npm run lint 2>/dev/null; echo $?` → **Note:** exit code 0/1 as text is not valid JSON. The preset should be: `bash` with `npm run lint 2>/dev/null && echo '{"passed":true}' || echo '{"passed":false}'`
+   - "Lint Check" — `bash` with: `npm run lint 2>/dev/null && echo '{"passed":true}' || echo '{"passed":false}'`
    - "Type Check" — `node` with `console.log(JSON.stringify({passed: true}))`
-   - Presets help users understand the expected format (JSON stdout for data merging, exit code for pass/fail)
+   - Presets output valid JSON to stdout and rely on exit code for pass/fail semantics
+3. Apply `validateGate()` to ensure script-only gates (no fields) pass validation
 
 **Acceptance criteria:**
 - Script section can be toggled on/off
@@ -489,10 +572,10 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - Source textarea accepts multiline script code
 - Timeout defaults to 30 and maxes at 120
 - Preset buttons populate the form correctly with valid JSON-outputting scripts
-- Gate with script-only (no fields) works in the editor
+- Gate with script-only (no fields) works in the editor and passes validation
 - `gate.script` is correctly propagated to parent via `onChange`
 
-**Dependencies:** Task 1.1, Task 4.3
+**Dependencies:** Task 1.1, Task 1.2, Task 4.3
 **Agent type:** coder
 
 ---
@@ -520,28 +603,32 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 
 ### Task 4.6: Surface script error reason in frontend gate status UI
 
-**File:** `packages/web/src/components/space/visual-editor/ChannelEdgeConfigPanel.tsx` (and/or `GateArtifactsView.tsx` if it exists)
+**Data transport mechanism:** Script evaluation results are transported to the frontend via the existing `space.gateData.updated` event. When a script fails, the `write_gate` MCP tool (Task 3.4) stores the evaluation result under a `_scriptResult` key in the gate data. The frontend reads `gateData._scriptResult.reason` to display error information.
+
+**File:** `packages/web/src/components/space/visual-editor/ChannelEdgeConfigPanel.tsx`
 
 **Subtasks:**
-1. When a gate evaluation fails due to a script check, the `GateEvalResult.reason` field contains the error message (e.g., "Script check failed: <stderr output>")
-2. In the channel edge config panel's gate summary, display the `reason` when the gate is blocked due to a script failure
-3. Style the error reason distinctively (e.g., red text, warning icon) so users can see why their script check failed
-4. For field-check failures, continue showing the existing behavior (no change)
+1. When gate data updates (via `space.gateData.updated`), check if `gateData._scriptResult` exists
+2. If `_scriptResult.success === false`, extract `_scriptResult.reason` and display it in the gate summary
+3. Style the error reason distinctively (red text, warning icon) so users can see why their script check failed
+4. For field-check failures without script involvement, continue showing the existing behavior (no change)
+5. In `WorkflowCanvas.tsx`, similarly check `gateData._scriptResult` when computing gate status display — show a "Script failed" indicator alongside the gate status
 
 **Acceptance criteria:**
 - Script failure reason is visible in the gate status UI
 - Error reason is styled distinctively from normal gate status text
+- `_scriptResult` is read from gate data (not from a separate event)
 - Field-check failures are unaffected
-- Reason is shown in real-time as gate evaluations complete
+- Reason updates in real-time as gate evaluations complete
 
-**Dependencies:** Task 3.1 (for `reason` field in `GateEvalResult`), Task 4.5
+**Dependencies:** Task 3.4 (for `_scriptResult` data), Task 4.5
 **Agent type:** coder
 
 ---
 
 ### Task 4.7: Update visual editor tests for badge customization
 
-**Files:**
+**Files:** (additions to existing test file)
 - `packages/web/src/components/space/visual-editor/__tests__/semanticWorkflowGraph.test.ts`
 
 **Subtasks:**
@@ -601,7 +688,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 4. Verify the gate opens when the script succeeds
 5. Configure a failing script (e.g., `process.exit(1)`)
 6. Verify the gate blocks when the script fails
-7. Verify error message (from `stderr` or exit code) is shown in the frontend gate status UI
+7. Verify error message (from `stderr` or exit code) is shown in the frontend gate status UI (via `_scriptResult.reason`)
 
 **Acceptance criteria:**
 - E2E test passes against dev server
@@ -610,7 +697,7 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 - Test runs with `make run-e2e TEST=tests/features/space-gate-script-check.e2e.ts`
 - Test only uses `node` interpreter (no `python3` dependency)
 
-**Dependencies:** Task 3.2, Task 3.3, Task 4.4, Task 4.6
+**Dependencies:** Task 3.2, Task 3.3, Task 3.4, Task 4.4, Task 4.6
 **Agent type:** coder
 
 ---
@@ -619,32 +706,29 @@ Per-gate evaluation coalescing prevents overlapping evaluations for the same gat
 
 | Milestone | Tasks | Key Deliverable |
 |-----------|-------|-----------------|
-| 1. Shared Type Changes | 1.1, 1.2, 1.3 | Gate interface with label, color, script; validation; persistence tests |
+| 1. Shared Type Changes + Safety | 1.1, 1.2, 1.3, 1.4 | Gate interface with label, color, script; validation; `?? []` guards across codebase |
 | 2. Script Execution Engine | 2.1, 2.2 | `gate-script-executor.ts` with Bun.spawn(), restricted env, deep merge |
-| 3. Async Gate Evaluation | 3.1, 3.2, 3.3, 3.4, 3.5 | Async evaluateGate, per-gate coalescing+dirty-flag, ChannelRouter migration, workspacePath wiring |
+| 3. Async Gate Evaluation | 3.1, 3.2, 3.3, 3.4, 3.5 | Async evaluateGate, per-gate coalescing+dirty-flag, ChannelRouter migration, workspacePath wiring, script result transport |
 | 4. Frontend Badge/Editor | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7 | Custom badge rendering (bidirectional), label/color picker, script editor UI, error surfacing |
 | 5. E2E Testing | 5.1, 5.2 | End-to-end tests for badge customization and script checks |
 
-**Total tasks:** 17
-**Critical path:** 1.1 → 1.2 → 2.1 → 3.1 → 3.2 → 3.3 → 3.4 (backend) and 1.1 → 4.1 → 4.2 → 4.3 → 4.4 → 4.5 → 4.6 (frontend), converging at 5.1 + 5.2
+**Total tasks:** 18
+**Critical path:** 1.1 → 1.4 → 2.1 → 3.1 → 3.2 → 3.3 → 3.4 (backend) and 1.1 → 4.1 → 4.2 → 4.3 → 4.4 → 4.5 → 4.6 (frontend), converging at 5.1 + 5.2
 
-## Changes from v1 (reviewer feedback)
+## Changes from v2 (reviewer feedback)
 
 ### P1 fixes
-- **Task 4.1**: Now explicitly calls out `PairAggregate` intermediate type and the collapse logic as in-scope. Added `reverseGateLabel`/`reverseGateColor`/`reverseHasScript` for bidirectional edge support.
-- **Task 1.1**: Added explicit subtask to update all `computeGateDefaults` call sites. Fixed AC to show correct signature change `(fields?: GateField[])`.
-- **Task 3.2**: Added `workspacePath` to `ChannelRouterConfig` — critical missing piece.
-- **New Task 3.3**: Dedicated task for wiring all four `ChannelRouter` construction sites with `workspacePath` and `scriptExecutor`, including the node-agent MCP server injection point.
-- **New Task 4.6**: Surface script error reason in frontend gate status UI.
+- **New Task 1.4**: Comprehensive audit of ALL `gate.fields` access sites across frontend and backend, adding `?? []` guards. Verified against codebase: 6 frontend files (WorkflowCanvas, GateEditorPanel, ChannelEdgeConfigPanel, VisualWorkflowEditor, semanticWorkflowGraph) and 3 backend files (gate-evaluator, task-agent, node-agent-tools). Without this, making `fields` optional would cause `TypeError` crashes at runtime for script-only gates.
+- **Task 3.3 subtask 3**: Described how `workspacePath` reaches `buildNodeAgentMcpServerForSession` — it is NOT in scope; solution is to compute it via `this.getWorkspacePathForTask(taskId)`.
+- **Task 3.3 subtask 4**: Described the full lookup chain for `notifyGateDataChanged`: `runId → workflowRunRepo.getRun() → run.spaceId → spaceManager.getSpace() → space.workspacePath`.
+- **Task 3.4 subtask 2**: Explicitly guarded `node-agent-tools.ts` lines 670 and 678 (`gateDef.fields.map(...)`) for script-only gates.
+- **Task 1.2**: Clarified that `validateGate()` is only applied to new/updated gates, not on load. Existing gates with `fields: []` remain valid at runtime.
 
 ### P2 fixes
-- **Task 3.1**: `isChannelOpen()` kept synchronous. Added explicit note that `WorkflowCanvas.tsx` has its own independent `evaluateGateStatus()` and is unaffected.
-- **Task 3.2**: Per-gate evaluation queue now uses coalescing + re-run-if-dirty pattern (not just coalescing). Added global concurrency semaphore (default: 4) for cross-gate script limits.
-- **Task 4.4**: Fixed "Lint Check" preset to output valid JSON (`{"passed":true}` / `{"passed":false}`) instead of bare exit code.
-- **Task 5.2**: Added dependency on Task 4.4 (script editor UI) and Task 4.6 (error surfacing). Restricted E2E script tests to `node` interpreter only.
+- **Task 3.2 subtask 5**: Maps now keyed by composite `"${runId}:${gateId}"` to prevent cross-run state leakage.
+- **Task 4.6**: Specified data transport mechanism — script results stored in `_scriptResult` key within gate data, flowing through existing `space.gateData.updated` event. No new event type needed.
+- **Task 3.4 subtask 1**: Documented that `list_gates` returns `{ open: true }` for script-only gates (known limitation — `list_gates` shows field-based status only).
+- **Task 1.3**: Added test verifying `validateGate` is NOT applied on load.
 
 ### P3 fixes
-- Removed withdrawn CVE-2025-8022 citation. Replaced with plain-language security reasoning.
-- Added `maxBuffer` streaming enforcement detail (chunk-by-chunk byte counting).
-- Added restricted env threat model documentation (defense-in-depth for trusted scripts).
-- Clarified `computeGateDefaults` signature change in Task 1.1 AC.
+- **Task 4.3**: Added inline validation using `validateGate()` to gate editor.
