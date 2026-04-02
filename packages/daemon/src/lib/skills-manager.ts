@@ -132,10 +132,18 @@ const SKILL_FETCH_MAX_BYTES = 1 * 1024 * 1024;
 /** Fetch timeout when downloading a remote skill file (20 seconds). */
 const SKILL_FETCH_TIMEOUT_MS = 20_000;
 
+/** Maximum recursion depth for fetchGitHubDirectory. */
+const SKILL_FETCH_MAX_DEPTH = 5;
+
+/** Maximum total number of files written by a single fetchGitHubDirectory call tree. */
+const SKILL_FETCH_MAX_FILES = 100;
+
 /**
- * Validate that a commandName is safe to use as a filesystem path component.
- * Rejects empty strings, path separators, ".." traversal, null bytes, and
- * any character that would be unsafe in a filename across common platforms.
+ * Validate that a name is safe to use as a single filesystem path component
+ * (i.e., a plain filename — no directory separators allowed).
+ *
+ * Rejects empty strings, null bytes, path separators (/ and \), the special
+ * names "." and "..", and names starting with a dot.
  *
  * Throws a descriptive Error on failure.
  */
@@ -143,7 +151,7 @@ export function validateCommandName(commandName: string): void {
 	if (!commandName || commandName.trim() === '') {
 		throw new Error('commandName must not be empty');
 	}
-	// Reject null bytes
+	// Reject null bytes — these can be used to truncate or confuse path operations
 	if (commandName.includes('\0')) {
 		throw new Error('commandName must not contain null bytes');
 	}
@@ -151,11 +159,11 @@ export function validateCommandName(commandName: string): void {
 	if (commandName.includes('/') || commandName.includes('\\')) {
 		throw new Error('commandName must not contain path separators (/ or \\)');
 	}
-	// Reject ".." traversal
-	if (commandName === '..' || commandName.startsWith('../') || commandName.endsWith('/..')) {
-		throw new Error('commandName must not contain path traversal sequences (..)');
+	// Reject the special names "." and ".."
+	if (commandName === '.' || commandName === '..') {
+		throw new Error('commandName must not be "." or ".."');
 	}
-	// Reject leading/trailing dots (hidden files, . and ..)
+	// Reject leading dots (hidden files / relative traversal prefixes)
 	if (commandName.startsWith('.')) {
 		throw new Error('commandName must not start with a dot');
 	}
@@ -340,8 +348,23 @@ export class SkillsManager {
 	/**
 	 * Recursively fetch a GitHub directory (via API contents endpoint) to destDir.
 	 * Skips files that already exist to preserve local edits.
+	 *
+	 * Safety limits:
+	 * - Max recursion depth: SKILL_FETCH_MAX_DEPTH levels
+	 * - Max total files written: SKILL_FETCH_MAX_FILES files (shared counter)
+	 * - Entry names from the API are validated with validateCommandName() to prevent
+	 *   path traversal via malicious/compromised API responses
 	 */
-	private async fetchGitHubDirectory(apiUrl: string, destDir: string): Promise<void> {
+	private async fetchGitHubDirectory(
+		apiUrl: string,
+		destDir: string,
+		depth = 0,
+		fileCount = { value: 0 }
+	): Promise<void> {
+		if (depth > SKILL_FETCH_MAX_DEPTH) {
+			throw new Error(`Skill directory exceeds maximum nesting depth of ${SKILL_FETCH_MAX_DEPTH}`);
+		}
+
 		type GitHubEntry = {
 			name: string;
 			type: string;
@@ -370,7 +393,21 @@ export class SkillsManager {
 		await mkdir(destDir, { recursive: true });
 
 		for (const entry of entries) {
+			// Validate each entry name from the API before using it in any path —
+			// a malicious or compromised response could try path traversal via entry.name.
+			try {
+				validateCommandName(entry.name);
+			} catch {
+				throw new Error(
+					`Unsafe entry name "${entry.name}" returned by GitHub API — aborting install`
+				);
+			}
+
 			if (entry.type === 'file' && entry.download_url) {
+				if (fileCount.value >= SKILL_FETCH_MAX_FILES) {
+					throw new Error(`Skill directory exceeds maximum file count of ${SKILL_FETCH_MAX_FILES}`);
+				}
+				fileCount.value += 1;
 				const destFile = join(destDir, entry.name);
 				const alreadyExists = await access(destFile)
 					.then(() => true)
@@ -380,8 +417,8 @@ export class SkillsManager {
 					await writeFile(destFile, content, 'utf-8');
 				}
 			} else if (entry.type === 'dir') {
-				// Recurse into subdirectory
-				await this.fetchGitHubDirectory(entry.url, join(destDir, entry.name));
+				// Recurse into subdirectory — depth and fileCount are shared across the tree
+				await this.fetchGitHubDirectory(entry.url, join(destDir, entry.name), depth + 1, fileCount);
 			}
 		}
 	}

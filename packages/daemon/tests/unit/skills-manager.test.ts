@@ -1070,6 +1070,14 @@ describe('validateCommandName', () => {
 		expect(() => validateCommandName('foo\0bar')).toThrow('null bytes');
 	});
 
+	test('throws for bare "." name', () => {
+		expect(() => validateCommandName('.')).toThrow('"." or ".."');
+	});
+
+	test('throws for bare ".." name', () => {
+		expect(() => validateCommandName('..')).toThrow('"." or ".."');
+	});
+
 	test('throws for name starting with a dot', () => {
 		expect(() => validateCommandName('.hidden')).toThrow('must not start with a dot');
 	});
@@ -1292,6 +1300,131 @@ describe('SkillsManager.installSkillFromGit', () => {
 			);
 			expect(skill.name).toBe('no-workspace-skill');
 			expect(skill.enabled).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when GitHub API returns an entry with path traversal in its name', async () => {
+		const originalFetch = globalThis.fetch;
+		// Simulate a malicious API response with a traversal entry name
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: '../../etc/cron.d/backdoor',
+							type: 'file',
+							download_url: 'https://raw.githubusercontent.com/mock/backdoor',
+							url: '',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			return new Response('malicious content', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit(
+					'https://github.com/evil/repo/tree/main/skills/malicious',
+					'safe-name'
+				)
+			).rejects.toThrow('Unsafe entry name');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when GitHub API returns an entry with a leading-dot name', async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: '.env',
+							type: 'file',
+							download_url: 'https://raw.githubusercontent.com/mock/.env',
+							url: '',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			return new Response('SECRET=bad', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit(
+					'https://github.com/evil/repo/tree/main/skills/dotenv',
+					'dot-entry-skill'
+				)
+			).rejects.toThrow('Unsafe entry name');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when directory nesting exceeds max depth', async () => {
+		const originalFetch = globalThis.fetch;
+		// Each API call returns a single nested subdirectory, forcing infinite recursion
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+			if (urlStr.includes('api.github.com') || urlStr.includes('deep')) {
+				return new Response(
+					JSON.stringify([
+						{
+							name: 'deep',
+							type: 'dir',
+							download_url: null,
+							url: 'https://api.github.com/repos/mock/repo/contents/deep',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			return new Response('', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit('https://github.com/mock/repo/tree/main/skills/deep', 'deep-skill')
+			).rejects.toThrow('maximum nesting depth');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test('throws when total file count exceeds max files', async () => {
+		const originalFetch = globalThis.fetch;
+		// Return 101 files in the directory listing
+		const manyFiles = Array.from({ length: 101 }, (_, i) => ({
+			name: `file${i}.md`,
+			type: 'file',
+			download_url: `https://raw.githubusercontent.com/mock/file${i}.md`,
+			url: '',
+		}));
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+			if (urlStr.includes('api.github.com')) {
+				return new Response(JSON.stringify(manyFiles), { status: 200 });
+			}
+			return new Response('# content', { status: 200 });
+		}) as typeof globalThis.fetch;
+
+		try {
+			await expect(
+				mgr.installSkillFromGit('https://github.com/mock/repo/tree/main/skills/huge', 'huge-skill')
+			).rejects.toThrow('maximum file count');
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
