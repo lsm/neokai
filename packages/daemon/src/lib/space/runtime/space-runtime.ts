@@ -660,7 +660,7 @@ export class SpaceRuntime {
 				}
 
 				// Task Agent session is dead. Apply crash-retry logic:
-				//   - Below MAX_TASK_AGENT_CRASH_RETRIES: reset to open for re-spawn
+				//   - Below MAX_TASK_AGENT_CRASH_RETRIES: reset to pending for re-spawn
 				//     (tolerates transient startup failures, e.g. dev-proxy timing in CI).
 				//   - At or above limit: escalate to blocked so a human can
 				//     investigate before further retries are attempted.
@@ -670,7 +670,7 @@ export class SpaceRuntime {
 				if (crashCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
 					log.warn(
 						`SpaceRuntime: task agent for task ${task.id} crashed ` +
-							`(session ${task.taskAgentSessionId}); resetting to open for re-spawn ` +
+							`(session ${task.taskAgentSessionId}); resetting to pending for re-spawn ` +
 							`(crash ${crashCount}/${MAX_TASK_AGENT_CRASH_RETRIES})`
 					);
 					this.config.taskRepo.updateTask(task.id, {
