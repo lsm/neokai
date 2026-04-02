@@ -312,6 +312,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - space_agents: drop role, config, inject_workflow_context
 	//   - node config JSON: wrap string systemPrompt/instructions to {mode, value}
 	runMigration74(db);
+
+	// Migration 75: Add UNIQUE constraint on node_executions for idempotent activation.
+	//   - Adds UNIQUE INDEX on (workflow_run_id, workflow_node_id, agent_name)
+	//   - Deduplicates any existing records before creating the index
+	runMigration75(db);
 }
 
 /**
@@ -5186,4 +5191,35 @@ export function runMigration74(db: BunDatabase): void {
 			}
 		}
 	}
+}
+
+/**
+ * Migration 75: Add UNIQUE constraint on node_executions.
+ *
+ * Adds a UNIQUE INDEX on (workflow_run_id, workflow_node_id, agent_name) to
+ * prevent duplicate records from concurrent activateNode() calls. Uses
+ * INSERT OR IGNORE in NodeExecutionRepository.createOrIgnore() for idempotent
+ * activation.
+ *
+ * Before creating the unique index, deduplicates any existing records by
+ * keeping only the earliest record (by created_at) for each unique key.
+ */
+function runMigration75(db: BunDatabase): void {
+	if (!tableExists(db, 'node_executions')) return;
+
+	// Deduplicate existing records: keep the earliest by rowid for each unique key.
+	db.prepare(`
+		DELETE FROM node_executions
+		WHERE rowid NOT IN (
+			SELECT MIN(rowid)
+			FROM node_executions
+			GROUP BY workflow_run_id, workflow_node_id, agent_name
+		)
+	`).run();
+
+	// Create the unique index. Idempotent — IF NOT EXISTS skips if already present.
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_agent
+		ON node_executions(workflow_run_id, workflow_node_id, agent_name)
+	`);
 }

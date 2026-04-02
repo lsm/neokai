@@ -8,11 +8,11 @@
  * Responsibilities:
  * - Maintain a Map<runId, WorkflowExecutor> for active workflow runs
  * - Rehydrate executors from DB on first executeTick() call
- * - Start new workflow runs (creates run record + executor + first step task)
+ * - Start new workflow runs (creates run record + executor + first node task)
  * - Spawn Task Agent sessions for pending tasks
  * - Monitor agent liveness and recover from crashes
  * - Resolve task types from agent roles (planner → planning, coder/general → coding, etc.)
- * - Filter and expose workflow rules applicable to a given step
+ * - Filter and expose workflow rules applicable to a given node
  * - Clean up executors when runs reach terminal states
  *
  * In the agent-centric model, agents drive workflow progression via send_message
@@ -27,6 +27,7 @@ import type {
 	ResolvedChannel,
 	WorkflowNode,
 	WorkflowChannel,
+	NodeExecutionStatus,
 } from '@neokai/shared';
 import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
@@ -44,9 +45,34 @@ import { Logger } from '../../logger';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { autoCompleteStuckAgents, resolveNodeTimeout } from './agent-liveness';
 import { CompletionDetector } from './completion-detector';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { MAX_TASK_AGENT_CRASH_RETRIES } from './constants';
 
 const log = new Logger('space-runtime');
+
+/**
+ * Map a SpaceTaskStatus to the equivalent NodeExecutionStatus.
+ *
+ * Returns undefined for statuses that have no NodeExecution equivalent ('archived').
+ */
+function taskStatusToNodeExecutionStatus(
+	taskStatus: SpaceTask['status']
+): NodeExecutionStatus | undefined {
+	switch (taskStatus) {
+		case 'open':
+			return 'pending';
+		case 'in_progress':
+			return 'in_progress';
+		case 'done':
+			return 'done';
+		case 'blocked':
+			return 'blocked';
+		case 'cancelled':
+			return 'cancelled';
+		case 'archived':
+			return undefined;
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -57,13 +83,13 @@ export interface SpaceRuntimeConfig {
 	db: BunDatabase;
 	/** Space manager for listing spaces and fetching workspace paths */
 	spaceManager: SpaceManager;
-	/** Agent manager for resolving agents */
+	/** Agent manager for resolving agent roles in resolveTaskTypeForNode() */
 	spaceAgentManager: SpaceAgentManager;
 	/** Workflow manager for loading workflow definitions */
 	spaceWorkflowManager: SpaceWorkflowManager;
 	/** Workflow run repository for run CRUD and status updates */
 	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** Task repository for querying tasks by run/step */
+	/** Task repository for querying tasks by run/node */
 	taskRepo: SpaceTaskRepository;
 	/** Node execution repository for workflow-internal execution state */
 	nodeExecutionRepo: NodeExecutionRepository;
@@ -349,23 +375,25 @@ export class SpaceRuntime {
 		const executor = this.buildExecutor(workflow, run, spaceId, space.workspacePath);
 		this.executors.set(run.id, executor);
 
-		// Find the start step and create the initial task. Roll back map entries if this fails.
+		// Find the start node and create the initial task. Roll back map entries if this fails.
 		const startStep = workflow.nodes.find((s) => s.id === workflow.startNodeId);
 		if (!startStep) {
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
 			this.config.workflowRunRepo.transitionStatus(run.id, 'cancelled');
-			throw new Error(`Start step "${workflow.startNodeId}" not found in workflow "${workflowId}"`);
+			throw new Error(`Start node "${workflow.startNodeId}" not found in workflow "${workflowId}"`);
 		}
 
 		const taskManager = this.getOrCreateTaskManager(spaceId);
-		// Multi-agent start steps: create one SpaceTask per agent.
+		// Multi-agent start nodes: create one SpaceTask per agent.
 		// resolveNodeAgents() normalises agentId vs agents[] for backward compatibility.
-		// Keep inside the try block so a malformed step (neither agentId nor agents)
-		// triggers the rollback path and does not leave the executor/run orphaned.
+		// Keep resolveNodeAgents() + task creation inside the try block so a
+		// malformed node (neither agentId nor agents) triggers the rollback path
+		// and does not leave the executor/run orphaned.
 		const tasks: SpaceTask[] = [];
+		let startAgents: ReturnType<typeof resolveNodeAgents>;
 		try {
-			const startAgents = resolveNodeAgents(startStep);
+			startAgents = resolveNodeAgents(startStep);
 			for (const agentEntry of startAgents) {
 				const task = await taskManager.createTask({
 					title: startStep.name,
@@ -386,12 +414,54 @@ export class SpaceRuntime {
 			throw err;
 		}
 
-		// Resolve channel topology for the start step and store in run config.
+		// Resolve channel topology for the start node and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
 		this.resolveAndStoreChannels(run.id, space.id, startStep, workflow.channels ?? []);
 
+		// Create node_execution records for the start node's tasks.
+		// startWorkflowRun() creates tasks directly (not via ChannelRouter.activateNode()),
+		// so we must create the corresponding node_execution records here.
+		//
+		// For multi-agent nodes, all tasks share the same title (startStep.name).
+		// We use per-agent names for uniqueness, matching activateNode() behavior.
+		// The tick loop handles both cases: direct title match (single-agent / activateNode)
+		// and shared-title worst-status logic (multi-agent start nodes).
+		const isMultiAgentStart = startAgents.length > 1;
+		for (let i = 0; i < tasks.length; i++) {
+			this.config.nodeExecutionRepo.createOrIgnore({
+				workflowRunId: run.id,
+				workflowNodeId: startStep.id,
+				agentName: isMultiAgentStart ? startAgents[i].name : startStep.name,
+				agentId: startAgents[i].agentId ?? null,
+				status: 'pending',
+			});
+		}
+
 		return { run, tasks };
+	}
+
+	/**
+	 * Resolve the agent ID for a specific agent entry.
+	 */
+	resolveTaskTypeForAgent(agentId: string): ResolvedTaskType {
+		return { agentId };
+	}
+
+	/**
+	 * Resolve per-agent task types for a workflow step.
+	 * Returns one `ResolvedTaskType` per agent entry in the node (in order).
+	 */
+	resolveTaskTypesForNode(step: WorkflowNode): ResolvedTaskType[] {
+		const nodeAgents = resolveNodeAgents(step);
+		return nodeAgents.map((sa) => this.resolveTaskTypeForAgent(sa.agentId));
+	}
+
+	/**
+	 * Resolve the ResolvedTaskType for a workflow node (first agent).
+	 */
+	resolveTaskTypeForNode(step: WorkflowNode): ResolvedTaskType {
+		return this.resolveTaskTypesForNode(step)[0];
 	}
 
 	/**
@@ -487,7 +557,7 @@ export class SpaceRuntime {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * For each active executor, processes the current step's tasks:
+	 * For each active executor, processes the current node's tasks:
 	 * - Detects blocked and timeout conditions
 	 * - Spawns Task Agent sessions for pending tasks
 	 * - Monitors agent liveness and resets dead agents
@@ -528,7 +598,7 @@ export class SpaceRuntime {
 		}
 
 		// In the agent-centric model, agents activate nodes themselves via activateNode().
-		// The tick loop processes ALL active tasks across all nodes — not just one "current step".
+		// The tick loop processes ALL active tasks across all nodes — not just one "current node".
 		const meta = this.executorMeta.get(runId);
 		if (!meta) return;
 
@@ -537,28 +607,53 @@ export class SpaceRuntime {
 		if (allRunTasks.length === 0) return;
 
 		// Sync node_execution status from SpaceTask status.
-		// node_execution records are created by ChannelRouter.activateNode().
-		// The mapping: node_execution.agentName === task.title (both set to the
-		// agent slot name for multi-agent nodes, or the node name for single-agent nodes).
-		// SpaceTask statuses (open/in_progress/done/blocked/cancelled) map 1:1 to
-		// NodeExecution statuses, except 'open' → 'pending'.
+		// node_execution records are created by ChannelRouter.activateNode()
+		// and SpaceRuntime.startWorkflowRun(). The mapping key is
+		// node_execution.agentName === task.title.
+		//
+		// Two sync strategies:
+		// 1. Direct title match: agentName === task.title (single-agent nodes,
+		//    activateNode-created records). When multiple tasks share a title,
+		//    use worst-status logic.
+		// 2. Multi-agent start node fallback: per-agent exec names don't match
+		//    the shared task title. Look up the node name from the workflow
+		//    definition and use worst-status across all tasks with that title.
 		const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 		if (nodeExecutions.length > 0) {
-			const taskByTitle = new Map(allRunTasks.map((t) => [t.title, t]));
+			const tasksByTitle = new Map<string, SpaceTask[]>();
+			for (const task of allRunTasks) {
+				const group = tasksByTitle.get(task.title);
+				if (group) {
+					group.push(task);
+				} else {
+					tasksByTitle.set(task.title, [task]);
+				}
+			}
+			// Build nodeId → node name mapping for multi-agent start node fallback.
+			const nodeNameById = new Map<string, string>();
+			for (const node of meta.workflow.nodes) {
+				nodeNameById.set(node.id, node.name);
+			}
 			for (const exec of nodeExecutions) {
-				const task = taskByTitle.get(exec.agentName);
-				if (!task) continue;
-				// Map SpaceTask status to NodeExecution status.
-				// 'archived' has no NodeExecution equivalent — skip it.
-				// 'open' maps to 'pending'; others map 1:1.
-				if (task.status === 'archived') continue;
-				const mappedStatus =
-					task.status === 'open'
-						? ('pending' as const)
-						: (task.status as import('@neokai/shared').NodeExecutionStatus);
-				// Only update if the status actually changed to avoid unnecessary DB writes
-				if (exec.status !== mappedStatus) {
-					this.config.nodeExecutionRepo.updateStatus(exec.id, mappedStatus);
+				let group = tasksByTitle.get(exec.agentName);
+				// Multi-agent start node fallback: per-agent exec names (e.g. 'coder-a')
+				// don't match the shared task title (e.g. node.name). Look up node name.
+				if (!group || group.length === 0) {
+					const nodeName = nodeNameById.get(exec.workflowNodeId);
+					if (nodeName) {
+						group = tasksByTitle.get(nodeName);
+					}
+				}
+				if (!group || group.length === 0) continue;
+				const mappedStatuses = group
+					.map((t) => taskStatusToNodeExecutionStatus(t.status))
+					.filter((s): s is NodeExecutionStatus => s !== undefined);
+				if (mappedStatuses.length === 0) continue;
+				// Prefer the least-terminal status so completion requires ALL agents to finish.
+				const nonTerminal = mappedStatuses.find((s) => !TERMINAL_NODE_EXECUTION_STATUSES.has(s));
+				const effectiveStatus = nonTerminal ?? mappedStatuses[0];
+				if (exec.status !== effectiveStatus) {
+					this.config.nodeExecutionRepo.updateStatus(exec.id, effectiveStatus);
 				}
 			}
 		}
@@ -593,7 +688,7 @@ export class SpaceRuntime {
 
 			// Escalate the run to blocked for multi-agent steps when ALL tasks are terminal.
 			// Single-task steps: only task_blocked is emitted (backward compat).
-			if (allRunTasks.length > 1 && this.areAllStepTasksTerminal(allRunTasks)) {
+			if (allRunTasks.length > 1 && this.areAllNodeTasksTerminal(allRunTasks)) {
 				this.config.workflowRunRepo.transitionStatus(runId, 'blocked');
 				await this.safeNotify({
 					kind: 'workflow_run_blocked',
@@ -879,7 +974,7 @@ export class SpaceRuntime {
 				}
 				// Prune dedup entries for all tasks in this run so the set doesn't
 				// grow unboundedly. Once a run is terminal its tasks will never
-				// reappear in stepTasks, so the normal per-tick pruning loop
+				// reappear in nodeTasks, so the normal per-tick pruning loop
 				// (processRunTick) would never clear them otherwise.
 				for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
 					this.notifiedTaskSet.delete(`${task.id}:blocked`);
@@ -999,7 +1094,7 @@ export class SpaceRuntime {
 
 	/**
 	 * Builds a WorkflowExecutor for the given run with fresh state.
-	 * Used for graph navigation (getCurrentStep, isComplete) and condition evaluation.
+	 * Used for graph navigation (getCurrentNode, isComplete) and condition evaluation.
 	 */
 	private buildExecutor(
 		workflow: SpaceWorkflow,
@@ -1011,27 +1106,27 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Returns true when every task in the step has reached a terminal state.
+	 * Returns true when every task in the node has reached a terminal state.
 	 *
 	 * Terminal statuses: completed, blocked, cancelled, archived.
 	 *
-	 * Used to implement the partial-failure gate: for multi-agent steps, the run
+	 * Used to implement the partial-failure gate: for multi-agent nodes, the run
 	 * must not be escalated to blocked until every sibling task has settled.
-	 * The caller is already inside `if (stepTasks.some(blocked))`, so
+	 * The caller is already inside `if (nodeTasks.some(blocked))`, so
 	 * "any failed" is guaranteed true at the call site — no need to return it.
 	 *
-	 * @param stepTasks - Pre-fetched tasks for the current step.
+	 * @param nodeTasks - Pre-fetched tasks for the current node.
 	 */
-	private areAllStepTasksTerminal(stepTasks: SpaceTask[]): boolean {
+	private areAllNodeTasksTerminal(nodeTasks: SpaceTask[]): boolean {
 		const TERMINAL = new Set<string>(['done', 'blocked', 'cancelled', 'archived']);
-		return stepTasks.every((t) => TERMINAL.has(t.status));
+		return nodeTasks.every((t) => TERMINAL.has(t.status));
 	}
 
 	/**
-	 * Resolves the channel topology for a workflow step and stores it in the run's
+	 * Resolves the channel topology for a workflow node and stores it in the run's
 	 * config for use by session group creation (Milestone 6).
 	 *
-	 * Resolves channel topology using `WorkflowNodeAgent.name` entries from the step
+	 * Resolves channel topology using `WorkflowNodeAgent.name` entries from the node
 	 * and the workflow-level channels array.
 	 * Stores the result under `run.config._resolvedChannels`.
 	 *

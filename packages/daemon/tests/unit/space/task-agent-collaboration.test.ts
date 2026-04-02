@@ -80,6 +80,35 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
 	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
+/**
+ * Ensure a node_execution record exists with the given status.
+ * If a record with the same (runId, nodeId, agentName) already exists,
+ * update its status. Otherwise, create a new record.
+ */
+function ensureNodeExec(
+	repo: NodeExecutionRepository,
+	runId: string,
+	nodeId: string,
+	agentName: string,
+	agentId: string | null,
+	status: string
+): void {
+	const existing = repo
+		.listByWorkflowRun(runId)
+		.find((e) => e.workflowNodeId === nodeId && e.agentName === agentName);
+	if (existing) {
+		repo.updateStatus(existing.id, status as import('@neokai/shared').NodeExecutionStatus);
+	} else {
+		repo.createOrIgnore({
+			workflowRunId: runId,
+			workflowNodeId: nodeId,
+			agentName,
+			agentId: agentId ?? null,
+			status: status as import('@neokai/shared').NodeExecutionStatus,
+		});
+	}
+}
+
 function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
 	return {
 		id: spaceId,
@@ -375,14 +404,17 @@ describe('Task Agent — full collaboration flow', () => {
 						status: 'done',
 						completedAt: Date.now(),
 					});
-					// Create matching node_execution record for CompletionDetector
-					ctx.nodeExecutionRepo.create({
-						workflowRunId: run.id,
-						workflowNodeId: wf.nodes[0].id,
-						agentName: 'Code',
-						agentId: ctx.coderAgentId,
-						status: 'done',
-					});
+					// Update node_execution record to 'done' for CompletionDetector.
+					// startWorkflowRun() creates the record with 'pending', so we
+					// must update it here.
+					ensureNodeExec(
+						ctx.nodeExecutionRepo,
+						run.id,
+						wf.nodes[0].id,
+						'Code',
+						ctx.coderAgentId,
+						'done'
+					);
 				},
 				completionDetector: new CompletionDetector(ctx.nodeExecutionRepo),
 			})
@@ -489,22 +521,24 @@ describe('Task Agent — full collaboration flow', () => {
 		const spawn2Parsed = JSON.parse(spawn2.content[0].text);
 		expect(spawn2Parsed.success).toBe(true);
 
-		// Create node_execution records for both nodes (pending status)
+		// Ensure node_execution records exist for both nodes (pending status)
 		// so CompletionDetector sees all nodes and checks their status
-		ctx.nodeExecutionRepo.create({
-			workflowRunId: run.id,
-			workflowNodeId: node1Id,
-			agentName: wf.nodes[0].name,
-			agentId: wf.nodes[0].agents[0].agentId,
-			status: 'pending',
-		});
-		ctx.nodeExecutionRepo.create({
-			workflowRunId: run.id,
-			workflowNodeId: node2Id,
-			agentName: wf.nodes[1].name,
-			agentId: wf.nodes[1].agents[0].agentId,
-			status: 'pending',
-		});
+		ensureNodeExec(
+			ctx.nodeExecutionRepo,
+			run.id,
+			node1Id,
+			wf.nodes[0].name,
+			wf.nodes[0].agents[0].agentId,
+			'pending'
+		);
+		ensureNodeExec(
+			ctx.nodeExecutionRepo,
+			run.id,
+			node2Id,
+			wf.nodes[1].name,
+			wf.nodes[1].agents[0].agentId,
+			'pending'
+		);
 
 		// Complete only node1 — report_workflow_done should be blocked
 		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(
@@ -702,14 +736,15 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		expect(stepTasks.length).toBeGreaterThan(0);
 		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'done', completedAt: Date.now() });
 
-		// Create node_execution record — 'done' is a terminal status for CompletionDetector
-		ctx.nodeExecutionRepo.create({
-			workflowRunId: run.id,
-			workflowNodeId: wf.nodes[0].id,
-			agentName: wf.nodes[0].name,
-			agentId: wf.nodes[0].agents[0].agentId,
-			status: 'done',
-		});
+		// Ensure node_execution record is 'done' — terminal status for CompletionDetector
+		ensureNodeExec(
+			ctx.nodeExecutionRepo,
+			run.id,
+			wf.nodes[0].id,
+			wf.nodes[0].name,
+			wf.nodes[0].agents[0].agentId,
+			'done'
+		);
 
 		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
@@ -832,22 +867,7 @@ describe('Task Agent — multi-agent node collaboration', () => {
 		// Idempotency: second spawn returns the same session (the last-created task)
 		expect(spawn2Parsed.alreadySpawned).toBe(true);
 
-		// Create node_execution records for both agents (pending status)
-		// so CompletionDetector sees all agents and checks their status
-		ctx.nodeExecutionRepo.create({
-			workflowRunId: run.id,
-			workflowNodeId: nodeId,
-			agentName: nodeTasks[0].title,
-			agentId: wf.nodes[0].agents[0].agentId,
-			status: 'pending',
-		});
-		ctx.nodeExecutionRepo.create({
-			workflowRunId: run.id,
-			workflowNodeId: nodeId,
-			agentName: nodeTasks[1].title,
-			agentId: wf.nodes[0].agents[1].agentId,
-			status: 'pending',
-		});
+		// Node_execution records are created by startWorkflowRun() with per-agent names.
 
 		// Mark one task completed, one still pending — detector should block
 		ctx.taskRepo.updateTask(nodeTasks[0].id, { status: 'done', completedAt: Date.now() });

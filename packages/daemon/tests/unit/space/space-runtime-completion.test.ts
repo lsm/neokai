@@ -119,7 +119,7 @@ function seedNodeExec(
 	const id = `exec-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	const now = Date.now();
 	db.prepare(
-		`INSERT INTO node_executions
+		`INSERT OR REPLACE INTO node_executions
 		     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
 		      agent_session_id, status, result, created_at, started_at,
 		      completed_at, updated_at)

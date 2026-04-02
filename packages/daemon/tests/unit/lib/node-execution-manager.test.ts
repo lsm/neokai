@@ -93,7 +93,7 @@ function seedExecution(
 		id,
 		overrides.workflowRunId ?? 'run-1',
 		overrides.workflowNodeId ?? 'node-1',
-		overrides.agentName ?? 'agent-1',
+		overrides.agentName ?? `agent-${id.slice(-6)}`,
 		overrides.status ?? 'pending',
 		now,
 		now

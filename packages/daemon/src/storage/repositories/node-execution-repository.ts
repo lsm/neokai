@@ -26,7 +26,8 @@ export class NodeExecutionRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
-	 * Create a new node execution record
+	 * Create a new node execution record.
+	 * Throws on constraint violations (e.g., duplicate UNIQUE key).
 	 */
 	create(params: CreateNodeExecutionParams): NodeExecution {
 		const id = generateUUID();
@@ -45,7 +46,7 @@ export class NodeExecutionRepository {
 				params.workflowRunId,
 				params.workflowNodeId,
 				params.agentName,
-				params.agentId,
+				params.agentId ?? null,
 				params.agentSessionId ?? null,
 				params.status ?? 'pending',
 				// result is only set via update() after the agent calls report_done
@@ -57,6 +58,61 @@ export class NodeExecutionRepository {
 			);
 
 		return this.getById(id)!;
+	}
+
+	/**
+	 * Create a node execution record, ignoring if a duplicate already exists.
+	 *
+	 * Uses INSERT OR IGNORE to handle concurrent activateNode() calls gracefully.
+	 * If a record with the same (workflow_run_id, workflow_node_id, agent_name)
+	 * already exists (UNIQUE constraint), the insert is silently skipped and
+	 * the existing record is returned.
+	 *
+	 * @returns The newly created record, or the existing record if a duplicate was found.
+	 */
+	createOrIgnore(params: CreateNodeExecutionParams): NodeExecution {
+		const id = generateUUID();
+		const now = Date.now();
+
+		this.db
+			.prepare(
+				`INSERT OR IGNORE INTO node_executions
+					    (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+					     agent_session_id, status, result, created_at, started_at,
+					     completed_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				id,
+				params.workflowRunId,
+				params.workflowNodeId,
+				params.agentName,
+				params.agentId ?? null,
+				params.agentSessionId ?? null,
+				params.status ?? 'pending',
+				null,
+				now,
+				null,
+				null,
+				now
+			);
+
+		// If the insert was ignored (duplicate), return the existing record.
+		const inserted = this.getById(id);
+		if (inserted) return inserted;
+
+		// Duplicate — find the existing record by unique key.
+		const existing = this.db
+			.prepare(
+				`SELECT * FROM node_executions
+				        WHERE workflow_run_id = ? AND workflow_node_id = ? AND agent_name = ?
+				        ORDER BY created_at ASC LIMIT 1`
+			)
+			.get(params.workflowRunId, params.workflowNodeId, params.agentName) as
+			| Record<string, unknown>
+			| undefined;
+
+		return existing ? this.rowToNodeExecution(existing) : this.getById(id)!;
 	}
 
 	/**

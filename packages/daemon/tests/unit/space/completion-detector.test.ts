@@ -86,7 +86,7 @@ function seedExecution(
 		id,
 		overrides.workflowRunId ?? 'run-1',
 		overrides.workflowNodeId ?? 'node-1',
-		overrides.agentName ?? 'agent-1',
+		overrides.agentName ?? `agent-${execCounter}`,
 		overrides.status ?? 'in_progress',
 		now,
 		now
