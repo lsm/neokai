@@ -460,17 +460,6 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
-
-	// Rooms: composite index for listRooms ORDER BY updated_at DESC WHERE status = 'active'
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_rooms_status_updated ON rooms(status, updated_at DESC)`);
-
-	// Sessions: index on type for listSessionsByType, findByRoomId
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(type)`);
-
-	// Sessions: composite index for listSessions ORDER BY last_active_at DESC
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_sessions_status_last_active ON sessions(status, last_active_at DESC)`
-	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler ON goals(mission_type, schedule_paused, next_run_at)`
 	);

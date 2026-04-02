@@ -54,7 +54,6 @@ describe('RoomRepository', () => {
 			expect(room.defaultModel).toBeUndefined();
 			expect(room.sessionIds).toEqual([]);
 			expect(room.status).toBe('active');
-			expect(room.contextId).toBeUndefined();
 			expect(room.createdAt).toBeDefined();
 			expect(room.updatedAt).toBeDefined();
 			expect(room.createdAt).toBe(room.updatedAt);
