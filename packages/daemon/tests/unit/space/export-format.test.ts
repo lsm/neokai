@@ -22,6 +22,7 @@ import {
 	validateExportedAgent,
 	validateExportedWorkflow,
 	validateExportBundle,
+	normalizeOverride,
 } from '../../../src/lib/space/export-format.ts';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
@@ -1876,6 +1877,225 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 			expect(ch.from).toBe('coder');
 			expect(ch.to).toBe('reviewer');
 			expect(ch.direction).toBe('bidirectional');
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// normalizeOverride
+// ---------------------------------------------------------------------------
+
+describe('normalizeOverride', () => {
+	test('returns undefined for undefined input', () => {
+		expect(normalizeOverride(undefined)).toBeUndefined();
+	});
+
+	test('converts plain string to { mode: "override", value }', () => {
+		const result = normalizeOverride('Be helpful.');
+		expect(result).toEqual({ mode: 'override', value: 'Be helpful.' });
+	});
+
+	test('passes through { mode: "override", value } as-is', () => {
+		const override = { mode: 'override' as const, value: 'You are strict.' };
+		const result = normalizeOverride(override);
+		expect(result).toBe(override);
+	});
+
+	test('passes through { mode: "expand", value } as-is', () => {
+		const override = { mode: 'expand' as const, value: 'Append this.' };
+		const result = normalizeOverride(override);
+		expect(result).toBe(override);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validateExportedWorkflow — legacy plain-string overrides
+// ---------------------------------------------------------------------------
+
+describe('validateExportedWorkflow — legacy plain-string overrides', () => {
+	test('accepts node agent with plain string systemPrompt', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [{ agentRef: 'Coder', name: 'coder', systemPrompt: 'You are helpful' }],
+					name: 'Step',
+				},
+			],
+			startNode: 'Step',
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.nodes[0].agents[0].systemPrompt).toBe('You are helpful');
+		}
+	});
+
+	test('accepts node agent with plain string instructions', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [{ agentRef: 'Coder', name: 'coder', instructions: 'Focus on tests.' }],
+					name: 'Step',
+				},
+			],
+			startNode: 'Step',
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.nodes[0].agents[0].instructions).toBe('Focus on tests.');
+		}
+	});
+
+	test('accepts both plain strings and { mode, value } objects in the same node', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{
+							agentRef: 'Coder',
+							name: 'coder',
+							systemPrompt: 'You are a coder',
+							instructions: { mode: 'override', value: 'Write tests' },
+						},
+						{
+							agentRef: 'Reviewer',
+							name: 'reviewer',
+							systemPrompt: { mode: 'expand', value: 'Extra context' },
+							instructions: 'Review thoroughly',
+						},
+					],
+					name: 'Step',
+				},
+			],
+			startNode: 'Step',
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			const agents = result.value.nodes[0].agents;
+			expect(agents[0].systemPrompt).toBe('You are a coder');
+			expect(agents[0].instructions).toEqual({ mode: 'override', value: 'Write tests' });
+			expect(agents[1].systemPrompt).toEqual({ mode: 'expand', value: 'Extra context' });
+			expect(agents[1].instructions).toBe('Review thoroughly');
+		}
+	});
+
+	test('rejects empty string for systemPrompt (min 1)', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [{ agentRef: 'Coder', name: 'coder', systemPrompt: '' }],
+					name: 'Step',
+				},
+			],
+			startNode: 'Step',
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+	});
+
+	test('rejects empty string for instructions (min 1)', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [{ agentRef: 'Coder', name: 'coder', instructions: '' }],
+					name: 'Step',
+				},
+			],
+			startNode: 'Step',
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+	});
+
+	test('plain string overrides survive export → JSON → validate round-trip', () => {
+		// Export produces { mode, value } — but validate should also accept the result
+		const workflow = makeWorkflow();
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedWorkflow(parsed);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			// Exported workflow has no per-slot overrides, so all should be absent
+			for (const node of result.value.nodes) {
+				for (const agent of node.agents) {
+					expect(agent.systemPrompt).toBeUndefined();
+					expect(agent.instructions).toBeUndefined();
+				}
+			}
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// exportWorkflow — endNode
+// ---------------------------------------------------------------------------
+
+describe('exportWorkflow — endNode', () => {
+	test('exports endNode when endNodeId is set (map UUID to node name)', () => {
+		const workflow = makeWorkflow({
+			endNodeId: 'node-uuid-3', // 'Plan step'
+		});
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		expect(exported.endNode).toBe('Plan step');
+	});
+
+	test('omits endNode when endNodeId is not set', () => {
+		const workflow = makeWorkflow();
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		expect(exported.endNode).toBeUndefined();
+	});
+
+	test('falls back to UUID when endNode name not found', () => {
+		const workflow = makeWorkflow({
+			endNodeId: 'node-uuid-missing',
+		});
+		const exported = exportWorkflow(workflow, []);
+
+		expect(exported.endNode).toBe('node-uuid-missing');
+	});
+
+	test('endNode round-trip: export → JSON → validate → verify endNode matches node name', () => {
+		const workflow = makeWorkflow({
+			endNodeId: 'node-uuid-3', // 'Plan step'
+		});
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedWorkflow(parsed);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.endNode).toBe('Plan step');
 		}
 	});
 });

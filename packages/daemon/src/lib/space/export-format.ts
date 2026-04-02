@@ -63,11 +63,19 @@ const workflowNodeAgentOverrideSchema = z.object({
 	value: z.string(),
 });
 
+/**
+ * Union schema accepting both legacy plain-string overrides and new `{ mode, value }` objects.
+ * Legacy exports stored systemPrompt/instructions as plain strings; the new format uses
+ * `WorkflowNodeAgentOverride { mode, value }`. Both are accepted on import for backward
+ * compatibility — plain strings are normalized to `{ mode: 'override', value }` during import.
+ */
+const overrideOrStringSchema = z.union([workflowNodeAgentOverrideSchema, z.string().min(1)]);
+
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),
 	name: z.string().min(1),
-	systemPrompt: workflowNodeAgentOverrideSchema.optional(),
-	instructions: workflowNodeAgentOverrideSchema.optional(),
+	systemPrompt: overrideOrStringSchema.optional(),
+	instructions: overrideOrStringSchema.optional(),
 });
 
 /**
@@ -138,6 +146,27 @@ const exportBundleBaseSchema = z.object({
 // ============================================================================
 
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+// ============================================================================
+// Normalization helpers
+// ============================================================================
+
+/**
+ * Normalize a systemPrompt or instructions override value from the exported format.
+ *
+ * The Zod schema accepts both plain strings (legacy) and `{ mode, value }` objects (new).
+ * This helper converts the union to the canonical `WorkflowNodeAgentOverride` format:
+ * - Plain string → `{ mode: 'override', value: <string> }`
+ * - `{ mode, value }` object → passed through as-is
+ * - `undefined` → `undefined`
+ */
+export function normalizeOverride(
+	value: import('@neokai/shared').WorkflowNodeAgentOverride | string | undefined
+): import('@neokai/shared').WorkflowNodeAgentOverride | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value === 'string') return { mode: 'override', value };
+	return value;
+}
 
 // ============================================================================
 // Export functions
