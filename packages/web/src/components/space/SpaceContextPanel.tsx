@@ -27,14 +27,16 @@ function taskStatusColor(status: string): string {
 	switch (status) {
 		case 'in_progress':
 			return 'bg-blue-400';
-		case 'review':
-			return 'bg-amber-400';
-		case 'pending':
+		case 'open':
 			return 'bg-gray-400';
-		case 'needs_attention':
+		case 'done':
+			return 'bg-green-400';
+		case 'blocked':
 			return 'bg-red-400';
-		case 'draft':
+		case 'cancelled':
 			return 'bg-gray-500';
+		case 'archived':
+			return 'bg-gray-600';
 		default:
 			return 'bg-gray-500';
 	}

@@ -13,7 +13,7 @@ import type {
 	SpaceAgent,
 	WorkflowNodeAgent,
 	WorkflowChannel,
-	SpaceTaskStatus,
+	NodeExecutionStatus,
 } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 
@@ -70,11 +70,11 @@ export interface ConditionDraft {
 export interface AgentTaskState {
 	/** Matches WorkflowNodeAgent.name; null means single-agent node */
 	agentName: string | null;
-	status: SpaceTaskStatus;
+	status: NodeExecutionStatus;
 	completionSummary?: string | null;
 }
 
-/** Returns true when all provided agent states have status === 'completed'. */
+/** Returns true when all provided agent states have status === 'done'. */
 export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
 	return states.length > 0 && states.every((s) => s.status === 'done');
 }

@@ -50,7 +50,7 @@ const CANVAS_PADDING = 40;
 // Types
 // ============================================================================
 
-type NodeStatus = 'pending' | 'active' | 'completed' | 'failed';
+type NodeStatus = 'pending' | 'active' | 'done' | 'failed';
 
 type GateStatus = 'open' | 'blocked' | 'waiting_human';
 
@@ -637,7 +637,7 @@ function NodeBox({
 				/>
 			);
 			break;
-		case 'completed': {
+		case 'done': {
 			borderColor = '#16a34a';
 			bgColor = '#052e16';
 			labelColor = '#86efac';
@@ -817,7 +817,7 @@ function getNodeStatus(
 		)
 	) {
 		// All terminal — check if they succeeded
-		if (nodeTasks.some((t) => t.status === 'done')) return 'completed';
+		if (nodeTasks.some((t) => t.status === 'done')) return 'done';
 	}
 
 	if (run?.status === 'blocked' || run?.status === 'cancelled') {
