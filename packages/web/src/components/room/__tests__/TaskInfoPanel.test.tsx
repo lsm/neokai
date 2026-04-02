@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { TaskInfoPanel } from '../TaskInfoPanel';
+import type { TaskViewVersionContext } from '../TaskViewToggle';
 
 // Mock TaskViewModelSelector to avoid connectionManager dependency in tests
 vi.mock('../TaskViewModelSelector.tsx', () => ({
@@ -798,6 +799,56 @@ describe('TaskInfoPanel', () => {
 			);
 
 			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+	});
+
+	describe('View version toggle', () => {
+		it('should show sub-label "V1 Timeline \u2192 V2 Turn-based" when version is v1', () => {
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v1',
+				onToggleVersion: vi.fn(),
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).toContain('V1 Timeline \u2192 V2 Turn-based');
+		});
+
+		it('should show sub-label "V2 Turn-based \u2192 V1 Timeline" when version is v2', () => {
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v2',
+				onToggleVersion: vi.fn(),
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).toContain('V2 Turn-based \u2192 V1 Timeline');
+		});
+
+		it('should not show view toggle section when viewVersion is omitted', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('Timeline');
+			expect(container.textContent).not.toContain('Turn-based');
+			expect(container.querySelector('[data-testid="task-view-toggle"]')).toBeNull();
+		});
+
+		it('should call onToggleVersion when toggle button is clicked', () => {
+			const onToggleVersion = vi.fn();
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v1',
+				onToggleVersion,
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			fireEvent.click(container.querySelector('[data-testid="task-view-toggle"]')!);
+			expect(onToggleVersion).toHaveBeenCalledOnce();
 		});
 	});
 });
