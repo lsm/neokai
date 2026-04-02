@@ -1200,3 +1200,266 @@ describe('validateGate', () => {
 		expect(errors.some((e) => e.includes('at least one'))).toBe(false);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// evaluateGate — script returns non-JSON stdout (empty data merge)
+// ---------------------------------------------------------------------------
+
+describe('GateEvaluator — evaluateGate (non-JSON stdout)', () => {
+	const mockContext: GateScriptExecutorContext = {
+		workspacePath: '/workspace',
+		gateId: 'g1',
+		runId: 'run-1',
+	};
+
+	test('executor returns empty data (non-JSON stdout) → field evaluation uses original data', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: { interpreter: 'bash', source: 'echo "not json"' },
+			resetOnCycle: false,
+		};
+
+		// Simulates gate-script-executor behavior when stdout is not valid JSON:
+		// parseJsonStdout returns {}, so executor returns { success: true, data: {} }
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: {},
+		});
+
+		// Original data has approved: true
+		const result = await evaluateGate(gate, { approved: true }, executor, mockContext);
+		expect(result.open).toBe(true);
+	});
+
+	test('executor returns empty data → field evaluation fails with original data', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: { interpreter: 'bash', source: 'echo "not json"' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: {},
+		});
+
+		// Original data has approved: false — should remain false after merge
+		const result = await evaluateGate(gate, { approved: false }, executor, mockContext);
+		expect(result.open).toBe(false);
+		expect(result.reason).toContain('approved');
+	});
+
+	test('executor returns empty data and no original data → field evaluation uses empty object', async () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: { interpreter: 'bash', source: 'echo "plaintext"' },
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => ({
+			success: true,
+			data: {},
+		});
+
+		const result = await evaluateGate(gate, {}, executor, mockContext);
+		expect(result.open).toBe(false);
+		expect(result.reason).toContain('does not exist');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Backward compatibility — gates without script field
+// ---------------------------------------------------------------------------
+
+describe('GateEvaluator — backward compatibility (gates without script)', () => {
+	test('gate without script field evaluates fields normally', async () => {
+		const gate: Gate = {
+			id: 'legacy-gate',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		};
+
+		const result = await evaluateGate(gate, { approved: true });
+		expect(result.open).toBe(true);
+	});
+
+	test('gate with script: undefined evaluates same as no script', async () => {
+		const gate: Gate = {
+			id: 'no-script-gate',
+			fields: [{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: undefined,
+			resetOnCycle: false,
+		};
+
+		// Script is undefined → scriptExecutor is never called
+		const executor: GateScriptExecutorFn = async () => {
+			throw new Error('should not be called');
+		};
+		const result = await evaluateGate(gate, { ready: true }, executor);
+		expect(result.open).toBe(true);
+	});
+
+	test('gate with script: null evaluates same as no script', async () => {
+		const gate: Gate = {
+			id: 'null-script-gate',
+			fields: [{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: null,
+			resetOnCycle: false,
+		};
+
+		const executor: GateScriptExecutorFn = async () => {
+			throw new Error('should not be called');
+		};
+		const result = await evaluateGate(gate, { ready: true }, executor);
+		expect(result.open).toBe(true);
+	});
+
+	test('gate with empty fields and no script opens (legacy runtime behavior)', async () => {
+		// At runtime, gates loaded from storage may have fields: [] and no script.
+		// evaluateFields handles this: empty array → no checks → open.
+		// This is different from validateGate (creation-time), which rejects it.
+		const gate: Gate = {
+			id: 'legacy-empty-gate',
+			fields: [],
+			resetOnCycle: false,
+		};
+
+		const result = await evaluateGate(gate, {});
+		expect(result.open).toBe(true);
+	});
+
+	test('gate with no fields key and no script opens (missing fields defaults to [])', async () => {
+		// Fields is optional on Gate; when absent, evaluateFields uses ?? []
+		const gate: Gate = {
+			id: 'no-fields-key-gate',
+			resetOnCycle: false,
+		};
+
+		const result = await evaluateGate(gate, {});
+		expect(result.open).toBe(true);
+	});
+
+	test('field-only gate with scriptExecutor provided is never called', async () => {
+		const gate: Gate = {
+			id: 'field-only-with-executor',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: '==', value: true } }],
+			resetOnCycle: false,
+		};
+
+		let called = false;
+		const executor: GateScriptExecutorFn = async () => {
+			called = true;
+			return { success: true, data: {} };
+		};
+
+		await evaluateGate(gate, { done: true }, executor);
+		expect(called).toBe(false);
+	});
+
+	test('gate with label and color but no script evaluates fields', async () => {
+		const gate: Gate = {
+			id: 'styled-gate',
+			label: 'Approval',
+			color: '#22c55e',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		};
+
+		const result = await evaluateGate(gate, { approved: true });
+		expect(result.open).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// isChannelOpen — remains synchronous
+// ---------------------------------------------------------------------------
+
+describe('GateEvaluator — isChannelOpen synchronous guarantee', () => {
+	test('isChannelOpen returns a plain object (not a Promise)', () => {
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b' };
+		const result = isChannelOpen(channel, new Map());
+
+		// Verify it's not a thenable (Promise)
+		expect(typeof result.then).toBe('undefined');
+		expect(result.open).toBe(true);
+	});
+
+	test('isChannelOpen with gated channel returns plain object (not a Promise)', () => {
+		const gate: Gate = {
+			id: 'g1',
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		};
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'g1' };
+		const gates = new Map<string, Gate>([['g1', gate]]);
+
+		const result = isChannelOpen(channel, gates, new Map());
+
+		expect(typeof result.then).toBe('undefined');
+		expect(result.open).toBe(false);
+	});
+
+	test('isChannelOpen ignores gate script — no async execution', () => {
+		const gate: Gate = {
+			id: 'g1',
+			script: { interpreter: 'bash', source: 'echo fail; exit 1' },
+			fields: [
+				{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		};
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'g1' };
+		const gates = new Map<string, Gate>([['g1', gate]]);
+
+		// Gate has a script that would fail, but isChannelOpen never runs it.
+		// It only evaluates fields, and with approved: true the gate opens.
+		const gateData = new Map<string, Record<string, unknown>>([['g1', { approved: true }]]);
+		const result = isChannelOpen(channel, gates, gateData);
+
+		expect(typeof result.then).toBe('undefined');
+		expect(result.open).toBe(true);
+	});
+
+	test('isChannelOpen with script-only gate (no fields) opens without running script', () => {
+		const gate: Gate = {
+			id: 'g1',
+			script: { interpreter: 'bash', source: 'exit 1' },
+			resetOnCycle: false,
+		};
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'g1' };
+		const gates = new Map<string, Gate>([['g1', gate]]);
+
+		// Script-only gate: isChannelOpen uses evaluateFields which checks gate.fields ?? [].
+		// Empty fields → open. Script is never run.
+		const result = isChannelOpen(channel, gates);
+
+		expect(typeof result.then).toBe('undefined');
+		expect(result.open).toBe(true);
+	});
+
+	test('isChannelOpen works with gate that has optional fields (undefined)', () => {
+		const gate: Gate = {
+			id: 'g1',
+			resetOnCycle: false,
+		};
+		const channel: Channel = { id: 'ch-1', from: 'a', to: 'b', gateId: 'g1' };
+		const gates = new Map<string, Gate>([['g1', gate]]);
+
+		const result = isChannelOpen(channel, gates);
+		expect(typeof result.then).toBe('undefined');
+		expect(result.open).toBe(true);
+	});
+});
