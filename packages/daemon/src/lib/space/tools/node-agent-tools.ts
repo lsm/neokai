@@ -580,9 +580,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				const record = gateDataRepo.get(workflowRunId, gate.id);
 				return {
 					gateId: gate.id,
-					fields: gate.fields,
+					fields: gate.fields ?? [],
 					description: gate.description ?? null,
-					currentData: record?.data ?? computeGateDefaults(gate.fields),
+					currentData: record?.data ?? computeGateDefaults(gate.fields ?? []),
 				};
 			});
 			return jsonResult({
@@ -618,7 +618,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 
 			const record = gateDataRepo.get(workflowRunId, gateId);
-			const currentData = record?.data ?? computeGateDefaults(gateDef.fields);
+			const currentData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
 			// Evaluate current gate status
 			const evalResult = evaluateGate(gateDef, currentData);
@@ -626,7 +626,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			return jsonResult({
 				success: true,
 				gateId,
-				fields: gateDef.fields,
+				fields: gateDef.fields ?? [],
 				data: currentData,
 				gateOpen: evalResult.open,
 				reason: evalResult.reason ?? null,
