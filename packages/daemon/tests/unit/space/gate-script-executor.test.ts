@@ -34,6 +34,20 @@ const CTX: GateScriptContext = {
 	runId: 'run-456',
 };
 
+/** Probes whether python3 is available on this system. */
+async function isPython3Available(): Promise<boolean> {
+	try {
+		const proc = Bun.spawn(['python3', '-c', 'print("hello")'], {
+			stdout: 'ignore',
+			stderr: 'ignore',
+		});
+		await proc.exited;
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 // ---------------------------------------------------------------------------
 // buildRestrictedEnv
 // ---------------------------------------------------------------------------
@@ -655,8 +669,11 @@ describe('executeGateScript — integration', () => {
 	});
 
 	test('maxBuffer enforcement: script outputting >1MB does not crash', async () => {
-		// Generate a JSON payload larger than 1MB (MAX_BUFFER_BYTES = 1_048_576)
-		// The output will be truncated by collectWithMaxBuffer, resulting in invalid JSON
+		// Generate a JSON payload larger than 1MB (MAX_BUFFER_BYTES = 1_048_576).
+		// The output will be truncated by collectWithMaxBuffer at a byte boundary.
+		// Truncation does NOT guarantee invalid JSON (a cut after `}` would still parse),
+		// but with this specific payload ({ data: 'x'.repeat(2_000_000) }) the truncated
+		// prefix is almost certainly missing its closing braces, so parseJsonStdout returns null.
 		const r = await executeGateScript(
 			{
 				interpreter: 'node',
@@ -667,7 +684,7 @@ describe('executeGateScript — integration', () => {
 			} as GateScript,
 			CTX
 		);
-		// Should not crash — process exits 0, truncated stdout means JSON parse fails → empty data
+		// Should not crash — process exits 0, truncated stdout fails JSON parse → empty data
 		expect(r.success).toBe(true);
 		expect(r.data).toEqual({});
 	});
@@ -686,8 +703,9 @@ describe('executeGateScript — integration', () => {
 		expect(r.data).toEqual({});
 	});
 
-	test('maxBuffer enforcement: stderr exceeding 1MB is truncated', async () => {
-		// Script exits non-zero with >1MB stderr — truncated stderr used as error
+	test('maxBuffer enforcement: stderr exceeding 1MB is truncated to boundary', async () => {
+		// Script exits non-zero with >1MB stderr (base64-encoded 2MB random data produces
+		// ~2.7MB of text). The truncated stderr is used as the error message.
 		const r = await executeGateScript(
 			{
 				interpreter: 'bash',
@@ -696,8 +714,10 @@ describe('executeGateScript — integration', () => {
 			CTX
 		);
 		expect(r.success).toBe(false);
-		// stderr is truncated to 1MB, but should still contain some base64 output
-		expect(r.error!.length).toBeLessThanOrEqual(1_048_576);
+		expect(r.error).toBeDefined();
+		// Truncation should have fired: stderr must be non-empty and at the exact 1MB cap
+		expect(r.error!.length).toBeGreaterThan(0);
+		expect(r.error!.length).toBe(1_048_576);
 	});
 
 	test('workspacePath is set as cwd for bash script', async () => {
@@ -723,35 +743,6 @@ describe('executeGateScript — integration', () => {
 		expect(r.success).toBe(true);
 		expect(r.data['cwd']).toBe(realpathSync('/tmp'));
 	});
-
-	test('workspacePath is set as cwd for python3 script (if available)', async () => {
-		let python3Available = false;
-		try {
-			const proc = Bun.spawn(['python3', '-c', 'print("hello")'], {
-				stdout: 'ignore',
-				stderr: 'ignore',
-			});
-			await proc.exited;
-			python3Available = true;
-		} catch {
-			// python3 not available
-		}
-
-		if (!python3Available) {
-			console.log('[SKIP] python3 not available on this system');
-			return;
-		}
-
-		const r = await executeGateScript(
-			{
-				interpreter: 'python3',
-				source: 'import json, os; print(json.dumps({"cwd": os.getcwd()}))',
-			} as GateScript,
-			CTX
-		);
-		expect(r.success).toBe(true);
-		expect(r.data['cwd']).toBe(realpathSync('/tmp'));
-	});
 });
 
 // ---------------------------------------------------------------------------
@@ -760,21 +751,7 @@ describe('executeGateScript — integration', () => {
 
 describe('executeGateScript — python3', () => {
 	test('successful python3 script with JSON stdout', async () => {
-		// Probe for python3 availability — skip the entire test if missing
-		let python3Available = false;
-		try {
-			const proc = Bun.spawn(['python3', '-c', 'print("hello")'], {
-				stdout: 'ignore',
-				stderr: 'ignore',
-			});
-			await proc.exited;
-			python3Available = true;
-		} catch {
-			// python3 not available
-		}
-
-		if (!python3Available) {
-			// Log skip reason for CI visibility — bun:test does not have test.skip()
+		if (!(await isPython3Available())) {
 			console.log('[SKIP] python3 not available on this system');
 			return;
 		}
@@ -788,5 +765,22 @@ describe('executeGateScript — python3', () => {
 		);
 		expect(r.success).toBe(true);
 		expect(r.data['python']).toBe(true);
+	});
+
+	test('workspacePath is set as cwd for python3 script', async () => {
+		if (!(await isPython3Available())) {
+			console.log('[SKIP] python3 not available on this system');
+			return;
+		}
+
+		const r = await executeGateScript(
+			{
+				interpreter: 'python3',
+				source: 'import json, os; print(json.dumps({"cwd": os.getcwd()}))',
+			} as GateScript,
+			CTX
+		);
+		expect(r.success).toBe(true);
+		expect(r.data['cwd']).toBe(realpathSync('/tmp'));
 	});
 });
