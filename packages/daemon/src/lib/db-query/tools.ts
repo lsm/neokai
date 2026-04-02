@@ -100,19 +100,25 @@ function findTopLevelKeyword(sql: string, keyword: string): number {
 
 /**
  * Rewrite ALL SELECT column lists to `*` so that all columns
-/**
- * Rewrite ALL SELECT column lists to `*` so that all columns
  * (including scope columns needed by the outer filter) are available.
  * This handles both the main SELECT and SELECTs inside CTE bodies,
- * subqueries, and nested parentheses.
+ * subqueries, and nested parentheses. Preserves DISTINCT when present.
  *
  * Strategy: collect all (selectPos, fromPos) pairs in a single forward pass
  * (at any depth, respecting string literals), then replace from right to
- * left to preserve string positions.
+ * left to preserve string positions. The outer loop walks left-to-right, so
+ * pairs are in ascending order by selectStart — this invariant is required
+ * for the right-to-left replacement to be correct.
  */
 function rewriteSelectToStar(sql: string): string {
-	// Collect all SELECT→FROM pairs at any depth (except inside string literals)
-	const pairs: Array<{ selectStart: number; selectEnd: number; fromStart: number }> = [];
+	// Collect all SELECT→FROM pairs at any depth (except inside string literals).
+	// Each pair records selectStart (position of S in SELECT), fromStart
+	// (position of F in FROM), and whether DISTINCT follows SELECT.
+	const pairs: Array<{
+		selectStart: number;
+		fromStart: number;
+		hasDistinct: boolean;
+	}> = [];
 	const upper = sql.toUpperCase();
 	let depth = 0;
 	let inString = false;
@@ -154,6 +160,10 @@ function rewriteSelectToStar(sql: string): string {
 				const selectEnd = i + 6;
 				const targetDepth = depth;
 
+				// Check for DISTINCT keyword immediately after SELECT
+				const afterSelect = sql.slice(selectEnd).trimStart();
+				const hasDistinct = /^DISTINCT\b/i.test(afterSelect);
+
 				// Find matching FROM at the same depth as this SELECT
 				let fDepth = depth;
 				let fInString = false;
@@ -185,7 +195,7 @@ function rewriteSelectToStar(sql: string): string {
 					}
 				}
 				if (fromStart !== -1) {
-					pairs.push({ selectStart: i, selectEnd, fromStart });
+					pairs.push({ selectStart: i, fromStart, hasDistinct });
 				}
 			}
 		}
@@ -193,11 +203,14 @@ function rewriteSelectToStar(sql: string): string {
 
 	if (pairs.length === 0) return sql;
 
-	// Replace from right to left to preserve positions
+	// Replace from right to left to preserve positions. Pairs are in ascending
+	// order by selectStart (outer loop walks left-to-right), so processing
+	// right-to-left ensures earlier positions remain valid after each replacement.
 	let result = sql;
 	for (let p = pairs.length - 1; p >= 0; p--) {
-		const { selectStart, fromStart } = pairs[p];
-		result = `${result.slice(0, selectStart)}SELECT * ${result.slice(fromStart)}`;
+		const { selectStart, fromStart, hasDistinct } = pairs[p];
+		const replacement = hasDistinct ? 'SELECT DISTINCT * ' : 'SELECT * ';
+		result = `${result.slice(0, selectStart)}${replacement}${result.slice(fromStart)}`;
 	}
 
 	return result;
@@ -286,7 +299,8 @@ function rewriteScopedQuery(
 	// No scope filters needed (global scope or all tables unscoped)
 	if (scopeFilterSet.size === 0) {
 		const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
-		const effectiveLimit = Math.min(existingLimit ?? DEFAULT_LIMIT, MAX_LIMIT);
+		// Use the stricter of the arg-level limit and the SQL-embedded limit
+		const effectiveLimit = Math.min(cappedLimit, Math.min(existingLimit ?? MAX_LIMIT, MAX_LIMIT));
 		return {
 			sql: `${strippedSql} LIMIT ${effectiveLimit}`,
 			params: userParams,

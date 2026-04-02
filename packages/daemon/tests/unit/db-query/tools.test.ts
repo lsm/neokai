@@ -839,6 +839,115 @@ describe('db-query tools', () => {
 				}
 			});
 		});
+
+		describe('SELECT DISTINCT preserved in scope wrapping', () => {
+			it('DISTINCT is preserved in scoped queries', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT DISTINCT status FROM tasks',
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				// room-1 has tasks with 'in_progress' and 'pending' — 2 distinct statuses
+				expect(parsed.rows).toHaveLength(2);
+				const statuses = parsed.rows.map((r: Record<string, unknown>) => r.status);
+				expect(statuses.sort()).toEqual(['in_progress', 'pending']);
+			});
+		});
+
+		describe('quoted identifiers rejected', () => {
+			it('rejects double-quoted table names', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM "tasks"' });
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('Quoted identifiers');
+			});
+
+			it('rejects backtick-quoted table names', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({ sql: 'SELECT * FROM `tasks`' });
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('Quoted identifiers');
+			});
+		});
+
+		describe('OFFSET rejected', () => {
+			it('rejects queries with OFFSET clause', async () => {
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM rooms LIMIT 10 OFFSET 5',
+				});
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('OFFSET');
+			});
+		});
+
+		describe('mixed direct/indirect scope JOIN', () => {
+			it('JOINs direct-scope and indirect-scope tables correctly', async () => {
+				seedMissionExecutions(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// goals (direct scope via room_id) JOIN mission_executions (indirect via goals)
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM goals JOIN mission_executions ON goals.id = mission_executions.goal_id',
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				// room-1 goals: goal-1, goal-2; goal-1 → exec-1, exec-2; goal-2 → exec-3
+				expect(parsed.rows).toHaveLength(3);
+			});
+		});
+
+		describe('global scope limit arg', () => {
+			it('respects explicit limit arg in global scope', async () => {
+				seedRooms(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				// 3 rooms in global scope, limit to 2
+				const result = await handlers.db_query({ sql: 'SELECT * FROM rooms', limit: 2 });
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBe(2);
+				expect(parsed.truncated).toBe(true);
+			});
+
+			it('uses stricter of arg limit and SQL LIMIT in global scope', async () => {
+				seedRooms(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
+					db
+				);
+				// SQL has LIMIT 10, arg has limit 2 — should use 2 (stricter)
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM rooms LIMIT 10',
+					limit: 2,
+				});
+				const parsed = parseResult(result);
+
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBe(2);
+			});
+		});
 	});
 
 	// ── db_list_tables ─────────────────────────────────────────────────────────

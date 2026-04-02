@@ -511,8 +511,8 @@ describe('validateSql — edge cases', () => {
 		expect(result.tableRefs).toEqual(['tasks', 'sessions']);
 	});
 
-	test('ORDER BY, LIMIT, OFFSET preserved', () => {
-		const result = validateSql('SELECT * FROM tasks ORDER BY created_at DESC LIMIT 10 OFFSET 20');
+	test('ORDER BY, LIMIT preserved (no OFFSET)', () => {
+		const result = validateSql('SELECT * FROM tasks ORDER BY created_at DESC LIMIT 10');
 		expect(result.valid).toBe(true);
 		expect(result.tableRefs).toEqual(['tasks']);
 	});
@@ -529,5 +529,69 @@ describe('validateSql — edge cases', () => {
 		const result = validateSql('SELECT * FROM tasks UNION SELECT * FROM archived_tasks');
 		expect(result.valid).toBe(true);
 		expect(result.tableRefs).toEqual(['tasks', 'archived_tasks']);
+	});
+});
+
+// ============ Quoted identifiers rejected ============
+
+describe('validateSql — quoted identifiers rejected', () => {
+	test('rejects double-quoted table name', () => {
+		const result = validateSql('SELECT * FROM "tasks"');
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('Quoted identifiers');
+	});
+
+	test('rejects backtick-quoted table name', () => {
+		const result = validateSql('SELECT * FROM `tasks`');
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('Quoted identifiers');
+	});
+
+	test('rejects double-quoted column in WHERE', () => {
+		const result = validateSql('SELECT * FROM tasks WHERE "status" = ?');
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('Quoted identifiers');
+	});
+
+	test('double quotes inside string literals are allowed', () => {
+		const result = validateSql('SELECT * FROM tasks WHERE name = \'say "hello"\'');
+		expect(result.valid).toBe(true);
+	});
+});
+
+// ============ OFFSET rejected ============
+
+describe('validateSql — OFFSET rejected', () => {
+	test('rejects OFFSET clause', () => {
+		const result = validateSql('SELECT * FROM tasks LIMIT 10 OFFSET 20');
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('OFFSET');
+	});
+
+	test('rejects OFFSET without LIMIT', () => {
+		const result = validateSql('SELECT * FROM tasks OFFSET 5');
+		expect(result.valid).toBe(false);
+		expect(result.error).toContain('OFFSET');
+	});
+
+	test('allows OFFSET keyword inside string literal', () => {
+		const result = validateSql("SELECT * FROM tasks WHERE notes = 'see OFFSET clause'");
+		expect(result.valid).toBe(true);
+	});
+});
+
+// ============ DISTINCT preserved ============
+
+describe('validateSql — DISTINCT queries', () => {
+	test('accepts SELECT DISTINCT', () => {
+		const result = validateSql('SELECT DISTINCT status FROM tasks');
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+	});
+
+	test('accepts SELECT DISTINCT with WHERE', () => {
+		const result = validateSql('SELECT DISTINCT room_id FROM tasks WHERE status = ?');
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
 	});
 });

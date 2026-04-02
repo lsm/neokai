@@ -397,6 +397,26 @@ export function validateSql(sql: string): SqlValidationResult {
 		};
 	}
 
+	// Reject double-quoted identifiers ("table") and backtick-quoted identifiers
+	// (`table`). These bypass table-ref extraction and scope filtering.
+	if (withoutStrings.includes('"') || withoutStrings.includes('`')) {
+		return {
+			valid: false,
+			error: 'Quoted identifiers (double-quoted or backtick) are not allowed',
+			tableRefs: [],
+		};
+	}
+
+	// Reject OFFSET — the subquery wrapper strips LIMIT and would silently
+	// drop OFFSET, breaking pagination without any indication to the caller.
+	if (/\bOFFSET\b/i.test(withoutStrings)) {
+		return {
+			valid: false,
+			error: 'OFFSET is not supported (use LIMIT only)',
+			tableRefs: [],
+		};
+	}
+
 	// Normalize whitespace
 	const cleaned = normalizeWhitespace(withoutStrings);
 
