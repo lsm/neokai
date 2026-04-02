@@ -13,10 +13,10 @@
  * - Indexes are created
  *
  * NOTE: Several columns originally added by M29 were subsequently removed:
- * - space_tasks.custom_agent_id, workflow_node_id — removed by M71
- * - space_workflow_runs.config — removed by M71
- * - space_tasks status values changed by M71 ('pending'→'open', 'completed'→'done', etc.)
- * Tests have been updated to reflect the post-M71 schema.
+ * - space_tasks.custom_agent_id, workflow_node_id — removed by M73
+ * - space_workflow_runs.config — removed by M73
+ * - space_tasks status values changed by M73 ('pending'→'open', 'completed'→'done', etc.)
+ * Tests have been updated to reflect the post-M73 schema.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -100,10 +100,10 @@ describe('Migration 29: Space system tables', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// space_tasks columns — post-M71 schema
+	// space_tasks columns — post-M73 schema
 	// -------------------------------------------------------------------------
 
-	test('space_tasks does NOT have custom_agent_id column after M71 removed it', () => {
+	test('space_tasks does NOT have custom_agent_id column after M73 removed it', () => {
 		runMigrations(db, () => {});
 		expect(columnExists(db, 'space_tasks', 'custom_agent_id')).toBe(false);
 	});
@@ -150,10 +150,10 @@ describe('Migration 29: Space system tables', () => {
 			)
 		`);
 
-		// M29 should add the missing column so intermediate migrations (M30–M70) work.
-		// After M71 runs, it removes the column — but M29 must not throw in the process.
+		// M29 should add the missing column so intermediate migrations (M30–M72) work.
+		// After M73 runs, it removes the column — but M29 must not throw in the process.
 		expect(() => runMigrations(db, () => {})).not.toThrow();
-		// M71 removes custom_agent_id, so it should NOT exist after all migrations.
+		// M73 removes custom_agent_id, so it should NOT exist after all migrations.
 		expect(columnExists(db, 'space_tasks', 'custom_agent_id')).toBe(false);
 	});
 
@@ -162,18 +162,18 @@ describe('Migration 29: Space system tables', () => {
 		expect(columnExists(db, 'space_tasks', 'workflow_run_id')).toBe(true);
 	});
 
-	test('space_tasks does NOT have workflow_node_id column after M71 removed it', () => {
+	test('space_tasks does NOT have workflow_node_id column after M73 removed it', () => {
 		runMigrations(db, () => {});
 		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
 	});
 
-	test('space_tasks has labels column (added by M71)', () => {
+	test('space_tasks has labels column (added by M73)', () => {
 		runMigrations(db, () => {});
 		expect(columnExists(db, 'space_tasks', 'labels')).toBe(true);
 	});
 
 	// -------------------------------------------------------------------------
-	// space_workflow_runs state tracking — post-M71 schema
+	// space_workflow_runs state tracking — post-M73 schema
 	// -------------------------------------------------------------------------
 
 	test('space_workflow_runs has all required workflow tracking columns', () => {
@@ -189,14 +189,14 @@ describe('Migration 29: Space system tables', () => {
 			'created_at',
 			'updated_at',
 			'completed_at',
-			'started_at', // added by M71
+			'started_at', // added by M73
 		];
 
 		for (const col of requiredCols) {
 			expect(columnExists(db, 'space_workflow_runs', col)).toBe(true);
 		}
 
-		// M71 removed config, iteration_count, max_iterations, goal_id, current_step_index, current_node_id
+		// M73 removed config, iteration_count, max_iterations, goal_id, current_step_index, current_node_id
 		expect(columnExists(db, 'space_workflow_runs', 'config')).toBe(false);
 		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
 		expect(columnExists(db, 'space_workflow_runs', 'current_step_index')).toBe(false);
@@ -229,7 +229,7 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('wf-1', 's-1', 'Workflow 1', ${now}, ${now})`
 		);
 
-		// Valid status (new M71 values)
+		// Valid status (new M73 values)
 		expect(() => {
 			db.exec(
 				`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
@@ -237,7 +237,7 @@ describe('Migration 29: Space system tables', () => {
 			);
 		}).not.toThrow();
 
-		// 'done' is now a valid status (was 'completed' before M71)
+		// 'done' is now a valid status (was 'completed' before M73)
 		expect(() => {
 			db.exec(
 				`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
@@ -255,7 +255,7 @@ describe('Migration 29: Space system tables', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Indexes — post-M71 schema
+	// Indexes — post-M73 schema
 	// -------------------------------------------------------------------------
 
 	test('expected indexes are created', () => {
@@ -277,7 +277,7 @@ describe('Migration 29: Space system tables', () => {
 			expect(indexExists(db, idx)).toBe(true);
 		}
 
-		// These indexes were removed (the columns they referenced were dropped by M71)
+		// These indexes were removed (the columns they referenced were dropped by M73)
 		expect(indexExists(db, 'idx_space_tasks_workflow_node_id')).toBe(false);
 		expect(indexExists(db, 'idx_space_tasks_custom_agent_id')).toBe(false);
 	});
@@ -383,7 +383,7 @@ describe('Migration 29: Space system tables', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// CHECK constraints on space_tasks — post-M71 values
+	// CHECK constraints on space_tasks — post-M73 values
 	// -------------------------------------------------------------------------
 
 	test('space_tasks status CHECK constraint is enforced', () => {
@@ -395,7 +395,7 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('sp-3', 'check-space', '/workspace/checks', 'Check Space', ${now}, ${now})`
 		);
 
-		// Valid status values (new M71 values)
+		// Valid status values (new M73 values)
 		let taskNum = 0;
 		for (const status of ['open', 'in_progress', 'done', 'blocked', 'cancelled', 'archived']) {
 			taskNum++;
