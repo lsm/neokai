@@ -26,6 +26,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
@@ -43,6 +44,7 @@ export interface GlobalSpacesToolsConfig {
 	runtime: SpaceRuntime;
 	workflowManager: SpaceWorkflowManager;
 	taskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Node execution repository for querying node execution records. */
 	nodeExecutionRepo: NodeExecutionRepository;
@@ -87,6 +89,7 @@ export function createGlobalSpacesToolHandlers(
 		runtime,
 		workflowManager,
 		taskRepo,
+		nodeExecutionRepo,
 		workflowRunRepo,
 		nodeExecutionRepo,
 		db,
@@ -608,7 +611,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'get_workflow_run',
-			'Check the status of a workflow run including current step and associated tasks.',
+			'Check the status of a workflow run including node executions.',
 			{
 				run_id: z.string().describe('ID of the workflow run'),
 			},
@@ -709,7 +712,6 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'retry_task',
-			'Reset a failed (blocked) or cancelled task back to pending so it can be picked up again. Optionally update the description before retry.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
 				space_id: z

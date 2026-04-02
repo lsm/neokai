@@ -48,6 +48,7 @@ import { setupDialogHandlers } from './dialog-handlers';
 import { setupSpaceHandlers } from './space-handlers';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
+import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
 import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import { setupSpaceWorkflowHandlers } from './space-workflow-handlers';
@@ -417,6 +418,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// after gate data is written externally (e.g. approveGate RPC, writeGateData RPC).
 	// sessionManager and daemonHub are injected so space:chat:${spaceId} sessions are
 	// provisioned with MCP tools and system prompts on startup and on space.created.
+	const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		spaceManager: deps.spaceManager,
@@ -424,6 +426,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowManager,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
+		nodeExecutionRepo,
 		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
 		channelCycleRepo,
@@ -517,6 +520,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 				runtime: spaceRuntimeService.getSharedRuntime(),
 				workflowManager: spaceWorkflowManager,
 				taskRepo: spaceTaskRepo,
+				nodeExecutionRepo,
 				workflowRunRepo: spaceWorkflowRunRepo,
 				nodeExecutionRepo,
 				db: deps.db.getDatabase(),
@@ -670,6 +674,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			spaceRuntimeService,
 			sessionFactory: globalSessionFactory,
 			taskRepo: spaceTaskRepo,
+			nodeExecutionRepo,
 			workflowRunRepo: spaceWorkflowRunRepo,
 			nodeExecutionRepo,
 			db: deps.db.getDatabase(),

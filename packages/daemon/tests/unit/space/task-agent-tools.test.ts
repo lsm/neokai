@@ -2067,6 +2067,15 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		// Mark the step task as terminal (bypass state machine)
 		ctx.taskRepo.updateTask(stepTask.id, { status: 'done' });
 
+		// Create a matching node_execution record in terminal status so
+		// CompletionDetector (which now queries node_executions) sees it.
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'only-step',
+			status: 'done',
+		});
+
 		// Create the orchestration (main) task WITHOUT workflowRunId so the
 		// CompletionDetector does not see it and only checks step tasks.
 		const mainTask = ctx.taskRepo.createTask({
@@ -2090,13 +2099,21 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		expect(updatedRun?.status).toBe('done');
 	});
 
-	test('allows completion when step task has needs_attention status (terminal)', async () => {
+	test('allows completion when step task has cancelled status (terminal for NodeExecution)', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Test run');
 		const stepTask = tasks[0];
 
-		// blocked is a terminal status for the CompletionDetector (bypass state machine)
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'blocked' });
+		// cancelled is a terminal status for NodeExecution (done + cancelled)
+		ctx.taskRepo.updateTask(stepTask.id, { status: 'cancelled' });
+
+		// Create a matching node_execution record in terminal status
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'only-step',
+			status: 'cancelled',
+		});
 
 		// Create orchestration task WITHOUT workflowRunId (excluded from detector)
 		const mainTask = ctx.taskRepo.createTask({
@@ -2111,7 +2128,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
 
-		const result = await handlers.report_workflow_done({ summary: 'Attention needed but done' });
+		const result = await handlers.report_workflow_done({ summary: 'Agent cancelled but done' });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);

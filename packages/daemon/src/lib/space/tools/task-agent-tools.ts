@@ -656,7 +656,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Agent calling report_workflow_done prematurely while agents are still
 			// running.
 			if (completionDetector) {
-				if (!completionDetector.isComplete(workflowRunId)) {
+				if (!completionDetector.isComplete({ workflowRunId })) {
 					return jsonResult({
 						success: false,
 						error:

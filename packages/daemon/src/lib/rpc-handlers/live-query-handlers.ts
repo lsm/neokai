@@ -499,6 +499,31 @@ function mapNeoActivityRow(row: Record<string, unknown>): Record<string, unknown
 }
 
 /**
+ * Node executions by workflow run — returns all node execution records
+ * for a given workflow run, ordered by creation time ascending.
+ *
+ * Used by the frontend to show per-node execution status in the workflow canvas.
+ */
+const NODE_EXECUTIONS_BY_RUN_SQL = `
+SELECT
+  id,
+  workflow_run_id  AS workflowRunId,
+  workflow_node_id AS workflowNodeId,
+  agent_name       AS agentName,
+  agent_id         AS agentId,
+  agent_session_id AS agentSessionId,
+  status,
+  result,
+  created_at       AS createdAt,
+  started_at       AS startedAt,
+  completed_at     AS completedAt,
+  updated_at       AS updatedAt
+FROM node_executions
+WHERE workflow_run_id = ?
+ORDER BY created_at ASC, id ASC
+`.trim();
+
+/**
  * Canonical task timeline query (no projection table):
  * - SDK messages are read directly from sdk_messages joined through session_group_members.
  * - Group/system events are read from task_group_events.

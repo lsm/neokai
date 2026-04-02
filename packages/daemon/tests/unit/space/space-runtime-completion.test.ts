@@ -109,6 +109,25 @@ function buildLinearWorkflow(
 	});
 }
 
+function seedNodeExec(
+	db: BunDatabase,
+	workflowRunId: string,
+	workflowNodeId: string,
+	agentName: string,
+	status: string
+): string {
+	const id = `exec-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	const now = Date.now();
+	db.prepare(
+		`INSERT INTO node_executions
+		     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+		      agent_session_id, status, result, created_at, started_at,
+		      completed_at, updated_at)
+		     VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, ?, NULL, NULL, ?)`
+	).run(id, workflowRunId, workflowNodeId, agentName, status, now, now);
+	return id;
+}
+
 // ---------------------------------------------------------------------------
 // MockTaskAgentManager
 // ---------------------------------------------------------------------------
@@ -148,6 +167,8 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
 	let sink: MockNotificationSink;
+
+	let nodeExecutionRepo: NodeExecutionRepository;
 
 	const SPACE_ID = 'space-cd-1';
 	const WORKSPACE = '/tmp/cd-ws';
@@ -191,6 +212,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 		spaceManager = new SpaceManager(db);
 		sink = new MockNotificationSink();
+		nodeExecutionRepo = new NodeExecutionRepository(db);
 	});
 
 	afterEach(() => {
@@ -224,6 +246,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(freshRun?.completedAt).toBeNull();
 
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Create matching node_execution record for CompletionDetector
+			seedNodeExec(db, run.id, 'step-ts', 'agent', 'done');
 
 			// Capture time before tick to verify completedAt is recent
 			const beforeTick = Date.now();
@@ -270,6 +295,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				status: 'done',
 			});
 
+			// Create node_execution records for CompletionDetector
+			seedNodeExec(db, run.id, 'node-cd-1', 'agent', 'done');
+			seedNodeExec(db, run.id, 'node-cd-2', 'coder', 'done');
+
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
@@ -308,6 +337,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				status: 'cancelled',
 			});
 
+			// Create node_execution records for CompletionDetector
+			seedNodeExec(db, run.id, 'node-mix-1', 'agent', 'done');
+			seedNodeExec(db, run.id, 'node-mix-2', 'coder', 'cancelled');
+
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
@@ -340,6 +373,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				agentName: 'coder',
 				status: 'in_progress',
 			});
+
+			// Create node_execution records — one done, one still in_progress
+			seedNodeExec(db, run.id, 'node-ip-1', 'agent', 'done');
+			seedNodeExec(db, run.id, 'node-ip-2', 'coder', 'in_progress');
 
 			await rt.executeTick();
 
@@ -390,6 +427,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			// Complete the task and let tick mark run as completed
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-done-skip', 'agent', 'done');
 			await rt.executeTick();
 
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
@@ -442,6 +480,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(run.status).toBe('in_progress');
 
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-lifecycle', 'agent', 'done');
 			await rt.executeTick();
 
 			const runAfter = workflowRunRepo.getRun(run.id);
@@ -457,6 +496,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-Immutable', 'agent', 'done');
 			await rt.executeTick();
 
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
@@ -511,6 +551,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			// Step 3: complete all tasks
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-resume', 'agent', 'done');
 			await rt.executeTick();
 
 			// Step 4: run should now be completed
@@ -563,6 +604,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			// Complete the only node-agent task
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'chan-plan', 'Planner', 'done');
 
 			await rt.executeTick();
 
@@ -610,6 +652,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				status: 'done',
 			});
 
+			// Create node_execution records for CompletionDetector
+			seedNodeExec(db, run.id, 'full-plan', 'agent', 'done');
+			seedNodeExec(db, run.id, 'full-code', 'coder', 'done');
+
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
@@ -632,6 +678,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			// Complete start node only — second node never activated
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'no-chan-1', 'agent', 'done');
 
 			await rt.executeTick();
 
@@ -662,6 +709,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'wc-plan', 'planner', 'done');
 
 			await rt.executeTick();
 
@@ -709,6 +757,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			taskRepo.updateTask(tasks[1].id, { status: 'done' });
 			taskRepo.updateTask(tasks[2].id, { status: 'cancelled' });
 
+			// Create node_execution records for CompletionDetector
+			seedNodeExec(db, run.id, 'par-node', 'coder', 'done');
+			seedNodeExec(db, run.id, 'par-node', 'planner', 'done');
+			seedNodeExec(db, run.id, 'par-node', 'general', 'cancelled');
+
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
@@ -746,6 +799,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
 
+			// Create node_execution records — one done, one still in_progress
+			seedNodeExec(db, run.id, 'par-partial', 'coder', 'done');
+			seedNodeExec(db, run.id, 'par-partial', 'planner', 'in_progress');
+
 			await rt.executeTick();
 
 			const runAfter = workflowRunRepo.getRun(run.id);
@@ -779,14 +836,20 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
+			// Create node_execution records for both agents (start non-terminal)
+			const exec1Id = seedNodeExec(db, run.id, 'stag-node', 'coder', 'in_progress');
+			const exec2Id = seedNodeExec(db, run.id, 'stag-node', 'planner', 'in_progress');
+
 			// Tick 1: first agent completes
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			db.prepare('UPDATE node_executions SET status = ? WHERE id = ?').run('done', exec1Id);
 			await rt.executeTick();
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
 
 			// Tick 2: second agent completes
 			taskRepo.updateTask(tasks[1].id, { status: 'done' });
+			db.prepare('UPDATE node_executions SET status = ? WHERE id = ?').run('done', exec2Id);
 			await rt.executeTick();
 
 			// Now the run should be completed
@@ -810,7 +873,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				{ id: 'step-dedup-clean', name: 'Step', agentId: AGENT_A },
 			]);
 
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			const taskId = tasks[0].id;
 			// M71: dedup key uses 'blocked' (renamed from 'needs_attention')
 			const dedupKey = `${taskId}:blocked`;
@@ -829,6 +892,8 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			// Now resolve the task and complete it
 			taskRepo.updateTask(taskId, { status: 'done' });
+			// Create node_execution record in terminal status for CompletionDetector
+			seedNodeExec(db, run.id, 'step-dedup-clean', 'agent', 'done');
 			await rt.executeTick();
 
 			// Run should be completed

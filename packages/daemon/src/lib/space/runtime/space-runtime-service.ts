@@ -16,6 +16,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -40,6 +41,8 @@ export interface SpaceRuntimeServiceConfig {
 	spaceWorkflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	/** Node execution repository for workflow-internal execution state */
+	nodeExecutionRepo?: NodeExecutionRepository;
 	reactiveDb?: ReactiveDatabase;
 	/**
 	 * Optional Task Agent Manager to wire into the underlying SpaceRuntime.
@@ -83,7 +86,10 @@ export class SpaceRuntimeService {
 	private taskAgentManager: TaskAgentManager | null = null;
 
 	constructor(private readonly config: SpaceRuntimeServiceConfig) {
-		this.runtime = new SpaceRuntime(config);
+		// Ensure nodeExecutionRepo is available — create from db if not provided.
+		const nodeExecutionRepo =
+			this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+		this.runtime = new SpaceRuntime({ ...config, nodeExecutionRepo });
 	}
 
 	/**
@@ -209,6 +215,7 @@ export class SpaceRuntimeService {
 			runtime: this.runtime,
 			workflowManager: spaceWorkflowManager,
 			taskRepo,
+			nodeExecutionRepo: this.config.nodeExecutionRepo ?? new NodeExecutionRepository(db),
 			workflowRunRepo,
 			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,

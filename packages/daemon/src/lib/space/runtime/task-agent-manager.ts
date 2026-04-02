@@ -77,6 +77,7 @@ import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { CompletionDetector } from './completion-detector';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
@@ -622,7 +623,9 @@ export class TaskAgentManager {
 				db: this.config.db.getDatabase(),
 				workspacePath,
 			});
-			const completionDetector = new CompletionDetector(this.config.taskRepo);
+			const completionDetector = new CompletionDetector(
+				new NodeExecutionRepository(this.config.db.getDatabase())
+			);
 
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
@@ -1441,7 +1444,9 @@ export class TaskAgentManager {
 			db: this.config.db.getDatabase(),
 			workspacePath: rehydrateWorkspacePath,
 		});
-		const rehydrateCompletionDetector = new CompletionDetector(this.config.taskRepo);
+		const rehydrateCompletionDetector = new CompletionDetector(
+			new NodeExecutionRepository(this.config.db.getDatabase())
+		);
 
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,

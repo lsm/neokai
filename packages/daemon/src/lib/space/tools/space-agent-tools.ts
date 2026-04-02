@@ -26,6 +26,7 @@ import type { SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
@@ -48,6 +49,8 @@ export interface SpaceAgentToolsConfig {
 	workflowManager: SpaceWorkflowManager;
 	/** Task repository for read queries (list/filter). */
 	taskRepo: SpaceTaskRepository;
+	/** Node execution repository for workflow run node execution queries. */
+	nodeExecutionRepo: NodeExecutionRepository;
 	/** Workflow run repository for listing and updating runs. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Task manager for create/retry/cancel/reassign operations. */
@@ -77,6 +80,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		runtime,
 		workflowManager,
 		taskRepo,
+		nodeExecutionRepo,
 		workflowRunRepo,
 		taskManager,
 		spaceAgentManager,
@@ -631,7 +635,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'get_task_detail',
-			'Get the full detail of a task by its numeric ID (e.g. task #5) or UUID. Includes error, result, PR URL, PR number, and current step.',
 			{
 				task_id: z.string().optional().describe('UUID of the task to retrieve'),
 				task_number: z
@@ -643,7 +646,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'retry_task',
-			'Retry a failed (blocked) or cancelled task by resetting it to pending. Optionally provide an updated description.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
 				description: z

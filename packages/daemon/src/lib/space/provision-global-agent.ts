@@ -16,6 +16,7 @@ import type { SpaceManager } from './managers/space-manager';
 import type { SpaceAgentManager } from './managers/space-agent-manager';
 import type { SpaceWorkflowManager } from './managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
+import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { SpaceRuntimeService } from './runtime/space-runtime-service';
@@ -53,6 +54,7 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	 */
 	sessionFactory: SessionFactory;
 	taskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Node execution repository for querying node execution records. */
 	nodeExecutionRepo: NodeExecutionRepository;
@@ -97,6 +99,7 @@ export async function provisionGlobalSpacesAgent(
 		spaceRuntimeService,
 		sessionFactory,
 		taskRepo,
+		nodeExecutionRepo,
 		workflowRunRepo,
 		nodeExecutionRepo,
 		db,
@@ -150,6 +153,7 @@ export async function provisionGlobalSpacesAgent(
 			runtime,
 			workflowManager: spaceWorkflowManager,
 			taskRepo,
+			nodeExecutionRepo,
 			workflowRunRepo,
 			nodeExecutionRepo,
 			db,

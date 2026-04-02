@@ -34,6 +34,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { TaskAgentManager } from './task-agent-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
@@ -64,6 +65,8 @@ export interface SpaceRuntimeConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Task repository for querying tasks by run/step */
 	taskRepo: SpaceTaskRepository;
+	/** Node execution repository for workflow-internal execution state */
+	nodeExecutionRepo: NodeExecutionRepository;
 	/** Optional reactive DB invalidation hooks for task LiveQuery surfaces */
 	reactiveDb?: ReactiveDatabase;
 	/**
@@ -93,7 +96,7 @@ export interface SpaceRuntimeConfig {
 	 * detect when all agents in a workflow run have reached a terminal status and
 	 * mark the run as completed. Replaces the old terminal-node detection model.
 	 *
-	 * Defaults to `new CompletionDetector(taskRepo)` if not provided.
+	 * Defaults to `new CompletionDetector(nodeExecutionRepo)` if not provided.
 	 */
 	completionDetector?: CompletionDetector;
 }
@@ -176,7 +179,8 @@ export class SpaceRuntime {
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
-		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
+		this.completionDetector =
+			config.completionDetector ?? new CompletionDetector(config.nodeExecutionRepo);
 	}
 
 	/**
@@ -680,12 +684,20 @@ export class SpaceRuntime {
 				);
 			}
 
-			// Step 1.6: All-agents-done completion detection.
-			// After liveness checks and auto-completion, inspect whether every task
-			// in the run has reached a terminal status. If so, mark the run as
-			// completed — cleanupTerminalExecutors() will emit the notification and
-			// remove the executor on the same tick.
-			if (this.completionDetector.isComplete(runId)) {
+			// Step 1.6: Completion detection.
+			// After liveness checks and auto-completion, inspect whether the
+			// workflow run is complete:
+			//   - End-node short-circuit: if the workflow has an endNodeId and the
+			//     end node's execution is terminal, the run is complete.
+			//   - All-agents-done fallback: every node execution is terminal.
+			// cleanupTerminalExecutors() will emit the notification and remove the
+			// executor on the same tick.
+			if (
+				this.completionDetector.isComplete({
+					workflowRunId: runId,
+					endNodeId: meta.workflow.endNodeId,
+				})
+			) {
 				this.config.workflowRunRepo.transitionStatus(runId, 'done');
 				return;
 			}
