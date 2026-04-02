@@ -240,8 +240,7 @@ export function createGlobalSpacesToolHandlers(
 					resolved.spaceId,
 					args.workflow_id,
 					args.title,
-					args.description,
-					args.goal_id
+					args.description
 				);
 				return jsonResult({ success: true, space_id: resolved.spaceId, run, tasks });
 			} catch (err) {
@@ -605,7 +604,6 @@ export function createGlobalSpacesMcpServer(
 				workflow_id: z.string().describe('ID of the workflow to run'),
 				title: z.string().describe('Short title for this workflow run'),
 				description: z.string().optional().describe('Description of the work'),
-				goal_id: z.string().optional().describe('Goal/mission ID to associate with this run'),
 			},
 			(args) => handlers.start_workflow_run(args)
 		),
@@ -685,14 +683,6 @@ export function createGlobalSpacesMcpServer(
 					.enum(['low', 'normal', 'high', 'urgent'])
 					.optional()
 					.describe('Task priority (default: normal)'),
-				task_type: z
-					.enum(['planning', 'coding', 'research', 'design', 'review'])
-					.optional()
-					.describe('Task type for routing and display'),
-				assigned_agent: z
-					.enum(['coder', 'general'])
-					.optional()
-					.describe('Built-in agent type to assign (default: coder)'),
 				custom_agent_id: z
 					.string()
 					.optional()

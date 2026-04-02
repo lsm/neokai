@@ -59,7 +59,7 @@ export interface SpaceRuntimeServiceConfig {
 	gateDataRepo?: GateDataRepository;
 	channelCycleRepo?: ChannelCycleRepository;
 	/** Node execution repository for querying node execution records. */
-	nodeExecutionRepo?: NodeExecutionRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	/**
 	 * Optional SessionManager for provisioning space:chat:${spaceId} sessions.
 	 * When provided, setupSpaceAgentSession() attaches MCP tools and system prompts
@@ -213,7 +213,7 @@ export class SpaceRuntimeService {
 			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,
 			taskAgentManager: this.taskAgentManager,
-			nodeExecutionRepo: this.config.nodeExecutionRepo!,
+			nodeExecutionRepo: this.config.nodeExecutionRepo,
 		});
 
 		session.setRuntimeMcpServers({

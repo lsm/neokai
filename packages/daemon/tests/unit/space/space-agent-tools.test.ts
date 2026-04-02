@@ -4,7 +4,7 @@
  * Covers (per M7 spec tools):
  * - list_workflows: returns space workflows
  * - start_workflow_run: explicit workflowId required; creates run + tasks
- * - get_workflow_run: returns run status, current step, and tasks
+ * - get_workflow_run: returns run status, current step, and node executions
  * - change_plan: description update; workflow switch (cancel + restart)
  * - list_tasks: filter by status, workflowRunId
  */

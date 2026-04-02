@@ -107,6 +107,17 @@ export class SpaceWorkflowManager {
 			);
 			this.validateNodes(existing.spaceId, inputs);
 			this.validateEndNodeId(params.endNodeId, inputs);
+		} else if (params.endNodeId !== undefined) {
+			// endNodeId changed but nodes didn't — validate against existing nodes
+			const existingNodes: WorkflowNodeInput[] = (existing.nodes ?? []).map(
+				(n): WorkflowNodeInput => ({
+					id: n.id,
+					name: n.name,
+					agents: n.agents,
+					instructions: n.instructions,
+				})
+			);
+			this.validateEndNodeId(params.endNodeId, existingNodes);
 		}
 
 		if (params.channels && params.channels.length > 0) {

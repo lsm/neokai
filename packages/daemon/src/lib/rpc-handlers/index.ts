@@ -607,6 +607,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.db.getDatabase(),
 		deps.daemonHub
 	);
+
 	// Space workflow run handlers — reuse the same factory pattern as spaceTask handlers
 	const spaceWorkflowRunTaskManagerFactory: SpaceWorkflowRunTaskManagerFactory = (spaceId) => {
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
@@ -623,7 +624,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	);
 
 	// Node execution handlers
-	setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo);
+	setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
 
 	// Provision the Global Spaces Agent session (spaces:global)
 	// Create shared state synchronously so the RPC handler is available immediately.
