@@ -16,6 +16,7 @@ import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
 import { AddSkillDialog } from './AddSkillDialog';
 import { EditSkillDialog } from './EditSkillDialog';
+import { InstallSkillFromGitDialog } from './InstallSkillFromGitDialog';
 
 const SOURCE_TYPE_STYLES: Record<string, string> = {
 	builtin: 'bg-green-500/20 text-green-400',
@@ -37,6 +38,7 @@ export function SkillsRegistry() {
 	const { skills: skillsList, isLoading: isLoadingVal, error: errorVal } = useSkills();
 
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [showInstallFromGitDialog, setShowInstallFromGitDialog] = useState(false);
 	const [editingSkill, setEditingSkill] = useState<AppSkill | null>(null);
 	const [deletingSkill, setDeletingSkill] = useState<AppSkill | null>(null);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -96,9 +98,14 @@ export function SkillsRegistry() {
 						Application-level skills are available to any room or session. Built-in skills ship with
 						NeoKai; plugin and MCP server skills can be added from external sources.
 					</p>
-					<Button variant="primary" size="sm" onClick={() => setShowAddDialog(true)}>
-						Add Skill
-					</Button>
+					<div class="flex gap-2">
+						<Button variant="primary" size="sm" onClick={() => setShowAddDialog(true)}>
+							Add Skill
+						</Button>
+						<Button variant="secondary" size="sm" onClick={() => setShowInstallFromGitDialog(true)}>
+							Install from Git
+						</Button>
+					</div>
 				</div>
 
 				{skillsList.length === 0 ? (
@@ -186,6 +193,11 @@ export function SkillsRegistry() {
 			</SettingsSection>
 
 			<AddSkillDialog isOpen={showAddDialog} onClose={() => setShowAddDialog(false)} />
+
+			<InstallSkillFromGitDialog
+				isOpen={showInstallFromGitDialog}
+				onClose={() => setShowInstallFromGitDialog(false)}
+			/>
 
 			{editingSkill && (
 				<EditSkillDialog skill={editingSkill} isOpen onClose={() => setEditingSkill(null)} />
