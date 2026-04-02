@@ -118,6 +118,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		},
 	],
 	startNodeId: CODING_PLANNER_STEP,
+	endNodeId: CODING_DONE_STEP,
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -192,7 +193,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 /**
  * Research Workflow
  *
- * Two-node graph: Planner → General.
+ * Two-node graph: Planner → General (terminal topology — no cycles).
  * Routing is channel-based (agent-centric model).
  * - Plan Research → Research: no gate — advances without human intervention.
  */
@@ -215,6 +216,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		},
 	],
 	startNodeId: RESEARCH_PLANNER_STEP,
+	endNodeId: RESEARCH_GENERAL_STEP,
 	tags: ['research'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -235,6 +237,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
  * No planning phase — used when the task is well-defined and only
  * implementation is needed. The run completes immediately when advance()
  * is called from the Coder step.
+ *
+ * startNodeId and endNodeId point to the same node (single-node workflow).
  */
 export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -250,6 +254,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 		},
 	],
 	startNodeId: REVIEW_CODER_STEP,
+	endNodeId: REVIEW_CODER_STEP,
 	tags: ['coding', 'review'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -403,6 +408,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		},
 	],
 	startNodeId: V2_PLANNING_STEP,
+	endNodeId: V2_DONE_STEP,
 	tags: ['coding', 'v2', 'parallel-review', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -660,6 +666,7 @@ export function seedBuiltInWorkflows(
 		}));
 
 		const startNodeId = nodeIdMap.get(template.startNodeId)!;
+		const endNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId)! : undefined;
 
 		workflowManager.createWorkflow({
 			spaceId,
@@ -667,6 +674,7 @@ export function seedBuiltInWorkflows(
 			description: template.description,
 			nodes,
 			startNodeId,
+			endNodeId,
 			tags: [...template.tags],
 			channels: template.channels ? [...template.channels] : undefined,
 			gates: template.gates ? [...template.gates] : undefined,

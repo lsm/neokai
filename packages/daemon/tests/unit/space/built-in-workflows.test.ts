@@ -158,6 +158,16 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.startNodeId).toBe(plannerStep?.id);
 	});
 
+	test('endNodeId points to the Done step', () => {
+		const doneStep = CODING_WORKFLOW.nodes.find((s) => s.name === 'Done');
+		expect(CODING_WORKFLOW.endNodeId).toBe(doneStep?.id);
+	});
+
+	test('endNodeId references a valid node in the graph', () => {
+		const nodeIds = new Set(CODING_WORKFLOW.nodes.map((n) => n.id));
+		expect(nodeIds.has(CODING_WORKFLOW.endNodeId!)).toBe(true);
+	});
+
 	test('does not reference leader', () => {
 		expect(hasLeaderAgentId(CODING_WORKFLOW)).toBe(false);
 	});
@@ -207,6 +217,16 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.startNodeId).toBe(plannerStep?.id);
 	});
 
+	test('endNodeId points to the Research step', () => {
+		const researchStep = RESEARCH_WORKFLOW.nodes.find((s) => s.name === 'Research');
+		expect(RESEARCH_WORKFLOW.endNodeId).toBe(researchStep?.id);
+	});
+
+	test('endNodeId references a valid node in the graph', () => {
+		const nodeIds = new Set(RESEARCH_WORKFLOW.nodes.map((n) => n.id));
+		expect(nodeIds.has(RESEARCH_WORKFLOW.endNodeId!)).toBe(true);
+	});
+
 	test('does not reference leader', () => {
 		expect(hasLeaderAgentId(RESEARCH_WORKFLOW)).toBe(false);
 	});
@@ -232,6 +252,14 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 
 	test('startNodeId points to the coder step', () => {
 		expect(REVIEW_ONLY_WORKFLOW.startNodeId).toBe(REVIEW_ONLY_WORKFLOW.nodes[0].id);
+	});
+
+	test('endNodeId points to the coder step (same as startNodeId)', () => {
+		expect(REVIEW_ONLY_WORKFLOW.endNodeId).toBe(REVIEW_ONLY_WORKFLOW.nodes[0].id);
+	});
+
+	test('startNodeId equals endNodeId (single-node workflow)', () => {
+		expect(REVIEW_ONLY_WORKFLOW.startNodeId).toBe(REVIEW_ONLY_WORKFLOW.endNodeId);
 	});
 
 	test('does not reference leader', () => {
@@ -286,6 +314,16 @@ describe('CODING_WORKFLOW_V2 template', () => {
 	test('startNodeId points to the Planning (planner) node', () => {
 		const planningNode = CODING_WORKFLOW_V2.nodes.find((n) => n.name === 'Planning');
 		expect(CODING_WORKFLOW_V2.startNodeId).toBe(planningNode?.id);
+	});
+
+	test('endNodeId points to the Done node', () => {
+		const doneNode = CODING_WORKFLOW_V2.nodes.find((n) => n.name === 'Done');
+		expect(CODING_WORKFLOW_V2.endNodeId).toBe(doneNode?.id);
+	});
+
+	test('endNodeId references a valid node in the graph', () => {
+		const nodeIds = new Set(CODING_WORKFLOW_V2.nodes.map((n) => n.id));
+		expect(nodeIds.has(CODING_WORKFLOW_V2.endNodeId!)).toBe(true);
 	});
 
 	test('has seven gates', () => {
@@ -542,6 +580,32 @@ describe('getBuiltInWorkflows()', () => {
 				expect(step.agents.length).toBeGreaterThan(0);
 				for (const agent of step.agents) {
 					expect(VALID_BUILTIN_ROLES.has(agent.agentId.toLowerCase())).toBe(true);
+				}
+			}
+		}
+	});
+
+	test('all templates define endNodeId', () => {
+		for (const wf of getBuiltInWorkflows()) {
+			expect(wf.endNodeId).toBeTruthy();
+			expect(typeof wf.endNodeId).toBe('string');
+		}
+	});
+
+	test('all templates endNodeId references a valid node', () => {
+		for (const wf of getBuiltInWorkflows()) {
+			const nodeIds = new Set(wf.nodes.map((n) => n.id));
+			expect(nodeIds.has(wf.endNodeId!)).toBe(true);
+		}
+	});
+
+	test('all nodes use agents[] array format (no bare agentId on nodes)', () => {
+		for (const wf of getBuiltInWorkflows()) {
+			for (const node of wf.nodes) {
+				expect(Array.isArray(node.agents)).toBe(true);
+				expect(node.agents.length).toBeGreaterThan(0);
+				for (const agent of node.agents) {
+					expect(agent.agentId).toBeTruthy();
 				}
 			}
 		}
@@ -840,6 +904,21 @@ describe('seedBuiltInWorkflows()', () => {
 		for (const wf of manager.listWorkflows(SPACE_ID)) {
 			expect(wf.id).toBeTruthy();
 		}
+	});
+
+	test('all seeded workflows have endNodeId pointing to a valid node', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			expect(wf.endNodeId).toBeTruthy();
+			const nodeIds = new Set(wf.nodes.map((n) => n.id));
+			expect(nodeIds.has(wf.endNodeId!)).toBe(true);
+		}
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with startNodeId === endNodeId', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.startNodeId).toBe(wf.endNodeId);
 	});
 
 	test('is idempotent — second call does not create additional workflows', async () => {
