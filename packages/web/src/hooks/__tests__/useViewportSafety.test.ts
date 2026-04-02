@@ -6,6 +6,7 @@
  */
 
 import { renderHook } from '@testing-library/preact';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useViewportSafety } from '../useViewportSafety.ts';
 
 // ---------------------------------------------------------------------------
@@ -441,7 +442,7 @@ describe('useViewportSafety — keyboard detection', () => {
 		mockVV._trigger('resize');
 
 		// Should dispatch a resize event for BottomTabBar to re-measure
-		expect(dispatchSpy).toHaveBeenCalledWith(expect.any(Event));
+		expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'resize' }));
 
 		dispatchSpy.mockRestore();
 	});
@@ -458,5 +459,35 @@ describe('useViewportSafety — keyboard detection', () => {
 		unmount();
 
 		expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+		// --safe-height should be removed on unmount
+		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
+	});
+
+	it('restores --bottom-bar-height even when it was empty string (desktop)', () => {
+		setNavigator(0, DESKTOP_SAFARI_UA);
+		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+		setVisualViewport(mockVV);
+
+		// No inline --bottom-bar-height set (desktop: BottomTabBar is md:hidden)
+		expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('');
+
+		renderHook(() => useViewportSafety());
+
+		// Open keyboard
+		mockVV.height = WINDOW_INNER_HEIGHT - 300;
+		mockVV._trigger('resize');
+
+		// Keyboard open — override set
+		expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
+
+		// Close keyboard — saved value was '' (empty string, falsy)
+		mockVV.height = WINDOW_INNER_HEIGHT;
+		mockVV._trigger('resize');
+
+		// The inline override should be restored (even though value is '')
+		// so the CSS cascade can fall through to the :root rule
+		expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+		// The saved '' is restored, removing the inline override
+		expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('');
 	});
 });

@@ -13,7 +13,7 @@
  *    Safari's tab bar overlay.
  *
  * 2. **Virtual keyboard detection (all platforms)**: When a virtual keyboard appears
- *    (detected via `visualViewport.height < window.innerHeight`), the hook:
+ *    (detected via `window.innerHeight - visualViewport.height > 50px`), the hook:
  *    - Adds `keyboard-open` class to `<html>` for CSS targeting
  *    - Sets `--safe-height` to `visualViewport.height` (on all platforms, not just
  *      iPad Safari) so the app container shrinks to match the visible area
@@ -23,6 +23,12 @@
  *
  *    When the keyboard closes, these overrides are removed and a `resize` event is
  *    dispatched so the BottomTabBar's ResizeObserver re-measures its height.
+ *
+ * **Known limitation**: On iOS Safari, `window.innerHeight` itself changes when the
+ * address bar shows/hides. This can cause the keyboard detection delta to undercount
+ * the keyboard size in edge cases (e.g. small split-screen on iPad). The 50px
+ * threshold provides a reasonable buffer. A more robust approach would use the
+ * `navigator.virtualKeyboard` API, but it is not broadly supported yet.
  *
  * **IMPORTANT**: This hook must only be called **once globally** in `App.tsx`.
  * Downstream components must NOT call it themselves — doing so would create
@@ -68,7 +74,13 @@ function updateSafeHeight(vv: VisualViewport): void {
 
 /**
  * Check whether the virtual keyboard is currently visible by comparing
- * `visualViewport.height` with `window.innerHeight`.
+ * `visualViewport.height` with `window.innerHeight`. Returns true when the
+ * difference exceeds {@link KEYBOARD_THRESHOLD} to avoid false positives from
+ * browser chrome changes (address bar, etc.).
+ *
+ * **Known limitation**: On iOS Safari, `window.innerHeight` itself fluctuates
+ * when the address bar shows/hides, so the delta may undercount the keyboard
+ * size. The 50px threshold mitigates this.
  */
 function isKeyboardVisible(vv: VisualViewport): boolean {
 	return window.innerHeight - vv.height > KEYBOARD_THRESHOLD;
@@ -136,13 +148,24 @@ export function useViewportSafety(): void {
 				}
 				// On iPad, --safe-height is already updated above via updateSafeHeight()
 
-				// Restore bottom bar height from saved value
-				if (savedBottomBarHeight) {
+				// Restore bottom bar height from saved value.
+				// NOTE: We use !== null instead of truthiness because
+				// getPropertyValue returns '' when the property is not set
+				// inline (e.g. on desktop where BottomTabBar is md:hidden and
+				// never measures itself). null is the correct sentinel.
+				if (savedBottomBarHeight !== null) {
 					document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
 					savedBottomBarHeight = null;
 				}
 
-				// Dispatch resize so BottomTabBar's ResizeObserver re-measures
+				// Dispatch resize so BottomTabBar's ResizeObserver re-measures.
+				// NOTE: This is synchronous and will re-enter handleResize.
+				// This is safe: keyboardOpen is already false and the keyboard
+				// is not visible, so neither branch of the keyboard detection
+				// logic executes. The only redundant work is an extra
+				// updateSafeHeight() call on iPad Safari (a harmless DOM write).
+				// BottomTabBar's listener uses requestAnimationFrame so it
+				// won't interfere with this handler's execution.
 				window.dispatchEvent(new Event('resize'));
 			}
 		};
@@ -173,7 +196,8 @@ export function useViewportSafety(): void {
 
 			// Cleanup: restore original state
 			document.documentElement.classList.remove('keyboard-open');
-			if (savedBottomBarHeight) {
+			document.documentElement.style.removeProperty('--safe-height');
+			if (savedBottomBarHeight !== null) {
 				document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
 			}
 		};
