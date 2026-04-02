@@ -169,8 +169,40 @@ export function ChannelEdgeConfigPanel({
 					</div>
 				) : (
 					<div class="space-y-2">
+						{/* Gate header with label, color dot, and script indicator */}
+						<div class="flex items-center gap-2 text-xs">
+							{currentGate.color && (
+								<span
+									data-testid="gate-color-dot"
+									class="w-2.5 h-2.5 rounded-full shrink-0"
+									style={{ backgroundColor: currentGate.color }}
+									title={`Color: ${currentGate.color}`}
+								/>
+							)}
+							<span class="font-mono text-gray-300 truncate">{currentGate.id}</span>
+							{currentGate.label && (
+								<span
+									data-testid="gate-label-badge"
+									class="rounded-full bg-dark-600 px-2 py-0.5 text-[10px] font-semibold truncate"
+									style={{ color: currentGate.color ?? undefined }}
+									title={currentGate.label}
+								>
+									{currentGate.label}
+								</span>
+							)}
+							{currentGate.script && (
+								<span
+									data-testid="gate-script-indicator"
+									class="ml-auto text-gray-500 shrink-0"
+									title={`Script: ${currentGate.script.interpreter}`}
+								>
+									{'\u26A1'}
+								</span>
+							)}
+						</div>
+
 						{/* Field summary rows */}
-						{(currentGate.fields ?? []).length === 0 ? (
+						{(currentGate.fields ?? []).length === 0 && !currentGate.script ? (
 							<p class="text-xs text-gray-600 italic">No fields defined yet</p>
 						) : (
 							<div class="space-y-1">
