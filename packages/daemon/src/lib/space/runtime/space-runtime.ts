@@ -536,6 +536,33 @@ export class SpaceRuntime {
 		const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
 		if (allRunTasks.length === 0) return;
 
+		// Sync node_execution status from SpaceTask status.
+		// node_execution records are created by ChannelRouter.activateNode().
+		// The mapping: node_execution.agentName === task.title (both set to the
+		// agent slot name for multi-agent nodes, or the node name for single-agent nodes).
+		// SpaceTask statuses (open/in_progress/done/blocked/cancelled) map 1:1 to
+		// NodeExecution statuses, except 'open' → 'pending'.
+		const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+		if (nodeExecutions.length > 0) {
+			const taskByTitle = new Map(allRunTasks.map((t) => [t.title, t]));
+			for (const exec of nodeExecutions) {
+				const task = taskByTitle.get(exec.agentName);
+				if (!task) continue;
+				// Map SpaceTask status to NodeExecution status.
+				// 'archived' has no NodeExecution equivalent — skip it.
+				// 'open' maps to 'pending'; others map 1:1.
+				if (task.status === 'archived') continue;
+				const mappedStatus =
+					task.status === 'open'
+						? ('pending' as const)
+						: (task.status as import('@neokai/shared').NodeExecutionStatus);
+				// Only update if the status actually changed to avoid unnecessary DB writes
+				if (exec.status !== mappedStatus) {
+					this.config.nodeExecutionRepo.updateStatus(exec.id, mappedStatus);
+				}
+			}
+		}
+
 		// Refresh dedup entries: clear keys for tasks that have left their flagged state.
 		for (const task of allRunTasks) {
 			if (task.status !== 'blocked') {

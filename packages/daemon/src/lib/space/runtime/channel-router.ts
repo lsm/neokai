@@ -41,6 +41,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
@@ -140,6 +141,12 @@ export interface ChannelRouterConfig {
 	workflowManager: SpaceWorkflowManager;
 	/** Agent manager for resolving agent roles → task types */
 	agentManager: SpaceAgentManager;
+	/**
+	 * Node execution repository for creating node_execution records.
+	 * When provided, activateNode() creates a node_execution record for each
+	 * SpaceTask, enabling CompletionDetector to track workflow completion.
+	 */
+	nodeExecutionRepo?: NodeExecutionRepository;
 	/**
 	 * Gate data repository for reading/writing gate runtime data.
 	 * Required when workflows use the new separated Channel+Gate architecture
@@ -281,6 +288,18 @@ export class ChannelRouter {
 					status: 'open',
 				});
 				tasks.push(task);
+
+				// Create a corresponding node_execution record so that
+				// CompletionDetector can track this node's lifecycle.
+				if (this.config.nodeExecutionRepo) {
+					this.config.nodeExecutionRepo.create({
+						workflowRunId: runId,
+						workflowNodeId: nodeId,
+						agentName: agentEntry.name,
+						agentId: agentEntry.agentId ?? null,
+						status: 'pending',
+					});
+				}
 			} catch (err) {
 				// Detect DB UNIQUE constraint violation caused by a concurrent activateNode() call.
 				// The winning writer already created the tasks — re-read and return them.

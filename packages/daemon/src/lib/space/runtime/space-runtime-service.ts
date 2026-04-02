@@ -331,6 +331,7 @@ export class SpaceRuntimeService {
 			workflowRunRepo: this.config.workflowRunRepo,
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
+			nodeExecutionRepo: this.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
