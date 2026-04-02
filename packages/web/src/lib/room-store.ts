@@ -1073,6 +1073,39 @@ class RoomStore {
 	}
 
 	/**
+	 * Manually trigger a recurring mission execution immediately.
+	 */
+	async triggerNow(goalId: string): Promise<RoomGoal> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		const result = await hub.request<{ goal: RoomGoal }>('goal.triggerNow', {
+			roomId,
+			goalId,
+		});
+		return result.goal;
+	}
+
+	/**
+	 * Set nextRunAt to a specific datetime for a recurring mission.
+	 * @param goalId The goal to update
+	 * @param nextRunAt Unix timestamp in seconds
+	 */
+	async scheduleNext(goalId: string, nextRunAt: number): Promise<RoomGoal> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		const result = await hub.request<{ goal: RoomGoal }>('goal.scheduleNext', {
+			roomId,
+			goalId,
+			nextRunAt,
+		});
+		return result.goal;
+	}
+
+	/**
 	 * Dismiss an auto-completed task notification
 	 */
 	dismissAutoCompleted(taskId: string): void {

@@ -1684,6 +1684,194 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
+	// ---- goal.triggerNow and goal.scheduleNext ----
+
+	describe('goal.triggerNow', () => {
+		function setupTriggerNowHandler() {
+			const triggerNowMock = mock(
+				async (): Promise<RoomGoal> => ({
+					...recurringGoal,
+					nextRunAt: Math.floor(Date.now() / 1000),
+				})
+			);
+			const runtime = {
+				triggerNow: triggerNowMock,
+			};
+			const runtimeService = {
+				getRuntime: mock(() => runtime),
+			} as unknown as RoomRuntimeService;
+
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager,
+				undefined,
+				runtimeService
+			);
+
+			return { runtime, runtimeService, triggerNowMock };
+		}
+
+		it('registers the handler', () => {
+			setupTriggerNowHandler();
+			expect(messageHubData.handlers.get('goal.triggerNow')).toBeDefined();
+		});
+
+		it('triggers a recurring mission and returns updated goal', async () => {
+			const { triggerNowMock } = setupTriggerNowHandler();
+			const handler = messageHubData.handlers.get('goal.triggerNow')!;
+
+			const result = (await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})) as {
+				goal: RoomGoal;
+			};
+
+			expect(triggerNowMock).toHaveBeenCalledWith('goal-123');
+			expect(result.goal).toBeDefined();
+		});
+
+		it('throws when roomId is missing', async () => {
+			setupTriggerNowHandler();
+			const handler = messageHubData.handlers.get('goal.triggerNow')!;
+			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when goalId is missing', async () => {
+			setupTriggerNowHandler();
+			const handler = messageHubData.handlers.get('goal.triggerNow')!;
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
+		});
+
+		it('throws when runtime service is not provided', async () => {
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager,
+				undefined,
+				undefined
+			);
+			const handler = messageHubData.handlers.get('goal.triggerNow')!;
+			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
+				'Runtime service is required'
+			);
+		});
+
+		it('throws when runtime is not found for room', async () => {
+			const runtimeService = {
+				getRuntime: mock(() => null),
+			} as unknown as RoomRuntimeService;
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager,
+				undefined,
+				runtimeService
+			);
+			const handler = messageHubData.handlers.get('goal.triggerNow')!;
+			await expect(handler!({ roomId: 'room-missing', goalId: 'goal-123' }, {})).rejects.toThrow(
+				'No runtime found for room'
+			);
+		});
+
+		it('resolves short ID before calling runtime.triggerNow', async () => {
+			const { triggerNowMock } = setupTriggerNowHandler();
+			mockGoalManager.getGoalByShortId.mockReturnValueOnce({ id: 'goal-uuid-123' });
+			const handler = messageHubData.handlers.get('goal.triggerNow')!;
+
+			await handler!({ roomId: 'room-123', goalId: 'g-42' }, {});
+
+			expect(triggerNowMock).toHaveBeenCalledWith('goal-uuid-123');
+		});
+	});
+
+	describe('goal.scheduleNext', () => {
+		it('registers the handler', () => {
+			expect(messageHubData.handlers.get('goal.scheduleNext')).toBeDefined();
+		});
+
+		it('sets nextRunAt and returns updated goal', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
+			mockGoalManager.updateNextRunAt.mockResolvedValueOnce({
+				...recurringGoal,
+				nextRunAt: 9999999999,
+			});
+
+			const result = (await handler!(
+				{ roomId: 'room-123', goalId: 'goal-123', nextRunAt: 9999999999 },
+				{}
+			)) as { goal: RoomGoal };
+
+			expect(mockGoalManager.updateNextRunAt).toHaveBeenCalledWith('goal-123', 9999999999);
+			expect(result.goal).toBeDefined();
+		});
+
+		it('throws when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			await expect(handler!({ goalId: 'goal-123', nextRunAt: 9999999999 }, {})).rejects.toThrow(
+				'Room ID is required'
+			);
+		});
+
+		it('throws when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			await expect(handler!({ roomId: 'room-123', nextRunAt: 9999999999 }, {})).rejects.toThrow(
+				'Goal ID is required'
+			);
+		});
+
+		it('throws when nextRunAt is not a number', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', nextRunAt: 'invalid' }, {})
+			).rejects.toThrow('nextRunAt must be a positive Unix timestamp');
+		});
+
+		it('throws when nextRunAt is zero or negative', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', nextRunAt: -1 }, {})
+			).rejects.toThrow('nextRunAt must be a positive Unix timestamp');
+		});
+
+		it('throws when goal is not found', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(null);
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'no-such', nextRunAt: 9999999999 }, {})
+			).rejects.toThrow('Goal not found');
+		});
+
+		it('throws when goal is not a recurring mission', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				...recurringGoal,
+				missionType: 'one_shot',
+			});
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', nextRunAt: 9999999999 }, {})
+			).rejects.toThrow('not a recurring mission');
+		});
+
+		it('throws when nextRunAt is in the past', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			const pastTimestamp = Math.floor(Date.now() / 1000) - 60;
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', nextRunAt: pastTimestamp }, {})
+			).rejects.toThrow('nextRunAt must be in the future');
+		});
+
+		it('throws when goal is not active', async () => {
+			const handler = messageHubData.handlers.get('goal.scheduleNext')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				...recurringGoal,
+				status: 'completed' as const,
+			});
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', nextRunAt: 9999999999 }, {})
+			).rejects.toThrow('not active');
+		});
+	});
+
 	describe('short ID support', () => {
 		const GOAL_UUID = 'f1e2d3c4-b5a6-4789-a123-456789abcdef';
 		const ROOM_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';

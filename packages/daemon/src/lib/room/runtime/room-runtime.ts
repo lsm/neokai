@@ -3500,6 +3500,101 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Manually trigger a recurring mission execution immediately.
+	 *
+	 * Sets `nextRunAt` to now and starts a new execution (if no active execution exists),
+	 * bypassing the normal tick schedule check. Respects overlap prevention guards.
+	 *
+	 * Returns the updated goal (fetched fresh from DB after execution starts).
+	 * Throws if the goal is not recurring, is paused, is not active, has no schedule,
+	 * or already has an active execution.
+	 */
+	async triggerNow(goalId: string): Promise<RoomGoal> {
+		const goal = await this.goalManager.getGoal(goalId);
+		if (!goal) throw new Error(`Goal not found: ${goalId}`);
+		if (goal.missionType !== 'recurring') {
+			throw new Error(
+				`Goal ${goalId} is not a recurring mission (missionType=${goal.missionType ?? 'one_shot'})`
+			);
+		}
+		if (goal.status !== 'active') {
+			throw new Error(`Goal ${goalId} is not active (status=${goal.status})`);
+		}
+		if (goal.schedulePaused) {
+			throw new Error(`Goal ${goalId} schedule is paused. Resume the schedule first.`);
+		}
+		if (!goal.schedule) {
+			throw new Error(`Goal ${goalId} has no schedule configured.`);
+		}
+
+		// Overlap prevention: check for active execution
+		const activeExecution = this.goalManager.getActiveExecution(goal.id);
+		if (activeExecution) {
+			throw new Error(
+				`Goal ${goalId} already has an active execution (${activeExecution.id}). ` +
+					`Wait for it to complete before triggering again.`
+			);
+		}
+
+		// Calculate next cron-scheduled time. startExecution writes this atomically
+		// in the same transaction as the execution row insert — no separate update needed.
+		const tz = goal.schedule.timezone ?? 'UTC';
+		const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+
+		let execution;
+		try {
+			execution = this.goalManager.startExecution(goal.id, nextRunAt ?? undefined);
+			log.info(
+				`Recurring mission ${goal.id} (${goal.title}) manually triggered execution ${execution.executionNumber}`
+			);
+		} catch (err) {
+			log.warn(`Recurring mission ${goal.id}: failed to start execution (possible race) — ${err}`);
+			throw new Error(
+				`Failed to start execution for goal ${goalId}. An execution may already be in progress.`
+			);
+		}
+
+		// Fetch previous execution result for context
+		const prevExecutions = this.goalManager.listExecutions(goal.id, 2);
+		const prevCompleted = prevExecutions.find(
+			(e) => e.id !== execution.id && e.status === 'completed'
+		);
+		const previousResultSummary = prevCompleted?.resultSummary;
+
+		// Plan reuse or planning — same logic as _doTickRecurringMissions Phase 2
+		if (execution.executionNumber > 1 && prevCompleted) {
+			try {
+				const clonedCount = await this.reuseExecutionPlan(
+					goal,
+					execution.id,
+					prevCompleted.taskIds
+				);
+				if (clonedCount > 0) {
+					log.info(
+						`Recurring mission ${goal.id}: manual trigger execution ${execution.executionNumber} started with ${clonedCount} reused tasks`
+					);
+				} else {
+					log.warn(
+						`Recurring mission ${goal.id}: no tasks to reuse from previous execution — falling back to planning`
+					);
+					await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+				}
+			} catch (err) {
+				log.warn(`Recurring mission ${goal.id}: plan reuse failed — falling back to planning`, err);
+				await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+			}
+		} else {
+			await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+		}
+
+		// Return the goal fresh from DB — startExecution already wrote the correct
+		// nextRunAt atomically, so no separate update is needed.
+		const updatedGoal = await this.goalManager.getGoal(goal.id);
+		if (!updatedGoal) throw new Error(`Goal ${goalId} disappeared after execution start`);
+		return updatedGoal;
+	}
+
+	/**
 	 * Find the highest-priority active goal that needs planning.
 	 *
 	 * A goal needs planning when:

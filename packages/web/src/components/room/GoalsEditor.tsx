@@ -34,6 +34,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Skeleton } from '../ui/Skeleton';
+import { toast } from '../../lib/toast';
 
 // ─── Create Form Types ────────────────────────────────────────────────────────
 
@@ -80,6 +81,10 @@ export interface GoalsEditorProps {
 	onDismissNotification?: (taskId: string) => void;
 	/** Fetch execution history for a recurring mission (optional) */
 	onListExecutions?: (goalId: string) => Promise<MissionExecution[]>;
+	/** Manually trigger a recurring mission execution immediately (optional) */
+	onTriggerNow?: (goalId: string) => Promise<void>;
+	/** Set nextRunAt to a specific datetime for a recurring mission (optional) */
+	onScheduleNext?: (goalId: string, nextRunAt: number) => Promise<void>;
 }
 
 // ─── Common Schedule Presets ──────────────────────────────────────────────────
@@ -1164,6 +1169,8 @@ interface GoalItemProps {
 	isExpanded: boolean;
 	onToggleExpand: () => void;
 	onListExecutions?: (goalId: string) => Promise<MissionExecution[]>;
+	onTriggerNow?: (goalId: string) => Promise<void>;
+	onScheduleNext?: (goalId: string, nextRunAt: number) => Promise<void>;
 }
 
 function GoalItem({
@@ -1176,12 +1183,17 @@ function GoalItem({
 	isExpanded,
 	onToggleExpand,
 	onListExecutions,
+	onTriggerNow,
+	onScheduleNext,
 }: GoalItemProps) {
 	const [isEditing, setIsEditing] = useState(false);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 	const [linkTaskId, setLinkTaskId] = useState('');
 	const [isUpdating, setIsUpdating] = useState(false);
 	const [executions, setExecutions] = useState<MissionExecution[] | null>(null);
+	const [isTriggering, setIsTriggering] = useState(false);
+	const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+	const [scheduleDateTime, setScheduleDateTime] = useState('');
 
 	const missionType: MissionType = goal.missionType ?? 'one_shot';
 
@@ -1193,6 +1205,8 @@ function GoalItem({
 				.catch(() => setExecutions([]));
 		}
 	}, [isExpanded, missionType, onListExecutions, goal.id, executions]);
+
+	const hasActiveExecution = executions?.some((e) => e.status === 'running') ?? false;
 
 	const handleStatusChange = async (newStatus: GoalStatus) => {
 		setIsUpdating(true);
@@ -1219,6 +1233,34 @@ function GoalItem({
 		try {
 			await onDelete();
 			setShowDeleteConfirm(false);
+		} finally {
+			setIsUpdating(false);
+		}
+	};
+
+	const handleTriggerNow = async () => {
+		if (!onTriggerNow) return;
+		setIsTriggering(true);
+		try {
+			await onTriggerNow(goal.id);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to trigger mission');
+		} finally {
+			setIsTriggering(false);
+		}
+	};
+
+	const handleScheduleNext = async () => {
+		if (!onScheduleNext || !scheduleDateTime) return;
+		const timestamp = Math.floor(new Date(scheduleDateTime).getTime() / 1000);
+		if (timestamp <= Math.floor(Date.now() / 1000)) return;
+		setIsUpdating(true);
+		try {
+			await onScheduleNext(goal.id, timestamp);
+			setShowSchedulePicker(false);
+			setScheduleDateTime('');
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to schedule mission');
 		} finally {
 			setIsUpdating(false);
 		}
@@ -1455,6 +1497,115 @@ function GoalItem({
 							<div>
 								<h5 class="text-xs font-medium text-gray-400 uppercase mb-2">Schedule</h5>
 								<RecurringScheduleInfo goal={goal} />
+								{/* Manual trigger controls for active, non-paused recurring missions */}
+								{goal.status === 'active' && onTriggerNow && (
+									<div class="mt-3 flex flex-wrap gap-2" data-testid="recurring-controls">
+										<Button
+											variant="primary"
+											size="sm"
+											onClick={handleTriggerNow}
+											disabled={isTriggering || goal.schedulePaused || hasActiveExecution}
+											title={
+												hasActiveExecution
+													? 'An execution is already running — wait for it to complete'
+													: undefined
+											}
+											loading={isTriggering}
+											data-testid="run-now-btn"
+										>
+											<span class="flex items-center gap-1.5">
+												<svg
+													class="w-3.5 h-3.5"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+													/>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+													/>
+												</svg>
+												{isTriggering ? 'Starting...' : 'Run Now'}
+											</span>
+										</Button>
+										{onScheduleNext && (
+											<>
+												{!showSchedulePicker ? (
+													<Button
+														variant="secondary"
+														size="sm"
+														onClick={() => setShowSchedulePicker(true)}
+														disabled={isUpdating}
+														data-testid="schedule-next-btn"
+													>
+														<span class="flex items-center gap-1.5">
+															<svg
+																class="w-3.5 h-3.5"
+																fill="none"
+																viewBox="0 0 24 24"
+																stroke="currentColor"
+															>
+																<path
+																	stroke-linecap="round"
+																	stroke-linejoin="round"
+																	stroke-width={2}
+																	d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+																/>
+															</svg>
+															Schedule
+														</span>
+													</Button>
+												) : (
+													<div class="flex items-center gap-2">
+														<input
+															type="datetime-local"
+															value={scheduleDateTime}
+															onInput={(e) =>
+																setScheduleDateTime((e.target as HTMLInputElement).value)
+															}
+															min={new Date().toISOString().slice(0, 16)}
+															class="px-2 py-1 bg-dark-700 border border-dark-600 rounded text-xs text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+															data-testid="schedule-datetime-input"
+														/>
+														<Button
+															variant="primary"
+															size="sm"
+															onClick={handleScheduleNext}
+															disabled={
+																!scheduleDateTime ||
+																isUpdating ||
+																new Date(scheduleDateTime).getTime() <= Date.now()
+															}
+															loading={isUpdating}
+															data-testid="schedule-confirm-btn"
+														>
+															Set
+														</Button>
+														<Button
+															variant="ghost"
+															size="sm"
+															onClick={() => {
+																setShowSchedulePicker(false);
+																setScheduleDateTime('');
+															}}
+															disabled={isUpdating}
+														>
+															Cancel
+														</Button>
+													</div>
+												)}
+											</>
+										)}
+									</div>
+								)}
 							</div>
 						)}
 
@@ -1786,6 +1937,8 @@ export function GoalsEditor({
 	autoCompletedNotifications = [],
 	onDismissNotification,
 	onListExecutions,
+	onTriggerNow,
+	onScheduleNext,
 }: GoalsEditorProps) {
 	const [showCreateModal, setShowCreateModal] = useState(false);
 	const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null);
@@ -1880,6 +2033,8 @@ export function GoalsEditor({
 							isExpanded={expandedGoalId === goal.id}
 							onToggleExpand={() => toggleExpand(goal.id)}
 							onListExecutions={onListExecutions}
+							onTriggerNow={onTriggerNow}
+							onScheduleNext={onScheduleNext}
 						/>
 					))}
 				</div>
