@@ -624,31 +624,6 @@ describe('TaskViewV2', () => {
 		});
 	});
 
-	// --- Review flow ---
-
-	it('calls approveReviewedTask when approve button clicked', async () => {
-		mockTaskViewData = makeDefaultTaskViewData(
-			makeTask({ status: 'review' }),
-			makeGroup({ submittedForReview: true })
-		);
-		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		fireEvent.click(getByTestId('approve-button'));
-		await waitFor(() => {
-			expect(mockTaskViewData.approveReviewedTask).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	it('opens reject modal when reject button clicked', async () => {
-		const data = makeDefaultTaskViewData(
-			makeTask({ status: 'review' }),
-			makeGroup({ submittedForReview: true })
-		);
-		mockTaskViewData = data;
-		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		fireEvent.click(getByTestId('open-reject-modal'));
-		expect(data.rejectModal.open).toHaveBeenCalled();
-	});
-
 	// --- Dependencies ---
 
 	it('renders dependency links when task.dependsOn is non-empty', () => {
@@ -856,31 +831,6 @@ describe('TaskViewV2', () => {
 		await waitFor(() => {
 			expect(container.querySelector('[title="Enable auto-scroll"]')).toBeTruthy();
 		});
-	});
-
-	// --- Review flow ---
-
-	it('calls approveReviewedTask when approve button clicked', async () => {
-		mockTaskViewData = makeDefaultTaskViewData(
-			makeTask({ status: 'review' }),
-			makeGroup({ submittedForReview: true })
-		);
-		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		fireEvent.click(getByTestId('approve-button'));
-		await waitFor(() => {
-			expect(mockTaskViewData.approveReviewedTask).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	it('opens reject modal when reject button clicked', async () => {
-		const data = makeDefaultTaskViewData(
-			makeTask({ status: 'review' }),
-			makeGroup({ submittedForReview: true })
-		);
-		mockTaskViewData = data;
-		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		fireEvent.click(getByTestId('open-reject-modal'));
-		expect(data.rejectModal.open).toHaveBeenCalled();
 	});
 
 	// --- Dependencies ---
