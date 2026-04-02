@@ -8,13 +8,13 @@
  * Expanded: name input, agent dropdown, entry/exit gate selectors, instructions
  */
 
-import { useState, useCallback } from 'preact/hooks';
 import type {
-	SpaceAgent,
-	WorkflowNodeAgent,
-	WorkflowChannel,
 	NodeExecutionStatus,
+	SpaceAgent,
+	WorkflowChannel,
+	WorkflowNodeAgent,
 } from '@neokai/shared';
+import { useCallback, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -681,7 +681,7 @@ interface WorkflowNodeCardProps {
 	disableRemove?: boolean;
 	/**
 	 * Runtime agent completion states for this node.
-	 * Derived from SpaceTask records filtered by the node's ID.
+	 * Derived from NodeExecution records filtered by the node's ID.
 	 * When provided, per-agent status indicators are shown in the collapsed header.
 	 */
 	nodeTaskStates?: AgentTaskState[];

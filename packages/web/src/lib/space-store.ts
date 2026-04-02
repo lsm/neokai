@@ -178,6 +178,12 @@ class SpaceStore {
 	/** Stale-event guard for task-activity LiveQuery subscriptions */
 	private activeTaskActivitySubscriptionIds = new Set<string>();
 
+	/** Cleanup functions for node execution LiveQuery subscriptions */
+	private nodeExecCleanupFns: Array<() => void> = [];
+
+	/** Stale-event guard for node execution LiveQuery subscriptions */
+	private activeNodeExecSubscriptionIds = new Set<string>();
+
 	// ========================================
 	// Global Space List
 	// ========================================
@@ -532,6 +538,8 @@ class SpaceStore {
 					this.fetchNodeExecutions(hub, spaceId).catch((err) => {
 						logger.warn('Failed to fetch node executions after run creation:', err);
 					});
+					// Subscribe to the new run's LiveQuery for real-time updates
+					this.subscribeNodeExecutionsByRun(hub, event.run.id);
 				}
 			}
 		});
@@ -690,6 +698,9 @@ class SpaceStore {
 			this.fetchNodeExecutions(hub, resolvedId),
 		]);
 
+		// Subscribe to node execution LiveQueries for real-time updates
+		this.subscribeNodeExecutions(hub);
+
 		return resolvedId;
 	}
 
@@ -778,6 +789,7 @@ class SpaceStore {
 		}
 		this.cleanupFunctions = [];
 		this.unsubscribeTaskActivity();
+		this.unsubscribeNodeExecutions();
 	}
 
 	private applyTaskActivityDelta(
@@ -887,6 +899,129 @@ class SpaceStore {
 		if (hub) {
 			hub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
 		}
+	}
+
+	// ========================================
+	// Node Execution LiveQuery subscriptions
+	// ========================================
+
+	/**
+	 * Subscribe to nodeExecutions.byRun LiveQueries for all current workflow runs.
+	 * Called after initial fetch to enable real-time status updates.
+	 */
+	private subscribeNodeExecutions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): void {
+		this.unsubscribeNodeExecutions();
+
+		const runs = this.workflowRuns.value;
+		if (runs.length === 0) return;
+
+		for (const run of runs) {
+			this.subscribeNodeExecutionsByRun(hub, run.id);
+		}
+	}
+
+	/**
+	 * Subscribe to nodeExecutions.byRun for a single workflow run.
+	 */
+	private subscribeNodeExecutionsByRun(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		runId: string
+	): void {
+		const subscriptionId = `nodeExecutions-byRun-${runId}`;
+		this.activeNodeExecSubscriptionIds.add(subscriptionId);
+
+		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (!this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
+			this.mergeNodeExecSnapshot(event.rows as NodeExecution[]);
+		});
+		this.nodeExecCleanupFns.push(unsubSnapshot);
+
+		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (!this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
+			this.mergeNodeExecDelta(event);
+		});
+		this.nodeExecCleanupFns.push(unsubDelta);
+
+		const unsubReconnect = hub.onConnection((state) => {
+			if (state !== 'connected') return;
+			if (!this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
+			hub
+				.request('liveQuery.subscribe', {
+					queryName: 'nodeExecutions.byRun',
+					params: [runId],
+					subscriptionId,
+				})
+				.catch((err) => {
+					logger.warn('Node execution LiveQuery re-subscribe failed:', err);
+				});
+		});
+		this.nodeExecCleanupFns.push(unsubReconnect);
+
+		hub
+			.request('liveQuery.subscribe', {
+				queryName: 'nodeExecutions.byRun',
+				params: [runId],
+				subscriptionId,
+			})
+			.catch((err) => {
+				logger.warn('Node execution LiveQuery subscribe failed:', err);
+			});
+	}
+
+	/**
+	 * Merge a LiveQuery snapshot (full replace for one run) into nodeExecutions.
+	 */
+	private mergeNodeExecSnapshot(rows: NodeExecution[]): void {
+		const current = this.nodeExecutions.value;
+		const runId = rows[0]?.workflowRunId;
+		if (!runId) return;
+		// Remove old executions for this run, add fresh snapshot
+		const filtered = current.filter((e) => e.workflowRunId !== runId);
+		this.nodeExecutions.value = [...filtered, ...rows];
+	}
+
+	/**
+	 * Merge a LiveQuery delta (add/remove/update) into nodeExecutions.
+	 */
+	private mergeNodeExecDelta(event: LiveQueryDeltaEvent): void {
+		const current = this.nodeExecutions.value;
+		const next = new Map(current.map((e) => [e.id, e]));
+
+		for (const row of (event.removed ?? []) as NodeExecution[]) {
+			next.delete(row.id);
+		}
+		for (const row of (event.updated ?? []) as NodeExecution[]) {
+			next.set(row.id, row);
+		}
+		for (const row of (event.added ?? []) as NodeExecution[]) {
+			next.set(row.id, row);
+		}
+
+		this.nodeExecutions.value = Array.from(next.values());
+	}
+
+	/**
+	 * Unsubscribe from all node execution LiveQueries.
+	 */
+	private unsubscribeNodeExecutions(): void {
+		for (const cleanup of this.nodeExecCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+		this.nodeExecCleanupFns = [];
+
+		for (const subId of this.activeNodeExecSubscriptionIds) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub.request('liveQuery.unsubscribe', { subscriptionId: subId }).catch(() => {});
+			}
+		}
+		this.activeNodeExecSubscriptionIds = new Set();
 	}
 
 	// ========================================
