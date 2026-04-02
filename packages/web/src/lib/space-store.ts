@@ -19,29 +19,29 @@
  * - error: Error state
  */
 
-import { signal, computed } from '@preact/signals';
 import type {
-	Space,
-	SpaceTask,
-	SpaceWorkflowRun,
-	SpaceAgent,
-	SpaceWorkflow,
+	CreateSpaceAgentParams,
+	CreateSpaceTaskParams,
+	CreateSpaceWorkflowParams,
+	CreateWorkflowRunParams,
+	LiveQueryDeltaEvent,
+	LiveQuerySnapshotEvent,
 	NodeExecution,
 	RuntimeState,
+	Space,
+	SpaceAgent,
+	SpaceTask,
 	SpaceTaskActivityMember,
-	LiveQuerySnapshotEvent,
-	LiveQueryDeltaEvent,
-	CreateSpaceTaskParams,
-	UpdateSpaceTaskParams,
-	CreateSpaceAgentParams,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
 	UpdateSpaceAgentParams,
-	CreateSpaceWorkflowParams,
-	UpdateSpaceWorkflowParams,
-	CreateWorkflowRunParams,
 	UpdateSpaceParams,
+	UpdateSpaceTaskParams,
+	UpdateSpaceWorkflowParams,
 } from '@neokai/shared';
+import { isUUID, Logger } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { Logger, isUUID } from '@neokai/shared';
+import { computed, signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
 
 const logger = new Logger('kai:web:spacestore');
@@ -553,6 +553,10 @@ class SpaceStore {
 						...this.workflowRuns.value.slice(idx + 1),
 					];
 				}
+				// Re-fetch node executions when a run is updated (e.g. node status changes).
+				this.fetchNodeExecutions(hub, spaceId).catch((err) => {
+					logger.warn('Failed to fetch node executions after run update:', err);
+				});
 			}
 		});
 		this.cleanupFunctions.push(unsubRunUpdated);
@@ -751,6 +755,8 @@ class SpaceStore {
 			for (const result of results) {
 				if (result.status === 'fulfilled') {
 					allExecs.push(...result.value);
+				} else {
+					logger.warn('Failed to fetch node executions for a run:', result.reason);
 				}
 			}
 			this.nodeExecutions.value = allExecs;
