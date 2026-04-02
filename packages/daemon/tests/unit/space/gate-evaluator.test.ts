@@ -617,6 +617,18 @@ describe('validateGateScript', () => {
 		expect(errors[0]).toContain('expected object');
 	});
 
+	test('rejects false as script', () => {
+		const errors = validateGateScript(false);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected object');
+	});
+
+	test('rejects 0 as script', () => {
+		const errors = validateGateScript(0);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected object');
+	});
+
 	test('rejects timeoutMs exceeding 120000', () => {
 		const errors = validateGateScript({
 			interpreter: 'bash',
@@ -809,6 +821,13 @@ describe('validateGate', () => {
 		const errors = validateGate({ id: 'g1', fields: [], resetOnCycle: false });
 		// Should only have the "at least one" error, no field-level errors
 		expect(errors.every((e) => !e.includes('[0]'))).toBe(true);
+	});
+
+	test('runs validateGateFields for non-array fields value', () => {
+		const errors = validateGate({ id: 'g1', fields: 'bad', resetOnCycle: false });
+		// Should have both the "expected an array" error and the "at least one" error
+		expect(errors.some((e) => e.includes('expected an array'))).toBe(true);
+		expect(errors.some((e) => e.includes('at least one'))).toBe(true);
 	});
 
 	test('collects all errors from color, label, script, and fields', () => {

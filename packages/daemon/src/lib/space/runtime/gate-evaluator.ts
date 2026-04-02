@@ -176,7 +176,7 @@ export function validateGateScript(script: unknown): string[] {
 		return errors;
 	}
 
-	if (!script || typeof script !== 'object') {
+	if (typeof script !== 'object') {
 		errors.push(`script: expected object, got ${typeof script}`);
 		return errors;
 	}
@@ -211,12 +211,14 @@ export function validateGateScript(script: unknown): string[] {
  *
  * This validator enforces structural rules on new/updated gates:
  *   - At least one of `fields` (non-empty) or `script` must be present.
- *   - When `fields` is present and non-empty, existing field validation runs.
+ *   - When `fields` is present, existing field validation runs (handles non-array gracefully).
  *   - Optional `color`, `label`, and `script` are validated when provided.
  *
- * **Important:** This validator is only applied to new/updated gates (via
- * `GateEditorPanel` and MCP tool handlers), never to existing gates loaded
- * from storage. Existing gates with `fields: []` remain valid at runtime.
+ * **Important:** This validator should only be applied to new/updated gates
+ * (e.g. via `GateEditorPanel` or MCP tool handlers), never to existing gates
+ * loaded from storage. Existing gates with `fields: []` remain valid at runtime.
+ *
+ * TODO: Wire into RPC handlers and GateEditorPanel in follow-on tasks.
  *
  * @param gate  The gate object to validate.
  * @returns Array of human-readable error strings. Empty array = valid.
@@ -231,29 +233,17 @@ export function validateGate(gate: unknown): string[] {
 
 	const g = gate as Record<string, unknown>;
 
-	// Validate color
-	if (g.color !== undefined) {
-		errors.push(...validateGateColor(g.color));
-	}
+	// Validate optional fields — sub-validators handle null/undefined gracefully
+	errors.push(...validateGateColor(g.color));
+	errors.push(...validateGateLabel(g.label));
+	errors.push(...validateGateScript(g.script));
 
-	// Validate label
-	if (g.label !== undefined) {
-		errors.push(...validateGateLabel(g.label));
-	}
-
-	// Validate script
-	if (g.script !== undefined) {
-		errors.push(...validateGateScript(g.script));
-	}
-
-	// Validate fields when present
+	// Validate fields when present (validateGateFields handles non-array gracefully)
 	if (g.fields !== undefined && g.fields !== null) {
-		if (Array.isArray(g.fields) && g.fields.length > 0) {
-			errors.push(...validateGateFields(g.fields));
-		}
+		errors.push(...validateGateFields(g.fields));
 	}
 
-	// At least one of fields (non-empty) or script must be present
+	// At least one of fields (non-empty array) or script must be present
 	const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
 	const hasScript = g.script !== undefined && g.script !== null;
 	if (!hasFields && !hasScript) {

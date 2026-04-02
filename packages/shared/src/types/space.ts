@@ -593,7 +593,7 @@ export interface Gate {
 	description?: string;
 	/** Custom label displayed on the gate badge in the workflow editor. */
 	label?: string;
-	/** Custom badge color (CSS color value). */
+	/** Custom badge color (hex format `#rrggbb`). */
 	color?: string;
 	/** Declared fields with schema, permissions, and checks. */
 	fields?: GateField[];
