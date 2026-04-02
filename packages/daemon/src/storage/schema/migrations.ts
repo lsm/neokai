@@ -5207,19 +5207,21 @@ export function runMigration74(db: BunDatabase): void {
 function runMigration75(db: BunDatabase): void {
 	if (!tableExists(db, 'node_executions')) return;
 
-	// Deduplicate existing records: keep the earliest by rowid for each unique key.
-	db.prepare(`
-		DELETE FROM node_executions
-		WHERE rowid NOT IN (
-			SELECT MIN(rowid)
-			FROM node_executions
-			GROUP BY workflow_run_id, workflow_node_id, agent_name
-		)
-	`).run();
+	db.transaction(() => {
+		// Deduplicate existing records: keep the earliest by rowid for each unique key.
+		db.prepare(`
+			DELETE FROM node_executions
+			WHERE rowid NOT IN (
+				SELECT MIN(rowid)
+				FROM node_executions
+				GROUP BY workflow_run_id, workflow_node_id, agent_name
+			)
+		`).run();
 
-	// Create the unique index. Idempotent — IF NOT EXISTS skips if already present.
-	db.exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_agent
-		ON node_executions(workflow_run_id, workflow_node_id, agent_name)
-	`);
+		// Create the unique index. Idempotent — IF NOT EXISTS skips if already present.
+		db.exec(`
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_agent
+			ON node_executions(workflow_run_id, workflow_node_id, agent_name)
+		`);
+	});
 }

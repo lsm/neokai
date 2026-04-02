@@ -860,6 +860,66 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			await rt.executeTick();
 			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 		});
+
+		test('mixed-status multi-agent start node: tick loop syncs per-agent node_executions', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Mixed Status Sync ${Date.now()}`,
+				description: '',
+				nodes: [
+					{
+						id: 'mix-start',
+						name: 'Mixed Start Node',
+						agents: [
+							{ agentId: AGENT_A, name: 'coder' },
+							{ agentId: AGENT_B, name: 'reviewer' },
+						],
+					},
+				],
+				startNodeId: 'mix-start',
+				rules: [],
+				tags: [],
+				transitions: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(2);
+
+			// startWorkflowRun() creates per-agent node_execution records.
+			// Both should be 'pending' initially.
+			const execsBefore = nodeExecutionRepo.listByWorkflowRun(run.id);
+			expect(execsBefore).toHaveLength(2);
+			expect(execsBefore.every((e) => e.status === 'pending')).toBe(true);
+
+			// Set tasks to heterogeneous statuses: coder done, reviewer still in_progress.
+			taskRepo.updateTask(tasks[0].id, { status: 'done', completedAt: Date.now() });
+			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+
+			await rt.executeTick();
+
+			// Tick loop should have synced node_executions from task statuses.
+			const execsAfter = nodeExecutionRepo.listByWorkflowRun(run.id);
+			const coderExec = execsAfter.find((e) => e.agentName === 'coder');
+			const reviewerExec = execsAfter.find((e) => e.agentName === 'reviewer');
+			expect(coderExec?.status).toBe('done');
+			expect(reviewerExec?.status).toBe('in_progress');
+
+			// Run must NOT be completed — reviewer is still in progress.
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('in_progress');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+
+			// Now complete the reviewer task too.
+			taskRepo.updateTask(tasks[1].id, { status: 'done', completedAt: Date.now() });
+			await rt.executeTick();
+
+			// Both execs should now be 'done', and the run should be completed.
+			const execsFinal = nodeExecutionRepo.listByWorkflowRun(run.id);
+			expect(execsFinal.every((e) => e.status === 'done')).toBe(true);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+		});
 	});
 
 	// -------------------------------------------------------------------------

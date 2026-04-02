@@ -394,9 +394,10 @@ export class SpaceRuntime {
 		let startAgents: ReturnType<typeof resolveNodeAgents>;
 		try {
 			startAgents = resolveNodeAgents(startStep);
+			const isMultiAgentStart = startAgents.length > 1;
 			for (const agentEntry of startAgents) {
 				const task = await taskManager.createTask({
-					title: startStep.name,
+					title: isMultiAgentStart ? agentEntry.name : startStep.name,
 					description: agentEntry.instructions?.value ?? startStep.instructions ?? '',
 					workflowRunId: run.id,
 					status: 'open',
@@ -423,10 +424,10 @@ export class SpaceRuntime {
 		// startWorkflowRun() creates tasks directly (not via ChannelRouter.activateNode()),
 		// so we must create the corresponding node_execution records here.
 		//
-		// For multi-agent nodes, all tasks share the same title (startStep.name).
-		// We use per-agent names for uniqueness, matching activateNode() behavior.
-		// The tick loop handles both cases: direct title match (single-agent / activateNode)
-		// and shared-title worst-status logic (multi-agent start nodes).
+		// Task titles and node_execution agentNames are aligned:
+		// - Single-agent: title = agentName = node.name
+		// - Multi-agent: title = agentName = agentEntry.name (per-agent)
+		// The tick loop syncs status via agentName === task.title.
 		const isMultiAgentStart = startAgents.length > 1;
 		for (let i = 0; i < tasks.length; i++) {
 			this.config.nodeExecutionRepo.createOrIgnore({
@@ -611,13 +612,8 @@ export class SpaceRuntime {
 		// and SpaceRuntime.startWorkflowRun(). The mapping key is
 		// node_execution.agentName === task.title.
 		//
-		// Two sync strategies:
-		// 1. Direct title match: agentName === task.title (single-agent nodes,
-		//    activateNode-created records). When multiple tasks share a title,
-		//    use worst-status logic.
-		// 2. Multi-agent start node fallback: per-agent exec names don't match
-		//    the shared task title. Look up the node name from the workflow
-		//    definition and use worst-status across all tasks with that title.
+		// When multiple tasks share a title (edge case), worst-status logic
+		// ensures completion requires ALL matching tasks to be terminal.
 		const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 		if (nodeExecutions.length > 0) {
 			const tasksByTitle = new Map<string, SpaceTask[]>();
@@ -629,21 +625,8 @@ export class SpaceRuntime {
 					tasksByTitle.set(task.title, [task]);
 				}
 			}
-			// Build nodeId → node name mapping for multi-agent start node fallback.
-			const nodeNameById = new Map<string, string>();
-			for (const node of meta.workflow.nodes) {
-				nodeNameById.set(node.id, node.name);
-			}
 			for (const exec of nodeExecutions) {
-				let group = tasksByTitle.get(exec.agentName);
-				// Multi-agent start node fallback: per-agent exec names (e.g. 'coder-a')
-				// don't match the shared task title (e.g. node.name). Look up node name.
-				if (!group || group.length === 0) {
-					const nodeName = nodeNameById.get(exec.workflowNodeId);
-					if (nodeName) {
-						group = tasksByTitle.get(nodeName);
-					}
-				}
+				const group = tasksByTitle.get(exec.agentName);
 				if (!group || group.length === 0) continue;
 				const mappedStatuses = group
 					.map((t) => taskStatusToNodeExecutionStatus(t.status))

@@ -267,11 +267,17 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Find the pending task for this step (created when the workflow node was activated)
-			// Filter by step name in the task title since workflowNodeId is no longer on SpaceTask.
+			// Find the pending task for this step (created when the workflow node was activated).
+			// Task-to-node mapping uses title matching since workflowNodeId is no longer on SpaceTask.
+			// Build the set of expected task titles from the node definition:
+			// - Single-agent nodes: title = node.name
+			// - Multi-agent nodes: titles = agents[].name (per-agent names)
 			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
+			const agentSlots = resolveNodeAgents(step);
+			const expectedTitles = agentSlots.length > 1 ? agentSlots.map((a) => a.name) : [step.name];
+			const titleSet = new Set(expectedTitles);
 			const stepTasks = allRunTasks.filter(
-				(t) => t.title.includes(step.name) || t.title.includes(step_id)
+				(t) => titleSet.has(t.title) || t.title.includes(step.name) || t.title.includes(step_id)
 			);
 			if (stepTasks.length === 0) {
 				return jsonResult({
@@ -476,14 +482,24 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Find task(s) for this step (filter by step ID or name in task title)
+			// Find task(s) for this step (filter by expected task titles, step name, or step ID).
+			// Matches the same logic as spawn_node_agent: for multi-agent nodes, expected
+			// task titles are per-agent names; for single-agent nodes, it's the node name.
 			const allStepTasks = taskRepo.listByWorkflowRun(workflowRunId);
 			const workflow = workflowManager.getWorkflow(
 				workflowRunRepo.getRun(workflowRunId)?.workflowId ?? ''
 			);
 			const stepNode = workflow?.nodes.find((n) => n.id === stepId);
+			let titleSet: Set<string> | undefined;
+			if (stepNode) {
+				const agentSlots = resolveNodeAgents(stepNode);
+				titleSet = new Set(agentSlots.length > 1 ? agentSlots.map((a) => a.name) : [stepNode.name]);
+			}
 			const stepTasks = allStepTasks.filter(
-				(t) => (stepNode && t.title.includes(stepNode.name)) || t.title.includes(stepId)
+				(t) =>
+					(titleSet && titleSet.has(t.title)) ||
+					(stepNode && t.title.includes(stepNode.name)) ||
+					t.title.includes(stepId)
 			);
 
 			if (stepTasks.length === 0) {

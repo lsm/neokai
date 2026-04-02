@@ -112,7 +112,12 @@ export class NodeExecutionRepository {
 			| Record<string, unknown>
 			| undefined;
 
-		return existing ? this.rowToNodeExecution(existing) : this.getById(id)!;
+		if (existing) return this.rowToNodeExecution(existing);
+		const fallback = this.getById(id);
+		if (fallback) return fallback;
+		throw new Error(
+			`node_execution record not found after INSERT OR IGNORE for (${params.workflowRunId}, ${params.workflowNodeId}, ${params.agentName})`
+		);
 	}
 
 	/**
