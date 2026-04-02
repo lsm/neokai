@@ -4946,31 +4946,38 @@ function runMigration73(db: BunDatabase): void {
 export function runMigration74(db: BunDatabase): void {
 	// ---- node_executions: new table ----
 	if (!tableExists(db, 'node_executions')) {
-		db.exec(`
-			CREATE TABLE node_executions (
-				id TEXT PRIMARY KEY,
-				workflow_run_id TEXT NOT NULL,
-				workflow_node_id TEXT NOT NULL,
-				agent_name TEXT NOT NULL,
-				agent_id TEXT NOT NULL,
-				agent_session_id TEXT,
-				status TEXT NOT NULL DEFAULT 'pending'
-					CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
-				result TEXT,
-				created_at INTEGER NOT NULL,
-				started_at INTEGER,
-				completed_at INTEGER,
-				updated_at INTEGER NOT NULL,
-				FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
-				FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
-			)
-		`);
-		db.exec(
-			`CREATE INDEX IF NOT EXISTS idx_node_executions_run ON node_executions(workflow_run_id)`
-		);
-		db.exec(
-			`CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
-		);
+		try {
+			db.exec('BEGIN');
+			db.exec(`
+				CREATE TABLE node_executions (
+					id TEXT PRIMARY KEY,
+					workflow_run_id TEXT NOT NULL,
+					workflow_node_id TEXT NOT NULL,
+					agent_name TEXT NOT NULL,
+					agent_id TEXT,
+					agent_session_id TEXT,
+					status TEXT NOT NULL DEFAULT 'pending'
+						CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
+					result TEXT,
+					created_at INTEGER NOT NULL,
+					started_at INTEGER,
+					completed_at INTEGER,
+					updated_at INTEGER NOT NULL,
+					FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
+					FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
+				)
+			`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_node_executions_run ON node_executions(workflow_run_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
+			);
+			db.exec('COMMIT');
+		} catch (e) {
+			db.exec('ROLLBACK');
+			throw e;
+		}
 	}
 
 	// ---- space_workflows: drop config and max_iterations, add tags ----
