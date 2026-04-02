@@ -186,6 +186,7 @@ function buildManager(opts: {
 	const gateDataRepo = new GateDataRepository(bunDb);
 	const spaceManager = new SpaceManager(bunDb);
 	const taskManager = new SpaceTaskManager(bunDb, spaceId);
+	const nodeExecutionRepo = new NodeExecutionRepository(bunDb);
 	const runtime = new SpaceRuntime({
 		db: bunDb,
 		spaceManager,
@@ -193,6 +194,7 @@ function buildManager(opts: {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 	const daemonHub = new TestDaemonHub();
 	const space = makeSpace(spaceId);
@@ -270,6 +272,7 @@ function buildManager(opts: {
 		appMcpManager: appMcpManager as never,
 		skillsManager: mockSkillsManager,
 		appMcpServerRepo: mockAppMcpServerRepo,
+		nodeExecutionRepo,
 	});
 
 	return {

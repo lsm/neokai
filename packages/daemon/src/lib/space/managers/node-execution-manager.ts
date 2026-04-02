@@ -7,6 +7,11 @@
  * - Agent session tracking per node execution
  *
  * This separates workflow-internal state from the user-facing SpaceTask.
+ *
+ * TODO: Wire this class into the RPC handler layer so production code uses it
+ * for status transitions instead of raw repo calls. Currently only the pure
+ * functions (isValidNodeExecutionTransition, isNodeExecutionTerminal) and the
+ * TERMINAL_NODE_EXECUTION_STATUSES set are imported by CompletionDetector.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
