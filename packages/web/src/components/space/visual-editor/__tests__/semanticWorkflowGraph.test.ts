@@ -265,12 +265,10 @@ describe('gate label/color/hasScript propagation', () => {
 		];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels);
-		expect(result[0]).toMatchObject({
-			gateType: 'check',
-			gateLabel: undefined,
-			gateColor: undefined,
-			hasScript: undefined,
-		});
+		expect(result[0].gateType).toBe('check');
+		expect(result[0].gateLabel).toBeUndefined();
+		expect(result[0].gateColor).toBeUndefined();
+		expect(result[0].hasScript).toBeUndefined();
 	});
 
 	it('returns undefined for label/color/hasScript when channel has no gateId', () => {
@@ -279,12 +277,10 @@ describe('gate label/color/hasScript propagation', () => {
 		];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels);
-		expect(result[0]).toMatchObject({
-			gateType: undefined,
-			gateLabel: undefined,
-			gateColor: undefined,
-			hasScript: undefined,
-		});
+		expect(result[0].gateType).toBeUndefined();
+		expect(result[0].gateLabel).toBeUndefined();
+		expect(result[0].gateColor).toBeUndefined();
+		expect(result[0].hasScript).toBeUndefined();
 	});
 
 	it('propagates label/color/hasScript for bidirectional edges per direction', () => {
@@ -462,7 +458,7 @@ describe('gate label/color/hasScript propagation', () => {
 
 	it('uses first gate label/color when multiple gates exist on the same direction', () => {
 		// Two channels from Planning→Review (different agents), each with a gate.
-		// Implementation uses ??= (nullish coalesce assignment) so first gate wins.
+		// Implementation uses ??= (nullish coalesce assignment) so first non-undefined wins.
 		const channels: WorkflowChannel[] = [
 			{ from: 'Planning', to: 'Reviewer 1', direction: 'one-way', gateId: 'gate-a' },
 			{ from: 'Planning', to: 'Reviewer 2', direction: 'one-way', gateId: 'gate-b' },
@@ -477,28 +473,43 @@ describe('gate label/color/hasScript propagation', () => {
 		expect(result[0]).toMatchObject({
 			direction: 'one-way',
 			channelCount: 2,
-			// First gate's label/color wins (??= behavior)
+			// First gate's label/color wins (??= skips when non-undefined)
 			gateLabel: 'First',
 			gateColor: '#aa0000',
 		});
+	});
+
+	it('second gate label wins when first gate has no label (??= undefined propagation)', () => {
+		// ??= only skips assignment when the current value is non-nullish.
+		// If the first gate has label: undefined, the second gate's label propagates.
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', direction: 'one-way', gateId: 'gate-a' },
+			{ from: 'Planning', to: 'Reviewer 2', direction: 'one-way', gateId: 'gate-b' },
+		];
+		const gates = [
+			humanGate('gate-a'), // no label
+			humanGate('gate-b', { label: 'Second', color: '#00bb00' }),
+		];
+
+		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
+		expect(result[0].gateLabel).toBe('Second');
+		expect(result[0].gateColor).toBe('#00bb00');
 	});
 
 	it('sets hasScript to true when any gate on the same direction has a script', () => {
 		// Two channels same direction: first gate has no script, second gate has script.
 		// Implementation uses `if (gateInfo.hasScript)` which is true if ANY gate has a script.
 		const channels: WorkflowChannel[] = [
-			{ from: 'Planning', to: 'Reviewer 1', direction: 'one-way', gateId: 'gate-no-script' },
-			{ from: 'Planning', to: 'Reviewer 2', direction: 'one-way', gateId: 'gate-with-script' },
+			{ from: 'Planning', to: 'Reviewer 1', direction: 'one-way', gateId: 'gate-1' },
+			{ from: 'Planning', to: 'Reviewer 2', direction: 'one-way', gateId: 'gate-2' },
 		];
 		const gates = [
-			humanGate('gate-no-script', { label: 'No Script' }),
-			humanGate('gate-with-script', { script: { interpreter: 'bash', source: 'exit 0' } }),
+			humanGate('gate-1'),
+			humanGate('gate-2', { script: { interpreter: 'bash', source: 'exit 0' } }),
 		];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
-		expect(result[0]).toMatchObject({
-			hasScript: true,
-		});
+		expect(result[0].hasScript).toBe(true);
 	});
 
 	it('gate with both fields and script propagates both gateType and hasScript', () => {
@@ -586,12 +597,10 @@ describe('gate label/color/hasScript propagation', () => {
 		];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
-		expect(result[0]).toMatchObject({
-			gateType: 'check',
-			gateLabel: undefined,
-			gateColor: undefined,
-			hasScript: true,
-		});
+		expect(result[0].gateType).toBe('check');
+		expect(result[0].gateLabel).toBeUndefined();
+		expect(result[0].gateColor).toBeUndefined();
+		expect(result[0].hasScript).toBe(true);
 	});
 
 	it('different agents from same multi-agent node with gates propagate independently per direction', () => {
