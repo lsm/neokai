@@ -2,8 +2,8 @@
  * Tests for Space Node Execution RPC Handlers
  *
  * Covers:
- * - nodeExecution.list: throws if workflowRunId missing; returns executions list;
- *   ownership check (spaceId filter)
+ * - nodeExecution.list: throws if workflowRunId/spaceId missing; returns executions list;
+ *   ownership check (spaceId enforcement)
  */
 
 import { describe, expect, it, mock } from 'bun:test';
@@ -123,13 +123,26 @@ describe('space-node-execution-handlers', () => {
 	describe('nodeExecution.list', () => {
 		it('throws if workflowRunId is missing', async () => {
 			setup();
-			await expect(call('nodeExecution.list', {})).rejects.toThrow('workflowRunId is required');
+			await expect(call('nodeExecution.list', { spaceId: 'space-1' })).rejects.toThrow(
+				'workflowRunId is required'
+			);
+		});
+
+		it('throws if spaceId is missing', async () => {
+			setup();
+			await expect(call('nodeExecution.list', { workflowRunId: 'run-1' })).rejects.toThrow(
+				'spaceId is required'
+			);
 		});
 
 		it('returns empty array when no executions exist for the run', async () => {
-			setup({ executions: [] });
+			setup({
+				executions: [],
+				runs: { 'run-1': { spaceId: 'space-1' } },
+			});
 			const result = (await call('nodeExecution.list', {
-				workflowRunId: 'run-nonexistent',
+				workflowRunId: 'run-1',
+				spaceId: 'space-1',
 			})) as { executions: NodeExecution[] };
 
 			expect(result.executions).toEqual([]);
@@ -139,6 +152,7 @@ describe('space-node-execution-handlers', () => {
 			setup();
 			const result = (await call('nodeExecution.list', {
 				workflowRunId: 'run-1',
+				spaceId: 'space-1',
 			})) as { executions: NodeExecution[] };
 
 			expect(result.executions).toHaveLength(2);
@@ -159,20 +173,11 @@ describe('space-node-execution-handlers', () => {
 
 			const result = (await call('nodeExecution.list', {
 				workflowRunId: 'run-1',
+				spaceId: 'space-1',
 			})) as { executions: NodeExecution[] };
 
 			expect(result.executions).toHaveLength(2);
 			expect(result.executions.every((e) => e.workflowRunId === 'run-1')).toBe(true);
-		});
-
-		it('passes through when spaceId is not provided (no ownership check)', async () => {
-			setup();
-			// No spaceId — should return results without ownership check
-			const result = (await call('nodeExecution.list', {
-				workflowRunId: 'run-1',
-			})) as { executions: NodeExecution[] };
-
-			expect(result.executions).toHaveLength(2);
 		});
 
 		it('succeeds when spaceId matches the run spaceId', async () => {
@@ -195,7 +200,7 @@ describe('space-node-execution-handlers', () => {
 			).rejects.toThrow('WorkflowRun not found: run-1');
 		});
 
-		it('throws when spaceId is provided but run not found', async () => {
+		it('throws when run not found', async () => {
 			setup({ runs: {} });
 			await expect(
 				call('nodeExecution.list', {

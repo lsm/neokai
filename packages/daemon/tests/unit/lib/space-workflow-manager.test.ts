@@ -155,7 +155,7 @@ describe('SpaceWorkflowManager', () => {
 			);
 		});
 
-		it('accepts valid endNodeId referencing existing node when nodes and endNodeId updated together', () => {
+		it('accepts valid endNodeId referencing existing node on update (no nodes change)', () => {
 			const created = manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Test Workflow',

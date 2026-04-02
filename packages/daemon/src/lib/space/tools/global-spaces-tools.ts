@@ -231,7 +231,6 @@ export function createGlobalSpacesToolHandlers(
 			workflow_id: string;
 			title: string;
 			description?: string;
-			goal_id?: string;
 		}): Promise<ToolResult> {
 			const resolved = resolveSpaceId(args.space_id);
 			if ('error' in resolved) return jsonResult({ success: false, error: resolved.error });
