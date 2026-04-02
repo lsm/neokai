@@ -3280,10 +3280,10 @@ export function runMigration51(db: BunDatabase): void {
 		return;
 	}
 
-	// Post-M72 guard: if task_type column is absent, M72 has already rebuilt space_tasks
+	// Post-M73 guard: if task_type column is absent, M73 has already rebuilt space_tasks
 	// with the new schema (removing task_type, agent_name, slot_role, etc.) and new status
 	// values. M51's table rebuild would fail because it uses the old CHECK constraint
-	// (which rejects 'open', 'done', 'blocked'). Return early — M51 is superseded by M72.
+	// (which rejects 'open', 'done', 'blocked'). Return early — M51 is superseded by M73.
 	if (!tableHasColumn(db, 'space_tasks', 'task_type')) {
 		return;
 	}
