@@ -175,10 +175,9 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, `Agent ${agentId}`, 'coder', Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
 function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
@@ -921,15 +920,15 @@ describe('TaskAgentManager', () => {
 			const now = Date.now();
 			ctx.bunDb
 				.prepare(
-					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, created_at, updated_at)
-           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
 				)
 				.run(wfId, ctx.spaceId, 'Test WF', now, now);
 			const stepId = 'step-complete-1';
 			ctx.bunDb
 				.prepare(
-					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, order_index, created_at, updated_at)
-           VALUES (?, ?, ?, '', 0, ?, ?)`
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, created_at, updated_at)
+           VALUES (?, ?, ?, '', ?, ?)`
 				)
 				.run(stepId, wfId, 'Step 1', now, now);
 			ctx.bunDb
@@ -1519,8 +1518,8 @@ describe('TaskAgentManager', () => {
 			const now = Date.now();
 			ctx.bunDb
 				.prepare(
-					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, created_at, updated_at)
-           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
 				)
 				.run(wfId, ctx.spaceId, 'WF Reorient', now, now);
 			const wfRunId = 'run-reorient-workflow';
@@ -1685,17 +1684,17 @@ describe('TaskAgentManager', () => {
 			const now = Date.now();
 			ctx.bunDb
 				.prepare(
-					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, created_at, updated_at)
-           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
 				)
 				.run(wfId, ctx.spaceId, 'WF Rehydrate Sub', now, now);
 			const stepId = 'step-rehydrate-1';
 			ctx.bunDb
 				.prepare(
-					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, agent_id, order_index, config, created_at, updated_at)
-           VALUES (?, ?, ?, '', ?, 0, null, ?, ?)`
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, ?, ?)`
 				)
-				.run(stepId, wfId, 'Step 1', ctx.agentId, now, now);
+				.run(stepId, wfId, 'Step 1', now, now);
 			const wfRunId = 'run-rehydrate-sub';
 			ctx.bunDb
 				.prepare(
@@ -1753,8 +1752,8 @@ describe('TaskAgentManager', () => {
 			const now = Date.now();
 			ctx.bunDb
 				.prepare(
-					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, created_at, updated_at)
-           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
 				)
 				.run(wfId, ctx.spaceId, 'WF Sub No Start', now, now);
 			const wfRunId = 'run-rehydrate-no-start';

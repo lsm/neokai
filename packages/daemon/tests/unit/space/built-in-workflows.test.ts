@@ -54,18 +54,11 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
 	).run(spaceId, `/tmp/ws-${spaceId}`, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgent(
-	db: BunDatabase,
-	agentId: string,
-	spaceId: string,
-	name: string,
-	role: string
-): void {
+function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt,
-     role, config, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, null, ?, ?)`
-	).run(agentId, spaceId, name, role, Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
 /** Valid builtin roles — 'leader' must NOT appear in any template step. */
@@ -585,10 +578,10 @@ describe('seedBuiltInWorkflows()', () => {
 		({ db, dir } = makeDb());
 		seedSpace(db, SPACE_ID);
 		// Seed preset agents so the manager's agentLookup (when wired) would find them
-		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner', 'planner');
-		seedAgent(db, CODER_ID, SPACE_ID, 'Coder', 'coder');
-		seedAgent(db, GENERAL_ID, SPACE_ID, 'General', 'general');
-		seedAgent(db, QA_ID, SPACE_ID, 'QA', 'qa');
+		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner');
+		seedAgent(db, CODER_ID, SPACE_ID, 'Coder');
+		seedAgent(db, GENERAL_ID, SPACE_ID, 'General');
+		seedAgent(db, QA_ID, SPACE_ID, 'QA');
 
 		const repo = new SpaceWorkflowRepository(db);
 		// No agentLookup — seeder bypasses lookup by passing real IDs directly
@@ -980,10 +973,10 @@ describe('Coding Workflow export/import round-trip', () => {
 	beforeEach(() => {
 		({ db, dir } = makeDb());
 		seedSpace(db, SPACE_ID);
-		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner', 'planner');
-		seedAgent(db, CODER_ID, SPACE_ID, 'Coder', 'coder');
-		seedAgent(db, GENERAL_ID, SPACE_ID, 'General', 'general');
-		seedAgent(db, QA_ID, SPACE_ID, 'QA', 'qa');
+		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner');
+		seedAgent(db, CODER_ID, SPACE_ID, 'Coder');
+		seedAgent(db, GENERAL_ID, SPACE_ID, 'General');
+		seedAgent(db, QA_ID, SPACE_ID, 'QA');
 
 		const repo = new SpaceWorkflowRepository(db);
 		manager = new SpaceWorkflowManager(repo);

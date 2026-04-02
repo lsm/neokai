@@ -4,7 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with the fully-migrated production schema (after M71).
+ * Keep in sync with the fully-migrated production schema (after M74).
  *
  * IMPORTANT: The schema defined here must exactly match the fully-migrated production
  * schema (i.e. after all migrations have run). Never add columns or constraints here
@@ -64,7 +64,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			description TEXT NOT NULL DEFAULT '',
 			start_node_id TEXT,
 			end_node_id TEXT,
-			config TEXT,
+			tags TEXT NOT NULL DEFAULT '[]',
 			channels TEXT,
 			gates TEXT,
 			layout TEXT,
@@ -80,9 +80,6 @@ export function createSpaceTables(db: BunDatabase): void {
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			agent_id TEXT,
-			agents TEXT NOT NULL DEFAULT '[]',
-			order_index INTEGER NOT NULL,
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
@@ -144,6 +141,30 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS node_executions (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT NOT NULL,
+			workflow_node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			agent_id TEXT,
+			agent_session_id TEXT,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
+			result TEXT,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_node_executions_run ON node_executions(workflow_run_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
+	);
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_tasks (

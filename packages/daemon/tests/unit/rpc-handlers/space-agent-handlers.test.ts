@@ -436,8 +436,8 @@ describe('Space Agent RPC Handlers', () => {
 			insertWorkflow(db, 'wf-3', 'space-1', 'Temp Workflow');
 			insertWorkflowNode(db, 'node-3', 'wf-3', agentId);
 
-			// Remove the node reference by clearing the agents JSON array
-			db.prepare(`UPDATE space_workflow_nodes SET agents = '[]' WHERE id = 'node-3'`).run();
+			// Remove the node reference by clearing the agents in the config JSON
+			db.prepare(`UPDATE space_workflow_nodes SET config = '{}' WHERE id = 'node-3'`).run();
 
 			const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
 				id: agentId,

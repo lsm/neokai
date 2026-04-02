@@ -4,8 +4,11 @@
  * Data access layer for SpaceWorkflow and SpaceWorkflowNode records.
  *
  * Storage layout:
- *   space_workflows             — id, space_id, name, description, start_node_id, end_node_id, tags (JSON), channels (JSON), gates (JSON), layout (JSON), created_at, updated_at
- *   space_workflow_nodes        — id, workflow_id, name, order_index, config (JSON), created_at, updated_at
+ *   space_workflows             — id, space_id, name, description, start_node_id, end_node_id,
+ *                                  tags (JSON), channels (JSON), gates (JSON), layout (JSON),
+ *                                  created_at, updated_at
+ *   space_workflow_nodes        — id, workflow_id, name, description, config (JSON),
+ *                                  created_at, updated_at
  *
  * The `config` column on space_workflow_nodes stores: { instructions?, agents? }
  */
@@ -34,7 +37,7 @@ interface WorkflowRow {
 	description: string;
 	start_node_id: string | null;
 	end_node_id?: string | null;
-	config: string | null;
+	tags: string;
 	channels: string | null;
 	gates: string | null;
 	layout: string | null;
@@ -46,16 +49,10 @@ interface NodeRow {
 	id: string;
 	workflow_id: string;
 	name: string;
-	order_index: number;
+	description: string;
 	config: string | null;
 	created_at: number;
 	updated_at: number;
-}
-
-// JSON stored inside space_workflows.config
-interface WorkflowConfigJson {
-	tags?: string[];
-	extra?: Record<string, unknown>;
 }
 
 // JSON stored inside space_workflow_nodes.config
@@ -102,17 +99,11 @@ function rowToNode(row: NodeRow): WorkflowNode {
 }
 
 function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
-	const cfg = parseJson<WorkflowConfigJson>(row.config, {});
 	const startNodeId = row.start_node_id ?? nodes[0]?.id ?? '';
+	const tags = parseJson<string[]>(row.tags, []);
 	const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
 	const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
 	const gates = parseJson<Gate[] | null>(row.gates, null);
-
-	// `end_node_id` may not exist in older DB schemas — guard for undefined
-	const rawEndNodeId = (row as unknown as Record<string, unknown>).end_node_id as
-		| string
-		| null
-		| undefined;
 
 	const wf: SpaceWorkflow = {
 		id: row.id,
@@ -121,11 +112,11 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 		description: row.description || undefined,
 		nodes,
 		startNodeId,
-		tags: cfg.tags ?? [],
+		tags,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
-	if (rawEndNodeId) wf.endNodeId = rawEndNodeId;
+	if (row.end_node_id) wf.endNodeId = row.end_node_id;
 	if (channels && channels.length > 0) wf.channels = channels;
 	if (gates && gates.length > 0) wf.gates = gates;
 	if (layout) wf.layout = layout;
@@ -159,10 +150,6 @@ export class SpaceWorkflowRepository {
 		const startNodeId = params.startNodeId ?? resolvedNodes[0]?.id ?? null;
 		const endNodeId = params.endNodeId ?? null;
 
-		const cfg: WorkflowConfigJson = {
-			tags: params.tags ?? [],
-		};
-
 		const channelsJson =
 			params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
 		const gatesJson = params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null;
@@ -170,8 +157,8 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, config, channels, gates, layout, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -180,7 +167,7 @@ export class SpaceWorkflowRepository {
 				params.description ?? '',
 				startNodeId,
 				endNodeId,
-				JSON.stringify(cfg),
+				JSON.stringify(params.tags ?? []),
 				channelsJson,
 				gatesJson,
 				layoutJson,
@@ -247,20 +234,9 @@ export class SpaceWorkflowRepository {
 			fields.push('end_node_id = ?');
 			values.push(params.endNodeId ?? null);
 		}
-
-		// Build updated config
-		const existingCfg = parseJson<WorkflowConfigJson>(row.config, {});
-		let cfgChanged = false;
-		const newCfg: WorkflowConfigJson = { ...existingCfg };
-
 		if (params.tags !== undefined) {
-			newCfg.tags = params.tags ?? [];
-			cfgChanged = true;
-		}
-
-		if (cfgChanged) {
-			fields.push('config = ?');
-			values.push(JSON.stringify(newCfg));
+			fields.push('tags = ?');
+			values.push(JSON.stringify(params.tags ?? []));
 		}
 
 		if (params.channels !== undefined) {
@@ -327,7 +303,7 @@ export class SpaceWorkflowRepository {
 		const nodeRows = this.db
 			.prepare(
 				`SELECT DISTINCT workflow_id FROM space_workflow_nodes
-         WHERE config LIKE '%' || ? || '%'`
+	         WHERE config LIKE '%' || ? || '%'`
 			)
 			.all(agentId) as Array<{ workflow_id: string }>;
 
@@ -345,9 +321,7 @@ export class SpaceWorkflowRepository {
 
 	private fetchNodes(workflowId: string): WorkflowNode[] {
 		const rows = this.db
-			.prepare(
-				`SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY order_index ASC, rowid ASC`
-			)
+			.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
 			.all(workflowId) as NodeRow[];
 		return rows.map(rowToNode);
 	}
@@ -356,7 +330,7 @@ export class SpaceWorkflowRepository {
 		workflowId: string,
 		input: WorkflowNodeInput,
 		nodeId: string,
-		index: number,
+		_index: number,
 		now: number
 	): void {
 		const nodeCfg: NodeConfigJson = {};
@@ -378,9 +352,9 @@ export class SpaceWorkflowRepository {
 		this.db
 			.prepare(
 				`INSERT INTO space_workflow_nodes
-           (id, workflow_id, name, description, agent_id, order_index, config, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	           (id, workflow_id, name, description, config, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?)`
 			)
-			.run(nodeId, workflowId, input.name, '', null, index, JSON.stringify(nodeCfg), now, now);
+			.run(nodeId, workflowId, input.name, '', JSON.stringify(nodeCfg), now, now);
 	}
 }

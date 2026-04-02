@@ -304,6 +304,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//     adds 'started_at', removes deprecated columns.
 	//   - Maps old → new status values in existing rows.
 	runMigration73(db);
+
+	// Migration 74: Remaining schema cleanup for end-node / workflow completion work.
+	//   - node_executions: new table for per-node execution tracking
+	//   - space_workflows: drop config (migrate tags out) and max_iterations
+	//   - space_workflow_nodes: drop order_index and agent_id
+	//   - space_agents: drop role, config, inject_workflow_context
+	//   - node config JSON: wrap string systemPrompt/instructions to {mode, value}
+	runMigration74(db);
 }
 
 /**
@@ -4900,5 +4908,282 @@ function runMigration73(db: BunDatabase): void {
 	// ---- space_agents: add instructions ----
 	if (tableExists(db, 'space_agents') && !tableHasColumn(db, 'space_agents', 'instructions')) {
 		db.exec(`ALTER TABLE space_agents ADD COLUMN instructions TEXT`);
+	}
+}
+
+/**
+ * Migration 74: Remaining schema cleanup for end-node / workflow completion.
+ *
+ * ### node_executions (new table)
+ *
+ * Creates a dedicated table for tracking per-node agent execution state within
+ * a workflow run. Separates workflow-internal state from user-facing space_tasks.
+ *
+ * ### space_workflows
+ *
+ * Drops `config` JSON blob (tags extracted to dedicated `tags` column) and
+ * `max_iterations` column (no longer used by the runtime).
+ *
+ * ### space_workflow_nodes
+ *
+ * Drops `order_index` (node ordering is not significant in the graph model)
+ * and `agent_id` (legacy single-agent shorthand; always use agents[] in config).
+ *
+ * ### space_agents
+ *
+ * Drops `role` (removed from type system), `config` (toolConfig, deprecated),
+ * and `inject_workflow_context` (no longer used).
+ *
+ * ### Node config JSON migration
+ *
+ * Transforms WorkflowNodeAgent entries inside space_workflow_nodes.config:
+ * plain string `systemPrompt` / `instructions` → `{ mode: 'override', value }`.
+ * Guards: null/empty string → skip; already an object with `mode` → skip.
+ *
+ * Idempotency: each sub-migration checks for the presence of the column(s)
+ * being dropped before proceeding.
+ */
+export function runMigration74(db: BunDatabase): void {
+	// ---- node_executions: new table ----
+	if (!tableExists(db, 'node_executions')) {
+		try {
+			db.exec('BEGIN');
+			db.exec(`
+				CREATE TABLE node_executions (
+					id TEXT PRIMARY KEY,
+					workflow_run_id TEXT NOT NULL,
+					workflow_node_id TEXT NOT NULL,
+					agent_name TEXT NOT NULL,
+					agent_id TEXT,
+					agent_session_id TEXT,
+					status TEXT NOT NULL DEFAULT 'pending'
+						CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
+					result TEXT,
+					created_at INTEGER NOT NULL,
+					started_at INTEGER,
+					completed_at INTEGER,
+					updated_at INTEGER NOT NULL,
+					FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
+					FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
+				)
+			`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_node_executions_run ON node_executions(workflow_run_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
+			);
+			db.exec('COMMIT');
+		} catch (e) {
+			db.exec('ROLLBACK');
+			throw e;
+		}
+	}
+
+	// ---- space_workflows: drop config and max_iterations, add tags ----
+	if (tableExists(db, 'space_workflows') && tableHasColumn(db, 'space_workflows', 'config')) {
+		// Pre-extract tags from config JSON before dropping the column.
+		const wfRows = db.prepare(`SELECT id, config FROM space_workflows`).all() as Array<{
+			id: string;
+			config: string | null;
+		}>;
+		const tagsMap = new Map<string, string>();
+		for (const row of wfRows) {
+			if (!row.config) {
+				tagsMap.set(row.id, '[]');
+				continue;
+			}
+			try {
+				const cfg = JSON.parse(row.config) as Record<string, unknown>;
+				const tags = Array.isArray(cfg.tags) ? cfg.tags : [];
+				tagsMap.set(row.id, JSON.stringify(tags));
+			} catch {
+				tagsMap.set(row.id, '[]');
+			}
+		}
+
+		db.exec('PRAGMA foreign_keys = OFF');
+		db.exec('BEGIN');
+		try {
+			db.exec(`
+				CREATE TABLE space_workflows_m74_new (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					name TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					start_node_id TEXT,
+					end_node_id TEXT,
+					tags TEXT NOT NULL DEFAULT '[]',
+					layout TEXT,
+					channels TEXT,
+					gates TEXT,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+				)
+			`);
+
+			db.exec(`
+				INSERT INTO space_workflows_m74_new
+				  (id, space_id, name, description, start_node_id, end_node_id, tags,
+				   layout, channels, gates, created_at, updated_at)
+				SELECT
+				  id, space_id, name, description, start_node_id, end_node_id, '[]',
+				  layout, channels, gates, created_at, updated_at
+				FROM space_workflows
+			`);
+
+			db.exec(`DROP TABLE space_workflows`);
+			db.exec(`ALTER TABLE space_workflows_m74_new RENAME TO space_workflows`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflows_space_id ON space_workflows(space_id)`
+			);
+
+			// Apply extracted tags
+			const updateTags = db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`);
+			for (const [id, tags] of tagsMap) {
+				updateTags.run(tags, id);
+			}
+
+			db.exec('COMMIT');
+		} catch (err) {
+			db.exec('ROLLBACK');
+			throw err;
+		} finally {
+			db.exec('PRAGMA foreign_keys = ON');
+		}
+	}
+
+	// ---- space_workflow_nodes: drop order_index and agent_id ----
+	if (
+		tableExists(db, 'space_workflow_nodes') &&
+		tableHasColumn(db, 'space_workflow_nodes', 'order_index')
+	) {
+		db.exec('PRAGMA foreign_keys = OFF');
+		db.exec('BEGIN');
+		try {
+			db.exec(`
+				CREATE TABLE space_workflow_nodes_m74_new (
+					id TEXT PRIMARY KEY,
+					workflow_id TEXT NOT NULL,
+					name TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					config TEXT,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
+				)
+			`);
+
+			db.exec(`
+				INSERT INTO space_workflow_nodes_m74_new
+				  (id, workflow_id, name, description, config, created_at, updated_at)
+				SELECT
+				  id, workflow_id, name, description, config, created_at, updated_at
+				FROM space_workflow_nodes
+			`);
+
+			db.exec(`DROP TABLE space_workflow_nodes`);
+			db.exec(`ALTER TABLE space_workflow_nodes_m74_new RENAME TO space_workflow_nodes`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflow_nodes_workflow_id ON space_workflow_nodes(workflow_id)`
+			);
+
+			db.exec('COMMIT');
+		} catch (err) {
+			db.exec('ROLLBACK');
+			throw err;
+		} finally {
+			db.exec('PRAGMA foreign_keys = ON');
+		}
+	}
+
+	// ---- space_agents: drop role, config, inject_workflow_context ----
+	if (tableExists(db, 'space_agents') && tableHasColumn(db, 'space_agents', 'role')) {
+		db.exec('PRAGMA foreign_keys = OFF');
+		db.exec('BEGIN');
+		try {
+			db.exec(`
+				CREATE TABLE space_agents_m74_new (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					name TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					model TEXT,
+					tools TEXT NOT NULL DEFAULT '[]',
+					system_prompt TEXT NOT NULL DEFAULT '',
+					provider TEXT,
+					instructions TEXT,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+				)
+			`);
+
+			db.exec(`
+				INSERT INTO space_agents_m74_new
+				  (id, space_id, name, description, model, tools, system_prompt, provider,
+				   instructions, created_at, updated_at)
+				SELECT
+				  id, space_id, name, description, model, tools, system_prompt, provider,
+				  instructions, created_at, updated_at
+				FROM space_agents
+			`);
+
+			db.exec(`DROP TABLE space_agents`);
+			db.exec(`ALTER TABLE space_agents_m74_new RENAME TO space_agents`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
+
+			db.exec('COMMIT');
+		} catch (err) {
+			db.exec('ROLLBACK');
+			throw err;
+		} finally {
+			db.exec('PRAGMA foreign_keys = ON');
+		}
+	}
+
+	// ---- Node config JSON migration ----
+	// Transform WorkflowNodeAgent entries in space_workflow_nodes.config:
+	// plain string systemPrompt/instructions → { mode: 'override', value: existingString }
+	if (tableExists(db, 'space_workflow_nodes')) {
+		const nodeRows = db
+			.prepare(`SELECT id, config FROM space_workflow_nodes WHERE config IS NOT NULL`)
+			.all() as Array<{ id: string; config: string }>;
+
+		const updateNodeConfig = db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`);
+
+		for (const row of nodeRows) {
+			let cfg: Record<string, unknown>;
+			try {
+				cfg = JSON.parse(row.config) as Record<string, unknown>;
+			} catch {
+				continue;
+			}
+
+			const agents = cfg.agents;
+			if (!Array.isArray(agents)) continue;
+
+			let changed = false;
+			for (const agent of agents as Array<Record<string, unknown>>) {
+				// Wrap string systemPrompt → { mode: 'override', value }
+				if (typeof agent.systemPrompt === 'string' && agent.systemPrompt) {
+					agent.systemPrompt = { mode: 'override', value: agent.systemPrompt };
+					changed = true;
+				}
+				// typeof agent.systemPrompt === 'object' → already migrated, skip
+
+				// Wrap string instructions → { mode: 'override', value }
+				if (typeof agent.instructions === 'string' && agent.instructions) {
+					agent.instructions = { mode: 'override', value: agent.instructions };
+					changed = true;
+				}
+				// typeof agent.instructions === 'object' → already migrated, skip
+			}
+
+			if (changed) {
+				updateNodeConfig.run(JSON.stringify(cfg), row.id);
+			}
+		}
 	}
 }

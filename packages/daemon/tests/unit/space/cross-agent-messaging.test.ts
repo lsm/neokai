@@ -79,18 +79,11 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
 	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgent(
-	db: BunDatabase,
-	agentId: string,
-	spaceId: string,
-	name: string,
-	role: string
-): void {
+function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, name, role, Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
 function seedRunTask(
@@ -261,7 +254,7 @@ function makeTaskCtx(): TaskCtx {
 	seedSpace(db, spaceId);
 
 	const agentId = 'agent-coder-cam';
-	seedAgent(db, agentId, spaceId, 'Coder', 'coder');
+	seedAgent(db, agentId, spaceId, 'Coder');
 
 	const agentRepo = new SpaceAgentRepository(db);
 	const agentManager = new SpaceAgentManager(agentRepo);

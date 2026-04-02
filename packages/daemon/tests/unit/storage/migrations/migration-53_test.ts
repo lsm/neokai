@@ -5,12 +5,15 @@
  * Channels are moved from the `config` JSON blob to this first-class column
  * (JSON-serialized WorkflowChannel[]).
  *
+ * NOTE: M74 later drops `config` and `max_iterations` from space_workflows, so
+ * tests that query `config` after a full migration run must be updated.
+ *
  * Covers:
  * - channels column exists after migration on a fresh DB
  * - Migration is idempotent (running twice does not throw)
  * - New rows without channels have NULL in the channels column
  * - Channels round-trip correctly through create/read via the repository
- * - Channels are NOT stored inside config JSON after create
+ * - Tags column exists (added by M74, replaces config for metadata storage)
  * - Channels are updated correctly via the repository
  * - Clearing channels via update sets the column to NULL
  * - Data migration: existing rows with channels in config JSON get migrated to the column
@@ -158,7 +161,7 @@ describe('Migration 53: channels column on space_workflows', () => {
 		});
 	});
 
-	test('channels are NOT stored inside config JSON', () => {
+	test('tags column exists after full migration (added by M74)', () => {
 		runMigrations(db, () => {});
 
 		const now = Date.now();
@@ -174,11 +177,13 @@ describe('Migration 53: channels column on space_workflows', () => {
 			channels: [{ from: 'a', to: 'b', direction: 'one-way' }],
 		});
 
-		const raw = db.prepare(`SELECT config FROM space_workflows WHERE id = ?`).get(wf.id) as {
-			config: string | null;
+		// After M74, config column is dropped. Verify tags column exists and has default.
+		expect(columnExists(db, 'space_workflows', 'config')).toBe(false);
+		expect(columnExists(db, 'space_workflows', 'tags')).toBe(true);
+		const raw = db.prepare(`SELECT tags FROM space_workflows WHERE id = ?`).get(wf.id) as {
+			tags: string;
 		};
-		const cfg = JSON.parse(raw.config ?? '{}') as Record<string, unknown>;
-		expect(cfg.channels).toBeUndefined();
+		expect(raw.tags).toBe('[]');
 	});
 
 	test('updating channels via repository writes to the channels column', () => {
@@ -261,9 +266,9 @@ describe('Migration 53: channels column on space_workflows', () => {
 		expect(columnExists(db, 'space_workflows', 'channels')).toBe(true);
 
 		// The channels were migrated from config to the channels column
-		const raw = db
-			.prepare(`SELECT channels, config FROM space_workflows WHERE id = 'wf-legacy'`)
-			.get() as { channels: string | null; config: string };
+		const raw = db.prepare(`SELECT channels FROM space_workflows WHERE id = 'wf-legacy'`).get() as {
+			channels: string | null;
+		};
 
 		expect(raw.channels).not.toBeNull();
 		const migratedChannels = JSON.parse(raw.channels!) as Array<Record<string, unknown>>;
@@ -274,11 +279,6 @@ describe('Migration 53: channels column on space_workflows', () => {
 			direction: 'one-way',
 			label: 'legacy link',
 		});
-
-		// config JSON must no longer contain channels
-		const migratedCfg = JSON.parse(raw.config) as Record<string, unknown>;
-		expect(migratedCfg.channels).toBeUndefined();
-		expect(migratedCfg.tags).toEqual(['legacy']);
 	});
 
 	test('data migration: rows without channels in config are left with NULL in channels column', () => {

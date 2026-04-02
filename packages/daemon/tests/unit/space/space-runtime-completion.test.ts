@@ -82,12 +82,11 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, role: string): void {
+function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, `Agent ${agentId}`, role, Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
 function buildLinearWorkflow(
@@ -174,9 +173,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 		({ db, dir } = makeDb());
 
 		seedSpaceRow(db, SPACE_ID, WORKSPACE);
-		seedAgentRow(db, AGENT_A, SPACE_ID, 'coder');
-		seedAgentRow(db, AGENT_B, SPACE_ID, 'planner');
-		seedAgentRow(db, AGENT_C, SPACE_ID, 'general');
+		seedAgentRow(db, AGENT_A, SPACE_ID);
+		seedAgentRow(db, AGENT_B, SPACE_ID);
+		seedAgentRow(db, AGENT_C, SPACE_ID);
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		taskRepo = new SpaceTaskRepository(db);

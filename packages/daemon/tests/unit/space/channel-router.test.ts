@@ -74,17 +74,11 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
 	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgent(
-	db: BunDatabase,
-	agentId: string,
-	spaceId: string,
-	role: 'coder' | 'planner' | 'general' | string
-): void {
+function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-	).run(agentId, spaceId, `Agent ${agentId}`, role, Date.now(), Date.now());
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -179,9 +173,9 @@ describe('ChannelRouter', () => {
 		({ db, dir } = makeDb());
 
 		seedSpace(db, SPACE_ID);
-		seedAgent(db, AGENT_CODER, SPACE_ID, 'coder');
-		seedAgent(db, AGENT_PLANNER, SPACE_ID, 'planner');
-		seedAgent(db, AGENT_CUSTOM, SPACE_ID, 'my-custom-role');
+		seedAgent(db, AGENT_CODER, SPACE_ID);
+		seedAgent(db, AGENT_PLANNER, SPACE_ID);
+		seedAgent(db, AGENT_CUSTOM, SPACE_ID);
 
 		taskRepo = new SpaceTaskRepository(db);
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -1427,10 +1421,10 @@ describe('ChannelRouter', () => {
 			];
 			const AGENT_REVIEWER = 'agent-reviewer';
 			db.prepare(
-				`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
-				 config, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
-			).run(AGENT_REVIEWER, SPACE_ID, 'Agent Reviewer', 'general', Date.now(), Date.now());
+				`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt,
+				created_at, updated_at)
+				 VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+			).run(AGENT_REVIEWER, SPACE_ID, 'Agent Reviewer', Date.now(), Date.now());
 
 			const NODE_C = 'node-c';
 			const workflow = buildWorkflowWithGates(
@@ -1812,9 +1806,9 @@ describe('ChannelRouter', () => {
 				[AGENT_REVIEWER3, 'Reviewer 3'],
 			]) {
 				db.prepare(
-					`INSERT INTO space_agents (id, space_id, name, role, description, model, tools,
-					 system_prompt, config, created_at, updated_at)
-					 VALUES (?, ?, ?, 'general', '', null, '[]', '', null, ?, ?)`
+					`INSERT INTO space_agents (id, space_id, name, description, model, tools,
+					 system_prompt, created_at, updated_at)
+					 VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
 				).run(id, SPACE_ID, name, Date.now(), Date.now());
 			}
 
@@ -1887,9 +1881,9 @@ describe('ChannelRouter', () => {
 			const AGENT_C = 'agent-c';
 
 			db.prepare(
-				`INSERT INTO space_agents (id, space_id, name, role, description, model, tools,
-				 system_prompt, config, created_at, updated_at)
-				 VALUES (?, ?, 'Agent C', 'general', '', null, '[]', '', null, ?, ?)`
+				`INSERT INTO space_agents (id, space_id, name, description, model, tools,
+				 system_prompt, created_at, updated_at)
+				 VALUES (?, ?, 'Agent C', '', null, '[]', '', ?, ?)`
 			).run(AGENT_C, SPACE_ID, Date.now(), Date.now());
 
 			const channels: WorkflowChannel[] = [
@@ -1958,9 +1952,9 @@ describe('ChannelRouter', () => {
 			const AGENT_QA = 'agent-qa';
 
 			db.prepare(
-				`INSERT INTO space_agents (id, space_id, name, role, description, model, tools,
-				 system_prompt, config, created_at, updated_at)
-				 VALUES (?, ?, 'QA Agent', 'general', '', null, '[]', '', null, ?, ?)`
+				`INSERT INTO space_agents (id, space_id, name, description, model, tools,
+				 system_prompt, created_at, updated_at)
+				 VALUES (?, ?, 'QA Agent', '', null, '[]', '', ?, ?)`
 			).run(AGENT_QA, SPACE_ID, Date.now(), Date.now());
 
 			// All 3 reviewer channels share the same review-votes-gate
@@ -2058,9 +2052,9 @@ describe('ChannelRouter', () => {
 			const AGENT_QA = 'agent-qa-partial';
 
 			db.prepare(
-				`INSERT INTO space_agents (id, space_id, name, role, description, model, tools,
-				 system_prompt, config, created_at, updated_at)
-				 VALUES (?, ?, 'QA Agent', 'general', '', null, '[]', '', null, ?, ?)`
+				`INSERT INTO space_agents (id, space_id, name, description, model, tools,
+				 system_prompt, created_at, updated_at)
+				 VALUES (?, ?, 'QA Agent', '', null, '[]', '', ?, ?)`
 			).run(AGENT_QA, SPACE_ID, Date.now(), Date.now());
 
 			const channels: WorkflowChannel[] = [
@@ -2214,9 +2208,9 @@ describe('ChannelRouter', () => {
 			}
 
 			beforeEach(() => {
-				seedAgent(db, AGENT_REVIEWER, SPACE_ID, 'reviewer');
-				seedAgent(db, AGENT_QA, SPACE_ID, 'qa');
-				seedAgent(db, AGENT_DONE, SPACE_ID, 'general');
+				seedAgent(db, AGENT_REVIEWER, SPACE_ID);
+				seedAgent(db, AGENT_QA, SPACE_ID);
+				seedAgent(db, AGENT_DONE, SPACE_ID);
 			});
 
 			test('QA failure via onGateDataChanged activates Coding, increments counter, resets cycle gates', async () => {

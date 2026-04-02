@@ -1399,8 +1399,8 @@ describe('validateGate is creation-time only — not applied on load', () => {
 		]);
 
 		db.exec(
-			`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, channels, gates, layout, created_at, updated_at)
-			 VALUES ('${workflowId}', '${SPACE_ID}', 'Legacy Empty Fields', '', NULL, '{}', NULL, '${legacyGatesJson.replace(/'/g, "''")}', NULL, ${now}, ${now})`
+			`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, channels, gates, layout, created_at, updated_at)
+			 VALUES ('${workflowId}', '${SPACE_ID}', 'Legacy Empty Fields', '', NULL, '[]', NULL, '${legacyGatesJson.replace(/'/g, "''")}', NULL, ${now}, ${now})`
 		);
 
 		// The repository should load this without throwing
@@ -1420,8 +1420,8 @@ describe('validateGate is creation-time only — not applied on load', () => {
 		const legacyGatesJson = JSON.stringify([{ id: 'gate-minimal', resetOnCycle: false }]);
 
 		db.exec(
-			`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, channels, gates, layout, created_at, updated_at)
-			 VALUES ('${workflowId}', '${SPACE_ID}', 'Minimal Gate', '', NULL, '{}', NULL, '${legacyGatesJson.replace(/'/g, "''")}', NULL, ${now}, ${now})`
+			`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, channels, gates, layout, created_at, updated_at)
+			 VALUES ('${workflowId}', '${SPACE_ID}', 'Minimal Gate', '', NULL, '[]', NULL, '${legacyGatesJson.replace(/'/g, "''")}', NULL, ${now}, ${now})`
 		);
 
 		const workflow = workflowRepo.getWorkflow(workflowId);
@@ -1445,8 +1445,8 @@ describe('validateGate is creation-time only — not applied on load', () => {
 		const legacyGatesJson = JSON.stringify([{ id: 'gate-bad', fields: [], resetOnCycle: false }]);
 
 		db.exec(
-			`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, channels, gates, layout, created_at, updated_at)
-			 VALUES ('${workflowId}', '${SPACE_ID}', 'Validation Bypass', '', NULL, '{}', NULL, '${legacyGatesJson.replace(/'/g, "''")}', NULL, ${now}, ${now})`
+			`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, channels, gates, layout, created_at, updated_at)
+			 VALUES ('${workflowId}', '${SPACE_ID}', 'Validation Bypass', '', NULL, '[]', NULL, '${legacyGatesJson.replace(/'/g, "''")}', NULL, ${now}, ${now})`
 		);
 
 		const workflow = workflowRepo.getWorkflow(workflowId);
@@ -1532,8 +1532,8 @@ describe('validateGate is creation-time only — not applied on load', () => {
 		]);
 
 		db.exec(
-			`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, channels, gates, layout, created_at, updated_at)
-			 VALUES ('${workflowId}', '${SPACE_ID}', 'Mixed Gates', '', NULL, '{}', NULL, '${mixedGatesJson.replace(/'/g, "''")}', NULL, ${now}, ${now})`
+			`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, channels, gates, layout, created_at, updated_at)
+			 VALUES ('${workflowId}', '${SPACE_ID}', 'Mixed Gates', '', NULL, '[]', NULL, '${mixedGatesJson.replace(/'/g, "''")}', NULL, ${now}, ${now})`
 		);
 
 		const workflow = workflowRepo.getWorkflow(workflowId);
