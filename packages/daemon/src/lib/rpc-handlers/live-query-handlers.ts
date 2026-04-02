@@ -9,7 +9,7 @@
 
 import { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
-import { createEventMessage } from '@neokai/shared';
+import { createEventMessage, parseJson, parseJsonOptional } from '@neokai/shared';
 import type {
 	LiveQuerySubscribeRequest,
 	LiveQuerySubscribeResponse,
@@ -76,13 +76,10 @@ function mapTaskRow(row: Record<string, unknown>): Record<string, unknown> {
 function mapGoalRow(row: Record<string, unknown>): Record<string, unknown> {
 	return {
 		...row,
-		linkedTaskIds: JSON.parse((row.linkedTaskIds as string | null) ?? '[]') as string[],
-		metrics: JSON.parse((row.metrics as string | null) ?? '{}') as Record<string, number>,
-		structuredMetrics:
-			row.structuredMetrics != null
-				? (JSON.parse(row.structuredMetrics as string) as unknown[])
-				: undefined,
-		schedule: row.schedule != null ? (JSON.parse(row.schedule as string) as unknown) : undefined,
+		linkedTaskIds: parseJson<string[]>((row.linkedTaskIds as string | null) ?? '[]', []),
+		metrics: parseJson<Record<string, number>>((row.metrics as string | null) ?? '{}', {}),
+		structuredMetrics: parseJsonOptional(row.structuredMetrics as string | null),
+		schedule: parseJsonOptional(row.schedule as string | null),
 		schedulePaused: row.schedulePaused === 1,
 	};
 }

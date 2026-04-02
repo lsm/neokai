@@ -287,6 +287,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Sets default_path from allowed_paths[0].path, or '__NEEDS_WORKSPACE_PATH__' sentinel
 	// when allowed_paths is also empty. Sentinel is replaced at startup with config.workspaceRoot.
 	runMigration70(db);
+	// Migration 71: Fix corrupted schedule values in goals table.
+	// Some rows may contain raw cron strings (e.g. "@daily") instead of the expected
+	// JSON object {"expression":"@daily","timezone":"UTC"}. This wraps bare strings
+	// into the proper CronSchedule shape.
+	runMigration71(db);
 }
 
 /**
@@ -4561,5 +4566,51 @@ export function runMigration70(db: BunDatabase): void {
 			// JSON parse failed — fall through to sentinel
 		}
 		update.run(newPath, row.id);
+	}
+}
+
+/**
+ * Migration 71: Fix corrupted schedule values in goals table.
+ *
+ * Some rows may contain raw cron strings (e.g. "@daily", "0 9 * * *") instead
+ * of the expected JSON object {"expression":"@daily","timezone":"UTC"}.
+ * This migration detects such rows and wraps bare strings into the proper
+ * CronSchedule shape.
+ *
+ * Idempotency: if no rows have non-JSON schedule values, the function returns early.
+ */
+export function runMigration71(db: BunDatabase): void {
+	if (!tableExists(db, 'goals')) return;
+
+	// Check if the schedule column exists (older DBs may not have it)
+	const goalColumns = db.prepare(`PRAGMA table_info(goals)`).all() as Array<{ name: string }>;
+	const hasSchedule = goalColumns.some((col) => col.name === 'schedule');
+	if (!hasSchedule) return;
+
+	const rows = db
+		.prepare(`SELECT id, schedule FROM goals WHERE schedule IS NOT NULL`)
+		.all() as Array<{ id: string; schedule: string }>;
+
+	if (rows.length === 0) return;
+
+	const update = db.prepare(`UPDATE goals SET schedule = ? WHERE id = ?`);
+
+	for (const row of rows) {
+		try {
+			const parsed = JSON.parse(row.schedule);
+			// If it parses and is an object with expression field, it's already correct
+			if (typeof parsed === 'object' && parsed !== null && typeof parsed.expression === 'string') {
+				continue;
+			}
+			// If it parses but is a bare string (somehow valid JSON string), wrap it
+			if (typeof parsed === 'string') {
+				const fixedVal = JSON.stringify({ expression: parsed, timezone: 'UTC' });
+				update.run(fixedVal, row.id);
+			}
+		} catch {
+			// JSON parse failed — this is a raw cron string like "@daily"
+			const fixedVal = JSON.stringify({ expression: row.schedule, timezone: 'UTC' });
+			update.run(fixedVal, row.id);
+		}
 	}
 }
