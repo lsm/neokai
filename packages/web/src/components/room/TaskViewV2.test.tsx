@@ -8,7 +8,7 @@
  * - Runtime messages rendered inline between turn blocks
  * - Clicking a turn block opens slide-out panel
  * - Only one slide-out panel at a time (opening a new one closes previous)
- * - Review bar removed from view (interrupt moved to gear menu)
+ * - TaskReviewBar shown when group.submittedForReview is true
  * - Auto-scroll integration (isFirstLoad flip, autoScrollEnabled toggle)
  * - Shared sub-components (HumanInputArea, TaskActionDialogs, RejectModal)
  * - conversationKey bump forces re-render key
@@ -189,6 +189,27 @@ vi.mock('./task-shared/TaskActionDialogs.tsx', () => ({
 	CancelTaskDialog: () => null,
 	ArchiveTaskDialog: () => null,
 	SetStatusModal: () => null,
+}));
+
+vi.mock('./task-shared/TaskReviewBar.tsx', () => ({
+	TaskReviewBar: ({
+		task,
+		onApprove,
+		onOpenRejectModal,
+	}: {
+		task: unknown;
+		onApprove: () => void;
+		onOpenRejectModal: () => void;
+	}) => (
+		<div data-testid="task-review-bar">
+			<button data-testid="approve-button" onClick={onApprove}>
+				Approve
+			</button>
+			<button data-testid="reject-button" onClick={onOpenRejectModal}>
+				Reject
+			</button>
+		</div>
+	),
 }));
 
 vi.mock('../ui/RejectModal.tsx', () => ({
@@ -941,5 +962,32 @@ describe('TaskViewV2', () => {
 		mockIsReconnecting = true;
 		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
 		expect(getByTestId('reconnecting-banner').textContent).toContain('Reconnecting');
+	});
+
+	// --- TaskReviewBar (approve/reject) ---
+
+	it('renders TaskReviewBar when group.submittedForReview is true', () => {
+		mockTaskViewData = makeDefaultTaskViewData(makeTask(), makeGroup({ submittedForReview: true }));
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		expect(getByTestId('task-review-bar')).toBeTruthy();
+	});
+
+	it('does not render TaskReviewBar when group.submittedForReview is false', () => {
+		const { queryByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		expect(queryByTestId('task-review-bar')).toBeNull();
+	});
+
+	it('calls approveReviewedTask when approve button clicked', () => {
+		mockTaskViewData = makeDefaultTaskViewData(makeTask(), makeGroup({ submittedForReview: true }));
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		fireEvent.click(getByTestId('approve-button'));
+		expect(mockTaskViewData.approveReviewedTask).toHaveBeenCalled();
+	});
+
+	it('calls rejectModal.open when reject button clicked', () => {
+		mockTaskViewData = makeDefaultTaskViewData(makeTask(), makeGroup({ submittedForReview: true }));
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		fireEvent.click(getByTestId('reject-button'));
+		expect(mockTaskViewData.rejectModal.open).toHaveBeenCalled();
 	});
 });
