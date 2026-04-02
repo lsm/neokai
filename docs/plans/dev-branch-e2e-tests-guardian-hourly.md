@@ -32,11 +32,16 @@ Create a recurring mission with these parameters:
 
 The `cancel-in-progress: true` concurrency group on CI means that pushing to `dev` (or merging a PR) cancels any in-progress CI run. If the guardian's fix PR is merged while a CI run is in progress, that run gets cancelled -- but the guardian should not re-trigger CI via `workflow_dispatch` (doing so would itself be cancelled by the next push). Using `supervised` autonomy ensures all PRs get human review before merge, which avoids timing-related merge conflicts and keeps a human in the loop for any cascading effects on CI.
 
+### Prerequisites
+
+- **GitHub CLI (`gh`)**: Must be authenticated with a token that has `repo` scope (read access to actions/runs). Set `GH_TOKEN` or `GITHUB_TOKEN` in the environment. For hourly runs this is well within rate limits (~10 API calls per execution).
+- **`jq`**: Required for JSON parsing. Pre-installed on GitHub-hosted runners and most Unix systems.
+
 ### Mission Description (Discovery Task Prompt)
 
 Use the following as the mission description. This is what the Planner agent sees when creating the first execution's task plan.
 
-```
+<pre>
 Run E2E CI checks on recent dev branch commits. For each failing test suite, report: test name, failure message, and relevant commit hash. Output a summary of all failures found.
 
 ## Steps
@@ -72,17 +77,27 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
    fi
    ```
 
-3. **Verify E2E jobs actually ran** before checking for failures. E2E jobs are gated on `build` and `discover` succeeding. If either upstream job fails, E2E jobs are skipped -- not failed. A run with zero E2E failures and zero E2E jobs run is NOT "all green"; it means E2E never executed.
+   **Important**: After the polling loop resolves (finds at least one completed run), re-run the full step 1 query with `--limit 5` to get the full list of recent runs for proper cancelled-run skipping. The polling query only used `--limit 1` to detect completion -- it does not provide enough data for step 2's selection logic.
+
+3. **Verify E2E jobs actually ran** before checking for failures. E2E jobs are gated on `build` and `discover` succeeding. If either upstream job fails or is skipped, E2E jobs are skipped -- not failed. A run with zero E2E failures and zero E2E jobs run is NOT "all green"; it means E2E never executed.
 
    Check for skipped E2E jobs and upstream failures:
    ```bash
-   RUN_ID=<run-id>
+   RUN_ID=&lt;run-id&gt;
    # Check if build and discover succeeded (prerequisite for E2E)
    UPSTREAM=$(gh run view --repo lsm/neokai $RUN_ID --json jobs \
      --jq '.jobs[] | select(.name == "Build Binary (linux-x64)" or .name == "Discover Tests") | {name, conclusion, status}')
 
    echo "Upstream jobs:"
    echo "$UPSTREAM"
+
+   # Check for skipped build (e.g., unit test failure caused build to be skipped)
+   BUILD_CONCLUSION=$(echo "$UPSTREAM" | jq -r '.[] | select(.name == "Build Binary (linux-x64)") | .conclusion')
+   if [ "$BUILD_CONCLUSION" = "skipped" ]; then
+     echo "WARNING: Build was skipped (likely a prerequisite job failed). E2E cannot run."
+     echo "Report this as a CI infrastructure issue rather than 'all green'."
+     exit 0
+   fi
 
    # Count E2E jobs that actually ran (not skipped)
    E2E_TOTAL=$(gh run view --repo lsm/neokai $RUN_ID --json jobs \
@@ -101,6 +116,8 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
    fi
    ```
 
+   Note: `exit 0` here means the discovery task succeeds (no failures to report) even though E2E didn't run. This is intentional -- the guardian should not alarm on CI infrastructure issues that prevent E2E from running. The task output will contain the warning text for human visibility.
+
 4. List failed E2E jobs from the chosen run (only jobs that actually ran, not skipped):
    ```bash
    gh run view --repo lsm/neokai $RUN_ID --json jobs \
@@ -115,38 +132,44 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
    ```bash
    # Get the failing step name(s) and summary
    gh run view --repo lsm/neokai $RUN_ID --json jobs \
-     --jq '.jobs[] | select(.name == "<job-name>") | .steps[] | select(.conclusion == "failure") | .name'
+     --jq '.jobs[] | select(.name == "&lt;job-name&gt;") | .steps[] | select(.conclusion == "failure") | .name'
    ```
 
    **6b. Download test report artifact (for detailed failure messages)** -- downloads per-test Playwright output:
    ```bash
    # Artifact naming convention (from .github/workflows/main.yml):
-   #   No-LLM jobs: e2e-no-llm-results-<test-name>
-   #   LLM jobs:    e2e-results-llm-<test-name>
-   # where <test-name> matches the matrix.test.name value (e.g., "features-mission-terminology")
+   #   No-LLM jobs: e2e-no-llm-results-&lt;test-name&gt;
+   #   LLM jobs:    e2e-results-llm-&lt;test-name&gt;
+   # where &lt;test-name&gt; matches the matrix.test.name value (e.g., "features-mission-terminology")
    #
    # IMPORTANT: artifacts are only uploaded when the job fails (if: failure() in the workflow).
    # Artifacts expire after 7 days (retention-days: 7).
    mkdir -p /tmp/e2e-guardian
-   gh run download $RUN_ID --repo lsm/neokai --name "e2e-no-llm-results-<test-name>" --dir "/tmp/e2e-guardian/<test-name>"
+   gh run download $RUN_ID --repo lsm/neokai --name "e2e-no-llm-results-&lt;test-name&gt;" --dir "/tmp/e2e-guardian/&lt;test-name&gt;"
    ```
 
    **Artifact directory structure** (confirmed from CI workflow `upload-artifact@v4` with `if: failure()`):
+   The CI workflow uploads `packages/e2e/test-results/` and `packages/e2e/playwright-report/`. When `gh run download` extracts the artifact, the directory structure is:
    ```
-   /tmp/e2e-guardian/<test-name>/
-   ├── test-results/           # Playwright internal output (per-test directories)
-   │   └── <test-name>/
-   │       └── .last-run.json  # Structured test result with error messages
-   └── playwright-report/      # HTML reporter output
-       └── index.html          # Self-contained HTML report
+   /tmp/e2e-guardian/&lt;matrix-name&gt;/
+   ├── test-results/               # Playwright internal output (per-test directories)
+   │   ├── &lt;test-title-dir-1&gt;/     # Named after test titles, NOT the matrix name
+   │   │   └── .last-run.json
+   │   └── &lt;test-title-dir-N&gt;/     # Multiple test directories may exist
+   │       └── .last-run.json
+   └── playwright-report/          # HTML reporter output
+       └── index.html              # Self-contained HTML report
    ```
 
-   **Reading failure messages from `.last-run.json`**:
-   Playwright's `test-results/` contains per-test directories, each with a `.last-run.json` file that holds the most recent test run result including `errors[]` with structured error data. This is the best source for programmatic failure message extraction:
+   **Reading failure messages from artifacts**:
+   The `.last-run.json` file is a simple status file (e.g., `{status: "failed"}`) and does NOT contain structured error data. Do NOT rely on `jq` paths like `.suites[].specs[].tests[].results[].error` -- they will return empty. Instead, use these approaches:
    ```bash
-   # Extract all error messages from test results
-   find /tmp/e2e-guardian/<test-name>/test-results/ -name ".last-run.json" \
-     -exec jq -r '.suites[]?.specs[]?.tests[]?.results[]?.error // empty | .message // empty' {} \; 2>/dev/null
+   # Option A: Extract error text from Playwright HTML report (recommended)
+   grep -oP '(?&lt;=&lt;pre&gt;).*?(?=&lt;/pre&gt;)' /tmp/e2e-guardian/&lt;matrix-name&gt;/playwright-report/index.html 2&gt;/dev/null | head -50
+
+   # Option B: Check .last-run.json status only (to confirm which tests failed)
+   find /tmp/e2e-guardian/&lt;matrix-name&gt;/test-results/ -name ".last-run.json" \
+     -exec sh -c 'echo "=== $1 ===" && cat "$1"' _ {} \; 2&gt;/dev/null
    ```
 
    **Batch download for all failed jobs**:
@@ -154,7 +177,7 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
    FAILED_JOBS=$(gh run view --repo lsm/neokai $RUN_ID --json jobs \
      --jq '.jobs[] | select(.conclusion == "failure") | select(.name | startswith("E2E")) | .name')
    for JOB in $FAILED_JOBS; do
-     # Extract test name from job name: "E2E No-LLM (features-foo)" -> "features-foo"
+     # Extract test name from job name: "E2E No-LLM (features-foo)" -&gt; "features-foo"
      TEST_NAME=$(echo "$JOB" | sed -n 's/.*(\(.*\)).*/\1/p')
      if [ -z "$TEST_NAME" ]; then
        echo "WARNING: Could not extract test name from job: $JOB"
@@ -168,7 +191,7 @@ Run E2E CI checks on recent dev branch commits. For each failing test suite, rep
      fi
      echo "Downloading artifact: $ARTIFACT"
      mkdir -p "/tmp/e2e-guardian/$TEST_NAME"
-     if ! gh run download $RUN_ID --repo lsm/neokai --name "$ARTIFACT" --dir "/tmp/e2e-guardian/$TEST_NAME" 2>&1; then
+     if ! gh run download $RUN_ID --repo lsm/neokai --name "$ARTIFACT" --dir "/tmp/e2e-guardian/$TEST_NAME" 2&gt;&amp;1; then
        echo "  Artifact download failed (may have expired or upload failed). Use step 6a logs instead."
      fi
    done
@@ -202,14 +225,30 @@ These issues were documented in prior health check runs (see `docs/e2e-health-ch
 - **cancel-in-progress**: CI has `cancel-in-progress: true` with group `ci-${{ github.ref }}`. Pushing to dev while CI is running will cancel the in-progress run. Always check for cancelled runs and skip them (step 2).
 - **Read-only guard**: This mission is a read-only observer. Do NOT trigger `workflow_dispatch` or push to dev directly. All fixes must go through PRs with human review.
 - E2E test categories: `no-llm` (UI-only, fully parallel) and `llm` (requires LLM API, max 4 parallel).
-- The CI `discover` job auto-categorizes tests; artifact names follow `e2e-no-llm-results-<name>` and `e2e-results-llm-<name>`.
-- **Artifact naming**: Jobs are `E2E No-LLM (<name>)` and `E2E LLM (<name>)`. Strip the prefix and parentheses to get the artifact name suffix.
+- The CI `discover` job auto-categorizes tests; artifact names follow `e2e-no-llm-results-&lt;name&gt;` and `e2e-results-llm-&lt;name&gt;`.
+- **Artifact naming**: Jobs are `E2E No-LLM (&lt;name&gt;)` and `E2E LLM (&lt;name&gt;)`. Strip the prefix and parentheses to get the artifact name suffix.
 - **Job dependency chain** (from workflow YAML):
   - `build` (needs: check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli, discover)
   - `e2e-no-llm` (needs: build, discover) -- only runs if both succeed
   - `e2e-llm` (needs: build, discover) -- only runs if both succeed
+  - If any prerequisite of `build` fails, `build` is skipped, which in turn skips all E2E jobs.
 - **Artifact upload condition**: `if: failure()` -- artifacts are only uploaded when the job fails, not on success. Artifacts older than 7 days are auto-deleted by GitHub Actions.
-```
+- **`exit 0` semantics**: Several steps use `exit 0` when the guardian stops early (no completed runs after polling, no E2E jobs ran, all green). This signals "no failures to report" to the task runner, which is correct -- the guardian only reports failure when it finds actual test failures. Early-exit scenarios produce a text warning in the task output for human visibility.
+
+## Early Exit Semantics
+
+The discovery task uses `exit 0` for all "stop early" scenarios. This is intentional:
+
+| Scenario | Exit code | Meaning |
+|----------|-----------|---------|
+| All green (E2E ran, no failures) | `exit 0` | No failures to report |
+| No E2E ran (build skipped/failed) | `exit 0` | CI infra issue, not a test failure |
+| All 5 recent runs cancelled | `exit 0` | No data available |
+| No completed runs after polling | `exit 0` | CI still running, try again next hour |
+| Test failures found | Normal completion | Report contains failure entries |
+
+The task output text always contains a human-readable summary of what happened, regardless of exit code. The Leader agent should read the output to decide whether to create fix tasks.
+</pre>
 
 ---
 
@@ -222,6 +261,13 @@ The mission system uses **plan reuse** for execution 2+:
 3. **Fix tasks are NOT cloned** -- each execution's fix tasks are created fresh by the Leader based on what the discovery task finds in that specific run.
 
 This means: if execution #1 finds 3 failures and the Leader creates 3 fix tasks, execution #2 will only create new fix tasks for failures that still exist (or new failures introduced since the last run). Fixed tests should no longer appear in the discovery output.
+
+### Fix Task De-duplication Across Executions
+
+The Leader agent is expected to query existing in-progress tasks before creating new fix tasks. This is **guidance**, not a system-enforced rule -- the Leader uses its judgment to avoid creating duplicate fix tasks for the same failure. Specifically:
+- Before creating a fix task, the Leader checks whether a fix task for the same test file and root cause already exists and is still in progress.
+- If a matching fix task exists, skip creating a duplicate.
+- If a matching fix task was completed but the failure persists (discovered again in a new execution), create a new fix task noting that the previous fix attempt did not resolve the issue.
 
 ---
 
@@ -289,32 +335,31 @@ The mission uses `supervised` autonomy, which means:
 
 ### Fix Task Description Template
 
-```
-Fix E2E test failure: <test-name>
+Use indented code blocks (4 spaces) inside the template to avoid nested triple-backtick conflicts:
 
-**CI Run**: <run-id>
-**Commit**: <head-sha>
-**Job**: <job-name>
-**Test file**: packages/e2e/tests/<path>.e2e.ts
-**Error**: <failure message>
-**Root cause**: <category and explanation>
-**Pre-existing**: <yes/no, reference health check log entry if yes>
+    Fix E2E test failure: &lt;test-name&gt;
 
-Fix the test (or underlying product code) so it passes in CI. Verify locally with:
-```bash
-NEOKAI_USE_DEV_PROXY=1 make run-e2e TEST=tests/<path>.e2e.ts
-```
+    **CI Run**: &lt;run-id&gt;
+    **Commit**: &lt;head-sha&gt;
+    **Job**: &lt;job-name&gt;
+    **Test file**: packages/e2e/tests/&lt;path&gt;.e2e.ts
+    **Error**: &lt;failure message&gt;
+    **Root cause**: &lt;category and explanation&gt;
+    **Pre-existing**: &lt;yes/no, reference health check log entry if yes&gt;
 
-After fixing, commit on a feature branch and create a PR:
-```bash
-git checkout -b fix/e2e-<test-name>
-git add packages/e2e/tests/<path>.e2e.ts
-git commit -m "fix(e2e): <description>"
-git push origin fix/e2e-<test-name>
-gh pr create --base dev --title "fix(e2e): <description>" --body "Fixes E2E failure from CI run <run-id>"
-```
-Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
-```
+    Fix the test (or underlying product code) so it passes in CI. Verify locally with:
+
+        NEOKAI_USE_DEV_PROXY=1 make run-e2e TEST=tests/&lt;path&gt;.e2e.ts
+
+    After fixing, commit on a feature branch and create a PR:
+
+        git checkout -b fix/e2e-&lt;test-name&gt;
+        git add packages/e2e/tests/&lt;path&gt;.e2e.ts
+        git commit -m "fix(e2e): &lt;description&gt;"
+        git push origin fix/e2e-&lt;test-name&gt;
+        gh pr create --base dev --title "fix(e2e): &lt;description&gt;" --body "Fixes E2E failure from CI run &lt;run-id&gt;"
+
+    Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ### Reference Material for Fix Procedures
 
@@ -341,3 +386,4 @@ The existing detailed plan at `docs/plans/dev-branch-e2e-tests-health-check.md` 
 - Known pre-existing issues documented in `docs/e2e-health-check-log.md` are not re-investigated unless they have worsened.
 - Excluded tests (`space-export-import`, `space-workflow-rules`) are not investigated.
 - The guardian does NOT trigger `workflow_dispatch` or push to dev directly -- it is a read-only observer.
+- GitHub CLI is authenticated and `jq` is available in the agent environment.
