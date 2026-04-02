@@ -298,6 +298,46 @@ describe('Migration 74: Remaining schema cleanup', () => {
 		}).toThrow();
 	});
 
+	test('node_executions: deleting space_agent sets agent_id to NULL (ON DELETE SET NULL)', () => {
+		createPreM74Schema(db);
+		runMigration74(db);
+
+		const now = Date.now();
+
+		// Setup: space → agent → workflow → run → node_execution
+		db.prepare(
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('sp-1', 's', '/ws', 'Space', now, now);
+		db.prepare(
+			`INSERT INTO space_agents (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+		).run('ag-1', 'sp-1', 'Agent', now, now);
+		db.prepare(
+			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+		).run('wf-1', 'sp-1', 'WF', now, now);
+		db.prepare(
+			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+		).run('run-1', 'sp-1', 'wf-1', 'Run', 'pending', now, now);
+		db.prepare(
+			`INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_id, status, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		).run('ne-1', 'run-1', 'node-1', 'Agent', 'ag-1', 'in_progress', now, now);
+
+		// Verify agent_id is set
+		const before = db.prepare(`SELECT agent_id FROM node_executions WHERE id = ?`).get('ne-1') as {
+			agent_id: string | null;
+		};
+		expect(before.agent_id).toBe('ag-1');
+
+		// Delete the space_agent
+		db.prepare(`DELETE FROM space_agents WHERE id = ?`).run('ag-1');
+
+		// Verify agent_id was set to NULL (not a constraint violation)
+		const after = db.prepare(`SELECT agent_id FROM node_executions WHERE id = ?`).get('ne-1') as {
+			agent_id: string | null;
+		};
+		expect(after.agent_id).toBeNull();
+	});
+
 	test('node_executions is created via full migration chain', () => {
 		runMigrations(db, () => {});
 		expect(tableExists(db, 'node_executions')).toBe(true);
