@@ -16,7 +16,7 @@
  * Node status (from tasks in the space store):
  *   - pending:    gray box, no tasks yet
  *   - active:     blue box, pulsing — has in_progress tasks
- *   - completed:  green box, checkmark + elapsed time
+ *   - done:       green box, checkmark + elapsed time
  *   - failed:     red box — task errored or run failed
  */
 

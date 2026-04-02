@@ -142,20 +142,6 @@ class SpaceStore {
 		return map;
 	});
 
-	/** Node executions grouped by workflow run ID */
-	readonly nodeExecutionsByRun = computed(() => {
-		const map = new Map<string, NodeExecution[]>();
-		for (const exec of this.nodeExecutions.value) {
-			let arr = map.get(exec.workflowRunId);
-			if (!arr) {
-				arr = [];
-				map.set(exec.workflowRunId, arr);
-			}
-			arr.push(exec);
-		}
-		return map;
-	});
-
 	// ========================================
 	// Private State
 	// ========================================
@@ -542,6 +528,10 @@ class SpaceStore {
 				const exists = this.workflowRuns.value.some((r) => r.id === event.run.id);
 				if (!exists) {
 					this.workflowRuns.value = [...this.workflowRuns.value, event.run];
+					// Fetch node executions for the new run so the UI stays current.
+					this.fetchNodeExecutions(hub, spaceId).catch((err) => {
+						logger.warn('Failed to fetch node executions after run creation:', err);
+					});
 				}
 			}
 		});

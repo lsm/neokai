@@ -822,7 +822,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 								? allNodeExecs.filter((e) => e.workflowRunId === relevantRunId)
 								: allNodeExecs;
 							const nodeTaskStates: AgentTaskState[] = nodeExecs.map((e) => ({
-								agentName: e.agentName || null,
+								agentName: e.agentName ?? null,
 								status: e.status,
 								completionSummary: e.result ?? null,
 							}));

@@ -65,7 +65,7 @@ export interface ConditionDraft {
 
 /**
  * Runtime completion state for a single agent slot within a workflow node.
- * Derived from SpaceTask records filtered by workflowNodeId.
+ * Derived from NodeExecution records grouped by workflowNodeId.
  */
 export interface AgentTaskState {
 	/** Matches WorkflowNodeAgent.name; null means single-agent node */
