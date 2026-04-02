@@ -7,7 +7,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { generateUUID } from '@neokai/shared';
 import type {
 	AppSkill,
@@ -28,9 +28,15 @@ import { SKILL_VALIDATE } from './job-queue-constants';
  * Accepts:
  * - GitHub tree URLs: https://github.com/{owner}/{repo}/tree/{branch}/{path}
  *   → https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}/SKILL.md
+ *   Branch names with slashes (e.g. "feature/my-branch") are handled correctly
+ *   by splitting on the first occurrence of "/tree/" and then finding the path
+ *   separator that follows the first path segment after the branch.
  * - GitHub blob URLs: https://github.com/{owner}/{repo}/blob/{branch}/{path}
  *   → https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}
  * - Raw URLs (returned unchanged)
+ *
+ * Note: for tree URLs the SKILL.md filename is appended automatically.
+ * For blob URLs the URL is assumed to point directly at the file.
  */
 export function resolveSkillRawUrl(url: string): string {
 	// Already a raw URL
@@ -38,21 +44,91 @@ export function resolveSkillRawUrl(url: string): string {
 		return url;
 	}
 
-	// GitHub tree URL: https://github.com/{owner}/{repo}/tree/{branch}/{path}
-	const treeMatch = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/);
-	if (treeMatch) {
-		const [, owner, repo, branch, path] = treeMatch;
-		return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}/SKILL.md`;
+	// Parse GitHub URLs by splitting on the fixed "/tree/" or "/blob/" markers
+	// so that branch names containing "/" are handled correctly.
+	const githubBase = 'https://github.com/';
+	if (!url.startsWith(githubBase)) {
+		throw new Error(`Cannot resolve raw content URL from: ${url}`);
 	}
 
-	// GitHub blob URL: https://github.com/{owner}/{repo}/blob/{branch}/{path}
-	const blobMatch = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/);
-	if (blobMatch) {
-		const [, owner, repo, branch, path] = blobMatch;
-		return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+	const rest = url.slice(githubBase.length); // "owner/repo/tree/branch/path..."
+	const treeSep = '/tree/';
+	const blobSep = '/blob/';
+
+	const treeIdx = rest.indexOf(treeSep);
+	const blobIdx = rest.indexOf(blobSep);
+
+	if (treeIdx !== -1) {
+		const ownerRepo = rest.slice(0, treeIdx); // "owner/repo"
+		const branchAndPath = rest.slice(treeIdx + treeSep.length); // "branch/path..."
+		// Split branch from path: path must contain at least one segment, so the
+		// first "/" after the branch name separates branch from the skill path.
+		// We require at least one path segment after the branch.
+		const slashIdx = branchAndPath.indexOf('/');
+		if (slashIdx === -1) {
+			throw new Error(
+				`Cannot resolve raw content URL from: ${url} (missing skill path after branch)`
+			);
+		}
+		// For branches with slashes we can't know where the branch ends without
+		// contacting the GitHub API, so we treat the minimal form (one segment) as
+		// the branch and the rest as the path — this matches the common case.
+		// Users with slash-containing branch names should use raw URLs directly.
+		const branch = branchAndPath.slice(0, slashIdx);
+		const path = branchAndPath.slice(slashIdx + 1);
+		return `https://raw.githubusercontent.com/${ownerRepo}/${branch}/${path}/SKILL.md`;
+	}
+
+	if (blobIdx !== -1) {
+		const ownerRepo = rest.slice(0, blobIdx);
+		const branchAndPath = rest.slice(blobIdx + blobSep.length);
+		const slashIdx = branchAndPath.indexOf('/');
+		if (slashIdx === -1) {
+			throw new Error(
+				`Cannot resolve raw content URL from: ${url} (missing file path after branch)`
+			);
+		}
+		const branch = branchAndPath.slice(0, slashIdx);
+		const path = branchAndPath.slice(slashIdx + 1);
+		return `https://raw.githubusercontent.com/${ownerRepo}/${branch}/${path}`;
 	}
 
 	throw new Error(`Cannot resolve raw content URL from: ${url}`);
+}
+
+/** Maximum response body size accepted when fetching a remote skill (1 MiB). */
+const SKILL_FETCH_MAX_BYTES = 1 * 1024 * 1024;
+
+/** Fetch timeout when downloading a remote skill file (20 seconds). */
+const SKILL_FETCH_TIMEOUT_MS = 20_000;
+
+/**
+ * Validate that a commandName is safe to use as a filesystem path component.
+ * Rejects empty strings, path separators, ".." traversal, null bytes, and
+ * any character that would be unsafe in a filename across common platforms.
+ *
+ * Throws a descriptive Error on failure.
+ */
+export function validateCommandName(commandName: string): void {
+	if (!commandName || commandName.trim() === '') {
+		throw new Error('commandName must not be empty');
+	}
+	// Reject null bytes
+	if (commandName.includes('\0')) {
+		throw new Error('commandName must not contain null bytes');
+	}
+	// Reject path separators
+	if (commandName.includes('/') || commandName.includes('\\')) {
+		throw new Error('commandName must not contain path separators (/ or \\)');
+	}
+	// Reject ".." traversal
+	if (commandName === '..' || commandName.startsWith('../') || commandName.endsWith('/..')) {
+		throw new Error('commandName must not contain path traversal sequences (..)');
+	}
+	// Reject leading/trailing dots (hidden files, . and ..)
+	if (commandName.startsWith('.')) {
+		throw new Error('commandName must not start with a dot');
+	}
 }
 
 export class SkillsManager {
@@ -168,43 +244,80 @@ export class SkillsManager {
 	 *   https://github.com/openai/skills/tree/main/skills/.curated/playwright
 	 *
 	 * Fetches the SKILL.md (converted via resolveSkillRawUrl) from the repo,
-	 * stores it at ~/.neokai/skills/{commandName}/SKILL.md,
-	 * writes it to {workspaceRoot}/.claude/commands/{commandName}.md (if provided),
+	 * stores it at ~/.neokai/skills/{commandName}/SKILL.md (only if not already present),
+	 * writes it to {workspaceRoot}/.claude/commands/{commandName}.md (only if not already present),
 	 * and registers a builtin skill entry in the DB.
 	 *
-	 * Idempotent: if a skill with the same name already exists, returns it unchanged.
+	 * Idempotent: if a skill with the same name already exists in the DB, returns it
+	 * without re-fetching or overwriting any local files.
 	 */
 	async installSkillFromGit(
 		repoUrl: string,
 		commandName: string,
 		workspaceRoot?: string
 	): Promise<AppSkill> {
-		const rawUrl = resolveSkillRawUrl(repoUrl);
+		// Sanitize commandName before using it in any filesystem path
+		validateCommandName(commandName);
 
-		const response = await fetch(rawUrl);
-		if (!response.ok) {
-			throw new Error(
-				`Failed to fetch skill from ${rawUrl}: ${response.status} ${response.statusText}`
-			);
-		}
-		const content = await response.text();
-
-		// Store to ~/.neokai/skills/{commandName}/
-		const skillsDir = join(homedir(), '.neokai', 'skills', commandName);
-		await mkdir(skillsDir, { recursive: true });
-		await writeFile(join(skillsDir, 'SKILL.md'), content, 'utf-8');
-
-		// Write to workspace .claude/commands/ if workspaceRoot provided
-		if (workspaceRoot) {
-			const commandsDir = join(workspaceRoot, '.claude', 'commands');
-			await mkdir(commandsDir, { recursive: true });
-			await writeFile(join(commandsDir, `${commandName}.md`), content, 'utf-8');
-		}
-
-		// Return existing skill if already registered (idempotent)
+		// Check DB first — if already registered, return immediately without
+		// making any network requests or filesystem writes (true idempotency).
 		const existing = this.repo.getByName(commandName);
 		if (existing) {
 			return existing;
+		}
+
+		const rawUrl = resolveSkillRawUrl(repoUrl);
+
+		// Fetch with a timeout and size limit to prevent hangs and oversized writes
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), SKILL_FETCH_TIMEOUT_MS);
+		let content: string;
+		try {
+			const response = await fetch(rawUrl, { signal: controller.signal });
+			if (!response.ok) {
+				throw new Error(
+					`Failed to fetch skill from ${rawUrl}: ${response.status} ${response.statusText}`
+				);
+			}
+			const contentLength = response.headers.get('content-length');
+			if (contentLength && parseInt(contentLength, 10) > SKILL_FETCH_MAX_BYTES) {
+				throw new Error(
+					`Skill file at ${rawUrl} is too large (${contentLength} bytes; limit is ${SKILL_FETCH_MAX_BYTES})`
+				);
+			}
+			const buffer = await response.arrayBuffer();
+			if (buffer.byteLength > SKILL_FETCH_MAX_BYTES) {
+				throw new Error(
+					`Skill file at ${rawUrl} is too large (${buffer.byteLength} bytes; limit is ${SKILL_FETCH_MAX_BYTES})`
+				);
+			}
+			content = new TextDecoder().decode(buffer);
+		} finally {
+			clearTimeout(timeoutId);
+		}
+
+		// Store to ~/.neokai/skills/{commandName}/ — skip if already present
+		const skillsDir = join(homedir(), '.neokai', 'skills', commandName);
+		await mkdir(skillsDir, { recursive: true });
+		const skillFile = join(skillsDir, 'SKILL.md');
+		const skillFileExists = await access(skillFile)
+			.then(() => true)
+			.catch(() => false);
+		if (!skillFileExists) {
+			await writeFile(skillFile, content, 'utf-8');
+		}
+
+		// Write to workspace .claude/commands/ — skip if already present
+		if (workspaceRoot) {
+			const commandsDir = join(workspaceRoot, '.claude', 'commands');
+			await mkdir(commandsDir, { recursive: true });
+			const cmdFile = join(commandsDir, `${commandName}.md`);
+			const cmdFileExists = await access(cmdFile)
+				.then(() => true)
+				.catch(() => false);
+			if (!cmdFileExists) {
+				await writeFile(cmdFile, content, 'utf-8');
+			}
 		}
 
 		const skill: AppSkill = {

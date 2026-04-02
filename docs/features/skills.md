@@ -102,23 +102,27 @@ This skill is **opt-in**, not automatically enabled. Enable it in the global ski
 
 ### Playwright
 
-Runs the NeoKai Playwright end-to-end test suite. Invoke with `/playwright` in a session.
+CLI-first browser automation using `bunx @playwright/cli`. Invoke with `/playwright` in a session.
 
 - **Name**: `playwright`
 - **Type**: Built-in (enabled by default)
 - **Command file**: `.claude/commands/playwright.md`
-- **Usage**: `/playwright` — runs `make run-e2e` or `make self-test` depending on whether a dev server is already running
+- **Usage**: `/playwright` — drives a real browser for scraping, form filling, UI interaction, screenshots, and navigation. **Not** for running test suites.
+
+Core workflow: open a URL → snapshot the accessibility tree to get element refs → interact via CLI commands (click, fill, type, press) → re-snapshot after DOM changes. Use `bunx @playwright/cli snapshot`, `click`, `fill`, `screenshot`, `tab-new`, `tracing-start`, etc.
 
 This skill is **enabled by default**. The slash command definition lives at `.claude/commands/playwright.md` in the NeoKai repository root and is automatically discovered by the Claude Code SDK.
 
 ### Playwright Interactive
 
-Runs NeoKai's Playwright tests in interactive/headed mode for step-by-step debugging. Invoke with `/playwright-interactive` in a session.
+Persistent browser session for iterative UI debugging and visual QA. Invoke with `/playwright-interactive` in a session.
 
 - **Name**: `playwright-interactive`
 - **Type**: Built-in (enabled by default)
 - **Command file**: `.claude/commands/playwright-interactive.md`
-- **Usage**: `/playwright-interactive` — uses `make self-test` against a running dev server to watch and debug tests
+- **Usage**: `/playwright-interactive` — bootstraps browser/context/page handles once and reuses them across interactions for fast iterative debugging without reopening the browser
+
+Covers desktop and mobile web contexts, screenshot capture, functional QA checklist, visual QA checklist, signoff criteria, and cleanup with try/finally. Uses `bunx playwright` for the npm package.
 
 This skill is **enabled by default**. The slash command definition lives at `.claude/commands/playwright-interactive.md` in the NeoKai repository root and is automatically discovered by the Claude Code SDK.
 

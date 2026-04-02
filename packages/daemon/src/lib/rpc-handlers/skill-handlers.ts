@@ -12,7 +12,12 @@
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { AppSkill, CreateSkillParams, UpdateSkillParams } from '@neokai/shared';
+import type {
+	AppSkill,
+	CreateSkillParams,
+	UpdateSkillParams,
+	InstallSkillFromGitParams,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SkillsManager } from '../skills-manager';
 import { Logger } from '../logger';
@@ -125,7 +130,7 @@ export function registerSkillHandlers(
 
 	// skill.installFromGit — fetch a SKILL.md from a git repo URL and register it
 	messageHub.onRequest('skill.installFromGit', async (data) => {
-		const { repoUrl, commandName } = data as { repoUrl: string; commandName: string };
+		const { repoUrl, commandName } = data as InstallSkillFromGitParams;
 
 		if (!repoUrl) {
 			throw new Error('skill.installFromGit requires repoUrl');

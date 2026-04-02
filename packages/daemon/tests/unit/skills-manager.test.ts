@@ -21,7 +21,11 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables } from '../../src/storage/schema';
 import { SkillRepository } from '../../src/storage/repositories/skill-repository';
 import { AppMcpServerRepository } from '../../src/storage/repositories/app-mcp-server-repository';
-import { SkillsManager, resolveSkillRawUrl } from '../../src/lib/skills-manager';
+import {
+	SkillsManager,
+	resolveSkillRawUrl,
+	validateCommandName,
+} from '../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../helpers/reactive-database';
 import type { AppSkill } from '@neokai/shared';
 
@@ -1015,12 +1019,60 @@ describe('resolveSkillRawUrl', () => {
 		);
 	});
 
-	test('handles branch names with slashes in tree URL', () => {
-		// Branch = "feature/my-branch", path = "skills/my-skill"
-		// Note: URL encoding of slashes is NOT done by the input — test the regex boundary
+	test('handles branch name with dots (e.g. v2.0) in tree URL', () => {
+		// Branch = "v2.0", path = "path/to/skill"
 		expect(resolveSkillRawUrl('https://github.com/org/repo/tree/v2.0/path/to/skill')).toBe(
 			'https://raw.githubusercontent.com/org/repo/v2.0/path/to/skill/SKILL.md'
 		);
+	});
+
+	test('throws when tree URL has no path after branch', () => {
+		expect(() => resolveSkillRawUrl('https://github.com/org/repo/tree/main')).toThrow(
+			'Cannot resolve raw content URL'
+		);
+	});
+
+	test('throws when blob URL has no path after branch', () => {
+		expect(() => resolveSkillRawUrl('https://github.com/org/repo/blob/main')).toThrow(
+			'Cannot resolve raw content URL'
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validateCommandName utility
+// ---------------------------------------------------------------------------
+
+describe('validateCommandName', () => {
+	test('accepts valid command names', () => {
+		expect(() => validateCommandName('playwright')).not.toThrow();
+		expect(() => validateCommandName('playwright-interactive')).not.toThrow();
+		expect(() => validateCommandName('my-skill-v2')).not.toThrow();
+		expect(() => validateCommandName('web_search')).not.toThrow();
+	});
+
+	test('throws for empty string', () => {
+		expect(() => validateCommandName('')).toThrow('must not be empty');
+	});
+
+	test('throws for whitespace-only string', () => {
+		expect(() => validateCommandName('   ')).toThrow('must not be empty');
+	});
+
+	test('throws for path with forward slash (path traversal prevention)', () => {
+		expect(() => validateCommandName('../../etc/passwd')).toThrow('path separators');
+	});
+
+	test('throws for path with backslash', () => {
+		expect(() => validateCommandName('foo\\bar')).toThrow('path separators');
+	});
+
+	test('throws for string containing null byte', () => {
+		expect(() => validateCommandName('foo\0bar')).toThrow('null bytes');
+	});
+
+	test('throws for name starting with a dot', () => {
+		expect(() => validateCommandName('.hidden')).toThrow('must not start with a dot');
 	});
 });
 
@@ -1092,6 +1144,54 @@ describe('SkillsManager.installSkillFromGit', () => {
 				tmpDir
 			);
 			expect(skill1.id).toBe(skill2.id);
+		} finally {
+			globalThis.fetch = originalFetch;
+			await rm(tmpDir, { recursive: true });
+		}
+	});
+
+	test('throws for commandName with path traversal characters', async () => {
+		await expect(
+			mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'../../etc/passwd'
+			)
+		).rejects.toThrow('path separators');
+	});
+
+	test('throws for commandName starting with a dot', async () => {
+		await expect(
+			mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'.hidden-skill'
+			)
+		).rejects.toThrow('must not start with a dot');
+	});
+
+	test('is truly idempotent — does not call fetch on second call', async () => {
+		let fetchCalls = 0;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () => {
+			fetchCalls++;
+			return new Response('# Content', { status: 200 });
+		};
+
+		const tmpDir = await mkdtemp(join(tmpdir(), 'neokai-test-'));
+		try {
+			await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'idem-fetch-test',
+				tmpDir
+			);
+			expect(fetchCalls).toBe(1);
+
+			// Second call should NOT fetch again — skill already in DB
+			await mgr.installSkillFromGit(
+				'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
+				'idem-fetch-test',
+				tmpDir
+			);
+			expect(fetchCalls).toBe(1); // still 1
 		} finally {
 			globalThis.fetch = originalFetch;
 			await rm(tmpDir, { recursive: true });
