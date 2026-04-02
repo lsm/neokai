@@ -333,7 +333,7 @@ export function isChannelOpen(
 		if (d) data = d;
 	}
 
-	return evaluateFieldsSync(gate, data);
+	return evaluateFields(gate, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,14 +341,16 @@ export function isChannelOpen(
 // ---------------------------------------------------------------------------
 
 /**
- * Evaluates a Gate's fields against the provided runtime data store.
+ * Evaluates a Gate's declared fields against the provided runtime data store.
  *
- * Synchronous — no I/O or side effects. The gate opens when ALL fields pass.
+ * Pure function — no I/O or side effects. The gate opens when ALL fields pass.
+ * Used internally by `evaluateGate()` (after script pre-check) and by
+ * `isChannelOpen()` (which remains synchronous).
  *
  * @param gate The gate definition (fields, checks).
  * @param data Runtime data from the `gate_data` table.
  */
-export function evaluateFieldsSync(gate: Gate, data: Record<string, unknown>): GateEvalResult {
+export function evaluateFields(gate: Gate, data: Record<string, unknown>): GateEvalResult {
 	for (const field of gate.fields ?? []) {
 		const result = evaluateFieldCheck(field, data);
 		if (!result.open) return result;
@@ -397,7 +399,7 @@ export async function evaluateGate(
 	}
 
 	// ── Field evaluation ──────────────────────────────────────────────────
-	return evaluateFieldsSync(gate, data);
+	return evaluateFields(gate, data);
 }
 
 /**

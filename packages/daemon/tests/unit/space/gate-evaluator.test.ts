@@ -15,7 +15,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
 	evaluateGate,
-	evaluateFieldsSync,
+	evaluateFields,
 	evaluateFieldCheck,
 	isChannelOpen,
 	validateGateFields,
@@ -624,10 +624,10 @@ describe('GateEvaluator — evaluateGate (script pre-check)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// evaluateFieldsSync
+// evaluateFields
 // ---------------------------------------------------------------------------
 
-describe('GateEvaluator — evaluateFieldsSync', () => {
+describe('GateEvaluator — evaluateFields', () => {
 	test('opens when all fields pass', () => {
 		const gate: Gate = {
 			id: 'g1',
@@ -636,7 +636,7 @@ describe('GateEvaluator — evaluateFieldsSync', () => {
 			],
 			resetOnCycle: false,
 		};
-		const result = evaluateFieldsSync(gate, { approved: true });
+		const result = evaluateFields(gate, { approved: true });
 		expect(result.open).toBe(true);
 	});
 
@@ -648,13 +648,13 @@ describe('GateEvaluator — evaluateFieldsSync', () => {
 			],
 			resetOnCycle: false,
 		};
-		const result = evaluateFieldsSync(gate, { approved: false });
+		const result = evaluateFields(gate, { approved: false });
 		expect(result.open).toBe(false);
 	});
 
 	test('opens with empty fields (no checks)', () => {
 		const gate: Gate = { id: 'g1', fields: [], resetOnCycle: false };
-		const result = evaluateFieldsSync(gate, {});
+		const result = evaluateFields(gate, {});
 		expect(result.open).toBe(true);
 	});
 
@@ -667,14 +667,14 @@ describe('GateEvaluator — evaluateFieldsSync', () => {
 			],
 			resetOnCycle: false,
 		};
-		const result = evaluateFieldsSync(gate, { x: false, y: true });
+		const result = evaluateFields(gate, { x: false, y: true });
 		expect(result.open).toBe(false);
 		expect(result.reason).toContain('x');
 	});
 
 	test('handles undefined fields (defaults to empty array)', () => {
 		const gate: Gate = { id: 'g1', resetOnCycle: false };
-		const result = evaluateFieldsSync(gate, {});
+		const result = evaluateFields(gate, {});
 		expect(result.open).toBe(true);
 	});
 });
