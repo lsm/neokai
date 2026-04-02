@@ -221,13 +221,14 @@ test.describe('Gate Custom Badges', () => {
 		await expect(badgePreview).toContainText('Approve');
 
 		// ── Step 4: Set custom color #ff5500 ────────────────────────────────
-		// Use evaluate to set the color value and dispatch an input event.
-		// Preact maps onChange to the DOM input event (not change), so .fill()
-		// works but evaluate gives us explicit control over the event type.
+		// Use evaluate to set the color value and dispatch both input and change events.
+		// This ensures the handler fires regardless of whether Preact's onChange maps to
+		// the DOM input or change event (behavior varies by Preact version and input type).
 		const colorInput = gatePanel.getByTestId('gate-editor-color');
 		await colorInput.evaluate((el: HTMLInputElement, val) => {
 			el.value = val;
 			el.dispatchEvent(new Event('input', { bubbles: true }));
+			el.dispatchEvent(new Event('change', { bubbles: true }));
 		}, '#ff5500');
 
 		// Badge preview should reflect the custom color
