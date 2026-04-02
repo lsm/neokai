@@ -176,7 +176,7 @@ describe('createCustomAgentInit', () => {
 			makeConfig({
 				customAgent: makeAgent({ systemPrompt: 'Hidden base prompt' }),
 				workflowRun: makeWorkflowRun(),
-				slotOverrides: { systemPrompt: 'Workflow-visible prompt' },
+				slotOverrides: { systemPrompt: { mode: 'override', value: 'Workflow-visible prompt' } },
 			})
 		);
 
@@ -184,15 +184,15 @@ describe('createCustomAgentInit', () => {
 		expect(init.systemPrompt?.append).not.toContain('Hidden base prompt');
 	});
 
-	it('uses an empty prompt when a workflow slot does not define one', () => {
+	it('uses the agent system prompt when no slot override is defined', () => {
 		const init = createCustomAgentInit(
 			makeConfig({
-				customAgent: makeAgent({ systemPrompt: 'Hidden base prompt' }),
+				customAgent: makeAgent({ systemPrompt: 'Agent base prompt' }),
 				workflowRun: makeWorkflowRun(),
 			})
 		);
 
-		expect(init.systemPrompt?.append).toBe('');
+		expect(init.systemPrompt?.append).toBe('Agent base prompt');
 	});
 
 	it('uses tool-restricted agent mode when tools are configured', () => {

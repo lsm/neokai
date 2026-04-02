@@ -1894,12 +1894,10 @@ describe('node-agent-tools: system prompt uses only visible prompt text', () => 
 			id: 'agent-1',
 			spaceId: 'space-1',
 			name: 'Coder',
-			role: 'coder',
 			description: '',
 			model: null,
 			tools: [],
 			systemPrompt: 'Visible workflow prompt',
-			injectWorkflowContext: false,
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		});

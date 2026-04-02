@@ -3,71 +3,38 @@
  *
  * Seeds the five default SpaceAgent records when a new Space is created.
  * Preset agents are regular SpaceAgent rows — fully editable by users — that
- * happen to have a well-known role label and sensible defaults for tools and model.
- * SpaceRuntime resolves all agents by ID at
- * runtime; there is no special builtin code path.
+ * have sensible defaults for tools and model.
+ * SpaceRuntime resolves all agents by ID at runtime; there is no special
+ * builtin code path.
  *
  * Preset agents seeded per Space:
- *   - Coder    (role: 'coder')    — implementation worker
- *   - General  (role: 'general')  — general-purpose worker
- *   - Planner  (role: 'planner')  — planning/orchestration worker
- *   - Reviewer (role: 'reviewer') — code review specialist
- *   - QA       (role: 'qa')       — quality assurance specialist
+ *   - Coder    — implementation worker
+ *   - General  — general-purpose worker (Done node agent)
+ *   - Planner  — planning/orchestration worker
+ *   - Reviewer — code review specialist
+ *   - QA       — quality assurance specialist
  */
 
-import type { SpaceAgent, SessionFeatures } from '@neokai/shared';
+import type { SpaceAgent } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
+
 // ---------------------------------------------------------------------------
-// Feature flag profiles per role
+// Sub-session features
 // ---------------------------------------------------------------------------
 
 /**
- * All sub-session roles disable UI features — sub-sessions are internal
- * and should not expose rewind, worktree, coordinator, archive, or sessionInfo.
+ * Features for all sub-session agents (node agents spawned by the Task Agent).
+ * Sub-sessions are internal and should not expose rewind, worktree, coordinator,
+ * archive, or sessionInfo UI features.
  */
-export const ROLE_FEATURES: Record<string, SessionFeatures> = {
-	coder: { rewind: false, worktree: false, coordinator: false, archive: false, sessionInfo: false },
-	general: {
-		rewind: false,
-		worktree: false,
-		coordinator: false,
-		archive: false,
-		sessionInfo: false,
-	},
-	planner: {
-		rewind: false,
-		worktree: false,
-		coordinator: false,
-		archive: false,
-		sessionInfo: false,
-	},
-	reviewer: {
-		rewind: false,
-		worktree: false,
-		coordinator: false,
-		archive: false,
-		sessionInfo: false,
-	},
-	qa: { rewind: false, worktree: false, coordinator: false, archive: false, sessionInfo: false },
-};
-
-/** Default features for roles not explicitly listed in ROLE_FEATURES */
-export const DEFAULT_ROLE_FEATURES: SessionFeatures = {
+export const SUB_SESSION_FEATURES = {
 	rewind: false,
 	worktree: false,
 	coordinator: false,
 	archive: false,
 	sessionInfo: false,
-};
-
-/**
- * Look up feature flags for a given role.
- * Falls back to DEFAULT_ROLE_FEATURES for unknown roles.
- */
-export function getFeaturesForRole(role: string): SessionFeatures {
-	return ROLE_FEATURES[role] ?? DEFAULT_ROLE_FEATURES;
-}
+} as const;
 
 // ---------------------------------------------------------------------------
 // Tool defaults per role
@@ -91,8 +58,7 @@ const REVIEWER_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'W
 const QA_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
 
 /**
- * Tool profiles per role. Exported for testing and external consumption.
- * Keys match the SpaceAgent.role value.
+ * Tool profiles per preset agent name. Exported for testing and external consumption.
  */
 export const ROLE_TOOLS: Record<string, string[]> = {
 	coder: CODER_TOOLS,

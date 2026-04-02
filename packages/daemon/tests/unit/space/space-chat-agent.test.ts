@@ -156,11 +156,6 @@ describe('buildSpaceChatSystemPrompt — agent information', () => {
 		expect(prompt).toContain('Coder');
 	});
 
-	test('includes agent role', () => {
-		const prompt = buildSpaceChatSystemPrompt(makeContext());
-		expect(prompt).toContain('coder');
-	});
-
 	test('includes agent description', () => {
 		const prompt = buildSpaceChatSystemPrompt(makeContext());
 		expect(prompt).toContain('Implementation specialist');
@@ -168,10 +163,7 @@ describe('buildSpaceChatSystemPrompt — agent information', () => {
 
 	test('includes multiple agents', () => {
 		const ctx = makeContext({
-			agents: [
-				makeAgent({ name: 'Coder', role: 'coder' }),
-				makeAgent({ id: 'agent-2', name: 'Reviewer', role: 'reviewer' }),
-			],
+			agents: [makeAgent({ name: 'Coder' }), makeAgent({ id: 'agent-2', name: 'Reviewer' })],
 		});
 		const prompt = buildSpaceChatSystemPrompt(ctx);
 		expect(prompt).toContain('Coder');

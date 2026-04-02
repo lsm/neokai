@@ -9,7 +9,6 @@
  * - Rule injection: getRulesForStep() filters correctly
  * - Rehydration: executors reconstructed from DB on startup
  * - Executor cleanup: removed from map on run complete/cancel
- * - resolveTaskTypeForStep(): correct mapping for planner, coder, general, custom roles
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -168,118 +167,6 @@ describe('SpaceRuntime', () => {
 		}
 	});
 
-	// -------------------------------------------------------------------------
-	// resolveTaskTypeForStep
-	// -------------------------------------------------------------------------
-
-	describe('resolveTaskTypeForStep()', () => {
-		test('planner role → agentId returned', () => {
-			const step = { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER };
-			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.agentId).toBe(AGENT_PLANNER);
-		});
-
-		test('coder role → agentId returned', () => {
-			const step = { id: STEP_A, name: 'Code', agentId: AGENT_CODER };
-			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.agentId).toBe(AGENT_CODER);
-		});
-
-		test('general role → agentId returned', () => {
-			const step = { id: STEP_A, name: 'Research', agentId: AGENT_GENERAL };
-			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.agentId).toBe(AGENT_GENERAL);
-		});
-
-		test('custom role → agentId returned', () => {
-			const step = { id: STEP_A, name: 'Custom', agentId: AGENT_CUSTOM };
-			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.agentId).toBe(AGENT_CUSTOM);
-		});
-
-		test('unknown agentId → agentId returned as-is', () => {
-			const step = { id: STEP_A, name: 'Unknown', agentId: 'non-existent-uuid' };
-			const result = runtime.resolveTaskTypeForStep(step);
-			expect(result.agentId).toBe('non-existent-uuid');
-		});
-	});
-
-	// -------------------------------------------------------------------------
-	// resolveTaskTypesForStep (multi-agent variant)
-	// -------------------------------------------------------------------------
-
-	describe('resolveTaskTypesForStep()', () => {
-		test('single agentId shorthand → one-element array with agentId', () => {
-			const step = { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER };
-			const results = runtime.resolveTaskTypesForStep(step);
-			expect(results).toHaveLength(1);
-			expect(results[0].agentId).toBe(AGENT_PLANNER);
-		});
-
-		test('multi-agent step → one ResolvedTaskType per agent entry', () => {
-			const step = {
-				id: STEP_A,
-				name: 'Multi',
-				agents: [
-					{ agentId: AGENT_PLANNER, name: 'planner' },
-					{ agentId: AGENT_CODER, name: 'coder' },
-					{ agentId: AGENT_CUSTOM, name: 'my-custom-role' },
-				],
-			};
-			const results = runtime.resolveTaskTypesForStep(step);
-			expect(results).toHaveLength(3);
-			expect(results[0].agentId).toBe(AGENT_PLANNER);
-			expect(results[1].agentId).toBe(AGENT_CODER);
-			expect(results[2].agentId).toBe(AGENT_CUSTOM);
-		});
-
-		test('multi-agent step with general role → agentIds returned', () => {
-			const step = {
-				id: STEP_A,
-				name: 'Multi',
-				agents: [
-					{ agentId: AGENT_GENERAL, name: 'general' },
-					{ agentId: AGENT_CODER, name: 'coder' },
-				],
-			};
-			const results = runtime.resolveTaskTypesForStep(step);
-			expect(results).toHaveLength(2);
-			expect(results[0].agentId).toBe(AGENT_GENERAL);
-			expect(results[1].agentId).toBe(AGENT_CODER);
-		});
-
-		test('multi-agent step with unknown agentId → agentId preserved as-is', () => {
-			const step = {
-				id: STEP_A,
-				name: 'Multi',
-				agents: [
-					{ agentId: AGENT_CODER, name: 'coder' },
-					{ agentId: 'unknown-agent-id', name: 'unknown' },
-				],
-			};
-			const results = runtime.resolveTaskTypesForStep(step);
-			expect(results).toHaveLength(2);
-			expect(results[0].agentId).toBe(AGENT_CODER);
-			expect(results[1].agentId).toBe('unknown-agent-id');
-		});
-
-		test('resolveTaskTypeForStep delegates to first entry of resolveTaskTypesForStep', () => {
-			const step = {
-				id: STEP_A,
-				name: 'Multi',
-				agents: [
-					{ agentId: AGENT_PLANNER, name: 'planner' },
-					{ agentId: AGENT_CODER, name: 'coder' },
-				],
-			};
-			const single = runtime.resolveTaskTypeForStep(step);
-			const multi = runtime.resolveTaskTypesForStep(step);
-			expect(single).toEqual(multi[0]);
-			expect(single.agentId).toBe(AGENT_PLANNER);
-		});
-	});
-
-	// -------------------------------------------------------------------------
 	// getRulesForStep — removed in M71; no tests needed
 	// -------------------------------------------------------------------------
 
@@ -1266,19 +1153,6 @@ describe('SpaceRuntime', () => {
 			// Run should still be in_progress — sibling task is still running
 			const updatedRun = workflowRunRepo.getRun(run.id)!;
 			expect(updatedRun.status).toBe('in_progress');
-		});
-
-		test('resolveTaskTypeForAgent() returns { agentId } for each agent (M71: taskType/customAgentId removed)', () => {
-			// M71: ResolvedTaskType changed from { taskType, customAgentId } to { agentId }
-			expect(runtime.resolveTaskTypeForAgent(AGENT_PLANNER)).toEqual({ agentId: AGENT_PLANNER });
-			expect(runtime.resolveTaskTypeForAgent(AGENT_CODER)).toEqual({ agentId: AGENT_CODER });
-			expect(runtime.resolveTaskTypeForAgent(AGENT_GENERAL)).toEqual({ agentId: AGENT_GENERAL });
-			expect(runtime.resolveTaskTypeForAgent(AGENT_CUSTOM)).toEqual({ agentId: AGENT_CUSTOM });
-		});
-
-		test('resolveTaskTypeForAgent() preserves agentId for unknown agentId', () => {
-			const result = runtime.resolveTaskTypeForAgent('unknown-agent-id');
-			expect(result.agentId).toBe('unknown-agent-id');
 		});
 	});
 

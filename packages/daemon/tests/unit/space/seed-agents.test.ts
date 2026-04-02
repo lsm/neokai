@@ -132,7 +132,7 @@ describe('seedPresetAgents', () => {
 
 	it('partial collision — seeds succeed for non-conflicting names', async () => {
 		// Pre-create just the 'Coder' agent
-		await manager.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
+		await manager.create({ spaceId: 'space-1', name: 'Coder' });
 
 		const result = await seedPresetAgents('space-1', manager);
 
@@ -140,14 +140,6 @@ describe('seedPresetAgents', () => {
 		expect(result.seeded).toHaveLength(4);
 		expect(result.errors).toHaveLength(1);
 		expect(result.errors[0].name).toBe('Coder');
-	});
-
-	it('preset agents do not seed hidden workflow-context flags', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-
-		for (const agent of seeded) {
-			expect(agent.injectWorkflowContext).toBeUndefined();
-		}
 	});
 
 	it('General agent has restricted tools (no Write or Edit) — read-only Done node', async () => {

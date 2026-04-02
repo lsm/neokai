@@ -313,7 +313,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Extract slot-level overrides (systemPrompt) if present.
 			// model is no longer on WorkflowNodeAgent; systemPrompt is now WorkflowNodeAgentOverride.
 			const slotOverrides: import('../agents/custom-agent').SlotOverrides = {
-				systemPrompt: agentSlot?.systemPrompt?.value,
+				systemPrompt: agentSlot?.systemPrompt,
+				instructions: agentSlot?.instructions,
 			};
 
 			// Generate a new session ID for the sub-session.
