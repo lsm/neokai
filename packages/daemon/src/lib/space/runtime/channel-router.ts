@@ -227,7 +227,7 @@ export class ChannelRouter {
 			try {
 				const task = this.config.taskRepo.createTask({
 					spaceId: run.spaceId,
-					title: node.name,
+					title: agentEntry.name,
 					description: agentEntry.instructions?.value ?? node.instructions ?? '',
 					workflowRunId: runId,
 					status: 'open',
@@ -590,8 +590,11 @@ export class ChannelRouter {
 	 * workflows can re-activate a node after its tasks complete.
 	 *
 	 * Since M72 removed the `workflow_node_id` column from `space_tasks`, node
-	 * identity is determined by matching `task.title === node.name` (tasks are
-	 * created with `title: node.name` in `activateNode`).
+	 * identity is determined by matching `task.title` against the agent slot names
+	 * for the node. Tasks are created with `title: agentEntry.name` in
+	 * `activateNode`, so for single-agent nodes the title equals the agent slot
+	 * name (which defaults to node.name), and for multi-agent nodes each task
+	 * title is the individual slot name (e.g. 'Reviewer 1', 'Reviewer 2').
 	 */
 	private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
 		const ACTIVE_STATUSES = new Set(['open', 'in_progress']);
@@ -600,14 +603,21 @@ export class ChannelRouter {
 			.filter((t) => ACTIVE_STATUSES.has(t.status));
 		if (allActive.length === 0) return [];
 
-		// Resolve the node name so we can filter by task title.
+		// Resolve agent slot names for this node to filter by task title.
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return [];
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		const node = workflow?.nodes.find((n) => n.id === nodeId);
 		if (!node) return [];
 
-		return allActive.filter((t) => t.title === node.name);
+		let agentNames: Set<string>;
+		try {
+			agentNames = new Set(resolveNodeAgents(node).map((a) => a.name));
+		} catch {
+			return [];
+		}
+
+		return allActive.filter((t) => agentNames.has(t.title));
 	}
 
 	/**

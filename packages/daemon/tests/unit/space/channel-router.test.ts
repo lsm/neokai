@@ -361,9 +361,11 @@ describe('ChannelRouter', () => {
 
 			// Simulate a concurrent activation by directly inserting a task for the run
 			// before the router creates its task — triggering the idempotency path.
+			// NODE_A has agent slot name 'coder-slot', so the task must use that title
+			// for getActiveTasksForNode to recognise it as belonging to NODE_A.
 			const firstTask = taskRepo.createTask({
 				spaceId: SPACE_ID,
-				title: 'Node A',
+				title: 'coder-slot',
 				description: '',
 				workflowRunId: run.id,
 				status: 'open',
@@ -502,11 +504,13 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Pre-create a task for NODE_B so it is already active
-			// (workflowNodeId, agentName removed in M71; getActiveTasksForNode uses status filter)
+			// Pre-create a task for NODE_B so it is already active.
+			// After M72, getActiveTasksForNode identifies node tasks by matching
+			// task.title against the node's agent slot names. NODE_B has agent
+			// slot name 'planner', so the task must use that title.
 			taskRepo.createTask({
 				spaceId: SPACE_ID,
-				title: 'Planner Task',
+				title: 'planner',
 				description: '',
 				workflowRunId: run.id,
 				status: 'in_progress',

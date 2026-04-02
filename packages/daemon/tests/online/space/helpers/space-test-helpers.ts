@@ -214,10 +214,10 @@ export async function rejectGate(
  * Poll spaceTask.list until at least one task for the given node name has
  * one of the expected statuses. Returns the first matching task.
  *
- * Matches tasks by:
- * 1. task.title (which equals node.name, e.g. 'Planning', 'Plan Review', 'Coding')
- * 2. task.workflowNodeId (UUID, for direct UUID matching)
- * 3. task.agentName (agent slot name)
+ * Matches tasks by task.title, which equals the agent slot name set in
+ * activateNode() (e.g. 'Planning', 'Plan Review', 'Coding', 'Reviewer 1').
+ * For single-agent nodes the slot name equals the node name; for multi-agent
+ * nodes each task has the individual slot name.
  */
 export async function waitForNodeStatus(
 	daemon: DaemonServerContext,
@@ -236,11 +236,7 @@ export async function waitForNodeStatus(
 
 		const runTasks = tasks.filter((t) => t.workflowRunId === runId);
 		const match = runTasks.find(
-			(t) =>
-				(t.title === nodeNameOrId ||
-					t.workflowNodeId === nodeNameOrId ||
-					t.agentName === nodeNameOrId) &&
-				expectedStatuses.includes(t.status)
+			(t) => t.title === nodeNameOrId && expectedStatuses.includes(t.status)
 		);
 		if (match) return match;
 
@@ -355,8 +351,8 @@ export async function mockAgentDone(
 }
 
 /**
- * Find tasks for a given node name in a run.
- * Matches by task.title (= node.name), workflowNodeId (UUID), or agentName.
+ * Find tasks for a given node/slot name in a run.
+ * Matches by task.title, which equals the agent slot name set in activateNode().
  * Returns empty array when the node has not been activated yet.
  */
 export async function getTasksForNode(
@@ -369,13 +365,7 @@ export async function getTasksForNode(
 		spaceId,
 	})) as SpaceTask[];
 
-	return tasks.filter(
-		(t) =>
-			t.workflowRunId === runId &&
-			(t.title === nodeNameOrId ||
-				t.workflowNodeId === nodeNameOrId ||
-				t.agentName === nodeNameOrId)
-	);
+	return tasks.filter((t) => t.workflowRunId === runId && t.title === nodeNameOrId);
 }
 
 /**
@@ -385,8 +375,8 @@ export async function getTasksForNode(
  *
  * Use this instead of `waitForNodeActivated` when the node was previously
  * activated (and those tasks are now completed). `waitForNodeActivated` accepts
- * 'completed' as a match, so it can return the old completed task instead of
- * the freshly created one. This helper avoids that by explicitly excluding
+ * terminal statuses as a match, so it can return the old completed task instead
+ * of the freshly created one. This helper avoids that by explicitly excluding
  * known task IDs.
  */
 export async function waitForNewNodeTask(
@@ -406,9 +396,7 @@ export async function waitForNewNodeTask(
 		const match = tasks.find(
 			(t) =>
 				t.workflowRunId === runId &&
-				(t.title === nodeNameOrId ||
-					t.workflowNodeId === nodeNameOrId ||
-					t.agentName === nodeNameOrId) &&
+				t.title === nodeNameOrId &&
 				!excludeTaskIds.has(t.id) &&
 				(t.status === 'open' || t.status === 'in_progress')
 		);
