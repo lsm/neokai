@@ -22,7 +22,11 @@
  */
 
 import type { Gate, GateField, GateFieldCheck, GateScript, Channel } from '@neokai/shared';
-import { deepMergeWithDepthLimit } from './gate-script-executor';
+import {
+	deepMergeWithDepthLimit,
+	type GateScriptContext,
+	type GateScriptResult,
+} from './gate-script-executor';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -36,25 +40,11 @@ export interface GateEvalResult {
 	reason?: string;
 }
 
-/** Context passed to the script executor callback. */
-export interface GateScriptExecutorContext {
-	/** Absolute path to the workspace root. */
-	workspacePath: string;
-	/** The gate ID this script belongs to. */
-	gateId: string;
-	/** The current workflow run ID. */
-	runId: string;
-}
-
-/** Result of a script executor callback. */
-export interface GateScriptExecutorResult {
-	/** Whether the script passed. */
-	success: boolean;
-	/** Data to merge into the gate evaluation data (on success). */
-	data: Record<string, unknown>;
-	/** Human-readable error string on failure. */
-	error?: string;
-}
+// Re-export executor types from gate-script-executor for consumer convenience.
+export type {
+	GateScriptContext as GateScriptExecutorContext,
+	GateScriptResult as GateScriptExecutorResult,
+};
 
 /**
  * Callback type for executing gate scripts.
@@ -66,8 +56,8 @@ export interface GateScriptExecutorResult {
  */
 export type GateScriptExecutorFn = (
 	script: GateScript,
-	context: GateScriptExecutorContext
-) => Promise<GateScriptExecutorResult>;
+	context: GateScriptContext
+) => Promise<GateScriptResult>;
 
 // ---------------------------------------------------------------------------
 // Runtime validation
@@ -388,7 +378,7 @@ export async function evaluateGate(
 	gate: Gate,
 	data: Record<string, unknown>,
 	scriptExecutor?: GateScriptExecutorFn,
-	context?: GateScriptExecutorContext
+	context?: GateScriptContext
 ): Promise<GateEvalResult> {
 	// ── Script pre-check ──────────────────────────────────────────────────
 	if (gate.script && scriptExecutor && context) {

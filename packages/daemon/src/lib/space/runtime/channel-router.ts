@@ -593,7 +593,10 @@ export class ChannelRouter {
 		const record = this.config.gateDataRepo?.get(runId, gateId);
 		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
-		return await evaluateGate(gateDef, runtimeData);
+		// TODO: Wire scriptExecutor (from ChannelRouterConfig) and construct
+		// GateScriptContext with workspacePath/runId. Without it, script-based
+		// gates silently fall through to field evaluation only.
+		return evaluateGate(gateDef, runtimeData);
 	}
 
 	// incrementAndResetCyclicChannel is defined alongside findMatchingWorkflowChannel above
