@@ -285,7 +285,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			initState?.channels ?? [],
 			initState?.startNodeId ?? '',
 			initState?.gates ?? [],
-			initState?.endNodeId ?? ''
+			initState?.endNodeId
 		)
 	);
 
@@ -1043,7 +1043,14 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		setShowTemplates(false);
 		setPendingTemplate(null);
 		setTemplateBaselineSignature(
-			buildTemplateCanvasSignature(nextNodes, newEdges, nextChannels, firstLocalId, nextGates, '')
+			buildTemplateCanvasSignature(
+				nextNodes,
+				newEdges,
+				nextChannels,
+				firstLocalId,
+				nextGates,
+				undefined
+			)
 		);
 		if (!name) setName(template.label);
 
