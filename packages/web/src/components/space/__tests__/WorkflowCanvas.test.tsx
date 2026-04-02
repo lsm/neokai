@@ -9,12 +9,12 @@
  * - Gate icon rendered ON channel line (not as separate node)
  * - Gate status: open (green), blocked (gray lock), waiting_human (amber)
  * - Human approval gate shows waiting_human when no data
- * - Runtime mode shows live node status (active, completed)
+ * - Runtime mode shows live node status (active, done)
  * - Template mode shows "+ add gate" buttons on channels without gates
  * - Template mode shows remove-gate button on gated channels
  * - Node active status shows pulsing class
  * - Completed node shows checkmark indicator
- * - Active run banner shows when run is needs_attention
+ * - Active run banner shows when run is blocked
  * - Gate data event subscription updates gate status
  * - "View Artifacts" button opens artifacts panel overlay for waiting_human gate
  * - Closing the artifacts panel overlay hides it

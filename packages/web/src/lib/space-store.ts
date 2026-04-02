@@ -15,6 +15,8 @@
  * - agents: SpaceAgent list for the space
  * - workflows: SpaceWorkflow list for the space
  * - runtimeState: Runtime state (running/paused/stopped)
+ * - nodeExecutions: NodeExecution list for all workflow runs in the space
+ * - nodeExecutionsByNodeId: NodeExecutions grouped by workflow node ID
  * - loading: Loading state
  * - error: Error state
  */
@@ -125,7 +127,7 @@ class SpaceStore {
 	/** Tasks not associated with any workflow run */
 	readonly standaloneTasks = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
 
-	/** Node executions for this space — fetched per workflow run */
+	/** Node executions for all workflow runs — loaded via initial fetch and LiveQuery subscriptions */
 	readonly nodeExecutions = signal<NodeExecution[]>([]);
 
 	/** Node executions grouped by workflow node ID */
@@ -534,10 +536,6 @@ class SpaceStore {
 				const exists = this.workflowRuns.value.some((r) => r.id === event.run.id);
 				if (!exists) {
 					this.workflowRuns.value = [...this.workflowRuns.value, event.run];
-					// Fetch node executions for the new run so the UI stays current.
-					this.fetchNodeExecutions(hub, spaceId).catch((err) => {
-						logger.warn('Failed to fetch node executions after run creation:', err);
-					});
 					// Subscribe to the new run's LiveQuery for real-time updates
 					this.subscribeNodeExecutionsByRun(hub, event.run.id);
 				}
@@ -561,10 +559,6 @@ class SpaceStore {
 						...this.workflowRuns.value.slice(idx + 1),
 					];
 				}
-				// Re-fetch node executions when a run is updated (e.g. node status changes).
-				this.fetchNodeExecutions(hub, spaceId).catch((err) => {
-					logger.warn('Failed to fetch node executions after run update:', err);
-				});
 			}
 		});
 		this.cleanupFunctions.push(unsubRunUpdated);
@@ -759,7 +753,7 @@ class SpaceStore {
 							workflowRunId: run.id,
 							spaceId,
 						})
-						.then((r) => r.executions ?? [])
+						.then((r) => r?.executions ?? [])
 				)
 			);
 			const allExecs: NodeExecution[] = [];
@@ -933,7 +927,7 @@ class SpaceStore {
 		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
 			if (event.subscriptionId !== subscriptionId) return;
 			if (!this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
-			this.mergeNodeExecSnapshot(event.rows as NodeExecution[]);
+			this.mergeNodeExecSnapshot(event.rows as NodeExecution[], runId);
 		});
 		this.nodeExecCleanupFns.push(unsubSnapshot);
 
@@ -973,10 +967,8 @@ class SpaceStore {
 	/**
 	 * Merge a LiveQuery snapshot (full replace for one run) into nodeExecutions.
 	 */
-	private mergeNodeExecSnapshot(rows: NodeExecution[]): void {
+	private mergeNodeExecSnapshot(rows: NodeExecution[], runId: string): void {
 		const current = this.nodeExecutions.value;
-		const runId = rows[0]?.workflowRunId;
-		if (!runId) return;
 		// Remove old executions for this run, add fresh snapshot
 		const filtered = current.filter((e) => e.workflowRunId !== runId);
 		this.nodeExecutions.value = [...filtered, ...rows];
