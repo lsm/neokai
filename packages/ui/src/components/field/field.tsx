@@ -19,12 +19,14 @@ interface FieldContextValue {
 	disabled: boolean;
 	labelId: string | null;
 	setLabelId: (id: string | null) => void;
-	descriptionId: string | null;
-	setDescriptionId: (id: string | null) => void;
+	descriptionIds: string[];
+	addDescriptionId: (id: string) => void;
+	removeDescriptionId: (id: string) => void;
 	controlId: string | null;
 	setControlId: (id: string | null) => void;
-	invalid: boolean;
-	setInvalid: (invalid: boolean) => void;
+	invalidCount: number;
+	incrementInvalid: () => void;
+	decrementInvalid: () => void;
 }
 
 const FieldContext = createContext<FieldContextValue | null>(null);
@@ -89,25 +91,37 @@ function FieldFn({ as: Tag = 'div', disabled = false, children, ...rest }: Field
 	const isDisabled = disabled || (fieldsetCtx?.disabled ?? false);
 
 	const [labelId, setLabelId] = useState<string | null>(null);
-	const [descriptionId, setDescriptionId] = useState<string | null>(null);
+	const [descriptionIds, setDescriptionIds] = useState<string[]>([]);
 	const [controlId, setControlId] = useState<string | null>(null);
-	const [invalid, setInvalid] = useState(false);
+	const [invalidCount, setInvalidCount] = useState(0);
 
 	const stableLabelId = useCallback((id: string | null) => setLabelId(id), []);
-	const stableDescriptionId = useCallback((id: string | null) => setDescriptionId(id), []);
 	const stableControlId = useCallback((id: string | null) => setControlId(id), []);
-	const stableSetInvalid = useCallback((val: boolean) => setInvalid(val), []);
+	const stableAddDescriptionId = useCallback((id: string) => {
+		setDescriptionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+	}, []);
+	const stableRemoveDescriptionId = useCallback((id: string) => {
+		setDescriptionIds((prev) => prev.filter((existingId) => existingId !== id));
+	}, []);
+	const stableIncrementInvalid = useCallback(() => {
+		setInvalidCount((prev) => prev + 1);
+	}, []);
+	const stableDecrementInvalid = useCallback(() => {
+		setInvalidCount((prev) => Math.max(0, prev - 1));
+	}, []);
 
 	const ctx: FieldContextValue = {
 		disabled: isDisabled,
 		labelId,
 		setLabelId: stableLabelId,
-		descriptionId,
-		setDescriptionId: stableDescriptionId,
+		descriptionIds,
+		addDescriptionId: stableAddDescriptionId,
+		removeDescriptionId: stableRemoveDescriptionId,
 		controlId,
 		setControlId: stableControlId,
-		invalid,
-		setInvalid: stableSetInvalid,
+		invalidCount,
+		incrementInvalid: stableIncrementInvalid,
+		decrementInvalid: stableDecrementInvalid,
 	};
 
 	const slot = { disabled: isDisabled };
@@ -230,9 +244,9 @@ function DescriptionFn({ as: Tag = 'p', children, ...rest }: DescriptionProps) {
 
 	useEffect(() => {
 		if (!fieldCtx) return;
-		fieldCtx.setDescriptionId(id);
+		fieldCtx.addDescriptionId(id);
 		return () => {
-			fieldCtx.setDescriptionId(null);
+			fieldCtx.removeDescriptionId(id);
 		};
 	}, [id, fieldCtx]);
 
@@ -272,13 +286,13 @@ function FieldErrorFn({ as: Tag = 'p', children, ...rest }: FieldErrorProps) {
 
 	useEffect(() => {
 		if (!fieldCtx) return;
-		// FieldError sets aria-invalid on the associated input
-		fieldCtx.setInvalid(true);
+		// FieldError sets aria-invalid on the associated input (counter for multiple errors)
+		fieldCtx.incrementInvalid();
 		// Also register as description for aria-describedby
-		fieldCtx.setDescriptionId(id);
+		fieldCtx.addDescriptionId(id);
 		return () => {
-			fieldCtx.setInvalid(false);
-			fieldCtx.setDescriptionId(null);
+			fieldCtx.decrementInvalid();
+			fieldCtx.removeDescriptionId(id);
 		};
 	}, [id, fieldCtx]);
 

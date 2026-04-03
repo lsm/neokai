@@ -772,4 +772,84 @@ describe('FieldError', () => {
 		const sel = screen.getByRole('combobox');
 		expect(sel.getAttribute('aria-invalid')).toBe('true');
 	});
+
+	it('should set data-invalid on Input when FieldError is present', () => {
+		render(
+			<Field>
+				<Input />
+				<FieldError>Error</FieldError>
+			</Field>
+		);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('data-invalid')).toBe('');
+	});
+
+	it('should work with both Description and FieldError (no clobbering)', () => {
+		const { container } = render(
+			<Field>
+				<Label>Name</Label>
+				<Input />
+				<Description>Help text</Description>
+				<FieldError>Error text</FieldError>
+			</Field>
+		);
+		const input = container.querySelector('input');
+		const desc = container.querySelector('p[id]');
+		const error = container.querySelector('p[role="alert"]');
+
+		// Both description IDs should be in aria-describedby
+		const describedBy = input?.getAttribute('aria-describedby')?.split(' ') ?? [];
+		expect(describedBy).toContain(desc?.getAttribute('id'));
+		expect(describedBy).toContain(error?.getAttribute('id'));
+	});
+
+	it('should keep aria-describedby working after one FieldError unmounts (counter pattern)', () => {
+		const { rerender } = render(
+			<Field>
+				<Input />
+				<FieldError>Error 1</FieldError>
+				<FieldError>Error 2</FieldError>
+			</Field>
+		);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('aria-invalid')).toBe('true');
+
+		// Unmount one FieldError - aria-invalid should remain true
+		rerender(
+			<Field>
+				<Input />
+				<FieldError>Error 1</FieldError>
+			</Field>
+		);
+		expect(input.getAttribute('aria-invalid')).toBe('true');
+
+		// Unmount the last FieldError - aria-invalid should now be false
+		rerender(
+			<Field>
+				<Input />
+			</Field>
+		);
+		expect(input.getAttribute('aria-invalid')).toBeNull();
+	});
+
+	it('should keep aria-describedby working after Description unmounts (no clobbering)', () => {
+		const { rerender } = render(
+			<Field>
+				<Input />
+				<Description>Help text</Description>
+				<FieldError>Error text</FieldError>
+			</Field>
+		);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('aria-describedby')).toContain('Error text');
+
+		// Unmount Description - FieldError should still work
+		rerender(
+			<Field>
+				<Input />
+				<FieldError>Error text</FieldError>
+			</Field>
+		);
+		expect(input.getAttribute('aria-describedby')).toContain('Error text');
+	});
 });

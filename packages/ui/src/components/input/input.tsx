@@ -41,9 +41,12 @@ function InputFn({
 		};
 	}, [id, fieldCtx]);
 
+	// Compute combined invalid state: prop invalid OR any FieldError present
+	const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
+
 	const slot = {
 		disabled: isDisabled,
-		invalid,
+		invalid: isInvalid,
 		hover,
 		focus,
 		autofocus: autoFocus,
@@ -53,8 +56,11 @@ function InputFn({
 		id,
 		disabled: isDisabled || undefined,
 		'aria-labelledby': fieldCtx?.labelId ?? undefined,
-		'aria-describedby': fieldCtx?.descriptionId ?? undefined,
-		'aria-invalid': invalid || (fieldCtx?.invalid ?? false) || undefined,
+		'aria-describedby':
+			fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
+				? fieldCtx.descriptionIds.join(' ')
+				: undefined,
+		'aria-invalid': isInvalid || undefined,
 		autoFocus: autoFocus || undefined,
 		onMouseEnter: () => setHover(true),
 		onMouseLeave: () => setHover(false),
@@ -111,9 +117,12 @@ function TextareaFn({
 		};
 	}, [id, fieldCtx]);
 
+	// Compute combined invalid state: prop invalid OR any FieldError present
+	const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
+
 	const slot = {
 		disabled: isDisabled,
-		invalid,
+		invalid: isInvalid,
 		hover,
 		focus,
 		autofocus: autoFocus,
@@ -123,8 +132,11 @@ function TextareaFn({
 		id,
 		disabled: isDisabled || undefined,
 		'aria-labelledby': fieldCtx?.labelId ?? undefined,
-		'aria-describedby': fieldCtx?.descriptionId ?? undefined,
-		'aria-invalid': invalid || (fieldCtx?.invalid ?? false) || undefined,
+		'aria-describedby':
+			fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
+				? fieldCtx.descriptionIds.join(' ')
+				: undefined,
+		'aria-invalid': isInvalid || undefined,
 		autoFocus: autoFocus || undefined,
 		onMouseEnter: () => setHover(true),
 		onMouseLeave: () => setHover(false),
@@ -181,9 +193,12 @@ function SelectFn({
 		};
 	}, [id, fieldCtx]);
 
+	// Compute combined invalid state: prop invalid OR any FieldError present
+	const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
+
 	const slot = {
 		disabled: isDisabled,
-		invalid,
+		invalid: isInvalid,
 		hover,
 		focus,
 		autofocus: autoFocus,
@@ -193,8 +208,11 @@ function SelectFn({
 		id,
 		disabled: isDisabled || undefined,
 		'aria-labelledby': fieldCtx?.labelId ?? undefined,
-		'aria-describedby': fieldCtx?.descriptionId ?? undefined,
-		'aria-invalid': invalid || (fieldCtx?.invalid ?? false) || undefined,
+		'aria-describedby':
+			fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
+				? fieldCtx.descriptionIds.join(' ')
+				: undefined,
+		'aria-invalid': isInvalid || undefined,
 		autoFocus: autoFocus || undefined,
 		onMouseEnter: () => setHover(true),
 		onMouseLeave: () => setHover(false),

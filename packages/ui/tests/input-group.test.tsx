@@ -35,7 +35,7 @@ describe('InputGroup', () => {
 		expect(screen.getByText('https://')).not.toBeNull();
 	});
 
-	it('should track hover state on mouseenter/mouseleave', async () => {
+	it('should set data-hover on mouseenter', async () => {
 		const { container } = render(
 			<InputGroup>
 				<InputAddon>$</InputAddon>
@@ -47,16 +47,15 @@ describe('InputGroup', () => {
 		await act(async () => {
 			fireEvent.mouseEnter(group);
 		});
-		// Verify hover state is tracked (check via data-hover attribute)
-		expect(group).not.toBeNull();
+		expect(group.getAttribute('data-hover')).toBe('');
 
 		await act(async () => {
 			fireEvent.mouseLeave(group);
 		});
-		expect(group).not.toBeNull();
+		expect(group.getAttribute('data-hover')).toBeNull();
 	});
 
-	it('should track focus state on focusin/focusout', async () => {
+	it('should set data-focus on focusin and clear on focusout', async () => {
 		const { container } = render(
 			<InputGroup>
 				<InputAddon>$</InputAddon>
@@ -69,12 +68,12 @@ describe('InputGroup', () => {
 		await act(async () => {
 			fireEvent.focusIn(input);
 		});
-		expect(group).not.toBeNull();
+		expect(group.getAttribute('data-focus')).toBe('');
 
 		await act(async () => {
 			fireEvent.focusOut(input);
 		});
-		expect(group).not.toBeNull();
+		expect(group.getAttribute('data-focus')).toBeNull();
 	});
 
 	it('should provide context to InputAddon', async () => {
@@ -89,7 +88,7 @@ describe('InputGroup', () => {
 		expect(addon).not.toBeNull();
 	});
 
-	it('should accept disabled prop for styling purposes', () => {
+	it('should set data-disabled when disabled prop is true', () => {
 		const { container } = render(
 			<InputGroup disabled>
 				<InputAddon>$</InputAddon>
@@ -123,7 +122,7 @@ describe('InputAddon', () => {
 		expect(screen.getByText('Standalone')).not.toBeNull();
 	});
 
-	it('should receive data-* attributes from InputGroup context', async () => {
+	it('should receive data-hover attribute from InputGroup context', async () => {
 		const { container } = render(
 			<InputGroup>
 				<InputAddon>$</InputAddon>
@@ -137,13 +136,46 @@ describe('InputAddon', () => {
 		await act(async () => {
 			fireEvent.mouseEnter(group);
 		});
-		// Addon should be rendered
-		expect(addon).not.toBeNull();
+		// Addon should receive data-hover
+		expect(addon.getAttribute('data-hover')).toBe('');
 
 		await act(async () => {
 			fireEvent.mouseLeave(group);
 		});
-		expect(addon).not.toBeNull();
+		expect(addon.getAttribute('data-hover')).toBeNull();
+	});
+
+	it('should receive data-focus attribute from InputGroup context', async () => {
+		const { container } = render(
+			<InputGroup>
+				<InputAddon>$</InputAddon>
+				<Input />
+			</InputGroup>
+		);
+		const group = container.firstElementChild as HTMLElement;
+		const addon = screen.getByText('$');
+
+		// Focus should propagate to addon
+		await act(async () => {
+			fireEvent.focusIn(group);
+		});
+		expect(addon.getAttribute('data-focus')).toBe('');
+
+		await act(async () => {
+			fireEvent.focusOut(group);
+		});
+		expect(addon.getAttribute('data-focus')).toBeNull();
+	});
+
+	it('should receive data-disabled attribute from InputGroup context', () => {
+		render(
+			<InputGroup disabled>
+				<InputAddon>$</InputAddon>
+				<Input />
+			</InputGroup>
+		);
+		const addon = screen.getByText('$');
+		expect(addon.getAttribute('data-disabled')).toBe('');
 	});
 });
 
