@@ -34,9 +34,9 @@ async function createTestSpace(page: Page): Promise<{
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Delete any leftover space from a previous failed run
+			// Delete any leftover space from a previous failed run (including archived).
 			try {
-				const list = (await hub.request('space.list', {})) as Array<{
+				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
 					id: string;
 					workspacePath: string;
 				}>;

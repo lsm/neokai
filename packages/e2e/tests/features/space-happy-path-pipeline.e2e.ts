@@ -29,7 +29,7 @@ async function createSpaceWithRun(
 
 			const norm = (p: string) => p.replace(/^\/private/, '');
 			try {
-				const list = (await hub.request('space.list', {})) as Array<{
+				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
 					id: string;
 					workspacePath: string;
 				}>;

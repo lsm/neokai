@@ -19,6 +19,9 @@ import { TabsDemo } from './sections/TabsDemo.tsx';
 import { ToastDemo } from './sections/ToastDemo.tsx';
 import { TooltipDemo } from './sections/TooltipDemo.tsx';
 import { TransitionDemo } from './sections/TransitionDemo.tsx';
+import { CommandPaletteDemo } from './sections/CommandPaletteDemo.tsx';
+import { DrawerDemo } from './sections/DrawerDemo.tsx';
+import { NotificationDemo } from './sections/NotificationDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
@@ -64,11 +67,14 @@ const sections = [
 	{ id: 'input', label: 'Input' },
 	{ id: 'field', label: 'Field' },
 	{ id: 'dialog', label: 'Dialog' },
+	{ id: 'command-palette', label: 'Command Palette' },
+	{ id: 'drawer', label: 'Drawer' },
 	{ id: 'menu', label: 'Menu' },
 	{ id: 'disclosure', label: 'Disclosure' },
 	{ id: 'popover', label: 'Popover' },
 	{ id: 'tooltip', label: 'Tooltip' },
 	{ id: 'toast', label: 'Toast' },
+	{ id: 'notification', label: 'Notification' },
 	{ id: 'tabs', label: 'Tabs' },
 	{ id: 'listbox', label: 'Listbox' },
 	{ id: 'combobox', label: 'Combobox' },
@@ -157,6 +163,12 @@ export function App() {
 					<DemoSection id="dialog" title="Dialog">
 						<DialogDemo />
 					</DemoSection>
+					<DemoSection id="command-palette" title="Command Palette (Dialog + Combobox)">
+						<CommandPaletteDemo />
+					</DemoSection>
+					<DemoSection id="drawer" title="Drawer">
+						<DrawerDemo />
+					</DemoSection>
 					<DemoSection id="menu" title="Menu">
 						<MenuDemo />
 					</DemoSection>
@@ -171,6 +183,9 @@ export function App() {
 					</DemoSection>
 					<DemoSection id="toast" title="Toast">
 						<ToastDemo />
+					</DemoSection>
+					<DemoSection id="notification" title="Notification (Toast Variants)">
+						<NotificationDemo />
 					</DemoSection>
 					<DemoSection id="tabs" title="Tabs">
 						<TabsDemo />
