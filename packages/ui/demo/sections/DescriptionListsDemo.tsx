@@ -4,42 +4,44 @@ function LeftAligned() {
 	return (
 		<div>
 			<div class="px-4 sm:px-0">
-				<h3 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+				<h3 class="text-base/7 font-semibold text-text-primary dark:text-white">
 					Applicant Information
 				</h3>
-				<p class="mt-1 max-w-2xl text-sm/6 text-gray-500 dark:text-gray-400">
+				<p class="mt-1 max-w-2xl text-sm/6 text-text-secondary dark:text-text-tertiary">
 					Personal details and application.
 				</p>
 			</div>
-			<div class="mt-6 border-t border-gray-100 dark:border-white/10">
-				<dl class="divide-y divide-gray-100 dark:divide-white/10">
+			<div class="mt-6 border-t border-surface-border dark:border-white/10">
+				<dl class="divide-y divide-surface-border dark:divide-white/10">
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Full name</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Full name</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Margot Foster
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Application for</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Application for</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Backend Developer
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Email address</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Email address</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							margotfoster@example.com
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Salary expectation</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">
+							Salary expectation
+						</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							$120,000
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">About</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">About</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Fugiat ipsum ipsum deserunt culpa aute sint do nostrud anim incididunt cillum culpa
 							consequat. Excepteur qui ipsum aliquip consequat sint. Sit id mollit nulla mollit
 							nostrud in ea officia proident. Irure nostrud pariatur mollit ad adipisicing
@@ -47,29 +49,29 @@ function LeftAligned() {
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Attachments</dt>
-						<dd class="mt-2 text-sm text-gray-900 sm:col-span-2 sm:mt-0 dark:text-white">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Attachments</dt>
+						<dd class="mt-2 text-sm text-text-primary sm:col-span-2 sm:mt-0 dark:text-white">
 							<ul
 								role="list"
-								class="divide-y divide-gray-100 rounded-md border border-gray-200 dark:divide-white/5 dark:border-white/10"
+								class="divide-y divide-surface-border rounded-md border border-surface-border dark:divide-white/5 dark:border-white/10"
 							>
 								<li class="flex items-center justify-between py-4 pr-5 pl-4 text-sm/6">
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-white">
+											<span class="truncate font-medium text-text-primary dark:text-white">
 												resume_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">2.4mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">2.4mb</span>
 										</div>
 									</div>
 									<div class="ml-4 shrink-0">
 										<a
 											href="#"
-											class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Download
 										</a>
@@ -79,19 +81,19 @@ function LeftAligned() {
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-white">
+											<span class="truncate font-medium text-text-primary dark:text-white">
 												coverletter_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">4.5mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">4.5mb</span>
 										</div>
 									</div>
 									<div class="ml-4 shrink-0">
 										<a
 											href="#"
-											class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Download
 										</a>
@@ -110,68 +112,74 @@ function TwoColumn() {
 	return (
 		<div>
 			<div class="px-4 sm:px-0">
-				<h3 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+				<h3 class="text-base/7 font-semibold text-text-primary dark:text-white">
 					Applicant Information
 				</h3>
-				<p class="mt-1 max-w-2xl text-sm/6 text-gray-500 dark:text-gray-400">
+				<p class="mt-1 max-w-2xl text-sm/6 text-text-secondary dark:text-text-tertiary">
 					Personal details and application.
 				</p>
 			</div>
 			<div class="mt-6">
 				<dl class="grid grid-cols-1 sm:grid-cols-2">
-					<div class="border-t border-gray-100 px-4 py-6 sm:col-span-1 sm:px-0 dark:border-white/10">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Full name</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:mt-2 dark:text-gray-400">Margot Foster</dd>
+					<div class="border-t border-surface-border px-4 py-6 sm:col-span-1 sm:px-0 dark:border-white/10">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Full name</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:mt-2 dark:text-text-tertiary">
+							Margot Foster
+						</dd>
 					</div>
-					<div class="border-t border-gray-100 px-4 py-6 sm:col-span-1 sm:px-0 dark:border-white/10">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Application for</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:mt-2 dark:text-gray-400">
+					<div class="border-t border-surface-border px-4 py-6 sm:col-span-1 sm:px-0 dark:border-white/10">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Application for</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:mt-2 dark:text-text-tertiary">
 							Backend Developer
 						</dd>
 					</div>
-					<div class="border-t border-gray-100 px-4 py-6 sm:col-span-1 sm:px-0 dark:border-white/10">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Email address</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:mt-2 dark:text-gray-400">
+					<div class="border-t border-surface-border px-4 py-6 sm:col-span-1 sm:px-0 dark:border-white/10">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Email address</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:mt-2 dark:text-text-tertiary">
 							margotfoster@example.com
 						</dd>
 					</div>
-					<div class="border-t border-gray-100 px-4 py-6 sm:col-span-1 sm:px-0 dark:border-white/10">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Salary expectation</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:mt-2 dark:text-gray-400">$120,000</dd>
+					<div class="border-t border-surface-border px-4 py-6 sm:col-span-1 sm:px-0 dark:border-white/10">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">
+							Salary expectation
+						</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:mt-2 dark:text-text-tertiary">
+							$120,000
+						</dd>
 					</div>
-					<div class="border-t border-gray-100 px-4 py-6 sm:col-span-2 sm:px-0 dark:border-white/10">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">About</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:mt-2 dark:text-gray-400">
+					<div class="border-t border-surface-border px-4 py-6 sm:col-span-2 sm:px-0 dark:border-white/10">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">About</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:mt-2 dark:text-text-tertiary">
 							Fugiat ipsum ipsum deserunt culpa aute sint do nostrud anim incididunt cillum culpa
 							consequat. Excepteur qui ipsum aliquip consequat sint. Sit id mollit nulla mollit
 							nostrud in ea officia proident. Irure nostrud pariatur mollit ad adipisicing
 							reprehenderit deserunt qui eu.
 						</dd>
 					</div>
-					<div class="border-t border-gray-100 px-4 py-6 sm:col-span-2 sm:px-0 dark:border-white/10">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Attachments</dt>
-						<dd class="mt-2 text-sm text-gray-900 dark:text-white">
+					<div class="border-t border-surface-border px-4 py-6 sm:col-span-2 sm:px-0 dark:border-white/10">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Attachments</dt>
+						<dd class="mt-2 text-sm text-text-primary dark:text-white">
 							<ul
 								role="list"
-								class="divide-y divide-gray-100 rounded-md border border-gray-200 dark:divide-white/5 dark:border-white/10"
+								class="divide-y divide-surface-border rounded-md border border-surface-border dark:divide-white/5 dark:border-white/10"
 							>
 								<li class="flex items-center justify-between py-4 pr-5 pl-4 text-sm/6">
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-white">
+											<span class="truncate font-medium text-text-primary dark:text-white">
 												resume_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">2.4mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">2.4mb</span>
 										</div>
 									</div>
 									<div class="ml-4 shrink-0">
 										<a
 											href="#"
-											class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Download
 										</a>
@@ -181,19 +189,19 @@ function TwoColumn() {
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-white">
+											<span class="truncate font-medium text-text-primary dark:text-white">
 												coverletter_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">4.5mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">4.5mb</span>
 										</div>
 									</div>
 									<div class="ml-4 shrink-0">
 										<a
 											href="#"
-											class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Download
 										</a>
@@ -210,44 +218,50 @@ function TwoColumn() {
 
 function LeftAlignedInCard() {
 	return (
-		<div class="overflow-hidden bg-white shadow-sm sm:rounded-lg dark:bg-gray-800/50 dark:shadow-none dark:inset-ring dark:inset-ring-white/10">
+		<div class="overflow-hidden bg-white shadow-sm sm:rounded-lg dark:bg-surface-2/50 dark:shadow-none dark:inset-ring dark:inset-ring-white/10">
 			<div class="px-4 py-6 sm:px-6">
-				<h3 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+				<h3 class="text-base/7 font-semibold text-text-primary dark:text-white">
 					Applicant Information
 				</h3>
-				<p class="mt-1 max-w-2xl text-sm/6 text-gray-500 dark:text-gray-300">
+				<p class="mt-1 max-w-2xl text-sm/6 text-text-secondary dark:text-text-tertiary">
 					Personal details and application.
 				</p>
 			</div>
-			<div class="border-t border-gray-100 dark:border-white/5">
-				<dl class="divide-y divide-gray-100 dark:divide-white/5">
+			<div class="border-t border-surface-border dark:border-white/5">
+				<dl class="divide-y divide-surface-border dark:divide-white/5">
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-						<dt class="text-sm font-medium text-gray-900 dark:text-gray-100">Full name</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-300">
+						<dt class="text-sm font-medium text-text-primary dark:text-text-tertiary">Full name</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Margot Foster
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-						<dt class="text-sm font-medium text-gray-900 dark:text-gray-100">Application for</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-300">
+						<dt class="text-sm font-medium text-text-primary dark:text-text-tertiary">
+							Application for
+						</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Backend Developer
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-						<dt class="text-sm font-medium text-gray-900 dark:text-gray-100">Email address</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-300">
+						<dt class="text-sm font-medium text-text-primary dark:text-text-tertiary">
+							Email address
+						</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							margotfoster@example.com
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-						<dt class="text-sm font-medium text-gray-900 dark:text-gray-100">Salary expectation</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-300">
+						<dt class="text-sm font-medium text-text-primary dark:text-text-tertiary">
+							Salary expectation
+						</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							$120,000
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-						<dt class="text-sm font-medium text-gray-900 dark:text-gray-100">About</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-300">
+						<dt class="text-sm font-medium text-text-primary dark:text-text-tertiary">About</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Fugiat ipsum ipsum deserunt culpa aute sint do nostrud anim incididunt cillum culpa
 							consequat. Excepteur qui ipsum aliquip consequat sint. Sit id mollit nulla mollit
 							nostrud in ea officia proident. Irure nostrud pariatur mollit ad adipisicing
@@ -255,29 +269,31 @@ function LeftAlignedInCard() {
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-gray-100">Attachments</dt>
-						<dd class="mt-2 text-sm text-gray-900 sm:col-span-2 sm:mt-0 dark:text-gray-100">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-text-tertiary">
+							Attachments
+						</dt>
+						<dd class="mt-2 text-sm text-text-primary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							<ul
 								role="list"
-								class="divide-y divide-gray-100 rounded-md border border-gray-200 dark:divide-white/5 dark:border-white/10"
+								class="divide-y divide-surface-border rounded-md border border-surface-border dark:divide-white/5 dark:border-white/10"
 							>
 								<li class="flex items-center justify-between py-4 pr-5 pl-4 text-sm/6">
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-gray-100">
+											<span class="truncate font-medium text-text-primary dark:text-text-tertiary">
 												resume_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">2.4mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">2.4mb</span>
 										</div>
 									</div>
 									<div class="ml-4 shrink-0">
 										<a
 											href="#"
-											class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Download
 										</a>
@@ -287,19 +303,19 @@ function LeftAlignedInCard() {
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-gray-100">
+											<span class="truncate font-medium text-text-primary dark:text-text-tertiary">
 												coverletter_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">4.5mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">4.5mb</span>
 										</div>
 									</div>
 									<div class="ml-4 shrink-0">
 										<a
 											href="#"
-											class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Download
 										</a>
@@ -318,72 +334,74 @@ function LeftAlignedStriped() {
 	return (
 		<div>
 			<div class="px-4 sm:px-0">
-				<h3 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+				<h3 class="text-base/7 font-semibold text-text-primary dark:text-white">
 					Applicant Information
 				</h3>
-				<p class="mt-1 max-w-2xl text-sm/6 text-gray-500 dark:text-gray-400">
+				<p class="mt-1 max-w-2xl text-sm/6 text-text-secondary dark:text-text-tertiary">
 					Personal details and application.
 				</p>
 			</div>
-			<div class="mt-6 border-t border-gray-100 dark:border-white/5">
-				<dl class="divide-y divide-gray-100 dark:divide-white/5">
-					<div class="bg-gray-50 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-gray-800/25">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Full name</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+			<div class="mt-6 border-t border-surface-border dark:border-white/5">
+				<dl class="divide-y divide-surface-border dark:divide-white/5">
+					<div class="bg-surface-0 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-surface-2/25">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Full name</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Margot Foster
 						</dd>
 					</div>
-					<div class="bg-white px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-gray-900">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Application for</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+					<div class="bg-surface-0 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-surface-2">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Application for</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Backend Developer
 						</dd>
 					</div>
-					<div class="bg-gray-50 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-gray-800/25">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Email address</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+					<div class="bg-surface-0 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-surface-2/25">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Email address</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							margotfoster@example.com
 						</dd>
 					</div>
-					<div class="bg-white px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-gray-900">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Salary expectation</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+					<div class="bg-surface-0 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-surface-2">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">
+							Salary expectation
+						</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							$120,000
 						</dd>
 					</div>
-					<div class="bg-gray-50 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-gray-800/25">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">About</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+					<div class="bg-surface-0 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-surface-2/25">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">About</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							Fugiat ipsum ipsum deserunt culpa aute sint do nostrud anim incididunt cillum culpa
 							consequat. Excepteur qui ipsum aliquip consequat sint. Sit id mollit nulla mollit
 							nostrud in ea officia proident. Irure nostrud pariatur mollit ad adipisicing
 							reprehenderit deserunt qui eu.
 						</dd>
 					</div>
-					<div class="bg-white px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-gray-900">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Attachments</dt>
-						<dd class="mt-2 text-sm text-gray-900 sm:col-span-2 sm:mt-0 dark:text-white">
+					<div class="bg-surface-0 px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-3 dark:bg-surface-2">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Attachments</dt>
+						<dd class="mt-2 text-sm text-text-primary sm:col-span-2 sm:mt-0 dark:text-white">
 							<ul
 								role="list"
-								class="divide-y divide-gray-100 rounded-md border border-gray-200 dark:divide-white/5 dark:border-white/10"
+								class="divide-y divide-surface-border rounded-md border border-surface-border dark:divide-white/5 dark:border-white/10"
 							>
 								<li class="flex items-center justify-between py-4 pr-5 pl-4 text-sm/6">
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-white">
+											<span class="truncate font-medium text-text-primary dark:text-white">
 												resume_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">2.4mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">2.4mb</span>
 										</div>
 									</div>
 									<div class="ml-4 shrink-0">
 										<a
 											href="#"
-											class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Download
 										</a>
@@ -393,19 +411,19 @@ function LeftAlignedStriped() {
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-white">
+											<span class="truncate font-medium text-text-primary dark:text-white">
 												coverletter_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">4.5mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">4.5mb</span>
 										</div>
 									</div>
 									<div class="ml-4 shrink-0">
 										<a
 											href="#"
-											class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Download
 										</a>
@@ -424,23 +442,23 @@ function NarrowWithHiddenLabels() {
 	return (
 		<div>
 			<div class="px-4 sm:px-0">
-				<h3 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+				<h3 class="text-base/7 font-semibold text-text-primary dark:text-white">
 					Applicant Information
 				</h3>
-				<p class="mt-1 max-w-2xl text-sm/6 text-gray-500 dark:text-gray-400">
+				<p class="mt-1 max-w-2xl text-sm/6 text-text-secondary dark:text-text-tertiary">
 					Personal details and application.
 				</p>
 			</div>
-			<div class="mt-6 border-t border-gray-100 dark:border-white/10">
-				<dl class="divide-y divide-gray-100 dark:divide-white/10">
+			<div class="mt-6 border-t border-surface-border dark:border-white/10">
+				<dl class="divide-y divide-surface-border dark:divide-white/10">
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Full name</dt>
-						<dd class="mt-1 flex text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Full name</dt>
+						<dd class="mt-1 flex text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							<span class="grow">Margot Foster</span>
 							<span class="ml-4 shrink-0">
 								<button
 									type="button"
-									class="rounded-md bg-white font-medium text-indigo-600 hover:text-indigo-500 dark:bg-transparent dark:text-indigo-400 dark:hover:text-indigo-300"
+									class="rounded-md bg-surface-0 font-medium text-accent-500 hover:text-accent-400 dark:bg-transparent dark:text-accent-400 dark:hover:text-accent-300"
 								>
 									Update
 								</button>
@@ -448,13 +466,13 @@ function NarrowWithHiddenLabels() {
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Application for</dt>
-						<dd class="mt-1 flex text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Application for</dt>
+						<dd class="mt-1 flex text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							<span class="grow">Backend Developer</span>
 							<span class="ml-4 shrink-0">
 								<button
 									type="button"
-									class="rounded-md bg-white font-medium text-indigo-600 hover:text-indigo-500 dark:bg-transparent dark:text-indigo-400 dark:hover:text-indigo-300"
+									class="rounded-md bg-surface-0 font-medium text-accent-500 hover:text-accent-400 dark:bg-transparent dark:text-accent-400 dark:hover:text-accent-300"
 								>
 									Update
 								</button>
@@ -462,13 +480,13 @@ function NarrowWithHiddenLabels() {
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Email address</dt>
-						<dd class="mt-1 flex text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Email address</dt>
+						<dd class="mt-1 flex text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							<span class="grow">margotfoster@example.com</span>
 							<span class="ml-4 shrink-0">
 								<button
 									type="button"
-									class="rounded-md bg-white font-medium text-indigo-600 hover:text-indigo-500 dark:bg-transparent dark:text-indigo-400 dark:hover:text-indigo-300"
+									class="rounded-md bg-surface-0 font-medium text-accent-500 hover:text-accent-400 dark:bg-transparent dark:text-accent-400 dark:hover:text-accent-300"
 								>
 									Update
 								</button>
@@ -476,13 +494,15 @@ function NarrowWithHiddenLabels() {
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Salary expectation</dt>
-						<dd class="mt-1 flex text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">
+							Salary expectation
+						</dt>
+						<dd class="mt-1 flex text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							<span class="grow">$120,000</span>
 							<span class="ml-4 shrink-0">
 								<button
 									type="button"
-									class="rounded-md bg-white font-medium text-indigo-600 hover:text-indigo-500 dark:bg-transparent dark:text-indigo-400 dark:hover:text-indigo-300"
+									class="rounded-md bg-surface-0 font-medium text-accent-500 hover:text-accent-400 dark:bg-transparent dark:text-accent-400 dark:hover:text-accent-300"
 								>
 									Update
 								</button>
@@ -490,8 +510,8 @@ function NarrowWithHiddenLabels() {
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">About</dt>
-						<dd class="mt-1 flex text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">About</dt>
+						<dd class="mt-1 flex text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							<span class="grow">
 								Fugiat ipsum ipsum deserunt culpa aute sint do nostrud anim incididunt cillum culpa
 								consequat. Excepteur qui ipsum aliquip consequat sint. Sit id mollit nulla mollit
@@ -501,7 +521,7 @@ function NarrowWithHiddenLabels() {
 							<span class="ml-4 shrink-0">
 								<button
 									type="button"
-									class="rounded-md bg-white font-medium text-indigo-600 hover:text-indigo-500 dark:bg-transparent dark:text-indigo-400 dark:hover:text-indigo-300"
+									class="rounded-md bg-surface-0 font-medium text-accent-500 hover:text-accent-400 dark:bg-transparent dark:text-accent-400 dark:hover:text-accent-300"
 								>
 									Update
 								</button>
@@ -509,38 +529,38 @@ function NarrowWithHiddenLabels() {
 						</dd>
 					</div>
 					<div class="px-4 py-6 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-0">
-						<dt class="text-sm/6 font-medium text-gray-900 dark:text-white">Attachments</dt>
-						<dd class="mt-1 text-sm/6 text-gray-700 sm:col-span-2 sm:mt-0 dark:text-gray-400">
+						<dt class="text-sm/6 font-medium text-text-primary dark:text-white">Attachments</dt>
+						<dd class="mt-1 text-sm/6 text-text-secondary sm:col-span-2 sm:mt-0 dark:text-text-tertiary">
 							<ul
 								role="list"
-								class="divide-y divide-gray-100 rounded-md border border-gray-200 dark:divide-white/5 dark:border-white/10"
+								class="divide-y divide-surface-border rounded-md border border-surface-border dark:divide-white/5 dark:border-white/10"
 							>
 								<li class="flex items-center justify-between py-4 pr-5 pl-4 text-sm/6">
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-white">
+											<span class="truncate font-medium text-text-primary dark:text-white">
 												resume_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">2.4mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">2.4mb</span>
 										</div>
 									</div>
 									<div class="ml-4 flex shrink-0 space-x-4">
 										<button
 											type="button"
-											class="rounded-md bg-white font-medium text-indigo-600 hover:text-indigo-500 dark:bg-transparent dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="rounded-md bg-surface-0 font-medium text-accent-500 hover:text-accent-400 dark:bg-transparent dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Update
 										</button>
-										<span aria-hidden="true" class="text-gray-200 dark:text-gray-600">
+										<span aria-hidden="true" class="text-text-tertiary dark:text-text-tertiary">
 											|
 										</span>
 										<button
 											type="button"
-											class="rounded-md bg-white font-medium text-gray-900 hover:text-gray-800 dark:bg-transparent dark:text-gray-400 dark:hover:text-white"
+											class="rounded-md bg-surface-0 font-medium text-text-primary hover:text-text-secondary dark:bg-transparent dark:text-text-tertiary dark:hover:text-white"
 										>
 											Remove
 										</button>
@@ -550,28 +570,28 @@ function NarrowWithHiddenLabels() {
 									<div class="flex w-0 flex-1 items-center">
 										<Paperclip
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 dark:text-gray-500"
+											class="size-5 shrink-0 text-text-tertiary dark:text-text-tertiary"
 										/>
 										<div class="ml-4 flex min-w-0 flex-1 gap-2">
-											<span class="truncate font-medium text-gray-900 dark:text-white">
+											<span class="truncate font-medium text-text-primary dark:text-white">
 												coverletter_back_end_developer.pdf
 											</span>
-											<span class="shrink-0 text-gray-400 dark:text-gray-500">4.5mb</span>
+											<span class="shrink-0 text-text-tertiary dark:text-text-tertiary">4.5mb</span>
 										</div>
 									</div>
 									<div class="ml-4 flex shrink-0 space-x-4">
 										<button
 											type="button"
-											class="rounded-md bg-white font-medium text-indigo-600 hover:text-indigo-500 dark:bg-transparent dark:text-indigo-400 dark:hover:text-indigo-300"
+											class="rounded-md bg-surface-0 font-medium text-accent-500 hover:text-accent-400 dark:bg-transparent dark:text-accent-400 dark:hover:text-accent-300"
 										>
 											Update
 										</button>
-										<span aria-hidden="true" class="text-gray-200 dark:text-gray-600">
+										<span aria-hidden="true" class="text-text-tertiary dark:text-text-tertiary">
 											|
 										</span>
 										<button
 											type="button"
-											class="rounded-md bg-white font-medium text-gray-900 hover:text-gray-800 dark:bg-transparent dark:text-gray-400 dark:hover:text-white"
+											class="rounded-md bg-surface-0 font-medium text-text-primary hover:text-text-secondary dark:bg-transparent dark:text-text-tertiary dark:hover:text-white"
 										>
 											Remove
 										</button>
@@ -590,27 +610,27 @@ export function DescriptionListsDemo() {
 	return (
 		<div class="space-y-12">
 			<section>
-				<h3 class="text-base font-semibold text-gray-900 dark:text-white mb-4">Left Aligned</h3>
+				<h3 class="text-base font-semibold text-text-primary dark:text-white mb-4">Left Aligned</h3>
 				<LeftAligned />
 			</section>
 			<section>
-				<h3 class="text-base font-semibold text-gray-900 dark:text-white mb-4">Two Column</h3>
+				<h3 class="text-base font-semibold text-text-primary dark:text-white mb-4">Two Column</h3>
 				<TwoColumn />
 			</section>
 			<section>
-				<h3 class="text-base font-semibold text-gray-900 dark:text-white mb-4">
+				<h3 class="text-base font-semibold text-text-primary dark:text-white mb-4">
 					Left Aligned in Card
 				</h3>
 				<LeftAlignedInCard />
 			</section>
 			<section>
-				<h3 class="text-base font-semibold text-gray-900 dark:text-white mb-4">
+				<h3 class="text-base font-semibold text-text-primary dark:text-white mb-4">
 					Left Aligned Striped
 				</h3>
 				<LeftAlignedStriped />
 			</section>
 			<section>
-				<h3 class="text-base font-semibold text-gray-900 dark:text-white mb-4">
+				<h3 class="text-base font-semibold text-text-primary dark:text-white mb-4">
 					Narrow with Hidden Labels
 				</h3>
 				<NarrowWithHiddenLabels />

@@ -9,20 +9,20 @@ export function PaginationDemo() {
 					<div class="flex flex-1 justify-between sm:hidden">
 						<a
 							href="#"
-							class="relative inline-flex items-center rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-0 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 dark:hover:bg-white/10"
+							class="relative inline-flex items-center rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-0 dark:border-white/10 dark:bg-white/5 dark:text-text-tertiary dark:hover:bg-white/10"
 						>
 							Previous
 						</a>
 						<a
 							href="#"
-							class="relative ml-3 inline-flex items-center rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-0 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 dark:hover:bg-white/10"
+							class="relative ml-3 inline-flex items-center rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-0 dark:border-white/10 dark:bg-white/5 dark:text-text-tertiary dark:hover:bg-white/10"
 						>
 							Next
 						</a>
 					</div>
 					<div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
 						<div>
-							<p class="text-sm text-text-secondary dark:text-gray-300">
+							<p class="text-sm text-text-secondary dark:text-text-tertiary">
 								Showing <span class="font-medium">1</span> to <span class="font-medium">10</span> of{' '}
 								<span class="font-medium">97</span> results
 							</p>
@@ -34,7 +34,7 @@ export function PaginationDemo() {
 							>
 								<a
 									href="#"
-									class="relative inline-flex items-center rounded-l-md px-2 py-2 text-text-tertiary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center rounded-l-md px-2 py-2 text-text-tertiary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									<span class="sr-only">Previous</span>
 									<svg
@@ -60,40 +60,40 @@ export function PaginationDemo() {
 								</a>
 								<a
 									href="#"
-									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									2
 								</a>
 								<a
 									href="#"
-									class="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 md:inline-flex dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 md:inline-flex dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									3
 								</a>
-								<span class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-secondary inset-ring inset-ring-surface-border focus:outline-offset-0 dark:text-gray-400 dark:inset-ring-gray-700">
+								<span class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-secondary inset-ring inset-ring-surface-border focus:outline-offset-0 dark:text-text-tertiary dark:inset-ring-surface-2">
 									...
 								</span>
 								<a
 									href="#"
-									class="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 md:inline-flex dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 md:inline-flex dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									8
 								</a>
 								<a
 									href="#"
-									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									9
 								</a>
 								<a
 									href="#"
-									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									10
 								</a>
 								<a
 									href="#"
-									class="relative inline-flex items-center rounded-r-md px-2 py-2 text-text-tertiary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center rounded-r-md px-2 py-2 text-text-tertiary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									<span class="sr-only">Next</span>
 									<svg
@@ -122,20 +122,20 @@ export function PaginationDemo() {
 					<div class="flex flex-1 justify-between sm:hidden">
 						<a
 							href="#"
-							class="relative inline-flex items-center rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-0 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 dark:hover:bg-white/10"
+							class="relative inline-flex items-center rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-0 dark:border-white/10 dark:bg-white/5 dark:text-text-tertiary dark:hover:bg-white/10"
 						>
 							Previous
 						</a>
 						<a
 							href="#"
-							class="relative ml-3 inline-flex items-center rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-0 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 dark:hover:bg-white/10"
+							class="relative ml-3 inline-flex items-center rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-0 dark:border-white/10 dark:bg-white/5 dark:text-text-tertiary dark:hover:bg-white/10"
 						>
 							Next
 						</a>
 					</div>
 					<div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
 						<div>
-							<p class="text-sm text-text-secondary dark:text-gray-300">
+							<p class="text-sm text-text-secondary dark:text-text-tertiary">
 								Showing <span class="font-medium">1</span> to <span class="font-medium">10</span> of{' '}
 								<span class="font-medium">97</span> results
 							</p>
@@ -147,7 +147,7 @@ export function PaginationDemo() {
 							>
 								<a
 									href="#"
-									class="relative inline-flex items-center rounded-l-md px-2 py-2 text-text-tertiary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center rounded-l-md px-2 py-2 text-text-tertiary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									<span class="sr-only">Previous</span>
 									<ChevronLeft aria-hidden="true" class="size-5" />
@@ -161,40 +161,40 @@ export function PaginationDemo() {
 								</a>
 								<a
 									href="#"
-									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									2
 								</a>
 								<a
 									href="#"
-									class="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 md:inline-flex dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 md:inline-flex dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									3
 								</a>
-								<span class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-secondary inset-ring inset-ring-surface-border focus:outline-offset-0 dark:text-gray-400 dark:inset-ring-gray-700">
+								<span class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-secondary inset-ring inset-ring-surface-border focus:outline-offset-0 dark:text-text-tertiary dark:inset-ring-surface-2">
 									...
 								</span>
 								<a
 									href="#"
-									class="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 md:inline-flex dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 md:inline-flex dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									8
 								</a>
 								<a
 									href="#"
-									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									9
 								</a>
 								<a
 									href="#"
-									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-gray-200 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-primary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:text-text-tertiary dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									10
 								</a>
 								<a
 									href="#"
-									class="relative inline-flex items-center rounded-r-md px-2 py-2 text-text-tertiary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:inset-ring-gray-700 dark:hover:bg-white/5"
+									class="relative inline-flex items-center rounded-r-md px-2 py-2 text-text-tertiary inset-ring inset-ring-surface-border hover:bg-surface-0 focus:z-20 focus:outline-offset-0 dark:inset-ring-surface-2 dark:hover:bg-white/5"
 								>
 									<span class="sr-only">Next</span>
 									<ChevronRight aria-hidden="true" class="size-5" />

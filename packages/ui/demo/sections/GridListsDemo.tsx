@@ -393,7 +393,7 @@ export function GridListsDemo() {
 			{/* ============================================================ */}
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">Actions with shared borders</h3>
-				<div class="divide-y divide-surface-border overflow-hidden rounded-lg bg-surface-2 shadow-sm sm:grid sm:grid-cols-2 sm:divide-y-0 dark:divide-white/10 dark:bg-gray-900 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/20">
+				<div class="divide-y divide-surface-border overflow-hidden rounded-lg bg-surface-2 shadow-sm sm:grid sm:grid-cols-2 sm:divide-y-0 dark:divide-white/10 dark:bg-surface-2 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/20">
 					{[
 						{
 							title: 'Request time off',
@@ -515,7 +515,7 @@ export function GridListsDemo() {
 						},
 					].map((file) => (
 						<li key={file.source} class="relative">
-							<div class="group overflow-hidden rounded-lg bg-surface-2 focus-within:ring-2 focus-within:ring-accent-500 focus-within:ring-offset-2 dark:bg-gray-800">
+							<div class="group overflow-hidden rounded-lg bg-surface-2 focus-within:ring-2 focus-within:ring-accent-500 focus-within:ring-offset-2 dark:bg-surface-2">
 								<img
 									alt=""
 									src={file.source}

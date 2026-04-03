@@ -23,24 +23,26 @@ const stats3 = [
 
 function WithTrending() {
 	return (
-		<dl class="mx-auto grid grid-cols-1 gap-px bg-gray-900/5 sm:grid-cols-2 lg:grid-cols-4 dark:bg-white/10">
+		<dl class="mx-auto grid grid-cols-1 gap-px bg-surface-2/5 sm:grid-cols-2 lg:grid-cols-4 dark:bg-white/10">
 			{stats1.map((stat) => (
 				<div
 					key={stat.name}
-					class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 bg-white px-4 py-10 sm:px-6 xl:px-8 dark:bg-gray-900"
+					class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 bg-surface-0 px-4 py-10 sm:px-6 xl:px-8 dark:bg-surface-2"
 				>
-					<dt class="text-sm/6 font-medium text-gray-500 dark:text-gray-400">{stat.name}</dt>
+					<dt class="text-sm/6 font-medium text-text-secondary dark:text-text-tertiary">
+						{stat.name}
+					</dt>
 					<dd
 						class={classNames(
 							stat.changeType === 'negative'
 								? 'text-rose-600 dark:text-rose-400'
-								: 'text-gray-700 dark:text-gray-300',
+								: 'text-text-secondary dark:text-text-tertiary',
 							'text-xs font-medium'
 						)}
 					>
 						{stat.change}
 					</dd>
-					<dd class="w-full flex-none text-3xl/10 font-medium tracking-tight text-gray-900 dark:text-white">
+					<dd class="w-full flex-none text-3xl/10 font-medium tracking-tight text-text-primary dark:text-white">
 						{stat.value}
 					</dd>
 				</div>
@@ -51,18 +53,22 @@ function WithTrending() {
 
 function Simple() {
 	return (
-		<div class="bg-white dark:bg-gray-900">
+		<div class="bg-surface-0 dark:bg-surface-2">
 			<div class="mx-auto max-w-7xl">
-				<div class="grid grid-cols-1 gap-px bg-gray-900/5 sm:grid-cols-2 lg:grid-cols-4 dark:bg-white/10">
+				<div class="grid grid-cols-1 gap-px bg-surface-2/5 sm:grid-cols-2 lg:grid-cols-4 dark:bg-white/10">
 					{stats2.map((stat) => (
-						<div key={stat.name} class="bg-white px-4 py-6 sm:px-6 lg:px-8 dark:bg-gray-900">
-							<p class="text-sm/6 font-medium text-gray-500 dark:text-gray-400">{stat.name}</p>
+						<div key={stat.name} class="bg-surface-0 px-4 py-6 sm:px-6 lg:px-8 dark:bg-surface-2">
+							<p class="text-sm/6 font-medium text-text-secondary dark:text-text-tertiary">
+								{stat.name}
+							</p>
 							<p class="mt-2 flex items-baseline gap-x-2">
-								<span class="text-4xl font-semibold tracking-tight text-gray-900 dark:text-white">
+								<span class="text-4xl font-semibold tracking-tight text-text-primary dark:text-white">
 									{stat.value}
 								</span>
 								{stat.unit ? (
-									<span class="text-sm text-gray-500 dark:text-gray-400">{stat.unit}</span>
+									<span class="text-sm text-text-secondary dark:text-text-tertiary">
+										{stat.unit}
+									</span>
 								) : null}
 							</p>
 						</div>
@@ -76,17 +82,17 @@ function Simple() {
 function SimpleInCards() {
 	return (
 		<div>
-			<h3 class="text-base font-semibold text-gray-900 dark:text-white">Last 30 days</h3>
+			<h3 class="text-base font-semibold text-text-primary dark:text-white">Last 30 days</h3>
 			<dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
 				{stats3.map((item) => (
 					<div
 						key={item.name}
-						class="overflow-hidden rounded-lg bg-white px-4 py-5 shadow-sm sm:p-6 dark:bg-gray-800/75 dark:inset-ring dark:inset-ring-white/10"
+						class="overflow-hidden rounded-lg bg-white px-4 py-5 shadow-sm sm:p-6 dark:bg-surface-2/75 dark:inset-ring dark:inset-ring-white/10"
 					>
-						<dt class="truncate text-sm font-medium text-gray-500 dark:text-gray-400">
+						<dt class="truncate text-sm font-medium text-text-secondary dark:text-text-tertiary">
 							{item.name}
 						</dt>
-						<dd class="mt-1 text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
+						<dd class="mt-1 text-3xl font-semibold tracking-tight text-text-primary dark:text-white">
 							{item.stat}
 						</dd>
 					</div>
@@ -126,24 +132,24 @@ const statsWithIcons = [
 function WithBrandIcon() {
 	return (
 		<div>
-			<h3 class="text-base font-semibold text-gray-900 dark:text-white">Last 30 days</h3>
+			<h3 class="text-base font-semibold text-text-primary dark:text-white">Last 30 days</h3>
 
 			<dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
 				{statsWithIcons.map((item) => (
 					<div
 						key={item.id}
-						class="relative overflow-hidden rounded-lg bg-white px-4 pt-5 pb-12 shadow-sm sm:px-6 sm:pt-6 dark:bg-gray-800/75 dark:inset-ring dark:inset-ring-white/10"
+						class="relative overflow-hidden rounded-lg bg-white px-4 pt-5 pb-12 shadow-sm sm:px-6 sm:pt-6 dark:bg-surface-2/75 dark:inset-ring dark:inset-ring-white/10"
 					>
 						<dt>
-							<div class="absolute rounded-md bg-indigo-500 p-3">
+							<div class="absolute rounded-md bg-accent-500 p-3">
 								<item.icon aria-hidden="true" class="size-6 text-white" />
 							</div>
-							<p class="ml-16 truncate text-sm font-medium text-gray-500 dark:text-gray-400">
+							<p class="ml-16 truncate text-sm font-medium text-text-secondary dark:text-text-tertiary">
 								{item.name}
 							</p>
 						</dt>
 						<dd class="ml-16 flex items-baseline pb-6 sm:pb-7">
-							<p class="text-2xl font-semibold text-gray-900 dark:text-white">{item.stat}</p>
+							<p class="text-2xl font-semibold text-text-primary dark:text-white">{item.stat}</p>
 							<p
 								class={classNames(
 									item.changeType === 'increase'
@@ -170,11 +176,11 @@ function WithBrandIcon() {
 								</span>
 								{item.change}
 							</p>
-							<div class="absolute inset-x-0 bottom-0 bg-gray-50 px-4 py-4 sm:px-6 dark:bg-gray-700/20">
+							<div class="absolute inset-x-0 bottom-0 bg-surface-0 px-4 py-4 sm:px-6 dark:bg-surface-2/20">
 								<div class="text-sm">
 									<a
 										href="#"
-										class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+										class="font-medium text-accent-500 hover:text-accent-400 dark:text-accent-400 dark:hover:text-accent-300"
 									>
 										View all<span class="sr-only"> {item.name} stats</span>
 									</a>
@@ -215,15 +221,17 @@ const statsWithSharedBorders = [
 function WithSharedBorders() {
 	return (
 		<div>
-			<h3 class="text-base font-semibold text-gray-900 dark:text-white">Last 30 days</h3>
-			<dl class="mt-5 grid grid-cols-1 divide-gray-200 overflow-hidden rounded-lg bg-white shadow-sm md:grid-cols-3 md:divide-x md:divide-y-0 dark:divide-white/10 dark:bg-gray-800/75 dark:shadow-none dark:inset-ring dark:inset-ring-white/10">
+			<h3 class="text-base font-semibold text-text-primary dark:text-white">Last 30 days</h3>
+			<dl class="mt-5 grid grid-cols-1 divide-surface-border overflow-hidden rounded-lg bg-surface-0 shadow-sm md:grid-cols-3 md:divide-x md:divide-y-0 dark:divide-white/10 dark:bg-surface-2/75 dark:shadow-none dark:inset-ring dark:inset-ring-white/10">
 				{statsWithSharedBorders.map((item) => (
 					<div key={item.name} class="px-4 py-5 sm:p-6">
-						<dt class="text-base font-normal text-gray-900 dark:text-gray-100">{item.name}</dt>
+						<dt class="text-base font-normal text-text-primary dark:text-text-tertiary">
+							{item.name}
+						</dt>
 						<dd class="mt-1 flex items-baseline justify-between md:block lg:flex">
-							<div class="flex items-baseline text-2xl font-semibold text-indigo-600 dark:text-indigo-400">
+							<div class="flex items-baseline text-2xl font-semibold text-accent-500 dark:text-accent-400">
 								{item.stat}
-								<span class="ml-2 text-sm font-medium text-gray-500 dark:text-gray-400">
+								<span class="ml-2 text-sm font-medium text-text-secondary dark:text-text-tertiary">
 									from {item.previousStat}
 								</span>
 							</div>
@@ -266,23 +274,27 @@ export function StatsDemo() {
 	return (
 		<div class="space-y-12">
 			<section>
-				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">With Trending</h2>
+				<h2 class="text-lg font-semibold text-text-primary dark:text-white mb-4">With Trending</h2>
 				<WithTrending />
 			</section>
 			<section>
-				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Simple</h2>
+				<h2 class="text-lg font-semibold text-text-primary dark:text-white mb-4">Simple</h2>
 				<Simple />
 			</section>
 			<section>
-				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Simple in Cards</h2>
+				<h2 class="text-lg font-semibold text-text-primary dark:text-white mb-4">
+					Simple in Cards
+				</h2>
 				<SimpleInCards />
 			</section>
 			<section>
-				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">With Brand Icon</h2>
+				<h2 class="text-lg font-semibold text-text-primary dark:text-white mb-4">
+					With Brand Icon
+				</h2>
 				<WithBrandIcon />
 			</section>
 			<section>
-				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+				<h2 class="text-lg font-semibold text-text-primary dark:text-white mb-4">
 					With Shared Borders
 				</h2>
 				<WithSharedBorders />

@@ -298,7 +298,7 @@ export function CirclesProgressBars() {
 								<a
 									href="#"
 									aria-current="step"
-									class="relative flex size-8 items-center justify-center rounded-full border-2 border-accent-500 bg-white dark:border-accent-500 dark:bg-gray-900"
+									class="relative flex size-8 items-center justify-center rounded-full border-2 border-accent-500 bg-white dark:border-accent-500 dark:bg-surface-2"
 								>
 									<span
 										aria-hidden="true"
@@ -314,7 +314,7 @@ export function CirclesProgressBars() {
 								</div>
 								<a
 									href="#"
-									class="group relative flex size-8 items-center justify-center rounded-full border-2 border-surface-border bg-white hover:border-surface-border/80 dark:border-white/15 dark:bg-gray-900 dark:hover:border-white/25"
+									class="group relative flex size-8 items-center justify-center rounded-full border-2 border-surface-border bg-white hover:border-surface-border/80 dark:border-white/15 dark:bg-surface-2 dark:hover:border-white/25"
 								>
 									<span
 										aria-hidden="true"
@@ -612,7 +612,7 @@ export function BulletsAndTextProgressBars() {
 								) : null}
 								<a href={step.href} aria-current="step" class="group relative flex items-start">
 									<span aria-hidden="true" class="flex h-9 items-center">
-										<span class="relative z-10 flex size-8 items-center justify-center rounded-full border-2 border-accent-500 bg-white dark:border-accent-500 dark:bg-gray-900">
+										<span class="relative z-10 flex size-8 items-center justify-center rounded-full border-2 border-accent-500 bg-white dark:border-accent-500 dark:bg-surface-2">
 											<span class="size-2.5 rounded-full bg-accent-500 dark:bg-accent-500" />
 										</span>
 									</span>
@@ -634,7 +634,7 @@ export function BulletsAndTextProgressBars() {
 								) : null}
 								<a href={step.href} class="group relative flex items-start">
 									<span aria-hidden="true" class="flex h-9 items-center">
-										<span class="relative z-10 flex size-8 items-center justify-center rounded-full border-2 border-surface-border bg-white group-hover:border-surface-border/80 dark:border-white/15 dark:bg-gray-900 dark:group-hover:border-white/25">
+										<span class="relative z-10 flex size-8 items-center justify-center rounded-full border-2 border-surface-border bg-white group-hover:border-surface-border/80 dark:border-white/15 dark:bg-surface-2 dark:group-hover:border-white/25">
 											<span class="size-2.5 rounded-full bg-transparent group-hover:bg-surface-2 dark:group-hover:bg-white/15" />
 										</span>
 									</span>

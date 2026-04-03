@@ -1,4 +1,4 @@
-import { Check, ThumbsUp, User } from 'lucide-preact';
+import { Check, ThumbsUp, User, CheckCircle, Circle } from 'lucide-preact';
 import { classNames } from '../../src/internal/class-names.ts';
 
 // ============================================================
@@ -13,7 +13,7 @@ const timeline = [
 		date: 'Sep 20',
 		datetime: '2020-09-20',
 		icon: User,
-		iconBackground: 'bg-gray-400 dark:bg-gray-600',
+		iconBackground: 'bg-surface-3 dark:bg-surface-2',
 	},
 	{
 		id: 2,
@@ -75,7 +75,7 @@ export function SimpleWithIcons() {
 									<span
 										class={classNames(
 											event.iconBackground,
-											'flex size-8 items-center justify-center rounded-full ring-8 ring-white dark:ring-gray-900'
+											'flex size-8 items-center justify-center rounded-full ring-8 ring-surface-0 dark:ring-surface-1'
 										)}
 									>
 										<event.icon aria-hidden="true" class="size-5 text-white" />
@@ -156,42 +156,6 @@ const activity = [
 	},
 ];
 
-function CheckCircleIcon({ class: className }: { class?: string }) {
-	return (
-		<svg
-			xmlns="http://www.w3.org/2000/svg"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			class={className}
-		>
-			<circle cx="12" cy="12" r="10" />
-			<path d="m9 12 2 2 4-4" />
-		</svg>
-	);
-}
-
-function CircleDotIcon({ class: className }: { class?: string }) {
-	return (
-		<svg
-			xmlns="http://www.w3.org/2000/svg"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			class={className}
-		>
-			<circle cx="12" cy="12" r="10" />
-			<circle cx="12" cy="12" r="1" fill="currentColor" />
-		</svg>
-	);
-}
-
 export function WithComments() {
 	return (
 		<ul role="list" class="space-y-6">
@@ -210,7 +174,7 @@ export function WithComments() {
 							<img
 								alt=""
 								src={activityItem.person.imageUrl}
-								class="relative mt-3 size-6 flex-none rounded-full bg-surface-1 outline -outline-offset-1 outline-black/5 dark:bg-gray-800 dark:outline-white/10"
+								class="relative mt-3 size-6 flex-none rounded-full bg-surface-1 outline -outline-offset-1 outline-black/5 dark:bg-surface-2 dark:outline-white/10"
 							/>
 							<div class="flex-auto rounded-md p-3 ring-1 ring-surface-2 ring-inset dark:ring-white/15">
 								<div class="flex justify-between gap-x-4">
@@ -230,14 +194,14 @@ export function WithComments() {
 						</>
 					) : (
 						<>
-							<div class="relative flex size-6 flex-none items-center justify-center bg-surface-0 dark:bg-gray-900">
+							<div class="relative flex size-6 flex-none items-center justify-center bg-surface-0 dark:bg-surface-1">
 								{activityItem.type === 'paid' ? (
-									<CheckCircleIcon
+									<CheckCircle
 										aria-hidden="true"
 										class="size-6 text-accent-500 dark:text-accent-400"
 									/>
 								) : (
-									<CircleDotIcon
+									<Circle
 										aria-hidden="true"
 										class="size-1.5 rounded-full bg-surface-3 ring ring-surface-3 dark:bg-white/10 dark:ring-white/20"
 									/>

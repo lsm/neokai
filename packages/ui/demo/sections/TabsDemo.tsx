@@ -37,7 +37,7 @@ export function TabsWithUnderline() {
 				<select
 					defaultValue={tabsWithUnderline.find((tab) => tab.current)?.name ?? ''}
 					aria-label="Select a tab"
-					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 				>
 					{tabsWithUnderline.map((tab) => (
 						<option key={tab.name}>{tab.name}</option>
@@ -57,8 +57,8 @@ export function TabsWithUnderline() {
 							aria-current={tab.current ? 'page' : undefined}
 							class={classNames(
 								tab.current
-									? 'bg-surface-1 text-text-primary dark:bg-white/10 dark:text-gray-200'
-									: 'text-text-tertiary hover:text-text-secondary dark:text-text-tertiary dark:hover:text-gray-200',
+									? 'bg-surface-1 text-text-primary dark:bg-white/10 dark:text-text-tertiary'
+									: 'text-text-tertiary hover:text-text-secondary dark:text-text-tertiary dark:hover:text-text-tertiary',
 								'rounded-md px-3 py-2 text-sm font-medium'
 							)}
 						>
@@ -78,7 +78,7 @@ export function TabsWithUnderlineAndIcons() {
 				<select
 					defaultValue={tabsWithIcons.find((tab) => tab.current)?.name ?? ''}
 					aria-label="Select a tab"
-					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 				>
 					{tabsWithIcons.map((tab) => (
 						<option key={tab.name}>{tab.name}</option>
@@ -100,7 +100,7 @@ export function TabsWithUnderlineAndIcons() {
 								class={classNames(
 									tab.current
 										? 'border-accent-500 text-accent-400 dark:border-accent-400 dark:text-accent-400'
-										: 'border-transparent text-text-tertiary hover:border-surface-border hover:text-text-secondary dark:text-text-tertiary dark:hover:border-white/20 dark:hover:text-gray-200',
+										: 'border-transparent text-text-tertiary hover:border-surface-border hover:text-text-secondary dark:text-text-tertiary dark:hover:border-white/20 dark:hover:text-text-tertiary',
 									'border-b-2 px-1 py-4 text-sm font-medium whitespace-nowrap'
 								)}
 							>
@@ -130,7 +130,7 @@ export function TabsInPills() {
 				<select
 					defaultValue={tabsPills.find((tab) => tab.current)?.name ?? ''}
 					aria-label="Select a tab"
-					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 				>
 					{tabsPills.map((tab) => (
 						<option key={tab.name}>{tab.name}</option>
@@ -151,7 +151,7 @@ export function TabsInPills() {
 							class={classNames(
 								tab.current
 									? 'bg-accent-100 text-accent-700 dark:bg-accent-500/20 dark:text-accent-300'
-									: 'text-text-tertiary hover:text-text-secondary dark:text-text-tertiary dark:hover:text-gray-200',
+									: 'text-text-tertiary hover:text-text-secondary dark:text-text-tertiary dark:hover:text-text-tertiary',
 								'rounded-md px-3 py-2 text-sm font-medium'
 							)}
 						>
@@ -171,7 +171,7 @@ export function TabsInPillsOnGray() {
 				<select
 					defaultValue={tabsPills.find((tab) => tab.current)?.name ?? ''}
 					aria-label="Select a tab"
-					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-2 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-gray-800/50 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-2 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-surface-2/50 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 				>
 					{tabsPills.map((tab) => (
 						<option key={tab.name}>{tab.name}</option>
@@ -212,7 +212,7 @@ export function TabsInPillsWithBrandColor() {
 				<select
 					defaultValue={tabsPills.find((tab) => tab.current)?.name ?? ''}
 					aria-label="Select a tab"
-					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 				>
 					{tabsPills.map((tab) => (
 						<option key={tab.name}>{tab.name}</option>
@@ -253,7 +253,7 @@ export function FullWidthTabsWithUnderline() {
 				<select
 					defaultValue={tabsWithBadges.find((tab) => tab.current)?.name ?? ''}
 					aria-label="Select a tab"
-					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 				>
 					{tabsWithBadges.map((tab) => (
 						<option key={tab.name}>{tab.name}</option>
@@ -303,13 +303,13 @@ export function FullWidthTabsWithUnderline() {
 
 export function BarWithUnderline() {
 	return (
-		<div class="bg-surface-0 px-4 py-6 sm:px-6 lg:px-8 dark:bg-gray-900">
+		<div class="bg-surface-0 px-4 py-6 sm:px-6 lg:px-8 dark:bg-surface-2">
 			<div class="mx-auto max-w-7xl">
 				<div class="grid grid-cols-1 sm:hidden">
 					<select
 						defaultValue={tabsWithUnderline.find((tab) => tab.current)?.name ?? ''}
 						aria-label="Select a tab"
-						class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+						class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 					>
 						{tabsWithUnderline.map((tab) => (
 							<option key={tab.name}>{tab.name}</option>
@@ -355,7 +355,7 @@ export function TabsWithUnderlineAndBadges() {
 				<select
 					defaultValue={tabsWithUnderline.find((tab) => tab.current)?.name ?? ''}
 					aria-label="Select a tab"
-					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 				>
 					{tabsWithUnderline.map((tab) => (
 						<option key={tab.name}>{tab.name}</option>
@@ -369,7 +369,7 @@ export function TabsWithUnderlineAndBadges() {
 			<div class="hidden sm:block">
 				<nav
 					aria-label="Tabs"
-					class="isolate flex divide-x divide-surface-border rounded-lg bg-surface-0 shadow-sm dark:divide-white/10 dark:bg-gray-800/50 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/10"
+					class="isolate flex divide-x divide-surface-border rounded-lg bg-surface-0 shadow-sm dark:divide-white/10 dark:bg-surface-2/50 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/10"
 				>
 					{tabsWithUnderline.map((tab, tabIdx) => (
 						<a
@@ -408,7 +408,7 @@ export function SimpleTabs() {
 				<select
 					defaultValue={tabsWithUnderline.find((tab) => tab.current)?.name ?? ''}
 					aria-label="Select a tab"
-					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-gray-100 dark:outline-white/10 dark:*:bg-gray-800 dark:focus:outline-accent-500"
+					class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-surface-0 py-2 pr-8 pl-3 text-base text-text-primary outline-1 -outline-offset-1 outline-surface-border focus:outline-2 focus:-outline-offset-2 focus:outline-accent-500 dark:bg-white/5 dark:text-text-tertiary dark:outline-white/10 dark:*:bg-surface-2 dark:focus:outline-accent-500"
 				>
 					{tabsWithUnderline.map((tab) => (
 						<option key={tab.name}>{tab.name}</option>
@@ -430,7 +430,7 @@ export function SimpleTabs() {
 								class={classNames(
 									tab.current
 										? 'border-accent-500 text-accent-400 dark:border-accent-400 dark:text-accent-400'
-										: 'border-transparent text-text-tertiary hover:border-surface-border hover:text-text-secondary dark:text-text-tertiary dark:hover:border-white/20 dark:hover:text-gray-200',
+										: 'border-transparent text-text-tertiary hover:border-surface-border hover:text-text-secondary dark:text-text-tertiary dark:hover:border-white/20 dark:hover:text-text-tertiary',
 									'w-1/4 border-b-2 px-1 py-4 text-center text-sm font-medium'
 								)}
 							>
@@ -461,7 +461,7 @@ export function TabsDemo() {
 			</div>
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">Tabs in pills on gray</h3>
-				<div class="bg-surface-2 p-4 dark:bg-gray-800/50">
+				<div class="bg-surface-2 p-4 dark:bg-surface-2/50">
 					<TabsInPillsOnGray />
 				</div>
 			</div>

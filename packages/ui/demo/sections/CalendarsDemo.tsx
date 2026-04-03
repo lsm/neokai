@@ -103,22 +103,22 @@ function DoubleCalendar() {
 			<div class="relative grid grid-cols-1 gap-x-14 md:grid-cols-2">
 				<button
 					type="button"
-					class="absolute -top-1 -left-1.5 flex items-center justify-center p-1.5 text-gray-400 hover:text-gray-500 dark:text-gray-400 dark:hover:text-white"
+					class="absolute -top-1 -left-1.5 flex items-center justify-center p-1.5 text-text-tertiary hover:text-text-secondary dark:text-text-tertiary dark:hover:text-white"
 				>
 					<span class="sr-only">Previous month</span>
 					<ChevronLeft aria-hidden="true" class="size-5" />
 				</button>
 				<button
 					type="button"
-					class="absolute -top-1 -right-1.5 flex items-center justify-center p-1.5 text-gray-400 hover:text-gray-500 dark:text-gray-400 dark:hover:text-white"
+					class="absolute -top-1 -right-1.5 flex items-center justify-center p-1.5 text-text-tertiary hover:text-text-secondary dark:text-text-tertiary dark:hover:text-white"
 				>
 					<span class="sr-only">Next month</span>
 					<ChevronRight aria-hidden="true" class="size-5" />
 				</button>
 				{months.map((month, monthIdx) => (
 					<section key={monthIdx} class="text-center last:max-md:hidden">
-						<h2 class="text-sm font-semibold text-gray-900 dark:text-white">{month.name}</h2>
-						<div class="mt-6 grid grid-cols-7 text-xs/6 text-gray-500 dark:text-gray-400">
+						<h2 class="text-sm font-semibold text-text-primary dark:text-white">{month.name}</h2>
+						<div class="mt-6 grid grid-cols-7 text-xs/6 text-text-secondary dark:text-text-tertiary">
 							<div>M</div>
 							<div>T</div>
 							<div>W</div>
@@ -127,14 +127,14 @@ function DoubleCalendar() {
 							<div>S</div>
 							<div>S</div>
 						</div>
-						<div class="isolate mt-2 grid grid-cols-7 gap-px rounded-lg bg-gray-200 text-sm shadow-sm ring-1 ring-gray-200 dark:bg-white/10 dark:shadow-none dark:ring-white/10">
+						<div class="isolate mt-2 grid grid-cols-7 gap-px rounded-lg bg-surface-border text-sm shadow-sm ring-1 ring-surface-border dark:bg-white/10 dark:shadow-none dark:ring-white/10">
 							{month.days.map((day) => (
 								<button
 									key={day.date}
 									type="button"
 									data-is-today={day.isToday ? '' : undefined}
 									data-is-current-month={day.isCurrentMonth ? '' : undefined}
-									class="relative bg-gray-50 py-1.5 text-gray-400 first:rounded-tl-lg last:rounded-br-lg hover:bg-gray-100 focus:z-10 data-is-current-month:bg-white data-is-current-month:text-gray-900 data-is-current-month:hover:bg-gray-100 nth-36:rounded-bl-lg nth-7:rounded-tr-lg dark:bg-gray-900/75 dark:text-gray-500 dark:hover:bg-gray-900/25 dark:data-is-current-month:bg-gray-900 dark:data-is-current-month:text-gray-100 dark:data-is-current-month:hover:bg-gray-900/50"
+									class="relative bg-surface-0 py-1.5 text-text-tertiary first:rounded-tl-lg last:rounded-br-lg hover:bg-surface-1 focus:z-10 data-is-current-month:bg-surface-0 data-is-current-month:text-text-primary data-is-current-month:hover:bg-surface-1 nth-36:rounded-bl-lg nth-7:rounded-tr-lg dark:bg-surface-2/75 dark:text-text-tertiary dark:hover:bg-surface-2/25 dark:data-is-current-month:bg-surface-2 dark:data-is-current-month:text-text-tertiary dark:data-is-current-month:hover:bg-surface-2/50"
 								>
 									<time
 										dateTime={day.date}
@@ -149,8 +149,8 @@ function DoubleCalendar() {
 				))}
 			</div>
 			<section class="mt-12">
-				<h2 class="text-base font-semibold text-gray-900 dark:text-white">Upcoming events</h2>
-				<ol class="mt-2 divide-y divide-gray-200 text-sm/6 text-gray-500 dark:divide-white/10 dark:text-gray-400">
+				<h2 class="text-base font-semibold text-text-primary dark:text-white">Upcoming events</h2>
+				<ol class="mt-2 divide-y divide-surface-border text-sm/6 text-text-secondary dark:divide-white/10 dark:text-text-tertiary">
 					<li class="py-4 sm:flex">
 						<time dateTime="2022-01-17" class="w-28 flex-none">
 							Wed, Jan 12
@@ -161,7 +161,7 @@ function DoubleCalendar() {
 						<time dateTime="2022-01-19" class="w-28 flex-none">
 							Thu, Jan 13
 						</time>
-						<p class="mt-2 flex-auto font-semibold text-gray-900 sm:mt-0 dark:text-white">
+						<p class="mt-2 flex-auto font-semibold text-text-primary sm:mt-0 dark:text-white">
 							View house with real estate agent
 						</p>
 						<p class="flex-none sm:ml-6">
@@ -173,7 +173,7 @@ function DoubleCalendar() {
 						<time dateTime="2022-01-20" class="w-28 flex-none">
 							Fri, Jan 14
 						</time>
-						<p class="mt-2 flex-auto font-semibold text-gray-900 sm:mt-0 dark:text-white">
+						<p class="mt-2 flex-auto font-semibold text-text-primary sm:mt-0 dark:text-white">
 							Meeting with bank manager
 						</p>
 						<p class="flex-none sm:ml-6">All day</p>
@@ -182,7 +182,7 @@ function DoubleCalendar() {
 						<time dateTime="2022-01-18" class="w-28 flex-none">
 							Mon, Jan 17
 						</time>
-						<p class="mt-2 flex-auto font-semibold text-gray-900 sm:mt-0 dark:text-white">
+						<p class="mt-2 flex-auto font-semibold text-text-primary sm:mt-0 dark:text-white">
 							Sign paperwork at lawyers
 						</p>
 						<p class="flex-none sm:ml-6">
@@ -200,7 +200,9 @@ export function CalendarsDemo() {
 	return (
 		<div class="space-y-12">
 			<section>
-				<h3 class="text-base font-semibold text-gray-900 dark:text-white mb-4">Double Calendar</h3>
+				<h3 class="text-base font-semibold text-text-primary dark:text-white mb-4">
+					Double Calendar
+				</h3>
 				<DoubleCalendar />
 			</section>
 		</div>

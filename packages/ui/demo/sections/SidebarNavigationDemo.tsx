@@ -45,7 +45,7 @@ const expandableNavigation = [
 
 export function LightSidebarNavigation() {
 	return (
-		<div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-0 px-6 dark:border-white/10 dark:bg-gray-900 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
+		<div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-0 px-6 dark:border-white/10 dark:bg-surface-2 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
 			<div class="relative flex h-16 shrink-0 items-center">
 				<img
 					alt="Your Company"
@@ -86,7 +86,7 @@ export function LightSidebarNavigation() {
 										{item.count ? (
 											<span
 												aria-hidden="true"
-												class="ml-auto w-9 min-w-max rounded-full bg-white px-2.5 py-0.5 text-center text-xs/5 font-medium whitespace-nowrap text-text-secondary outline-1 -outline-offset-1 outline-surface-border dark:bg-gray-900 dark:text-white dark:outline-white/15"
+												class="ml-auto w-9 min-w-max rounded-full bg-white px-2.5 py-0.5 text-center text-xs/5 font-medium whitespace-nowrap text-text-secondary outline-1 -outline-offset-1 outline-surface-border dark:bg-surface-2 dark:text-white dark:outline-white/15"
 											>
 												{item.count}
 											</span>
@@ -134,7 +134,7 @@ export function LightSidebarNavigation() {
 							<img
 								alt=""
 								src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
-								class="size-8 rounded-full bg-surface-1 outline -outline-offset-1 outline-black/5 dark:bg-gray-800 dark:outline-white/10"
+								class="size-8 rounded-full bg-surface-1 outline -outline-offset-1 outline-black/5 dark:bg-surface-2 dark:outline-white/10"
 							/>
 							<span class="sr-only">Your profile</span>
 							<span aria-hidden="true">Tom Cook</span>
@@ -148,7 +148,7 @@ export function LightSidebarNavigation() {
 
 export function DarkSidebarNavigation() {
 	return (
-		<div class="relative flex grow flex-col gap-y-5 overflow-y-auto bg-gray-900 px-6 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:border-r dark:before:border-white/10 dark:before:bg-black/10">
+		<div class="relative flex grow flex-col gap-y-5 overflow-y-auto bg-surface-2 px-6 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:border-r dark:before:border-white/10 dark:before:bg-black/10">
 			<div class="relative flex h-16 shrink-0 items-center">
 				<img
 					alt="Your Company"
@@ -176,7 +176,7 @@ export function DarkSidebarNavigation() {
 										{item.count ? (
 											<span
 												aria-hidden="true"
-												class="ml-auto w-9 min-w-max rounded-full bg-gray-900 px-2.5 py-0.5 text-center text-xs/5 font-medium whitespace-nowrap text-white outline-1 -outline-offset-1 outline-white/15"
+												class="ml-auto w-9 min-w-max rounded-full bg-surface-2 px-2.5 py-0.5 text-center text-xs/5 font-medium whitespace-nowrap text-white outline-1 -outline-offset-1 outline-white/15"
 											>
 												{item.count}
 											</span>
@@ -217,7 +217,7 @@ export function DarkSidebarNavigation() {
 							<img
 								alt=""
 								src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
-								class="size-8 rounded-full bg-gray-800 outline -outline-offset-1 outline-white/10"
+								class="size-8 rounded-full bg-surface-2 outline -outline-offset-1 outline-white/10"
 							/>
 							<span class="sr-only">Your profile</span>
 							<span aria-hidden="true">Tom Cook</span>
@@ -231,7 +231,7 @@ export function DarkSidebarNavigation() {
 
 export function ExpandableSectionsSidebarNavigation() {
 	return (
-		<div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-0 px-6 dark:border-white/10 dark:bg-gray-900 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
+		<div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-0 px-6 dark:border-white/10 dark:bg-surface-2 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
 			<div class="relative flex h-16 shrink-0 items-center">
 				<img
 					alt="Your Company"
@@ -310,7 +310,7 @@ export function ExpandableSectionsSidebarNavigation() {
 							<img
 								alt=""
 								src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
-								class="size-8 rounded-full bg-surface-1 outline -outline-offset-1 outline-black/5 dark:bg-gray-800 dark:outline-white/10"
+								class="size-8 rounded-full bg-surface-1 outline -outline-offset-1 outline-black/5 dark:bg-surface-2 dark:outline-white/10"
 							/>
 							<span class="sr-only">Your profile</span>
 							<span aria-hidden="true">Tom Cook</span>

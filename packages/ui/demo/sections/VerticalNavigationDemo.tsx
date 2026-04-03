@@ -163,7 +163,7 @@ export function WithSecondaryNavigationVerticalNavigation() {
 									{item.count ? (
 										<span
 											aria-hidden="true"
-											class="ml-auto w-9 min-w-max rounded-full bg-white px-2.5 py-0.5 text-center text-xs/5 font-medium whitespace-nowrap text-text-secondary outline-1 -outline-offset-1 outline-surface-border dark:bg-gray-900 dark:text-text-tertiary dark:outline-white/10"
+											class="ml-auto w-9 min-w-max rounded-full bg-white px-2.5 py-0.5 text-center text-xs/5 font-medium whitespace-nowrap text-text-secondary outline-1 -outline-offset-1 outline-surface-border dark:bg-surface-2 dark:text-text-tertiary dark:outline-white/10"
 										>
 											{item.count}
 										</span>
@@ -192,7 +192,7 @@ export function WithSecondaryNavigationVerticalNavigation() {
 											item.current
 												? 'border-accent-500 text-accent-500 dark:border-accent-500 dark:text-white'
 												: 'border-surface-border text-text-tertiary group-hover:border-accent-500 group-hover:text-accent-500 dark:border-white/10 dark:text-text-tertiary dark:group-hover:border-white/20 dark:group-hover:text-white',
-											'flex size-6 shrink-0 items-center justify-center rounded-lg border bg-white text-[0.625rem] font-medium dark:bg-gray-900'
+											'flex size-6 shrink-0 items-center justify-center rounded-lg border bg-white text-[0.625rem] font-medium dark:bg-surface-2'
 										)}
 									>
 										{item.initial}
@@ -238,7 +238,7 @@ export function OnGrayVerticalNavigation() {
 									{item.count ? (
 										<span
 											aria-hidden="true"
-											class="ml-auto w-9 min-w-max rounded-full bg-white px-2.5 py-0.5 text-center text-xs/5 font-medium whitespace-nowrap text-text-secondary outline-1 -outline-offset-1 outline-surface-border dark:bg-gray-800 dark:text-text-tertiary dark:outline-white/10"
+											class="ml-auto w-9 min-w-max rounded-full bg-white px-2.5 py-0.5 text-center text-xs/5 font-medium whitespace-nowrap text-text-secondary outline-1 -outline-offset-1 outline-surface-border dark:bg-surface-2 dark:text-text-tertiary dark:outline-white/10"
 										>
 											{item.count}
 										</span>
@@ -267,7 +267,7 @@ export function OnGrayVerticalNavigation() {
 											item.current
 												? 'border-accent-500 text-accent-500 dark:border-accent-500 dark:text-white'
 												: 'border-surface-border text-text-tertiary group-hover:border-accent-500 group-hover:text-accent-500 dark:border-white/10 dark:text-text-tertiary dark:group-hover:border-white/20 dark:group-hover:text-white',
-											'flex size-6 shrink-0 items-center justify-center rounded-lg border bg-white text-[0.625rem] font-medium dark:bg-gray-900/50'
+											'flex size-6 shrink-0 items-center justify-center rounded-lg border bg-white text-[0.625rem] font-medium dark:bg-surface-2/50'
 										)}
 									>
 										{item.initial}
@@ -304,7 +304,7 @@ export function VerticalNavigationDemo() {
 			</div>
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">On Gray</h3>
-				<div class="bg-surface-2 p-4 dark:bg-gray-800/50">
+				<div class="bg-surface-2 p-4 dark:bg-surface-2/50">
 					<OnGrayVerticalNavigation />
 				</div>
 			</div>

@@ -57,7 +57,7 @@ export function SimpleTable() {
 			<div class="mt-8 flow-root overflow-hidden">
 				<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
 					<table class="w-full text-left">
-						<thead class="bg-white dark:bg-gray-900">
+						<thead class="bg-surface-0 dark:bg-surface-2">
 							<tr>
 								<th
 									scope="col"
@@ -265,7 +265,7 @@ export function FullWidthTable() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="bg-white dark:bg-gray-900">
+							<tbody class="bg-surface-0 dark:bg-surface-2">
 								{people1.map((person) => (
 									<tr key={person.email} class="even:bg-surface-0">
 										<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-3">
@@ -410,7 +410,7 @@ export function FullWidthConstrained() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+							<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 								{peopleWithAvatars.map((person) => (
 									<tr key={person.email}>
 										<td class="py-5 pr-3 pl-4 text-sm whitespace-nowrap sm:pl-0">
@@ -504,7 +504,7 @@ export function StripedRows() {
 							</th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+					<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 						{people1.map((person) => (
 							<tr key={person.email}>
 								<td class="w-full max-w-0 py-4 pr-3 pl-4 text-sm font-medium text-text-primary sm:w-auto sm:max-w-none sm:pl-0">
@@ -594,7 +594,7 @@ export function UppercaseHeadings() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+							<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 								{people1.map((person) => (
 									<tr key={person.email}>
 										<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-0">
@@ -677,7 +677,7 @@ export function StackedColumnsMobile() {
 							</th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+					<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 						{people1.map((person) => (
 							<tr key={person.email}>
 								<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-0">
@@ -764,7 +764,7 @@ export function HiddenColumnsMobile() {
 										</th>
 									</tr>
 								</thead>
-								<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+								<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 									{people1.map((person) => (
 										<tr key={person.email}>
 											<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-6">
@@ -853,7 +853,7 @@ export function AvatarsMultiline() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+							<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 								{peopleWithAvatars.map((person) => (
 									<tr key={person.email}>
 										<td class="py-5 pr-3 pl-4 text-sm whitespace-nowrap sm:pl-0">
@@ -1385,7 +1385,7 @@ const activityItems = [
 
 export function CondensedContent() {
 	return (
-		<div class="bg-white py-10 dark:bg-gray-900">
+		<div class="bg-surface-0 py-10 dark:bg-surface-2">
 			<h3 class="px-4 text-base/7 font-semibold text-text-primary sm:px-6 lg:px-8">
 				Latest activity
 			</h3>
@@ -1560,7 +1560,7 @@ export function SortableHeadings() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+							<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 								{people1.map((person) => (
 									<tr key={person.email}>
 										<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-0">
@@ -1689,7 +1689,7 @@ export function GroupedRows() {
 				<div class="-mx-4 -my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
 					<div class="inline-block min-w-full py-2 align-middle sm:px-6 lg:px-8">
 						<table class="relative min-w-full">
-							<thead class="bg-white dark:bg-gray-900">
+							<thead class="bg-surface-0 dark:bg-surface-2">
 								<tr>
 									<th
 										scope="col"
@@ -1720,7 +1720,7 @@ export function GroupedRows() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="bg-white dark:bg-gray-900">
+							<tbody class="bg-surface-0 dark:bg-surface-2">
 								{locations.map((location) => (
 									<tbody key={location.name}>
 										<tr class="border-t border-surface-border">
@@ -2051,7 +2051,7 @@ export function WithCheckboxes() {
 				<div class="-mx-4 -my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
 					<div class="inline-block min-w-full py-2 align-middle sm:px-6 lg:px-8">
 						<div class="group/table relative">
-							<div class="absolute top-0 left-14 z-10 hidden h-12 items-center space-x-3 bg-white group-has-checked/table:flex sm:left-12 dark:bg-gray-900">
+							<div class="absolute top-0 left-14 z-10 hidden h-12 items-center space-x-3 bg-surface-0 group-has-checked/table:flex sm:left-12 dark:bg-surface-2">
 								<button
 									type="button"
 									class="inline-flex items-center rounded-sm bg-white px-2 py-1 text-sm font-semibold text-text-primary shadow-xs ring-1 ring-inset ring-surface-border hover:bg-surface-0 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-white dark:bg-white/10 dark:text-white dark:ring-white/10 dark:hover:bg-white/15 dark:disabled:hover:bg-white/10"
@@ -2072,7 +2072,7 @@ export function WithCheckboxes() {
 											<div class="group absolute top-1/2 left-4 -mt-2 grid size-4 grid-cols-1">
 												<input
 													type="checkbox"
-													class="col-start-1 row-start-1 appearance-none rounded-sm border border-surface-border bg-white checked:border-accent-500 checked:bg-accent-500 indeterminate:border-accent-500 indeterminate:bg-accent-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:border-surface-border disabled:bg-surface-1 disabled:checked:bg-surface-1 dark:border-white/20 dark:bg-gray-800/50 dark:checked:border-accent-500 dark:checked:bg-accent-500 dark:indeterminate:border-accent-500 dark:indeterminate:bg-accent-500 dark:focus-visible:outline-accent-500 dark:disabled:border-white/10 dark:disabled:bg-gray-800 dark:disabled:checked:bg-gray-800 forced-colors:appearance-auto"
+													class="col-start-1 row-start-1 appearance-none rounded-sm border border-surface-border bg-white checked:border-accent-500 checked:bg-accent-500 indeterminate:border-accent-500 indeterminate:bg-accent-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:border-surface-border disabled:bg-surface-1 disabled:checked:bg-surface-1 dark:border-white/20 dark:bg-surface-2/50 dark:checked:border-accent-500 dark:checked:bg-accent-500 dark:indeterminate:border-accent-500 dark:indeterminate:bg-accent-500 dark:focus-visible:outline-accent-500 dark:disabled:border-white/10 dark:disabled:bg-surface-2 dark:disabled:checked:bg-surface-2 forced-colors:appearance-auto"
 													ref={checkbox}
 													checked={checked}
 													onChange={toggleAll}
@@ -2128,11 +2128,11 @@ export function WithCheckboxes() {
 										</th>
 									</tr>
 								</thead>
-								<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+								<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 									{people17.map((person) => (
 										<tr
 											key={person.email}
-											class="group has-checked:bg-surface-0 dark:has-checked:bg-gray-800/50"
+											class="group has-checked:bg-surface-0 dark:has-checked:bg-surface-2/50"
 										>
 											<td class="relative px-7 sm:w-12 sm:px-6">
 												<div class="absolute inset-y-0 left-0 hidden w-0.5 bg-accent-500 group-has-checked:block" />
@@ -2140,7 +2140,7 @@ export function WithCheckboxes() {
 												<div class="absolute top-1/2 left-4 -mt-2 grid size-4 grid-cols-1">
 													<input
 														type="checkbox"
-														class="col-start-1 row-start-1 appearance-none rounded-sm border border-surface-border bg-white checked:border-accent-500 checked:bg-accent-500 indeterminate:border-accent-500 indeterminate:bg-accent-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:border-surface-border disabled:bg-surface-1 disabled:checked:bg-surface-1 dark:border-white/20 dark:bg-gray-800/50 dark:checked:border-accent-500 dark:checked:bg-accent-500 dark:indeterminate:border-accent-500 dark:indeterminate:bg-accent-500 dark:focus-visible:outline-accent-500 dark:disabled:border-white/10 dark:disabled:bg-gray-800 dark:disabled:checked:bg-gray-800 forced-colors:appearance-auto"
+														class="col-start-1 row-start-1 appearance-none rounded-sm border border-surface-border bg-white checked:border-accent-500 checked:bg-accent-500 indeterminate:border-accent-500 indeterminate:bg-accent-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:border-surface-border disabled:bg-surface-1 disabled:checked:bg-surface-1 dark:border-white/20 dark:bg-surface-2/50 dark:checked:border-accent-500 dark:checked:bg-accent-500 dark:indeterminate:border-accent-500 dark:indeterminate:bg-accent-500 dark:focus-visible:outline-accent-500 dark:disabled:border-white/10 dark:disabled:bg-surface-2 dark:disabled:checked:bg-surface-2 forced-colors:appearance-auto"
 														value={person.email}
 														checked={selectedPeople.includes(person)}
 														onChange={(e) =>
@@ -2352,7 +2352,7 @@ export function HiddenHeadings() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+							<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 								{transactions.map((transaction) => (
 									<tr key={transaction.id}>
 										<td class="py-2 pr-3 pl-4 text-sm whitespace-nowrap text-text-secondary sm:pl-0">
@@ -2446,7 +2446,7 @@ export function FullWidthAvatars() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+							<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 								{people1.map((person) => (
 									<tr key={person.email} class="divide-x divide-surface-border">
 										<td class="py-4 pr-4 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-0">
@@ -2591,7 +2591,7 @@ export function SortableHeadingsIcon() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+							<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 								{people1.map((person) => (
 									<tr key={person.email}>
 										<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-0">
@@ -2697,7 +2697,7 @@ export function HiddenHeadingsIcon() {
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+							<tbody class="divide-y divide-surface-border bg-surface-0 dark:bg-surface-2">
 								{transactions.map((transaction) => (
 									<tr key={transaction.id}>
 										<td class="py-2 pr-3 pl-4 text-sm whitespace-nowrap text-text-secondary sm:pl-0">

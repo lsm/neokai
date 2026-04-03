@@ -46,7 +46,7 @@ export function FullWidthBarBreadcrumbs() {
 	return (
 		<nav
 			aria-label="Breadcrumb"
-			class="flex border-b border-surface-border bg-surface-0 dark:border-white/10 dark:bg-gray-900/50"
+			class="flex border-b border-surface-border bg-surface-0 dark:border-white/10 dark:bg-surface-2/50"
 		>
 			<ol role="list" class="mx-auto flex w-full max-w-screen-xl space-x-4 px-4 sm:px-6 lg:px-8">
 				<li class="flex">
@@ -92,7 +92,7 @@ export function SimpleWithChevronsBreadcrumbs() {
 		<nav aria-label="Breadcrumb" class="flex">
 			<ol
 				role="list"
-				class="flex space-x-4 rounded-md bg-surface-0 px-6 shadow-sm dark:bg-gray-900/50 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/10"
+				class="flex space-x-4 rounded-md bg-surface-0 px-6 shadow-sm dark:bg-surface-2/50 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/10"
 			>
 				<li class="flex">
 					<div class="flex items-center">
