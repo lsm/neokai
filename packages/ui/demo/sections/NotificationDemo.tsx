@@ -2,6 +2,7 @@ import { useState } from 'preact/hooks';
 import type { VNode } from 'preact';
 import { Transition, Toaster, useToast } from '../../src/mod.ts';
 import type { ToastVariant } from '../../src/mod.ts';
+import { X } from 'lucide-preact';
 
 interface NotificationItem {
 	id: number;
@@ -459,6 +460,291 @@ function NotificationWithSplitButtons() {
 	);
 }
 
+function SimpleIconNotification() {
+	const [show, setShow] = useState(true);
+
+	return (
+		<div class="space-y-4">
+			<button
+				type="button"
+				onClick={() => setShow(true)}
+				class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
+			>
+				Show simple notification
+			</button>
+
+			{/* Fixed overlay container */}
+			<div
+				aria-live="assertive"
+				class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
+			>
+				<div class="flex w-full flex-col items-center space-y-4 sm:items-end">
+					<Transition show={show}>
+						<div class="pointer-events-auto w-full max-w-sm rounded-lg bg-surface-1 shadow-lg border border-surface-border transition-all duration-300 ease-out data-[closed]:opacity-0 data-[closed]:translate-y-2 data-[closed]:sm:translate-x-2">
+							<div class="p-4">
+								<div class="flex items-start">
+									<div class="shrink-0">
+										<CheckCircle class="size-6 text-green-400" />
+									</div>
+									<div class="ml-3 w-0 flex-1 pt-0.5">
+										<p class="text-sm font-medium text-text-primary">Successfully saved!</p>
+										<p class="mt-1 text-sm text-text-secondary">
+											Anyone with a link can now view this file.
+										</p>
+									</div>
+									<div class="ml-4 flex shrink-0">
+										<button
+											type="button"
+											onClick={() => setShow(false)}
+											class="inline-flex rounded-md text-text-muted hover:text-text-primary focus:outline-2 focus:outline-offset-2 focus:outline-accent-500 cursor-pointer"
+										>
+											<span class="sr-only">Close</span>
+											<X class="size-5" />
+										</button>
+									</div>
+								</div>
+							</div>
+						</div>
+					</Transition>
+				</div>
+			</div>
+
+			<p class="text-xs text-text-muted">
+				Simple notification with icon using{' '}
+				<code class="text-accent-400 font-mono">Transition</code> component.
+			</p>
+		</div>
+	);
+}
+
+function CondensedNotification() {
+	const [show, setShow] = useState(true);
+
+	return (
+		<div class="space-y-4">
+			<button
+				type="button"
+				onClick={() => setShow(true)}
+				class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
+			>
+				Show condensed notification
+			</button>
+
+			{/* Fixed overlay container */}
+			<div
+				aria-live="assertive"
+				class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
+			>
+				<div class="flex w-full flex-col items-center space-y-4 sm:items-end">
+					<Transition show={show}>
+						<div class="pointer-events-auto w-full max-w-sm rounded-lg bg-surface-1 shadow-lg border border-surface-border transition-all duration-300 ease-out data-[closed]:opacity-0 data-[closed]:translate-y-2 data-[closed]:sm:translate-x-2">
+							<div class="p-4">
+								<div class="flex items-center">
+									<div class="flex w-0 flex-1 justify-between">
+										<p class="w-0 flex-1 text-sm font-medium text-text-primary">
+											Discussion archived
+										</p>
+										<button
+											type="button"
+											class="ml-3 shrink-0 rounded-md bg-surface-1 text-sm font-medium text-accent-400 hover:text-accent-300 focus:outline-2 focus:outline-offset-2 focus:outline-accent-500 dark:bg-gray-800 cursor-pointer"
+										>
+											Undo
+										</button>
+									</div>
+									<div class="ml-4 flex shrink-0">
+										<button
+											type="button"
+											onClick={() => setShow(false)}
+											class="inline-flex rounded-md text-text-muted hover:text-text-primary focus:outline-2 focus:outline-offset-2 focus:outline-accent-500 cursor-pointer"
+										>
+											<span class="sr-only">Close</span>
+											<X class="size-5" />
+										</button>
+									</div>
+								</div>
+							</div>
+						</div>
+					</Transition>
+				</div>
+			</div>
+
+			<p class="text-xs text-text-muted">
+				Condensed notification with undo action using{' '}
+				<code class="text-accent-400 font-mono">Transition</code> component.
+			</p>
+		</div>
+	);
+}
+
+function NotificationWithActionsBelow() {
+	const [show, setShow] = useState(true);
+
+	return (
+		<div class="space-y-4">
+			<button
+				type="button"
+				onClick={() => setShow(true)}
+				class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
+			>
+				Show notification with actions
+			</button>
+
+			{/* Fixed overlay container */}
+			<div
+				aria-live="assertive"
+				class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
+			>
+				<div class="flex w-full flex-col items-center space-y-4 sm:items-end">
+					<Transition show={show}>
+						<div class="pointer-events-auto w-full max-w-sm rounded-lg bg-surface-1 shadow-lg border border-surface-border transition-all duration-300 ease-out data-[closed]:opacity-0 data-[closed]:translate-y-2 data-[closed]:sm:translate-x-2">
+							<div class="p-4">
+								<div class="flex items-start">
+									<div class="shrink-0">
+										<Inbox class="size-6 text-text-tertiary" />
+									</div>
+									<div class="ml-3 w-0 flex-1 pt-0.5">
+										<p class="text-sm font-medium text-text-primary">Discussion moved</p>
+										<p class="mt-1 text-sm text-text-secondary">
+											Lorem ipsum dolor sit amet consectetur adipisicing elit oluptatum tenetur.
+										</p>
+										<div class="mt-3 flex space-x-7">
+											<button
+												type="button"
+												class="rounded-md text-sm font-medium text-accent-400 hover:text-accent-300 focus:outline-2 focus:outline-offset-2 focus:outline-accent-500 cursor-pointer"
+											>
+												Undo
+											</button>
+											<button
+												type="button"
+												class="rounded-md text-sm font-medium text-text-secondary hover:text-text-primary focus:outline-2 focus:outline-offset-2 focus:outline-accent-500 cursor-pointer"
+											>
+												Dismiss
+											</button>
+										</div>
+									</div>
+									<div class="ml-4 flex shrink-0">
+										<button
+											type="button"
+											onClick={() => setShow(false)}
+											class="inline-flex rounded-md text-text-muted hover:text-text-primary focus:outline-2 focus:outline-offset-2 focus:outline-accent-500 cursor-pointer"
+										>
+											<span class="sr-only">Close</span>
+											<X class="size-5" />
+										</button>
+									</div>
+								</div>
+							</div>
+						</div>
+					</Transition>
+				</div>
+			</div>
+
+			<p class="text-xs text-text-muted">
+				Notification with actions below using{' '}
+				<code class="text-accent-400 font-mono">Transition</code> component.
+			</p>
+		</div>
+	);
+}
+
+function NotificationWithButtonsBelow() {
+	const [show, setShow] = useState(true);
+
+	return (
+		<div class="space-y-4">
+			<button
+				type="button"
+				onClick={() => setShow(true)}
+				class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
+			>
+				Show notification with buttons
+			</button>
+
+			{/* Fixed overlay container */}
+			<div
+				aria-live="assertive"
+				class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
+			>
+				<div class="flex w-full flex-col items-center space-y-4 sm:items-end">
+					<Transition show={show}>
+						<div class="pointer-events-auto w-full max-w-sm rounded-lg bg-surface-1 shadow-lg border border-surface-border transition-all duration-300 ease-out data-[closed]:opacity-0 data-[closed]:translate-y-2 data-[closed]:sm:translate-x-2">
+							<div class="p-4">
+								<div class="flex items-start">
+									<div class="shrink-0 pt-0.5">
+										<img
+											alt=""
+											src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2.2&w=160&h=160&q=80"
+											class="size-10 rounded-full bg-surface-2"
+										/>
+									</div>
+									<div class="ml-3 w-0 flex-1">
+										<p class="text-sm font-medium text-text-primary">Emilia Gates</p>
+										<p class="mt-1 text-sm text-text-secondary">Sent you an invite to connect.</p>
+										<div class="mt-4 flex">
+											<button
+												type="button"
+												class="inline-flex items-center rounded-md bg-accent-500 px-2.5 py-1.5 text-sm font-semibold text-white shadow-xs hover:bg-accent-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 cursor-pointer"
+											>
+												Accept
+											</button>
+											<button
+												type="button"
+												class="ml-3 inline-flex items-center rounded-md bg-surface-1 px-2.5 py-1.5 text-sm font-semibold text-text-primary shadow-xs inset-ring inset-ring-surface-border hover:bg-surface-2 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 cursor-pointer"
+											>
+												Decline
+											</button>
+										</div>
+									</div>
+									<div class="ml-4 flex shrink-0">
+										<button
+											type="button"
+											onClick={() => setShow(false)}
+											class="inline-flex rounded-md text-text-muted hover:text-text-primary focus:outline-2 focus:outline-offset-2 focus:outline-accent-500 cursor-pointer"
+										>
+											<span class="sr-only">Close</span>
+											<X class="size-5" />
+										</button>
+									</div>
+								</div>
+							</div>
+						</div>
+					</Transition>
+				</div>
+			</div>
+
+			<p class="text-xs text-text-muted">
+				Notification with buttons below using{' '}
+				<code class="text-accent-400 font-mono">Transition</code> component.
+			</p>
+		</div>
+	);
+}
+
+// Icon components
+function CheckCircle({ class: className }: { class?: string }) {
+	return (
+		<svg class={className} viewBox="0 0 20 20" fill="currentColor">
+			<path
+				fill-rule="evenodd"
+				d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+				clip-rule="evenodd"
+			/>
+		</svg>
+	);
+}
+
+function Inbox({ class: className }: { class?: string }) {
+	return (
+		<svg class={className} viewBox="0 0 20 20" fill="currentColor">
+			<path
+				fill-rule="evenodd"
+				d="M10 2C7.79086 2 6 3.79086 6 6V7H5C3.89543 7 3 7.89543 3 9V15C3 16.1046 3.89543 17 5 17H15C16.1046 17 17 16.1046 17 15V9C17 7.89543 16.1046 7 15 7H14V6C14 3.79086 12.2091 2 10 2ZM8 6C8 4.89543 8.89543 4 10 4C11.1046 4 12 4.89543 12 6V7H8V6ZM5 9H15C15.5523 9 16 9.44772 16 10V14H4V10C4 9.44772 4.44772 9 5 9Z"
+				clip-rule="evenodd"
+			/>
+		</svg>
+	);
+}
+
 function NotificationDemo() {
 	return (
 		<div class="space-y-8">
@@ -488,8 +774,36 @@ function NotificationDemo() {
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">Notification with split buttons</h3>
 				<NotificationWithSplitButtons />
 			</div>
+
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Simple icon notification</h3>
+				<SimpleIconNotification />
+			</div>
+
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Condensed notification</h3>
+				<CondensedNotification />
+			</div>
+
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Notification with actions below</h3>
+				<NotificationWithActionsBelow />
+			</div>
+
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Notification with buttons below</h3>
+				<NotificationWithButtonsBelow />
+			</div>
 		</div>
 	);
 }
 
-export { NotificationDemo, NotificationWithAvatar, NotificationWithSplitButtons };
+export {
+	NotificationDemo,
+	NotificationWithAvatar,
+	NotificationWithSplitButtons,
+	SimpleIconNotification,
+	CondensedNotification,
+	NotificationWithActionsBelow,
+	NotificationWithButtonsBelow,
+};

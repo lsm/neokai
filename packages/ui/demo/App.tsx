@@ -68,6 +68,8 @@ import { SidebarShellsDemo } from './sections/application-shells/sidebar/Sidebar
 import { StackedShellsDemo } from './sections/application-shells/stacked/StackedShellsDemo.tsx';
 import { DropdownsDemo } from './sections/elements/dropdowns/DropdownsDemo.tsx';
 import { CalendarsHeadlessDemo } from './sections/data-display/calendars/CalendarsHeadlessDemo.tsx';
+import { DrawersDemo } from './sections/overlays/DrawersDemo.tsx';
+import { ModalDialogsDemo } from './sections/overlays/ModalDialogsDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
@@ -598,6 +600,14 @@ export function App() {
 					</DemoSection>
 					<DemoSection id="data-display-description-lists" title="Description Lists (Data Display)">
 						<DescriptionListsDemo />
+					</DemoSection>
+
+					{/* Application UI - Overlays */}
+					<DemoSection id="overlays-drawers" title="Overlays / Drawers">
+						<DrawersDemo />
+					</DemoSection>
+					<DemoSection id="overlays-modal-dialogs" title="Overlays / Modal Dialogs">
+						<ModalDialogsDemo />
 					</DemoSection>
 				</main>
 			</div>
