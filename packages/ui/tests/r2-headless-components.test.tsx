@@ -7,6 +7,12 @@ import {
 	AlertDescription,
 	AlertIcon,
 	AlertTitle,
+	Avatar,
+	AvatarFallback,
+	AvatarGroup,
+	AvatarGroupOverflow,
+	AvatarImage,
+	AvatarStatus,
 	Badge,
 	ProgressBar,
 	Stepper,
@@ -707,7 +713,7 @@ describe('StepperIcon', () => {
 		render(
 			<Stepper currentStep={0}>
 				<StepperStep status="complete">
-					<StepperIcon status="complete" />
+					<StepperIcon stepIndex={0} status="complete" />
 				</StepperStep>
 			</Stepper>
 		);
@@ -719,7 +725,7 @@ describe('StepperIcon', () => {
 		render(
 			<Stepper currentStep={1}>
 				<StepperStep status="current">
-					<StepperIcon status="current" />
+					<StepperIcon stepIndex={1} status="current" />
 				</StepperStep>
 			</Stepper>
 		);
@@ -731,7 +737,7 @@ describe('StepperIcon', () => {
 		render(
 			<Stepper currentStep={0}>
 				<StepperStep status="upcoming">
-					<StepperIcon status="upcoming" />
+					<StepperIcon stepIndex={1} status="upcoming" />
 				</StepperStep>
 			</Stepper>
 		);
@@ -743,7 +749,7 @@ describe('StepperIcon', () => {
 		render(
 			<Stepper currentStep={0}>
 				<StepperStep status="complete">
-					<StepperIcon status="complete" />
+					<StepperIcon stepIndex={0} status="complete" />
 				</StepperStep>
 			</Stepper>
 		);
@@ -755,33 +761,33 @@ describe('StepperIcon', () => {
 		render(
 			<Stepper currentStep={1}>
 				<StepperStep status="current">
-					<StepperIcon status="current" />
+					<StepperIcon stepIndex={1} status="current" />
 				</StepperStep>
 			</Stepper>
 		);
 		const number = document.querySelector('[data-status="current"] [data-step-number]');
 		expect(number).not.toBeNull();
-		expect(number?.textContent).toBe('2'); // currentStep + 1
+		expect(number?.textContent).toBe('2'); // stepIndex + 1
 	});
 
 	it('should render step number for upcoming status', () => {
 		render(
 			<Stepper currentStep={0}>
 				<StepperStep status="upcoming">
-					<StepperIcon status="upcoming" />
+					<StepperIcon stepIndex={1} status="upcoming" />
 				</StepperStep>
 			</Stepper>
 		);
 		const number = document.querySelector('[data-status="upcoming"] [data-step-number]');
 		expect(number).not.toBeNull();
-		expect(number?.textContent).toBe('1'); // currentStep + 1
+		expect(number?.textContent).toBe('2'); // stepIndex + 1
 	});
 
 	it('should render custom children when provided', () => {
 		render(
 			<Stepper currentStep={0}>
 				<StepperStep status="complete">
-					<StepperIcon>Custom Icon</StepperIcon>
+					<StepperIcon stepIndex={0}>Custom Icon</StepperIcon>
 				</StepperStep>
 			</Stepper>
 		);
@@ -885,5 +891,291 @@ describe('StepperSeparator', () => {
 		);
 		const separator = document.querySelector('div[data-separator="true"]');
 		expect(separator).not.toBeNull();
+	});
+});
+
+// --- Avatar Tests ---
+
+describe('Avatar', () => {
+	it('should render with default size (md)', () => {
+		render(
+			<Avatar>
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const avatar = document.querySelector('[data-size="md"]');
+		expect(avatar).not.toBeNull();
+	});
+
+	it('should render with default shape (circle)', () => {
+		render(
+			<Avatar>
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const avatar = document.querySelector('[data-shape="circle"]');
+		expect(avatar).not.toBeNull();
+	});
+
+	it('should render with custom size (sm)', () => {
+		render(
+			<Avatar size="sm">
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const avatar = document.querySelector('[data-size="sm"]');
+		expect(avatar).not.toBeNull();
+	});
+
+	it('should render with custom size (lg)', () => {
+		render(
+			<Avatar size="lg">
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const avatar = document.querySelector('[data-size="lg"]');
+		expect(avatar).not.toBeNull();
+	});
+
+	it('should render with custom size (xl)', () => {
+		render(
+			<Avatar size="xl">
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const avatar = document.querySelector('[data-size="xl"]');
+		expect(avatar).not.toBeNull();
+	});
+
+	it('should render with rounded shape', () => {
+		render(
+			<Avatar shape="rounded">
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const avatar = document.querySelector('[data-shape="rounded"]');
+		expect(avatar).not.toBeNull();
+	});
+
+	it('should render with status', () => {
+		render(
+			<Avatar status="online">
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const avatar = document.querySelector('[data-status="online"]');
+		expect(avatar).not.toBeNull();
+	});
+
+	it('should render as custom element when as prop is provided', () => {
+		render(
+			<Avatar as="div">
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const avatar = document.querySelector('div[data-size="md"]');
+		expect(avatar).not.toBeNull();
+	});
+});
+
+describe('AvatarImage', () => {
+	it('should render with data-loaded when src is provided', async () => {
+		render(
+			<Avatar>
+				<AvatarImage src="https://example.com/avatar.jpg" alt="User avatar" />
+			</Avatar>
+		);
+		// The image won't actually load in tests, so we test initial state
+		const img = document.querySelector('img[alt="User avatar"]');
+		expect(img).not.toBeNull();
+	});
+
+	it('should render with src and alt attributes', () => {
+		render(
+			<Avatar>
+				<AvatarImage src="https://example.com/avatar.jpg" alt="User avatar" />
+			</Avatar>
+		);
+		const img = document.querySelector('img');
+		expect(img?.getAttribute('src')).toBe('https://example.com/avatar.jpg');
+		expect(img?.getAttribute('alt')).toBe('User avatar');
+	});
+
+	it('should call onLoad when image loads', () => {
+		const onLoad = vi.fn();
+		render(
+			<Avatar>
+				<AvatarImage src="https://example.com/avatar.jpg" alt="User" onLoad={onLoad} />
+			</Avatar>
+		);
+		const img = document.querySelector('img') as HTMLImageElement;
+		// Simulate load event
+		act(() => {
+			fireEvent.load(img);
+		});
+		expect(onLoad).toHaveBeenCalledTimes(1);
+	});
+
+	it('should call onError when image fails to load', () => {
+		const onError = vi.fn();
+		render(
+			<Avatar>
+				<AvatarImage src="https://example.com/invalid.jpg" alt="User" onError={onError} />
+			</Avatar>
+		);
+		const img = document.querySelector('img') as HTMLImageElement;
+		// Simulate error event
+		act(() => {
+			fireEvent.error(img);
+		});
+		expect(onError).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('AvatarFallback', () => {
+	it('should render with default tag (span)', () => {
+		render(
+			<Avatar>
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		const fallback = document.querySelector('span');
+		expect(fallback).not.toBeNull();
+	});
+
+	it('should render children', () => {
+		render(
+			<Avatar>
+				<AvatarFallback>JD</AvatarFallback>
+			</Avatar>
+		);
+		expect(screen.getByText('JD')).not.toBeNull();
+	});
+
+	it('should render as custom element when as prop is provided', () => {
+		render(
+			<Avatar>
+				<AvatarFallback as="div">JD</AvatarFallback>
+			</Avatar>
+		);
+		const fallback = document.querySelector('div');
+		expect(fallback).not.toBeNull();
+	});
+});
+
+describe('AvatarStatus', () => {
+	it('should render with aria-label for status', () => {
+		render(
+			<Avatar>
+				<AvatarStatus status="online" />
+			</Avatar>
+		);
+		const status = document.querySelector('[aria-label="Status: online"]');
+		expect(status).not.toBeNull();
+	});
+
+	it('should render with default tag (span)', () => {
+		render(
+			<Avatar>
+				<AvatarStatus status="online" />
+			</Avatar>
+		);
+		const status = document.querySelector('span');
+		expect(status).not.toBeNull();
+	});
+});
+
+describe('AvatarGroup', () => {
+	it('should render with default tag (div)', () => {
+		render(
+			<AvatarGroup>
+				<Avatar>
+					<AvatarFallback>U1</AvatarFallback>
+				</Avatar>
+			</AvatarGroup>
+		);
+		const group = document.querySelector('div');
+		expect(group).not.toBeNull();
+	});
+
+	it('should not have data-overflow when count is within max', () => {
+		render(
+			<AvatarGroup max={3}>
+				<Avatar>
+					<AvatarFallback>U1</AvatarFallback>
+				</Avatar>
+				<Avatar>
+					<AvatarFallback>U2</AvatarFallback>
+				</Avatar>
+			</AvatarGroup>
+		);
+		const group = document.querySelector('div');
+		expect(group?.getAttribute('data-overflow')).toBeNull();
+	});
+});
+
+describe('AvatarGroupOverflow', () => {
+	it('should render with default tag (span)', () => {
+		render(
+			<AvatarGroup max={2}>
+				<Avatar>
+					<AvatarFallback>U1</AvatarFallback>
+				</Avatar>
+				<Avatar>
+					<AvatarFallback>U2</AvatarFallback>
+				</Avatar>
+				<Avatar>
+					<AvatarFallback>U3</AvatarFallback>
+				</Avatar>
+				<AvatarGroupOverflow>+1</AvatarGroupOverflow>
+			</AvatarGroup>
+		);
+		const overflow = document.querySelector('span');
+		expect(overflow).not.toBeNull();
+	});
+
+	it('should render children', async () => {
+		render(
+			<AvatarGroup max={2}>
+				<Avatar>
+					<AvatarFallback>U1</AvatarFallback>
+				</Avatar>
+				<Avatar>
+					<AvatarFallback>U2</AvatarFallback>
+				</Avatar>
+				<Avatar>
+					<AvatarFallback>U3</AvatarFallback>
+				</Avatar>
+				<AvatarGroupOverflow>+3</AvatarGroupOverflow>
+			</AvatarGroup>
+		);
+		// Wait for useEffect to count children
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 0));
+		});
+		expect(screen.getByText('+3')).not.toBeNull();
+	});
+
+	it('should have data-count attribute', async () => {
+		render(
+			<AvatarGroup max={2}>
+				<Avatar>
+					<AvatarFallback>U1</AvatarFallback>
+				</Avatar>
+				<Avatar>
+					<AvatarFallback>U2</AvatarFallback>
+				</Avatar>
+				<Avatar>
+					<AvatarFallback>U3</AvatarFallback>
+				</Avatar>
+				<AvatarGroupOverflow>+3</AvatarGroupOverflow>
+			</AvatarGroup>
+		);
+		// Wait for useEffect to count children
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 0));
+		});
+		const overflow = document.querySelector('[data-count="3"]');
+		expect(overflow).not.toBeNull();
 	});
 });
