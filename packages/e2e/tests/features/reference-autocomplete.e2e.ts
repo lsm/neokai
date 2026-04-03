@@ -42,6 +42,7 @@ import {
 	selectReferenceByClick,
 	selectReferenceByIndex,
 } from '../helpers/reference-helpers';
+import { CHAT_INPUT_SELECTOR } from '../helpers/selectors';
 
 // ─── Shared Infrastructure ────────────────────────────────────────────────────
 
@@ -49,25 +50,14 @@ import {
 async function navigateToRoomChat(page: Page, roomId: string): Promise<void> {
 	await page.goto(`/room/${roomId}/agent`);
 	await waitForWebSocketConnected(page);
-	// Use combined selector to match room agent chat textarea
-	const textarea = page
-		.locator(
-			'textarea[placeholder*="room coordinator"], textarea[placeholder="Ask or make anything..."]'
-		)
-		.first();
+	const textarea = page.locator(CHAT_INPUT_SELECTOR).first();
 	await textarea.waitFor({ state: 'visible', timeout: 15000 });
 	await expect(textarea).toBeEnabled({ timeout: 5000 });
 }
 
 /** Get the chat input textarea for room agent or standalone session chat. */
 function getChatInput(page: Page) {
-	// Use combined selector to match room agent ("Chat with...") and standalone session ("Ask or make...")
-	// textareas. Neo panel's "Ask Neo…" is excluded by not using a generic "Ask" match.
-	return page
-		.locator(
-			'textarea[placeholder*="room coordinator"], textarea[placeholder="Ask or make anything..."]'
-		)
-		.first();
+	return page.locator(CHAT_INPUT_SELECTOR).first();
 }
 
 /**
@@ -100,10 +90,6 @@ async function insertAndSend(page: Page, text: string, waitFor?: string): Promis
 
 // ─── Selectors (Task 5.4) ─────────────────────────────────────────────────────
 
-// Matches both room agent ("Chat with...") and standalone session ("Ask or make...") textareas.
-// Neo panel's "Ask Neo…" is excluded by not using a generic "Ask" match.
-const CHAT_INPUT_SELECTOR =
-	'textarea[placeholder*="room coordinator"], textarea[placeholder="Ask or make anything..."]';
 const MENTION_TOKEN_SELECTOR = '[data-testid="mention-token"]';
 const MENTION_TOKEN_POPOVER_SELECTOR = '[data-testid="mention-token-popover"]';
 const AUTOCOMPLETE_SELECTOR = '[role="listbox"]';
@@ -321,7 +307,7 @@ test.describe('Reference Token Rendering in Sent Messages', () => {
 		await expect(popover).toBeVisible({ timeout: 5000 });
 	});
 
-	test('message with both task and goal references renders both tokens', async ({ page }) => {
+	test('task and goal references each render as tokens in separate messages', async ({ page }) => {
 		// Select task reference
 		await typeInChatInput(page, '@');
 		await waitForReferenceAutocomplete(page);
@@ -418,13 +404,8 @@ test.describe('Reference Autocomplete — Standalone Session', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
-		// createSessionViaUI is the established infrastructure helper for standalone sessions
-		try {
-			sessionId = await createSessionViaUI(page);
-		} catch {
-			// Session creation via UI may fail in some environments
-			// Skip tests if session can't be created
-		}
+		// createSessionViaUI may fail in some environments - let it throw so CI catches issues
+		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -435,12 +416,6 @@ test.describe('Reference Autocomplete — Standalone Session', () => {
 	});
 
 	test('typing @ shows only file/folder results (no tasks or goals)', async ({ page }) => {
-		// Verify session was created and chat is visible
-		const sessionTextarea = page.locator('textarea[placeholder="Ask or make anything..."]');
-		if (!(await sessionTextarea.isVisible({ timeout: 2000 }).catch(() => false))) {
-			test.skip(); // Skip if session creation failed
-		}
-
 		// Note: File search requires a non-empty query. Use @p to search for files starting with "p".
 		// For standalone sessions, tasks and goals are not available.
 		await typeInChatInput(page, '@p');

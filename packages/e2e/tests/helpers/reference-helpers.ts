@@ -9,12 +9,7 @@
 import { expect } from '@playwright/test';
 import type { Page, Locator } from '@playwright/test';
 import { waitForWebSocketConnected, getWorkspaceRoot } from './wait-helpers';
-
-// ─── Selectors ────────────────────────────────────────────────────────────────
-
-/** The chat textarea that accepts user input. Matches both room agent ("Chat with...") and standalone session ("Ask or make...") textareas. The Neo panel's "Ask Neo…" is excluded by not using a generic "Ask" match. */
-const CHAT_INPUT_SELECTOR =
-	'textarea[placeholder*="room coordinator"], textarea[placeholder="Ask or make anything..."]';
+import { CHAT_INPUT_SELECTOR } from './selectors';
 
 /** Individual reference items inside the autocomplete */
 const AUTOCOMPLETE_ITEM_SELECTOR = '[role="option"]';
