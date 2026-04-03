@@ -29,6 +29,32 @@ export interface ChannelEditorProps {
 }
 
 // ============================================================================
+// Gate type helpers
+// ============================================================================
+
+type GateType = 'always' | 'human' | 'condition' | 'task_result';
+
+const GATE_TYPE_TO_ID: Record<Exclude<GateType, 'always'>, string> = {
+	human: 'human-approval',
+	condition: 'custom-condition',
+	task_result: 'task-result',
+};
+
+function gateIdToType(gateId?: string): GateType {
+	if (!gateId) return 'always';
+	if (gateId === 'human-approval') return 'human';
+	if (gateId === 'task-result') return 'task_result';
+	return 'condition';
+}
+
+const GATE_TYPE_LABELS: Record<GateType, string> = {
+	always: 'Automatic',
+	human: 'Human Approval',
+	condition: 'Custom Condition',
+	task_result: 'Task Result',
+};
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -108,7 +134,7 @@ function ChannelEntry({
 							class="text-xs text-teal-400 bg-teal-900/40 border border-teal-700/50 rounded px-1 py-0.5 flex-shrink-0"
 							data-testid="gate-badge"
 						>
-							Gated
+							{GATE_TYPE_LABELS[gateIdToType(channel.gateId)]}
 						</span>
 					)}
 					{channel.label && (
@@ -265,19 +291,28 @@ function ChannelEntry({
 						/>
 					</div>
 
-					{/* Gate ID (read-only display; use visual editor for gate configuration) */}
+					{/* Gate Condition */}
 					<div class="space-y-0.5">
-						<label class="text-xs text-gray-500">Gate ID</label>
-						<input
-							type="text"
-							data-testid={`channel-gate-id-input-${index}`}
-							value={channel.gateId ?? ''}
-							onInput={(e) =>
-								updateField('gateId', (e.currentTarget as HTMLInputElement).value || undefined)
-							}
-							placeholder="e.g. plan-approval-gate (references workflow gates)"
+						<label class="text-xs text-gray-500">Gate Condition</label>
+						<select
+							data-testid={`channel-gate-select-${index}`}
+							value={gateIdToType(channel.gateId)}
+							onChange={(e) => {
+								const type = (e.currentTarget as HTMLSelectElement).value as GateType;
+								updateField(
+									'gateId',
+									type === 'always'
+										? undefined
+										: GATE_TYPE_TO_ID[type as Exclude<GateType, 'always'>]
+								);
+							}}
 							class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-teal-500"
-						/>
+						>
+							<option value="always">Automatic (always open)</option>
+							<option value="human">Human Approval</option>
+							<option value="condition">Custom Condition</option>
+							<option value="task_result">Task Result</option>
+						</select>
 					</div>
 				</div>
 			)}

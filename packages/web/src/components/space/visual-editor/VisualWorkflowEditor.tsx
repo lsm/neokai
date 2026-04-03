@@ -27,6 +27,7 @@ import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
+import { ChannelEditor } from '../ChannelEditor';
 import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
@@ -267,6 +268,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			),
 		[nodes]
 	);
+	const agentRolesFromNodes = useMemo(() => {
+		const roles = new Set<string>();
+		for (const node of regularNodes) {
+			for (const agent of node.step.agents ?? []) {
+				if (agent.name) roles.add(agent.name);
+			}
+		}
+		return [...roles];
+	}, [regularNodes]);
 	const currentTemplateCanvasSignature = useMemo(
 		() => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, endNodeId),
 		[nodes, edges, channels, startNodeId, gates, endNodeId]
