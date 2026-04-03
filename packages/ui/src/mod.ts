@@ -57,17 +57,17 @@ export {
 	TabPanel,
 	TabPanels,
 } from './components/tabs/tabs.tsx';
-export { Transition } from './components/transition/transition.tsx';
+export { Transition, TransitionChild } from './components/transition/transition.tsx';
 export {
 	Toast,
 	ToastAction,
 	ToastDescription,
 	ToastProgress,
-	ToastVariant,
 	Toaster,
 	ToastTitle,
 	useToast,
 } from './components/toast/toast.tsx';
+export type { ToastVariant } from './components/toast/toast.tsx';
 export {
 	Avatar,
 	AvatarFallback,
@@ -96,6 +96,7 @@ export {
 export { IconButton } from './components/icon-button/icon-button.tsx';
 export { Skeleton } from './components/skeleton/skeleton.tsx';
 export { Spinner } from './components/spinner/spinner.tsx';
+export { TouchTarget } from './components/touch-target/touch-target.tsx';
 
 // Hooks
 export { useClose } from './hooks/use-close.ts';
