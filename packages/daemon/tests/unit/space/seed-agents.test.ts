@@ -1,7 +1,7 @@
 /**
  * seedPresetAgents Unit Tests
  *
- * Verifies that the five preset SpaceAgent records are created with correct
+ * Verifies that the six preset SpaceAgent records are created with correct
  * defaults (role, tools, description) and that seeding is idempotent (errors
  * on name collision are captured but do not abort remaining seeds).
  */
@@ -32,10 +32,10 @@ describe('seedPresetAgents', () => {
 		setModelsCache(new Map());
 	});
 
-	it('creates exactly five preset agents', async () => {
+	it('creates exactly six preset agents', async () => {
 		const result = await seedPresetAgents('space-1', manager);
 
-		expect(result.seeded).toHaveLength(5);
+		expect(result.seeded).toHaveLength(6);
 		expect(result.errors).toHaveLength(0);
 	});
 
@@ -43,14 +43,14 @@ describe('seedPresetAgents', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const names = seeded.map((a) => a.name.toLowerCase()).sort();
-		expect(names).toEqual(['coder', 'general', 'planner', 'qa', 'reviewer']);
+		expect(names).toEqual(['coder', 'general', 'planner', 'qa', 'research', 'reviewer']);
 	});
 
 	it('creates agents with correct names', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const names = seeded.map((a) => a.name).sort();
-		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Reviewer']);
+		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
 	});
 
 	it('sets tools on each preset agent', async () => {
@@ -83,6 +83,16 @@ describe('seedPresetAgents', () => {
 		expect(coder?.tools).toContain('Bash');
 	});
 
+	it('research agent has full coding toolset (Write + Edit for committing findings)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const research = seeded.find((a) => a.name === 'Research');
+
+		expect(research?.tools).toContain('Read');
+		expect(research?.tools).toContain('Write');
+		expect(research?.tools).toContain('Edit');
+		expect(research?.tools).toContain('Bash');
+	});
+
 	it('sets descriptions on all preset agents', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
@@ -104,11 +114,11 @@ describe('seedPresetAgents', () => {
 		// Seed once
 		await seedPresetAgents('space-1', manager);
 
-		// Seed again — all four names are now taken
+		// Seed again — all six names are now taken
 		const second = await seedPresetAgents('space-1', manager);
 
 		expect(second.seeded).toHaveLength(0);
-		expect(second.errors).toHaveLength(5);
+		expect(second.errors).toHaveLength(6);
 		for (const err of second.errors) {
 			expect(err.error).toMatch(/already exists/i);
 		}
@@ -120,8 +130,8 @@ describe('seedPresetAgents', () => {
 		const r1 = await seedPresetAgents('space-1', manager);
 		const r2 = await seedPresetAgents('space-2', manager);
 
-		expect(r1.seeded).toHaveLength(5);
-		expect(r2.seeded).toHaveLength(5);
+		expect(r1.seeded).toHaveLength(6);
+		expect(r2.seeded).toHaveLength(6);
 		expect(r1.errors).toHaveLength(0);
 		expect(r2.errors).toHaveLength(0);
 
@@ -137,7 +147,7 @@ describe('seedPresetAgents', () => {
 		const result = await seedPresetAgents('space-1', manager);
 
 		// Coder fails, others succeed
-		expect(result.seeded).toHaveLength(4);
+		expect(result.seeded).toHaveLength(5);
 		expect(result.errors).toHaveLength(1);
 		expect(result.errors[0].name).toBe('Coder');
 	});
@@ -168,19 +178,71 @@ describe('seedPresetAgents', () => {
 		expect(qa?.tools).toContain('Glob');
 	});
 
-	it('QA agent does not seed a hidden system prompt', async () => {
+	it('all preset agents have a non-empty system prompt', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+
+		for (const agent of seeded) {
+			expect(typeof agent.systemPrompt).toBe('string');
+			expect(agent.systemPrompt?.length ?? 0).toBeGreaterThan(0);
+		}
+	});
+
+	it('all preset agents have non-empty instructions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+
+		for (const agent of seeded) {
+			expect(typeof agent.instructions).toBe('string');
+			expect(agent.instructions?.length ?? 0).toBeGreaterThan(0);
+		}
+	});
+
+	it('Coder system prompt mentions code and PR', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const coder = seeded.find((a) => a.name === 'Coder');
+
+		expect(coder?.systemPrompt).toContain('software engineer');
+		expect(coder?.systemPrompt).toContain('commit');
+		expect(coder?.instructions).toContain('PR');
+	});
+
+	it('Research system prompt mentions investigation and findings', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const research = seeded.find((a) => a.name === 'Research');
+
+		expect(research?.systemPrompt).toContain('research specialist');
+		expect(research?.instructions).toContain('markdown');
+		expect(research?.instructions).toContain('PR');
+	});
+
+	it('Reviewer system prompt mentions code review', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		expect(reviewer?.systemPrompt).toContain('code reviewer');
+		expect(reviewer?.instructions).toContain('report_done');
+	});
+
+	it('Planner system prompt mentions planning', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const planner = seeded.find((a) => a.name === 'Planner');
+
+		expect(planner?.systemPrompt).toContain('project manager');
+		expect(planner?.instructions).toContain('plan');
+	});
+
+	it('QA system prompt mentions quality assurance', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const qa = seeded.find((a) => a.name === 'QA');
 
-		expect(qa).toBeDefined();
-		expect(qa?.systemPrompt).toBeUndefined();
+		expect(qa?.systemPrompt).toContain('quality assurance');
+		expect(qa?.instructions).toContain('test suite');
 	});
 
-	it('General agent does not seed a hidden system prompt', async () => {
+	it('General system prompt mentions summarization', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General');
 
-		expect(general).toBeDefined();
-		expect(general?.systemPrompt).toBeUndefined();
+		expect(general?.systemPrompt).toContain('summarization');
+		expect(general?.instructions).toContain('summary');
 	});
 });

@@ -74,6 +74,9 @@ describe('buildRestrictedEnv', () => {
 		process.env['DB_PASSWORD'] = 'db-secret';
 		process.env['AWS_CREDENTIAL'] = 'aws-secret';
 		process.env['SOME_API_KEY'] = 'api-secret';
+		process.env['GH_TOKEN'] = 'ghp-test-token';
+		process.env['GITHUB_TOKEN'] = 'gho-test-token';
+		process.env['GH_HOST'] = 'github.com';
 		process.env['MY_OTHER_VAR'] = 'safe-value';
 		process.env['NODE_ENV'] = 'test';
 	});
@@ -159,6 +162,18 @@ describe('buildRestrictedEnv', () => {
 
 	test('allows TMPDIR in env', () => {
 		expect(buildRestrictedEnv(CTX)['TMPDIR']).toBe('/tmp');
+	});
+
+	test('allows GH_TOKEN in env (GitHub CLI auth)', () => {
+		expect(buildRestrictedEnv(CTX)['GH_TOKEN']).toBe('ghp-test-token');
+	});
+
+	test('allows GITHUB_TOKEN in env (GitHub Actions auth)', () => {
+		expect(buildRestrictedEnv(CTX)['GITHUB_TOKEN']).toBe('gho-test-token');
+	});
+
+	test('allows GH_HOST in env (GitHub Enterprise)', () => {
+		expect(buildRestrictedEnv(CTX)['GH_HOST']).toBe('github.com');
 	});
 
 	test('allows non-restricted env vars', () => {

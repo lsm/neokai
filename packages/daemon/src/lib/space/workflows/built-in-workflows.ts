@@ -28,10 +28,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 // Template node ID constants (used as stable IDs for nodes and startNodeId)
 // ---------------------------------------------------------------------------
 
-const CODING_PLANNER_STEP = 'tpl-coding-planner';
-const CODING_CODER_STEP = 'tpl-coding-coder';
-const CODING_VERIFY_STEP = 'tpl-coding-verify';
-const CODING_DONE_STEP = 'tpl-coding-done';
+const CODING_CODE_STEP = 'tpl-coding-code';
+const CODING_REVIEW_STEP = 'tpl-coding-review';
 
 // V2 node IDs
 const V2_PLANNING_STEP = 'tpl-v2-planning';
@@ -40,6 +38,36 @@ const V2_CODING_STEP = 'tpl-v2-coding';
 const V2_REVIEW_STEP = 'tpl-v2-review';
 const V2_QA_STEP = 'tpl-v2-qa';
 const V2_DONE_STEP = 'tpl-v2-done';
+
+const PR_READY_BASH_SCRIPT = [
+	'if [ -n "$(git status --porcelain)" ]; then',
+	'  echo "Working tree has uncommitted changes or untracked files" >&2',
+	'  exit 1',
+	'fi',
+	'# Single atomic call to avoid state changing between checks',
+	'if ! PR_JSON=$(gh pr view --json state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
+	'  echo "Failed to retrieve PR info (not authenticated, no PR, or network error)" >&2',
+	'  exit 1',
+	'fi',
+	'PR_STATE=$(jq -r \'.state\' <<< "$PR_JSON")',
+	'if [ "$PR_STATE" != "OPEN" ]; then',
+	'  echo "No open PR found for current branch (state: ${PR_STATE:-none})" >&2',
+	'  exit 1',
+	'fi',
+	'PR_MERGEABLE=$(jq -r \'.mergeable\' <<< "$PR_JSON")',
+	'# Block on UNKNOWN — orchestrator retries until GitHub resolves mergeability',
+	'if [ "$PR_MERGEABLE" != "MERGEABLE" ]; then',
+	'  echo "PR is not mergeable (mergeable: ${PR_MERGEABLE:-unknown})" >&2',
+	'  exit 1',
+	'fi',
+	'PR_STATUS=$(jq -r \'.mergeStateStatus\' <<< "$PR_JSON")',
+	'# Block on UNKNOWN — orchestrator retries until GitHub resolves status',
+	'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ]; then',
+	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
+	'  exit 1',
+	'fi',
+	'echo \'{"pr_created": true, "worktree_clean": true}\'',
+].join('\n');
 
 const V2_PLANNING_PROMPT =
 	'You are the Planning node for this workflow. Turn the task into a concrete implementation plan ' +
@@ -66,10 +94,10 @@ const V2_DONE_PROMPT =
 	'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce ' +
 	'a concise final outcome summary without reopening work unless a blocking issue is discovered.';
 
-const RESEARCH_PLANNER_STEP = 'tpl-research-planner';
-const RESEARCH_GENERAL_STEP = 'tpl-research-general';
+const RESEARCH_STEP = 'tpl-research-research';
+const RESEARCH_REVIEW_STEP = 'tpl-research-review';
 
-const REVIEW_CODER_STEP = 'tpl-review-coder';
+const REVIEW_REVIEW_STEP = 'tpl-review-review';
 
 // ---------------------------------------------------------------------------
 // Built-in templates
@@ -78,113 +106,108 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
 /**
  * Coding Workflow
  *
- * Four-node graph: Plan → Code → Verify → Done (with cycle).
- * Routing is channel-based (agent-centric model).
- * - Plan → Code: gated by `plan-approval-gate` — a human must approve the plan.
- * - Code → Verify: no gate — automatically verify after coding.
- * - Verify → Plan: gated by `verify-fail-gate` on 'failed' — loops back (cyclic).
- * - Verify → Done: gated by `verify-pass-gate` on 'passed' — completes the workflow.
- * - Per-channel `maxCycles: 3` caps the number of Plan→Code→Verify cycles.
+ * Two-node iterative graph: Code ↔ Review (with cycle).
+ * - Code → Review: gated by `code-ready-gate` — a bash script verifies that a PR
+ *   exists for the current branch and the working tree is clean. The script
+ *   outputs `{"pr_created": true, "worktree_clean": true}` on success; gate
+ *   fields validate the output.
+ * - Review → Code: ungated — Reviewer sends back for changes without any gate.
+ *   When satisfied, Reviewer calls `report_done()` on the Review node (endNodeId)
+ *   which signals workflow completion.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding Workflow',
 	description:
-		'Plan-first coding workflow with verification. A human reviews the plan, code is implemented, then verified. Loops back on failure.',
+		'Iterative coding workflow with Code ↔ Review loop. Coder implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
 	nodes: [
 		{
-			id: CODING_PLANNER_STEP,
-			name: 'Plan',
-			agents: [{ agentId: 'Planner', name: 'planner' }],
-		},
-		{
-			id: CODING_CODER_STEP,
+			id: CODING_CODE_STEP,
 			name: 'Code',
-			agents: [{ agentId: 'Coder', name: 'coder' }],
-		},
-		{
-			id: CODING_VERIFY_STEP,
-			name: 'Verify & Test',
-			agents: [{ agentId: 'General', name: 'general' }],
-			// NOTE: task_result condition uses prefix matching — "failed: reason" matches expression "failed"
+			agents: [
+				{
+					agentId: 'Coder',
+					name: 'coder',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are working on a coding task in a Coder→Reviewer iterative workflow. Write code, run tests, ' +
+							'commit all changes, and open a PR. The gate will verify the PR is open and the worktree is clean ' +
+							'before passing to the Reviewer.',
+					},
+				},
+			],
 			instructions:
-				'Review the completed work. Run tests, check for issues. Set result to "passed" if everything looks good, or "failed: <reason>" if problems are found.',
+				'Implement the task. When done, create a pull request with `gh pr create` ' +
+				'and ensure all changes are committed (clean working tree). The code-ready-gate ' +
+				'will verify both conditions automatically before advancing to Review.',
 		},
 		{
-			id: CODING_DONE_STEP,
-			name: 'Done',
-			agents: [{ agentId: 'General', name: 'general' }],
+			id: CODING_REVIEW_STEP,
+			name: 'Review',
+			agents: [
+				{
+					agentId: 'Reviewer',
+					name: 'reviewer',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are the final reviewer in a Coder→Reviewer iterative workflow. Review the open PR. Call report_done() ' +
+							'when satisfied. If changes are needed, provide specific feedback — the Coder will be sent back automatically.',
+					},
+				},
+			],
+			instructions:
+				'Review the pull request for correctness and quality. If changes are needed, send feedback to Code. ' +
+				'When satisfied, call report_done() to complete the workflow.',
 		},
 	],
-	startNodeId: CODING_PLANNER_STEP,
+	startNodeId: CODING_CODE_STEP,
+	endNodeId: CODING_REVIEW_STEP,
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
 	gates: [
 		{
-			id: 'plan-approval-gate',
-			description: 'Review and approve the plan before coding begins',
-			fields: [
-				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
-			],
-			resetOnCycle: false,
-		},
-		{
-			id: 'verify-fail-gate',
-			description: 'Loop back to planning when verification fails',
+			id: 'code-ready-gate',
+			description: 'Coder has opened a PR and cleaned the worktree',
 			fields: [
 				{
-					name: 'result',
-					type: 'string',
-					writers: ['general'],
-					check: { op: '==', value: 'failed' },
+					name: 'pr_created',
+					type: 'boolean',
+					writers: ['*'],
+					check: { op: 'exists' },
 				},
-			],
-			resetOnCycle: true,
-		},
-		{
-			id: 'verify-pass-gate',
-			description: 'Complete workflow when verification passes',
-			fields: [
 				{
-					name: 'result',
-					type: 'string',
-					writers: ['general'],
-					check: { op: '==', value: 'passed' },
+					name: 'worktree_clean',
+					type: 'boolean',
+					writers: ['*'],
+					check: { op: 'exists' },
 				},
 			],
+			script: {
+				interpreter: 'bash',
+				source: PR_READY_BASH_SCRIPT,
+				timeoutMs: 30000,
+			},
 			resetOnCycle: true,
 		},
 	],
 	channels: [
 		{
-			from: 'Plan',
+			from: 'Code',
+			to: 'Review',
+			direction: 'one-way',
+			gateId: 'code-ready-gate',
+			label: 'Code → Review',
+		},
+		{
+			from: 'Review',
 			to: 'Code',
 			direction: 'one-way',
-			gateId: 'plan-approval-gate',
-			label: 'Plan → Code',
-		},
-		{
-			from: 'Code',
-			to: 'Verify & Test',
-			direction: 'one-way',
-			label: 'Code → Verify',
-		},
-		{
-			from: 'Verify & Test',
-			to: 'Plan',
-			direction: 'one-way',
-			maxCycles: 3,
-			gateId: 'verify-fail-gate',
-			label: 'Verify → Plan (on fail)',
-		},
-		{
-			from: 'Verify & Test',
-			to: 'Done',
-			direction: 'one-way',
-			gateId: 'verify-pass-gate',
-			label: 'Verify → Done (on pass)',
+			maxCycles: 5,
+			label: 'Review → Code (changes requested)',
 		},
 	],
 };
@@ -192,71 +215,152 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 /**
  * Research Workflow
  *
- * Two-node graph: Planner → General.
- * Routing is channel-based (agent-centric model).
- * - Plan Research → Research: no gate — advances without human intervention.
+ * Two-node iterative graph:
+ *   Research → Review (gated by research-ready-gate: PR opened and mergeable)
+ *   Review → Research (ungated back-channel, max 5 cycles)
+ *
+ * Research agent researches thoroughly, commits findings, opens a PR.
+ * Reviewer agent reviews the research PR; calls report_done() if satisfied,
+ * or sends back for more research via the back-channel.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Research Workflow',
 	description:
-		'Fully automated research workflow. Planner scopes the research; General agent executes and summarises findings.',
+		'Iterative research workflow with gated PR verification. Research agent investigates and opens a PR; Reviewer evaluates findings and requests revisions if needed.',
 	nodes: [
 		{
-			id: RESEARCH_PLANNER_STEP,
-			name: 'Plan Research',
-			agents: [{ agentId: 'Planner', name: 'planner' }],
+			id: RESEARCH_STEP,
+			name: 'Research',
+			agents: [
+				{
+					agentId: 'Research',
+					name: 'research',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are conducting research in a Research→Reviewer iterative workflow. Investigate thoroughly, write findings ' +
+							'to markdown docs, commit, and open a PR. The gate will verify the PR is open and the worktree is clean.',
+					},
+				},
+			],
+			instructions:
+				'Research the topic thoroughly. When done, commit all findings and open a pull request with `gh pr create`. ' +
+				'The research-ready-gate will verify the PR automatically before advancing to Review.',
 		},
 		{
-			id: RESEARCH_GENERAL_STEP,
-			name: 'Research',
-			agents: [{ agentId: 'General', name: 'general' }],
+			id: RESEARCH_REVIEW_STEP,
+			name: 'Review',
+			agents: [
+				{
+					agentId: 'Reviewer',
+					name: 'reviewer',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are the reviewer in a Research→Reviewer iterative workflow. Review the research PR for ' +
+							'completeness and accuracy. Call report_done() when satisfied. If more research is needed, ' +
+							'provide specific feedback.',
+					},
+				},
+			],
+			instructions:
+				'Review the research pull request for completeness and quality. If more research is needed, send feedback to Research. ' +
+				'When satisfied, call report_done() to complete the workflow.',
 		},
 	],
-	startNodeId: RESEARCH_PLANNER_STEP,
+	startNodeId: RESEARCH_STEP,
+	endNodeId: RESEARCH_REVIEW_STEP,
 	tags: ['research'],
 	createdAt: 0,
 	updatedAt: 0,
+	gates: [
+		{
+			id: 'research-ready-gate',
+			description: 'Research agent has opened a PR and cleaned the worktree',
+			fields: [
+				{
+					name: 'pr_created',
+					type: 'boolean',
+					writers: ['*'],
+					check: { op: 'exists' },
+				},
+				{
+					name: 'worktree_clean',
+					type: 'boolean',
+					writers: ['*'],
+					check: { op: 'exists' },
+				},
+			],
+			script: {
+				interpreter: 'bash',
+				source: PR_READY_BASH_SCRIPT,
+				timeoutMs: 30000,
+			},
+			resetOnCycle: true,
+		},
+	],
 	channels: [
 		{
-			from: 'Plan Research',
+			from: 'Research',
+			to: 'Review',
+			direction: 'one-way',
+			gateId: 'research-ready-gate',
+			label: 'Research → Review',
+		},
+		{
+			from: 'Review',
 			to: 'Research',
 			direction: 'one-way',
-			label: 'Plan → Research',
+			maxCycles: 5,
+			label: 'Review → Research (more research needed)',
 		},
 	],
 };
-
 /**
  * Review-Only Workflow
  *
- * Single-node graph: Coder only (terminal step).
+ * Single-node graph: Reviewer only (terminal step).
  * No planning phase — used when the task is well-defined and only
- * implementation is needed. The run completes immediately when advance()
- * is called from the Coder step.
+ * review is needed. The run completes immediately when advance()
+ * is called from the Review step.
+ *
+ * startNodeId and endNodeId point to the same node (single-node workflow).
  */
 export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Review-Only Workflow',
 	description:
-		'Single-step coding workflow with no planning phase. Coder implements directly; the run completes when done.',
+		'Single-step review workflow with no planning phase. Reviewer evaluates directly; the run completes when done.',
 	nodes: [
 		{
-			id: REVIEW_CODER_STEP,
-			name: 'Code',
-			agents: [{ agentId: 'Coder', name: 'coder' }],
+			id: REVIEW_REVIEW_STEP,
+			name: 'Review',
+			agents: [
+				{
+					agentId: 'Reviewer',
+					name: 'reviewer',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are the sole reviewer in a single-node review workflow. Review the open PR thoroughly. ' +
+							'Call report_done() when satisfied.',
+					},
+				},
+			],
 		},
 	],
-	startNodeId: REVIEW_CODER_STEP,
-	tags: ['coding', 'review'],
+	startNodeId: REVIEW_REVIEW_STEP,
+	endNodeId: REVIEW_REVIEW_STEP,
+	tags: ['review'],
 	createdAt: 0,
 	updatedAt: 0,
 };
 
 /**
- * Coding Workflow V2
+ * Full-Cycle Coding Workflow
  *
  * Six-node graph with a single code-review node that runs three reviewers
  * in parallel (via `node.agents[]`) and a QA verification gate.
@@ -276,10 +380,10 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  *   Plan Review → Planning (reviewer requests plan changes)
  *   Coding → Planning (coder asks planner for clarification)
  */
-export const CODING_WORKFLOW_V2: SpaceWorkflow = {
+export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
-	name: 'Coding Workflow V2',
+	name: 'Full-Cycle Coding Workflow',
 	description:
 		'Full-cycle coding workflow with plan review, parallel code reviewers, and QA gate. ' +
 		'Supports rejection cycles at both review and QA stages.',
@@ -403,6 +507,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
 		},
 	],
 	startNodeId: V2_PLANNING_STEP,
+	endNodeId: V2_DONE_STEP,
 	tags: ['coding', 'v2', 'parallel-review', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -583,7 +688,7 @@ export const CODING_WORKFLOW_V2: SpaceWorkflow = {
  * to persist them with real SpaceAgent IDs for a given space.
  */
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
-	return [CODING_WORKFLOW, CODING_WORKFLOW_V2, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
+	return [CODING_WORKFLOW, FULL_CYCLE_CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
 }
 
 /**
@@ -660,6 +765,7 @@ export function seedBuiltInWorkflows(
 		}));
 
 		const startNodeId = nodeIdMap.get(template.startNodeId)!;
+		const endNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId)! : undefined;
 
 		workflowManager.createWorkflow({
 			spaceId,
@@ -667,6 +773,7 @@ export function seedBuiltInWorkflows(
 			description: template.description,
 			nodes,
 			startNodeId,
+			endNodeId,
 			tags: [...template.tags],
 			channels: template.channels ? [...template.channels] : undefined,
 			gates: template.gates ? [...template.gates] : undefined,

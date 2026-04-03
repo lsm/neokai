@@ -2,7 +2,7 @@
  * Space Happy Path — QA Completion Flow
  *
  * Integration tests for the QA → Done (pass) and QA → Coding (fail) segments
- * of CODING_WORKFLOW_V2.
+ * of FULL_CYCLE_CODING_WORKFLOW.
  *
  * No real LLM sessions are started. Gate data is written directly via RPC to
  * simulate agent actions, exercising the gate/channel machinery deterministically.

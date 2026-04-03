@@ -7,7 +7,7 @@
  *
  * ## Key helpers
  *
- * - createTestSpace        — create a Space with CODING_WORKFLOW_V2 pre-seeded
+ * - createTestSpace        — create a Space with FULL_CYCLE_CODING_WORKFLOW pre-seeded
  * - startWorkflowRun       — start a run and return its ID + initial tasks
  * - writeGateData          — write arbitrary data to a gate (simulates agent write_gate call)
  * - readGateData           — read current gate data for a (runId, gateId) pair
@@ -43,7 +43,7 @@ export interface TestSpaceFixture {
 	space: Space;
 	/** All agents seeded into the space */
 	agents: SpaceAgent[];
-	/** The CODING_WORKFLOW_V2 workflow (preferred) or the first available */
+	/** The FULL_CYCLE_CODING_WORKFLOW workflow (preferred) or the first available */
 	workflow: SpaceWorkflow;
 }
 
@@ -69,7 +69,7 @@ export interface GateArtifacts {
  * Create a Space whose name embeds a unique suffix so tests never collide.
  * space.create auto-seeds preset agents and built-in workflows (including V2).
  *
- * Returns the Space, all its agents, and the CODING_WORKFLOW_V2 workflow.
+ * Returns the Space, all its agents, and the FULL_CYCLE_CODING_WORKFLOW workflow.
  * Falls back to the first workflow if V2 is not found (should not happen with
  * normal seeding, but keeps tests robust).
  */

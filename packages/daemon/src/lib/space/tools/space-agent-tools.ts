@@ -282,8 +282,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 
 			// Stable sort descending by hits; tiebreak: prefer 'v2'-tagged workflows (e.g.
-			// CODING_WORKFLOW_V2 over CODING_WORKFLOW) so V2 is always recommended first
-			// when both match equally. Falls back to V1 naturally if V2 is not seeded.
+			// FULL_CYCLE_CODING_WORKFLOW over CODING_WORKFLOW) so the full pipeline is
+			// always recommended first when both match equally.
 			scored.sort((a, b) => {
 				if (b.hits !== a.hits) return b.hits - a.hits;
 				const aIsV2 = (a.workflow.tags ?? []).includes('v2') ? 1 : 0;

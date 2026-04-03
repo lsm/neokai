@@ -1934,7 +1934,7 @@ describe('ChannelRouter', () => {
 		// -----------------------------------------------------------------------
 
 		test('review-votes-gate: QA blocked until all 3 reviewers approve (min: 3)', async () => {
-			// Mirrors the CODING_WORKFLOW_V2 review-votes-gate:
+			// Mirrors the FULL_CYCLE_CODING_WORKFLOW review-votes-gate:
 			// Each of the 3 reviewer nodes writes independently to review-votes-gate.
 			// QA only activates when vote count reaches 3.
 			const gate: Gate = {
@@ -2115,7 +2115,7 @@ describe('ChannelRouter', () => {
 			const NODE_QA = 'node-qa-loop';
 			const NODE_DONE = 'node-done-qa';
 
-			// Gates matching CODING_WORKFLOW_V2 design
+			// Gates matching FULL_CYCLE_CODING_WORKFLOW design
 			const gateCodePr: Gate = {
 				id: 'code-pr-gate',
 				fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],

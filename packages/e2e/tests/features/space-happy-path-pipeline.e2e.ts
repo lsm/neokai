@@ -142,13 +142,16 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 		await expect(page.getByText('Planner', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Coder', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('General', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Research', { exact: true }).first()).toBeVisible({
+			timeout: 5000,
+		});
 		await expect(page.getByText('Reviewer', { exact: true }).first()).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(page.getByText('QA', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 
 		await page.locator('button:has-text("Workflows")').click();
-		await expect(page.getByText('Coding Workflow V2', { exact: true })).toBeVisible({
+		await expect(page.getByText('Full-Cycle Coding Workflow', { exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -162,7 +165,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 					nodes: Array<{ name: string; agents?: Array<{ name: string }> }>;
 				}>;
 			};
-			const v2 = list.workflows.find((w) => w.name === 'Coding Workflow V2');
+			const v2 = list.workflows.find((w) => w.name === 'Full-Cycle Coding Workflow');
 			const reviewNode = v2?.nodes.find((n) => n.name === 'Code Review');
 			return reviewNode?.agents?.length ?? 0;
 		});
