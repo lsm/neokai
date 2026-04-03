@@ -367,15 +367,13 @@ function rewriteSelectToStar(sql: string, options?: { skipOutermost?: boolean })
 	// Replace from right to left to preserve positions. Active pairs are in ascending
 	// order by selectStart (outer loop walks left-to-right), so processing
 	// right-to-left ensures earlier positions remain valid after each replacement.
+	// No shift tracking is needed — positions to the LEFT of a replaced range
+	// are unchanged by right-to-left processing.
 	let result = sql;
-	let shift = 0;
 	for (let p = activePairs.length - 1; p >= 0; p--) {
 		const { selectStart, fromStart, hasDistinct } = activePairs[p];
-		const adjFrom = fromStart + shift;
-		const oldLen = adjFrom - selectStart;
 		const replacement = hasDistinct ? 'SELECT DISTINCT * ' : 'SELECT * ';
-		result = `${result.slice(0, selectStart)}${replacement}${result.slice(adjFrom)}`;
-		shift += replacement.length - oldLen;
+		result = `${result.slice(0, selectStart)}${replacement}${result.slice(fromStart)}`;
 	}
 
 	return result;
@@ -446,9 +444,11 @@ function isAggregateOrDistinctQuery(sql: string): boolean {
 	}
 
 	// Check for aggregate functions in the outermost SELECT's column list
-	// (between the top-level SELECT and the top-level FROM), skipping any
-	// parenthesized subqueries to avoid false positives from correlated
-	// subqueries like: SELECT (SELECT COUNT(*) FROM t) AS cnt FROM ...
+	// (between the top-level SELECT and the top-level FROM).
+	// Note: this does NOT skip parenthesized subqueries — the raw column list
+	// text is scanned. False positives from correlated subqueries like
+	// `SELECT (SELECT COUNT(*) FROM t) AS cnt FROM ...` are prevented by the
+	// `/\(\s*SELECT\b/i` guard above, which short-circuits before reaching here.
 	if (selectPos === -1 || fromPos === -1 || fromPos <= selectPos) return false;
 
 	const aggColumnList = sql.slice(selectPos + 6, fromPos).toUpperCase();

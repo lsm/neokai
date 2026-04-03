@@ -584,6 +584,27 @@ describe('db-query tools', () => {
 				expect(result.isError).toBeFalsy();
 				expect(parseResult(result).rowCount).toBe(2);
 			});
+
+			it('CTE with explicit outer column list is rewritten correctly in scoped mode', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// Regression test: outer SELECT has explicit columns (not *),
+				// and the CTE body also has explicit columns. Both should be
+				// rewritten to * without shift corruption.
+				const result = await handlers.db_query({
+					sql: 'WITH active AS (SELECT id, title, status FROM tasks WHERE status = ?) SELECT id, title FROM active',
+					params: ['pending'],
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1 has task-2 with status 'pending'
+				expect(parsed.rowCount).toBe(1);
+				expect(parsed.rows[0].id).toBe('task-2');
+				expect(parsed.rows[0].title).toBe('Task 2');
+			});
 		});
 
 		describe('indirect scope tables filtered correctly', () => {
