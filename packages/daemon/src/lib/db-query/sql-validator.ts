@@ -359,6 +359,37 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
 // ============ Public API ============
 
 /**
+ * Check whether the SQL contains a top-level set operator
+ * (UNION, INTERSECT, or EXCEPT) at depth 0 (outside parentheses).
+ * This allows UNION ALL inside CTE bodies (e.g. WITH RECURSIVE)
+ * while rejecting top-level compound queries.
+ *
+ * Precondition: `sql` must have string literal contents stripped
+ * (via `stripStringContents`) so that parentheses inside strings don't
+ * affect depth tracking.
+ */
+function hasTopLevelSetOperator(sql: string): boolean {
+	const upper = sql.toUpperCase();
+	const setOperators = ['UNION', 'INTERSECT', 'EXCEPT'];
+	let depth = 0;
+	for (let i = 0; i < sql.length; i++) {
+		if (sql[i] === '(') depth++;
+		else if (sql[i] === ')') depth--;
+		else if (depth === 0) {
+			for (const op of setOperators) {
+				if (upper.slice(i, i + op.length) === op) {
+					const beforeOk = i === 0 || /\s/.test(sql[i - 1]);
+					const afterChar = i + op.length < sql.length ? sql[i + op.length] : ' ';
+					const afterOk = /\s/.test(afterChar);
+					if (beforeOk && afterOk) return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+/**
  * Validate a SQL statement for use with the db-query MCP server.
  *
  * Checks:
@@ -393,6 +424,39 @@ export function validateSql(sql: string): SqlValidationResult {
 		return {
 			valid: false,
 			error: 'Semicolons are not allowed (single statement only)',
+			tableRefs: [],
+		};
+	}
+
+	// Reject double-quoted identifiers ("table") and backtick-quoted identifiers
+	// (`table`). These bypass table-ref extraction and scope filtering.
+	if (withoutStrings.includes('"') || withoutStrings.includes('`')) {
+		return {
+			valid: false,
+			error: 'Quoted identifiers (double-quoted or backtick) are not allowed',
+			tableRefs: [],
+		};
+	}
+
+	// Reject OFFSET — the subquery wrapper strips LIMIT and would silently
+	// drop OFFSET, breaking pagination without any indication to the caller.
+	if (/\bOFFSET\b/i.test(withoutStrings)) {
+		return {
+			valid: false,
+			error: 'OFFSET is not supported (use LIMIT only)',
+			tableRefs: [],
+		};
+	}
+
+	// Reject UNION at the top level only (not inside parentheses/CTE bodies).
+	// WITH RECURSIVE uses UNION ALL inside CTE bodies, which is fine.
+	// Top-level UNION is incompatible with the scope-wrapping subquery because
+	// each arm gets rewritten to SELECT * with different column counts.
+	if (hasTopLevelSetOperator(withoutStrings)) {
+		return {
+			valid: false,
+			error:
+				'Compound queries (UNION, INTERSECT, EXCEPT) are not supported (use CTEs or subqueries instead)',
 			tableRefs: [],
 		};
 	}
