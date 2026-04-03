@@ -5,6 +5,7 @@
  *   neo.send           — send a message to Neo
  *   neo.history        — retrieve paginated message history
  *   neo.clearSession   — reset the Neo session
+ *   neo.isProvisioned  — check if Neo credentials are configured (no LLM call)
  *   neo.getSettings    — read Neo settings (security mode, model)
  *   neo.updateSettings — write Neo settings
  *   neo.confirmAction  — execute a pending action by ID
@@ -174,6 +175,21 @@ export function setupNeoHandlers(
 				error: err instanceof Error ? err.message : String(err),
 			};
 		}
+	});
+
+	// ── neo.isProvisioned ─────────────────────────────────────────────────────
+	/**
+	 * Check whether Neo credentials are configured and the session is provisioned.
+	 *
+	 * This is a lightweight, synchronous check — no LLM call is made.
+	 * Returns { provisioned: boolean } where `true` means the session exists and
+	 * credentials are configured.
+	 *
+	 * Used by E2E tests to skip AI-dependent tests when no credentials are present,
+	 * without relying on error cards that only appear after a failed send attempt.
+	 */
+	messageHub.onRequest('neo.isProvisioned', () => {
+		return { provisioned: neoAgentManager.getSession() !== null };
 	});
 
 	// ── neo.getSettings ───────────────────────────────────────────────────────

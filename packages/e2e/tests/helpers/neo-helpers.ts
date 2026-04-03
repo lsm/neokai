@@ -105,21 +105,28 @@ export async function waitForNeoChatReady(page: Page): Promise<void> {
 }
 
 /**
- * Check whether the Neo agent is provisioned (not showing an error card).
- * Must be called with the Neo panel already open so error cards are rendered.
- * Waits for the panel content to settle before checking, avoiding a race between
- * `openNeoPanel` and async Neo store subscription.
- * Returns true if Neo appears functional.
+ * Check whether the Neo agent is provisioned (credentials configured and session active).
+ *
+ * Uses the `neo.isProvisioned` RPC endpoint for a reliable, synchronous check.
+ * This avoids the previous approach of waiting for error cards that only appear
+ * after a failed send attempt — meaning `isNeoAvailable` always returned `true`
+ * in CI environments without LLM credentials, causing AI-dependent tests to
+ * proceed and time out (90s) waiting for an LLM response.
+ *
+ * The Neo panel does not need to be open for this call to work.
  */
 export async function isNeoAvailable(page: Page): Promise<boolean> {
-	await waitForNeoChatReady(page);
-	const hasNoCredentials = await page
-		.getByTestId('neo-error-no-credentials')
-		.isVisible()
-		.catch(() => false);
-	const hasProviderError = await page
-		.getByTestId('neo-error-provider-unavailable')
-		.isVisible()
-		.catch(() => false);
-	return !hasNoCredentials && !hasProviderError;
+	const result = await page
+		.evaluate(async () => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) return { provisioned: false };
+			try {
+				const response = await hub.request('neo.isProvisioned', {});
+				return response as { provisioned: boolean };
+			} catch {
+				return { provisioned: false };
+			}
+		})
+		.catch(() => ({ provisioned: false }));
+	return result.provisioned;
 }
