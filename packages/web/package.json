@@ -19,11 +19,11 @@
 		"coverage": "vitest run --reporter dot --coverage"
 	},
 	"dependencies": {
-		"@preact/signals": "2.8.2",
+		"@preact/signals": "2.9.0",
 		"clsx": "2.1.1",
 		"highlight.js": "11.11.1",
 		"marked": "17.0.5",
-		"preact": "10.29.0"
+		"preact": "10.29.1"
 	},
 	"devDependencies": {
 		"@preact/preset-vite": "2.10.5",
