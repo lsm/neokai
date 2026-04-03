@@ -61,7 +61,18 @@ const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
 /**
  * Environment variables that are always allowed regardless of the prefix/key pattern.
  */
-const ALLOWED_ENV_KEYS = new Set(['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'TERM', 'TMPDIR']);
+const ALLOWED_ENV_KEYS = new Set([
+	'PATH',
+	'HOME',
+	'USER',
+	'SHELL',
+	'LANG',
+	'TERM',
+	'TMPDIR',
+	'GH_TOKEN',
+	'GITHUB_TOKEN',
+	'GH_HOST',
+]);
 
 /** Keys that are rejected during deep-merge to prevent prototype pollution. */
 const PROTO_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);

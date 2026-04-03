@@ -74,6 +74,9 @@ describe('buildRestrictedEnv', () => {
 		process.env['DB_PASSWORD'] = 'db-secret';
 		process.env['AWS_CREDENTIAL'] = 'aws-secret';
 		process.env['SOME_API_KEY'] = 'api-secret';
+		process.env['GH_TOKEN'] = 'ghp-test-token';
+		process.env['GITHUB_TOKEN'] = 'gho-test-token';
+		process.env['GH_HOST'] = 'github.com';
 		process.env['MY_OTHER_VAR'] = 'safe-value';
 		process.env['NODE_ENV'] = 'test';
 	});

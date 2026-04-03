@@ -153,17 +153,19 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
 		expect(gate.script!.source).toContain('git status --porcelain');
-		expect(gate.script!.source).toContain('gh pr view --json state --jq');
-		expect(gate.script!.source).toContain('gh pr view --json mergeable --jq');
-		expect(gate.script!.source).toContain('gh pr view --json mergeStateStatus --jq');
+		expect(gate.script!.source).toContain('gh pr view --json state,mergeable,mergeStateStatus');
+		expect(gate.script!.source).toContain('jq -r');
 		expect(gate.script!.source).toContain('"OPEN"');
 		expect(gate.script!.source).toContain('.mergeable');
 		expect(gate.script!.source).toContain('"MERGEABLE"');
 		expect(gate.script!.source).toContain('.mergeStateStatus');
 		expect(gate.script!.source).toContain('"CLEAN"');
+		expect(gate.script!.source).toContain('"HAS_HOOKS"');
+		expect(gate.script!.source).toContain('"UNKNOWN"');
 		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('pr_created');
 		expect(gate.script!.source).toContain('worktree_clean');
+		expect(gate.script!.source).toContain('not authenticated');
 	});
 
 	test('code-ready-gate resets on cycle', () => {
