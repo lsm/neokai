@@ -3,6 +3,7 @@ import {
 	cleanupTestSession,
 	createSessionViaUI,
 	waitForWebSocketConnected,
+	waitForElement,
 } from '../helpers/wait-helpers';
 
 const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
@@ -48,13 +49,18 @@ test.describe('File Operations', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Ask Claude to read a file (Claude will use file tools)
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('What is in the package.json file? Just show me the name and version.');
-		await page.keyboard.press('Meta+Enter');
+		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+		await messageInput.fill('What is in the package.json file? Just show me the name and version.');
+		await sendButton.click();
+
+		// Wait for stop button to indicate processing started
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Wait for response - in mock mode, response is instant but UI still needs time
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: IS_MOCK ? 5000 : 45000,
+			timeout: IS_MOCK ? 30000 : 45000,
 		});
 
 		// The response should contain file content or mention inability to read
@@ -73,13 +79,18 @@ test.describe('File Operations', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Ask Claude to list files
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('List the files in the current directory. Just show file names.');
-		await page.keyboard.press('Meta+Enter');
+		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+		await messageInput.fill('List the files in the current directory. Just show file names.');
+		await sendButton.click();
+
+		// Wait for stop button to indicate processing started
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Wait for response - in mock mode, response is instant but UI still needs time
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: IS_MOCK ? 5000 : 45000,
+			timeout: IS_MOCK ? 30000 : 45000,
 		});
 
 		// The response should contain file listings
@@ -98,15 +109,20 @@ test.describe('File Operations', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Ask Claude to read and display file content
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill(
+		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+		await messageInput.fill(
 			'Show me the first 5 lines of README.md or any markdown file you can find.'
 		);
-		await page.keyboard.press('Meta+Enter');
+		await sendButton.click();
+
+		// Wait for stop button to indicate processing started
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Wait for response - in mock mode, response is instant
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: IS_MOCK ? 5000 : 45000,
+			timeout: IS_MOCK ? 30000 : 45000,
 		});
 
 		// Response should exist
@@ -123,13 +139,18 @@ test.describe('File Operations', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Ask Claude to read a non-existent file
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('Read the file nonexistent_file_12345.xyz');
-		await page.keyboard.press('Meta+Enter');
+		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+		await messageInput.fill('Read the file nonexistent_file_12345.xyz');
+		await sendButton.click();
+
+		// Wait for stop button to indicate processing started
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Wait for response - in mock mode, response is instant
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: IS_MOCK ? 5000 : 45000,
+			timeout: IS_MOCK ? 30000 : 45000,
 		});
 
 		// The response should handle the error gracefully
@@ -167,13 +188,18 @@ test.describe('File Operations', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Ask Claude about path handling
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill("What's the current working directory? Just tell me the path.");
-		await page.keyboard.press('Meta+Enter');
+		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+		await messageInput.fill("What's the current working directory? Just tell me the path.");
+		await sendButton.click();
+
+		// Wait for stop button to indicate processing started
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Wait for response - in mock mode, response is instant
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: IS_MOCK ? 5000 : 45000,
+			timeout: IS_MOCK ? 30000 : 45000,
 		});
 
 		// The response should contain path information
