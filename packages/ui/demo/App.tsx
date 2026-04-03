@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
+import { ChevronDown, ChevronRight, Sun, Moon } from 'lucide-preact';
 import { ButtonDemo } from './sections/ButtonDemo.tsx';
 import { CheckboxDemo } from './sections/CheckboxDemo.tsx';
 import { ComboboxDemo } from './sections/ComboboxDemo.tsx';
@@ -38,27 +39,8 @@ function DemoSection({ id, title, children }: DemoSectionProps) {
 	);
 }
 
-function SunIcon() {
-	return (
-		<svg class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
-			<path
-				fill-rule="evenodd"
-				d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"
-				clip-rule="evenodd"
-			/>
-		</svg>
-	);
-}
-
-function MoonIcon() {
-	return (
-		<svg class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
-			<path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
-		</svg>
-	);
-}
-
-const sections = [
+// Component category (existing demos)
+const componentSections = [
 	{ id: 'button', label: 'Button' },
 	{ id: 'icon-button', label: 'IconButton' },
 	{ id: 'checkbox', label: 'Checkbox' },
@@ -83,6 +65,176 @@ const sections = [
 	{ id: 'skeleton', label: 'Skeleton' },
 ];
 
+// Application UI subcategories (placeholder sections for future demos)
+interface SidebarSection {
+	id: string;
+	label: string;
+}
+
+interface SidebarCategory {
+	id: string;
+	label: string;
+	sections: SidebarSection[];
+}
+
+const applicationUiCategories: SidebarCategory[] = [
+	{
+		id: 'application-shells',
+		label: 'Application Shells',
+		sections: [
+			{ id: 'multi-column', label: 'Multi-column' },
+			{ id: 'sidebar', label: 'Sidebar' },
+			{ id: 'stacked', label: 'Stacked' },
+		],
+	},
+	{
+		id: 'data-display',
+		label: 'Data Display',
+		sections: [
+			{ id: 'calendars', label: 'Calendars' },
+			{ id: 'description-lists', label: 'Description Lists' },
+			{ id: 'stats', label: 'Stats' },
+		],
+	},
+	{
+		id: 'elements',
+		label: 'Elements',
+		sections: [
+			{ id: 'avatars', label: 'Avatars' },
+			{ id: 'badges', label: 'Badges' },
+			{ id: 'button-groups', label: 'Button Groups' },
+			{ id: 'buttons', label: 'Buttons' },
+			{ id: 'dropdowns', label: 'Dropdowns' },
+		],
+	},
+	{
+		id: 'feedback',
+		label: 'Feedback',
+		sections: [
+			{ id: 'alerts', label: 'Alerts' },
+			{ id: 'empty-states', label: 'Empty States' },
+		],
+	},
+	{
+		id: 'forms',
+		label: 'Forms',
+		sections: [
+			{ id: 'action-panels', label: 'Action Panels' },
+			{ id: 'checkboxes', label: 'Checkboxes' },
+			{ id: 'comboboxes', label: 'Comboboxes' },
+			{ id: 'form-layouts', label: 'Form Layouts' },
+			{ id: 'input-groups', label: 'Input Groups' },
+			{ id: 'radio-groups', label: 'Radio Groups' },
+			{ id: 'select-menus', label: 'Select Menus' },
+			{ id: 'sign-in-forms', label: 'Sign-in Forms' },
+			{ id: 'textareas', label: 'Textareas' },
+			{ id: 'toggles', label: 'Toggles' },
+		],
+	},
+	{
+		id: 'headings',
+		label: 'Headings',
+		sections: [
+			{ id: 'card-headings', label: 'Card Headings' },
+			{ id: 'page-headings', label: 'Page Headings' },
+			{ id: 'section-headings', label: 'Section Headings' },
+		],
+	},
+	{
+		id: 'layout',
+		label: 'Layout',
+		sections: [
+			{ id: 'cards', label: 'Cards' },
+			{ id: 'containers', label: 'Containers' },
+			{ id: 'dividers', label: 'Dividers' },
+			{ id: 'list-containers', label: 'List Containers' },
+			{ id: 'media-objects', label: 'Media Objects' },
+		],
+	},
+	{
+		id: 'lists',
+		label: 'Lists',
+		sections: [
+			{ id: 'feeds', label: 'Feeds' },
+			{ id: 'grid-lists', label: 'Grid Lists' },
+			{ id: 'stacked-lists', label: 'Stacked Lists' },
+			{ id: 'tables', label: 'Tables' },
+		],
+	},
+	{
+		id: 'navigation',
+		label: 'Navigation',
+		sections: [
+			{ id: 'breadcrumbs', label: 'Breadcrumbs' },
+			{ id: 'command-palettes', label: 'Command Palettes' },
+			{ id: 'navbars', label: 'Navbars' },
+			{ id: 'pagination', label: 'Pagination' },
+			{ id: 'progress-bars', label: 'Progress Bars' },
+			{ id: 'sidebar-navigation', label: 'Sidebar Navigation' },
+			{ id: 'tabs', label: 'Tabs' },
+			{ id: 'vertical-navigation', label: 'Vertical Navigation' },
+		],
+	},
+	{
+		id: 'overlays',
+		label: 'Overlays',
+		sections: [
+			{ id: 'drawers', label: 'Drawers' },
+			{ id: 'modal-dialogs', label: 'Modal Dialogs' },
+			{ id: 'notifications', label: 'Notifications' },
+		],
+	},
+	{
+		id: 'page-examples',
+		label: 'Page Examples',
+		sections: [
+			{ id: 'detail-screens', label: 'Detail Screens' },
+			{ id: 'home-screens', label: 'Home Screens' },
+			{ id: 'settings-screens', label: 'Settings Screens' },
+		],
+	},
+];
+
+interface CategoryProps {
+	category: SidebarCategory;
+	defaultOpen?: boolean;
+}
+
+function Category({ category, defaultOpen = false }: CategoryProps) {
+	const [isOpen, setIsOpen] = useState(defaultOpen);
+
+	return (
+		<li>
+			<button
+				type="button"
+				onClick={() => setIsOpen(!isOpen)}
+				class="flex items-center w-full px-3 py-2 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors cursor-pointer"
+			>
+				{isOpen ? (
+					<ChevronDown class="w-4 h-4 mr-2 flex-shrink-0" />
+				) : (
+					<ChevronRight class="w-4 h-4 mr-2 flex-shrink-0" />
+				)}
+				{category.label}
+			</button>
+			{isOpen && (
+				<ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
+					{category.sections.map((section) => (
+						<li key={section.id}>
+							<a
+								href={`#${category.id}-${section.id}`}
+								class="block px-3 py-1.5 text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-2 rounded transition-colors"
+							>
+								{section.label}
+							</a>
+						</li>
+					))}
+				</ul>
+			)}
+		</li>
+	);
+}
+
 export function App() {
 	const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
@@ -99,28 +251,47 @@ export function App() {
 	return (
 		<div class="min-h-screen bg-surface-0 text-text-primary">
 			{/* Sidebar */}
-			<nav class="fixed left-0 top-0 w-56 h-screen overflow-y-auto bg-surface-1 border-r border-surface-border z-10">
+			<nav class="fixed left-0 top-0 w-64 h-screen overflow-y-auto bg-surface-1 border-r border-surface-border z-10">
 				<div class="p-4">
-					<p class="text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-4">
-						Components
-					</p>
-					<ul class="space-y-1">
-						{sections.map((s) => (
-							<li key={s.id}>
-								<a
-									href={`#${s.id}`}
-									class="block px-3 py-1.5 rounded text-sm text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors"
-								>
-									{s.label}
-								</a>
-							</li>
-						))}
-					</ul>
+					{/* Components section */}
+					<div class="mb-6">
+						<p class="px-3 text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
+							Components
+						</p>
+						<ul class="space-y-0.5">
+							{componentSections.map((s) => (
+								<li key={s.id}>
+									<a
+										href={`#${s.id}`}
+										class="block px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors"
+									>
+										{s.label}
+									</a>
+								</li>
+							))}
+						</ul>
+					</div>
+
+					{/* Application UI section */}
+					<div>
+						<p class="px-3 text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
+							Application UI
+						</p>
+						<ul class="space-y-1">
+							{applicationUiCategories.map((category) => (
+								<Category
+									key={category.id}
+									category={category}
+									defaultOpen={category.id === 'application-shells'}
+								/>
+							))}
+						</ul>
+					</div>
 				</div>
 			</nav>
 
 			{/* Content */}
-			<div class="ml-56">
+			<div class="ml-64">
 				{/* Header */}
 				<header class="px-8 pt-10 pb-4 border-b border-surface-border flex items-start justify-between">
 					<div>
@@ -133,7 +304,7 @@ export function App() {
 						title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
 						class="mt-2 p-2 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors cursor-pointer"
 					>
-						{theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+						{theme === 'dark' ? <Sun class="w-5 h-5" /> : <Moon class="w-5 h-5" />}
 					</button>
 				</header>
 
