@@ -32,12 +32,12 @@ test.describe('Space Settings CRUD', () => {
 		spaceName = `E2E Settings Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
 
-		// Navigate to the space
-		await page.goto(`/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
+		// Navigate directly to the configure view (which hosts the Settings tab)
+		await page.goto(`/space/${spaceId}/configure`);
+		await page.waitForURL(`/space/${spaceId}/configure`, { timeout: 10000 });
 
-		// Click the Settings tab
-		await page.getByRole('button', { name: 'Settings', exact: true }).click();
+		// Click the Settings tab (role="tab", identified by data-testid)
+		await page.getByTestId('space-configure-tab-settings').click();
 		await expect(page.locator('text=Danger Zone')).toBeVisible({ timeout: 5000 });
 	});
 
