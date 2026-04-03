@@ -8,6 +8,10 @@ import { join, dirname } from 'path';
 import { existsSync, rmSync, readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 
+// Shared test environment - Node.js caches this module, so the workspace path
+// is computed once and shared between playwright.config.ts and global-setup.ts.
+import { e2eWorkspaceDir } from './test-env';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -38,6 +42,31 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
 			const parentDir = dirname(currentDir);
 			if (parentDir === currentDir) break;
 			currentDir = parentDir;
+		}
+	}
+
+	// Initialize the E2E workspace as a git repo so that task planning worktrees can
+	// be created. Without a .git directory, WorktreeManager.findGitRoot() returns null,
+	// causing "task requires isolation" errors and daemon log spam during tests.
+	// The workspace path is shared from test-env.ts (same module instance).
+	if (e2eWorkspaceDir && existsSync(e2eWorkspaceDir)) {
+		console.log(`\n🔧 Initializing workspace as git repo: ${e2eWorkspaceDir}`);
+		try {
+			execSync('git init', { cwd: e2eWorkspaceDir, stdio: 'inherit' });
+			execSync('git config user.email "e2e@neokai.test"', {
+				cwd: e2eWorkspaceDir,
+				stdio: 'inherit',
+			});
+			execSync('git config user.name "NeoKai E2E"', { cwd: e2eWorkspaceDir, stdio: 'inherit' });
+			// Create initial commit so the repo is valid
+			execSync('git commit --allow-empty -m "Initial commit for E2E testing"', {
+				cwd: e2eWorkspaceDir,
+				stdio: 'inherit',
+			});
+			console.log('✅ Workspace initialized as git repo\n');
+		} catch (error) {
+			// Log but don't fail — some tests may not need git functionality
+			console.warn('⚠️  Failed to initialize git repo in workspace (continuing):', error);
 		}
 	}
 
