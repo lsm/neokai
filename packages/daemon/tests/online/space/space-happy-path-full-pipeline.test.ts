@@ -18,11 +18,11 @@
  *   QA
  *     └─► qa-result-gate     — QA writes passed
  *   Done
- *     └─► run.status = completed
+ *     └─► run.status = done
  *
  * ## Test scenarios
  *
- *  1. Happy path — full pipeline completes; run.status becomes completed
+ *  1. Happy path — full pipeline completes; run.status becomes done
  *     Verifies every stage in order and confirms the completion summary.
  *
  *  2. Failure-and-recovery — two failure injections:
@@ -309,7 +309,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 	//   driveToCodePrGateOpen → QA activates (all approved, round 1)
 	//   → QA fails (qa-fail-gate) → Coding cycles back (cycle 1 via qa-fail channel)
 	//   → Reviewer 1 rejects (review-reject-gate) → Coding cycles back (cycle 1 via reject channel)
-	//   → all 3 approve (round 3) → QA passes → Done → completed
+	//   → all 3 approve (round 3) → QA passes → Done → done
 	// -------------------------------------------------------------------------
 	test(
 		'Failure-and-recovery: QA fail + reviewer rejection → eventual completion',

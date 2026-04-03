@@ -158,7 +158,7 @@ async function setupToCodePrGate(
  * Complete all three reviewer tasks and write rejection vote to review-reject-gate,
  * then wait for a *new* Coding task to appear (not the one in preCycleTaskIds).
  *
- * Returns the newly activated Coding task and the IDs of the completed reviewer tasks.
+ * Returns the newly activated Coding task and the IDs of the done reviewer tasks.
  */
 async function triggerRejectCycle(
 	daemon: DaemonServerContext,
@@ -184,8 +184,8 @@ async function triggerRejectCycle(
 	});
 
 	// Use waitForNewNodeTask to confirm a *fresh* Coding task was created,
-	// not the old completed one. waitForNodeActivated would match the old task
-	// because it accepts 'completed' as a valid status.
+	// not the old done task. waitForNodeActivated would match the old task
+	// because it accepts terminal statuses (including 'done').
 	return waitForNewNodeTask(
 		daemon,
 		spaceId,
@@ -375,8 +375,8 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 				waitForNodeActivated(daemon, spaceId, runId, 'Reviewer 3', NODE_ACTIVATION_TIMEOUT),
 			]);
 
-			// Collect existing Coding task IDs (completed from setup) so we can confirm
-			// the post-cycle Coding task is genuinely new (not the old completed one).
+			// Collect existing Coding task IDs (done from setup) so we can confirm
+			// the post-cycle Coding task is genuinely new (not the old done one).
 			const existingCodingTasks = await getTasksForNode(daemon, spaceId, runId, 'Coding');
 			const preCycleIds = new Set(existingCodingTasks.map((t) => t.id));
 
@@ -396,7 +396,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			const qaTasks = await getTasksForNode(daemon, spaceId, runId, 'QA');
 			expect(qaTasks.length).toBe(0);
 
-			// Run must remain in_progress (not needs_attention — rejection is a cycle, not a human-reject)
+			// Run must remain in_progress (not blocked — rejection is a cycle, not a human-reject)
 			const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
 				id: runId,
 			})) as { run: SpaceWorkflowRun };

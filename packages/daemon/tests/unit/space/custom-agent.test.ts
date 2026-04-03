@@ -4,6 +4,7 @@ import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-ag
 import {
 	buildCustomAgentSystemPrompt,
 	buildCustomAgentTaskMessage,
+	composePromptLayer,
 	createCustomAgentInit,
 	resolveAgentInit,
 	type CustomAgentConfig,
@@ -323,5 +324,69 @@ describe('resolveAgentInit', () => {
 		});
 
 		expect(init.systemPrompt?.append).toBe('Visible prompt');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// composePromptLayer
+// ---------------------------------------------------------------------------
+
+describe('composePromptLayer', () => {
+	describe('override mode', () => {
+		it('replaces non-empty base entirely', () => {
+			expect(composePromptLayer('Base value', { mode: 'override', value: 'X' })).toBe('X');
+		});
+
+		it('replaces null base', () => {
+			expect(composePromptLayer(null, { mode: 'override', value: 'Override only' })).toBe(
+				'Override only'
+			);
+		});
+
+		it('replaces empty string base', () => {
+			expect(composePromptLayer('', { mode: 'override', value: 'Override' })).toBe('Override');
+		});
+
+		it('returns trimmed override value', () => {
+			expect(composePromptLayer('Base', { mode: 'override', value: '  Trimmed  ' })).toBe(
+				'Trimmed'
+			);
+		});
+	});
+
+	describe('expand mode', () => {
+		it('appends override to non-empty base with double newline', () => {
+			expect(composePromptLayer('Base prompt', { mode: 'expand', value: 'Extra' })).toBe(
+				'Base prompt\n\nExtra'
+			);
+		});
+
+		it('returns only override value when base is empty string', () => {
+			expect(composePromptLayer('', { mode: 'expand', value: 'Expand only' })).toBe('Expand only');
+		});
+
+		it('returns only override value when base is null', () => {
+			expect(composePromptLayer(null, { mode: 'expand', value: 'Expand only' })).toBe(
+				'Expand only'
+			);
+		});
+
+		it('returns base only when override value is blank', () => {
+			expect(composePromptLayer('Base value', { mode: 'expand', value: '   ' })).toBe('Base value');
+		});
+	});
+
+	describe('no override (undefined)', () => {
+		it('returns base value unchanged', () => {
+			expect(composePromptLayer('Agent base prompt', undefined)).toBe('Agent base prompt');
+		});
+
+		it('returns empty string when base is null', () => {
+			expect(composePromptLayer(null, undefined)).toBe('');
+		});
+
+		it('returns empty string when base is empty', () => {
+			expect(composePromptLayer('', undefined)).toBe('');
+		});
 	});
 });

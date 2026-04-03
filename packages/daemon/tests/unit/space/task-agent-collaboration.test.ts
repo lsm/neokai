@@ -7,13 +7,13 @@
  *    - Multi-node workflow with channels between agents
  *    - Task Agent spawns node agents for each node
  *    - All agents reach terminal status
- *    - report_workflow_done succeeds and closes the run
+ *    - End node reports done → SpaceRuntime tick completes the run
  *
  * 2. Gate-blocked flow with escalation:
  *    - Human gate on a channel blocks message delivery
  *    - Task Agent detects blocked state via check_node_status
  *    - Task Agent escalates by calling request_human_input
- *    - Main task transitions to needs_attention
+ *    - Main task transitions to blocked
  *
  * 3. Multi-agent node collaboration:
  *    - Multiple agents on the same node can complete independently
@@ -399,15 +399,15 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		expect(spawnParsed.success).toBe(true);
 
 		// The code agent is blocked (waiting for human approval on the gate)
-		// Task Agent simulates detecting this by checking a needs_attention state on the step task
+		// Task Agent simulates detecting this by checking the blocked state on the step task
 		// workflowNodeId was removed in M71 — filter by tasks that are not the main task
 		const stepTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
 		expect(stepTasks.length).toBeGreaterThan(0);
 
-		// Simulate the node agent reaching needs_attention (gate blocked)
+		// Simulate the node agent reaching blocked state (gate blocked)
 		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'blocked' });
 
-		// check_node_status should report needs_attention
+		// check_node_status should report blocked
 		const checkResult = await handlers.check_node_status({ step_id: wf.startNodeId });
 		const checkParsed = JSON.parse(checkResult.content[0].text);
 		expect(checkParsed.success).toBe(true);
