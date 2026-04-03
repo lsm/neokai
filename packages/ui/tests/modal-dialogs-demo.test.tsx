@@ -91,7 +91,7 @@ describe('SimpleAlert', () => {
 		});
 
 		expect(screen.getByText('Deactivate account')).toBeTruthy();
-		expect(screen.getByText('Are you sure you want to deactivate your account?')).toBeTruthy();
+		expect(screen.getByText(/Are you sure you want to deactivate your account\?/)).toBeTruthy();
 	});
 
 	it('has Deactivate and Cancel buttons', async () => {
