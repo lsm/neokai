@@ -1,4 +1,13 @@
-import { EllipsisVertical, Plus, Pencil } from 'lucide-preact';
+import {
+	Menu,
+	MenuButton,
+	MenuItems,
+	MenuItem,
+	Popover,
+	PopoverButton,
+	PopoverPanel,
+} from '../../../../src/mod.ts';
+import { EllipsisVertical, Plus, Pencil, Filter } from 'lucide-preact';
 
 export function SectionHeadingsDemo() {
 	return (
@@ -230,6 +239,80 @@ export function SectionHeadingsDemo() {
 							<span class="sr-only">More options</span>
 							<EllipsisVertical class="size-5" />
 						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 11 - With Actions and Popover */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With actions and popover</h3>
+				<div class="border-b border-gray-200 pb-5 dark:border-white/10">
+					<div class="sm:flex sm:items-center sm:justify-between">
+						<h3 class="text-base font-semibold text-gray-900 dark:text-white">Job Postings</h3>
+						<div class="mt-3 flex sm:mt-0 sm:ml-4 gap-2">
+							<Popover class="relative">
+								<PopoverButton class="rounded-full bg-white p-2 text-gray-400 shadow-xs ring-1 ring-inset ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:ring-white/5 dark:hover:bg-white/20 cursor-pointer">
+									<span class="sr-only">Filter</span>
+									<Filter class="size-5" />
+								</PopoverButton>
+								<PopoverPanel class="absolute right-0 mt-2 w-48 rounded-lg bg-surface-1 shadow-xl border border-surface-border p-4 z-10">
+									<div class="space-y-3">
+										<p class="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+											Status
+										</p>
+										<label class="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+											<input type="checkbox" class="rounded border-surface-border" />
+											Open
+										</label>
+										<label class="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+											<input type="checkbox" class="rounded border-surface-border" />
+											Closed
+										</label>
+										<label class="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+											<input type="checkbox" class="rounded border-surface-border" />
+											Draft
+										</label>
+									</div>
+								</PopoverPanel>
+							</Popover>
+							<Menu as="div" class="relative">
+								<MenuButton class="rounded-full bg-white p-2 text-gray-400 shadow-xs ring-1 ring-inset ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:ring-white/5 dark:hover:bg-white/20 cursor-pointer">
+									<span class="sr-only">More options</span>
+									<EllipsisVertical class="size-5" />
+								</MenuButton>
+								<MenuItems
+									transition
+									class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-surface-1 shadow-xl border border-surface-border transition data-closed:scale-95 data-closed:transform data-closed:opacity-0 data-enter:duration-100 data-enter:ease-out data-leave:duration-75 data-leave:ease-in outline-none"
+								>
+									<MenuItem>
+										<a
+											href="#"
+											class="block px-4 py-2 text-sm text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+										>
+											Export
+										</a>
+									</MenuItem>
+									<MenuItem>
+										<a
+											href="#"
+											class="block px-4 py-2 text-sm text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+										>
+											Share
+										</a>
+									</MenuItem>
+									<MenuItem>
+										<a
+											href="#"
+											class="block px-4 py-2 text-sm text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+										>
+											Settings
+										</a>
+									</MenuItem>
+								</MenuItems>
+							</Menu>
+						</div>
 					</div>
 				</div>
 			</div>

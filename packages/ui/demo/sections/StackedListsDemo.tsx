@@ -1,3 +1,6 @@
+import { Menu, MenuButton, MenuItems, MenuItem } from '../../src/mod.ts';
+import { EllipsisVertical } from 'lucide-preact';
+
 const people = [
 	{
 		name: 'Leslie Alexander',
@@ -690,6 +693,226 @@ export function StackedListsDemo() {
 									)}
 								</div>
 								<ChevronRightIcon class="size-5 flex-none text-text-tertiary dark:text-text-secondary" />
+							</div>
+						</li>
+					))}
+				</ul>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 19 - With Inline Links and Actions Menu */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">
+					With inline links and actions menu
+				</h3>
+				<ul role="list" class="divide-y divide-surface-2 dark:divide-white/5">
+					{[
+						{
+							name: 'Leslie Alexander',
+							email: 'leslie.alexander@example.com',
+							role: 'Co-Founder / CEO',
+							imageUrl:
+								'https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+							lastSeen: '3h ago',
+							lastSeenDateTime: '2023-01-23T13:23Z',
+						},
+						{
+							name: 'Michael Foster',
+							email: 'michael.foster@example.com',
+							role: 'Co-Founder / CTO',
+							imageUrl:
+								'https://images.unsplash.com/photo-1519244703995-f4e0f30006d5?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+							lastSeen: '3h ago',
+							lastSeenDateTime: '2023-01-23T13:23Z',
+						},
+						{
+							name: 'Dries Vincent',
+							email: 'dries.vincent@example.com',
+							role: 'Business Relations',
+							imageUrl:
+								'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+							lastSeen: null,
+						},
+					].map((person) => (
+						<li key={person.email} class="flex justify-between gap-x-6 py-5">
+							<div class="flex min-w-0 gap-x-4">
+								<img
+									alt=""
+									src={person.imageUrl}
+									class="size-12 flex-none rounded-full bg-surface-1 dark:bg-surface-2 dark:outline dark:-outline-offset-1 dark:outline-white/10"
+								/>
+								<div class="min-w-0 flex-auto">
+									<p class="text-sm/6 font-semibold text-text-primary">
+										<a href={person.href} class="hover:underline">
+											{person.name}
+										</a>
+									</p>
+									<p class="mt-1 flex text-xs/5 text-text-secondary">
+										<a href={`mailto:${person.email}`} class="truncate hover:underline">
+											{person.email}
+										</a>
+									</p>
+								</div>
+							</div>
+							<div class="flex shrink-0 items-center gap-x-6">
+								<div class="hidden sm:flex sm:flex-col sm:items-end">
+									<p class="text-sm/6 text-text-primary">{person.role}</p>
+									{person.lastSeen ? (
+										<p class="mt-1 text-xs/5 text-text-secondary">
+											Last seen <time dateTime={person.lastSeenDateTime}>{person.lastSeen}</time>
+										</p>
+									) : (
+										<div class="mt-1 flex items-center gap-x-1.5">
+											<div class="flex-none rounded-full bg-green-500/20 p-1 dark:bg-green-500/30">
+												<div class="size-1.5 rounded-full bg-green-500" />
+											</div>
+											<p class="text-xs/5 text-text-secondary">Online</p>
+										</div>
+									)}
+								</div>
+								<Menu as="div" class="relative flex-none">
+									<MenuButton class="relative block text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white cursor-pointer">
+										<span class="absolute -inset-2.5" />
+										<span class="sr-only">Open options</span>
+										<EllipsisVertical aria-hidden="true" class="size-5" />
+									</MenuButton>
+									<MenuItems
+										transition
+										class="absolute right-0 z-10 mt-2 w-32 origin-top-right rounded-md bg-surface-1 shadow-xl border border-surface-border transition data-closed:scale-95 data-closed:transform data-closed:opacity-0 data-enter:duration-100 data-enter:ease-out data-leave:duration-75 data-leave:ease-in outline-none"
+									>
+										<MenuItem>
+											<a
+												href="#"
+												class="block px-3 py-1 text-sm/6 text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+											>
+												View profile<span class="sr-only">, {person.name}</span>
+											</a>
+										</MenuItem>
+										<MenuItem>
+											<a
+												href="#"
+												class="block px-3 py-1 text-sm/6 text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+											>
+												Message<span class="sr-only">, {person.name}</span>
+											</a>
+										</MenuItem>
+									</MenuItems>
+								</Menu>
+							</div>
+						</li>
+					))}
+				</ul>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 20 - With Badges, Button and Actions Menu */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">
+					With badges, button and actions menu
+				</h3>
+				<ul role="list" class="divide-y divide-surface-2 dark:divide-white/5">
+					{[
+						{
+							id: 1,
+							name: 'GraphQL API',
+							href: '#',
+							status: 'Complete',
+							createdBy: 'Leslie Alexander',
+							dueDate: 'March 17, 2023',
+							dueDateTime: '2023-03-17T00:00Z',
+						},
+						{
+							id: 2,
+							name: 'New benefits plan',
+							href: '#',
+							status: 'In progress',
+							createdBy: 'Leslie Alexander',
+							dueDate: 'May 5, 2023',
+							dueDateTime: '2023-05-05T00:00Z',
+						},
+						{
+							id: 3,
+							name: 'Onboarding emails',
+							href: '#',
+							status: 'In progress',
+							createdBy: 'Courtney Henry',
+							dueDate: 'May 25, 2023',
+							dueDateTime: '2023-05-25T00:00Z',
+						},
+					].map((project) => (
+						<li key={project.id} class="flex items-center justify-between gap-x-6 py-5">
+							<div class="min-w-0">
+								<div class="flex items-start gap-x-3">
+									<p class="text-sm/6 font-semibold text-text-primary">{project.name}</p>
+									{project.status === 'In progress' ? (
+										<p class="mt-0.5 rounded-md bg-surface-2 px-1.5 py-0.5 text-xs font-medium text-text-secondary ring-1 ring-inset ring-surface-border/50 dark:bg-surface-2 dark:text-text-secondary">
+											{project.status}
+										</p>
+									) : null}
+									{project.status === 'Complete' ? (
+										<p class="mt-0.5 rounded-md bg-green-500/10 px-1.5 py-0.5 text-xs font-medium text-green-500 ring-1 ring-inset ring-green-500/20 dark:bg-green-500/10 dark:text-green-400 dark:ring-green-500/20">
+											{project.status}
+										</p>
+									) : null}
+								</div>
+								<div class="mt-1 flex items-center gap-x-2 text-xs/5 text-text-secondary">
+									<p class="whitespace-nowrap">
+										Due on <time dateTime={project.dueDateTime}>{project.dueDate}</time>
+									</p>
+									<svg viewBox="0 0 2 2" class="size-0.5 fill-current">
+										<circle r={1} cx={1} cy={1} />
+									</svg>
+									<p class="truncate">Created by {project.createdBy}</p>
+								</div>
+							</div>
+							<div class="flex flex-none items-center gap-x-4">
+								<a
+									href={project.href}
+									class="hidden rounded-md bg-surface-0 px-2.5 py-1.5 text-sm font-semibold text-text-primary shadow-xs ring-1 ring-inset ring-surface-border hover:bg-surface-1 sm:block dark:bg-surface-0/50 dark:text-text-primary dark:shadow-none dark:hover:bg-surface-1"
+								>
+									View project<span class="sr-only">, {project.name}</span>
+								</a>
+								<Menu as="div" class="relative flex-none">
+									<MenuButton class="relative block text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white cursor-pointer">
+										<span class="absolute -inset-2.5" />
+										<span class="sr-only">Open options</span>
+										<EllipsisVertical aria-hidden="true" class="size-5" />
+									</MenuButton>
+									<MenuItems
+										transition
+										class="absolute right-0 z-10 mt-2 w-32 origin-top-right rounded-md bg-surface-1 shadow-xl border border-surface-border transition data-closed:scale-95 data-closed:transform data-closed:opacity-0 data-enter:duration-100 data-enter:ease-out data-leave:duration-75 data-leave:ease-in outline-none"
+									>
+										<MenuItem>
+											<a
+												href="#"
+												class="block px-3 py-1 text-sm/6 text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+											>
+												Edit<span class="sr-only">, {project.name}</span>
+											</a>
+										</MenuItem>
+										<MenuItem>
+											<a
+												href="#"
+												class="block px-3 py-1 text-sm/6 text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+											>
+												Move<span class="sr-only">, {project.name}</span>
+											</a>
+										</MenuItem>
+										<MenuItem>
+											<a
+												href="#"
+												class="block px-3 py-1 text-sm/6 text-red-400 data-[focus]:bg-red-500 data-[focus]:text-white cursor-pointer"
+											>
+												Delete<span class="sr-only">, {project.name}</span>
+											</a>
+										</MenuItem>
+									</MenuItems>
+								</Menu>
 							</div>
 						</li>
 					))}
