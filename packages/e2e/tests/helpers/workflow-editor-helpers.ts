@@ -9,36 +9,25 @@
 import type { Page, Locator } from '@playwright/test';
 import { expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from './wait-helpers';
+import { createUniqueSpaceDir } from './space-helpers';
 
 // ─── Space lifecycle (RPC — infrastructure only) ───────────────────────────────
 
 export async function createSpace(page: Page, name: string): Promise<string> {
 	await waitForWebSocketConnected(page);
 	const workspaceRoot = await getWorkspaceRoot(page);
+	// Use a unique subdirectory to avoid conflicts with other parallel tests
+	// (workspace_path has a UNIQUE constraint in the DB).
+	const wsPath = createUniqueSpaceDir(workspaceRoot, 'workflow-editor');
 	return page.evaluate(
 		async ({ wsPath, spaceName }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Clean up any leftover space at this workspace path (including archived).
-			const norm = (p: string) => p.replace(/^\/private/, '');
-			try {
-				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
-					id: string;
-					workspacePath: string;
-				}>;
-				const matches = list.filter((s) => norm(s.workspacePath) === norm(wsPath));
-				for (const s of matches) {
-					await hub.request('space.delete', { id: s.id });
-				}
-			} catch {
-				// Ignore cleanup errors
-			}
-
 			const res = await hub.request('space.create', { name: spaceName, workspacePath: wsPath });
 			return (res as { id: string }).id;
 		},
-		{ wsPath: workspaceRoot, spaceName: name }
+		{ wsPath, spaceName: name }
 	);
 }
 

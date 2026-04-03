@@ -18,9 +18,6 @@ export async function createSpaceViaRpc(
 	workspacePath: string,
 	name: string
 ): Promise<string> {
-	// Pre-creation cleanup: delete any existing space at this path (including archived)
-	await cleanupExistingSpace(page, workspacePath);
-
 	const id = await page.evaluate(
 		async ({ workspacePath, name }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
@@ -76,30 +73,4 @@ export function createUniqueSpaceDir(workspaceRoot: string, prefix = 'space'): s
 	);
 	mkdirSync(uniqueDir, { recursive: true });
 	return uniqueDir;
-}
-
-/**
- * Delete any existing space at the given workspace path (including archived ones).
- * Prevents UNIQUE constraint violations when tests reuse the same workspace path.
- */
-async function cleanupExistingSpace(page: Page, workspacePath: string): Promise<void> {
-	try {
-		await page.evaluate(async (path) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			// Normalize macOS /private symlink prefix before comparing
-			const norm = (p: string) => p.replace(/^\/private/, '');
-			const spaces = (await hub.request('space.list', { includeArchived: true })) as Array<{
-				id: string;
-				workspacePath: string;
-			}>;
-			for (const space of spaces) {
-				if (norm(space.workspacePath) === norm(path)) {
-					await hub.request('space.delete', { id: space.id });
-				}
-			}
-		}, workspacePath);
-	} catch {
-		// Best-effort cleanup
-	}
 }
