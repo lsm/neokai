@@ -22,7 +22,11 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
+import {
+	createSpaceViaRpc,
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
@@ -43,8 +47,11 @@ test.describe('Comprehensive Space Navigation', () => {
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'nav');
 		spaceName = `E2E SpaceNav ${Date.now()}`;
-		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
+		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 	});
 
 	test.afterEach(async ({ page }) => {
