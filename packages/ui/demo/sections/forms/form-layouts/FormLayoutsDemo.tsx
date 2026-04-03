@@ -15,7 +15,7 @@ export function FormLayoutsDemo() {
 				<div class="bg-surface-0 border border-surface-border rounded-xl p-6 space-y-6">
 					{/* Username with prefix icon */}
 					<div>
-						<label for="username" class="block text-sm font-medium text-text-primary mb-2">
+						<label htmlFor="username" class="block text-sm font-medium text-text-primary mb-2">
 							Username
 						</label>
 						<InputGroup>
@@ -28,7 +28,7 @@ export function FormLayoutsDemo() {
 
 					{/* Email with icon */}
 					<div>
-						<label for="email" class="block text-sm font-medium text-text-primary mb-2">
+						<label htmlFor="email" class="block text-sm font-medium text-text-primary mb-2">
 							Email
 						</label>
 						<InputGroup>
@@ -41,7 +41,7 @@ export function FormLayoutsDemo() {
 
 					{/* Phone with icon */}
 					<div>
-						<label for="phone" class="block text-sm font-medium text-text-primary mb-2">
+						<label htmlFor="phone" class="block text-sm font-medium text-text-primary mb-2">
 							Phone
 						</label>
 						<InputGroup>
@@ -54,7 +54,7 @@ export function FormLayoutsDemo() {
 
 					{/* Password with icon */}
 					<div>
-						<label for="password" class="block text-sm font-medium text-text-primary mb-2">
+						<label htmlFor="password" class="block text-sm font-medium text-text-primary mb-2">
 							Password
 						</label>
 						<InputGroup>
@@ -81,7 +81,7 @@ export function FormLayoutsDemo() {
 					<div class="grid grid-cols-1 gap-x-6 gap-y-6 sm:grid-cols-2">
 						{/* First name */}
 						<div>
-							<label for="first-name" class="block text-sm font-medium text-text-primary mb-2">
+							<label htmlFor="first-name" class="block text-sm font-medium text-text-primary mb-2">
 								First name
 							</label>
 							<InputGroup>
@@ -94,7 +94,7 @@ export function FormLayoutsDemo() {
 
 						{/* Last name */}
 						<div>
-							<label for="last-name" class="block text-sm font-medium text-text-primary mb-2">
+							<label htmlFor="last-name" class="block text-sm font-medium text-text-primary mb-2">
 								Last name
 							</label>
 							<InputGroup>
@@ -107,7 +107,7 @@ export function FormLayoutsDemo() {
 
 						{/* Email */}
 						<div class="sm:col-span-2">
-							<label for="email-2" class="block text-sm font-medium text-text-primary mb-2">
+							<label htmlFor="email-2" class="block text-sm font-medium text-text-primary mb-2">
 								Email address
 							</label>
 							<InputGroup>
@@ -125,7 +125,7 @@ export function FormLayoutsDemo() {
 
 						{/* Phone */}
 						<div>
-							<label for="phone-2" class="block text-sm font-medium text-text-primary mb-2">
+							<label htmlFor="phone-2" class="block text-sm font-medium text-text-primary mb-2">
 								Phone
 							</label>
 							<InputGroup>
@@ -138,7 +138,7 @@ export function FormLayoutsDemo() {
 
 						{/* Appointment date */}
 						<div>
-							<label for="appointment" class="block text-sm font-medium text-text-primary mb-2">
+							<label htmlFor="appointment" class="block text-sm font-medium text-text-primary mb-2">
 								Appointment date
 							</label>
 							<InputGroup>
@@ -151,7 +151,7 @@ export function FormLayoutsDemo() {
 
 						{/* Street address */}
 						<div class="sm:col-span-2">
-							<label for="street" class="block text-sm font-medium text-text-primary mb-2">
+							<label htmlFor="street" class="block text-sm font-medium text-text-primary mb-2">
 								Street address
 							</label>
 							<InputGroup>
