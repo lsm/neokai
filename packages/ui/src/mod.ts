@@ -22,8 +22,20 @@ export {
 	DisclosureButton,
 	DisclosurePanel,
 } from './components/disclosure/disclosure.tsx';
-export { Description, Field, Fieldset, Label, Legend } from './components/field/field.tsx';
+export {
+	Description,
+	Field,
+	FieldError,
+	Fieldset,
+	Label,
+	Legend,
+} from './components/field/field.tsx';
 export { Input, Select, Textarea } from './components/input/input.tsx';
+export {
+	InputAddon,
+	InputGroup,
+	useInputGroupContext,
+} from './components/input-group/input-group.tsx';
 export {
 	Listbox,
 	ListboxButton,

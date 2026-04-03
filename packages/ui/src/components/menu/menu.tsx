@@ -902,6 +902,20 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
 MenuItemFn.displayName = 'MenuItem';
 export const MenuItem = MenuItemFn;
 
+// --- MenuSectionContext ---
+
+interface MenuSectionContextValue {
+	headingId: string | null;
+	setHeadingId: (id: string | null) => void;
+}
+
+const MenuSectionContext = createContext<MenuSectionContextValue | null>(null);
+MenuSectionContext.displayName = 'MenuSectionContext';
+
+function useMenuSectionContext(): MenuSectionContextValue | null {
+	return useContext(MenuSectionContext);
+}
+
 // --- MenuSection ---
 
 interface MenuSectionProps {
@@ -911,15 +925,32 @@ interface MenuSectionProps {
 }
 
 function MenuSectionFn({ as: Tag = 'div', children, ...rest }: MenuSectionProps) {
+	const [headingId, setHeadingId] = useState<string | null>(null);
+	const stableSetHeadingId = useCallback((id: string | null) => setHeadingId(id), []);
+
+	const ctx: MenuSectionContextValue = {
+		headingId,
+		setHeadingId: stableSetHeadingId,
+	};
+
 	const slot = {};
 
-	return render({
-		ourProps: {},
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'div',
-		name: 'MenuSection',
-	});
+	const ourProps: Record<string, unknown> = {
+		role: 'group',
+		'aria-labelledby': headingId,
+	};
+
+	return createElement(
+		MenuSectionContext.Provider,
+		{ value: ctx },
+		render({
+			ourProps,
+			theirProps: { as: Tag, children, ...rest },
+			slot,
+			defaultTag: 'div',
+			name: 'MenuSection',
+		})
+	);
 }
 
 MenuSectionFn.displayName = 'MenuSection';
@@ -934,10 +965,26 @@ interface MenuHeadingProps {
 }
 
 function MenuHeadingFn({ as: Tag = 'header', children, ...rest }: MenuHeadingProps) {
+	const sectionCtx = useMenuSectionContext();
+	const id = useId();
+
+	useEffect(() => {
+		if (!sectionCtx) return;
+		sectionCtx.setHeadingId(id);
+		return () => {
+			sectionCtx.setHeadingId(null);
+		};
+	}, [id, sectionCtx]);
+
 	const slot = {};
 
+	const ourProps: Record<string, unknown> = {
+		id,
+		role: 'presentation',
+	};
+
 	return render({
-		ourProps: { role: 'presentation' },
+		ourProps,
 		theirProps: { as: Tag, children, ...rest },
 		slot,
 		defaultTag: 'header',

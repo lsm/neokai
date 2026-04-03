@@ -23,6 +23,8 @@ interface FieldContextValue {
 	setDescriptionId: (id: string | null) => void;
 	controlId: string | null;
 	setControlId: (id: string | null) => void;
+	invalid: boolean;
+	setInvalid: (invalid: boolean) => void;
 }
 
 const FieldContext = createContext<FieldContextValue | null>(null);
@@ -89,10 +91,12 @@ function FieldFn({ as: Tag = 'div', disabled = false, children, ...rest }: Field
 	const [labelId, setLabelId] = useState<string | null>(null);
 	const [descriptionId, setDescriptionId] = useState<string | null>(null);
 	const [controlId, setControlId] = useState<string | null>(null);
+	const [invalid, setInvalid] = useState(false);
 
 	const stableLabelId = useCallback((id: string | null) => setLabelId(id), []);
 	const stableDescriptionId = useCallback((id: string | null) => setDescriptionId(id), []);
 	const stableControlId = useCallback((id: string | null) => setControlId(id), []);
+	const stableSetInvalid = useCallback((val: boolean) => setInvalid(val), []);
 
 	const ctx: FieldContextValue = {
 		disabled: isDisabled,
@@ -102,6 +106,8 @@ function FieldFn({ as: Tag = 'div', disabled = false, children, ...rest }: Field
 		setDescriptionId: stableDescriptionId,
 		controlId,
 		setControlId: stableControlId,
+		invalid,
+		setInvalid: stableSetInvalid,
 	};
 
 	const slot = { disabled: isDisabled };
@@ -247,3 +253,50 @@ function DescriptionFn({ as: Tag = 'p', children, ...rest }: DescriptionProps) {
 
 DescriptionFn.displayName = 'Description';
 export const Description = DescriptionFn;
+
+// --- FieldError ---
+
+interface FieldErrorProps {
+	as?: ElementType;
+	children?: unknown;
+	[key: string]: unknown;
+}
+
+function FieldErrorFn({ as: Tag = 'p', children, ...rest }: FieldErrorProps) {
+	const fieldCtx = useContext(FieldContext);
+	const fieldsetCtx = useContext(FieldsetContext);
+
+	const isDisabled = fieldCtx?.disabled ?? fieldsetCtx?.disabled ?? false;
+
+	const id = useId();
+
+	useEffect(() => {
+		if (!fieldCtx) return;
+		// FieldError sets aria-invalid on the associated input
+		fieldCtx.setInvalid(true);
+		// Also register as description for aria-describedby
+		fieldCtx.setDescriptionId(id);
+		return () => {
+			fieldCtx.setInvalid(false);
+			fieldCtx.setDescriptionId(null);
+		};
+	}, [id, fieldCtx]);
+
+	const slot = { disabled: isDisabled };
+
+	const ourProps: Record<string, unknown> = {
+		id,
+		role: 'alert',
+	};
+
+	return render({
+		ourProps,
+		theirProps: { as: Tag, children, ...rest },
+		slot,
+		defaultTag: 'p',
+		name: 'FieldError',
+	});
+}
+
+FieldErrorFn.displayName = 'FieldError';
+export const FieldError = FieldErrorFn;
