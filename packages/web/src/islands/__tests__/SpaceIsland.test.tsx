@@ -183,16 +183,16 @@ describe('SpaceIsland — configure workflow editor', () => {
 	}
 
 	it('renders configure sub-tabs', () => {
-		const { getByTestId, getByText } = renderConfigure();
+		const { getByTestId } = renderConfigure();
 		expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
-		expect(getByText('Agents')).toBeTruthy();
-		expect(getByText('Workflows')).toBeTruthy();
-		expect(getByText('Settings')).toBeTruthy();
+		expect(getByTestId('space-configure-tab-agents')).toBeTruthy();
+		expect(getByTestId('space-configure-tab-workflows')).toBeTruthy();
+		expect(getByTestId('space-configure-tab-settings')).toBeTruthy();
 	});
 
 	it('opens the visual editor when creating a workflow', () => {
 		const result = renderConfigure();
-		fireEvent.click(result.getByText('Workflows'));
+		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
 		fireEvent.click(result.getByTestId('create-workflow-btn'));
 		expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
 		expect(capturedVisualEditorProps.workflow).toBeUndefined();
@@ -200,7 +200,7 @@ describe('SpaceIsland — configure workflow editor', () => {
 
 	it('opens the visual editor when editing a workflow', () => {
 		const result = renderConfigure();
-		fireEvent.click(result.getByText('Workflows'));
+		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
 		fireEvent.click(result.getByTestId('edit-workflow-btn'));
 		expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
 		expect((capturedVisualEditorProps.workflow as SpaceWorkflow)?.id).toBe('wf-existing');
@@ -208,14 +208,14 @@ describe('SpaceIsland — configure workflow editor', () => {
 
 	it('hides configure sub-tabs while editing a workflow', () => {
 		const result = renderConfigure();
-		fireEvent.click(result.getByText('Workflows'));
+		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
 		fireEvent.click(result.getByTestId('create-workflow-btn'));
 		expect(result.queryByTestId('space-configure-tab-bar')).toBeNull();
 	});
 
 	it('restores configure sub-tabs after save', () => {
 		const result = renderConfigure();
-		fireEvent.click(result.getByText('Workflows'));
+		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
 		fireEvent.click(result.getByTestId('create-workflow-btn'));
 		fireEvent.click(result.getByTestId('visual-editor-save'));
 		expect(result.getByTestId('space-configure-tab-bar')).toBeTruthy();
