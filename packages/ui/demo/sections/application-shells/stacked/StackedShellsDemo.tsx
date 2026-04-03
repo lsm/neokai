@@ -7,7 +7,7 @@ import {
 	MenuButton,
 	MenuItem,
 	MenuItems,
-} from '../../../../../src/mod.ts';
+} from '../../../../src/mod.ts';
 import { Menu as MenuIcon, X, Bell, Search } from 'lucide-preact';
 
 const user = {
@@ -137,7 +137,7 @@ function StackedWithBottomBorder() {
 											aria-current={item.current ? 'page' : undefined}
 											class={classNames(
 												item.current ? 'text-white' : 'text-accent-100',
-												'rounded-md px-3 py-2 text-sm font-medium hover:bg-accent-500/75 dark:hover:bg-accent-700/75',
+												'rounded-md px-3 py-2 text-sm font-medium hover:bg-accent-500/75 dark:hover:bg-accent-700/75'
 											)}
 										>
 											{item.name}
@@ -296,7 +296,10 @@ function StackedWithBottomBorder() {
 function StackedWithLighterPageHeader() {
 	return (
 		<div class="min-h-full">
-			<Disclosure as="nav" class="border-b border-surface-border bg-surface-1 dark:border-white/10 dark:bg-gray-900">
+			<Disclosure
+				as="nav"
+				class="border-b border-surface-border bg-surface-1 dark:border-white/10 dark:bg-gray-900"
+			>
 				<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
 					<div class="flex h-16 justify-between">
 						<div class="flex">
@@ -322,7 +325,7 @@ function StackedWithLighterPageHeader() {
 											item.current
 												? 'border-accent-500 text-text-primary dark:border-accent-500 dark:text-white'
 												: 'border-transparent text-text-secondary hover:border-surface-border hover:text-text-primary dark:text-gray-400 dark:hover:border-white/20 dark:hover:text-gray-200',
-											'inline-flex items-center border-b-2 px-1 pt-1 text-sm font-medium',
+											'inline-flex items-center border-b-2 px-1 pt-1 text-sm font-medium'
 										)}
 									>
 										{item.name}
@@ -391,7 +394,7 @@ function StackedWithLighterPageHeader() {
 									item.current
 										? 'border-accent-500 bg-accent-500/10 text-accent-700 dark:border-accent-500 dark:bg-accent-600/10 dark:text-accent-300'
 										: 'border-transparent text-text-secondary hover:border-surface-border hover:bg-surface-2 hover:text-text-primary dark:text-gray-400 dark:hover:border-gray-500 dark:hover:bg-white/5 dark:hover:text-gray-200',
-									'block border-l-4 py-2 pr-4 pl-3 text-base font-medium',
+									'block border-l-4 py-2 pr-4 pl-3 text-base font-medium'
 								)}
 							>
 								{item.name}
@@ -408,8 +411,12 @@ function StackedWithLighterPageHeader() {
 								/>
 							</div>
 							<div class="ml-3">
-								<div class="text-base font-medium text-text-primary dark:text-white">{user.name}</div>
-								<div class="text-sm font-medium text-text-muted dark:text-gray-400">{user.email}</div>
+								<div class="text-base font-medium text-text-primary dark:text-white">
+									{user.name}
+								</div>
+								<div class="text-sm font-medium text-text-muted dark:text-gray-400">
+									{user.email}
+								</div>
 							</div>
 							<button
 								type="button"
@@ -439,7 +446,9 @@ function StackedWithLighterPageHeader() {
 			<div class="py-10">
 				<header>
 					<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-						<h1 class="text-3xl font-bold tracking-tight text-text-primary dark:text-white">Dashboard</h1>
+						<h1 class="text-3xl font-bold tracking-tight text-text-primary dark:text-white">
+							Dashboard
+						</h1>
 					</div>
 				</header>
 				<main>
@@ -486,7 +495,7 @@ function BrandedNavWithLighterPageHeader() {
 												item.current
 													? 'bg-gray-900 text-white dark:bg-gray-950/50'
 													: 'text-gray-300 hover:bg-white/5 hover:text-white',
-												'rounded-md px-3 py-2 text-sm font-medium',
+												'rounded-md px-3 py-2 text-sm font-medium'
 											)}
 										>
 											{item.name}
@@ -558,7 +567,7 @@ function BrandedNavWithLighterPageHeader() {
 									item.current
 										? 'bg-gray-900 text-white dark:bg-gray-950/50'
 										: 'text-gray-300 hover:bg-white/5 hover:text-white',
-									'block rounded-md px-3 py-2 text-base font-medium',
+									'block rounded-md px-3 py-2 text-base font-medium'
 								)}
 							>
 								{item.name}
@@ -605,7 +614,9 @@ function BrandedNavWithLighterPageHeader() {
 
 			<header class="relative bg-surface-1 shadow-sm dark:bg-gray-800 dark:shadow-none dark:after:pointer-events-none dark:after:absolute dark:after:inset-x-0 dark:after:inset-y-0 dark:after:border-y dark:after:border-white/10">
 				<div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-					<h1 class="text-3xl font-bold tracking-tight text-text-primary dark:text-white">Dashboard</h1>
+					<h1 class="text-3xl font-bold tracking-tight text-text-primary dark:text-white">
+						Dashboard
+					</h1>
 				</div>
 			</header>
 			<main>
@@ -643,7 +654,7 @@ function TwoRowNavigationWithOverlap() {
 												item.current
 													? 'bg-accent-700 text-white dark:bg-accent-950/40'
 													: 'text-white hover:bg-accent-500/75 dark:hover:bg-accent-700/75',
-												'rounded-md px-3 py-2 text-sm font-medium',
+												'rounded-md px-3 py-2 text-sm font-medium'
 											)}
 										>
 											{item.name}
@@ -715,7 +726,7 @@ function TwoRowNavigationWithOverlap() {
 									item.current
 										? 'bg-accent-700 text-white dark:bg-accent-950/40'
 										: 'text-white hover:bg-accent-500/75 dark:hover:bg-accent-700/75',
-									'block rounded-md px-3 py-2 text-base font-medium',
+									'block rounded-md px-3 py-2 text-base font-medium'
 								)}
 							>
 								{item.name}
@@ -762,7 +773,9 @@ function TwoRowNavigationWithOverlap() {
 
 			<header class="relative bg-surface-1 shadow-sm dark:bg-gray-800 dark:shadow-none dark:after:pointer-events-none dark:after:absolute dark:after:inset-x-0 dark:after:bottom-0 dark:after:h-px dark:after:bg-white/10">
 				<div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-					<h1 class="text-3xl font-bold tracking-tight text-text-primary dark:text-white">Dashboard</h1>
+					<h1 class="text-3xl font-bold tracking-tight text-text-primary dark:text-white">
+						Dashboard
+					</h1>
 				</div>
 			</header>
 			<main>
@@ -786,14 +799,18 @@ export function StackedShellsDemo() {
 			</div>
 
 			<div>
-				<h3 class="text-sm font-medium text-text-tertiary mb-3">Stacked with lighter page header</h3>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">
+					Stacked with lighter page header
+				</h3>
 				<div class="rounded-lg border border-surface-border overflow-hidden">
 					<StackedWithLighterPageHeader />
 				</div>
 			</div>
 
 			<div>
-				<h3 class="text-sm font-medium text-text-tertiary mb-3">Branded nav with lighter page header</h3>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">
+					Branded nav with lighter page header
+				</h3>
 				<div class="rounded-lg border border-surface-border overflow-hidden">
 					<BrandedNavWithLighterPageHeader />
 				</div>

@@ -1,4 +1,15 @@
-import { EllipsisVertical, Pencil } from 'lucide-preact';
+import { Menu, MenuButton, MenuItems, MenuItem } from '../../../../src/mod.ts';
+import {
+	Briefcase,
+	Calendar,
+	Check,
+	ChevronDown,
+	DollarSign,
+	Link,
+	MapPin,
+	EllipsisVertical,
+	Pencil,
+} from 'lucide-preact';
 
 export function PageHeadingsDemo() {
 	return (
@@ -274,6 +285,217 @@ export function PageHeadingsDemo() {
 							<span class="sr-only">More options</span>
 							<EllipsisVertical class="size-5" />
 						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 06 - With Logo, Meta and Actions */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With logo, meta and actions</h3>
+				<div class="px-4 py-10 sm:px-6 lg:px-8">
+					<div class="mx-auto flex items-center justify-between gap-x-8 lg:mx-0">
+						<div class="flex items-center gap-x-6">
+							<img
+								alt=""
+								src="https://tailwindcss.com/plus-assets/img/logos/48x48/tuple.svg"
+								class="size-16 flex-none rounded-full outline -outline-offset-1 outline-white/10 dark:outline-white/10"
+							/>
+							<h1>
+								<div class="text-sm/6 text-text-secondary">
+									Invoice <span class="text-text-primary">#00011</span>
+								</div>
+								<div class="mt-1 text-base font-semibold text-text-primary">Tuple, Inc</div>
+							</h1>
+						</div>
+						<div class="flex items-center gap-x-4 sm:gap-x-6">
+							<button
+								type="button"
+								class="hidden text-sm/6 font-semibold text-text-primary sm:block cursor-pointer"
+							>
+								Copy URL
+							</button>
+							<a href="#" class="hidden text-sm/6 font-semibold text-text-primary sm:block">
+								Edit
+							</a>
+							<a
+								href="#"
+								class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-400"
+							>
+								Send
+							</a>
+
+							<Menu as="div" class="relative sm:hidden">
+								<MenuButton class="relative block cursor-pointer">
+									<span class="absolute -inset-3" />
+									<span class="sr-only">More</span>
+									<EllipsisVertical aria-hidden="true" class="size-5 text-text-secondary" />
+								</MenuButton>
+
+								<MenuItems
+									transition
+									class="absolute right-0 z-10 mt-0.5 w-32 origin-top-right rounded-md bg-surface-1 shadow-xl border border-surface-border transition data-closed:scale-95 data-closed:transform data-closed:opacity-0 data-enter:duration-100 data-enter:ease-out data-leave:duration-75 data-leave:ease-in outline-none"
+								>
+									<MenuItem>
+										<button
+											type="button"
+											class="block w-full px-3 py-1 text-left text-sm/6 text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+										>
+											Copy URL
+										</button>
+									</MenuItem>
+									<MenuItem>
+										<a
+											href="#"
+											class="block px-3 py-1 text-sm/6 text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+										>
+											Edit
+										</a>
+									</MenuItem>
+								</MenuItems>
+							</Menu>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 07 - Card with Avatar and Stats */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">Card with avatar and stats</h3>
+				<div class="overflow-hidden rounded-lg bg-surface-0 shadow-sm dark:bg-surface-0/50 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/10">
+					<div class="bg-surface-0 p-6 dark:bg-surface-1">
+						<div class="sm:flex sm:items-center sm:justify-between">
+							<div class="sm:flex sm:space-x-5">
+								<div class="shrink-0">
+									<img
+										alt=""
+										src="https://images.unsplash.com/photo-1550525811-e5869dd03032?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
+										class="mx-auto size-20 rounded-full dark:outline dark:-outline-offset-1 dark:outline-white/10"
+									/>
+								</div>
+								<div class="mt-4 text-center sm:mt-0 sm:pt-1 sm:text-left">
+									<p class="text-sm font-medium text-text-secondary">Welcome back,</p>
+									<p class="text-xl font-bold text-text-primary sm:text-2xl">Rebecca Nicholas</p>
+									<p class="text-sm font-medium text-text-secondary">Product Designer</p>
+								</div>
+							</div>
+							<div class="mt-5 flex justify-center sm:mt-0">
+								<a
+									href="#"
+									class="flex items-center justify-center rounded-md bg-surface-0 px-3 py-2 text-sm font-semibold text-text-primary shadow-xs ring-1 ring-inset ring-surface-border hover:bg-surface-1 dark:bg-surface-0/50 dark:text-text-primary dark:shadow-none dark:hover:bg-surface-1"
+								>
+									View profile
+								</a>
+							</div>
+						</div>
+					</div>
+					<div class="grid grid-cols-1 divide-y divide-surface-2 border-t border-surface-2 bg-surface-1/50 sm:grid-cols-3 sm:divide-x sm:divide-y-0 dark:divide-white/10 dark:border-white/10">
+						{[
+							{ label: 'Vacation days left', value: 12 },
+							{ label: 'Sick days left', value: 4 },
+							{ label: 'Personal days left', value: 2 },
+						].map((stat) => (
+							<div key={stat.label} class="px-6 py-5 text-center text-sm font-medium">
+								<span class="text-text-primary">{stat.value}</span>{' '}
+								<span class="text-text-secondary">{stat.label}</span>
+							</div>
+						))}
+					</div>
+				</div>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 08 - With Icon Meta and Dropdown */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon meta and dropdown</h3>
+				<div class="lg:flex lg:items-center lg:justify-between">
+					<div class="min-w-0 flex-1">
+						<h2 class="text-2xl/7 font-bold text-text-primary sm:truncate sm:text-3xl sm:tracking-tight">
+							Back End Developer
+						</h2>
+						<div class="mt-1 flex flex-col sm:mt-0 sm:flex-row sm:flex-wrap sm:space-x-6">
+							<div class="mt-2 flex items-center text-sm text-text-secondary">
+								<Briefcase aria-hidden="true" class="mr-1.5 size-5 shrink-0 text-text-tertiary" />
+								Full-time
+							</div>
+							<div class="mt-2 flex items-center text-sm text-text-secondary">
+								<MapPin aria-hidden="true" class="mr-1.5 size-5 shrink-0 text-text-tertiary" />
+								Remote
+							</div>
+							<div class="mt-2 flex items-center text-sm text-text-secondary">
+								<DollarSign aria-hidden="true" class="mr-1.5 size-5 shrink-0 text-text-tertiary" />
+								$120k - $140k
+							</div>
+							<div class="mt-2 flex items-center text-sm text-text-secondary">
+								<Calendar aria-hidden="true" class="mr-1.5 size-5 shrink-0 text-text-tertiary" />
+								Closing on January 9, 2020
+							</div>
+						</div>
+					</div>
+					<div class="mt-5 flex lg:mt-0 lg:ml-4">
+						<span class="hidden sm:block">
+							<button
+								type="button"
+								class="inline-flex items-center rounded-md bg-surface-0 px-3 py-2 text-sm font-semibold text-text-primary shadow-xs ring-1 ring-inset ring-surface-border hover:bg-surface-1 dark:bg-white/10 dark:text-text-primary dark:shadow-none dark:ring-white/5 dark:hover:bg-white/20 cursor-pointer"
+							>
+								<Pencil class="mr-1.5 -ml-0.5 size-5 text-text-tertiary" />
+								Edit
+							</button>
+						</span>
+
+						<span class="ml-3 hidden sm:block">
+							<button
+								type="button"
+								class="inline-flex items-center rounded-md bg-surface-0 px-3 py-2 text-sm font-semibold text-text-primary shadow-xs ring-1 ring-inset ring-surface-border hover:bg-surface-1 dark:bg-white/10 dark:text-text-primary dark:shadow-none dark:ring-white/5 dark:hover:bg-white/20 cursor-pointer"
+							>
+								<Link class="mr-1.5 -ml-0.5 size-5 text-text-tertiary" />
+								View
+							</button>
+						</span>
+
+						<span class="sm:ml-3">
+							<button
+								type="button"
+								class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-400 cursor-pointer"
+							>
+								<Check class="mr-1.5 -ml-0.5 size-5" />
+								Publish
+							</button>
+						</span>
+
+						{/* Dropdown */}
+						<Menu as="div" class="relative ml-3 sm:hidden">
+							<MenuButton class="inline-flex items-center rounded-md bg-surface-0 px-3 py-2 text-sm font-semibold text-text-primary shadow-xs ring-1 ring-inset ring-surface-border hover:bg-surface-1 dark:bg-white/10 dark:text-text-primary dark:shadow-none dark:ring-white/5 dark:hover:bg-white/20 cursor-pointer">
+								More
+								<ChevronDown aria-hidden="true" class="-mr-1 ml-1.5 size-5 text-text-tertiary" />
+							</MenuButton>
+
+							<MenuItems
+								transition
+								class="absolute left-0 z-10 mt-2 -mr-1 w-24 origin-top-right rounded-md bg-surface-1 shadow-xl border border-surface-border transition data-closed:scale-95 data-closed:transform data-closed:opacity-0 data-enter:duration-200 data-enter:ease-out data-leave:duration-75 data-leave:ease-in outline-none"
+							>
+								<MenuItem>
+									<a
+										href="#"
+										class="block px-4 py-2 text-sm text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+									>
+										Edit
+									</a>
+								</MenuItem>
+								<MenuItem>
+									<a
+										href="#"
+										class="block px-4 py-2 text-sm text-text-primary data-[focus]:bg-accent-500 data-[focus]:text-white cursor-pointer"
+									>
+										View
+									</a>
+								</MenuItem>
+							</MenuItems>
+						</Menu>
 					</div>
 				</div>
 			</div>

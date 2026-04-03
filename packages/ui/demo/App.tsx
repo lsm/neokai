@@ -59,6 +59,13 @@ import { TextareasDemo } from './sections/TextareasDemo.tsx';
 import { TogglesDemo } from './sections/TogglesDemo.tsx';
 import { FormLayoutsDemo } from './sections/forms/form-layouts/FormLayoutsDemo.tsx';
 import { SelectMenusDemo } from './sections/forms/select-menus/SelectMenusDemo.tsx';
+import { ComboboxesDemo } from './sections/forms/comboboxes/ComboboxesDemo.tsx';
+import { CustomSelectMenusDemo } from './sections/forms/select-menus/CustomSelectMenusDemo.tsx';
+import { MultiColumnShellsDemo } from './sections/application-shells/multi-column/MultiColumnShellsDemo.tsx';
+import { SidebarShellsDemo } from './sections/application-shells/sidebar/SidebarShellsDemo.tsx';
+import { StackedShellsDemo } from './sections/application-shells/stacked/StackedShellsDemo.tsx';
+import { DropdownsDemo } from './sections/elements/dropdowns/DropdownsDemo.tsx';
+import { CalendarsHeadlessDemo } from './sections/data-display/calendars/CalendarsHeadlessDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
@@ -546,10 +553,38 @@ export function App() {
 					>
 						<MultiColumnDemo />
 					</DemoSection>
+					<DemoSection
+						id="application-shells-multi-column-shells"
+						title="Multi-column Shells (Headless+Icon)"
+					>
+						<MultiColumnShellsDemo />
+					</DemoSection>
+					<DemoSection id="application-shells-sidebar" title="Sidebar Shells (Headless+Icon)">
+						<SidebarShellsDemo />
+					</DemoSection>
+					<DemoSection id="application-shells-stacked" title="Stacked Shells (Headless+Icon)">
+						<StackedShellsDemo />
+					</DemoSection>
+
+					{/* Application UI - Forms / Comboboxes */}
+					<DemoSection id="forms-comboboxes" title="Comboboxes (Headless+Icon)">
+						<ComboboxesDemo />
+					</DemoSection>
+					<DemoSection id="forms-select-menus-headless" title="Custom Select Menus (Headless+Icon)">
+						<CustomSelectMenusDemo />
+					</DemoSection>
+
+					{/* Application UI - Elements / Dropdowns */}
+					<DemoSection id="elements-dropdowns" title="Dropdowns (Headless+Icon)">
+						<DropdownsDemo />
+					</DemoSection>
 
 					{/* Application UI - Data Display */}
 					<DemoSection id="data-display-calendars" title="Calendars (Data Display)">
 						<CalendarsDemo />
+					</DemoSection>
+					<DemoSection id="data-display-calendars-headless" title="Calendars (Headless+Icon)">
+						<CalendarsHeadlessDemo />
 					</DemoSection>
 					<DemoSection id="data-display-description-lists" title="Description Lists (Data Display)">
 						<DescriptionListsDemo />
