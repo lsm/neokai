@@ -105,21 +105,26 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test('nav panel "Workflows" link switches to workflows tab', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		// Click the "Workflows" link in the nav panel footer
-		const workflowsLink = page.locator('text=Workflows').first();
-		await expect(workflowsLink).toBeVisible({ timeout: 5000 });
-		await workflowsLink.click();
+		// After the dashboard refactor, Workflows lives in the Configure page.
+		// Navigate there via the "Configure space" gear button, then click the Workflows tab.
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+		await page.getByTestId('space-configure-tab-workflows').click();
 
-		// Workflows list should appear
-		await expect(page.locator('text=New Workflow')).toBeVisible({ timeout: 5000 });
+		// Workflows list should appear — "Create Workflow" button is the list's primary CTA
+		await expect(page.getByRole('button', { name: 'Create Workflow' })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 
 	test('nav panel "Agents" link switches to agents tab', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		const agentsLink = page.locator('text=Agents').first();
-		await expect(agentsLink).toBeVisible({ timeout: 5000 });
-		await agentsLink.click();
+		// After the dashboard refactor, Agents lives in the Configure page.
+		// Navigate there via the "Configure space" gear button — Agents is the default tab.
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+		await page.getByTestId('space-configure-tab-agents').click();
 
 		// Agents list should appear — empty state or list
 		await expect(
@@ -130,12 +135,11 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test('nav panel "Settings" link switches to settings tab', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		const settingsLink = page
-			.locator('[class*="cursor-pointer"]')
-			.filter({ hasText: 'Settings' })
-			.last();
-		await expect(settingsLink).toBeVisible({ timeout: 5000 });
-		await settingsLink.click();
+		// After the dashboard refactor, Settings lives in the Configure page.
+		// Navigate there via the "Configure space" gear button, then click the Settings tab.
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+		await page.getByTestId('space-configure-tab-settings').click();
 
 		// Settings panel should appear
 		await expect(
@@ -148,14 +152,18 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test('can create a workflow from template with tags', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		// Navigate to workflows
-		await page.locator('text=Workflows').first().click();
-		await expect(page.locator('text=New Workflow')).toBeVisible({ timeout: 5000 });
+		// Navigate to Workflows via the Configure page
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+		await page.getByTestId('space-configure-tab-workflows').click();
+		await expect(page.getByRole('button', { name: 'Create Workflow' })).toBeVisible({
+			timeout: 5000,
+		});
 
-		// Click New Workflow button
-		await page.getByRole('button', { name: 'New Workflow' }).first().click();
+		// Click Create Workflow button to open the editor
+		await page.getByRole('button', { name: 'Create Workflow' }).first().click();
 
-		// Editor should open
+		// Editor should open — the title in create mode is "New Workflow"
 		await expect(page.locator('text=New Workflow').first()).toBeVisible({ timeout: 5000 });
 
 		// Fill name
@@ -182,9 +190,11 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test('can add a rule to a workflow', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		// Navigate to workflows → open editor
-		await page.locator('text=Workflows').first().click();
-		await page.getByRole('button', { name: 'New Workflow' }).first().click();
+		// Navigate to Workflows via the Configure page → open editor
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+		await page.getByTestId('space-configure-tab-workflows').click();
+		await page.getByRole('button', { name: 'Create Workflow' }).first().click();
 		await expect(page.locator('input[placeholder*="Feature Development"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -210,9 +220,11 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test('rule "Applies to" shows step buttons from the steps list', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		// Navigate to workflows → open editor
-		await page.locator('text=Workflows').first().click();
-		await page.getByRole('button', { name: 'New Workflow' }).first().click();
+		// Navigate to Workflows via the Configure page → open editor
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+		await page.getByTestId('space-configure-tab-workflows').click();
+		await page.getByRole('button', { name: 'Create Workflow' }).first().click();
 		await expect(page.locator('input[placeholder*="Feature Development"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -237,8 +249,10 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test('removing a rule decrements rule count', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		await page.locator('text=Workflows').first().click();
-		await page.getByRole('button', { name: 'New Workflow' }).first().click();
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+		await page.getByTestId('space-configure-tab-workflows').click();
+		await page.getByRole('button', { name: 'Create Workflow' }).first().click();
 		await expect(page.locator('input[placeholder*="Feature Development"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -258,8 +272,10 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test('can open agent creation form from Agents tab', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		// Navigate to agents tab
-		await page.locator('text=Agents').first().click();
+		// Navigate to Agents via the Configure page
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+		await page.getByTestId('space-configure-tab-agents').click();
 		await expect(
 			page.locator('text=No custom agents yet').or(page.locator('text=Create Agent'))
 		).toBeVisible({ timeout: 5000 });
@@ -316,7 +332,9 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 
 		test('can delete a workflow via list UI', async ({ page }) => {
 			await navigateToSpace(page, spaceId);
-			await page.locator('text=Workflows').first().click();
+			await page.getByRole('button', { name: 'Configure space' }).click();
+			await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
+			await page.getByTestId('space-configure-tab-workflows').click();
 
 			// The workflow card should appear in the list
 			await expect(page.locator(`text=${deletableWorkflowName}`)).toBeVisible({ timeout: 5000 });

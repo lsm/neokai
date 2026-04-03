@@ -41,9 +41,9 @@ const ROLE_A = 'coder';
 const ROLE_B = 'reviewer';
 const AGENT_A_NAME = 'Coder Agent';
 const AGENT_B_NAME = 'Reviewer Agent';
-// Option text as rendered by the agent select: "{name} ({role})"
-const AGENT_A_OPTION = `${AGENT_A_NAME} (${ROLE_A})`;
-const AGENT_B_OPTION = `${AGENT_B_NAME} (${ROLE_B})`;
+// Option text as rendered by agent-select and add-agent-select: just the agent name (no role suffix)
+const AGENT_A_OPTION = AGENT_A_NAME;
+const AGENT_B_OPTION = AGENT_B_NAME;
 
 // ─── RPC helpers (infrastructure only) ───────────────────────────────────────
 
@@ -118,13 +118,14 @@ test.describe('Multi-Agent Step Editor', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill('Multi-Agent Badges Test');
 
-		// Add one step (Task Agent virtual node is always present in create mode, so we get 2 nodes)
+		// Add one step — Task Agent is shown as an overlay (data-testid="task-agent-overlay"),
+		// not as a workflow-node-* element, so we get 1 node in the canvas after clicking Add Step.
 		await editor.getByTestId('add-step-button').click();
 		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		await expect(nodes).toHaveCount(2, { timeout: 3000 });
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
 
-		// Open node config panel — use .last() to click the newly added regular node (Task Agent is not selectable)
-		await nodes.last().click();
+		// Open node config panel — click the single added regular node
+		await nodes.first().click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Parallel Step');
@@ -145,10 +146,11 @@ test.describe('Multi-Agent Step Editor', () => {
 		await panel.getByTestId('close-button').click();
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		// Get a fresh node locator after panel closes (the previous nodes locator may be stale)
-		// Task Agent is at index 0, so the regular node is at index 1
+		// Get a fresh node locator after panel closes (the previous nodes locator may be stale).
+		// Task Agent is rendered as a separate overlay (not a workflow-node-* element), so the
+		// regular node is the only workflow-node-* and sits at index 0.
 		const freshNodes = editor.locator('[data-testid^="workflow-node-"]');
-		const regularNode = freshNodes.nth(1);
+		const regularNode = freshNodes.nth(0);
 		const agentBadges = regularNode.getByTestId('agent-badges');
 		await expect(agentBadges).toBeVisible({ timeout: 3000 });
 		// Both agent names should appear as badge spans within the agent-badges container
@@ -314,8 +316,8 @@ test.describe('Multi-Agent Step Editor', () => {
 		// Add step (simplified - no multi-agent to isolate save issue)
 		await editor.getByTestId('add-step-button').click();
 		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		// Task Agent is at index 0, the new regular node is at index 1
-		await nodes.nth(1).click();
+		// Task Agent is an overlay (not a workflow-node-*), so the regular node is at index 0
+		await nodes.nth(0).click();
 		const panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
 		await panel.getByTestId('step-name-input').fill('Persist Step');
