@@ -24,7 +24,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks'
 import type { SpaceWorkflow, WorkflowNode, WorkflowChannel, Gate } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
-import { filterAgents, TEMPLATES, buildTemplateNodes } from '../WorkflowEditor';
+import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import { ConfirmModal } from '../../ui/ConfirmModal';
@@ -253,6 +253,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
 	const agents = filterAgents(spaceStore.agents.value);
+	const availableTemplates = useMemo(
+		() => getAvailableTemplates(spaceStore.workflows.value),
+		[spaceStore.workflows.value]
+	);
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 	const regularNodes = useMemo(
 		() =>
@@ -1286,7 +1290,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 							{showTemplates && (
 								<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
-									{TEMPLATES.map((t) => (
+									{availableTemplates.map((t) => (
 										<button
 											key={t.label}
 											onClick={() => handleTemplateSelection(t)}

@@ -54,6 +54,7 @@ import {
 	TEMPLATES,
 	buildTemplateNodes,
 	filterAgents,
+	getAvailableTemplates,
 	initFromWorkflow,
 } from '../WorkflowEditor';
 
@@ -383,6 +384,88 @@ describe('WorkflowEditor', () => {
 			if (agentSelects.length > 0) {
 				expect((agentSelects[0] as HTMLSelectElement).value).toBe('agent-1');
 			}
+		});
+
+		it('template agent lookup supports fuzzy role-name matching', () => {
+			const template = TEMPLATES.find((entry) => entry.label === 'Coding (Plan → Code)');
+			expect(template).toBeTruthy();
+
+			const nodes = buildTemplateNodes(template!, [
+				makeAgent('agent-a', 'Primary Planner Agent'),
+				makeAgent('agent-b', 'Senior Coder'),
+			]);
+
+			expect(nodes[0].agentId).toBe('agent-a');
+			expect(nodes[1].agentId).toBe('agent-b');
+		});
+
+		it('template assigns fallback agents when no role-name match exists', () => {
+			const template = TEMPLATES.find((entry) => entry.label === 'Coding (Plan → Code)');
+			expect(template).toBeTruthy();
+
+			const nodes = buildTemplateNodes(template!, [
+				makeAgent('agent-x', 'Alice'),
+				makeAgent('agent-y', 'Bob'),
+			]);
+
+			expect(nodes[0].agentId).toBe('agent-x');
+			expect(nodes[1].agentId).toBe('agent-y');
+		});
+
+		it('uses explicit agentId from template step when provided', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Explicit Agent ID',
+					description: 'Template with explicit IDs',
+					steps: [{ name: 'Code', role: 'coder', agentId: 'agent-2' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agentId).toBe('agent-2');
+		});
+
+		it('prefers built-in workflows from store as template source', () => {
+			const builtIns = [
+				makeWorkflow({
+					name: 'Coding Workflow',
+					description: 'Coding desc',
+					nodes: [
+						{ id: 'c1', name: 'Code', agents: [{ agentId: 'agent-2', name: 'coder' }] },
+						{ id: 'c2', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
+					],
+					startNodeId: 'c1',
+				}),
+				makeWorkflow({
+					name: 'Research Workflow',
+					nodes: [
+						{ id: 'r1', name: 'Research', agents: [{ agentId: 'agent-3', name: 'research' }] },
+						{ id: 'r2', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
+					],
+					startNodeId: 'r1',
+				}),
+				makeWorkflow({
+					name: 'Review-Only Workflow',
+					nodes: [
+						{ id: 'ro1', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
+					],
+					startNodeId: 'ro1',
+				}),
+				makeWorkflow({
+					name: 'Full-Cycle Coding Workflow',
+					nodes: [
+						{ id: 'f1', name: 'Planning', agents: [{ agentId: 'agent-1', name: 'planner' }] },
+					],
+					startNodeId: 'f1',
+				}),
+			];
+
+			const templates = getAvailableTemplates(builtIns);
+			expect(templates.map((template) => template.label)).toEqual([
+				'Coding Workflow',
+				'Research Workflow',
+				'Review-Only Workflow',
+				'Full-Cycle Coding Workflow',
+			]);
 		});
 	});
 

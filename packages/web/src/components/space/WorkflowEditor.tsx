@@ -11,7 +11,7 @@
  * - Save / Cancel
  */
 
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import type {
 	SpaceWorkflow,
 	SpaceAgent,
@@ -57,6 +57,8 @@ export interface WorkflowTemplateStep {
 	name: string;
 	/** Single-agent role/name lookup key. Ignored when agentSlots is provided. */
 	role?: string;
+	/** Explicit agent ID to use (skips role lookup when set). */
+	agentId?: string;
 	/** Multi-agent slot definitions for parallel node execution. */
 	agentSlots?: WorkflowTemplateAgentSlot[];
 	/** Optional default node system prompt. */
@@ -70,9 +72,21 @@ export interface WorkflowTemplateAgentSlot {
 	name: string;
 	/** Agent role/name lookup key used to assign the slot. */
 	role: string;
+	/** Explicit agent ID to use for this slot (skips role lookup when set). */
+	agentId?: string;
+	/** Optional default slot system prompt. */
+	systemPrompt?: string;
 	/** Optional default slot instructions. */
 	instructions?: string;
 }
+
+/** Built-in workflow names in preferred display order. */
+export const BUILT_IN_WORKFLOW_TEMPLATE_NAMES = [
+	'Coding Workflow',
+	'Research Workflow',
+	'Review-Only Workflow',
+	'Full-Cycle Coding Workflow',
+] as const;
 
 const V2_TEMPLATE_PROMPTS = {
 	planning:
@@ -328,14 +342,44 @@ function capitalizeRole(role: string): string {
 	return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
+function normalizeAgentLookup(value: string): string {
+	return value
+		.toLowerCase()
+		.trim()
+		.replace(/[^a-z0-9]+/g, ' ')
+		.replace(/\s+/g, ' ');
+}
+
+const TEMPLATE_ROLE_ALIASES: Record<string, string[]> = {
+	planner: ['planner', 'plan'],
+	coder: ['coder', 'code', 'developer', 'engineer'],
+	reviewer: ['reviewer', 'review'],
+	research: ['research', 'researcher'],
+	qa: ['qa', 'quality', 'tester', 'test'],
+	general: ['general', 'done', 'summary'],
+};
+
+const TEMPLATE_FALLBACK_USAGE_KEY = '__template-fallback__';
+
 function resolveTemplateAgent(
 	roleOrName: string,
 	agents: SpaceAgent[],
 	usageByRole: Map<string, number>
 ): SpaceAgent | undefined {
-	const key = roleOrName.trim().toLowerCase();
+	const key = normalizeAgentLookup(roleOrName);
 	if (!key) return undefined;
-	const matches = agents.filter((a) => a.name.toLowerCase() === key);
+
+	const aliases = TEMPLATE_ROLE_ALIASES[key] ?? [key];
+	const aliasSet = new Set(aliases);
+	const matches = agents.filter((a) => {
+		const normalizedName = normalizeAgentLookup(a.name);
+		if (!normalizedName) return false;
+		if (normalizedName === key) return true;
+		if (normalizedName.includes(key)) return true;
+		const tokens = normalizedName.split(' ');
+		return tokens.some((token) => aliasSet.has(token));
+	});
+
 	if (matches.length === 0) return undefined;
 
 	// Prefer distinct matches for repeated slots of the same role, then fall back
@@ -354,6 +398,81 @@ function getTemplateStepDefs(template: WorkflowTemplate): WorkflowTemplateStep[]
 	return stepRoles.map((role) => ({ name: capitalizeRole(role), role }));
 }
 
+function extractInstructionText(
+	value:
+		| string
+		| null
+		| undefined
+		| {
+				mode: string;
+				value?: string | null;
+		  }
+): string | undefined {
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		return trimmed ? trimmed : undefined;
+	}
+	if (!value || typeof value !== 'object') return undefined;
+	if (typeof value.value !== 'string') return undefined;
+	const trimmed = value.value.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+/** Convert a persisted workflow into a template picker entry. */
+export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
+	const steps: WorkflowTemplateStep[] = workflow.nodes.map((node) => {
+		if ((node.agents?.length ?? 0) > 1) {
+			return {
+				name: node.name,
+				agentSlots: (node.agents ?? []).map((agent) => ({
+					name: agent.name || agent.agentId,
+					role: agent.name || agent.agentId,
+					agentId: agent.agentId,
+					systemPrompt: extractInstructionText(agent.systemPrompt),
+					instructions: extractInstructionText(agent.instructions),
+				})),
+				instructions: node.instructions,
+			};
+		}
+
+		const primary = node.agents?.[0];
+		return {
+			name: node.name,
+			role: primary?.name ?? primary?.agentId ?? '',
+			agentId: primary?.agentId,
+			systemPrompt: extractInstructionText(primary?.systemPrompt),
+			instructions: node.instructions,
+		};
+	});
+
+	return {
+		label: workflow.name,
+		description: workflow.description ?? '',
+		steps,
+		channels: (workflow.channels ?? []).map((channel) => ({
+			...channel,
+			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+		})),
+		gates: (workflow.gates ?? []).map((gate) => ({
+			...gate,
+			fields: [...(gate.fields ?? [])],
+		})),
+		tags: [...(workflow.tags ?? [])],
+	};
+}
+
+/**
+ * Prefer daemon-seeded built-in workflows as template source so UI stays in sync.
+ * Falls back to static templates when no built-ins are available in store.
+ */
+export function getAvailableTemplates(workflows: SpaceWorkflow[]): WorkflowTemplate[] {
+	const byName = new Map(workflows.map((workflow) => [workflow.name, workflow]));
+	const builtIn = BUILT_IN_WORKFLOW_TEMPLATE_NAMES.map((name) => byName.get(name))
+		.filter((workflow): workflow is SpaceWorkflow => !!workflow)
+		.map((workflow) => workflowToTemplate(workflow));
+	return builtIn.length > 0 ? builtIn : TEMPLATES;
+}
+
 /**
  * Build workflow node drafts from a template definition.
  * Supports both legacy single-agent stepRoles and multi-agent steps.
@@ -367,10 +486,21 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 
 		if (Array.isArray(step.agentSlots) && step.agentSlots.length > 0) {
 			const agentSlots: WorkflowNodeAgent[] = step.agentSlots.map((slot, slotIndex) => {
-				const assigned = resolveTemplateAgent(slot.role, agents, usageByRole);
+				const assigned =
+					(slot.agentId ? agents.find((agent) => agent.id === slot.agentId) : undefined) ??
+					resolveTemplateAgent(slot.role, agents, usageByRole) ??
+					(() => {
+						const fallbackUsed = usageByRole.get(TEMPLATE_FALLBACK_USAGE_KEY) ?? 0;
+						usageByRole.set(TEMPLATE_FALLBACK_USAGE_KEY, fallbackUsed + 1);
+						if (agents.length === 0) return undefined;
+						return agents[Math.min(fallbackUsed, agents.length - 1)];
+					})();
 				return {
 					agentId: assigned?.id ?? '',
 					name: slot.name?.trim() || `${capitalizeRole(slot.role)} ${slotIndex + 1}`,
+					systemPrompt: slot.systemPrompt?.trim()
+						? { mode: 'override' as const, value: slot.systemPrompt.trim() }
+						: undefined,
 					instructions: slot.instructions?.trim()
 						? { mode: 'override' as const, value: slot.instructions.trim() }
 						: undefined,
@@ -382,16 +512,26 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				name,
 				agentId: '',
 				agents: agentSlots,
+				systemPrompt: step.systemPrompt?.trim() ?? undefined,
 				instructions: step.instructions?.trim() ?? '',
 			};
 		}
 
 		const role = step.role?.trim() ?? '';
-		const assigned = role ? resolveTemplateAgent(role, agents, usageByRole) : undefined;
+		const assigned =
+			(step.agentId ? agents.find((agent) => agent.id === step.agentId) : undefined) ??
+			(role ? resolveTemplateAgent(role, agents, usageByRole) : undefined) ??
+			(() => {
+				const fallbackUsed = usageByRole.get(TEMPLATE_FALLBACK_USAGE_KEY) ?? 0;
+				usageByRole.set(TEMPLATE_FALLBACK_USAGE_KEY, fallbackUsed + 1);
+				if (agents.length === 0) return undefined;
+				return agents[Math.min(fallbackUsed, agents.length - 1)];
+			})();
 		return {
 			localId: makeLocalId(),
 			name,
 			agentId: assigned?.id ?? '',
+			systemPrompt: step.systemPrompt?.trim() ?? undefined,
 			instructions: step.instructions?.trim() ?? '',
 		};
 	});
@@ -502,6 +642,10 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [showTemplates, setShowTemplates] = useState(false);
 
 	const agents = filterAgents(spaceStore.agents.value);
+	const availableTemplates = useMemo(
+		() => getAvailableTemplates(spaceStore.workflows.value),
+		[spaceStore.workflows.value]
+	);
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
 	// Determine which workflow run to use for completion indicators.
@@ -782,7 +926,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						</button>
 						{showTemplates && (
 							<div class="mt-3 grid grid-cols-1 gap-2">
-								{TEMPLATES.map((tpl) => (
+								{availableTemplates.map((tpl) => (
 									<button
 										key={tpl.label}
 										onClick={() => applyTemplate(tpl)}
