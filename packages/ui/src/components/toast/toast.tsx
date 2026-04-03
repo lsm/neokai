@@ -410,7 +410,8 @@ function ToasterFn({
 				},
 				item.icon && createElement('span', { 'data-toast-icon': true }, item.icon),
 				item.title && createElement(ToastTitle, null, item.title),
-				item.description && createElement(ToastDescription, null, item.description)
+				item.description && createElement(ToastDescription, null, item.description),
+				item.showProgress && createElement(ToastProgress, { key: `${item.id}-progress` })
 			)
 		);
 

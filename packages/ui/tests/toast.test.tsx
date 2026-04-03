@@ -758,6 +758,81 @@ describe('ToastProgress', () => {
 		const progress = screen.queryByTestId('progress');
 		expect(progress).toBeNull();
 	});
+
+	it('renders in managed toast via useToast when showProgress is true', async () => {
+		function AddToast() {
+			const { toast } = useToast();
+			return (
+				<button
+					onClick={() =>
+						toast({
+							title: 'Toast with progress',
+							description: 'Shows progress bar',
+							showProgress: true,
+							duration: 0,
+						})
+					}
+				>
+					Add Progress Toast
+				</button>
+			);
+		}
+
+		render(
+			<>
+				<AddToast />
+				<Toaster />
+			</>
+		);
+		await act(async () => {});
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Add Progress Toast'));
+		});
+		await act(async () => {});
+
+		const toast = document.querySelector('[role="status"]');
+		expect(toast).not.toBeNull();
+		// ToastProgress is rendered as a child of Toast when showProgress is true
+		expect(toast?.querySelector('[data-progress]')).not.toBeNull();
+	});
+
+	it('does not render progress in managed toast when showProgress is false', async () => {
+		function AddToast() {
+			const { toast } = useToast();
+			return (
+				<button
+					onClick={() =>
+						toast({
+							title: 'Toast without progress',
+							showProgress: false,
+							duration: 0,
+						})
+					}
+				>
+					Add No Progress Toast
+				</button>
+			);
+		}
+
+		render(
+			<>
+				<AddToast />
+				<Toaster />
+			</>
+		);
+		await act(async () => {});
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Add No Progress Toast'));
+		});
+		await act(async () => {});
+
+		const toast = document.querySelector('[role="status"]');
+		expect(toast).not.toBeNull();
+		// ToastProgress should not be rendered when showProgress is false
+		expect(toast?.querySelector('[data-progress]')).toBeNull();
+	});
 });
 
 // -------------------------
