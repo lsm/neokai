@@ -43,6 +43,13 @@ import { ContainersDemo } from './sections/layout/containers/ContainersDemo.tsx'
 import { DividersDemo } from './sections/layout/dividers/DividersDemo.tsx';
 import { ListContainersDemo } from './sections/layout/list-containers/ListContainersDemo.tsx';
 import { MediaObjectsDemo } from './sections/layout/media-objects/MediaObjectsDemo.tsx';
+import { ActionPanelsDemo } from './sections/ActionPanelsDemo.tsx';
+import { CheckboxesDemo } from './sections/CheckboxesDemo.tsx';
+import { InputGroupsDemo } from './sections/InputGroupsDemo.tsx';
+import { RadioGroupsDemo } from './sections/RadioGroupsDemo.tsx';
+import { SignInFormsDemo } from './sections/SignInFormsDemo.tsx';
+import { TextareasDemo } from './sections/TextareasDemo.tsx';
+import { TogglesDemo } from './sections/TogglesDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
@@ -310,7 +317,7 @@ export function App() {
 								<Category
 									key={category.id}
 									category={category}
-									defaultOpen={['application-shells', 'elements', 'headings', 'layout'].includes(
+									defaultOpen={['application-shells', 'elements', 'headings', 'layout', 'forms'].includes(
 										category.id
 									)}
 								/>
@@ -465,6 +472,29 @@ export function App() {
 					</DemoSection>
 					<DemoSection id="layout-media-objects" title="Layout / Media Objects">
 						<MediaObjectsDemo />
+					</DemoSection>
+
+					{/* Application UI - Forms */}
+					<DemoSection id="forms-action-panels" title="Forms / Action Panels">
+						<ActionPanelsDemo />
+					</DemoSection>
+					<DemoSection id="forms-checkboxes" title="Forms / Checkboxes">
+						<CheckboxesDemo />
+					</DemoSection>
+					<DemoSection id="forms-input-groups" title="Forms / Input Groups">
+						<InputGroupsDemo />
+					</DemoSection>
+					<DemoSection id="forms-radio-groups" title="Forms / Radio Groups">
+						<RadioGroupsDemo />
+					</DemoSection>
+					<DemoSection id="forms-sign-in-forms" title="Forms / Sign-in Forms">
+						<SignInFormsDemo />
+					</DemoSection>
+					<DemoSection id="forms-textareas" title="Forms / Textareas">
+						<TextareasDemo />
+					</DemoSection>
+					<DemoSection id="forms-toggles" title="Forms / Toggles">
+						<TogglesDemo />
 					</DemoSection>
 				</main>
 			</div>
