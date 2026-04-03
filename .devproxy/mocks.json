@@ -1035,6 +1035,55 @@
 			}
 		},
 		{
+			"comment": "Catch-all for E2E tests \u2014 matches any POST to messages endpoint with beta param. Must be before the generic catch-all.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-limit",
+						"value": "50"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-remaining",
+						"value": "49"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin (E2E test key)"
+					}
+				],
+				"body": {
+					"id": "msg_mock_e2e_test",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Hello! I'm Claude, an AI assistant."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 50,
+						"output_tokens": 20,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
 			"comment": "CATCH-ALL for beta messages \u2014 must be last. All probe-specific and follow-up mocks must precede this entry.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
