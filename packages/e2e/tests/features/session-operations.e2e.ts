@@ -2,7 +2,7 @@ import { test, expect } from '../../fixtures';
 import {
 	cleanupTestSession,
 	createSessionViaUI,
-	waitForAssistantResponse,
+	waitForMessageProcessed,
 } from '../helpers/wait-helpers';
 
 /**
@@ -53,12 +53,13 @@ test.describe('Session Export', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Send a test message to have content to export
+		const messageText = 'Hello, this is a test message for export.';
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('Hello, this is a test message for export.');
+		await textarea.fill(messageText);
 		await page.keyboard.press('Enter');
 
-		// Wait for assistant response using the reliable helper
-		await waitForAssistantResponse(page);
+		// Wait for message to be sent and response to be received
+		await waitForMessageProcessed(page, messageText);
 
 		// Setup download listener
 		const downloadPromise = page.waitForEvent('download');
@@ -83,8 +84,8 @@ test.describe('Session Export', () => {
 		await textarea.fill(testMessage);
 		await page.keyboard.press('Enter');
 
-		// Wait for assistant response using the reliable helper
-		await waitForAssistantResponse(page);
+		// Wait for message to be sent and response to be received
+		await waitForMessageProcessed(page, testMessage);
 
 		// Setup download listener
 		const downloadPromise = page.waitForEvent('download');
@@ -113,12 +114,13 @@ test.describe('Session Export', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Send a test message
+		const messageText = 'Test message for toast';
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('Test message for toast');
+		await textarea.fill(messageText);
 		await page.keyboard.press('Enter');
 
-		// Wait for assistant response using the reliable helper
-		await waitForAssistantResponse(page);
+		// Wait for message to be sent and response to be received
+		await waitForMessageProcessed(page, messageText);
 
 		// Setup download listener (need to handle download to complete export)
 		const downloadPromise = page.waitForEvent('download');
