@@ -88,6 +88,8 @@ export interface RoomRuntimeServiceConfig {
 	/** Absolute path to the SQLite database file. When provided, a db-query MCP server
 	 * with room scope is attached to each room chat session. */
 	dbPath?: string;
+	/** Disable automatic goal processing (tick loop) - for testing/CI environments */
+	disableGoalProcessing?: boolean;
 }
 
 export class RoomRuntimeService {
@@ -745,6 +747,7 @@ export class RoomRuntimeService {
 				if (!provider) return false;
 				return Boolean(await provider.isAvailable());
 			},
+			disableGoalProcessing: this.ctx.disableGoalProcessing,
 		});
 
 		this.runtimes.set(room.id, runtime);

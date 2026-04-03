@@ -528,3 +528,62 @@ describe('RoomRuntimeService isProviderAvailable wiring — ProviderRegistry int
 		expect(await cb('anthropic', 'claude-3')).toBe(false);
 	});
 });
+
+describe('RoomRuntimeService disableGoalProcessing flag', () => {
+	it('config accepts disableGoalProcessing flag', () => {
+		// Verify the config interface accepts the flag
+		const configWithFlag: RoomRuntimeServiceConfig = {
+			db: {} as never,
+			messageHub: {} as never,
+			daemonHub: makeDaemonHub() as never,
+			getApiKey: async () => null,
+			roomManager: makeRoomManager() as never,
+			sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
+			defaultWorkspacePath: '/tmp',
+			defaultModel: 'test-model',
+			getGlobalSettings: () => ({}) as never,
+			settingsManager: { getEnabledMcpServersConfig: () => ({}) } as never,
+			reactiveDb: {} as never,
+			disableGoalProcessing: true,
+		};
+
+		// Verify the flag is set correctly
+		expect(configWithFlag.disableGoalProcessing).toBe(true);
+
+		// Verify undefined is also valid
+		const configWithoutFlag: RoomRuntimeServiceConfig = {
+			...configWithFlag,
+			disableGoalProcessing: undefined,
+		};
+		expect(configWithoutFlag.disableGoalProcessing).toBeUndefined();
+	});
+
+	it('passes disableGoalProcessing=true to RoomRuntime when service has it enabled', () => {
+		// Use createRuntimeTestContext to create a runtime with the flag enabled
+		// This creates a real RoomRuntime, so we can verify the flag is propagated
+		const { createRuntimeTestContext } = require('./room-runtime-test-helpers');
+
+		const ctx = createRuntimeTestContext({ disableGoalProcessing: true });
+
+		// Access the private disableGoalProcessing field to verify it was set
+		const runtime = ctx.runtime as unknown as { disableGoalProcessing: boolean };
+		expect(runtime.disableGoalProcessing).toBe(true);
+
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	it('defaults disableGoalProcessing=false on RoomRuntime when service does not have it set', () => {
+		// Use createRuntimeTestContext without the flag to verify the default is false
+		const { createRuntimeTestContext } = require('./room-runtime-test-helpers');
+
+		const ctx = createRuntimeTestContext({ disableGoalProcessing: false });
+
+		// Access the private disableGoalProcessing field to verify it's false
+		const runtime = ctx.runtime as unknown as { disableGoalProcessing: boolean };
+		expect(runtime.disableGoalProcessing).toBe(false);
+
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+});

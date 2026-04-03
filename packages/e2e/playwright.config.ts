@@ -241,6 +241,10 @@ export default defineConfig({
 			DB_PATH: e2eDatabasePath,
 			// Enable Neo agent for E2E tests (bypasses test-mode guard in app.ts)
 			NEOKAI_ENABLE_NEO_AGENT: '1',
+			// Disable automatic goal processing to prevent worktree creation spam in E2E tests
+			// Goals can still be created/manually triggered via UI or RPC, but the daemon
+			// won't automatically try to spawn planning groups that require worktrees.
+			NEOKAI_DISABLE_GOAL_PROCESSING: '1',
 			// Pass random port to CLI when in E2E_PORT mode
 			...(e2ePort ? { NEOKAI_PORT: e2ePort } : {}),
 		},
