@@ -30,6 +30,7 @@ import type {
 import type { SpaceWorkflow, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../src/lib/space/runtime/task-agent-manager.ts';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
+import { composePromptLayer } from '../../../src/lib/space/agents/custom-agent.ts';
 
 // ---------------------------------------------------------------------------
 // MockNotificationSink
@@ -133,6 +134,8 @@ function seedNodeExec(
 // ---------------------------------------------------------------------------
 
 class MockTaskAgentManager {
+	readonly cancelledSessions: string[] = [];
+
 	isTaskAgentAlive(_taskId: string): boolean {
 		return false;
 	}
@@ -151,6 +154,10 @@ class MockTaskAgentManager {
 	}
 
 	async rehydrate(): Promise<void> {}
+
+	cancelBySessionId(agentSessionId: string): void {
+		this.cancelledSessions.push(agentSessionId);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -961,6 +968,367 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(completedEvents).toHaveLength(1);
 			// Dedup entry was removed when executor was cleaned up
 			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(false);
+		});
+	});
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// End-node bypass completion scenarios
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	describe('end-node bypass completion', () => {
+		test('end node execution done → run completes via end-node short-circuit', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `End-Node Bypass ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'en-start', name: 'Start', agentId: AGENT_A },
+					{ id: 'en-end', name: 'End', agentId: AGENT_B },
+				],
+				startNodeId: 'en-start',
+				endNodeId: 'en-end',
+				tags: [],
+			});
+			expect(workflow.endNodeId).toBe('en-end');
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Complete start node task
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Seed both node executions — end node is done
+			seedNodeExec(db, run.id, 'en-start', 'Start', 'done');
+			seedNodeExec(db, run.id, 'en-end', 'End', 'done');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+			expect(completedRun?.completedAt).toBeDefined();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				expect(completedEvents[0].status).toBe('done');
+			}
+		});
+
+		test('non-end node done but end node still in_progress → run stays in_progress', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Non-End Done ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'ne-start', name: 'Start', agentId: AGENT_A },
+					{ id: 'ne-end', name: 'End', agentId: AGENT_B },
+				],
+				startNodeId: 'ne-start',
+				endNodeId: 'ne-end',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Start node exec is terminal, but end node exec is still in_progress
+			seedNodeExec(db, run.id, 'ne-start', 'Start', 'done');
+			seedNodeExec(db, run.id, 'ne-end', 'End', 'in_progress');
+
+			await rt.executeTick();
+
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('in_progress');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+		});
+
+		test('end node execution not created AND sibling in_progress → run stays in_progress', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `End Not Created Sibling IP ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'encip-start', name: 'Start', agentId: AGENT_A },
+					{ id: 'encip-mid', name: 'Middle', agentId: AGENT_B },
+					{ id: 'encip-end', name: 'End', agentId: AGENT_C },
+				],
+				startNodeId: 'encip-start',
+				endNodeId: 'encip-end',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Start node done, middle node in_progress, end node not created
+			seedNodeExec(db, run.id, 'encip-start', 'Start', 'done');
+			seedNodeExec(db, run.id, 'encip-mid', 'Middle', 'in_progress');
+			// No exec for 'encip-end'
+
+			await rt.executeTick();
+
+			// Middle exec is in_progress → fallback returns false → run stays in_progress
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('in_progress');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+		});
+
+		test('end node done while sibling exec in_progress → run completes, sibling exec cancelled', async () => {
+			const mockTam = new MockTaskAgentManager();
+			const rt = makeRuntimeWithTam({
+				taskAgentManager: mockTam as unknown as TaskAgentManager,
+			});
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `End Bypass Sibling Cancel ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'ec-sibling', name: 'Sibling', agentId: AGENT_A },
+					{ id: 'ec-end', name: 'End', agentId: AGENT_B },
+				],
+				startNodeId: 'ec-sibling',
+				endNodeId: 'ec-end',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Set start task to in_progress (sibling)
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+
+			// Seed sibling exec as in_progress with an agentSessionId
+			const siblingExecId = seedNodeExec(db, run.id, 'ec-sibling', 'Sibling', 'in_progress');
+			const siblingSessionId = 'mock-sibling-session-001';
+			db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+				siblingSessionId,
+				siblingExecId
+			);
+
+			// Seed end node exec as done
+			seedNodeExec(db, run.id, 'ec-end', 'End', 'done');
+
+			await rt.executeTick();
+
+			// Run should be done (end-node short-circuit)
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+
+			// Sibling exec should be cancelled
+			const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
+			const siblingExec = execs.find((e) => e.workflowNodeId === 'ec-sibling');
+			expect(siblingExec?.status).toBe('cancelled');
+
+			// TAM should have received cancelBySessionId for the sibling session
+			expect(mockTam.cancelledSessions).toContain(siblingSessionId);
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('workflow without endNodeId → all-executions-done fallback (backward compat)', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `No End Node ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'no-en-1', name: 'Step 1', agentId: AGENT_A },
+					{ id: 'no-en-2', name: 'Step 2', agentId: AGENT_B },
+				],
+				startNodeId: 'no-en-1',
+				tags: [],
+			});
+			expect(workflow.endNodeId).toBeUndefined();
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Both node execs terminal
+			seedNodeExec(db, run.id, 'no-en-1', 'Step 1', 'done');
+			seedNodeExec(db, run.id, 'no-en-2', 'Step 2', 'done');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+		});
+
+		test('end-node bypass: blocked sibling does not block run when end node is done', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `End Bypass Blocked Sibling ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'ebs-sibling', name: 'Sibling', agentId: AGENT_A },
+					{ id: 'ebs-end', name: 'End', agentId: AGENT_B },
+				],
+				startNodeId: 'ebs-sibling',
+				endNodeId: 'ebs-end',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Sibling task is blocked
+			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+
+			// Sibling exec blocked, end exec done
+			seedNodeExec(db, run.id, 'ebs-sibling', 'Sibling', 'blocked');
+			seedNodeExec(db, run.id, 'ebs-end', 'End', 'done');
+
+			await rt.executeTick();
+
+			// End-node bypass is active → blocked task notification skipped
+			// CompletionDetector returns true (end node done) → run completes
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('done');
+
+			// No spurious task_blocked events (end-node bypass suppressed them)
+			const blockedEvents = sink.events.filter((e) => e.kind === 'task_blocked');
+			expect(blockedEvents).toHaveLength(0);
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+	});
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// composePromptLayer: slot override composition
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	describe('composePromptLayer: slot override composition', () => {
+		test('systemPrompt override mode → replaces base prompt entirely', () => {
+			const result = composePromptLayer('Base system prompt', { mode: 'override', value: 'X' });
+			expect(result).toBe('X');
+		});
+
+		test('systemPrompt expand mode → appends override value to base with double newline', () => {
+			const result = composePromptLayer('Base system prompt', { mode: 'expand', value: 'X' });
+			expect(result).toBe('Base system prompt\n\nX');
+		});
+
+		test('instructions override mode → replaces base instructions entirely', () => {
+			const base = 'Original instructions for the agent';
+			const result = composePromptLayer(base, { mode: 'override', value: 'Override instructions' });
+			expect(result).toBe('Override instructions');
+		});
+
+		test('instructions expand mode → appends override to base instructions', () => {
+			const base = 'Original instructions for the agent';
+			const result = composePromptLayer(base, { mode: 'expand', value: 'Extra instructions' });
+			expect(result).toBe('Original instructions for the agent\n\nExtra instructions');
+		});
+
+		test('no override → returns base value unchanged', () => {
+			const base = 'Agent base system prompt';
+			expect(composePromptLayer(base, undefined)).toBe(base);
+		});
+
+		test('expand with empty base → returns only override value', () => {
+			const result = composePromptLayer('', { mode: 'expand', value: 'Expand only' });
+			expect(result).toBe('Expand only');
+		});
+
+		test('expand with null base → returns only override value', () => {
+			const result = composePromptLayer(null, { mode: 'expand', value: 'Expand only' });
+			expect(result).toBe('Expand only');
+		});
+
+		test('override with null base → returns override value', () => {
+			const result = composePromptLayer(null, { mode: 'override', value: 'Override only' });
+			expect(result).toBe('Override only');
+		});
+
+		test('no override with null base → returns empty string', () => {
+			expect(composePromptLayer(null, undefined)).toBe('');
+		});
+
+		test('expand with empty override value → returns base only', () => {
+			const result = composePromptLayer('Base value', { mode: 'expand', value: '   ' });
+			expect(result).toBe('Base value');
+		});
+	});
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// Orchestration task auto-complete on run completion
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	describe('orchestration task auto-complete on run completion', () => {
+		test('in_progress orchestration task auto-completed when run completes', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'orch-node-1', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Orch Run');
+
+			// Create an orchestration task with taskAgentSessionId starting with 'space:'
+			const orchTask = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Orchestration',
+				description: 'Task agent orchestration task',
+				workflowRunId: run.id,
+				status: 'in_progress',
+				taskAgentSessionId: `space:${SPACE_ID}:task:${tasks[0].id}`,
+			});
+
+			// Complete the workflow node execution
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'orch-node-1', 'agent', 'done');
+
+			await rt.executeTick();
+
+			// Run should be done
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+
+			// Orchestration task should be auto-completed
+			const orchTaskAfter = taskRepo.getTask(orchTask.id);
+			expect(orchTaskAfter?.status).toBe('done');
+		});
+
+		test('open orchestration task is skipped on run completion (no throw)', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'orch-open-1', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Orch Open Run');
+
+			// Create an orchestration task with taskAgentSessionId but in 'open' state
+			const orchTask = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Orchestration Open',
+				description: 'Task agent orchestration task in open state',
+				workflowRunId: run.id,
+				status: 'open',
+				taskAgentSessionId: `space:${SPACE_ID}:task:${tasks[0].id}`,
+			});
+
+			// Complete the workflow node execution
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'orch-open-1', 'agent', 'done');
+
+			// Should not throw
+			await rt.executeTick();
+
+			// Run should be done
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+
+			// Orchestration task should remain 'open' — only 'in_progress' tasks are auto-completed
+			const orchTaskAfter = taskRepo.getTask(orchTask.id);
+			expect(orchTaskAfter?.status).toBe('open');
 		});
 	});
 });
