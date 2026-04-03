@@ -319,6 +319,8 @@ export interface RuntimeTestContextOptions {
 	) => Promise<{ currentModel: string; provider: string } | null>;
 	/** Optional MessageHub mock (kept for backward compat; no longer used by trySwitchToFallbackModel) */
 	messageHub?: MessageHub;
+	/** Disable automatic goal processing for testing */
+	disableGoalProcessing?: boolean;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -364,6 +366,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		isProviderAvailable: opts?.isProviderAvailable,
 		messageHub: opts?.messageHub,
 		daemonHub: mockHub as unknown as DaemonHub,
+		disableGoalProcessing: opts?.disableGoalProcessing,
 	});
 
 	return {

@@ -44,6 +44,7 @@ export interface Config {
 	nodeEnv: string;
 	workspaceRoot?: string;
 	disableWorktrees?: boolean; // For testing - disables git worktree creation
+	disableGoalProcessing?: boolean; // For testing/CI - disables automatic goal processing (tick loop)
 	// GitHub integration
 	githubWebhookSecret?: string; // Secret for verifying webhook signatures
 	githubPollingInterval?: number; // Polling interval in seconds (0 = disabled)
@@ -110,6 +111,8 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
 		nodeEnv,
 		workspaceRoot,
+		disableWorktrees: process.env.NEOKAI_DISABLE_WORKTREES === '1',
+		disableGoalProcessing: process.env.NEOKAI_DISABLE_GOAL_PROCESSING === '1',
 		// GitHub integration
 		githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
 		githubPollingInterval: parseInt(process.env.GITHUB_POLLING_INTERVAL || '0'),

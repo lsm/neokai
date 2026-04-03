@@ -24,7 +24,14 @@
 		"./toast": "./src/components/toast/toast.tsx",
 		"./spinner": "./src/components/spinner/spinner.tsx",
 		"./skeleton": "./src/components/skeleton/skeleton.tsx",
-		"./icon-button": "./src/components/icon-button/icon-button.tsx"
+		"./icon-button": "./src/components/icon-button/icon-button.tsx",
+		"./alert": "./src/components/alert/alert.tsx",
+		"./avatar": "./src/components/avatar/avatar.tsx",
+		"./badge": "./src/components/badge/badge.tsx",
+		"./input-group": "./src/components/input-group/input-group.tsx",
+		"./progress-bar": "./src/components/progress-bar/progress-bar.tsx",
+		"./stepper": "./src/components/stepper/stepper.tsx",
+		"./touch-target": "./src/components/touch-target/touch-target.tsx"
 	},
 	"dependencies": {
 		"@floating-ui/dom": "1.7.6",
@@ -37,6 +44,7 @@
 		"@types/bun": "1.3.11",
 		"@vitest/coverage-v8": "4.1.2",
 		"happy-dom": "20.8.9",
+		"lucide-preact": "0.577.0",
 		"tailwindcss": "4.2.2",
 		"vite": "8.0.3",
 		"vitest": "4.1.2"

@@ -509,3 +509,48 @@ describe('RoomRuntime', () => {
 		});
 	});
 });
+
+describe('RoomRuntime disableGoalProcessing', () => {
+	it('skips goal processing when disableGoalProcessing is true', async () => {
+		// Create a context with disableGoalProcessing enabled
+		const ctx = createRuntimeTestContext({ disableGoalProcessing: true });
+
+		// Create a goal with a task
+		await createGoalAndTask(ctx);
+
+		// Start the runtime
+		ctx.runtime.start();
+
+		// Tick should NOT spawn any groups since goal processing is disabled
+		await ctx.runtime.tick();
+
+		// No session factory calls should be made
+		expect(ctx.sessionFactory.calls).toHaveLength(0);
+
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	it('still processes tasks when disableGoalProcessing is false (default)', async () => {
+		// Create a context without disableGoalProcessing (default)
+		const ctx = createRuntimeTestContext({ disableGoalProcessing: false });
+
+		// Create a goal with a task
+		await createGoalAndTask(ctx);
+
+		// Start the runtime
+		ctx.runtime.start();
+
+		// Tick should spawn groups for pending tasks
+		await ctx.runtime.tick();
+
+		// Worker and leader sessions should be created
+		const workerCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
+		);
+		expect(workerCalls).toHaveLength(1);
+
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+});

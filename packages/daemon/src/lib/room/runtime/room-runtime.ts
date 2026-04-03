@@ -157,6 +157,8 @@ export interface RoomRuntimeConfig {
 	getGoal: (goalId: string) => Promise<RoomGoal | null>;
 	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
 	getGlobalSettings: () => GlobalSettings;
+	/** Disable automatic goal processing (tick loop) - for testing/CI environments */
+	disableGoalProcessing?: boolean;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -185,6 +187,7 @@ export class RoomRuntime {
 	private readonly getRoomById: (roomId: string) => Room | null;
 	private readonly defaultModel: string;
 	private readonly getGlobalSettings: () => GlobalSettings;
+	private readonly disableGoalProcessing: boolean;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -308,6 +311,7 @@ export class RoomRuntime {
 		this.getRoomById = config.getRoom;
 		this.defaultModel = config.defaultModel ?? 'sonnet';
 		this.getGlobalSettings = config.getGlobalSettings;
+		this.disableGoalProcessing = config.disableGoalProcessing ?? false;
 
 		this.taskGroupManager = new TaskGroupManager({
 			groupRepo: config.groupRepo,
@@ -3175,6 +3179,13 @@ export class RoomRuntime {
 	}
 
 	private async executeTick(): Promise<void> {
+		// Skip goal processing when disabled (e.g., in test/CI environments)
+		// This prevents the daemon from being overwhelmed trying to spawn planning groups
+		// when worktrees can't be created (e.g., non-git repos, permission issues).
+		if (this.disableGoalProcessing) {
+			return;
+		}
+
 		// Note: cleanStaleGroups() is called in tick() before executeTick(), so it runs
 		// independently of any future tick-body lock.
 
