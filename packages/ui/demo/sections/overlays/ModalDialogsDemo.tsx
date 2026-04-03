@@ -469,4 +469,12 @@ function ModalDialogsDemo() {
 	);
 }
 
-export { ModalDialogsDemo };
+export {
+	ModalDialogsDemo,
+	CenteredWithSingleAction,
+	CenteredWithWideButtons,
+	SimpleAlert,
+	SimpleWithDismissButton,
+	SimpleWithGrayFooter,
+	SimpleWithLeftAlignedButtons,
+};

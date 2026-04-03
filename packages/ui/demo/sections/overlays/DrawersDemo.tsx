@@ -1681,4 +1681,18 @@ function DrawersDemo() {
 	);
 }
 
-export { DrawersDemo };
+export {
+	DrawersDemo,
+	EmptyDrawer,
+	EmptyWideDrawer,
+	DrawerWithOverlay,
+	DrawerWithCloseButtonOutside,
+	DrawerWithBrandedHeader,
+	DrawerWithStickyFooter,
+	CreateProjectFormDrawer,
+	WideCreateProjectFormDrawer,
+	UserProfileDrawer,
+	FileDetailsSlideOver,
+	ContactListDrawer,
+	FileDetailsDrawer,
+};
