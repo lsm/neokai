@@ -20,7 +20,7 @@
  * 3. plan-pr-gate is readable and contains the written data
  * 4. plan-approval-gate blocks Coding when no approval exists
  * 5. Approving plan-approval-gate → Coding node activates
- * 6. Rejecting plan-approval-gate → run transitions to needs_attention + humanRejected
+ * 6. Rejecting plan-approval-gate → run transitions to blocked + humanRejected
  *
  * ## Running
  *
@@ -268,10 +268,10 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 6: Rejection → needs_attention with humanRejected
+	// Test 6: Rejection → blocked with humanRejected
 	// -------------------------------------------------------------------------
 	test(
-		'Rejecting plan-approval-gate transitions run to needs_attention with humanRejected',
+		'Rejecting plan-approval-gate transitions run to blocked with humanRejected',
 		async () => {
 			const { space, workflow } = await createTestSpace(daemon);
 			const { runId } = await startWorkflowRun(

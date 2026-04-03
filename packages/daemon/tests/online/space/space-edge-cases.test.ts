@@ -10,7 +10,7 @@
  *                              tasks to 'cancelled'; cancellation is idempotent.
  *   c. Agent crash           — spaceWorkflowRun.markFailed (the production RPC the
  *                              Space Agent calls on crash detection) transitions
- *                              run → needs_attention with failureReason: 'agentCrash';
+ *                              run → blocked with failureReason: 'agentCrash';
  *                              the run can then be resumed.
  *   d. Approval gate persistence — gate data written before a daemon restart is
  *                              intact and readable after the daemon restarts.
@@ -225,7 +225,7 @@ describe('Space Workflow — Edge Cases', () => {
 
 	// =========================================================================
 	// c. Agent crash — spaceWorkflowRun.markFailed (production path) sets
-	//    run → needs_attention with failureReason: 'agentCrash'
+	//    run → blocked with failureReason: 'agentCrash'
 	//
 	// The Space Agent calls markFailed when it detects an unrecoverable failure
 	// (e.g. session terminated unexpectedly). These tests exercise that RPC
@@ -233,7 +233,7 @@ describe('Space Workflow — Edge Cases', () => {
 	// =========================================================================
 
 	test(
-		'markFailed RPC transitions run to needs_attention with agentCrash failureReason',
+		'markFailed RPC transitions run to blocked with agentCrash failureReason',
 		async () => {
 			const { space, workflow } = await createTestSpace(daemon);
 			const { runId } = await startWorkflowRun(daemon, space.id, workflow.id, 'Agent Crash Test');
@@ -260,7 +260,7 @@ describe('Space Workflow — Edge Cases', () => {
 	);
 
 	test(
-		'A run in needs_attention (agentCrash) can be resumed to in_progress',
+		'A run in blocked (agentCrash) can be resumed to in_progress',
 		async () => {
 			const { space, workflow } = await createTestSpace(daemon);
 			const { runId } = await startWorkflowRun(

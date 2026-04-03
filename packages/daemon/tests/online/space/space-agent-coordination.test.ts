@@ -207,7 +207,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 	}, SETUP_TIMEOUT);
 
 	test(
-		'supervised mode: agent escalates to human when receiving task_needs_attention',
+		'supervised mode: agent escalates to human when receiving task_blocked',
 		async () => {
 			// 1. Create a supervised space and task
 			const space = await createTestSpace(daemon, 'Supervised Test Space', 'supervised');
@@ -263,7 +263,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 	);
 
 	test(
-		'task_needs_attention: agent calls get_task_detail to assess the situation',
+		'task_blocked: agent calls get_task_detail to assess the situation',
 		async () => {
 			// 1. Create a semi_autonomous space and task
 			const space = await createTestSpace(

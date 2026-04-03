@@ -7,7 +7,7 @@
  * 3. Task Agent processes its initial context message
  * 4. Task Agent can call each workflow tool (spawn_node_agent, check_node_status,
  *    report_result) verified via probe mocks
- * 5. When report_result is called (via full MCP name mock), task status becomes 'completed'
+ * 5. When report_result is called (via full MCP name mock), task status becomes 'done'
  * 6. Space Agent receives the completion notification event
  *
  * Note: advance_workflow was removed in Task 3.5 (agent-driven progression).
@@ -516,7 +516,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			);
 			expect(reportUses.length).toBeGreaterThan(0);
 
-			// The task status must have changed to 'completed' because the tool was executed
+			// The task status must have changed to 'done' because the tool was executed
 			const finalStatus = await waitForTaskStatus(
 				daemon,
 				space.id,

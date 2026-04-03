@@ -12,12 +12,12 @@
  * - writeGateData          — write arbitrary data to a gate (simulates agent write_gate call)
  * - readGateData           — read current gate data for a (runId, gateId) pair
  * - approveGate            — human-approve a gate (writes approved:true + triggers activation)
- * - rejectGate             — human-reject a gate (writes approved:false, run → needs_attention)
- * - markRunFailed          — mark run as needs_attention with a specific failureReason
+ * - rejectGate             — human-reject a gate (writes approved:false, run → blocked)
+ * - markRunFailed          — mark run as blocked with a specific failureReason
  * - waitForNodeStatus      — poll until at least one task for a node reaches a target status
  * - waitForRunStatus       — poll until the workflow run reaches a target status
  * - getGateArtifacts       — fetch gate artifacts (changed files + diff) for a run
- * - mockAgentDone          — mark a task as completed directly via spaceTask.update
+ * - mockAgentDone          — mark a task as done directly via spaceTask.update
  * - restartDaemon          — kill the daemon and restart it with the same workspace/database
  *
  * ## Usage
@@ -172,7 +172,7 @@ export async function readGateData(
 
 /**
  * Human-approve a gate: writes approved:true and triggers downstream node activation.
- * If the run was previously in needs_attention+humanRejected, it resumes to in_progress.
+ * If the run was previously in blocked+humanRejected, it resumes to in_progress.
  */
 export async function approveGate(
 	daemon: DaemonServerContext,
@@ -189,7 +189,7 @@ export async function approveGate(
 }
 
 /**
- * Human-reject a gate: writes approved:false and transitions run to needs_attention
+ * Human-reject a gate: writes approved:false and transitions run to blocked
  * with failureReason: 'humanRejected'.
  */
 export async function rejectGate(
@@ -315,10 +315,10 @@ export async function getGateArtifacts(
 // ---------------------------------------------------------------------------
 
 /**
- * Mark a task as 'completed' directly via spaceTask.update.
+ * Mark a task as 'done' directly via spaceTask.update.
  *
  * Simulates an agent calling report_result without actually running a session.
- * Handles intermediate transitions: if the task is still 'pending', it is first
+ * Handles intermediate transitions: if the task is still 'open', it is first
  * moved to 'in_progress' before completing.
  */
 export async function mockAgentDone(
@@ -374,8 +374,8 @@ export async function getTasksForNode(
  * (non-terminal) status: pending or in_progress.
  *
  * Use this instead of `waitForNodeActivated` when the node was previously
- * activated (and those tasks are now completed). `waitForNodeActivated` accepts
- * terminal statuses as a match, so it can return the old completed task instead
+ * activated (and those tasks are now done). `waitForNodeActivated` accepts
+ * terminal statuses as a match, so it can return the old done task instead
  * of the freshly created one. This helper avoids that by explicitly excluding
  * known task IDs.
  */
@@ -431,12 +431,12 @@ export async function getTasksForNodeId(
 // ---------------------------------------------------------------------------
 
 /**
- * Mark a workflow run as needs_attention with a specific failure reason.
+ * Mark a workflow run as blocked with a specific failure reason.
  * Simulates what the Space Agent does when it detects an unrecoverable failure
  * (e.g. agentCrash, maxIterationsReached).
  *
  * Uses the spaceWorkflowRun.markFailed RPC which transitions the run to
- * needs_attention and sets the failureReason field atomically.
+ * blocked and sets the failureReason field atomically.
  */
 export async function markRunFailed(
 	daemon: DaemonServerContext,
