@@ -147,15 +147,21 @@ describe('CODING_WORKFLOW template', () => {
 		expect(cleanField.check.op).toBe('exists');
 	});
 
-	test('code-ready-gate has a bash script that checks for open PR and clean worktree', () => {
+	test('code-ready-gate has a bash script that checks PR mergeability and clean worktree', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		expect(gate.script).toBeDefined();
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
-		expect(gate.script!.source).toContain('gh pr view --json state');
-		expect(gate.script!.source).toContain('"OPEN"');
-		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('git status --porcelain');
+		expect(gate.script!.source).toContain('gh pr view --json state --jq');
+		expect(gate.script!.source).toContain('gh pr view --json mergeable --jq');
+		expect(gate.script!.source).toContain('gh pr view --json mergeStateStatus --jq');
+		expect(gate.script!.source).toContain('"OPEN"');
+		expect(gate.script!.source).toContain('.mergeable');
+		expect(gate.script!.source).toContain('"MERGEABLE"');
+		expect(gate.script!.source).toContain('.mergeStateStatus');
+		expect(gate.script!.source).toContain('"CLEAN"');
+		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('pr_created');
 		expect(gate.script!.source).toContain('worktree_clean');
 	});
