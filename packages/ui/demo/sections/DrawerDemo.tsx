@@ -29,8 +29,8 @@ function DrawerDemo() {
 				</button>
 				<p class="mt-2 text-xs text-text-muted">
 					Uses <code class="text-accent-400 font-mono">Dialog</code> +{' '}
-					<code class="text-accent-400 font-mono">DialogPanel</code> with{' '}
-					<code class="text-accent-400 font-mono">data-closed:translate-x-full</code> transition.
+					<code class="text-accent-400 font-mono">TransitionChild</code> with{' '}
+					<code class="text-accent-400 font-mono">data-[closed]:translate-x-full</code> transition.
 				</p>
 			</div>
 
@@ -67,18 +67,14 @@ function DrawerDemo() {
 			</div>
 
 			{/* Right Drawer */}
-			<Dialog open={rightOpen} onClose={setRightOpen} class="relative z-10">
+			<Dialog open={rightOpen} onClose={setRightOpen} class="relative z-50">
 				<Transition show={rightOpen}>
-					<DialogBackdrop
-						transition
-						class="fixed inset-0 bg-black/50 transition-opacity duration-300 ease-out data-[closed]:opacity-0 data-[enter]:duration-300 data-[enter]:ease-out data-[leave]:duration-200 data-[leave]:ease-in"
-					/>
+					<DialogBackdrop class="fixed inset-0 bg-black/50 transition-opacity duration-300 ease-out data-[closed]:opacity-0 data-[enter]:duration-300 data-[enter]:ease-out data-[leave]:duration-200 data-[leave]:ease-in" />
 
 					<div class="fixed inset-0 overflow-hidden">
 						<div class="absolute inset-0 overflow-hidden">
 							<div class="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-10">
 								<TransitionChild
-									show={rightOpen}
 									transition
 									as="div"
 									class="pointer-events-auto w-screen max-w-md transform transition duration-300 ease-in-out data-[closed]:translate-x-full sm:duration-500"
@@ -169,18 +165,14 @@ function DrawerDemo() {
 			</Dialog>
 
 			{/* Left Drawer */}
-			<Dialog open={leftOpen} onClose={setLeftOpen} class="relative z-10">
+			<Dialog open={leftOpen} onClose={setLeftOpen} class="relative z-50">
 				<Transition show={leftOpen}>
-					<DialogBackdrop
-						transition
-						class="fixed inset-0 bg-black/50 transition-opacity duration-300 ease-out data-[closed]:opacity-0 data-[enter]:duration-300 data-[enter]:ease-out data-[leave]:duration-200 data-[leave]:ease-in"
-					/>
+					<DialogBackdrop class="fixed inset-0 bg-black/50 transition-opacity duration-300 ease-out data-[closed]:opacity-0 data-[enter]:duration-300 data-[enter]:ease-out data-[leave]:duration-200 data-[leave]:ease-in" />
 
 					<div class="fixed inset-0 overflow-hidden">
 						<div class="absolute inset-0 overflow-hidden">
 							<div class="pointer-events-none fixed inset-y-0 left-0 flex max-w-full pr-10">
 								<TransitionChild
-									show={leftOpen}
 									transition
 									as="div"
 									class="pointer-events-auto w-screen max-w-xs transform transition duration-300 ease-in-out data-[closed]:-translate-x-full sm:duration-500"
@@ -259,8 +251,12 @@ function DrawerDemo() {
 
 			{/* Inline Drawer */}
 			<div class="relative overflow-hidden border border-surface-border rounded-xl bg-surface-0">
-				{inlineOpen && (
-					<div class="absolute inset-y-0 left-0 w-64 bg-surface-1 shadow-xl border-r border-surface-border z-10">
+				<Transition show={inlineOpen}>
+					<TransitionChild
+						transition
+						as="div"
+						class="absolute inset-y-0 left-0 w-64 bg-surface-1 shadow-xl border-r border-surface-border z-10 data-[closed]:-translate-x-full transition-transform duration-300 ease-out"
+					>
 						<div class="flex items-center justify-between p-4 border-b border-surface-border">
 							<span class="font-semibold text-text-primary">Sidebar</span>
 							<CloseButton
@@ -276,8 +272,8 @@ function DrawerDemo() {
 							This is an inline drawer variant without backdrop overlay. Useful for persistent
 							sidebars.
 						</div>
-					</div>
-				)}
+					</TransitionChild>
+				</Transition>
 				<div class="p-8 text-center">
 					<p class="text-text-secondary">
 						Main content area — click "Open inline drawer" to see the sidebar

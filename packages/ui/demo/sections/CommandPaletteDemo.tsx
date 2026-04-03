@@ -173,6 +173,7 @@ function CommandPaletteDemo() {
 									autoFocus
 									class="col-start-1 row-start-1 h-14 w-full pr-4 pl-12 text-base text-text-primary bg-transparent outline-none placeholder:text-text-muted"
 									placeholder="Search projects, actions, or type a command..."
+									// Command palette clears query on close, so no need to display selected item
 									displayValue={() => query}
 									onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
 								/>

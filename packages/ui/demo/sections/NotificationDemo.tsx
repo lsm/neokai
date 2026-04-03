@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import type { VNode } from 'preact';
 import { Toaster, useToast } from '../../src/mod.ts';
 import type { ToastVariant } from '../../src/mod.ts';
 
@@ -94,8 +95,6 @@ const iconMap: Record<ToastVariant, () => VNode> = {
 	info: InfoIcon,
 	warning: ExclamationIcon,
 };
-
-import type { VNode } from 'preact';
 
 function NotificationStack() {
 	const { toast } = useToast();
@@ -278,23 +277,9 @@ function NotificationGroup() {
 					<div
 						key={notification.id}
 						class={`group relative p-4 bg-surface-1 border border-surface-border rounded-lg transition-colors ${
-							notification.read ? 'opacity-60' : 'border-l-4'
-						} ${
-							notification.variant === 'success'
-								? notification.read
-									? ''
-									: 'border-l-green-500'
-								: notification.variant === 'error'
-									? notification.read
-										? ''
-										: 'border-l-red-500'
-									: notification.variant === 'info'
-										? notification.read
-											? ''
-											: 'border-l-accent-500'
-										: notification.read
-											? ''
-											: 'border-l-yellow-500'
+							notification.read
+								? 'opacity-60'
+								: `border-l-4 ${borderColorMap[notification.variant]}`
 						}`}
 					>
 						<NotificationCard
@@ -352,7 +337,7 @@ function InlineToastExamples() {
 	);
 }
 
-export function NotificationDemo() {
+function NotificationDemo() {
 	return (
 		<div class="space-y-8">
 			<div>
@@ -374,3 +359,5 @@ export function NotificationDemo() {
 		</div>
 	);
 }
+
+export { NotificationDemo };
