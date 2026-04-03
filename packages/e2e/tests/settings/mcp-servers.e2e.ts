@@ -68,7 +68,7 @@ test.describe('MCP Toggle - Tools Modal', () => {
 
 		// Verify section headers (use .first() to handle potential duplicate elements)
 		await expect(page.locator('h3:has-text("System Prompt")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("Setting Sources")').first()).toBeVisible();
+		await expect(page.locator('h4:has-text("Setting Sources")').first()).toBeVisible();
 		await expect(page.locator('h3:has-text("MCP Servers")').first()).toBeVisible();
 		await expect(page.locator('h3:has-text("NeoKai Tools")').first()).toBeVisible();
 		await expect(page.locator('h3:has-text("SDK Built-in")').first()).toBeVisible();
