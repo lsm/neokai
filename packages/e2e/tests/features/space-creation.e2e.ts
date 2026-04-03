@@ -2,12 +2,12 @@
  * Space Creation E2E Tests
  *
  * Verifies:
- * - Navigating to the Spaces section (Home header + Create Space button visible)
+ * - Navigating to the Spaces section (NavRail Spaces button + Create Space button visible)
  * - "Create Space" dialog opens
  * - Workspace path field is required
  * - Name auto-suggests from workspace path
  * - Creating a space navigates to it
- * - Space tabbed dashboard layout renders (Dashboard tab active with quick actions)
+ * - Space overview renders with tabbed layout (Active / Review / Done tabs)
  *
  * Setup: creates a space via dialog (UI-only)
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
@@ -141,12 +141,19 @@ test.describe('Space Creation UX', () => {
 			createdSpaceId = match[1];
 		}
 
-		// Tabbed dashboard should be visible with Dashboard tab active
-		await expect(page.locator('text=Dashboard')).toBeVisible({ timeout: 5000 });
+		// Space overview (dashboard) should be visible
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
-		// On desktop, the workflow canvas panel replaces the dashboard quick actions
-		// Workflows load async after space creation; wait for the canvas SVG to appear
-		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 15000 });
+		// The tabbed layout with Active / Review / Done tabs should render
+		await expect(page.getByRole('button', { name: 'Active', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 
 	test('dialog can be closed with Cancel button', async ({ page }) => {
