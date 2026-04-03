@@ -666,12 +666,10 @@ describe('VisualWorkflowEditor', () => {
 	// -------------------------------------------------------------------------
 
 	describe('Tags', () => {
-		it('adds a tag via suggestion button', () => {
-			const { getByText, queryByText } = render(<VisualWorkflowEditor {...makeProps()} />);
-			expect(queryByText('coding')).toBeNull();
-
-			fireEvent.click(getByText('+coding'));
-			expect(getByText('coding')).toBeTruthy();
+		it('does not render tag suggestion buttons', () => {
+			const { queryByText } = render(<VisualWorkflowEditor {...makeProps()} />);
+			expect(queryByText('+coding')).toBeNull();
+			expect(queryByText('+review')).toBeNull();
 		});
 
 		it('removes a tag via × button', () => {

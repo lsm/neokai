@@ -58,8 +58,6 @@ import {
 // Constants
 // ============================================================================
 
-const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment'];
-
 function buildTemplateCanvasSignature(
 	nodes: VisualNode[],
 	edges: VisualEdge[],
@@ -1486,19 +1484,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 								}}
 								class="text-xs bg-transparent text-gray-300 outline-none placeholder-gray-700 min-w-[6rem]"
 							/>
-						</div>
-						{/* Tag suggestions */}
-						<div class="flex gap-1 ml-auto">
-							{TAG_SUGGESTIONS.filter((s) => !tags.includes(s)).map((s) => (
-								<button
-									key={s}
-									type="button"
-									onClick={() => addTag(s)}
-									class="text-xs text-gray-600 hover:text-gray-300 border border-dark-700 hover:border-dark-500 rounded px-1.5 py-0.5 transition-colors"
-								>
-									+{s}
-								</button>
-							))}
 						</div>
 					</div>
 				</div>
