@@ -37,6 +37,7 @@
 		"tailwindcss",
 		"@floating-ui/dom",
 		"@vitest/coverage-v8",
-		"use-sync-external-store"
+		"use-sync-external-store",
+		"lucide-preact"
 	]
 }
