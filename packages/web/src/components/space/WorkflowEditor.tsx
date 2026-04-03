@@ -80,239 +80,6 @@ export interface WorkflowTemplateAgentSlot {
 	instructions?: string;
 }
 
-/** Built-in workflow names in preferred display order. */
-export const BUILT_IN_WORKFLOW_TEMPLATE_NAMES = [
-	'Coding Workflow',
-	'Research Workflow',
-	'Review-Only Workflow',
-	'Full-Cycle Coding Workflow',
-] as const;
-
-const V2_TEMPLATE_PROMPTS = {
-	planning:
-		'You are the Planning node for this workflow. Turn the task into a concrete implementation plan that downstream nodes can execute without guessing. Surface assumptions, dependencies, sequencing, and open questions explicitly.',
-	planReview:
-		'You are the Plan Review node for this workflow. Critically review the proposed plan for scope, correctness, feasibility, testing strategy, and risk. Approve only when the plan is actionable and complete.',
-	coding:
-		'You are the Coding node for this workflow. Implement the approved plan in the workspace, keep the changes reviewable, and leave the branch in a state that reviewers and QA can validate directly.',
-	codeReview:
-		'You are part of the Code Review node for this workflow. Review the implementation independently for correctness, regressions, maintainability, and test coverage. Record a clear approve or reject vote with concise reasoning.',
-	qa: 'You are the QA node for this workflow. Validate the implementation from an execution and release-readiness perspective. Run the relevant checks, confirm the reported state, and fail the handoff when issues remain.',
-	done: 'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce a concise final outcome summary without reopening work unless a blocking issue is discovered.',
-} as const;
-
-export const TEMPLATES: WorkflowTemplate[] = [
-	{
-		label: 'Coding (Plan → Code)',
-		description: 'Planner agent designs the approach, then coder implements.',
-		stepRoles: ['planner', 'coder'],
-	},
-	{
-		label: 'Research (Plan → Research)',
-		description: 'Planner agent scopes the research, then general agent executes it.',
-		stepRoles: ['planner', 'general'],
-	},
-	{
-		label: 'Quick Fix (Code only)',
-		description: 'Single coder step for focused, scope-limited changes.',
-		stepRoles: ['coder'],
-	},
-	{
-		label: 'Full-Cycle Coding Workflow',
-		description: 'Plan, review, code, then parallel code review (3 reviewers) and QA before done.',
-		steps: [
-			{
-				name: 'Planning',
-				role: 'planner',
-				systemPrompt: V2_TEMPLATE_PROMPTS.planning,
-				instructions:
-					'Break down the task into an actionable implementation plan. When the plan is ready, write it to the plan-pr-gate (field: plan_submitted) to notify reviewers.',
-			},
-			{
-				name: 'Plan Review',
-				role: 'reviewer',
-				systemPrompt: V2_TEMPLATE_PROMPTS.planReview,
-				instructions:
-					'Review the implementation plan for feasibility and completeness. Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
-			},
-			{
-				name: 'Coding',
-				role: 'coder',
-				systemPrompt: V2_TEMPLATE_PROMPTS.coding,
-				instructions:
-					'Implement the approved plan. Open a pull request when done. Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
-			},
-			{
-				name: 'Code Review',
-				systemPrompt: V2_TEMPLATE_PROMPTS.codeReview,
-				agentSlots: [
-					{ name: 'Reviewer 1', role: 'reviewer' },
-					{ name: 'Reviewer 2', role: 'reviewer' },
-					{ name: 'Reviewer 3', role: 'reviewer' },
-				],
-			},
-			{
-				name: 'QA',
-				role: 'qa',
-				systemPrompt: V2_TEMPLATE_PROMPTS.qa,
-				instructions:
-					'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. Write "result: passed" to qa-result-gate if everything is green, or "result: failed" with a summary to qa-fail-gate if issues are found. If QA fails, the coder will fix the issues and all reviewers must re-vote before QA runs again.',
-			},
-			{
-				name: 'Done',
-				role: 'general',
-				systemPrompt: V2_TEMPLATE_PROMPTS.done,
-			},
-		],
-		channels: [
-			{
-				from: 'Planning',
-				to: 'Plan Review',
-				direction: 'one-way',
-				label: 'Planning -> Plan Review',
-				gateId: 'plan-pr-gate',
-			},
-			{
-				from: 'Plan Review',
-				to: 'Coding',
-				direction: 'one-way',
-				label: 'Plan Review -> Coding',
-				gateId: 'plan-approval-gate',
-			},
-			{
-				from: 'Coding',
-				to: 'Code Review',
-				direction: 'one-way',
-				label: 'Coding -> Code Review',
-				gateId: 'code-pr-gate',
-			},
-			{
-				from: 'Code Review',
-				to: 'QA',
-				direction: 'one-way',
-				label: 'Code Review -> QA',
-				gateId: 'review-votes-gate',
-			},
-			{
-				from: 'QA',
-				to: 'Done',
-				direction: 'one-way',
-				label: 'QA -> Done',
-				gateId: 'qa-result-gate',
-			},
-			{
-				from: 'QA',
-				to: 'Coding',
-				direction: 'one-way',
-
-				label: 'QA -> Coding (on fail)',
-				gateId: 'qa-fail-gate',
-			},
-			{
-				from: 'Code Review',
-				to: 'Coding',
-				direction: 'one-way',
-
-				label: 'Code Review -> Coding (on reject)',
-				gateId: 'review-reject-gate',
-			},
-			{
-				from: 'Plan Review',
-				to: 'Planning',
-				direction: 'one-way',
-
-				label: 'Plan Review -> Planning (feedback)',
-			},
-			{
-				from: 'Coding',
-				to: 'Planning',
-				direction: 'one-way',
-
-				label: 'Coding -> Planning (feedback)',
-			},
-		],
-		gates: [
-			{
-				id: 'plan-pr-gate',
-				description: 'Planning node has submitted a plan for review.',
-				fields: [
-					{
-						name: 'plan_submitted',
-						type: 'boolean',
-						writers: ['planner'],
-						check: { op: 'exists' },
-					},
-				],
-				resetOnCycle: false,
-			},
-			{
-				id: 'plan-approval-gate',
-				description: 'Plan has been reviewed and approved.',
-				fields: [
-					{
-						name: 'approved',
-						type: 'boolean',
-						writers: ['human'],
-						check: { op: '==', value: true },
-					},
-				],
-				resetOnCycle: true,
-			},
-			{
-				id: 'code-pr-gate',
-				description: 'Coding node has opened or updated a pull request.',
-				fields: [
-					{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
-				],
-				resetOnCycle: false,
-			},
-			{
-				id: 'review-votes-gate',
-				description: 'All three reviewers have approved the code review node.',
-				fields: [
-					{
-						name: 'votes',
-						type: 'map',
-						writers: ['reviewer'],
-						check: { op: 'count', match: 'approved', min: 3 },
-					},
-				],
-				resetOnCycle: true,
-			},
-			{
-				id: 'review-reject-gate',
-				description: 'Any reviewer has rejected the current changes.',
-				fields: [
-					{
-						name: 'votes',
-						type: 'map',
-						writers: ['reviewer'],
-						check: { op: 'count', match: 'rejected', min: 1 },
-					},
-				],
-				resetOnCycle: true,
-			},
-			{
-				id: 'qa-result-gate',
-				description: 'QA marked the current cycle as passed.',
-				fields: [
-					{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } },
-				],
-				resetOnCycle: true,
-			},
-			{
-				id: 'qa-fail-gate',
-				description: 'QA marked the current cycle as failed.',
-				fields: [
-					{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } },
-				],
-				resetOnCycle: true,
-			},
-		],
-		tags: ['coding', 'v2', 'parallel-review'],
-	},
-];
-
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -462,15 +229,10 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 }
 
 /**
- * Prefer daemon-seeded built-in workflows as template source so UI stays in sync.
- * Falls back to static templates when no built-ins are available in store.
+ * Convert daemon-provided built-in template workflows into editor template entries.
  */
 export function getAvailableTemplates(workflows: SpaceWorkflow[]): WorkflowTemplate[] {
-	const byName = new Map(workflows.map((workflow) => [workflow.name, workflow]));
-	const builtIn = BUILT_IN_WORKFLOW_TEMPLATE_NAMES.map((name) => byName.get(name))
-		.filter((workflow): workflow is SpaceWorkflow => !!workflow)
-		.map((workflow) => workflowToTemplate(workflow));
-	return builtIn.length > 0 ? builtIn : TEMPLATES;
+	return workflows.map((workflow) => workflowToTemplate(workflow));
 }
 
 /**
@@ -643,8 +405,8 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 
 	const agents = filterAgents(spaceStore.agents.value);
 	const availableTemplates = useMemo(
-		() => getAvailableTemplates(spaceStore.workflows.value),
-		[spaceStore.workflows.value]
+		() => getAvailableTemplates(spaceStore.workflowTemplates.value),
+		[spaceStore.workflowTemplates.value]
 	);
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
@@ -926,6 +688,13 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						</button>
 						{showTemplates && (
 							<div class="mt-3 grid grid-cols-1 gap-2">
+								{availableTemplates.length === 0 && (
+									<div class="px-4 py-3 bg-dark-850 border border-dark-700 rounded-lg">
+										<p class="text-xs text-gray-500">
+											No built-in templates are available for this space yet.
+										</p>
+									</div>
+								)}
 								{availableTemplates.map((tpl) => (
 									<button
 										key={tpl.label}

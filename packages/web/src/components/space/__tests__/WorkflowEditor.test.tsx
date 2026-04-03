@@ -26,6 +26,7 @@ import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
 const mockAgents: Signal<SpaceAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
+const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
 const mockNodeExecutionsByNodeId = signal(new Map<string, unknown[]>());
 const mockWorkflowRuns = signal<unknown[]>([]);
 
@@ -37,6 +38,7 @@ vi.mock('../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			workflowTemplates: mockWorkflowTemplates,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			workflowRuns: mockWorkflowRuns,
 			createWorkflow: mockCreateWorkflow,
@@ -51,7 +53,6 @@ vi.mock('../../../lib/utils', () => ({
 
 import {
 	WorkflowEditor,
-	TEMPLATES,
 	buildTemplateNodes,
 	filterAgents,
 	getAvailableTemplates,
@@ -104,6 +105,172 @@ const defaultProps = {
 	onCancel: vi.fn(),
 };
 
+function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
+	return [
+		makeWorkflow({
+			id: 'tpl-coding',
+			name: 'Coding Workflow',
+			description: 'Coding desc',
+			nodes: [
+				{
+					id: 'c1',
+					name: 'Code',
+					agents: [
+						{
+							agentId: 'agent-2',
+							name: 'coder',
+							systemPrompt: { mode: 'override', value: 'Code.' },
+						},
+					],
+				},
+				{
+					id: 'c2',
+					name: 'Review',
+					agents: [
+						{
+							agentId: 'agent-4',
+							name: 'reviewer',
+							systemPrompt: { mode: 'override', value: 'Review.' },
+						},
+					],
+				},
+			],
+			startNodeId: 'c1',
+		}),
+		makeWorkflow({
+			id: 'tpl-research',
+			name: 'Research Workflow',
+			nodes: [
+				{
+					id: 'r1',
+					name: 'Research',
+					agents: [
+						{
+							agentId: 'agent-5',
+							name: 'research',
+							systemPrompt: { mode: 'override', value: 'Research.' },
+						},
+					],
+				},
+				{
+					id: 'r2',
+					name: 'Review',
+					agents: [
+						{
+							agentId: 'agent-4',
+							name: 'reviewer',
+							systemPrompt: { mode: 'override', value: 'Review.' },
+						},
+					],
+				},
+			],
+			startNodeId: 'r1',
+		}),
+		makeWorkflow({
+			id: 'tpl-review-only',
+			name: 'Review-Only Workflow',
+			nodes: [
+				{
+					id: 'ro1',
+					name: 'Review',
+					agents: [
+						{
+							agentId: 'agent-4',
+							name: 'reviewer',
+							systemPrompt: { mode: 'override', value: 'Review.' },
+						},
+					],
+				},
+			],
+			startNodeId: 'ro1',
+		}),
+		makeWorkflow({
+			id: 'tpl-full-cycle',
+			name: 'Full-Cycle Coding Workflow',
+			nodes: [
+				{
+					id: 'f1',
+					name: 'Planning',
+					agents: [
+						{
+							agentId: 'agent-1',
+							name: 'planner',
+							systemPrompt: { mode: 'override', value: 'Plan.' },
+						},
+					],
+				},
+				{
+					id: 'f2',
+					name: 'Plan Review',
+					agents: [
+						{
+							agentId: 'agent-4',
+							name: 'reviewer',
+							systemPrompt: { mode: 'override', value: 'Plan review.' },
+						},
+					],
+				},
+				{
+					id: 'f3',
+					name: 'Coding',
+					agents: [
+						{
+							agentId: 'agent-2',
+							name: 'coder',
+							systemPrompt: { mode: 'override', value: 'Code.' },
+						},
+					],
+				},
+				{
+					id: 'f4',
+					name: 'Code Review',
+					agents: [
+						{
+							agentId: 'agent-4',
+							name: 'Reviewer 1',
+							systemPrompt: { mode: 'override', value: 'Review 1.' },
+						},
+						{
+							agentId: 'agent-4',
+							name: 'Reviewer 2',
+							systemPrompt: { mode: 'override', value: 'Review 2.' },
+						},
+						{
+							agentId: 'agent-4',
+							name: 'Reviewer 3',
+							systemPrompt: { mode: 'override', value: 'Review 3.' },
+						},
+					],
+				},
+				{
+					id: 'f5',
+					name: 'QA',
+					agents: [
+						{ agentId: 'agent-6', name: 'qa', systemPrompt: { mode: 'override', value: 'QA.' } },
+					],
+				},
+				{
+					id: 'f6',
+					name: 'Done',
+					agents: [
+						{
+							agentId: 'agent-3',
+							name: 'general',
+							systemPrompt: { mode: 'override', value: 'Done.' },
+						},
+					],
+				},
+			],
+			startNodeId: 'f1',
+			channels: Array.from({ length: 9 }, (_, index) => ({
+				from: `n${index}`,
+				to: `n${index + 1}`,
+				direction: 'one-way' as const,
+			})),
+		}),
+	];
+}
+
 /** Select an agent on the currently-expanded step card */
 function selectAgent(container: Element, agentId: string) {
 	const agentSelect = container.querySelectorAll('select')[0] as HTMLSelectElement;
@@ -117,9 +284,13 @@ describe('WorkflowEditor', () => {
 			makeAgent('agent-1', 'planner', 'planner'),
 			makeAgent('agent-2', 'coder', 'coder'),
 			makeAgent('agent-3', 'general', 'general'),
+			makeAgent('agent-4', 'reviewer', 'reviewer'),
+			makeAgent('agent-5', 'research', 'research'),
+			makeAgent('agent-6', 'qa', 'qa'),
 			makeAgent('agent-leader', 'leader', 'leader'),
 		];
 		mockWorkflows.value = [];
+		mockWorkflowTemplates.value = makeBuiltInTemplateWorkflows();
 		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], tags: [] });
 		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
 		mockCreateWorkflow.mockClear();
@@ -310,30 +481,30 @@ describe('WorkflowEditor', () => {
 		it('shows template options when toggle clicked', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			expect(getByText('Coding (Plan → Code)')).toBeTruthy();
-			expect(getByText('Research (Plan → Research)')).toBeTruthy();
-			expect(getByText('Quick Fix (Code only)')).toBeTruthy();
+			expect(getByText('Coding Workflow')).toBeTruthy();
+			expect(getByText('Research Workflow')).toBeTruthy();
+			expect(getByText('Review-Only Workflow')).toBeTruthy();
 			expect(getByText('Full-Cycle Coding Workflow')).toBeTruthy();
 		});
 
 		it('applying Coding template creates 2 steps', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Coding (Plan → Code)'));
+			fireEvent.click(getByText('Coding Workflow'));
 			expect(getByText('2 steps')).toBeTruthy();
 		});
 
-		it('applying Quick Fix template creates 1 step', () => {
+		it('applying Review-Only template creates 1 step', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			expect(getByText('1 step')).toBeTruthy();
 		});
 
 		it('applying Research template creates 2 steps', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Research (Plan → Research)'));
+			fireEvent.click(getByText('Research Workflow'));
 			expect(getByText('2 steps')).toBeTruthy();
 		});
 
@@ -346,11 +517,19 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('Full-Cycle Coding Workflow template builds explicit system prompts for every node', () => {
-			const template = TEMPLATES.find((entry) => entry.label === 'Full-Cycle Coding Workflow');
+			const template = getAvailableTemplates(mockWorkflowTemplates.value).find(
+				(entry) => entry.label === 'Full-Cycle Coding Workflow'
+			);
 			expect(template).toBeTruthy();
 			const nodes = buildTemplateNodes(template!, mockAgents.value);
 			expect(nodes).toHaveLength(6);
 			for (const node of nodes) {
+				if (node.agents && node.agents.length > 0) {
+					for (const agent of node.agents) {
+						expect(agent.systemPrompt?.value?.trim().length).toBeGreaterThan(0);
+					}
+					continue;
+				}
 				expect(node.systemPrompt?.trim().length).toBeGreaterThan(0);
 			}
 		});
@@ -358,11 +537,11 @@ describe('WorkflowEditor', () => {
 		it('template sets workflow name if name is empty', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			const nameInput = container.querySelector(
 				'input[placeholder="e.g. Feature Development"]'
 			) as HTMLInputElement;
-			expect(nameInput.value).toBe('Quick Fix (Code only)');
+			expect(nameInput.value).toBe('Review-Only Workflow');
 		});
 
 		it('template does not override existing name', () => {
@@ -372,41 +551,53 @@ describe('WorkflowEditor', () => {
 			) as HTMLInputElement;
 			fireEvent.input(nameInput, { target: { value: 'My Custom Name' } });
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			expect(nameInput.value).toBe('My Custom Name');
 		});
 
 		it('template looks up agents by name matching role', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Coding (Plan → Code)'));
+			fireEvent.click(getByText('Coding Workflow'));
 			const agentSelects = container.querySelectorAll('select');
 			if (agentSelects.length > 0) {
-				expect((agentSelects[0] as HTMLSelectElement).value).toBe('agent-1');
+				expect((agentSelects[0] as HTMLSelectElement).value).toBe('agent-2');
 			}
 		});
 
 		it('template agent lookup supports fuzzy role-name matching', () => {
-			const template = TEMPLATES.find((entry) => entry.label === 'Coding (Plan → Code)');
-			expect(template).toBeTruthy();
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Coding Workflow',
+					description: 'Two-step coding workflow',
+					steps: [
+						{ name: 'Code', role: 'coder' },
+						{ name: 'Review', role: 'reviewer' },
+					],
+				},
+				[
+					makeAgent('agent-a', 'Primary Planner Agent'),
+					makeAgent('agent-b', 'Senior Coder'),
+					makeAgent('agent-c', 'Principal Reviewer'),
+				]
+			);
 
-			const nodes = buildTemplateNodes(template!, [
-				makeAgent('agent-a', 'Primary Planner Agent'),
-				makeAgent('agent-b', 'Senior Coder'),
-			]);
-
-			expect(nodes[0].agentId).toBe('agent-a');
-			expect(nodes[1].agentId).toBe('agent-b');
+			expect(nodes[0].agentId).toBe('agent-b');
+			expect(nodes[1].agentId).toBe('agent-c');
 		});
 
 		it('template assigns fallback agents when no role-name match exists', () => {
-			const template = TEMPLATES.find((entry) => entry.label === 'Coding (Plan → Code)');
-			expect(template).toBeTruthy();
-
-			const nodes = buildTemplateNodes(template!, [
-				makeAgent('agent-x', 'Alice'),
-				makeAgent('agent-y', 'Bob'),
-			]);
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Fallback Template',
+					description: 'No matching roles',
+					steps: [
+						{ name: 'Step A', role: 'coder' },
+						{ name: 'Step B', role: 'reviewer' },
+					],
+				},
+				[makeAgent('agent-x', 'Alice'), makeAgent('agent-y', 'Bob')]
+			);
 
 			expect(nodes[0].agentId).toBe('agent-x');
 			expect(nodes[1].agentId).toBe('agent-y');
@@ -425,47 +616,20 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('prefers built-in workflows from store as template source', () => {
-			const builtIns = [
-				makeWorkflow({
-					name: 'Coding Workflow',
-					description: 'Coding desc',
-					nodes: [
-						{ id: 'c1', name: 'Code', agents: [{ agentId: 'agent-2', name: 'coder' }] },
-						{ id: 'c2', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
-					],
-					startNodeId: 'c1',
-				}),
-				makeWorkflow({
-					name: 'Research Workflow',
-					nodes: [
-						{ id: 'r1', name: 'Research', agents: [{ agentId: 'agent-3', name: 'research' }] },
-						{ id: 'r2', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
-					],
-					startNodeId: 'r1',
-				}),
-				makeWorkflow({
-					name: 'Review-Only Workflow',
-					nodes: [
-						{ id: 'ro1', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
-					],
-					startNodeId: 'ro1',
-				}),
-				makeWorkflow({
-					name: 'Full-Cycle Coding Workflow',
-					nodes: [
-						{ id: 'f1', name: 'Planning', agents: [{ agentId: 'agent-1', name: 'planner' }] },
-					],
-					startNodeId: 'f1',
-				}),
-			];
-
-			const templates = getAvailableTemplates(builtIns);
+			const templates = getAvailableTemplates(makeBuiltInTemplateWorkflows());
 			expect(templates.map((template) => template.label)).toEqual([
 				'Coding Workflow',
 				'Research Workflow',
 				'Review-Only Workflow',
 				'Full-Cycle Coding Workflow',
 			]);
+		});
+
+		it('shows empty state when no built-in templates are available', () => {
+			mockWorkflowTemplates.value = [];
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			fireEvent.click(getByText(/Start from template/));
+			expect(getByText('No built-in templates are available for this space yet.')).toBeTruthy();
 		});
 	});
 

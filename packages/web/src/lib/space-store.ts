@@ -14,6 +14,7 @@
  * - workflowRuns: SpaceWorkflowRun list for the space
  * - agents: SpaceAgent list for the space
  * - workflows: SpaceWorkflow list for the space
+ * - workflowTemplates: Built-in workflow templates from daemon seeding source
  * - runtimeState: Runtime state (running/paused/stopped)
  * - nodeExecutions: NodeExecution list for all workflow runs in the space
  * - nodeExecutionsByNodeId: NodeExecutions grouped by workflow node ID
@@ -87,6 +88,9 @@ class SpaceStore {
 
 	/** Workflow definitions for this space */
 	readonly workflows = signal<SpaceWorkflow[]>([]);
+
+	/** Built-in workflow templates sourced from daemon seeding definitions */
+	readonly workflowTemplates = signal<SpaceWorkflow[]>([]);
 
 	/** Runtime state for this space */
 	readonly runtimeState = signal<RuntimeState | null>(null);
@@ -399,6 +403,7 @@ class SpaceStore {
 		this.workflowRuns.value = [];
 		this.agents.value = [];
 		this.workflows.value = [];
+		this.workflowTemplates.value = [];
 		this.nodeExecutions.value = [];
 		this.runtimeState.value = null;
 		this.taskActivity.value = new Map();
@@ -689,6 +694,7 @@ class SpaceStore {
 		await Promise.all([
 			this.fetchAgents(hub, resolvedId),
 			this.fetchWorkflows(hub, resolvedId),
+			this.fetchWorkflowTemplates(hub, resolvedId),
 			this.fetchNodeExecutions(hub, resolvedId),
 		]);
 
@@ -729,6 +735,27 @@ class SpaceStore {
 			this.workflows.value = result?.workflows ?? [];
 		} catch (err) {
 			logger.error('Failed to fetch workflows:', err);
+		}
+	}
+
+	/**
+	 * Fetch built-in workflow templates from daemon seeding source.
+	 */
+	private async fetchWorkflowTemplates(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): Promise<void> {
+		try {
+			const result = await hub.request<{ workflows: SpaceWorkflow[] }>(
+				'spaceWorkflow.listBuiltInTemplates',
+				{
+					spaceId,
+				}
+			);
+			this.workflowTemplates.value = result?.workflows ?? [];
+		} catch (err) {
+			logger.error('Failed to fetch workflow templates:', err);
+			this.workflowTemplates.value = [];
 		}
 	}
 

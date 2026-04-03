@@ -254,8 +254,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const agents = filterAgents(spaceStore.agents.value);
 	const availableTemplates = useMemo(
-		() => getAvailableTemplates(spaceStore.workflows.value),
-		[spaceStore.workflows.value]
+		() => getAvailableTemplates(spaceStore.workflowTemplates.value),
+		[spaceStore.workflowTemplates.value]
 	);
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 	const regularNodes = useMemo(
@@ -1290,6 +1290,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 							{showTemplates && (
 								<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
+									{availableTemplates.length === 0 && (
+										<div class="px-3 py-2.5 text-xs text-gray-500 border-b border-dark-700">
+											No built-in templates available for this space.
+										</div>
+									)}
 									{availableTemplates.map((t) => (
 										<button
 											key={t.label}
