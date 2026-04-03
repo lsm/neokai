@@ -144,16 +144,12 @@ test.describe('Space Creation UX', () => {
 		// Space overview (dashboard) should be visible
 		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
-		// The tabbed layout with Active / Review / Done tabs should render
-		await expect(page.getByRole('button', { name: 'Active', exact: true })).toBeVisible({
-			timeout: 5000,
-		});
-		await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible({
-			timeout: 5000,
-		});
-		await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible({
-			timeout: 5000,
-		});
+		// The tabbed layout with Active / Review / Done tabs should render.
+		// Tab buttons include a count badge in the accessible name (e.g. "Active 0"),
+		// so use substring matching (no exact: true) to match regardless of task count.
+		await expect(page.getByRole('button', { name: 'Active' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('button', { name: 'Review' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('button', { name: 'Done' })).toBeVisible({ timeout: 5000 });
 	});
 
 	test('dialog can be closed with Cancel button', async ({ page }) => {
