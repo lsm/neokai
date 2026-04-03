@@ -7,7 +7,7 @@
  * - Back button in task view returns to the tabbed dashboard view
  * - Task pane is not attached to the DOM when no task is selected
  *
- * Setup: creates a space via RPC (infrastructure), navigates to the space
+ * Setup: creates a space and a task via RPC (infrastructure) in beforeEach
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
  */
 
@@ -25,14 +25,24 @@ test.describe('Space Task Full-Width View', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
+	let taskTitle = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
-		const spaceName = `E2E Full-Width Task Test ${Date.now()}`;
-		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
+		spaceId = await createSpaceViaRpc(
+			page,
+			workspaceRoot,
+			`E2E Full-Width Task Test ${Date.now()}`
+		);
+
+		// Create the task in beforeEach — each test gets its own isolated space so there
+		// is no collision risk with the title, and task creation is setup, not an action
+		// under test. No "Create Task" UI button exists in the space dashboard yet.
+		taskTitle = 'Full-Width Test Task';
+		await createSpaceTaskViaRpc(page, spaceId, taskTitle);
 
 		// Navigate to the space dashboard
 		await page.goto(`/space/${spaceId}`);
@@ -48,19 +58,13 @@ test.describe('Space Task Full-Width View', () => {
 		if (spaceId) {
 			await deleteSpaceViaRpc(page, spaceId);
 			spaceId = '';
+			taskTitle = '';
 		}
 	});
 
 	test('clicking a task opens full-width task pane and hides dashboard tab bar', async ({
 		page,
 	}) => {
-		const taskTitle = `Full-Width Task ${Date.now()}`;
-
-		// Create a task via RPC inside the test body (not beforeEach) because each test
-		// needs a uniquely-named task, and no "Create Task" UI button exists in the space
-		// dashboard yet (SpaceCreateTaskDialog is defined but not wired to any trigger).
-		await createSpaceTaskViaRpc(page, spaceId, taskTitle);
-
 		// Wait for task to appear in SpaceDashboard's Active tab (status 'open' → Queued group)
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
@@ -83,14 +87,8 @@ test.describe('Space Task Full-Width View', () => {
 	});
 
 	test('back button in task view returns to the tabbed dashboard', async ({ page }) => {
-		const taskTitle = `Back Button Task ${Date.now()}`;
-
-		// Create a task via RPC inside the test body — same reasoning as above:
-		// unique title per test, no UI creation path available.
-		await createSpaceTaskViaRpc(page, spaceId, taskTitle);
+		// Wait for task to appear, then navigate to it
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
-
-		// Navigate to task by clicking its title
 		await page.getByText(taskTitle, { exact: true }).first().click();
 		await page.waitForURL(`/space/${spaceId}/task/**`, { timeout: 5000 });
 
