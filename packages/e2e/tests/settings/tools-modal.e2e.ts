@@ -48,8 +48,12 @@ test.describe('Tools Modal - Redesigned', () => {
 
 		await openToolsModal(page);
 
-		// Should show the group section headers (GroupHeader renders a <button> containing a <span>)
-		await expect(page.locator('button:has-text("App MCP Servers")')).toBeVisible();
+		// Should show the group section headers.
+		// "App MCP Servers" renders as a <button> (GroupHeader) when skills exist, or a plain
+		// <span> when no app skills are configured. Use exact text matching on the inner <span>
+		// (present in both DOM states) to avoid strict-mode violations and environment sensitivity.
+		await expect(page.getByText('App MCP Servers', { exact: true })).toBeVisible();
+		// "Project MCP Servers" and "NeoKai Tools" always render as GroupHeader buttons.
 		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
 		await expect(page.locator('button:has-text("NeoKai Tools")')).toBeVisible();
 	});

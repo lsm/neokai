@@ -65,6 +65,9 @@ export async function saveToolsModal(page: Page): Promise<void> {
  * GroupHeader renders: outer-div > GroupHeader-div > button
  * Content area is a sibling of GroupHeader-div inside the outer-div.
  * Uses XPath to navigate up two levels from the button then find the ml-5 content div.
+ *
+ * Note: fileMcpGroupOpen initializes to true in ToolsModal.tsx, so the content div is
+ * always present in the DOM immediately after the modal opens.
  */
 function getProjectMcpContent(page: Page) {
 	return page
@@ -74,15 +77,19 @@ function getProjectMcpContent(page: Page) {
 
 /**
  * Locator for individual server labels inside the Project MCP Servers content.
- * Individual server labels have class "p-2 rounded-lg" to distinguish them from
- * source-group toggle labels (which use "gap-1.5") in the same content area.
+ * Each server label contains a `div.text-sm` for the server name (ToolsModal.tsx renders
+ * `<div class="text-sm text-gray-200 truncate">{server.name}</div>`). Source-group toggle
+ * labels (for user/project/local sections) only contain a checkbox — no div.text-sm — so
+ * `label:has(div.text-sm)` is a structurally stable discriminator.
  */
 function getServerLabels(page: Page) {
-	return getProjectMcpContent(page).locator('label[class*="p-2 rounded-lg"]');
+	return getProjectMcpContent(page).locator('label:has(div.text-sm)');
 }
 
 /**
- * Get the list of MCP server names displayed in the Project MCP Servers section
+ * Get the list of MCP server names displayed in the Project MCP Servers section.
+ * Returns bare server names as stored in settings (e.g. "my-server"), not truncated
+ * or split, because ToolsModal renders server.name directly in a dedicated div.text-sm.
  */
 export async function getMcpServerNames(page: Page): Promise<string[]> {
 	const labels = getServerLabels(page);
@@ -91,7 +98,8 @@ export async function getMcpServerNames(page: Page): Promise<string[]> {
 
 	for (let i = 0; i < count; i++) {
 		const label = labels.nth(i);
-		// Server name is in a div with class text-sm inside the label
+		// Server name is in `div.text-sm` (class="text-sm text-gray-200 truncate")
+		// which renders server.name directly — no extra words to strip.
 		const nameElement = label.locator('div.text-sm').first();
 		const name = await nameElement.textContent();
 		if (name) {

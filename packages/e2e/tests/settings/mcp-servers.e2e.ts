@@ -66,8 +66,12 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		// Verify modal is open with expected sections
 		await expect(page.locator('h2:has-text("Tools")')).toBeVisible();
 
-		// Verify collapsible group headers rendered as buttons (GroupHeader component uses button+span)
-		await expect(page.locator('button:has-text("App MCP Servers")')).toBeVisible();
+		// Verify collapsible group headers.
+		// "App MCP Servers" renders as a <button> (via GroupHeader) when app skills exist, but
+		// falls back to a plain <span> when no skills are configured. Use exact text matching on
+		// the inner <span> which is present in both DOM states.
+		await expect(page.getByText('App MCP Servers', { exact: true })).toBeVisible();
+		// "Project MCP Servers" and "NeoKai Tools" always render as GroupHeader buttons.
 		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
 		await expect(page.locator('button:has-text("NeoKai Tools")')).toBeVisible();
 
