@@ -258,7 +258,7 @@ The Catalyst UI Kit demonstrates an elegant theming approach worth studying:
 
 | # | Task | Acceptance Criteria |
 |---|---|---|
-| 2.1 | Create a styled adapter component `NeoModal` that wraps @neokai/ui `Dialog` with the web app's props API (`title`, `size`, `showCloseButton`) | Component accepts the same props as current `Modal.tsx`. Uses `Dialog` + `DialogPanel` + `DialogBackdrop` internally. Styled with shared tokens from R1. All 18 Modal call sites work unchanged when importing NeoModal. |
+| 2.1 | Create a styled adapter component `NeoModal` that wraps @neokai/ui `Dialog` with the web app's props API (`title`, `size`, `showCloseButton`) | Component accepts the same props as current `Modal.tsx`. Uses `Dialog` + `DialogPanel` + `DialogBackdrop` internally. Styled with shared tokens from R1. All 19 Modal call sites work unchanged when importing NeoModal. |
 | 2.2 | Create a styled adapter `NeoDropdown` wrapping @neokai/ui `Menu` | Accepts `items: MenuItem[]` prop for backward compatibility. Internally renders `Menu` + `MenuItems` + `MenuItem`. Uses @floating-ui positioning. |
 | 2.3 | Create a styled adapter `NeoTooltip` wrapping @neokai/ui `Tooltip` | Accepts `content` and `delay` props for backward compatibility. Uses @floating-ui positioning with collision detection. |
 | 2.4 | Migrate Modal imports (19 occurrences) to use `NeoModal` adapter | All 19 `Modal` import sites in `packages/web/src/` updated to import from the adapter. No functional regressions. |
@@ -270,7 +270,7 @@ The Catalyst UI Kit demonstrates an elegant theming approach worth studying:
 | 2.10 | Migrate remaining imports (Spinner: 9, IconButton: 7, Skeleton: 4, Toast: 1 = 21 total) | All remaining migration-relevant import sites updated. |
 | 2.11 | Delete old web app UI component files (`Modal.tsx`, `Dropdown.tsx`, `Tooltip.tsx`, `ConfirmModal.tsx`, `RejectModal.tsx`, `Button.tsx`) | Files removed. No remaining imports. Knip reports no dead exports. |
 
-**Estimated effort:** 3-4 sessions (higher than initially estimated due to the 105 import surface and API adapter requirements).
+**Estimated effort:** 3-4 sessions (higher than initially estimated due to the 92-import migration surface and API adapter requirements).
 
 **Rollback strategy:** The styled adapters are new files — they don't modify @neokai/ui's headless primitives. If migration issues arise, revert the import changes and keep the old components. The adapters can be iterated on independently.
 
