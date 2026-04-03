@@ -226,6 +226,13 @@ export class TaskAgentManager {
 	private subSessions = new Map<string, Map<string, AgentSession>>();
 
 	/**
+	 * Reverse index from sub-session agentSessionId → AgentSession.
+	 * Used by cancelBySessionId() for O(1) lookup when the runtime needs
+	 * to cancel a specific agent session by its NodeExecution.agentSessionId.
+	 */
+	private agentSessionIndex = new Map<string, AgentSession>();
+
+	/**
 	 * Tracks taskIds currently being spawned — prevents concurrent
 	 * spawnTaskAgent() calls from creating duplicate Task Agent sessions.
 	 */
@@ -776,6 +783,7 @@ export class TaskAgentManager {
 			this.subSessions.set(taskId, new Map());
 		}
 		this.subSessions.get(taskId)!.set(sessionId, subSession);
+		this.agentSessionIndex.set(sessionId, subSession);
 
 		// Register in SessionManager cache to prevent duplicate AgentSession creation.
 		this.config.sessionManager.registerSession(subSession);
@@ -881,6 +889,26 @@ export class TaskAgentManager {
 	// Public — cleanup
 	// -------------------------------------------------------------------------
 
+	/**
+	 * Cancel a sub-session by its agent session ID.
+	 *
+	 * Used by SpaceRuntime to cancel sibling node agent sessions when the
+	 * workflow run completes via end-node short-circuit. Looks up the
+	 * session via the reverse index and interrupts it.
+	 *
+	 * No-op if the session is not found (already cleaned up or never registered).
+	 */
+	cancelBySessionId(agentSessionId: string): void {
+		const session = this.agentSessionIndex.get(agentSessionId);
+		if (!session) return;
+		void this.stopAndDeleteSession(agentSessionId, session).catch((err) => {
+			log.warn(
+				`TaskAgentManager.cancelBySessionId: failed to cancel session ${agentSessionId}:`,
+				err
+			);
+		});
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — rehydration
 	// -------------------------------------------------------------------------
@@ -973,6 +1001,10 @@ export class TaskAgentManager {
 				await this.stopAndDeleteSession(subSessionId, session);
 			}
 			this.subSessions.delete(taskId);
+			// Clean up reverse index entries for all sub-sessions of this task
+			for (const sid of sessionIdsToClean) {
+				this.agentSessionIndex.delete(sid);
+			}
 		}
 
 		// 2. Cleanup Task Agent session
@@ -1583,6 +1615,7 @@ export class TaskAgentManager {
 					this.subSessions.set(taskId, new Map());
 				}
 				this.subSessions.get(taskId)!.set(subSessionId, subSession);
+				this.agentSessionIndex.set(subSessionId, subSession);
 			}
 		}
 

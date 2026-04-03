@@ -38,6 +38,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { TaskAgentManager } from './task-agent-manager';
+import type { DaemonHub } from '../../daemon-hub';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
@@ -125,6 +126,12 @@ export interface SpaceRuntimeConfig {
 	 * Defaults to `new CompletionDetector(nodeExecutionRepo)` if not provided.
 	 */
 	completionDetector?: CompletionDetector;
+	/**
+	 * DaemonHub event bus for emitting task-level events (e.g. space.task.updated).
+	 * Used by the sibling cleanup logic to cancel in-progress node agent sessions
+	 * when the workflow run completes via end-node short-circuit.
+	 */
+	daemonHub?: DaemonHub;
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +405,7 @@ export class SpaceRuntime {
 			for (const agentEntry of startAgents) {
 				const task = await taskManager.createTask({
 					title: isMultiAgentStart ? agentEntry.name : startStep.name,
-					description: agentEntry.instructions?.value ?? startStep.instructions ?? '',
+					description: agentEntry.instructions?.value ?? '',
 					workflowRunId: run.id,
 					status: 'open',
 				});
@@ -628,9 +635,29 @@ export class SpaceRuntime {
 			}
 		}
 
+		// ─── End-node bypass ─────────────────────────────────────────────────
+		// When the workflow has an endNodeId and the end node's execution is
+		// terminal (done/cancelled), skip blocked/timeout notifications for
+		// sibling nodes and proceed directly to completion handling.
+		// This prevents spurious "task_blocked" notifications for nodes that
+		// are still running when the end node finishes first.
+		const endNodeId = meta.workflow.endNodeId;
+		let endNodeBypass = false;
+		if (endNodeId) {
+			const endNodeExecs = nodeExecutions.filter((e) => e.workflowNodeId === endNodeId);
+			if (
+				endNodeExecs.length > 0 &&
+				endNodeExecs.every((e) => TERMINAL_NODE_EXECUTION_STATUSES.has(e.status))
+			) {
+				endNodeBypass = true;
+			}
+		}
+
 		// Detect task-level blocked BEFORE the all-completed guard.
+		// When end-node bypass fires, skip blocked notifications for siblings
+		// — the run will be completed imminently.
 		// This is an explicit check — not inferred from WorkflowTransitionError.
-		if (allRunTasks.some((t) => t.status === 'blocked')) {
+		if (!endNodeBypass && allRunTasks.some((t) => t.status === 'blocked')) {
 			for (const task of allRunTasks) {
 				if (task.status !== 'blocked') continue;
 				const dedupKey = `${task.id}:blocked`;
@@ -781,6 +808,47 @@ export class SpaceRuntime {
 				})
 			) {
 				this.config.workflowRunRepo.transitionStatus(runId, 'done');
+
+				// Auto-complete the orchestration task (Task Agent's own task)
+				// when the run transitions to done. Guard: only if status is in_progress.
+				// The orchestration task is the one whose taskAgentSessionId follows
+				// the Task Agent pattern (space:${spaceId}:task:${taskId}) — node agent
+				// sub-sessions use UUID-style IDs and are NOT orchestration tasks.
+				for (const t of allRunTasks) {
+					if (t.taskAgentSessionId && t.status === 'in_progress') {
+						// Task Agent sessions follow the pattern "space:UUID:task:UUID"
+						if (t.taskAgentSessionId.startsWith('space:')) {
+							this.config.taskRepo.updateTask(t.id, { status: 'done' });
+							log.info(`SpaceRuntime: auto-completed orchestration task ${t.id} for run ${runId}`);
+							break;
+						}
+					}
+				}
+
+				// Sibling NodeExecution cleanup: cancel siblings still in_progress
+				// when the run completes via end-node short-circuit. For each
+				// in_progress node execution with an agentSessionId, cancel the
+				// corresponding agent session via TaskAgentManager.
+				const siblingsToCancel = this.config.nodeExecutionRepo
+					.listByWorkflowRun(runId)
+					.filter(
+						(e) =>
+							e.status === 'in_progress' &&
+							e.agentSessionId &&
+							(!endNodeId || e.workflowNodeId !== endNodeId)
+					);
+				for (const sibling of siblingsToCancel) {
+					this.config.nodeExecutionRepo.updateStatus(sibling.id, 'cancelled');
+					if (this.config.taskAgentManager) {
+						this.config.taskAgentManager.cancelBySessionId(sibling.agentSessionId!);
+					}
+					log.info(
+						`SpaceRuntime: cancelled sibling node execution ${sibling.id} ` +
+							`(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
+							`for completed run ${runId}`
+					);
+				}
+
 				return;
 			}
 

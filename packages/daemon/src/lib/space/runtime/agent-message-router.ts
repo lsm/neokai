@@ -17,12 +17,19 @@
  */
 
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { ResolvedChannel } from '@neokai/shared';
 import { ChannelResolver } from './channel-resolver';
 
 export interface AgentMessageRouterConfig {
 	/** Task repository for looking up peer sessions by workflow run and node. */
 	spaceTaskRepo: SpaceTaskRepository;
+	/**
+	 * Node execution repository for looking up agent sessions by workflow run.
+	 * When provided, peer resolution uses NodeExecution.agentSessionId instead
+	 * of SpaceTask.taskAgentSessionId for node agent sessions.
+	 */
+	nodeExecutionRepo?: NodeExecutionRepository;
 	/** Workflow run ID for looking up peer tasks. */
 	workflowRunId: string;
 	/** Pre-resolved channel topology for this step. */
@@ -97,8 +104,14 @@ export class AgentMessageRouter {
 	 */
 	async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
 		const { fromRole, fromSessionId, target, message, data } = params;
-		const { spaceTaskRepo, workflowRunId, resolvedChannels, messageInjector, nodeGroups } =
-			this.config;
+		const {
+			spaceTaskRepo,
+			nodeExecutionRepo,
+			workflowRunId,
+			resolvedChannels,
+			messageInjector,
+			nodeGroups,
+		} = this.config;
 
 		// --- Build channel resolver ---
 		const resolver = new ChannelResolver(resolvedChannels);
@@ -115,13 +128,25 @@ export class AgentMessageRouter {
 			};
 		}
 
-		// --- Load peers from space_tasks ---
-		const allRunTasks = spaceTaskRepo
-			.listByWorkflowRun(workflowRunId)
-			.filter((t) => t.taskAgentSessionId);
-		const peers = allRunTasks
-			.filter((t) => t.taskAgentSessionId !== fromSessionId)
-			.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.title ?? 'agent' }));
+		// --- Load peers from node_executions (workflow-internal state) ---
+		// When nodeExecutionRepo is available, use it as the primary source for
+		// node agent sessions. Fall back to space_tasks for backward compat.
+		let peers: Array<{ sessionId: string; role: string }>;
+		if (nodeExecutionRepo) {
+			const executions = nodeExecutionRepo
+				.listByWorkflowRun(workflowRunId)
+				.filter((e) => e.agentSessionId);
+			peers = executions
+				.filter((e) => e.agentSessionId !== fromSessionId)
+				.map((e) => ({ sessionId: e.agentSessionId!, role: e.agentName }));
+		} else {
+			const allRunTasks = spaceTaskRepo
+				.listByWorkflowRun(workflowRunId)
+				.filter((t) => t.taskAgentSessionId);
+			peers = allRunTasks
+				.filter((t) => t.taskAgentSessionId !== fromSessionId)
+				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.title ?? 'agent' }));
+		}
 
 		// --- Resolve target roles ---
 		let targetRoles: string[];

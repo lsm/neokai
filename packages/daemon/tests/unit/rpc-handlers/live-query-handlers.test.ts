@@ -14,7 +14,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { createTables } from '../../../src/storage/schema';
+import { createTables, runMigration74 } from '../../../src/storage/schema';
 import { NAMED_QUERY_REGISTRY } from '../../../src/lib/rpc-handlers/live-query-handlers';
 import type { NeoTask, RoomGoal } from '@neokai/shared';
 
@@ -30,6 +30,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	beforeEach(() => {
 		db = new BunDatabase(':memory:');
 		createTables(db);
+		runMigration74(db);
 		// Insert minimal room row to satisfy FK constraints
 		db.exec(
 			`INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test Room', ${now}, ${now})`

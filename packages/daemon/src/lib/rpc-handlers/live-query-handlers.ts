@@ -589,84 +589,104 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
-relevant_tasks AS (
-  SELECT *
-  FROM target_task
-  WHERE task_agent_session_id IS NOT NULL
-  UNION
-  SELECT st.*
-  FROM space_tasks st
+-- Leg 1: orchestration task (the Task Agent's own task)
+orchestration AS (
+  SELECT
+    tt.task_agent_session_id AS session_id,
+    'task_agent' AS kind,
+    'Task Agent' AS label,
+    'task-agent' AS role,
+    tt.id AS task_id,
+    tt.title AS task_title,
+    tt.status AS task_status,
+    NULL AS workflow_node_id,
+    NULL AS agent_name
+  FROM target_task tt
+  WHERE tt.task_agent_session_id IS NOT NULL
+),
+-- Leg 2: node agents via node_executions
+node_agents AS (
+  SELECT
+    ne.agent_session_id AS session_id,
+    'node_agent' AS kind,
+    COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+    ne.agent_name AS role,
+    st.id AS task_id,
+    st.title AS task_title,
+    st.status AS task_status,
+    ne.workflow_node_id AS workflow_node_id,
+    ne.agent_name AS agent_name
+  FROM node_executions ne
   JOIN target_task tt
     ON tt.workflow_run_id IS NOT NULL
-   AND st.workflow_run_id = tt.workflow_run_id
-  WHERE st.id != tt.id
-    AND st.task_agent_session_id IS NOT NULL
+   AND ne.workflow_run_id = tt.workflow_run_id
+  JOIN space_tasks st
+    ON st.task_agent_session_id = ne.agent_session_id
+  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  WHERE ne.agent_session_id IS NOT NULL
     AND st.status != 'archived'
+),
+-- Union both legs
+all_sessions AS (
+  SELECT * FROM orchestration
+  UNION ALL
+  SELECT * FROM node_agents
 ),
 message_stats AS (
   SELECT
-    sm.session_id AS sessionId,
+    sm.session_id,
     COUNT(*) AS messageCount,
     MAX(CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER)) AS lastMessageAt
   FROM sdk_messages sm
-  JOIN relevant_tasks rt ON rt.task_agent_session_id = sm.session_id
+  JOIN all_sessions ase ON ase.session_id = sm.session_id
   GROUP BY sm.session_id
 )
 SELECT
-  rt.task_agent_session_id AS id,
-  rt.task_agent_session_id AS sessionId,
+  ase.session_id AS id,
+  ase.session_id AS sessionId,
+  ase.kind AS kind,
+  ase.label AS label,
+  ase.role AS role,
   CASE
-    WHEN s.type = 'space_task_agent' THEN 'task_agent'
-    ELSE 'node_agent'
-  END AS kind,
-  CASE
-    WHEN s.type = 'space_task_agent' THEN 'Task Agent'
-    ELSE COALESCE(sa.name, rt.agent_name, rt.assigned_agent, 'agent')
-  END AS label,
-  CASE
-    WHEN s.type = 'space_task_agent' THEN 'task-agent'
-    ELSE COALESCE(rt.agent_name, rt.assigned_agent, 'agent')
-  END AS role,
-  CASE
-    WHEN rt.status = 'completed' THEN 'completed'
-    WHEN rt.status IN ('cancelled') THEN 'interrupted'
-    WHEN rt.error IS NOT NULL OR rt.status IN ('rate_limited', 'usage_limited') THEN 'failed'
+    WHEN ase.task_status = 'done' THEN 'completed'
+    WHEN ase.task_status = 'cancelled' THEN 'interrupted'
+    WHEN ase.task_status = 'blocked' THEN 'failed'
     WHEN json_extract(s.processing_state, '$.status') = 'processing' THEN 'active'
     WHEN json_extract(s.processing_state, '$.status') = 'queued' THEN 'queued'
     WHEN json_extract(s.processing_state, '$.status') = 'waiting_for_input' THEN 'waiting_for_input'
     WHEN json_extract(s.processing_state, '$.status') = 'interrupted' THEN 'interrupted'
-    WHEN rt.status = 'needs_attention' THEN 'waiting_for_input'
-    WHEN rt.status = 'pending' THEN 'queued'
+    WHEN ase.task_status = 'open' THEN 'queued'
     ELSE 'idle'
   END AS state,
   json_extract(s.processing_state, '$.status') AS processingStatus,
   json_extract(s.processing_state, '$.phase') AS processingPhase,
   COALESCE(ms.messageCount, 0) AS messageCount,
-  rt.id AS taskId,
-  rt.title AS taskTitle,
-  rt.status AS taskStatus,
-  rt.workflow_node_id AS workflowNodeId,
-  COALESCE(sa.name, rt.agent_name, NULL) AS agentName,
-  rt.current_step AS currentStep,
-  rt.error AS error,
-  COALESCE(rt.completion_summary, rt.result) AS completionSummary,
+  ase.task_id AS taskId,
+  ase.task_title AS taskTitle,
+  ase.task_status AS taskStatus,
+  ase.workflow_node_id AS workflowNodeId,
+  ase.agent_name AS agentName,
+  ase.task_id AS currentStep,
+  NULL AS error,
+  NULL AS completionSummary,
   CAST(
     MAX(
-      rt.updated_at,
-      COALESCE(CAST((julianday(s.last_active_at) - 2440587.5) * 86400000 AS INTEGER), rt.updated_at)
+      st.updated_at,
+      COALESCE(CAST((julianday(s.last_active_at) - 2440587.5) * 86400000 AS INTEGER), st.updated_at)
     ) AS INTEGER
   ) AS updatedAt,
   ms.lastMessageAt AS lastMessageAt
-FROM relevant_tasks rt
-LEFT JOIN sessions s ON s.id = rt.task_agent_session_id
-LEFT JOIN space_agents sa ON sa.id = rt.custom_agent_id
-LEFT JOIN message_stats ms ON ms.sessionId = rt.task_agent_session_id
+FROM all_sessions ase
+LEFT JOIN sessions s ON s.id = ase.session_id
+LEFT JOIN space_tasks st ON st.id = ase.task_id
+LEFT JOIN message_stats ms ON ms.session_id = ase.session_id
 ORDER BY
-  CASE WHEN rt.id = (SELECT id FROM target_task) THEN 0 ELSE 1 END,
-  CASE WHEN s.type = 'space_task_agent' THEN 0 ELSE 1 END,
+  CASE WHEN ase.task_id = (SELECT id FROM target_task) THEN 0 ELSE 1 END,
+  CASE WHEN ase.kind = 'task_agent' THEN 0 ELSE 1 END,
   updatedAt DESC,
-  rt.created_at ASC,
-	rt.id ASC
+  st.created_at ASC,
+  ase.task_id ASC,
+  st.id ASC
 `.trim();
 
 const SPACE_TASK_MESSAGES_BY_TASK_SQL = `
@@ -675,46 +695,58 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
-relevant_tasks AS (
-  SELECT *
-  FROM target_task
-  WHERE task_agent_session_id IS NOT NULL
-  UNION
-  SELECT st.*
-  FROM space_tasks st
+-- Leg 1: orchestration task (the Task Agent's own task)
+orchestration AS (
+  SELECT
+    tt.task_agent_session_id AS session_id,
+    'task_agent' AS kind,
+    'task-agent' AS role,
+    'Task Agent' AS label,
+    tt.id AS task_id,
+    tt.title AS task_title
+  FROM target_task tt
+  WHERE tt.task_agent_session_id IS NOT NULL
+),
+-- Leg 2: node agents via node_executions
+node_agents AS (
+  SELECT
+    ne.agent_session_id AS session_id,
+    'node_agent' AS kind,
+    ne.agent_name AS role,
+    COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+    st.id AS task_id,
+    st.title AS task_title
+  FROM node_executions ne
   JOIN target_task tt
     ON tt.workflow_run_id IS NOT NULL
-   AND st.workflow_run_id = tt.workflow_run_id
-  WHERE st.id != tt.id
-    AND st.task_agent_session_id IS NOT NULL
+   AND ne.workflow_run_id = tt.workflow_run_id
+  JOIN space_tasks st
+    ON st.task_agent_session_id = ne.agent_session_id
+  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  WHERE ne.agent_session_id IS NOT NULL
     AND st.status != 'archived'
+),
+-- Union both legs
+all_sessions AS (
+  SELECT * FROM orchestration
+  UNION ALL
+  SELECT * FROM node_agents
 )
 SELECT
   sm.id AS id,
   sm.session_id AS sessionId,
-  CASE
-    WHEN s.type = 'space_task_agent' THEN 'task_agent'
-    ELSE 'node_agent'
-  END AS kind,
-  CASE
-    WHEN s.type = 'space_task_agent' THEN 'task-agent'
-    ELSE COALESCE(rt.agent_name, rt.assigned_agent, 'agent')
-  END AS role,
-  CASE
-    WHEN s.type = 'space_task_agent' THEN 'Task Agent'
-    ELSE COALESCE(sa.name, rt.agent_name, rt.assigned_agent, 'agent')
-  END AS label,
-  rt.id AS taskId,
-  rt.title AS taskTitle,
+  ase.kind AS kind,
+  ase.role AS role,
+  ase.label AS label,
+  ase.task_id AS taskId,
+  ase.task_title AS taskTitle,
   sm.message_type AS messageType,
   sm.sdk_message AS content,
   CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
   CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
   json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
-FROM relevant_tasks rt
-JOIN sdk_messages sm ON sm.session_id = rt.task_agent_session_id
-LEFT JOIN sessions s ON s.id = rt.task_agent_session_id
-LEFT JOIN space_agents sa ON sa.id = rt.custom_agent_id
+FROM all_sessions ase
+JOIN sdk_messages sm ON sm.session_id = ase.session_id
 WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ORDER BY createdAt ASC, id ASC
 `.trim();
