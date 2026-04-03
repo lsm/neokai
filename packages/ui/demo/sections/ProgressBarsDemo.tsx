@@ -300,7 +300,10 @@ export function CirclesProgressBars() {
 									aria-current="step"
 									class="relative flex size-8 items-center justify-center rounded-full border-2 border-accent-500 bg-white dark:border-accent-500 dark:bg-gray-900"
 								>
-									<span aria-hidden="true" class="size-2.5 rounded-full bg-accent-500 dark:bg-accent-500" />
+									<span
+										aria-hidden="true"
+										class="size-2.5 rounded-full bg-accent-500 dark:bg-accent-500"
+									/>
 									<span class="sr-only">{step.name}</span>
 								</a>
 							</>
@@ -344,7 +347,13 @@ export function PanelsWithBorderProgressBars() {
 			href: '#',
 			status: 'current',
 		},
-		{ id: '03', name: 'Preview', description: 'Penatibus eu quis ante.', href: '#', status: 'upcoming' },
+		{
+			id: '03',
+			name: 'Preview',
+			description: 'Penatibus eu quis ante.',
+			href: '#',
+			status: 'upcoming',
+		},
 	];
 
 	return (
@@ -382,7 +391,9 @@ export function PanelsWithBorderProgressBars() {
 											</span>
 											<span class="mt-0.5 ml-4 flex min-w-0 flex-col">
 												<span class="text-sm font-medium text-text-primary">{step.name}</span>
-												<span class="text-sm font-medium text-text-secondary">{step.description}</span>
+												<span class="text-sm font-medium text-text-secondary">
+													{step.description}
+												</span>
 											</span>
 										</span>
 									</a>
@@ -407,7 +418,9 @@ export function PanelsWithBorderProgressBars() {
 												<span class="text-sm font-medium text-accent-500 dark:text-accent-400">
 													{step.name}
 												</span>
-												<span class="text-sm font-medium text-text-secondary">{step.description}</span>
+												<span class="text-sm font-medium text-text-secondary">
+													{step.description}
+												</span>
 											</span>
 										</span>
 									</a>
@@ -430,7 +443,9 @@ export function PanelsWithBorderProgressBars() {
 											</span>
 											<span class="mt-0.5 ml-4 flex min-w-0 flex-col">
 												<span class="text-sm font-medium text-text-secondary">{step.name}</span>
-												<span class="text-sm font-medium text-text-secondary">{step.description}</span>
+												<span class="text-sm font-medium text-text-secondary">
+													{step.description}
+												</span>
 											</span>
 										</span>
 									</a>
@@ -438,7 +453,10 @@ export function PanelsWithBorderProgressBars() {
 
 								{stepIdx !== 0 ? (
 									<>
-										<div aria-hidden="true" class="absolute inset-0 top-0 left-0 hidden w-3 lg:block">
+										<div
+											aria-hidden="true"
+											class="absolute inset-0 top-0 left-0 hidden w-3 lg:block"
+										>
 											<svg
 												fill="none"
 												viewBox="0 0 12 82"
@@ -493,7 +511,10 @@ export function CirclesProgressBarsText() {
 								</a>
 							) : step.status === 'current' ? (
 								<a href={step.href} aria-current="step" class="flex items-start">
-									<span aria-hidden="true" class="relative flex size-5 shrink-0 items-center justify-center">
+									<span
+										aria-hidden="true"
+										class="relative flex size-5 shrink-0 items-center justify-center"
+									>
 										<span class="absolute size-4 rounded-full bg-accent-900/20 dark:bg-accent-900" />
 										<span class="relative block size-2 rounded-full bg-accent-500 dark:bg-accent-400" />
 									</span>
@@ -526,23 +547,41 @@ export function CirclesProgressBarsText() {
 
 export function BulletsAndTextProgressBars() {
 	const steps = [
-		{ name: 'Create account', description: 'Vitae sed mi luctus laoreet.', href: '#', status: 'complete' },
+		{
+			name: 'Create account',
+			description: 'Vitae sed mi luctus laoreet.',
+			href: '#',
+			status: 'complete',
+		},
 		{
 			name: 'Profile information',
 			description: 'Cursus semper viverra facilisis et et some more.',
 			href: '#',
 			status: 'current',
 		},
-		{ name: 'Business information', description: 'Penatibus eu quis ante.', href: '#', status: 'upcoming' },
+		{
+			name: 'Business information',
+			description: 'Penatibus eu quis ante.',
+			href: '#',
+			status: 'upcoming',
+		},
 		{ name: 'Theme', description: 'Faucibus nec enim leo et.', href: '#', status: 'upcoming' },
-		{ name: 'Preview', description: 'Iusto et officia maiores porro ad non quas.', href: '#', status: 'upcoming' },
+		{
+			name: 'Preview',
+			description: 'Iusto et officia maiores porro ad non quas.',
+			href: '#',
+			status: 'upcoming',
+		},
 	];
 
 	return (
 		<nav aria-label="Progress">
 			<ol role="list" class="overflow-hidden">
 				{steps.map((step, stepIdx) => (
-					<li key={step.name} class={classNames(stepIdx !== steps.length - 1 ? 'pb-10' : '', 'relative')}>
+					<li
+						key={step.name}
+						class={classNames(stepIdx !== steps.length - 1 ? 'pb-10' : '', 'relative')}
+					>
 						{step.status === 'complete' ? (
 							<>
 								{stepIdx !== steps.length - 1 ? (
@@ -578,7 +617,9 @@ export function BulletsAndTextProgressBars() {
 										</span>
 									</span>
 									<span class="ml-4 flex min-w-0 flex-col">
-										<span class="text-sm font-medium text-accent-500 dark:text-accent-400">{step.name}</span>
+										<span class="text-sm font-medium text-accent-500 dark:text-accent-400">
+											{step.name}
+										</span>
 										<span class="text-sm text-text-secondary">{step.description}</span>
 									</span>
 								</a>

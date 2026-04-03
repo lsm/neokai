@@ -330,7 +330,11 @@ export function BarWithUnderline() {
 								<li key={tab.name}>
 									<a
 										href={tab.href}
-										class={tab.current ? 'text-accent-400 dark:text-accent-400' : 'hover:text-text-secondary dark:hover:text-white'}
+										class={
+											tab.current
+												? 'text-accent-400 dark:text-accent-400'
+												: 'hover:text-text-secondary dark:hover:text-white'
+										}
 									>
 										{tab.name}
 									</a>

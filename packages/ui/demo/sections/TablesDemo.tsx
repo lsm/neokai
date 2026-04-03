@@ -2496,6 +2496,243 @@ export function TablesDemo() {
 			<WithCheckboxes />
 			<HiddenHeadings />
 			<FullWidthAvatars />
+			<SortableHeadingsIcon />
+			<HiddenHeadingsIcon />
+		</div>
+	);
+}
+
+// ============================================================
+// 20 - Sortable Headings with Icons
+// ============================================================
+function ChevronDownIconLocal({ class: className }: { class?: string }) {
+	return (
+		<svg class={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+			<path
+				fill-rule="evenodd"
+				d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
+				clip-rule="evenodd"
+			/>
+		</svg>
+	);
+}
+
+export function SortableHeadingsIcon() {
+	return (
+		<div class="px-4 sm:px-6 lg:px-8">
+			<div class="sm:flex sm:items-center">
+				<div class="sm:flex-auto">
+					<h3 class="text-base font-semibold text-text-primary">Users</h3>
+					<p class="mt-2 text-sm text-text-secondary">
+						A list of all the users in your account including their name, title, email and role.
+					</p>
+				</div>
+				<div class="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
+					<button
+						type="button"
+						class="block rounded-md bg-accent-500 px-3 py-2 text-center text-sm font-semibold text-white shadow-xs hover:bg-accent-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500"
+					>
+						Add user
+					</button>
+				</div>
+			</div>
+			<div class="mt-8 flow-root">
+				<div class="-mx-4 -my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
+					<div class="inline-block min-w-full py-2 align-middle sm:px-6 lg:px-8">
+						<table class="relative min-w-full divide-y divide-surface-border">
+							<thead>
+								<tr>
+									<th
+										scope="col"
+										class="py-3.5 pr-3 pl-4 text-left text-sm font-semibold text-text-primary sm:pl-0"
+									>
+										<a href="#" class="group inline-flex">
+											Name
+											<span class="invisible ml-2 flex-none rounded-sm text-text-tertiary group-hover:visible group-focus:visible">
+												<ChevronDownIconLocal class="size-5" />
+											</span>
+										</a>
+									</th>
+									<th
+										scope="col"
+										class="px-3 py-3.5 text-left text-sm font-semibold text-text-primary"
+									>
+										<a href="#" class="group inline-flex">
+											Title
+											<span class="ml-2 flex-none rounded-sm bg-surface-1 text-text-primary group-hover:bg-surface-2">
+												<ChevronDownIconLocal class="size-5" />
+											</span>
+										</a>
+									</th>
+									<th
+										scope="col"
+										class="px-3 py-3.5 text-left text-sm font-semibold text-text-primary"
+									>
+										<a href="#" class="group inline-flex">
+											Email
+											<span class="invisible ml-2 flex-none rounded-sm text-text-tertiary group-hover:visible group-focus:visible">
+												<ChevronDownIconLocal class="size-5" />
+											</span>
+										</a>
+									</th>
+									<th
+										scope="col"
+										class="px-3 py-3.5 text-left text-sm font-semibold text-text-primary"
+									>
+										<a href="#" class="group inline-flex">
+											Role
+											<span class="invisible ml-2 flex-none rounded-sm text-text-tertiary group-hover:visible group-focus:visible">
+												<ChevronDownIconLocal class="size-5" />
+											</span>
+										</a>
+									</th>
+									<th scope="col" class="py-3.5 pr-0 pl-3">
+										<span class="sr-only">Edit</span>
+									</th>
+								</tr>
+							</thead>
+							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+								{people1.map((person) => (
+									<tr key={person.email}>
+										<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-0">
+											{person.name}
+										</td>
+										<td class="px-3 py-4 text-sm whitespace-nowrap text-text-secondary">
+											{person.title}
+										</td>
+										<td class="px-3 py-4 text-sm whitespace-nowrap text-text-secondary">
+											{person.email}
+										</td>
+										<td class="px-3 py-4 text-sm whitespace-nowrap text-text-secondary">
+											{person.role}
+										</td>
+										<td class="py-4 pr-4 pl-3 text-right text-sm whitespace-nowrap sm:pr-0">
+											<a href="#" class="text-accent-500 hover:text-accent-400">
+												Edit<span class="sr-only">, {person.name}</span>
+											</a>
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+// ============================================================
+// 21 - Hidden Headings with Icons
+// ============================================================
+export function HiddenHeadingsIcon() {
+	return (
+		<div class="px-4 sm:px-6 lg:px-8">
+			<div class="sm:flex sm:items-center">
+				<div class="sm:flex-auto">
+					<h3 class="text-base font-semibold text-text-primary">Transactions</h3>
+					<p class="mt-2 text-sm text-text-secondary">
+						A table of placeholder stock market data that does not make any sense.
+					</p>
+				</div>
+				<div class="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
+					<button
+						type="button"
+						class="block rounded-md bg-accent-500 px-3 py-2 text-center text-sm font-semibold text-white shadow-xs hover:bg-accent-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500"
+					>
+						Export
+					</button>
+				</div>
+			</div>
+			<div class="mt-8 flow-root">
+				<div class="-mx-4 -my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
+					<div class="inline-block min-w-full py-2 align-middle sm:px-6 lg:px-8">
+						<table class="relative min-w-full divide-y divide-surface-border">
+							<thead>
+								<tr>
+									<th
+										scope="col"
+										class="py-3.5 pr-3 pl-4 text-left text-sm font-semibold whitespace-nowrap text-text-primary sm:pl-0"
+									>
+										Transaction ID
+									</th>
+									<th
+										scope="col"
+										class="px-2 py-3.5 text-left text-sm font-semibold whitespace-nowrap text-text-primary"
+									>
+										Company
+									</th>
+									<th
+										scope="col"
+										class="px-2 py-3.5 text-left text-sm font-semibold whitespace-nowrap text-text-primary"
+									>
+										Share
+									</th>
+									<th
+										scope="col"
+										class="px-2 py-3.5 text-left text-sm font-semibold whitespace-nowrap text-text-primary"
+									>
+										Commission
+									</th>
+									<th
+										scope="col"
+										class="px-2 py-3.5 text-left text-sm font-semibold whitespace-nowrap text-text-primary"
+									>
+										Price
+									</th>
+									<th
+										scope="col"
+										class="px-2 py-3.5 text-left text-sm font-semibold whitespace-nowrap text-text-primary"
+									>
+										Quantity
+									</th>
+									<th
+										scope="col"
+										class="px-2 py-3.5 text-left text-sm font-semibold whitespace-nowrap text-text-primary"
+									>
+										Net amount
+									</th>
+									<th scope="col" class="py-3.5 pr-4 pl-3 whitespace-nowrap sm:pr-0">
+										<span class="sr-only">Edit</span>
+									</th>
+								</tr>
+							</thead>
+							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
+								{transactions.map((transaction) => (
+									<tr key={transaction.id}>
+										<td class="py-2 pr-3 pl-4 text-sm whitespace-nowrap text-text-secondary sm:pl-0">
+											{transaction.id}
+										</td>
+										<td class="px-2 py-2 text-sm font-medium whitespace-nowrap text-text-primary">
+											{transaction.company}
+										</td>
+										<td class="px-2 py-2 text-sm whitespace-nowrap text-text-primary">
+											{transaction.share}
+										</td>
+										<td class="px-2 py-2 text-sm whitespace-nowrap text-text-secondary">
+											{transaction.commission}
+										</td>
+										<td class="px-2 py-2 text-sm whitespace-nowrap text-text-secondary">
+											{transaction.price}
+										</td>
+										<td class="px-2 py-2 text-sm whitespace-nowrap text-text-secondary">
+											{transaction.quantity}
+										</td>
+										<td class="px-2 py-2 text-sm whitespace-nowrap text-text-secondary">
+											{transaction.netAmount}
+										</td>
+										<td class="py-2 pr-4 pl-3 text-right text-sm font-medium whitespace-nowrap sm:pr-0">
+											<a href="#" class="text-accent-500 hover:text-accent-400">
+												Edit<span class="sr-only">, {transaction.id}</span>
+											</a>
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
 		</div>
 	);
 }

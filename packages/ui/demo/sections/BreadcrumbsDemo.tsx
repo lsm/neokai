@@ -48,10 +48,7 @@ export function FullWidthBarBreadcrumbs() {
 			aria-label="Breadcrumb"
 			class="flex border-b border-surface-border bg-surface-0 dark:border-white/10 dark:bg-gray-900/50"
 		>
-			<ol
-				role="list"
-				class="mx-auto flex w-full max-w-screen-xl space-x-4 px-4 sm:px-6 lg:px-8"
-			>
+			<ol role="list" class="mx-auto flex w-full max-w-screen-xl space-x-4 px-4 sm:px-6 lg:px-8">
 				<li class="flex">
 					<div class="flex items-center">
 						<a

@@ -165,7 +165,9 @@ export function DarkSidebarNavigation() {
 									<a
 										href={item.href}
 										class={classNames(
-											item.current ? 'bg-white/5 text-white' : 'text-text-tertiary hover:bg-white/5 hover:text-white',
+											item.current
+												? 'bg-white/5 text-white'
+												: 'text-text-tertiary hover:bg-white/5 hover:text-white',
 											'group flex gap-x-3 rounded-md p-2 text-sm/6 font-semibold'
 										)}
 									>
@@ -192,7 +194,9 @@ export function DarkSidebarNavigation() {
 									<a
 										href={team.href}
 										class={classNames(
-											team.current ? 'bg-white/5 text-white' : 'text-text-tertiary hover:bg-white/5 hover:text-white',
+											team.current
+												? 'bg-white/5 text-white'
+												: 'text-text-tertiary hover:bg-white/5 hover:text-white',
 											'group flex gap-x-3 rounded-md p-2 text-sm/6 font-semibold'
 										)}
 									>

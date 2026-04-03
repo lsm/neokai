@@ -374,6 +374,327 @@ export function StackedListsDemo() {
 					))}
 				</ul>
 			</div>
+
+			{/* ============================================================ */}
+			{/* 13 - Narrow with Actions */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Narrow with actions</h3>
+				<div class="overflow-hidden bg-surface-0 shadow-sm outline outline-1 outline-black/5 dark:bg-surface-0/50 dark:shadow-none dark:outline-white/10 sm:rounded-xl">
+					<ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
+						{[
+							{
+								title: 'Request time off',
+								description: 'Doloribus dolores nostrum quia qui natus officia quod et dolorem.',
+							},
+							{
+								title: 'Benefits',
+								description: 'Doloribus dolores nostrum quia qui natus officia quod et dolorem.',
+							},
+							{
+								title: 'Schedule a one-on-one',
+								description: 'Doloribus dolores nostrum quia qui natus officia quod et dolorem.',
+							},
+						].map((item, idx) => (
+							<li
+								key={idx}
+								class="flex items-center justify-between gap-x-6 py-5 pl-4 pr-5 sm:pl-6"
+							>
+								<div class="flex min-w-0 gap-x-4">
+									<div class="min-w-0 flex-auto">
+										<p class="text-sm/6 font-semibold text-text-primary">{item.title}</p>
+										<p class="mt-1 truncate text-xs/5 text-text-secondary">{item.description}</p>
+									</div>
+								</div>
+								<a
+									href="#"
+									class="rounded-full bg-surface-0 px-2.5 py-1 text-xs font-semibold text-text-primary shadow-xs ring-1 ring-inset ring-surface-border hover:bg-surface-1 dark:bg-surface-0/50 dark:shadow-none dark:hover:bg-surface-1"
+								>
+									View<span class="sr-only">, {item.title}</span>
+								</a>
+							</li>
+						))}
+					</ul>
+				</div>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 14 - Narrow with Truncated Content */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Narrow with truncated content</h3>
+				<ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
+					{[
+						{
+							name: 'Leslie Alexander',
+							email: 'leslie.alexander@example.com',
+							imageUrl:
+								'https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+						},
+						{
+							name: 'Michael Foster',
+							email: 'michael.foster@example.com',
+							imageUrl:
+								'https://images.unsplash.com/photo-1519244703995-f4e0f30006d5?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+						},
+						{
+							name: 'Dries Vincent',
+							email: 'dries.vincent@example.com',
+							imageUrl:
+								'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+						},
+						{
+							name: 'Lindsay Walton',
+							email: 'lindsay.walton@example.com',
+							imageUrl:
+								'https://images.unsplash.com/photo-1517841905240-472988babdf9?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+						},
+					].map((person) => (
+						<li key={person.email} class="flex gap-x-4 py-5">
+							<img
+								alt=""
+								src={person.imageUrl}
+								class="size-12 flex-none rounded-full bg-surface-1 dark:bg-surface-2 dark:outline dark:-outline-offset-1 dark:outline-white/10"
+							/>
+							<div class="flex-auto">
+								<div class="flex items-baseline justify-between gap-x-4">
+									<p class="text-sm/6 font-semibold text-text-primary">{person.name}</p>
+									<p class="flex-none text-xs text-text-tertiary">
+										<time dateTime="2023-03-04">1d ago</time>
+									</p>
+								</div>
+								<p class="mt-1 line-clamp-2 text-sm/6 text-text-secondary">
+									Explicabo nihil laborum. Saepe facilis consequuntur in eaque. Consequatur
+									perspiciatis quam. Sed est illo quia. Culpa vitae placeat vitae. Repudiandae sunt
+									exercitationem nihil nisi facilis placeat minima eveniet.
+								</p>
+							</div>
+						</li>
+					))}
+				</ul>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 15 - Narrow with Small Avatars */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Narrow with small avatars</h3>
+				<ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
+					{people.map((person) => (
+						<li key={person.email} class="relative flex items-center space-x-4 py-4">
+							<div class="min-w-0 flex-auto">
+								<div class="flex items-center gap-x-3">
+									<div class="flex-none rounded-full bg-surface-1/10 p-1 text-text-tertiary">
+										<div class="size-2 rounded-full bg-current" />
+									</div>
+									<h2 class="min-w-0 text-sm/6 font-semibold text-text-primary">
+										<a href={person.href} class="flex gap-x-2">
+											<span class="truncate">{person.name}</span>
+											<span class="text-text-tertiary">/</span>
+											<span class="whitespace-nowrap">ios-app</span>
+											<span class="absolute inset-0" />
+										</a>
+									</h2>
+								</div>
+								<div class="mt-3 flex items-center gap-x-2 text-xs/5 text-text-secondary">
+									<p class="truncate">Deploys from GitHub</p>
+									<svg viewBox="0 0 2 2" class="size-0.5 flex-none fill-text-tertiary">
+										<circle r={1} cx={1} cy={1} />
+									</svg>
+									<p class="whitespace-nowrap">Deployed 3m ago</p>
+								</div>
+							</div>
+							<div class="flex-none rounded-full bg-surface-1 px-2 py-1 text-xs font-medium text-text-secondary ring-1 ring-surface-border dark:bg-surface-2 dark:text-text-tertiary">
+								Preview
+							</div>
+							<ChevronRightIcon class="size-5 flex-none text-text-tertiary" />
+						</li>
+					))}
+				</ul>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 16 - Activity with Icons */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Activity with icons</h3>
+				<ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
+					{[
+						{
+							user: {
+								name: 'Michael Foster',
+								imageUrl:
+									'https://images.unsplash.com/photo-1519244703995-f4e0f30006d5?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							},
+							projectName: 'ios-app',
+							commit: '2d89f0c8',
+							branch: 'main',
+							date: '1h',
+							dateTime: '2023-01-23T11:00',
+						},
+						{
+							user: {
+								name: 'Lindsay Walton',
+								imageUrl:
+									'https://images.unsplash.com/photo-1517841905240-472988babdf9?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							},
+							projectName: 'mobile-api',
+							commit: '249df660',
+							branch: 'main',
+							date: '3h',
+							dateTime: '2023-01-23T09:00',
+						},
+						{
+							user: {
+								name: 'Courtney Henry',
+								imageUrl:
+									'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							},
+							projectName: 'ios-app',
+							commit: '11464223',
+							branch: 'main',
+							date: '12h',
+							dateTime: '2023-01-23T00:00',
+						},
+					].map((item) => (
+						<li key={item.commit} class="py-4">
+							<div class="flex items-center gap-x-3">
+								<img
+									alt=""
+									src={item.user.imageUrl}
+									class="size-6 flex-none rounded-full bg-surface-2 dark:outline dark:-outline-offset-1 dark:outline-white/10"
+								/>
+								<h3 class="flex-auto truncate text-sm/6 font-semibold text-text-primary">
+									{item.user.name}
+								</h3>
+								<time dateTime={item.dateTime} class="flex-none text-xs text-text-secondary">
+									{item.date}
+								</time>
+							</div>
+							<p class="mt-3 truncate text-sm text-text-secondary">
+								Pushed to <span class="text-text-primary">{item.projectName}</span> (
+								<span class="font-mono text-text-secondary">{item.commit}</span> on{' '}
+								<span class="text-text-secondary">{item.branch}</span>)
+							</p>
+						</li>
+					))}
+				</ul>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 17 - Narrow with Badges */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Narrow with badges</h3>
+				<ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
+					{[
+						{
+							name: 'Leslie Alexander',
+							email: 'leslie.alexander@example.com',
+							imageUrl:
+								'https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+							role: 'Admin',
+						},
+						{
+							name: 'Michael Foster',
+							email: 'michael.foster@example.com',
+							imageUrl:
+								'https://images.unsplash.com/photo-1519244703995-f4e0f30006d5?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+							role: 'Member',
+						},
+						{
+							name: 'Dries Vincent',
+							email: 'dries.vincent@example.com',
+							imageUrl:
+								'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+							role: 'Member',
+						},
+						{
+							name: 'Lindsay Walton',
+							email: 'lindsay.walton@example.com',
+							imageUrl:
+								'https://images.unsplash.com/photo-1517841905240-472988babdf9?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+							href: '#',
+							role: 'Admin',
+						},
+					].map((person) => (
+						<li key={person.email} class="flex justify-between gap-x-6 py-5">
+							<div class="flex min-w-0 gap-x-4">
+								<img
+									alt=""
+									src={person.imageUrl}
+									class="size-12 flex-none rounded-full bg-surface-1 dark:bg-surface-2 dark:outline dark:-outline-offset-1 dark:outline-white/10"
+								/>
+								<div class="min-w-0 flex-auto">
+									<p class="text-sm/6 font-semibold text-text-primary">{person.name}</p>
+									<p class="mt-1 truncate text-xs/5 text-text-secondary">{person.email}</p>
+								</div>
+							</div>
+							<div class="shrink-0 sm:flex sm:flex-col sm:items-end">
+								<span class="inline-flex items-center rounded-full bg-accent-500/10 px-2 py-1 text-xs font-medium text-accent-500 ring-1 ring-accent-500/20 dark:bg-accent-500/10 dark:text-accent-400 dark:ring-accent-500/20">
+									{person.role}
+								</span>
+							</div>
+						</li>
+					))}
+				</ul>
+			</div>
+
+			{/* ============================================================ */}
+			{/* 18 - Simple List */}
+			{/* ============================================================ */}
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-3">Simple list</h3>
+				<ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
+					{people.map((person) => (
+						<li
+							key={person.email}
+							class="relative flex justify-between gap-x-6 px-4 py-5 hover:bg-surface-1 sm:px-6 dark:hover:bg-white/2.5"
+						>
+							<div class="flex min-w-0 gap-x-4">
+								<img
+									alt=""
+									src={person.imageUrl}
+									class="size-12 flex-none rounded-full bg-surface-1 dark:bg-surface-2 dark:outline dark:-outline-offset-1 dark:outline-white/10"
+								/>
+								<div class="min-w-0 flex-auto">
+									<p class="text-sm/6 font-semibold text-text-primary">
+										<a href={person.href}>
+											<span class="absolute inset-x-0 -top-px bottom-0" />
+											{person.name}
+										</a>
+									</p>
+									<p class="mt-1 flex text-xs/5 text-text-secondary">
+										<a href={`mailto:${person.email}`} class="relative truncate hover:underline">
+											{person.email}
+										</a>
+									</p>
+								</div>
+							</div>
+							<div class="flex shrink-0 items-center gap-x-4">
+								<div class="hidden sm:flex sm:flex-col sm:items-end">
+									<p class="text-sm/6 text-text-primary">{person.role}</p>
+									{person.lastSeen ? (
+										<p class="mt-1 text-xs/5 text-text-secondary">
+											Last seen <time dateTime={person.lastSeenDateTime}>{person.lastSeen}</time>
+										</p>
+									) : (
+										<OnlineIndicator />
+									)}
+								</div>
+								<ChevronRightIcon class="size-5 flex-none text-text-tertiary dark:text-text-secondary" />
+							</div>
+						</li>
+					))}
+				</ul>
+			</div>
 		</div>
 	);
 }
