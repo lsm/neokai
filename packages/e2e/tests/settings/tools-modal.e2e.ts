@@ -77,7 +77,9 @@ test.describe('Tools Modal - Redesigned', () => {
 		// Claude Code Preset should now be visible
 		await expect(page.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
 
-		// Setting Sources should also be visible
+		// Setting Sources should also be visible.
+		// .first() is required: getByText matches both the <h4> element and its parent <div>
+		// (whose text content is a superset), causing a strict-mode violation without it.
 		await expect(page.getByText('Setting Sources').first()).toBeVisible();
 	});
 

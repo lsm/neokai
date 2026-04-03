@@ -66,12 +66,13 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		// Verify modal is open with expected sections
 		await expect(page.locator('h2:has-text("Tools")')).toBeVisible();
 
-		// Verify section headers (use .first() to handle potential duplicate elements)
-		await expect(page.locator('h3:has-text("System Prompt")').first()).toBeVisible();
-		await expect(page.locator('h4:has-text("Setting Sources")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("MCP Servers")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("NeoKai Tools")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("SDK Built-in")').first()).toBeVisible();
+		// Verify collapsible group headers rendered as buttons (GroupHeader component uses button+span)
+		await expect(page.locator('button:has-text("App MCP Servers")')).toBeVisible();
+		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
+		await expect(page.locator('button:has-text("NeoKai Tools")')).toBeVisible();
+
+		// Advanced section is collapsed by default — only the toggle button is visible, not its children
+		await expect(page.getByRole('button', { name: /Advanced/i })).toBeVisible();
 	});
 
 	test.skip('should close Tools modal with close button', async ({ page }) => {
