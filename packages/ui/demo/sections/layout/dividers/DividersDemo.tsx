@@ -1,3 +1,5 @@
+import { Ellipsis, Pencil, Plus, Trash } from 'lucide-preact';
+
 export function DividersDemo() {
 	return (
 		<div class="space-y-12">
@@ -28,14 +30,7 @@ export function DividersDemo() {
 					></div>
 					<div class="relative flex justify-center">
 						<span class="bg-white px-2 text-gray-500 dark:bg-gray-900 dark:text-gray-400">
-							<svg
-								viewBox="0 0 20 20"
-								fill="currentColor"
-								aria-hidden="true"
-								class="size-5 text-gray-500 dark:text-gray-400"
-							>
-								<path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" />
-							</svg>
+							<Plus class="size-5" />
 						</span>
 					</div>
 					<div
@@ -102,14 +97,7 @@ export function DividersDemo() {
 							type="button"
 							class="inline-flex items-center gap-x-1.5 rounded-full bg-white px-3 py-1.5 text-sm font-semibold whitespace-nowrap text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
 						>
-							<svg
-								viewBox="0 0 20 20"
-								fill="currentColor"
-								aria-hidden="true"
-								class="-mr-0.5 -ml-1 size-5 text-gray-400"
-							>
-								<path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" />
-							</svg>
+							<Plus class="size-5" />
 							Button text
 						</button>
 					</div>
@@ -134,14 +122,7 @@ export function DividersDemo() {
 							type="button"
 							class="inline-flex items-center gap-x-1.5 rounded-full bg-white px-3 py-1.5 text-sm font-semibold whitespace-nowrap text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
 						>
-							<svg
-								viewBox="0 0 20 20"
-								fill="currentColor"
-								aria-hidden="true"
-								class="-mr-0.5 -ml-1 size-5 text-gray-400"
-							>
-								<path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" />
-							</svg>
+							<Plus class="size-5" />
 							<span>Button text</span>
 						</button>
 					</div>
@@ -184,6 +165,102 @@ export function DividersDemo() {
 						aria-hidden="true"
 						class="w-full border-t border-gray-300 dark:border-white/15"
 					></div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon-only toolbar</h3>
+				<div class="flex items-center">
+					<div
+						aria-hidden="true"
+						class="w-full border-t border-gray-300 dark:border-white/15"
+					></div>
+					<div class="relative flex justify-center">
+						<span class="isolate inline-flex -space-x-px rounded-md shadow-xs dark:shadow-none">
+							<button
+								type="button"
+								class="relative inline-flex items-center rounded-l-md bg-white px-3 py-2 text-gray-400 inset-ring inset-ring-gray-300 hover:bg-gray-50 focus:z-10 dark:bg-white/5 dark:inset-ring-gray-700 dark:hover:bg-white/10"
+							>
+								<span class="sr-only">Edit</span>
+								<Pencil class="size-5" />
+							</button>
+							<button
+								type="button"
+								class="relative inline-flex items-center bg-white px-3 py-2 text-gray-400 inset-ring inset-ring-gray-300 hover:bg-gray-50 focus:z-10 dark:bg-white/5 dark:inset-ring-gray-700 dark:hover:bg-white/10"
+							>
+								<span class="sr-only">Delete</span>
+								<Trash class="size-5" />
+							</button>
+							<button
+								type="button"
+								class="relative inline-flex items-center rounded-r-md bg-white px-3 py-2 text-gray-400 inset-ring inset-ring-gray-300 hover:bg-gray-50 focus:z-10 dark:bg-white/5 dark:inset-ring-gray-700 dark:hover:bg-white/10"
+							>
+								<span class="sr-only">More</span>
+								<Ellipsis class="size-5" />
+							</button>
+						</span>
+					</div>
+					<div
+						aria-hidden="true"
+						class="w-full border-t border-gray-300 dark:border-white/15"
+					></div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon-only centered</h3>
+				<div class="flex items-center">
+					<div
+						aria-hidden="true"
+						class="w-full border-t border-gray-300 dark:border-white/15"
+					></div>
+					<div class="relative flex justify-center">
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">Add</span>
+							<Plus class="size-5" />
+						</button>
+					</div>
+					<div
+						aria-hidden="true"
+						class="w-full border-t border-gray-300 dark:border-white/15"
+					></div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon-only on left</h3>
+				<div class="flex items-center">
+					<div class="relative flex justify-start">
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">Add</span>
+							<Plus class="size-5" />
+						</button>
+					</div>
+					<div
+						aria-hidden="true"
+						class="w-full border-t border-gray-300 dark:border-white/15"
+					></div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon-only on right</h3>
+				<div class="flex items-center">
+					<div
+						aria-hidden="true"
+						class="w-full border-t border-gray-300 dark:border-white/15"
+					></div>
+					<div class="relative flex justify-end">
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">Add</span>
+							<Plus class="size-5" />
+						</button>
+					</div>
 				</div>
 			</div>
 		</div>

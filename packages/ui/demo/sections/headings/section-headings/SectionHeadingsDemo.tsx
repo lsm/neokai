@@ -1,3 +1,5 @@
+import { EllipsisVertical, Plus, Pencil } from 'lucide-preact';
+
 export function SectionHeadingsDemo() {
 	return (
 		<div class="space-y-12">
@@ -184,6 +186,50 @@ export function SectionHeadingsDemo() {
 								</a>
 							</nav>
 						</div>
+					</div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon-only actions</h3>
+				<div class="border-b border-gray-200 pb-5 sm:flex sm:items-center sm:justify-between dark:border-white/10">
+					<h3 class="text-base font-semibold text-gray-900 dark:text-white">Team Members</h3>
+					<div class="mt-3 flex gap-2 sm:mt-0 sm:ml-4">
+						<button
+							type="button"
+							class="rounded-full bg-indigo-600 p-2 text-white shadow-xs hover:bg-indigo-500 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400"
+						>
+							<span class="sr-only">Add member</span>
+							<Plus class="size-5" />
+						</button>
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">More options</span>
+							<EllipsisVertical class="size-5" />
+						</button>
+					</div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon-only edit and more</h3>
+				<div class="border-b border-gray-200 pb-5 sm:flex sm:items-center sm:justify-between dark:border-white/10">
+					<h3 class="text-base font-semibold text-gray-900 dark:text-white">Projects</h3>
+					<div class="mt-3 flex gap-2 sm:mt-0 sm:ml-4">
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">Edit</span>
+							<Pencil class="size-5" />
+						</button>
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">More options</span>
+							<EllipsisVertical class="size-5" />
+						</button>
 					</div>
 				</div>
 			</div>
