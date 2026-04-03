@@ -89,6 +89,8 @@ The reference uses `@headlessui/react` for interactive patterns -- the React equ
 
 **Why a headless primitive:** Alerts need `role="alert"`, dismissible state management, and an icon slot -- these go beyond plain HTML.
 
+**Headless approach:** Alert is a state-management + ARIA primitive. Props like `variant` and `style` are **semantic configuration**, not styling — they control which ARIA semantics and data attributes are emitted. The component does not apply any Tailwind classes. Consumers use `data-variant="success"` and `data-style="outline"` to style via Tailwind selectors.
+
 **Props API:**
 
 ```typescript
@@ -128,6 +130,8 @@ interface AlertProps {
 **Reference files:** `elements/avatars/01-circular` through `11-with-text`
 
 **Why a headless primitive:** Avatars need image load/error state tracking, fallback chain (image → initials → placeholder icon), and status indicators -- these require state management.
+
+**Headless approach:** Avatar is a state-management primitive for image loading and fallback rendering. Props like `size`, `shape`, and `status` are **semantic configuration** — they control which data attributes are emitted and which fallback is rendered. The component does not apply any Tailwind classes. Consumers use `data-size="md"`, `data-shape="circle"`, `data-status="online"` to style via Tailwind selectors.
 
 **Props API:**
 
@@ -200,6 +204,8 @@ interface AvatarGroupOverflowProps {
 
 **Why a headless primitive:** Badges need removable state, dot indicators, and multiple variant axes -- these benefit from a structured API.
 
+**Headless approach:** Badge is a state-management primitive for the remove action and dot indicator rendering. Props like `color`, `shape`, `fill`, and `size` are **semantic configuration** — they control which data attributes are emitted. The component does not apply any Tailwind classes. Consumers use `data-color="red"`, `data-shape="pill"`, `data-fill="flat"`, `data-size="small"` to style via Tailwind selectors.
+
 **Props API:**
 
 ```typescript
@@ -259,6 +265,8 @@ interface ProgressBarProps {
 - The `label` prop sets `aria-label` (and optionally renders an `sr-only` heading)
 
 #### 3.5b. Stepper (7 examples — multi-step indicator)
+
+**Controlled approach:** Stepper uses a controlled `currentStep` prop rather than internal state management. This follows the same pattern as `TabGroup` (which uses `selectedIndex`), keeping the state owner outside the component. The component derives each step's status from the `currentStep` index comparison and renders accordingly. This is simpler than a compound component with internal state and makes it easy to wire to external routing or form state.
 
 **Props API:**
 
@@ -331,7 +339,7 @@ interface StepperStepProps {
 
 ### 4.2 Field — Add Input Group Support (MEDIUM)
 
-**Current API:** `Field` is a pure context provider with no `data-*` attributes.
+**Current API:** `Field` is a context provider. It already emits `data-disabled` via the `render()` utility's automatic slot-to-data-attribute translation (slot `{ disabled: isDisabled }` → `data-disabled` attribute on DOM).
 
 **What the reference does (21 input-group examples):**
 - Inputs with leading/trailing add-ons (`$` prefix, `.00` suffix)
@@ -344,23 +352,22 @@ interface StepperStepProps {
 |---|---|---|
 | Add `InputGroup` component | Wrapper providing group-level focus/hover state propagation | Yes (new component) |
 | Add `InputAddon` component | Renders add-on content (text, icon, or button) | Yes (new component) |
-| Add `data-disabled` to `Field` | Currently emits no data attributes | Yes |
 | Add `FieldError` component | Error text variant with `role="alert"`, sets `aria-invalid` on input | Yes (new component) |
 
-**Data attributes to add:** `data-disabled` on `Field`, `data-focus`/`data-hover` on `InputGroup`
+**Data attributes to add:** `data-focus`/`data-hover` on `InputGroup` (via slot boolean → `data-*` auto-translation)
 
 ---
 
-### 4.3 Input — Add Data Attributes (MEDIUM)
+### 4.3 Input — Verify Data Attributes (MEDIUM)
 
-**Current API:** Slot object contains `{ disabled, invalid, hover, focus, autofocus }` but these may not be emitted as `data-*` attributes on the DOM element (depends on `render()` utility behavior).
+**Current API:** Slot object contains `{ disabled, invalid, hover, focus, autofocus }`. The `render()` utility in `internal/render.ts` automatically generates `data-*` attributes from truthy boolean slot values (lines 25-30: iterates slot, emits `data-{key}` for each truthy boolean). This means `data-hover`, `data-focus`, `data-disabled`, `data-invalid` should already be emitted on the DOM element.
 
 **Changes needed:**
 
 | Change | Details | Backward-Compatible? |
 |---|---|---|
-| Verify `data-*` emission | Confirm `render()` translates slot booleans to `data-hover`, `data-focus`, `data-disabled`, `data-invalid` on the DOM | N/A (verification) |
-| Add missing data attributes | If not already emitted, add `data-hover`, `data-focus`, `data-disabled`, `data-invalid` to `ourProps` | Yes |
+| Verify `data-*` emission with a unit test | Confirm `render()` translates Input/Textarea/Select slot booleans to DOM attributes | N/A (verification) |
+| Document the behavior | Ensure the data attribute contract is clear for consumers | N/A |
 
 ---
 
@@ -511,24 +518,24 @@ The Catalyst UI Kit demonstrates a `TouchTarget` component that expands hit area
 |---|---|---|
 | 3.1 | Add `InputGroup` + `InputAddon` to Field family | New components. `InputGroup` propagates focus/hover to wrapper. `InputAddon` renders add-on content. Unit tests. |
 | 3.2 | Add `FieldError` component | Error text variant with `role="alert"`. Sets `aria-invalid` on associated input via Field context. Unit tests. |
-| 3.3 | Add `data-disabled` to `Field` | `data-disabled` emitted when `isDisabled` is true. Unit test verifies attribute presence. |
-| 3.4 | Fix `MenuSection` ARIA: add `role="group"` + `aria-labelledby` | `MenuSection` emits `role="group"` and `aria-labelledby` pointing to `MenuHeading` id. `MenuHeading` generates an id. Unit tests verify ARIA attributes. |
-| 3.5 | Verify/fix `data-*` emission on Input, Button, MenuItem | Confirm `render()` utility translates slot booleans to `data-hover`, `data-focus`, `data-disabled`, `data-invalid` on DOM. Fix if missing. Unit tests verify attributes. |
+| 3.3 | Fix `MenuSection` ARIA: add `role="group"` + `aria-labelledby` | `MenuSection` emits `role="group"` and `aria-labelledby` pointing to `MenuHeading` id. `MenuHeading` generates an id. Unit tests verify ARIA attributes. |
+| 3.4 | Verify `data-*` emission on Input, Button, MenuItem | Confirm `render()` utility translates slot booleans to `data-hover`, `data-focus`, `data-disabled`, `data-invalid` on DOM. Add a unit test if none exists. |
 
 **Estimated effort:** 2 sessions.
 
 ---
 
-#### R4. Add ButtonGroup + Fix CloseButton
+#### R4. Add ButtonGroup
 
-**Why:** Button groups are a pervasive visual pattern (12 reference examples). CloseButton has a crash bug.
+**Why:** Button groups are a pervasive visual pattern (12 reference examples). No new headless behavior needed — just a structural wrapper.
+
+**Note:** `CloseButton` already guards against missing context (`if (close) close()` at line 103 of `button.tsx`). No fix needed.
 
 **Task breakdown:**
 
 | # | Task | Acceptance Criteria |
 |---|---|---|
 | 4.1 | Add `ButtonGroup` component | Renders `<div role="group">`. Group-level data attributes. Unit tests. |
-| 4.2 | Fix `CloseButton` crash outside context | Add guard: if `close` is undefined, no-op instead of throw. Unit test verifies no crash when used standalone. |
 
 **Estimated effort:** 1 session.
 
