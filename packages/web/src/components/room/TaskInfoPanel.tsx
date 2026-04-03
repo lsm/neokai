@@ -22,6 +22,7 @@ import { borderColors } from '../../lib/design-tokens.ts';
 import { ViaNeoIndicator } from '../neo/ViaNeoIndicator.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { TaskViewModelSelector } from './TaskViewModelSelector.tsx';
+import type { TaskViewVersionContext } from './TaskViewToggle.tsx';
 
 /**
  * Map session status to a CSS color class.
@@ -60,6 +61,8 @@ function formatTimestamp(ms: number): string {
 
 export interface TaskInfoPanelProps {
 	isOpen: boolean;
+	/** View version toggle context (optional — enables V1/V2 toggle in the panel) */
+	viewVersion?: TaskViewVersionContext;
 	/** Room ID for routing task session model switches through RoomRuntimeService */
 	roomId?: string;
 	/** Full task ID */
@@ -84,6 +87,7 @@ export interface TaskInfoPanelProps {
 	leaderSession?: SessionInfo | null;
 	/** Available action handlers */
 	actions: {
+		onInterrupt?: () => void;
 		onComplete?: () => void;
 		onCancel?: () => void;
 		onArchive?: () => void;
@@ -93,6 +97,7 @@ export interface TaskInfoPanelProps {
 	};
 	/** Whether each action should be shown (context-aware) */
 	visibleActions: {
+		interrupt?: boolean;
 		complete?: boolean;
 		cancel?: boolean;
 		archive?: boolean;
@@ -102,6 +107,7 @@ export interface TaskInfoPanelProps {
 	};
 	/** Whether each action is disabled */
 	disabledActions?: {
+		interrupt?: boolean;
 		complete?: boolean;
 		cancel?: boolean;
 		archive?: boolean;
@@ -113,6 +119,7 @@ export interface TaskInfoPanelProps {
 
 export function TaskInfoPanel({
 	isOpen,
+	viewVersion,
 	roomId,
 	taskId,
 	groupId,
@@ -149,6 +156,7 @@ export function TaskInfoPanel({
 		null;
 
 	const hasVisibleActions =
+		visibleActions.interrupt ||
 		visibleActions.complete ||
 		visibleActions.cancel ||
 		visibleActions.archive ||
@@ -166,6 +174,38 @@ export function TaskInfoPanel({
 			data-testid="task-info-panel"
 		>
 			<div class="px-4 py-3 flex flex-col gap-3">
+				{/* View toggle section */}
+				{viewVersion && (
+					<div class="flex items-center justify-between">
+						<div class="flex flex-col gap-0.5">
+							<span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">View</span>
+							<span class="text-[10px] text-gray-600">
+								{viewVersion.version === 'v1'
+									? 'V1 Timeline → V2 Turn-based'
+									: 'V2 Turn-based → V1 Timeline'}
+							</span>
+						</div>
+						<button
+							data-testid="task-view-toggle"
+							onClick={viewVersion.onToggleVersion}
+							class="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors bg-dark-700 hover:bg-dark-600 text-gray-300 hover:text-gray-100"
+							aria-label={`Switch to ${viewVersion.version === 'v1' ? 'V2 turn-based' : 'V1 timeline'} view`}
+						>
+							{viewVersion.version === 'v1' ? (
+								<>
+									<span>V1</span>
+									<span class="text-gray-500">→ V2</span>
+								</>
+							) : (
+								<>
+									<span class="text-gray-500">V1 ←</span>
+									<span>V2</span>
+								</>
+							)}
+						</button>
+					</div>
+				)}
+
 				{/* Info section */}
 				{hasWorktreeInfo && (
 					<div>
@@ -347,6 +387,22 @@ export function TaskInfoPanel({
 							Actions
 						</h3>
 						<div class="flex items-center gap-2 flex-wrap">
+							{visibleActions.interrupt && actions.onInterrupt && (
+								<button
+									type="button"
+									onClick={actions.onInterrupt}
+									disabled={disabledActions?.interrupt}
+									data-testid="task-info-panel-interrupt"
+									class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 border border-amber-700/40 hover:border-amber-600/60"
+									title="Interrupt generation"
+								>
+									<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+										<rect x="6" y="6" width="12" height="12" rx="1" />
+									</svg>
+									Stop
+								</button>
+							)}
+
 							{visibleActions.complete && actions.onComplete && (
 								<button
 									type="button"

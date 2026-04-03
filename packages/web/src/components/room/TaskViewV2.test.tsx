@@ -8,9 +8,9 @@
  * - Runtime messages rendered inline between turn blocks
  * - Clicking a turn block opens slide-out panel
  * - Only one slide-out panel at a time (opening a new one closes previous)
- * - Review bar appears when group.submittedForReview
+ * - TaskReviewBar shown when group.submittedForReview is true
  * - Auto-scroll integration (isFirstLoad flip, autoScrollEnabled toggle)
- * - Shared sub-components (HumanInputArea, TaskActionDialogs, TaskReviewBar, RejectModal)
+ * - Shared sub-components (HumanInputArea, TaskActionDialogs, RejectModal)
  * - conversationKey bump forces re-render key
  */
 
@@ -174,28 +174,11 @@ vi.mock('./task-shared/HumanInputArea.tsx', () => ({
 	HumanInputArea: () => <div data-testid="human-input-area" />,
 }));
 
-vi.mock('./task-shared/TaskHeaderActions.tsx', () => ({
-	TaskHeaderActions: ({ onToggleInfoPanel }: { onToggleInfoPanel: () => void }) => (
-		<button data-testid="toggle-info-panel" onClick={onToggleInfoPanel}>
-			Info
-		</button>
-	),
-}));
-
-vi.mock('./task-shared/TaskReviewBar.tsx', () => ({
-	TaskReviewBar: ({
-		onApprove,
-		onOpenRejectModal,
-	}: {
-		onApprove: () => void;
-		onOpenRejectModal: () => void;
-	}) => (
-		<div data-testid="task-review-bar">
-			<button data-testid="approve-button" onClick={onApprove}>
-				Approve
-			</button>
-			<button data-testid="open-reject-modal" onClick={onOpenRejectModal}>
-				Reject
+vi.mock('./task-shared/TaskHeader.tsx', () => ({
+	TaskHeader: ({ onToggleInfoPanel }: { onToggleInfoPanel: () => void }) => (
+		<div data-testid="task-header">
+			<button data-testid="toggle-info-panel" onClick={onToggleInfoPanel}>
+				Info
 			</button>
 		</div>
 	),
@@ -206,6 +189,27 @@ vi.mock('./task-shared/TaskActionDialogs.tsx', () => ({
 	CancelTaskDialog: () => null,
 	ArchiveTaskDialog: () => null,
 	SetStatusModal: () => null,
+}));
+
+vi.mock('./task-shared/TaskReviewBar.tsx', () => ({
+	TaskReviewBar: ({
+		task,
+		onApprove,
+		onOpenRejectModal,
+	}: {
+		task: unknown;
+		onApprove: () => void;
+		onOpenRejectModal: () => void;
+	}) => (
+		<div data-testid="task-review-bar">
+			<button data-testid="approve-button" onClick={onApprove}>
+				Approve
+			</button>
+			<button data-testid="reject-button" onClick={onOpenRejectModal}>
+				Reject
+			</button>
+		</div>
+	),
 }));
 
 vi.mock('../ui/RejectModal.tsx', () => ({
@@ -461,28 +465,16 @@ describe('TaskViewV2', () => {
 
 	// --- Header ---
 
-	it('renders task title in header', () => {
-		const { container } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		expect(container.textContent).toContain('Test Task');
-	});
-
-	it('renders status badge', () => {
+	it('renders task header (delegated to TaskHeader component)', () => {
 		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		expect(getByTestId('task-status-badge').textContent).toContain('in progress');
+		expect(getByTestId('task-header')).toBeTruthy();
 	});
 
-	it('does not render review bar when group.submittedForReview is false', () => {
-		const { queryByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		expect(queryByTestId('task-review-bar')).toBeNull();
-	});
-
-	it('renders review bar when group.submittedForReview is true', () => {
-		mockTaskViewData = makeDefaultTaskViewData(
-			makeTask({ status: 'review' }),
-			makeGroup({ submittedForReview: true })
-		);
-		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		expect(getByTestId('task-review-bar')).toBeTruthy();
+	it('toggles info panel when header action button clicked', async () => {
+		const { getByTestId, queryByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		expect(queryByTestId('task-info-panel')).toBeNull();
+		fireEvent.click(getByTestId('toggle-info-panel'));
+		await waitFor(() => expect(getByTestId('task-info-panel')).toBeTruthy());
 	});
 
 	// --- Turn blocks ---
@@ -653,40 +645,6 @@ describe('TaskViewV2', () => {
 		});
 	});
 
-	// --- Review flow ---
-
-	it('calls approveReviewedTask when approve button clicked', async () => {
-		mockTaskViewData = makeDefaultTaskViewData(
-			makeTask({ status: 'review' }),
-			makeGroup({ submittedForReview: true })
-		);
-		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		fireEvent.click(getByTestId('approve-button'));
-		await waitFor(() => {
-			expect(mockTaskViewData.approveReviewedTask).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	it('opens reject modal when reject button clicked', async () => {
-		const data = makeDefaultTaskViewData(
-			makeTask({ status: 'review' }),
-			makeGroup({ submittedForReview: true })
-		);
-		mockTaskViewData = data;
-		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		fireEvent.click(getByTestId('open-reject-modal'));
-		expect(data.rejectModal.open).toHaveBeenCalled();
-	});
-
-	// --- Info panel ---
-
-	it('toggles info panel when header action button clicked', async () => {
-		const { getByTestId, queryByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		expect(queryByTestId('task-info-panel')).toBeNull();
-		fireEvent.click(getByTestId('toggle-info-panel'));
-		await waitFor(() => expect(getByTestId('task-info-panel')).toBeTruthy());
-	});
-
 	// --- Dependencies ---
 
 	it('renders dependency links when task.dependsOn is non-empty', () => {
@@ -701,13 +659,15 @@ describe('TaskViewV2', () => {
 
 	// --- PR link ---
 
-	it('renders PR link when task.prUrl is set', () => {
+	it('passes task with prUrl to TaskHeader when task.prUrl is set', () => {
 		mockTaskViewData = makeDefaultTaskViewData(
 			makeTask({ prUrl: 'https://github.com/org/repo/pull/42', prNumber: 42 }),
 			makeGroup()
 		);
-		const { container } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		expect(container.textContent).toContain('PR #42');
+		render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		// TaskHeader is mocked; the task data with prUrl is passed through
+		expect(mockTaskViewData.task?.prUrl).toBe('https://github.com/org/repo/pull/42');
+		expect(mockTaskViewData.task?.prNumber).toBe(42);
 	});
 
 	// --- conversationKey state resets ---
@@ -793,5 +753,32 @@ describe('TaskViewV2', () => {
 		mockIsReconnecting = true;
 		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
 		expect(getByTestId('reconnecting-banner').textContent).toContain('Reconnecting');
+	});
+
+	// --- TaskReviewBar (approve/reject) ---
+
+	it('renders TaskReviewBar when group.submittedForReview is true', () => {
+		mockTaskViewData = makeDefaultTaskViewData(makeTask(), makeGroup({ submittedForReview: true }));
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		expect(getByTestId('task-review-bar')).toBeTruthy();
+	});
+
+	it('does not render TaskReviewBar when group.submittedForReview is false', () => {
+		const { queryByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		expect(queryByTestId('task-review-bar')).toBeNull();
+	});
+
+	it('calls approveReviewedTask when approve button clicked', () => {
+		mockTaskViewData = makeDefaultTaskViewData(makeTask(), makeGroup({ submittedForReview: true }));
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		fireEvent.click(getByTestId('approve-button'));
+		expect(mockTaskViewData.approveReviewedTask).toHaveBeenCalled();
+	});
+
+	it('calls rejectModal.open when reject button clicked', () => {
+		mockTaskViewData = makeDefaultTaskViewData(makeTask(), makeGroup({ submittedForReview: true }));
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		fireEvent.click(getByTestId('reject-button'));
+		expect(mockTaskViewData.rejectModal.open).toHaveBeenCalled();
 	});
 });

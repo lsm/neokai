@@ -7,32 +7,61 @@
  * - Toggle button switches V1 → V2 and V2 → V1
  * - Persists preference to localStorage on toggle
  * - Renders TaskView (V1) or TaskViewV2 conditionally
- * - data-testid="task-view-toggle" present on button
+ * - data-testid="task-view-toggle" is passed to child views via viewVersion prop
  * - aria-label updates based on current version
+ *
+ * Note: The view toggle button is now rendered inside TaskInfoPanel (gear menu)
+ * rather than as a persistent header bar. The tests mock the child views but
+ * verify that the correct viewVersion context is passed.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup, act } from '@testing-library/preact';
 import { TaskViewToggle } from '../TaskViewToggle';
+import type { TaskViewVersionContext } from '../TaskViewToggle';
 
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
 
+let capturedVersion: TaskViewVersionContext | null = null;
+
 vi.mock('../TaskView', () => ({
-	TaskView: ({ roomId, taskId }: { roomId: string; taskId: string }) => (
-		<div data-testid="task-view-v1" data-room-id={roomId} data-task-id={taskId}>
-			TaskView V1
-		</div>
-	),
+	TaskView: ({
+		roomId,
+		taskId,
+		viewVersion,
+	}: {
+		roomId: string;
+		taskId: string;
+		viewVersion?: TaskViewVersionContext;
+	}) => {
+		capturedVersion = viewVersion ?? null;
+		return (
+			<div data-testid="task-view-v1" data-room-id={roomId} data-task-id={taskId}>
+				TaskView V1
+			</div>
+		);
+	},
 }));
 
 vi.mock('../TaskViewV2', () => ({
-	TaskViewV2: ({ roomId, taskId }: { roomId: string; taskId: string }) => (
-		<div data-testid="task-view-v2" data-room-id={roomId} data-task-id={taskId}>
-			TaskViewV2
-		</div>
-	),
+	TaskViewV2: ({
+		roomId,
+		taskId,
+		viewVersion,
+	}: {
+		roomId: string;
+		taskId: string;
+		viewVersion?: TaskViewVersionContext;
+	}) => {
+		capturedVersion = viewVersion ?? null;
+		return (
+			<div data-testid="task-view-v2" data-room-id={roomId} data-task-id={taskId}>
+				TaskViewV2
+			</div>
+		);
+	},
 }));
 
 // ---------------------------------------------------------------------------
@@ -65,6 +94,7 @@ describe('TaskViewToggle', () => {
 	beforeEach(() => {
 		localStorageMock.clear();
 		vi.clearAllMocks();
+		capturedVersion = null;
 	});
 
 	afterEach(() => {
@@ -77,11 +107,6 @@ describe('TaskViewToggle', () => {
 		);
 		expect(getByTestId('task-view-v1')).toBeTruthy();
 		expect(queryByTestId('task-view-v2')).toBeNull();
-	});
-
-	it('renders toggle button with data-testid="task-view-toggle"', () => {
-		const { getByTestId } = render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
-		expect(getByTestId('task-view-toggle')).toBeTruthy();
 	});
 
 	it('reads V2 preference from localStorage synchronously on mount', () => {
@@ -102,40 +127,55 @@ describe('TaskViewToggle', () => {
 		expect(queryByTestId('task-view-v2')).toBeNull();
 	});
 
-	it('toggles from V1 to V2 on button click', () => {
+	it('toggles from V1 to V2 on viewVersion.onToggleVersion call', async () => {
 		const { getByTestId, queryByTestId } = render(
 			<TaskViewToggle roomId="room-1" taskId="task-1" />
 		);
 		expect(getByTestId('task-view-v1')).toBeTruthy();
+		expect(capturedVersion?.version).toBe('v1');
 
-		fireEvent.click(getByTestId('task-view-toggle'));
+		// Simulate the toggle being called (e.g., from within TaskInfoPanel)
+		await act(async () => {
+			capturedVersion?.onToggleVersion();
+		});
 
+		// After toggle, V2 view should be rendered
 		expect(getByTestId('task-view-v2')).toBeTruthy();
 		expect(queryByTestId('task-view-v1')).toBeNull();
-	});
-
-	it('toggles from V2 back to V1 on second click', () => {
-		const { getByTestId, queryByTestId } = render(
-			<TaskViewToggle roomId="room-1" taskId="task-1" />
-		);
-		fireEvent.click(getByTestId('task-view-toggle'));
-		expect(getByTestId('task-view-v2')).toBeTruthy();
-
-		fireEvent.click(getByTestId('task-view-toggle'));
-		expect(getByTestId('task-view-v1')).toBeTruthy();
-		expect(queryByTestId('task-view-v2')).toBeNull();
-	});
-
-	it('persists V2 to localStorage when toggled from V1', () => {
-		const { getByTestId } = render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
-		fireEvent.click(getByTestId('task-view-toggle'));
 		expect(localStorageMock.setItem).toHaveBeenCalledWith('neokai:taskViewVersion', 'v2');
 	});
 
-	it('persists V1 to localStorage when toggled from V2', () => {
+	it('toggles from V2 back to V1 on second onToggleVersion call', async () => {
 		localStorageMock.getItem.mockReturnValueOnce('v2');
-		const { getByTestId } = render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
-		fireEvent.click(getByTestId('task-view-toggle'));
+		const { getByTestId, queryByTestId } = render(
+			<TaskViewToggle roomId="room-1" taskId="task-1" />
+		);
+		expect(getByTestId('task-view-v2')).toBeTruthy();
+		expect(capturedVersion?.version).toBe('v2');
+
+		await act(async () => {
+			capturedVersion?.onToggleVersion();
+		});
+
+		expect(getByTestId('task-view-v1')).toBeTruthy();
+		expect(queryByTestId('task-view-v2')).toBeNull();
+		expect(localStorageMock.setItem).toHaveBeenCalledWith('neokai:taskViewVersion', 'v1');
+	});
+
+	it('persists V2 to localStorage when toggled from V1', async () => {
+		render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
+		await act(async () => {
+			capturedVersion?.onToggleVersion();
+		});
+		expect(localStorageMock.setItem).toHaveBeenCalledWith('neokai:taskViewVersion', 'v2');
+	});
+
+	it('persists V1 to localStorage when toggled from V2', async () => {
+		localStorageMock.getItem.mockReturnValueOnce('v2');
+		render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
+		await act(async () => {
+			capturedVersion?.onToggleVersion();
+		});
 		expect(localStorageMock.setItem).toHaveBeenCalledWith('neokai:taskViewVersion', 'v1');
 	});
 
@@ -154,22 +194,29 @@ describe('TaskViewToggle', () => {
 		expect(v2.getAttribute('data-task-id')).toBe('my-task');
 	});
 
-	it('aria-label indicates switching to V2 when in V1 mode', () => {
-		const { getByTestId } = render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
-		const btn = getByTestId('task-view-toggle');
-		expect(btn.getAttribute('aria-label')).toContain('V2');
+	it('passes viewVersion context to V1 view with version "v1"', () => {
+		render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
+		expect(capturedVersion).toBeTruthy();
+		expect(capturedVersion?.version).toBe('v1');
+		expect(typeof capturedVersion?.onToggleVersion).toBe('function');
 	});
 
-	it('aria-label indicates switching to V1 when in V2 mode', () => {
+	it('passes viewVersion context to V2 view with version "v2"', () => {
 		localStorageMock.getItem.mockReturnValueOnce('v2');
-		const { getByTestId } = render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
-		const btn = getByTestId('task-view-toggle');
-		expect(btn.getAttribute('aria-label')).toContain('V1');
+		render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
+		expect(capturedVersion).toBeTruthy();
+		expect(capturedVersion?.version).toBe('v2');
+		expect(typeof capturedVersion?.onToggleVersion).toBe('function');
 	});
 
 	it('uses storage key "neokai:taskViewVersion"', () => {
 		render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
-		// getItem is called during lazy init
 		expect(localStorageMock.getItem).toHaveBeenCalledWith('neokai:taskViewVersion');
+	});
+
+	it('does not render a persistent toggle bar above the view', () => {
+		const { container } = render(<TaskViewToggle roomId="room-1" taskId="task-1" />);
+		// The old toggle bar had "View:" label text — that should not exist anymore
+		expect(container.textContent).not.toContain('View:');
 	});
 });

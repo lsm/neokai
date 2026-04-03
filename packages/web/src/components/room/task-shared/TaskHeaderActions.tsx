@@ -1,7 +1,4 @@
 export interface TaskHeaderActionsProps {
-	canInterrupt: boolean;
-	interrupting: boolean;
-	onInterrupt: () => void;
 	canReactivate: boolean;
 	reactivating: boolean;
 	onReactivate: () => void;
@@ -10,9 +7,6 @@ export interface TaskHeaderActionsProps {
 }
 
 export function TaskHeaderActions({
-	canInterrupt,
-	interrupting,
-	onInterrupt,
 	canReactivate,
 	reactivating,
 	onReactivate,
@@ -21,20 +15,6 @@ export function TaskHeaderActions({
 }: TaskHeaderActionsProps) {
 	return (
 		<>
-			{/* Stop (interrupt) button - quick action outside dropdown */}
-			{canInterrupt && (
-				<button
-					class="p-1.5 rounded text-amber-400 hover:text-amber-300 hover:bg-dark-700 transition-colors disabled:opacity-50"
-					onClick={onInterrupt}
-					title="Interrupt generation (task stays active, type your suggestions)"
-					disabled={interrupting}
-					data-testid="task-stop-button"
-				>
-					<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-						<rect x="6" y="6" width="12" height="12" rx="1" />
-					</svg>
-				</button>
-			)}
 			{/* Reactivate button - standalone, shown for completed/cancelled tasks */}
 			{canReactivate && (
 				<button
@@ -63,7 +43,7 @@ export function TaskHeaderActions({
 			)}
 			{/* Gear button - toggles info panel below header */}
 			<button
-				class={`p-1.5 rounded transition-colors ${
+				class={`p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded transition-colors ${
 					isInfoPanelOpen
 						? 'bg-blue-600 text-white'
 						: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'

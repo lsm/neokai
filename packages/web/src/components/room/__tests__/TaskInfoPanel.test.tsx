@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { TaskInfoPanel } from '../TaskInfoPanel';
+import type { TaskViewVersionContext } from '../TaskViewToggle';
 
 // Mock TaskViewModelSelector to avoid connectionManager dependency in tests
 vi.mock('../TaskViewModelSelector.tsx', () => ({
@@ -608,6 +609,63 @@ describe('TaskInfoPanel', () => {
 	});
 
 	describe('Actions Section', () => {
+		it('should show Interrupt (Stop) action when visible', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="task-info-panel-interrupt"]')).toBeTruthy();
+			expect(container.textContent).toContain('Stop');
+		});
+
+		it('should call onInterrupt when Stop button is clicked', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+				/>
+			);
+
+			fireEvent.click(container.querySelector('[data-testid="task-info-panel-interrupt"]')!);
+			expect(onInterrupt).toHaveBeenCalledOnce();
+		});
+
+		it('should disable Interrupt button when disabledActions.interrupt is true', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+					disabledActions={{ interrupt: true }}
+				/>
+			);
+
+			const btn = container.querySelector(
+				'[data-testid="task-info-panel-interrupt"]'
+			) as HTMLButtonElement;
+			expect(btn?.disabled).toBe(true);
+		});
+
+		it('should not show Interrupt action when not visible', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt: vi.fn() }}
+					visibleActions={{ interrupt: false }}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="task-info-panel-interrupt"]')).toBeNull();
+		});
+
 		it('should show Complete action when visible', () => {
 			const onComplete = vi.fn();
 			const { container } = render(
@@ -798,6 +856,56 @@ describe('TaskInfoPanel', () => {
 			);
 
 			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+	});
+
+	describe('View version toggle', () => {
+		it('should show sub-label "V1 Timeline \u2192 V2 Turn-based" when version is v1', () => {
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v1',
+				onToggleVersion: vi.fn(),
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).toContain('V1 Timeline \u2192 V2 Turn-based');
+		});
+
+		it('should show sub-label "V2 Turn-based \u2192 V1 Timeline" when version is v2', () => {
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v2',
+				onToggleVersion: vi.fn(),
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).toContain('V2 Turn-based \u2192 V1 Timeline');
+		});
+
+		it('should not show view toggle section when viewVersion is omitted', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('Timeline');
+			expect(container.textContent).not.toContain('Turn-based');
+			expect(container.querySelector('[data-testid="task-view-toggle"]')).toBeNull();
+		});
+
+		it('should call onToggleVersion when toggle button is clicked', () => {
+			const onToggleVersion = vi.fn();
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v1',
+				onToggleVersion,
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			fireEvent.click(container.querySelector('[data-testid="task-view-toggle"]')!);
+			expect(onToggleVersion).toHaveBeenCalledOnce();
 		});
 	});
 });
