@@ -150,8 +150,11 @@ test.describe('Task Action Dropdown', () => {
 		const completeAction = page.locator('[data-testid="task-action-complete"]');
 		await completeAction.click();
 
-		// Complete dialog should appear
-		const completeDialog = page.locator('[role="dialog"]');
+		// Complete dialog should appear — filter to avoid matching SlideOutPanel which
+		// also has role="dialog" in DOM when TaskViewV2 is active (strict mode violation)
+		const completeDialog = page
+			.locator('[role="dialog"]')
+			.filter({ has: page.locator('[data-testid="complete-task-confirm"]') });
 		await expect(completeDialog.locator('[data-testid="complete-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -169,8 +172,11 @@ test.describe('Task Action Dropdown', () => {
 		const cancelBtn = page.locator('[data-testid="task-cancel-button"]');
 		await cancelBtn.click();
 
-		// Cancel dialog should appear
-		const cancelDialog = page.locator('[role="dialog"]');
+		// Cancel dialog should appear — filter to avoid matching SlideOutPanel which
+		// also has role="dialog" in DOM when TaskViewV2 is active (strict mode violation)
+		const cancelDialog = page
+			.locator('[role="dialog"]')
+			.filter({ has: page.locator('[data-testid="cancel-task-confirm"]') });
 		await expect(cancelDialog.locator('[data-testid="cancel-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -205,8 +211,11 @@ test.describe('Task Action Dropdown', () => {
 		const completeAction = page.locator('[data-testid="task-action-complete"]');
 		await completeAction.click();
 
-		// Dropdown should be closed - complete dialog is open
-		const completeDialog = page.locator('[role="dialog"]');
+		// Dropdown should be closed - complete dialog is open — filter to avoid matching
+		// SlideOutPanel which also has role="dialog" in DOM (strict mode violation)
+		const completeDialog = page
+			.locator('[role="dialog"]')
+			.filter({ has: page.locator('[data-testid="complete-task-confirm"]') });
 		await expect(completeDialog).toBeVisible({ timeout: 5000 });
 	});
 
