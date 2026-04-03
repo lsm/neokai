@@ -15,35 +15,13 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
+import {
+	createSpaceViaRpc,
+	createSpaceTaskViaRpc,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
-
-/**
- * Create a task via RPC. For use in beforeEach setup only.
- * Returns the new task's id.
- */
-async function createTaskViaRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string,
-	title: string
-): Promise<string> {
-	const id = await page.evaluate(
-		async ({ spaceId, title }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			const task = (await hub.request('spaceTask.create', {
-				spaceId,
-				title,
-				description: '',
-			})) as { id: string };
-			return task.id;
-		},
-		{ spaceId, title }
-	);
-	if (!id) throw new Error('spaceTask.create returned no id');
-	return id;
-}
 
 /**
  * Create a standalone session via RPC. For use in beforeEach setup only.
@@ -99,7 +77,7 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		const workspaceRoot = await getWorkspaceRoot(page);
 		const spaceName = `E2E Sub-Routes Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
-		taskId = await createTaskViaRpc(page, spaceId, `Test Task ${Date.now()}`);
+		taskId = await createSpaceTaskViaRpc(page, spaceId, `Test Task ${Date.now()}`);
 		sessionId = await createSessionViaRpc(page, workspaceRoot);
 	});
 
