@@ -5,7 +5,7 @@
  * - Proceeding to plan-approval-gate (waiting_human state at run start)
  * - Rejecting via GateArtifactsView (View Artifacts → Reject button)
  * - Rejecting directly from the gate popup (without opening artifacts)
- * - Workflow run transitions to blocked state on canvas
+ * - Workflow run transitions to needs_attention state on canvas
  * - Canvas shows "Workflow paused — awaiting approval" banner
  * - Gate shows blocked state (red lock icon)
  * - Space remains usable after rejection (tabs navigate, canvas visible)
@@ -26,7 +26,7 @@
  * Note: The plan-approval-gate is ALWAYS in `waiting_human` state at the start of a run
  * because its condition is `{ type: 'check', field: 'approved' }` and no gate data has
  * been written yet. Rejection sets approved=false → gate becomes `blocked`, and the run
- * transitions to `blocked` with failureReason `humanRejected`.
+ * transitions to `needs_attention` with failureReason `humanRejected`.
  *
  * Timeout conventions:
  *   - 10000ms: state transitions requiring a server round-trip (gate data load, run status)
@@ -36,6 +36,7 @@
 import { test, expect } from '../../fixtures';
 import type { Page } from '@playwright/test';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { createUniqueSpaceDir } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
@@ -46,26 +47,14 @@ async function createSpaceWithRun(
 ): Promise<{ spaceId: string; runId: string }> {
 	await waitForWebSocketConnected(page);
 	const workspaceRoot = await getWorkspaceRoot(page);
+	// Use a unique subdirectory to avoid conflicts with other parallel tests
+	// (workspace_path has a UNIQUE constraint in the DB).
+	const wsPath = createUniqueSpaceDir(workspaceRoot, 'gate-rejection');
 
 	return page.evaluate(
 		async ({ wsPath }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
-
-			// Clean up any leftover space at this workspace path (including archived).
-			const norm = (p: string) => p.replace(/^\/private/, '');
-			try {
-				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
-					id: string;
-					workspacePath: string;
-				}>;
-				const matches = list.filter((s) => norm(s.workspacePath) === norm(wsPath));
-				for (const s of matches) {
-					await hub.request('space.delete', { id: s.id });
-				}
-			} catch {
-				// Ignore cleanup errors
-			}
 
 			// Create the space (preset agents + workflow are auto-seeded by the daemon).
 			const spaceRes = (await hub.request('space.create', {
@@ -84,7 +73,7 @@ async function createSpaceWithRun(
 
 			return { spaceId, runId };
 		},
-		{ wsPath: workspaceRoot }
+		{ wsPath }
 	);
 }
 
@@ -142,7 +131,7 @@ async function rejectViaPopup(page: Page): Promise<void> {
 	// Click Reject in the popup.
 	await page.locator('button:has-text("Reject")').first().click();
 
-	// Wait for the server round-trip: run transitions to blocked + gate becomes blocked.
+	// Wait for the server round-trip: run transitions to needs_attention + gate becomes blocked.
 	await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
 }
 
@@ -174,7 +163,7 @@ test.describe('Approval Gate Rejection', () => {
 
 	// ─── Test 1: Reject via GateArtifactsView closes overlay and transitions run ──
 
-	test('rejecting via GateArtifactsView closes overlay and transitions run to blocked', async ({
+	test('rejecting via GateArtifactsView closes overlay and transitions run to needs_attention', async ({
 		page,
 	}) => {
 		await page.goto(`/space/${spaceId}`);
@@ -228,7 +217,7 @@ test.describe('Approval Gate Rejection', () => {
 		// Overlay must NOT have appeared (we never opened it).
 		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 5000 });
 
-		// Canvas banner should indicate blocked (humanRejected) state.
+		// Canvas banner should indicate needs_attention.
 		await expect(page.locator('text=Workflow paused — awaiting approval')).toBeVisible({
 			timeout: 10000,
 		});
@@ -236,7 +225,7 @@ test.describe('Approval Gate Rejection', () => {
 
 	// ─── Test 3: Canvas shows error/attention state after rejection ───────────
 
-	test('canvas shows blocked banner and blocked gate after rejection', async ({ page }) => {
+	test('canvas shows needs_attention banner and blocked gate after rejection', async ({ page }) => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
