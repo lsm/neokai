@@ -927,6 +927,9 @@ export class TaskAgentManager {
 	cancelBySessionId(agentSessionId: string): void {
 		const session = this.agentSessionIndex.get(agentSessionId);
 		if (!session) return;
+		// Remove from reverse index immediately to prevent double-cancel
+		// if cleanup(taskId) is called later for the same task.
+		this.agentSessionIndex.delete(agentSessionId);
 		void this.stopAndDeleteSession(agentSessionId, session).catch((err) => {
 			log.warn(
 				`TaskAgentManager.cancelBySessionId: failed to cancel session ${agentSessionId}:`,
@@ -1648,6 +1651,9 @@ export class TaskAgentManager {
 				// During initial spawn, createSubSession() writes this field. On restart,
 				// the in-memory maps are rebuilt here but the DB field may be stale if the
 				// spawn happened before the P0 fix was deployed.
+				// NOTE: This matching relies on stepTask.title === ne.agentName, which is
+				// true because both are set to agentEntry.name at creation time. This coupling
+				// is not structurally enforced — a stale title edit would silently break it.
 				const rehydratedNodeExecs = this.config.nodeExecutionRepo
 					.listByWorkflowRun(workflowRunId)
 					.filter((e) => e.agentName === (stepTask.title ?? ''));

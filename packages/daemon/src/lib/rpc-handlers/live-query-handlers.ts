@@ -727,6 +727,7 @@ node_agents AS (
    AND ne.workflow_run_id = tt.workflow_run_id
   JOIN space_tasks st
     ON st.task_agent_session_id = ne.agent_session_id
+   AND st.id != tt.id  -- Exclude orchestration task (covered by Leg 1)
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
   WHERE ne.agent_session_id IS NOT NULL
     AND st.status != 'archived'
