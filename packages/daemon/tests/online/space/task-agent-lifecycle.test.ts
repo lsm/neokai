@@ -29,7 +29,7 @@
  *
  * The report_result test uses the full MCP name "mcp__task-agent__report_result" with
  * stop_reason "tool_use" so the SDK dispatches the tool, which updates the task status
- * to 'completed' and emits the DaemonHub space.task.completed event.
+ * to 'done' and emits the DaemonHub space.task.done event.
  *
  * ## Running
  *
@@ -474,7 +474,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 		async () => {
 			// This test uses the FULL MCP tool name "mcp__task-agent__report_result" with
 			// stop_reason "tool_use" so the SDK dispatches the tool. The handler updates the
-			// task status to 'completed' and emits the DaemonHub space.task.completed event.
+			// task status to 'done' and emits the DaemonHub space.task.done event.
 			// See probe mock "probe_task_agent_report_complete_001" in .devproxy/mocks.json.
 			const { space, workflow } = await createTestFixtures(daemon);
 
@@ -601,7 +601,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			expect(finalStatus).toBe('done');
 
 			// Wait for the Space Agent to receive and process the completion notification.
-			// provision-global-agent.ts subscribes to space.task.completed and injects
+			// provision-global-agent.ts subscribes to space.task.done and injects
 			// a notification message into the spaces:global session.
 			await waitForIdle(daemon, GLOBAL_SPACES_SESSION_ID, IDLE_TIMEOUT);
 

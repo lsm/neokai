@@ -255,16 +255,16 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`5. **Agents drive their own progression** — When a node agent sends a message to another ` +
 			`agent via \`send_message\` (using an agent name for DM or a node name for fan-out), ` +
 			`the target node is activated automatically. New pending tasks will appear — spawn their agents (return to step 1).\n` +
-			`5. **Handle gate-blocked messages** — Channels may have gate conditions that block delivery: ` +
+			`6. **Handle gate-blocked messages** — Channels may have gate conditions that block delivery: ` +
 			`a \`human\` gate requires explicit approval (call \`request_human_input\`); ` +
 			`\`condition\` and \`task_result\` gates are evaluated automatically by the system. ` +
 			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
-			`6. **Automatic workflow completion** — When the end node agent calls \`report_done\`, the ` +
+			`7. **Automatic workflow completion** — When the end node agent calls \`report_done\`, the ` +
 			`system automatically marks the workflow run and main task as completed. You do not need to ` +
 			`call any completion tool — just wait for the \`[STEP_COMPLETE]\` event from the end node. ` +
 			`Use \`list_group_members\` to verify all agents have finished if needed. ` +
 			`Only call \`report_result\` if you need to cancel or signal an unrecoverable error.\n` +
-			`7. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
+			`8. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
 			`\`status: "cancelled"\` and the error details.`
 	);
 
