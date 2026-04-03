@@ -1,6 +1,6 @@
 // Components
 
-export { Button, DataInteractive } from './components/button/button.tsx';
+export { Button, ButtonGroup, DataInteractive } from './components/button/button.tsx';
 export { Checkbox } from './components/checkbox/checkbox.tsx';
 export {
 	Combobox,
