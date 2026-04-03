@@ -988,6 +988,12 @@ jobs:
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
         env:
+          # Set a dummy API key so provider availability check passes.
+          # No-LLM tests don't need real API calls; the key just satisfies isAvailable().
+          ANTHROPIC_API_KEY: "sk-devproxy-test-key"
+          # Clear other auth tokens to avoid credential conflicts
+          ANTHROPIC_AUTH_TOKEN: ""
+          CLAUDE_CODE_OAUTH_TOKEN: ""
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
           CI: true
