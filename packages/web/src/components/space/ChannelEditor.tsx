@@ -85,6 +85,11 @@ interface ChannelEntryProps {
 	onDelete: (index: number) => void;
 }
 
+/** Returns true when a gate ID is one of the three canonical preset IDs. */
+function isCanonicalGateId(gateId?: string): boolean {
+	return gateId === 'human-approval' || gateId === 'task-result' || gateId === 'custom-condition';
+}
+
 function ChannelEntry({
 	channel,
 	index,
@@ -99,8 +104,28 @@ function ChannelEntry({
 	const directionSymbol = channel.direction === 'bidirectional' ? '↔' : '→';
 	const toText = formatTo(channel.to);
 
+	// Preserve the gate ID string when the channel has an arbitrary/legacy gate ID
+	// (i.e., not one of the three canonical preset IDs). This allows round-tripping
+	// through a different gate type and back to 'condition' without silently
+	// overwriting the original ID with 'custom-condition'.
+	const [customGateId, setCustomGateId] = useState<string>(() =>
+		isCanonicalGateId(channel.gateId) || !channel.gateId ? '' : channel.gateId
+	);
+
 	function updateField<K extends keyof WorkflowChannel>(key: K, value: WorkflowChannel[K]) {
 		onChange(index, { ...channel, [key]: value });
+	}
+
+	function handleGateTypeChange(type: GateType) {
+		if (type === 'always') {
+			updateField('gateId', undefined);
+		} else if (type === 'condition') {
+			// Use the locally-preserved custom gate ID (may be an arbitrary legacy ID),
+			// falling back to the canonical 'custom-condition' string.
+			updateField('gateId', customGateId || 'custom-condition');
+		} else {
+			updateField('gateId', GATE_TYPE_TO_ID[type]);
+		}
 	}
 
 	const borderClass = highlighted
@@ -299,12 +324,7 @@ function ChannelEntry({
 							value={gateIdToType(channel.gateId)}
 							onChange={(e) => {
 								const type = (e.currentTarget as HTMLSelectElement).value as GateType;
-								updateField(
-									'gateId',
-									type === 'always'
-										? undefined
-										: GATE_TYPE_TO_ID[type as Exclude<GateType, 'always'>]
-								);
+								handleGateTypeChange(type);
 							}}
 							class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-teal-500"
 						>
@@ -313,6 +333,23 @@ function ChannelEntry({
 							<option value="condition">Custom Condition</option>
 							<option value="task_result">Task Result</option>
 						</select>
+						{/* Show gate ID input when 'condition' is selected so the user can
+						    set or inspect the gate reference string. Pre-populated with any
+						    existing arbitrary gate ID to prevent silent data loss. */}
+						{gateIdToType(channel.gateId) === 'condition' && (
+							<input
+								type="text"
+								data-testid={`channel-gate-id-input-${index}`}
+								value={customGateId || channel.gateId || ''}
+								onInput={(e) => {
+									const val = (e.currentTarget as HTMLInputElement).value;
+									setCustomGateId(val);
+									updateField('gateId', val || undefined);
+								}}
+								placeholder="Gate ID (e.g. plan-approval-gate)"
+								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-teal-500 mt-1"
+							/>
+						)}
 					</div>
 				</div>
 			)}

@@ -416,4 +416,27 @@ describe('ChannelEditor — gate condition', () => {
 		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
 		expect(result[0].gateId).toBe('custom-condition');
 	});
+
+	it('arbitrary/legacy gate ID is preserved when round-tripping through another type', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gateId: 'plan-approval-gate' })];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+
+		// Unknown gate ID → select shows 'condition', text input shows original ID
+		const select = getByTestId('channel-gate-select-0') as HTMLSelectElement;
+		expect(select.value).toBe('condition');
+		const input = getByTestId('channel-gate-id-input-0') as HTMLInputElement;
+		expect(input.value).toBe('plan-approval-gate');
+
+		// Switch to 'human'
+		fireEvent.change(select, { target: { value: 'human' } });
+		expect(onChange.mock.calls[0][0][0].gateId).toBe('human-approval');
+
+		// Switch back to 'condition' — original arbitrary ID should be restored
+		fireEvent.change(select, { target: { value: 'condition' } });
+		expect(onChange.mock.calls[1][0][0].gateId).toBe('plan-approval-gate');
+	});
 });

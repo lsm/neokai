@@ -47,7 +47,6 @@ import { NodeConfigPanel } from './NodeConfigPanel';
 import type { NodeChannelLink } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
-import { ChannelEditor } from '../ChannelEditor';
 import { buildVisualNodePositions } from './nodeMetrics';
 import type { ResolvedWorkflowChannel } from './EdgeRenderer';
 import {
@@ -268,15 +267,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			),
 		[nodes]
 	);
-	const agentRolesFromNodes = useMemo(() => {
-		const roles = new Set<string>();
-		for (const node of regularNodes) {
-			for (const agent of node.step.agents ?? []) {
-				if (agent.name) roles.add(agent.name);
-			}
-		}
-		return [...roles];
-	}, [regularNodes]);
 	const currentTemplateCanvasSignature = useMemo(
 		() => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, endNodeId),
 		[nodes, edges, channels, startNodeId, gates, endNodeId]
