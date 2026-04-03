@@ -62,6 +62,8 @@ export {
 	Toast,
 	ToastAction,
 	ToastDescription,
+	ToastProgress,
+	ToastVariant,
 	Toaster,
 	ToastTitle,
 	useToast,

@@ -3,51 +3,58 @@ import {
 	Toast,
 	ToastAction,
 	ToastDescription,
+	ToastProgress,
 	Toaster,
 	ToastTitle,
 	useToast,
 } from '../../src/mod.ts';
+import type { ToastVariant } from '../../src/mod.ts';
 
 interface DemoToast {
 	id: number;
-	type: 'success' | 'error' | 'info';
+	type: ToastVariant;
 	title: string;
 	description: string;
 	show: boolean;
+	showProgress?: boolean;
 }
 
 let demoToastId = 0;
 
-const borderColorMap: Record<DemoToast['type'], string> = {
+const borderColorMap: Record<ToastVariant, string> = {
 	success: 'border-l-green-500',
 	error: 'border-l-red-500',
 	info: 'border-l-accent-500',
+	warning: 'border-l-yellow-500',
 };
 
-const iconColorMap: Record<DemoToast['type'], string> = {
+const iconColorMap: Record<ToastVariant, string> = {
 	success: 'text-green-400',
 	error: 'text-red-400',
 	info: 'text-accent-400',
+	warning: 'text-yellow-400',
 };
 
-const iconMap: Record<DemoToast['type'], string> = {
+const iconMap: Record<ToastVariant, string> = {
 	success: '✓',
 	error: '✕',
 	info: 'ℹ',
+	warning: '⚠',
 };
 
-const messages: Record<DemoToast['type'], { title: string; description: string }> = {
+const messages: Record<ToastVariant, { title: string; description: string }> = {
 	success: { title: 'Changes saved', description: 'Your file was saved successfully.' },
 	error: { title: 'Something went wrong', description: 'Please check the logs and try again.' },
 	info: { title: 'Update available', description: 'A new version has been released.' },
+	warning: { title: 'Storage almost full', description: 'You have used 95% of your storage.' },
 };
 
 function ToastStack() {
 	const [toasts, setToasts] = useState<DemoToast[]>([]);
 
-	function add(type: DemoToast['type']) {
+	function add(type: ToastVariant, showProgress = false) {
 		const id = ++demoToastId;
-		setToasts((prev) => [...prev, { id, type, show: true, ...messages[type] }]);
+		setToasts((prev) => [...prev, { id, type, show: true, showProgress, ...messages[type] }]);
 	}
 
 	function dismiss(id: number) {
@@ -74,10 +81,22 @@ function ToastStack() {
 					Error toast
 				</button>
 				<button
+					onClick={() => add('warning')}
+					class="px-4 py-2 rounded-lg bg-yellow-900/30 border border-yellow-700 text-yellow-300 text-sm font-medium hover:bg-yellow-900/50 transition-colors cursor-pointer"
+				>
+					Warning toast
+				</button>
+				<button
 					onClick={() => add('info')}
 					class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-text-primary text-sm font-medium hover:border-accent-500 transition-colors cursor-pointer"
 				>
 					Info toast
+				</button>
+				<button
+					onClick={() => add('success', true)}
+					class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-text-primary text-sm font-medium hover:border-accent-500 transition-colors cursor-pointer"
+				>
+					Success with progress
 				</button>
 			</div>
 
@@ -88,24 +107,37 @@ function ToastStack() {
 						key={t.id}
 						show={t.show}
 						duration={4000}
+						variant={t.type}
+						showProgress={t.showProgress}
 						afterLeave={() => remove(t.id)}
-						class={`flex items-start gap-3 bg-surface-1 border border-surface-border border-l-4 rounded-lg p-4 shadow-lg transition-all duration-200 data-[closed]:opacity-0 data-[closed]:translate-y-1 ${borderColorMap[t.type]}`}
+						class={`flex flex-col bg-surface-1 border border-surface-border border-l-4 rounded-lg shadow-lg transition-all duration-200 data-[closed]:opacity-0 data-[closed]:translate-y-1 ${borderColorMap[t.type]}`}
 					>
-						<span class={`text-sm font-bold shrink-0 mt-0.5 ${iconColorMap[t.type]}`}>
-							{iconMap[t.type]}
-						</span>
-						<div class="flex-1 min-w-0">
-							<ToastTitle class="text-sm font-semibold text-text-primary">{t.title}</ToastTitle>
-							<ToastDescription class="text-xs text-text-tertiary mt-0.5">
-								{t.description}
-							</ToastDescription>
+						<div class="flex items-start gap-3 p-4">
+							<span class={`text-sm font-bold shrink-0 mt-0.5 ${iconColorMap[t.type]}`}>
+								{iconMap[t.type]}
+							</span>
+							<div class="flex-1 min-w-0">
+								<ToastTitle class="text-sm font-semibold text-text-primary">{t.title}</ToastTitle>
+								<ToastDescription class="text-xs text-text-tertiary mt-0.5">
+									{t.description}
+								</ToastDescription>
+							</div>
+							<ToastAction
+								onClick={() => dismiss(t.id)}
+								class="shrink-0 text-text-muted hover:text-text-secondary transition-colors cursor-pointer text-xs"
+							>
+								✕
+							</ToastAction>
 						</div>
-						<ToastAction
-							onClick={() => dismiss(t.id)}
-							class="shrink-0 text-text-muted hover:text-text-secondary transition-colors cursor-pointer text-xs"
-						>
-							✕
-						</ToastAction>
+						{t.showProgress && (
+							<ToastProgress class="h-1 bg-surface-border rounded-b-lg overflow-hidden">
+								<div
+									class="h-full transition-all duration-75 ease-linear"
+									style={{ width: '100%', backgroundColor: 'var(--color-accent-500)' }}
+									data-progress-bar
+								/>
+							</ToastProgress>
+						)}
 					</Toast>
 				))}
 			</div>
@@ -173,12 +205,26 @@ function ToasterSection() {
 						toast({
 							title: 'Deployed successfully',
 							description: 'Your build is live.',
+							variant: 'success',
 							duration: 3000,
 						})
 					}
 					class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
 				>
-					toast() — 3 s auto-dismiss
+					Success (3 s)
+				</button>
+				<button
+					onClick={() =>
+						toast({
+							title: 'Something went wrong',
+							description: 'Please check the logs.',
+							variant: 'error',
+							duration: 5000,
+						})
+					}
+					class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
+				>
+					Error (5 s)
 				</button>
 				<button
 					onClick={() =>
@@ -190,7 +236,34 @@ function ToasterSection() {
 					}
 					class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
 				>
-					toast() — no auto-dismiss
+					No auto-dismiss
+				</button>
+				<button
+					onClick={() =>
+						toast({
+							title: 'With icon',
+							description: 'Custom icon rendered before title.',
+							icon: <span class="text-lg">🎯</span>,
+							duration: 3000,
+						})
+					}
+					class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
+				>
+					With custom icon
+				</button>
+				<button
+					onClick={() =>
+						toast({
+							title: 'With progress',
+							description: 'Shows remaining time.',
+							variant: 'info',
+							showProgress: true,
+							duration: 3000,
+						})
+					}
+					class="px-4 py-2 rounded-lg bg-surface-2 border border-surface-border text-sm text-text-primary hover:border-accent-500 transition-colors cursor-pointer"
+				>
+					With progress bar
 				</button>
 			</div>
 			<p class="text-xs text-text-muted">
@@ -211,7 +284,7 @@ export function ToastDemo() {
 		<div class="space-y-8">
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">
-					Typed toasts — success / error / info with colored left border
+					Typed toasts — success / error / warning / info with data-variant
 				</h3>
 				<ToastStack />
 			</div>
@@ -225,7 +298,7 @@ export function ToastDemo() {
 
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">
-					useToast() hook + Toaster portal
+					useToast() hook + Toaster portal — variant, icon, progress
 				</h3>
 				<ToasterSection />
 			</div>
