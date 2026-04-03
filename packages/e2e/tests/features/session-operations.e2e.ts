@@ -1,5 +1,9 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	waitForAssistantResponse,
+} from '../helpers/wait-helpers';
 
 /**
  * Session Export E2E Tests
@@ -51,12 +55,10 @@ test.describe('Session Export', () => {
 		// Send a test message to have content to export
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Hello, this is a test message for export.');
-		await page.keyboard.press('Meta+Enter');
+		await page.keyboard.press('Enter');
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 60000,
-		});
+		// Wait for assistant response using the reliable helper
+		await waitForAssistantResponse(page);
 
 		// Setup download listener
 		const downloadPromise = page.waitForEvent('download');
@@ -79,12 +81,10 @@ test.describe('Session Export', () => {
 		const testMessage = 'Unique export test message ' + Date.now();
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill(testMessage);
-		await page.keyboard.press('Meta+Enter');
+		await page.keyboard.press('Enter');
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 60000,
-		});
+		// Wait for assistant response using the reliable helper
+		await waitForAssistantResponse(page);
 
 		// Setup download listener
 		const downloadPromise = page.waitForEvent('download');
@@ -115,12 +115,10 @@ test.describe('Session Export', () => {
 		// Send a test message
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Test message for toast');
-		await page.keyboard.press('Meta+Enter');
+		await page.keyboard.press('Enter');
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 60000,
-		});
+		// Wait for assistant response using the reliable helper
+		await waitForAssistantResponse(page);
 
 		// Setup download listener (need to handle download to complete export)
 		const downloadPromise = page.waitForEvent('download');
