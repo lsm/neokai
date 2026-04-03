@@ -203,7 +203,11 @@ test.describe('App MCP Registry - Per-Room Enable/Disable', () => {
 		const checkbox = braveSearchEntry.locator('input[type="checkbox"]');
 		await expect(checkbox).not.toBeChecked();
 
-		// Verify "disabled globally" badge appears (indicates globally disabled)
-		await expect(page.locator('text=disabled globally')).toBeVisible({ timeout: 5000 });
+		// Verify "disabled globally" badge appears within the brave-search entry.
+		// Scope to the entry to avoid matching the same badge on other globally-disabled
+		// items (e.g. skills in the Skills section below MCP Servers).
+		await expect(braveSearchEntry.locator('text=disabled globally')).toBeVisible({
+			timeout: 5000,
+		});
 	});
 });
