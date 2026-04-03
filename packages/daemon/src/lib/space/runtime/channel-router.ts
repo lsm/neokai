@@ -37,6 +37,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@neokai/shared';
 import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@neokai/shared';
+import type { NodeExecution } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -44,6 +45,7 @@ import type { ChannelCycleRepository } from '../../../storage/repositories/chann
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
@@ -283,7 +285,10 @@ export class ChannelRouter {
 				const task = this.config.taskRepo.createTask({
 					spaceId: run.spaceId,
 					title: isMultiAgent ? agentEntry.name : node.name,
-					description: agentEntry.instructions?.value ?? node.instructions ?? '',
+					// Use only the agent-slot instructions for the task description.
+					// Node-level instructions are not carried into task descriptions —
+					// they belong to the workflow definition, not the task card UI.
+					description: agentEntry.instructions?.value ?? '',
 					workflowRunId: runId,
 					status: 'open',
 				});
@@ -375,6 +380,23 @@ export class ChannelRouter {
 		}
 
 		return { allowed: true };
+	}
+
+	/**
+	 * Returns non-terminal NodeExecution records for a given (runId, nodeId) pair.
+	 *
+	 * Unlike `getActiveTasksForNode()` (which queries SpaceTask records), this
+	 * method queries the `node_executions` table directly for workflow-internal
+	 * state. Used by external consumers (e.g. SpaceRuntime) that need to inspect
+	 * node execution status without going through SpaceTask.
+	 *
+	 * "Active" means the execution has not reached a terminal status
+	 * (done, cancelled).
+	 */
+	getActiveExecutionsForNode(runId: string, nodeId: string): NodeExecution[] {
+		return this.config.nodeExecutionRepo
+			.listByNode(runId, nodeId)
+			.filter((e) => !TERMINAL_NODE_EXECUTION_STATUSES.has(e.status));
 	}
 
 	/**

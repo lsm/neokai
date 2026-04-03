@@ -92,6 +92,8 @@ export interface SubSessionMemberInfo {
 	agentId?: string;
 	/** Slot name from WorkflowNodeAgent.name (e.g. 'coder', 'reviewer') */
 	role?: string;
+	/** Workflow node ID — used to link the sub-session to its NodeExecution record */
+	stepId?: string;
 }
 
 /**
@@ -376,6 +378,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				actualSessionId = await sessionFactory.create(init, {
 					agentId: primaryAgentId,
 					role: memberRole,
+					stepId: step_id,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);

@@ -226,6 +226,13 @@ export class TaskAgentManager {
 	private subSessions = new Map<string, Map<string, AgentSession>>();
 
 	/**
+	 * Reverse index from sub-session agentSessionId → AgentSession.
+	 * Used by cancelBySessionId() for O(1) lookup when the runtime needs
+	 * to cancel a specific agent session by its NodeExecution.agentSessionId.
+	 */
+	private agentSessionIndex = new Map<string, AgentSession>();
+
+	/**
 	 * Tracks taskIds currently being spawned — prevents concurrent
 	 * spawnTaskAgent() calls from creating duplicate Task Agent sessions.
 	 */
@@ -743,7 +750,8 @@ export class TaskAgentManager {
 	async createSubSession(
 		taskId: string,
 		sessionId: string,
-		init: AgentSessionInit
+		init: AgentSessionInit,
+		memberInfo?: SubSessionMemberInfo
 	): Promise<string> {
 		const subSession = AgentSession.fromInit(
 			init,
@@ -776,9 +784,35 @@ export class TaskAgentManager {
 			this.subSessions.set(taskId, new Map());
 		}
 		this.subSessions.get(taskId)!.set(sessionId, subSession);
+		this.agentSessionIndex.set(sessionId, subSession);
 
 		// Register in SessionManager cache to prevent duplicate AgentSession creation.
 		this.config.sessionManager.registerSession(subSession);
+
+		// Write agent_session_id on the matching NodeExecution record so that
+		// AgentMessageRouter, sibling cleanup, and live-query SQL can resolve
+		// the session. Requires stepId (workflowNodeId) and role (agentName).
+		if (memberInfo?.stepId && memberInfo.role) {
+			const parentTask = this.config.taskRepo.getTask(taskId);
+			if (parentTask?.workflowRunId) {
+				const nodeExecs = this.config.nodeExecutionRepo.listByNode(
+					parentTask.workflowRunId,
+					memberInfo.stepId
+				);
+				const match = nodeExecs.find((e) => e.agentName === memberInfo.role);
+				if (match && !match.agentSessionId) {
+					this.config.nodeExecutionRepo.updateSessionId(match.id, sessionId);
+				} else if (match && match.agentSessionId) {
+					log.warn(
+						`TaskAgentManager: NodeExecution ${match.id} already has agentSessionId ${match.agentSessionId}; skipping update for new session ${sessionId}`
+					);
+				} else {
+					log.warn(
+						`TaskAgentManager: no matching NodeExecution found for (run=${parentTask.workflowRunId}, node=${memberInfo.stepId}, agent=${memberInfo.role})`
+					);
+				}
+			}
+		}
 
 		// Start streaming query for the sub-session
 		await subSession.startStreamingQuery();
@@ -881,6 +915,29 @@ export class TaskAgentManager {
 	// Public — cleanup
 	// -------------------------------------------------------------------------
 
+	/**
+	 * Cancel a sub-session by its agent session ID.
+	 *
+	 * Used by SpaceRuntime to cancel sibling node agent sessions when the
+	 * workflow run completes via end-node short-circuit. Looks up the
+	 * session via the reverse index and interrupts it.
+	 *
+	 * No-op if the session is not found (already cleaned up or never registered).
+	 */
+	cancelBySessionId(agentSessionId: string): void {
+		const session = this.agentSessionIndex.get(agentSessionId);
+		if (!session) return;
+		// Remove from reverse index immediately to prevent double-cancel
+		// if cleanup(taskId) is called later for the same task.
+		this.agentSessionIndex.delete(agentSessionId);
+		void this.stopAndDeleteSession(agentSessionId, session).catch((err) => {
+			log.warn(
+				`TaskAgentManager.cancelBySessionId: failed to cancel session ${agentSessionId}:`,
+				err
+			);
+		});
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — rehydration
 	// -------------------------------------------------------------------------
@@ -888,7 +945,7 @@ export class TaskAgentManager {
 	/**
 	 * Rehydrate Task Agent sessions after a daemon restart.
 	 *
-	 * Queries `space_tasks` for tasks with status `in_progress` or `needs_attention`
+	 * Queries `space_tasks` for tasks with status `in_progress` or `blocked`
 	 * that have a non-null `taskAgentSessionId`. For each such task that has a
 	 * `space_task_agent` session type in the DB, restores the Task Agent session via
 	 * `AgentSession.restore()`, re-attaches the MCP server and system prompt,
@@ -973,6 +1030,10 @@ export class TaskAgentManager {
 				await this.stopAndDeleteSession(subSessionId, session);
 			}
 			this.subSessions.delete(taskId);
+			// Clean up reverse index entries for all sub-sessions of this task
+			for (const sid of sessionIdsToClean) {
+				this.agentSessionIndex.delete(sid);
+			}
 		}
 
 		// 2. Cleanup Task Agent session
@@ -1060,7 +1121,8 @@ export class TaskAgentManager {
 				const sessionId = await this.createSubSession(
 					taskId,
 					effectiveInit.sessionId,
-					effectiveInit
+					effectiveInit,
+					_memberInfo
 				);
 				return sessionId;
 			},
@@ -1583,6 +1645,23 @@ export class TaskAgentManager {
 					this.subSessions.set(taskId, new Map());
 				}
 				this.subSessions.get(taskId)!.set(subSessionId, subSession);
+				this.agentSessionIndex.set(subSessionId, subSession);
+
+				// Update NodeExecution.agentSessionId for the rehydrated sub-session.
+				// During initial spawn, createSubSession() writes this field. On restart,
+				// the in-memory maps are rebuilt here but the DB field may be stale if the
+				// spawn happened before the P0 fix was deployed.
+				// NOTE: This matching relies on stepTask.title === ne.agentName, which is
+				// true because both are set to agentEntry.name at creation time. This coupling
+				// is not structurally enforced — a stale title edit would silently break it.
+				const rehydratedNodeExecs = this.config.nodeExecutionRepo
+					.listByWorkflowRun(workflowRunId)
+					.filter((e) => e.agentName === (stepTask.title ?? ''));
+				for (const ne of rehydratedNodeExecs) {
+					if (!ne.agentSessionId) {
+						this.config.nodeExecutionRepo.updateSessionId(ne.id, subSessionId);
+					}
+				}
 			}
 		}
 
