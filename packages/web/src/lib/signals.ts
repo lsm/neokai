@@ -39,6 +39,8 @@ export const navSectionSignal = signal<NavSection>('home');
 export const currentSpaceIdSignal = signal<string | null>(null);
 export const currentSpaceSessionIdSignal = signal<string | null>(null);
 export const currentSpaceTaskIdSignal = signal<string | null>(null);
+export type SpaceViewMode = 'overview' | 'configure';
+export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
