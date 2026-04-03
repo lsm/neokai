@@ -6,6 +6,7 @@ import {
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
+	currentSpaceViewModeSignal,
 	navSectionSignal,
 	settingsSectionSignal,
 } from '../lib/signals.ts';
@@ -38,6 +39,7 @@ export default function MainContent() {
 	const spaceId = currentSpaceIdSignal.value;
 	const spaceSessionViewId = currentSpaceSessionIdSignal.value;
 	const spaceTaskViewId = currentSpaceTaskIdSignal.value;
+	const spaceViewMode = currentSpaceViewModeSignal.value;
 	const sessionsList = sessions.value;
 	const navSection = navSectionSignal.value;
 	const settingsSection = settingsSectionSignal.value;
@@ -50,7 +52,7 @@ export default function MainContent() {
 	// This drives the animate-fadeIn-200 transition wrapper below.
 	let contentKey: string;
 	if (spaceId) {
-		contentKey = `space-${spaceId}`;
+		contentKey = `space-${spaceId}-${spaceViewMode}`;
 	} else if (navSection === 'spaces') {
 		contentKey = 'spaces';
 	} else if (roomId) {
@@ -74,6 +76,7 @@ export default function MainContent() {
 			return (
 				<SpaceIsland
 					spaceId={spaceId}
+					viewMode={spaceViewMode}
 					sessionViewId={spaceSessionViewId}
 					taskViewId={spaceTaskViewId}
 				/>

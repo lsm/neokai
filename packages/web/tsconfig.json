@@ -14,9 +14,11 @@
 		"paths": {
 			"@/*": ["./*"],
 			"@neokai/shared": ["../shared/src/mod.ts"],
-			"@neokai/shared/*": ["../shared/src/*"]
+			"@neokai/shared/*": ["../shared/src/*"],
+			"@neokai/ui": ["../ui/src/mod.ts"],
+			"@neokai/ui/*": ["../ui/src/*"]
 		}
 	},
-	"include": ["src/**/*", "build.ts", "../shared/src/**/*"],
+	"include": ["src/**/*", "build.ts", "../shared/src/**/*", "../ui/src/**/*"],
 	"exclude": ["node_modules", "dist", "tests/**/*", "../shared/src/sdk/**/*"]
 }

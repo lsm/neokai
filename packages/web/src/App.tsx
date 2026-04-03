@@ -19,6 +19,7 @@ import {
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
+	currentSpaceViewModeSignal,
 	navSectionSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
@@ -34,6 +35,7 @@ import {
 	navigateToHome,
 	navigateToSpacesPage,
 	navigateToSpace,
+	navigateToSpaceConfigure,
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
 	navigateToSpaceTask,
@@ -43,6 +45,7 @@ import {
 	createRoomSessionPath,
 	createRoomTaskPath,
 	createSpacePath,
+	createSpaceConfigurePath,
 	createSpaceAgentPath,
 	createSpaceSessionPath,
 	createSpaceTaskPath,
@@ -108,6 +111,7 @@ export function App() {
 			const spaceId = currentSpaceIdSignal.value;
 			const spaceSessionId = currentSpaceSessionIdSignal.value;
 			const spaceTaskId = currentSpaceTaskIdSignal.value;
+			const spaceViewMode = currentSpaceViewModeSignal.value;
 			const navSection = navSectionSignal.value;
 			const currentPath = window.location.pathname;
 			// Detect agent routes: synthetic session IDs follow the pattern <type>:chat:<id>
@@ -125,21 +129,23 @@ export function App() {
 						? createSpaceAgentPath(spaceId)
 						: spaceSessionId && spaceId
 							? createSpaceSessionPath(spaceId, spaceSessionId)
-							: spaceId
-								? createSpacePath(spaceId)
-								: roomTaskId && roomId
-									? createRoomTaskPath(roomId, roomTaskId)
-									: isAgentRoute
-										? createRoomAgentPath(roomId)
-										: roomSessionId && roomId
-											? createRoomSessionPath(roomId, roomSessionId)
-											: roomId
-												? createRoomPath(roomId)
-												: navSection === 'spaces'
-													? '/spaces'
-													: navSection === 'chats'
-														? '/sessions'
-														: '/';
+							: spaceId && spaceViewMode === 'configure'
+								? createSpaceConfigurePath(spaceId)
+								: spaceId
+									? createSpacePath(spaceId)
+									: roomTaskId && roomId
+										? createRoomTaskPath(roomId, roomTaskId)
+										: isAgentRoute
+											? createRoomAgentPath(roomId)
+											: roomSessionId && roomId
+												? createRoomSessionPath(roomId, roomSessionId)
+												: roomId
+													? createRoomPath(roomId)
+													: navSection === 'spaces'
+														? '/spaces'
+														: navSection === 'chats'
+															? '/sessions'
+															: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -152,6 +158,8 @@ export function App() {
 					navigateToSpaceAgent(spaceId, true);
 				} else if (spaceSessionId && spaceId) {
 					navigateToSpaceSession(spaceId, spaceSessionId, true);
+				} else if (spaceId && spaceViewMode === 'configure') {
+					navigateToSpaceConfigure(spaceId, true);
 				} else if (spaceId) {
 					navigateToSpace(spaceId, true);
 				} else if (roomTaskId && roomId) {

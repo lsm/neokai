@@ -4,66 +4,43 @@
  * Content priority chain (full-width, each replaces the next):
  * 1. sessionViewId set → ChatContainer (agent/session chat)
  * 2. taskViewId set    → SpaceTaskPane (full-width task detail)
- * 3. default          → tabbed view — Dashboard | Agents | Workflows | Settings
+ * 3. default           → route-driven space view
  *
- * Dashboard tab shows a full-width task-centric overview.
- *
- * Space navigation is handled by the Context Panel sidebar.
+ * The default route renders the task-focused overview.
+ * Configure lives at its own route and reuses the same shell/context panel.
  */
 
-import { useState, useEffect } from 'preact/hooks';
-import { spaceStore } from '../lib/space-store';
-import { navigateToSpace, navigateToSpaceAgent, navigateToSpaceTask } from '../lib/router';
+import { useEffect } from 'preact/hooks';
+import type { SpaceViewMode } from '../lib/signals';
+import { SpaceConfigurePage } from '../components/space/SpaceConfigurePage';
 import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
-import { SpaceAgentList } from '../components/space/SpaceAgentList';
-import { WorkflowList } from '../components/space/WorkflowList';
-import { VisualWorkflowEditor } from '../components/space/visual-editor/VisualWorkflowEditor';
-import { SpaceSettings } from '../components/space/SpaceSettings';
+import { spaceStore } from '../lib/space-store';
+import { navigateToSpace, navigateToSpaceAgent, navigateToSpaceTask } from '../lib/router';
 import ChatContainer from './ChatContainer';
-import { cn } from '../lib/utils';
 
 interface SpaceIslandProps {
 	spaceId: string;
-	sessionViewId?: string | null; // When set, show this session content instead of space tabs
-	taskViewId?: string | null; // When set, show SpaceTaskPane for this task
+	viewMode: SpaceViewMode;
+	sessionViewId?: string | null;
+	taskViewId?: string | null;
 }
 
-type SpaceTab = 'dashboard' | 'agents' | 'workflows' | 'settings';
-
-const TABS: { id: SpaceTab; label: string }[] = [
-	{ id: 'dashboard', label: 'Dashboard' },
-	{ id: 'agents', label: 'Agents' },
-	{ id: 'workflows', label: 'Workflows' },
-	{ id: 'settings', label: 'Settings' },
-];
-
-export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: SpaceIslandProps) {
-	const [activeTab, setActiveTab] = useState<SpaceTab>('dashboard');
-	/** null = list view; 'new' = create editor; <id> = edit editor */
-	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
+export default function SpaceIsland({
+	spaceId,
+	viewMode,
+	sessionViewId,
+	taskViewId,
+}: SpaceIslandProps) {
 	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
 	const workflows = spaceStore.workflows.value;
 
-	// Load space data on mount or when spaceId changes
 	useEffect(() => {
 		spaceStore.selectSpace(spaceId).catch(() => {
 			// Error is tracked in spaceStore.error
 		});
-
-		return () => {
-			// Optionally clear when unmounting; leave it for now so
-			// navigating back is instant (store shows stale-then-fresh data).
-		};
 	}, [spaceId]);
-
-	// Reset workflow edit state when switching away from workflows tab
-	useEffect(() => {
-		if (activeTab !== 'workflows') {
-			setWorkflowEditId(null);
-		}
-	}, [activeTab]);
 
 	const handleTaskPaneClose = () => {
 		navigateToSpace(spaceId);
@@ -93,19 +70,10 @@ export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: Spac
 
 	const space = spaceStore.space.value;
 
-	const editingWorkflow =
-		workflowEditId && workflowEditId !== 'new'
-			? workflows.find((w) => w.id === workflowEditId)
-			: undefined;
-
-	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
-
-	// Session view: render ChatContainer instead of tabs
 	if (sessionViewId) {
 		return <ChatContainer key={sessionViewId} sessionId={sessionViewId} />;
 	}
 
-	// Task view: render SpaceTaskPane full-width instead of tabs
 	if (taskViewId) {
 		return (
 			<div class="flex-1 flex flex-col overflow-hidden bg-dark-900" data-testid="space-task-pane">
@@ -114,69 +82,32 @@ export default function SpaceIsland({ spaceId, sessionViewId, taskViewId }: Spac
 		);
 	}
 
-	return (
-		<div class="flex-1 flex overflow-hidden bg-dark-900">
-			{/* Main content — tabbed view */}
-			<div class="flex-1 overflow-hidden flex flex-col min-w-0">
-				{/* Tab bar — hidden when workflow editor is open (editor has its own back button) */}
-				{!showWorkflowEditor && (
-					<div class="flex border-b border-dark-700 px-4 flex-shrink-0" data-testid="space-tab-bar">
-						{TABS.map((tab) => (
-							<button
-								key={tab.id}
-								type="button"
-								onClick={() => setActiveTab(tab.id)}
-								class={cn(
-									'px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
-									activeTab === tab.id
-										? 'text-gray-100 border-blue-400'
-										: 'text-gray-400 border-transparent hover:text-gray-200'
-								)}
-							>
-								{tab.label}
-							</button>
-						))}
-					</div>
-				)}
-
-				{/* Tab content */}
-				<div class="flex-1 overflow-hidden">
-					{showWorkflowEditor ? (
-						<VisualWorkflowEditor
-							key={workflowEditId}
-							workflow={editingWorkflow}
-							onSave={() => setWorkflowEditId(null)}
-							onCancel={() => setWorkflowEditId(null)}
-						/>
-					) : (
-						<>
-							{activeTab === 'dashboard' && (
-								<div class="flex flex-col h-full min-h-0" data-testid="dashboard-view">
-									<SpaceDashboard
-										spaceId={spaceId}
-										onOpenSpaceAgent={() => navigateToSpaceAgent(spaceId)}
-										onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
-									/>
-								</div>
-							)}
-							{activeTab === 'agents' && (
-								<div class="p-6 h-full overflow-y-auto">
-									<SpaceAgentList />
-								</div>
-							)}
-							{activeTab === 'workflows' && space && (
-								<WorkflowList
-									spaceId={spaceId}
-									spaceName={space.name}
-									workflows={workflows}
-									onCreateWorkflow={() => setWorkflowEditId('new')}
-									onEditWorkflow={(id) => setWorkflowEditId(id)}
-								/>
-							)}
-							{activeTab === 'settings' && space && <SpaceSettings space={space} />}
-						</>
-					)}
+	if (viewMode === 'configure' && space) {
+		return (
+			<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-configure-view">
+				<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+					<SpaceConfigurePage space={space} workflows={workflows} />
 				</div>
+			</div>
+		);
+	}
+
+	if (viewMode === 'configure' && !space) {
+		return (
+			<div class="flex-1 flex items-center justify-center bg-dark-900">
+				<p class="text-sm text-gray-500">Space not found</p>
+			</div>
+		);
+	}
+
+	return (
+		<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-overview-view">
+			<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+				<SpaceDashboard
+					spaceId={spaceId}
+					onOpenSpaceAgent={() => navigateToSpaceAgent(spaceId)}
+					onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+				/>
 			</div>
 		</div>
 	);

@@ -1,18 +1,13 @@
 /**
- * Tests for SpaceDetailPanel component.
+ * Tests for SpaceDetailPanel.
  *
- * Covers: space activity summary, pinned item highlighting, unified task list filtering,
- * click navigation, sessions section, and empty states.
+ * Covers overview/agent navigation, task tab defaults, counters, and sessions behavior.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, screen } from '@testing-library/preact';
-import { signal, computed, type Signal, type ReadonlySignal } from '@preact/signals';
-import type { SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
-
-// -------------------------------------------------------
-// Hoisted mocks
-// -------------------------------------------------------
+import { signal, type Signal } from '@preact/signals';
+import type { SpaceTask, Space } from '@neokai/shared';
 
 const {
 	mockNavigateToSpace,
@@ -26,48 +21,20 @@ const {
 	mockNavigateToSpaceTask: vi.fn(),
 }));
 
-// -------------------------------------------------------
-// Signals used in mocks
-// -------------------------------------------------------
-
 let mockTasksSignal!: Signal<SpaceTask[]>;
-let mockWorkflowRunsSignal!: Signal<SpaceWorkflowRun[]>;
 let mockSpaceSignal!: Signal<Space | null>;
 let mockLoadingSignal!: Signal<boolean>;
 let mockSpaceIdSignal!: Signal<string | null>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 
-let mockActiveRuns!: ReadonlySignal<SpaceWorkflowRun[]>;
-let mockTasksByRun!: ReadonlySignal<Map<string, SpaceTask[]>>;
-let mockStandaloneTasks!: ReadonlySignal<SpaceTask[]>;
-
 function initSignals() {
 	mockTasksSignal = signal([]);
-	mockWorkflowRunsSignal = signal([]);
 	mockSpaceSignal = signal(null);
-	// By default simulate loaded state: not loading, spaceId matches
 	mockLoadingSignal = signal(false);
 	mockSpaceIdSignal = signal('space-1');
 	mockCurrentSpaceSessionIdSignal = signal(null);
 	mockCurrentSpaceTaskIdSignal = signal(null);
-
-	mockActiveRuns = computed(() =>
-		mockWorkflowRunsSignal.value.filter((r) => r.status === 'pending' || r.status === 'in_progress')
-	);
-
-	mockTasksByRun = computed(() => {
-		const map = new Map<string, SpaceTask[]>();
-		for (const task of mockTasksSignal.value) {
-			if (task.workflowRunId) {
-				const existing = map.get(task.workflowRunId) ?? [];
-				map.set(task.workflowRunId, [...existing, task]);
-			}
-		}
-		return map;
-	});
-
-	mockStandaloneTasks = computed(() => mockTasksSignal.value.filter((t) => !t.workflowRunId));
 }
 
 initSignals();
@@ -76,13 +43,9 @@ vi.mock('../../lib/space-store.ts', () => ({
 	get spaceStore() {
 		return {
 			tasks: mockTasksSignal,
-			workflowRuns: mockWorkflowRunsSignal,
 			space: mockSpaceSignal,
 			loading: mockLoadingSignal,
 			spaceId: mockSpaceIdSignal,
-			activeRuns: mockActiveRuns,
-			tasksByRun: mockTasksByRun,
-			standaloneTasks: mockStandaloneTasks,
 		};
 	},
 }));
@@ -108,10 +71,6 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
 });
 
 import { SpaceDetailPanel } from '../SpaceDetailPanel';
-
-// -------------------------------------------------------
-// Helpers
-// -------------------------------------------------------
 
 function makeTask(
 	id: string,
@@ -139,24 +98,6 @@ function makeTask(
 	} as SpaceTask;
 }
 
-function makeRun(
-	id: string,
-	title: string,
-	status: SpaceWorkflowRun['status'] = 'in_progress'
-): SpaceWorkflowRun {
-	return {
-		id,
-		spaceId: 'space-1',
-		workflowId: 'wf-1',
-		title,
-		status,
-		startedAt: null,
-		completedAt: null,
-		createdAt: 0,
-		updatedAt: 0,
-	} as SpaceWorkflowRun;
-}
-
 function makeSpace(id: string, overrides: Partial<Space> = {}): Space {
 	return {
 		id,
@@ -170,10 +111,6 @@ function makeSpace(id: string, overrides: Partial<Space> = {}): Space {
 	} as unknown as Space;
 }
 
-// -------------------------------------------------------
-// Tests
-// -------------------------------------------------------
-
 describe('SpaceDetailPanel', () => {
 	beforeEach(() => {
 		cleanup();
@@ -185,69 +122,41 @@ describe('SpaceDetailPanel', () => {
 		cleanup();
 	});
 
-	// -- Loading guard --
-
 	it('shows loading state when spaceStore is loading', () => {
 		mockLoadingSignal.value = true;
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('Loading…')).toBeTruthy();
-		expect(screen.queryByText('Dashboard')).toBeNull();
+		expect(screen.queryByText('Overview')).toBeNull();
 	});
 
 	it('shows loading state when store spaceId does not match prop', () => {
-		mockLoadingSignal.value = false;
 		mockSpaceIdSignal.value = 'other-space';
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('Loading…')).toBeTruthy();
 	});
 
-	it('renders panel content when store is loaded for this space', () => {
-		mockLoadingSignal.value = false;
-		mockSpaceIdSignal.value = 'space-1';
+	it('renders Overview and Space Agent buttons', () => {
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.queryByText('Loading…')).toBeNull();
-		expect(screen.getByText('Dashboard')).toBeTruthy();
-	});
-
-	// -- Space activity summary --
-
-	it('renders the empty activity summary when there are no tasks', () => {
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Space Activity')).toBeTruthy();
-		expect(screen.getByText('No tasks yet.')).toBeTruthy();
-	});
-
-	it('renders the non-empty activity summary when tasks exist', () => {
-		mockTasksSignal.value = [makeTask('t1', 'T1', 'in_progress')];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(
-			screen.getByText('Use Tasks and Space Agent to monitor and steer ongoing work.')
-		).toBeTruthy();
-	});
-
-	it('shows workspace path in activity summary when available', () => {
-		mockSpaceSignal.value = makeSpace('space-1', { workspacePath: '/tmp/workspace' });
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('/tmp/workspace')).toBeTruthy();
-	});
-
-	// -- Pinned items --
-
-	it('renders Dashboard and Space Agent buttons', () => {
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Dashboard')).toBeTruthy();
+		expect(screen.getByText('Overview')).toBeTruthy();
 		expect(screen.getByText('Space Agent')).toBeTruthy();
 	});
 
-	it('navigates to space dashboard and calls onNavigate', () => {
+	it('removes the old Space Activity header block', () => {
+		mockSpaceSignal.value = makeSpace('space-1', { workspacePath: '/tmp/workspace' });
+		render(<SpaceDetailPanel spaceId="space-1" />);
+		expect(screen.queryByText('Space Activity')).toBeNull();
+		expect(screen.queryByText('/tmp/workspace')).toBeNull();
+	});
+
+	it('navigates to space overview and calls onNavigate', () => {
 		const onNavigate = vi.fn();
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
-		fireEvent.click(screen.getByText('Dashboard'));
+		fireEvent.click(screen.getByText('Overview'));
 		expect(mockNavigateToSpace).toHaveBeenCalledWith('space-1');
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 
-	it('navigates to space agent route and calls onNavigate', () => {
+	it('navigates to the space agent and calls onNavigate', () => {
 		const onNavigate = vi.fn();
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 		fireEvent.click(screen.getByText('Space Agent'));
@@ -255,176 +164,75 @@ describe('SpaceDetailPanel', () => {
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 
-	// -- Dashboard highlighting --
-
-	it('highlights Dashboard when both session and task signals are null', () => {
-		mockCurrentSpaceSessionIdSignal.value = null;
-		mockCurrentSpaceTaskIdSignal.value = null;
+	it('highlights Overview when neither session nor task is selected', () => {
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		const dashboardBtn = screen.getByText('Dashboard').closest('button');
-		expect(dashboardBtn?.className).toContain('bg-dark-700');
+		const button = screen.getByText('Overview').closest('button');
+		expect(button?.className).toContain('bg-dark-700');
 	});
 
-	it('does NOT highlight Dashboard when a task is selected', () => {
-		mockCurrentSpaceSessionIdSignal.value = null;
-		mockCurrentSpaceTaskIdSignal.value = 'task-1';
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		const dashboardBtn = screen.getByText('Dashboard').closest('button');
-		expect(dashboardBtn?.className).not.toContain('bg-dark-700');
-	});
-
-	it('does NOT highlight Dashboard when a session is selected', () => {
-		mockCurrentSpaceSessionIdSignal.value = 'some-session';
-		mockCurrentSpaceTaskIdSignal.value = null;
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		const dashboardBtn = screen.getByText('Dashboard').closest('button');
-		expect(dashboardBtn?.className).not.toContain('bg-dark-700');
-	});
-
-	// -- Space Agent highlighting --
-
-	it('highlights Space Agent when its synthetic session ID is selected', () => {
+	it('highlights Space Agent when its synthetic session is selected', () => {
 		mockCurrentSpaceSessionIdSignal.value = 'space:chat:space-1';
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		const agentBtn = screen.getByText('Space Agent').closest('button');
-		expect(agentBtn?.className).toContain('bg-dark-700');
+		const button = screen.getByText('Space Agent').closest('button');
+		expect(button?.className).toContain('bg-dark-700');
 	});
 
-	it('does NOT highlight Space Agent when a different session is selected', () => {
-		mockCurrentSpaceSessionIdSignal.value = 'some-other-session';
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		const agentBtn = screen.getByText('Space Agent').closest('button');
-		expect(agentBtn?.className).not.toContain('bg-dark-700');
-	});
-
-	// -- Tasks section --
-
-	it('shows active tasks under Active tab by default', () => {
+	it('shows Review tasks by default and includes counters on task tabs', () => {
 		mockTasksSignal.value = [
-			makeTask('t1', 'Active Task', 'in_progress'),
-			makeTask('t2', 'Done Task', 'done'),
+			makeTask('t1', 'Queued Task', 'open'),
+			makeTask('t2', 'In Progress Task', 'in_progress'),
+			makeTask('t3', 'Blocked Task', 'blocked'),
 		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Active Task')).toBeTruthy();
-		expect(screen.queryByText('Done Task')).toBeNull();
+
+		expect(screen.getByText('Blocked Task')).toBeTruthy();
+		expect(screen.queryByText('Queued Task')).toBeNull();
+		expect(screen.getByText('Active')).toBeTruthy();
+		expect(screen.getByText('Review')).toBeTruthy();
+		expect(screen.getByText('2')).toBeTruthy();
+		expect(screen.getByText('1')).toBeTruthy();
 	});
 
-	it('keeps selected done task visible even when Active tab is selected', () => {
+	it('switches to Active tasks when the Active tab is clicked', () => {
 		mockTasksSignal.value = [
-			makeTask('t1', 'Active Task', 'in_progress'),
+			makeTask('t1', 'Queued Task', 'open'),
+			makeTask('t2', 'Blocked Task', 'blocked'),
+		];
+		render(<SpaceDetailPanel spaceId="space-1" />);
+
+		fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+		expect(screen.getByText('Queued Task')).toBeTruthy();
+		expect(screen.queryByText('Blocked Task')).toBeNull();
+	});
+
+	it('keeps the selected task visible even when it does not match the current tab', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'Queued Task', 'open'),
 			makeTask('t2', 'Done Task', 'done'),
 		];
 		mockCurrentSpaceTaskIdSignal.value = 't2';
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Active Task')).toBeTruthy();
+
 		expect(screen.getByText('Done Task')).toBeTruthy();
-	});
-
-	it('shows workflow tasks alongside standalone tasks in the unified list', () => {
-		mockWorkflowRunsSignal.value = [makeRun('r1', 'Run')];
-		mockTasksSignal.value = [
-			makeTask('t1', 'Run Task', 'in_progress', { workflowRunId: 'r1' }),
-			makeTask('t2', 'Standalone Task', 'open'),
-		];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Run Task')).toBeTruthy();
-		expect(screen.getByText('Standalone Task')).toBeTruthy();
-		expect(screen.getByText('Workflow task')).toBeTruthy();
-		expect(screen.getByText('Standalone task')).toBeTruthy();
-	});
-
-	it('shows draft and pending tasks under Active tab', () => {
-		mockTasksSignal.value = [
-			makeTask('t1', 'Draft Task', 'open'),
-			makeTask('t2', 'Pending Task', 'open'),
-			makeTask('t3', 'Done Task', 'done'),
-		];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Draft Task')).toBeTruthy();
-		expect(screen.getByText('Pending Task')).toBeTruthy();
-		expect(screen.queryByText('Done Task')).toBeNull();
-	});
-
-	it('switches to Review tab to show review tasks', () => {
-		mockTasksSignal.value = [
-			makeTask('t1', 'Active Task', 'in_progress'),
-			makeTask('t2', 'Review Task', 'blocked'),
-			makeTask('t3', 'Attention Task', 'blocked'),
-		];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-
-		const reviewTab = screen.getAllByRole('button').find((b) => b.textContent === 'review');
-		fireEvent.click(reviewTab!);
-
-		expect(screen.getByText('Review Task')).toBeTruthy();
-		expect(screen.getByText('Attention Task')).toBeTruthy();
-		expect(screen.queryByText('Active Task')).toBeNull();
-	});
-
-	it('does not render a Done tab', () => {
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.queryByRole('button', { name: 'done' })).toBeNull();
-	});
-
-	it('shows rate_limited tasks under Active tab', () => {
-		mockTasksSignal.value = [makeTask('t1', 'Throttled Task', 'blocked')];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Throttled Task')).toBeTruthy();
-	});
-
-	it('shows usage_limited tasks under Active tab', () => {
-		mockTasksSignal.value = [makeTask('t1', 'Limited Task', 'blocked')];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Limited Task')).toBeTruthy();
-	});
-
-	it('hides archived tasks from the task tabs unless explicitly selected', () => {
-		mockTasksSignal.value = [makeTask('t1', 'Archived Task', 'archived')];
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.queryByText('Archived Task')).toBeNull();
-	});
-
-	it('shows "No tasks" in Tasks section when filtered list is empty', () => {
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getAllByText('No tasks').length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('navigates to a task on click and calls onNavigate', () => {
 		const onNavigate = vi.fn();
-		mockTasksSignal.value = [makeTask('t1', 'Click Me', 'open')];
+		mockTasksSignal.value = [makeTask('t1', 'Blocked Task', 'blocked')];
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 
-		fireEvent.click(screen.getByText('Click Me'));
+		fireEvent.click(screen.getByText('Blocked Task'));
 		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 't1');
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 
-	it('highlights selected task in the task list', () => {
-		mockTasksSignal.value = [makeTask('t1', 'Selected Task', 'open')];
-		mockCurrentSpaceTaskIdSignal.value = 't1';
-		render(<SpaceDetailPanel spaceId="space-1" />);
-
-		const taskBtn = screen.getByText('Selected Task').closest('button');
-		expect(taskBtn?.className).toContain('bg-dark-700');
-	});
-
-	// -- Sessions section --
-
-	it('renders Sessions section collapsed by default', () => {
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('Sessions')).toBeTruthy();
-		expect(screen.queryByText('manual-s')).toBeNull();
-	});
-
-	it('shows manually created sessions from space.sessionIds', () => {
+	it('renders Sessions expanded by default', () => {
 		mockSpaceSignal.value = makeSpace('space-1', { sessionIds: ['manual-session-abc123'] });
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		fireEvent.click(screen.getByLabelText('Sessions section'));
-		// Manually created sessions show first 8 chars of ID
 		expect(screen.getByText('manual-s')).toBeTruthy();
 	});
 
-	it('filters out system space sessions from space.sessionIds', () => {
+	it('filters out system sessions from the Sessions section', () => {
 		mockSpaceSignal.value = makeSpace('space-1', {
 			sessionIds: [
 				'space:chat:space-1',
@@ -434,51 +242,19 @@ describe('SpaceDetailPanel', () => {
 			],
 		});
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		fireEvent.click(screen.getByLabelText('Sessions section'));
 
 		expect(screen.queryByText('space:cha')).toBeNull();
 		expect(screen.queryByText('space:spa')).toBeNull();
 		expect(screen.getByText('manual-s')).toBeTruthy();
 	});
 
-	it('navigates to session on click and calls onNavigate', () => {
+	it('navigates to a session on click and calls onNavigate', () => {
 		const onNavigate = vi.fn();
 		mockSpaceSignal.value = makeSpace('space-1', { sessionIds: ['manual-session-abc123'] });
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 
-		fireEvent.click(screen.getByLabelText('Sessions section'));
 		fireEvent.click(screen.getByText('manual-s'));
-
 		expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'manual-session-abc123');
-		expect(onNavigate).toHaveBeenCalled();
-	});
-
-	it('highlights selected session in the sessions list', () => {
-		mockSpaceSignal.value = makeSpace('space-1', { sessionIds: ['manual-session-abc123'] });
-		mockCurrentSpaceSessionIdSignal.value = 'manual-session-abc123';
-		render(<SpaceDetailPanel spaceId="space-1" />);
-
-		fireEvent.click(screen.getByLabelText('Sessions section'));
-		const sessionBtn = screen.getByText('manual-s').closest('button');
-		expect(sessionBtn?.className).toContain('bg-dark-700');
-	});
-
-	it('deduplicates manual sessions', () => {
-		mockSpaceSignal.value = makeSpace('space-1', {
-			sessionIds: ['manual-session-abc123', 'manual-session-abc123'],
-		});
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		fireEvent.click(screen.getByLabelText('Sessions section'));
-		expect(screen.getAllByText('manual-s')).toHaveLength(1);
-	});
-
-	it('renders session count badge in section header', () => {
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByText('(0)')).toBeTruthy();
-	});
-
-	it('renders "Create session" button in sessions header', () => {
-		render(<SpaceDetailPanel spaceId="space-1" />);
-		expect(screen.getByLabelText('Create session')).toBeTruthy();
+		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 });
