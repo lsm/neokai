@@ -1,6 +1,14 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Toast, ToastAction, ToastDescription, Toaster, ToastTitle, useToast } from '../src/mod.ts';
+import {
+	Toast,
+	ToastAction,
+	ToastDescription,
+	ToastProgress,
+	Toaster,
+	ToastTitle,
+	useToast,
+} from '../src/mod.ts';
 
 class RAFQueue {
 	callbacks: FrameRequestCallback[] = [];
@@ -588,5 +596,323 @@ describe('Toaster', () => {
 		// afterLeave calls dismiss(item.id), removing from store
 		await act(async () => {});
 		expect(screen.getByTestId('count').textContent).toBe('0');
+	});
+});
+
+// -------------------------
+// Toast variant
+// -------------------------
+
+describe('Toast variant', () => {
+	it('renders with data-variant="info" by default', async () => {
+		render(
+			<Toast show={true}>
+				<div>Toast content</div>
+			</Toast>
+		);
+		await act(async () => {});
+		const toast = document.querySelector('[role="status"]');
+		expect(toast?.getAttribute('data-variant')).toBe('info');
+	});
+
+	it('renders with data-variant="success"', async () => {
+		render(
+			<Toast show={true} variant="success">
+				<div>Toast content</div>
+			</Toast>
+		);
+		await act(async () => {});
+		const toast = document.querySelector('[role="status"]');
+		expect(toast?.getAttribute('data-variant')).toBe('success');
+	});
+
+	it('renders with data-variant="warning"', async () => {
+		render(
+			<Toast show={true} variant="warning">
+				<div>Toast content</div>
+			</Toast>
+		);
+		await act(async () => {});
+		const toast = document.querySelector('[role="status"]');
+		expect(toast?.getAttribute('data-variant')).toBe('warning');
+	});
+
+	it('renders with data-variant="error"', async () => {
+		render(
+			<Toast show={true} variant="error">
+				<div>Toast content</div>
+			</Toast>
+		);
+		await act(async () => {});
+		const toast = document.querySelector('[role="status"]');
+		expect(toast?.getAttribute('data-variant')).toBe('error');
+	});
+
+	it('renders managed toast with variant via useToast', async () => {
+		function AddToast() {
+			const { toast } = useToast();
+			return (
+				<button
+					onClick={() =>
+						toast({
+							title: 'Success toast',
+							description: 'Operation completed',
+							variant: 'success',
+							duration: 0,
+						})
+					}
+				>
+					Add Success
+				</button>
+			);
+		}
+
+		render(
+			<>
+				<AddToast />
+				<Toaster />
+			</>
+		);
+		await act(async () => {});
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Add Success'));
+		});
+		await act(async () => {});
+
+		const toast = document.querySelector('[role="status"]');
+		expect(toast?.getAttribute('data-variant')).toBe('success');
+		expect(document.body.textContent).toContain('Success toast');
+		expect(document.body.textContent).toContain('Operation completed');
+	});
+});
+
+// -------------------------
+// ToastProgress
+// -------------------------
+
+describe('ToastProgress', () => {
+	it('throws when used outside Toast', () => {
+		expect(() => {
+			render(<ToastProgress data-testid="progress" />);
+		}).toThrow('<ToastProgress> must be used within a <Toast>');
+	});
+
+	it('renders inside Toast', async () => {
+		render(
+			<Toast show={true} showProgress={true}>
+				<ToastProgress data-testid="progress" />
+				<ToastTitle>Title</ToastTitle>
+			</Toast>
+		);
+		await act(async () => {});
+		const progress = screen.queryByTestId('progress');
+		expect(progress).not.toBeNull();
+	});
+
+	it('renders with data-progress attribute', async () => {
+		render(
+			<Toast show={true} showProgress={true} duration={5000}>
+				<ToastProgress data-testid="progress" />
+				<ToastTitle>Title</ToastTitle>
+			</Toast>
+		);
+		await act(async () => {});
+		const progress = screen.queryByTestId('progress');
+		expect(progress?.getAttribute('data-progress')).toBeTruthy();
+	});
+
+	it('renders with aria-hidden="true"', async () => {
+		render(
+			<Toast show={true} showProgress={true}>
+				<ToastProgress data-testid="progress" />
+				<ToastTitle>Title</ToastTitle>
+			</Toast>
+		);
+		await act(async () => {});
+		const progress = screen.queryByTestId('progress');
+		expect(progress?.getAttribute('aria-hidden')).toBe('true');
+	});
+
+	it('renders with custom as prop', async () => {
+		render(
+			<Toast show={true} showProgress={true}>
+				<ToastProgress as="span" data-testid="progress" />
+				<ToastTitle>Title</ToastTitle>
+			</Toast>
+		);
+		await act(async () => {});
+		const progress = screen.queryByTestId('progress');
+		expect(progress?.tagName.toLowerCase()).toBe('span');
+	});
+
+	it('does not render when showProgress is false', async () => {
+		render(
+			<Toast show={true} showProgress={false}>
+				<ToastProgress data-testid="progress" />
+				<ToastTitle>Title</ToastTitle>
+			</Toast>
+		);
+		await act(async () => {});
+		// ToastProgress reads progress from context, which is undefined when showProgress is false
+		const progress = screen.queryByTestId('progress');
+		expect(progress).toBeNull();
+	});
+});
+
+// -------------------------
+// Toast icon slot (via Toaster)
+// -------------------------
+
+describe('Toast icon slot', () => {
+	it('renders managed toast with icon via useToast', async () => {
+		function AddToast() {
+			const { toast } = useToast();
+			return (
+				<button
+					onClick={() =>
+						toast({
+							title: 'Toast with icon',
+							icon: <span data-testid="custom-icon">★</span>,
+							duration: 0,
+						})
+					}
+				>
+					Add Icon Toast
+				</button>
+			);
+		}
+
+		render(
+			<>
+				<AddToast />
+				<Toaster />
+			</>
+		);
+		await act(async () => {});
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Add Icon Toast'));
+		});
+		await act(async () => {});
+
+		const icon = document.querySelector('[data-toast-icon]');
+		expect(icon).not.toBeNull();
+		expect(screen.queryByTestId('custom-icon')).not.toBeNull();
+	});
+
+	it('renders managed toast without icon when not provided', async () => {
+		function AddToast() {
+			const { toast } = useToast();
+			return (
+				<button
+					onClick={() =>
+						toast({
+							title: 'Toast without icon',
+							duration: 0,
+						})
+					}
+				>
+					Add No Icon Toast
+				</button>
+			);
+		}
+
+		render(
+			<>
+				<AddToast />
+				<Toaster />
+			</>
+		);
+		await act(async () => {});
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Add No Icon Toast'));
+		});
+		await act(async () => {});
+
+		const icon = document.querySelector('[data-toast-icon]');
+		expect(icon).toBeNull();
+	});
+});
+
+// -------------------------
+// Backward compatibility
+// -------------------------
+
+describe('Toast backward compatibility', () => {
+	it('Toast without variant prop works as before', async () => {
+		render(
+			<Toast show={true}>
+				<ToastTitle>Test Title</ToastTitle>
+				<ToastDescription>Test Description</ToastDescription>
+			</Toast>
+		);
+		await act(async () => {});
+		const toast = document.querySelector('[role="status"]');
+		expect(toast).not.toBeNull();
+		expect(toast?.textContent).toContain('Test Title');
+		expect(toast?.textContent).toContain('Test Description');
+	});
+
+	it('Toaster without icon works as before', async () => {
+		function AddToast() {
+			const { toast } = useToast();
+			return (
+				<button
+					onClick={() =>
+						toast({
+							title: 'Simple toast',
+							description: 'Just title and description',
+							duration: 0,
+						})
+					}
+				>
+					Add
+				</button>
+			);
+		}
+
+		render(
+			<>
+				<AddToast />
+				<Toaster />
+			</>
+		);
+		await act(async () => {});
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Add'));
+		});
+		await act(async () => {});
+
+		expect(document.body.textContent).toContain('Simple toast');
+		expect(document.body.textContent).toContain('Just title and description');
+	});
+
+	it('Toast without showProgress works as before', async () => {
+		render(
+			<Toast show={true} showProgress={false}>
+				<ToastTitle>No Progress Toast</ToastTitle>
+			</Toast>
+		);
+		await act(async () => {});
+		const toast = document.querySelector('[role="status"]');
+		expect(toast).not.toBeNull();
+		expect(toast?.textContent).toContain('No Progress Toast');
+	});
+
+	it('All variant types are backward compatible with existing toasts', async () => {
+		for (const variant of ['info', 'success', 'warning', 'error'] as const) {
+			render(
+				<Toast show={true} variant={variant}>
+					<ToastTitle>{variant} toast</ToastTitle>
+				</Toast>
+			);
+			await act(async () => {});
+			const toast = document.querySelector('[role="status"]');
+			expect(toast?.getAttribute('data-variant')).toBe(variant);
+			cleanup();
+		}
 	});
 });
