@@ -68,6 +68,14 @@ export {
 	ToastTitle,
 	useToast,
 } from './components/toast/toast.tsx';
+export {
+	Avatar,
+	AvatarFallback,
+	AvatarGroup,
+	AvatarGroupOverflow,
+	AvatarImage,
+	AvatarStatus,
+} from './components/avatar/avatar.tsx';
 export { IconButton } from './components/icon-button/icon-button.tsx';
 export { Skeleton } from './components/skeleton/skeleton.tsx';
 export { Spinner } from './components/spinner/spinner.tsx';
