@@ -64,8 +64,8 @@ const V2_DONE_PROMPT =
 	'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce ' +
 	'a concise final outcome summary without reopening work unless a blocking issue is discovered.';
 
-const RESEARCH_PLANNER_STEP = 'tpl-research-planner';
-const RESEARCH_GENERAL_STEP = 'tpl-research-general';
+const RESEARCH_STEP = 'tpl-research-research';
+const RESEARCH_REVIEW_STEP = 'tpl-research-review';
 
 const REVIEW_CODER_STEP = 'tpl-review-coder';
 
@@ -190,43 +190,114 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 /**
  * Research Workflow
  *
- * Two-node graph: Planner → General (terminal topology — no cycles).
- * Routing is channel-based (agent-centric model).
- * - Plan Research → Research: no gate — advances without human intervention.
+ * Two-node iterative graph:
+ *   Research → Review (gated by research-ready-gate: PR opened and mergeable)
+ *   Review → Research (ungated back-channel, max 5 cycles)
+ *
+ * Planner agent researches thoroughly, commits findings, opens a PR.
+ * Reviewer agent reviews the research PR; calls report_done() if satisfied,
+ * or sends back for more research via the back-channel.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Research Workflow',
 	description:
-		'Fully automated research workflow. Planner scopes the research; General agent executes and summarises findings.',
+		'Iterative research workflow with gated PR verification. Planner researches and opens a PR; Reviewer evaluates findings and requests revisions if needed.',
 	nodes: [
 		{
-			id: RESEARCH_PLANNER_STEP,
-			name: 'Plan Research',
+			id: RESEARCH_STEP,
+			name: 'Research',
 			agents: [{ agentId: 'Planner', name: 'planner' }],
+			instructions:
+				'Research the topic thoroughly. When done, commit all findings and open a pull request with `gh pr create`. ' +
+				'The research-ready-gate will verify the PR automatically before advancing to Review.',
 		},
 		{
-			id: RESEARCH_GENERAL_STEP,
-			name: 'Research',
-			agents: [{ agentId: 'General', name: 'general' }],
+			id: RESEARCH_REVIEW_STEP,
+			name: 'Review',
+			agents: [{ agentId: 'Reviewer', name: 'reviewer' }],
+			instructions:
+				'Review the research pull request for completeness and quality. If more research is needed, send feedback to Research. ' +
+				'When satisfied, call report_done() to complete the workflow.',
 		},
 	],
-	startNodeId: RESEARCH_PLANNER_STEP,
-	endNodeId: RESEARCH_GENERAL_STEP,
+	startNodeId: RESEARCH_STEP,
+	endNodeId: RESEARCH_REVIEW_STEP,
 	tags: ['research'],
 	createdAt: 0,
 	updatedAt: 0,
+	gates: [
+		{
+			id: 'research-ready-gate',
+			description: 'Planner has opened a PR and cleaned the worktree',
+			fields: [
+				{
+					name: 'pr_created',
+					type: 'boolean',
+					writers: ['*'],
+					check: { op: 'exists' },
+				},
+				{
+					name: 'worktree_clean',
+					type: 'boolean',
+					writers: ['*'],
+					check: { op: 'exists' },
+				},
+			],
+			script: {
+				interpreter: 'bash',
+				source: [
+					'if [ -n "$(git status --porcelain)" ]; then',
+					'  echo "Working tree has uncommitted changes or untracked files" >&2',
+					'  exit 1',
+					'fi',
+					'# Single atomic call to avoid state changing between checks',
+					'if ! PR_JSON=$(gh pr view --json state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
+					'  echo "Failed to retrieve PR info (not authenticated, no PR, or network error)" >&2',
+					'  exit 1',
+					'fi',
+					'PR_STATE=$(jq -r \'.state\' <<< "$PR_JSON")',
+					'if [ "$PR_STATE" != "OPEN" ]; then',
+					'  echo "No open PR found for current branch (state: ${PR_STATE:-none})" >&2',
+					'  exit 1',
+					'fi',
+					'PR_MERGEABLE=$(jq -r \'.mergeable\' <<< "$PR_JSON")',
+					'# Block on UNKNOWN — orchestrator retries until GitHub resolves mergeability',
+					'if [ "$PR_MERGEABLE" != "MERGEABLE" ]; then',
+					'  echo "PR is not mergeable (mergeable: ${PR_MERGEABLE:-unknown})" >&2',
+					'  exit 1',
+					'fi',
+					'PR_STATUS=$(jq -r \'.mergeStateStatus\' <<< "$PR_JSON")',
+					'# Block on UNKNOWN — orchestrator retries until GitHub resolves status',
+					'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ]; then',
+					'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
+					'  exit 1',
+					'fi',
+					'echo \'{"pr_created": true, "worktree_clean": true}\'',
+				].join('\n'),
+				timeoutMs: 30000,
+			},
+			resetOnCycle: true,
+		},
+	],
 	channels: [
 		{
-			from: 'Plan Research',
+			from: 'Research',
+			to: 'Review',
+			direction: 'one-way',
+			gateId: 'research-ready-gate',
+			label: 'Research → Review',
+		},
+		{
+			from: 'Review',
 			to: 'Research',
 			direction: 'one-way',
-			label: 'Plan → Research',
+			maxCycles: 5,
+			label: 'Review → Research (more research needed)',
 		},
 	],
 };
-
 /**
  * Review-Only Workflow
  *

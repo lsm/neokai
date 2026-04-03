@@ -198,47 +198,57 @@ describe('CODING_WORKFLOW template', () => {
 });
 
 describe('RESEARCH_WORKFLOW template', () => {
-	test('has two steps', () => {
+	test('has two nodes (Research + Review)', () => {
 		expect(RESEARCH_WORKFLOW.nodes).toHaveLength(2);
 	});
 
-	test('first step agentId placeholder is planner', () => {
+	test('first node uses Planner agent', () => {
 		expect(RESEARCH_WORKFLOW.nodes[0].agents[0]?.name).toBe('planner');
+		expect(RESEARCH_WORKFLOW.nodes[0].name).toBe('Research');
 	});
 
-	test('second step agentId placeholder is general', () => {
-		expect(RESEARCH_WORKFLOW.nodes[1].agents[0]?.name).toBe('general');
+	test('second node uses Reviewer agent', () => {
+		expect(RESEARCH_WORKFLOW.nodes[1].agents[0]?.name).toBe('reviewer');
+		expect(RESEARCH_WORKFLOW.nodes[1].name).toBe('Review');
 	});
 
-	test('has one channel (Plan Research → Research) with no gate (always open)', () => {
-		expect(RESEARCH_WORKFLOW.channels).toHaveLength(1);
-		const ch = RESEARCH_WORKFLOW.channels![0];
-		expect(ch.from).toBe('Plan Research');
-		expect(ch.to).toBe('Research');
-		expect(ch.direction).toBe('one-way');
-		expect(ch.gateId).toBeUndefined();
+	test('has two channels: gated Research→Review and ungated Review→Research', () => {
+		expect(RESEARCH_WORKFLOW.channels).toHaveLength(2);
+		const gated = RESEARCH_WORKFLOW.channels!.find((c) => c.gateId === 'research-ready-gate');
+		expect(gated).toBeDefined();
+		expect(gated!.from).toBe('Research');
+		expect(gated!.to).toBe('Review');
+		expect(gated!.direction).toBe('one-way');
+
+		const backChannel = RESEARCH_WORKFLOW.channels!.find((c) => c.gateId === undefined);
+		expect(backChannel).toBeDefined();
+		expect(backChannel!.from).toBe('Review');
+		expect(backChannel!.to).toBe('Research');
+		expect(backChannel!.maxCycles).toBe(5);
 	});
 
 	test('channel from/to references match node names', () => {
 		const nodeNames = new Set(RESEARCH_WORKFLOW.nodes.map((n) => n.name));
-		const ch = RESEARCH_WORKFLOW.channels![0];
-		expect(nodeNames.has(ch.from as string)).toBe(true);
-		expect(nodeNames.has(ch.to as string)).toBe(true);
+		for (const ch of RESEARCH_WORKFLOW.channels!) {
+			expect(nodeNames.has(ch.from as string)).toBe(true);
+			expect(nodeNames.has(ch.to as string)).toBe(true);
+		}
 	});
 
-	test('channel has a label', () => {
-		const ch = RESEARCH_WORKFLOW.channels![0];
-		expect(ch.label).toBeTruthy();
+	test('each channel has a label', () => {
+		for (const ch of RESEARCH_WORKFLOW.channels!) {
+			expect(ch.label).toBeTruthy();
+		}
 	});
 
-	test('startNodeId points to the planner step', () => {
-		const plannerStep = RESEARCH_WORKFLOW.nodes.find((s) => s.agents[0]?.name === 'planner');
-		expect(RESEARCH_WORKFLOW.startNodeId).toBe(plannerStep?.id);
+	test('startNodeId points to the Research node', () => {
+		const researchNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Research');
+		expect(RESEARCH_WORKFLOW.startNodeId).toBe(researchNode?.id);
 	});
 
-	test('endNodeId points to the Research step', () => {
-		const researchStep = RESEARCH_WORKFLOW.nodes.find((s) => s.name === 'Research');
-		expect(RESEARCH_WORKFLOW.endNodeId).toBe(researchStep?.id);
+	test('endNodeId points to the Review node', () => {
+		const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review');
+		expect(RESEARCH_WORKFLOW.endNodeId).toBe(reviewNode?.id);
 	});
 
 	test('endNodeId references a valid node in the graph', () => {
@@ -253,6 +263,37 @@ describe('RESEARCH_WORKFLOW template', () => {
 	test('template id and spaceId are empty (not space-specific)', () => {
 		expect(RESEARCH_WORKFLOW.id).toBe('');
 		expect(RESEARCH_WORKFLOW.spaceId).toBe('');
+	});
+
+	test('research-ready-gate has a bash script that checks PR mergeability and clean worktree', () => {
+		const gate = RESEARCH_WORKFLOW.gates!.find((g) => g.id === 'research-ready-gate')!;
+		expect(gate.script).toBeDefined();
+		expect(gate.script!.interpreter).toBe('bash');
+		expect(gate.script!.timeoutMs).toBe(30000);
+		expect(gate.script!.source).toContain('git status --porcelain');
+		expect(gate.script!.source).toContain('gh pr view --json state,mergeable,mergeStateStatus');
+		expect(gate.script!.source).toContain('jq -r');
+		expect(gate.script!.source).toContain('"OPEN"');
+		expect(gate.script!.source).toContain('.mergeable');
+		expect(gate.script!.source).toContain('"MERGEABLE"');
+		expect(gate.script!.source).toContain('.mergeStateStatus');
+		expect(gate.script!.source).toContain('"CLEAN"');
+		expect(gate.script!.source).toContain('"HAS_HOOKS"');
+		expect(gate.script!.source).toContain('exit 1');
+		expect(gate.script!.source).toContain('pr_created');
+		expect(gate.script!.source).toContain('worktree_clean');
+		expect(gate.script!.source).toContain('not authenticated');
+	});
+
+	test('research-ready-gate resets on cycle', () => {
+		const gate = RESEARCH_WORKFLOW.gates!.find((g) => g.id === 'research-ready-gate')!;
+		expect(gate.resetOnCycle).toBe(true);
+	});
+
+	test('nodes have instructions', () => {
+		for (const node of RESEARCH_WORKFLOW.nodes) {
+			expect(node.instructions).toBeTruthy();
+		}
 	});
 });
 
@@ -645,6 +686,7 @@ describe('seedBuiltInWorkflows()', () => {
 	const PLANNER_ID = 'agent-planner-uuid';
 	const CODER_ID = 'agent-coder-uuid';
 	const GENERAL_ID = 'agent-general-uuid';
+	const REVIEWER_ID = 'agent-reviewer-uuid';
 
 	// Role resolver — mirrors what the real call site does
 	const QA_ID = 'agent-qa-uuid';
@@ -652,7 +694,7 @@ describe('seedBuiltInWorkflows()', () => {
 		planner: PLANNER_ID,
 		coder: CODER_ID,
 		general: GENERAL_ID,
-		reviewer: 'agent-reviewer-uuid',
+		reviewer: REVIEWER_ID,
 		qa: QA_ID,
 	};
 	const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
@@ -664,6 +706,7 @@ describe('seedBuiltInWorkflows()', () => {
 		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner');
 		seedAgent(db, CODER_ID, SPACE_ID, 'Coder');
 		seedAgent(db, GENERAL_ID, SPACE_ID, 'General');
+		seedAgent(db, REVIEWER_ID, SPACE_ID, 'Reviewer');
 		seedAgent(db, QA_ID, SPACE_ID, 'QA');
 
 		const repo = new SpaceWorkflowRepository(db);
@@ -763,33 +806,38 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('RESEARCH_WORKFLOW seeded with one channel (Plan Research → Research, no gate)', async () => {
+	test('RESEARCH_WORKFLOW seeded with two channels (gated Research→Review, ungated Review→Research)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-		expect(wf.channels).toHaveLength(1);
-		const ch = wf.channels![0];
-		expect(ch.from).toBe('Plan Research');
-		expect(ch.to).toBe('Research');
-		expect(ch.gateId).toBeUndefined();
+		expect(wf.channels).toHaveLength(2);
+		const gated = wf.channels!.find((c) => c.gateId === 'research-ready-gate');
+		expect(gated).toBeDefined();
+		expect(gated!.from).toBe('Research');
+		expect(gated!.to).toBe('Review');
+		const back = wf.channels!.find((c) => c.gateId === undefined);
+		expect(back).toBeDefined();
+		expect(back!.from).toBe('Review');
+		expect(back!.to).toBe('Research');
 	});
 
-	test('RESEARCH_WORKFLOW seeded correctly — planner + general', async () => {
+	test('RESEARCH_WORKFLOW seeded correctly — planner + reviewer', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.nodes).toHaveLength(2);
 		expect(wf!.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID);
-		expect(wf!.nodes[1].agents[0]?.agentId).toBe(GENERAL_ID);
+		expect(wf!.nodes[1].agents[0]?.agentId).toBe(REVIEWER_ID);
 	});
 
-	test('RESEARCH_WORKFLOW seeded channel direction is one-way and from/to are node names', async () => {
+	test('RESEARCH_WORKFLOW seeded channels reference valid node names', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-		const ch = wf.channels![0];
-		expect(ch.direction).toBe('one-way');
 		const nodeNames = new Set(wf.nodes.map((n) => n.name));
-		expect(nodeNames.has(ch.from as string)).toBe(true);
-		expect(nodeNames.has(ch.to as string)).toBe(true);
+		for (const ch of wf.channels!) {
+			expect(ch.direction).toBe('one-way');
+			expect(nodeNames.has(ch.from as string)).toBe(true);
+			expect(nodeNames.has(ch.to as string)).toBe(true);
+		}
 	});
 
 	test('REVIEW_ONLY_WORKFLOW seeded with no channels', async () => {
@@ -988,7 +1036,7 @@ describe('seedBuiltInWorkflows()', () => {
 	});
 
 	test('does not persist any workflow when resolveAgentId fails on a shared role', async () => {
-		// 'general' is used by RESEARCH_WORKFLOW and FULL_CYCLE_CODING_WORKFLOW (Done node).
+		// 'general' is used by FULL_CYCLE_CODING_WORKFLOW (Done node).
 		// Pre-validation catches missing roles before any workflow is persisted.
 		const brokenResolver = (role: string): string | undefined =>
 			role === 'general' ? undefined : roleMap[role];
