@@ -84,7 +84,7 @@ test.describe('Space Task Full-Width View', () => {
 
 		// Tab bar should be hidden (full-width task view replaced the tab layout)
 		await expect(page.getByRole('button', { name: 'Overview', exact: true })).not.toBeVisible();
-		await expect(page.getByRole('button', { name: 'Agents', exact: true })).not.toBeVisible();
+		await expect(page.getByRole('button', { name: 'Active', exact: true })).not.toBeVisible();
 	});
 
 	test('back button in task view returns to the tabbed dashboard', async ({ page }) => {
