@@ -1,13 +1,12 @@
 /**
- * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 6
+ * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 5
  * tools available to the Task Agent session (send_message schema is shared
- * from node-agent-tool-schemas.ts, making 7 tools total in the MCP server).
+ * from node-agent-tool-schemas.ts, making 6 tools total in the MCP server).
  *
  * Tools (defined in this file):
  *   spawn_node_agent      — spawn a sub-session for a specific workflow node
  *   check_node_status     — check the status of the current or a specific node's sub-session
  *   report_result         — report the final task result (terminal tool)
- *   report_workflow_done  — explicitly mark the entire workflow run as completed
  *   request_human_input   — pause execution and surface a question to the human user
  *   list_group_members    — list all members of the current task's session group
  *
@@ -126,27 +125,7 @@ export const ListGroupMembersSchema = z.object({});
 export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 
 // ---------------------------------------------------------------------------
-// report_workflow_done
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `report_workflow_done` input.
- * Explicitly marks the entire workflow run as completed, bypassing the
- * automatic all-agents-done detector. Use this when all node agents have
- * finished and you are certain the run is complete.
- */
-export const ReportWorkflowDoneSchema = z.object({
-	/** Optional summary of what the workflow accomplished overall. */
-	summary: z
-		.string()
-		.describe('Optional human-readable summary of what the workflow accomplished')
-		.optional(),
-});
-
-export type ReportWorkflowDoneInput = z.infer<typeof ReportWorkflowDoneSchema>;
-
-// ---------------------------------------------------------------------------
-// Aggregate export for MCP server factory (Milestone 3)
+// Aggregate export for MCP server factory
 // ---------------------------------------------------------------------------
 
 /**
@@ -157,7 +136,6 @@ export const TASK_AGENT_TOOL_SCHEMAS = {
 	spawn_node_agent: SpawnNodeAgentSchema,
 	check_node_status: CheckNodeStatusSchema,
 	report_result: ReportResultSchema,
-	report_workflow_done: ReportWorkflowDoneSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,
 } as const;

@@ -202,15 +202,9 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`- **report_result** — Mark the task as completed or failed and record a result summary. ` +
-			`Pass \`status\` (\`completed\`, \`needs_attention\`, or \`cancelled\`) and a \`summary\` string. ` +
-			`Call this when the workflow reaches a terminal step or an unrecoverable error occurs.`
-	);
-	sections.push(
-		`- **report_workflow_done** — Explicitly mark the entire workflow run as completed and close the main task. ` +
-			`Pass a \`summary\` string describing what the workflow accomplished — use the Done node agent's ` +
-			`result summary (collected via \`check_node_status\`) as the summary when available. ` +
-			`Call this when all node agents have finished and you are certain the workflow is done. ` +
-			`This immediately marks the run completed without waiting for the automatic detector.`
+			`Pass \`status\` (\`done\`, \`blocked\`, or \`cancelled\`) and a \`summary\` string. ` +
+			`Call this when the workflow reaches an unrecoverable error or you need to cancel. ` +
+			`Workflow completion is automatic — the end node's \`report_done\` call triggers it.`
 	);
 	sections.push(
 		`- **request_human_input** — Surface a human gate and block until the human responds. ` +
@@ -221,7 +215,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	sections.push(
 		`- **list_group_members** — List all members of the current task's session group. ` +
 			`Returns each member's \`sessionId\`, \`agentName\`, \`status\`, \`completionState\`, and ` +
-			`\`permittedTargets\`. Completion state is read from \`space_tasks\` — use this to monitor ` +
+			`\`permittedTargets\`. Completion state is read from node execution records — use this to monitor ` +
 			`when all agents have called \`report_done\`. Use it after event messages and before finalizing.`
 	);
 	sections.push(
@@ -234,9 +228,9 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`**Node agent tools (for reference):** Each spawned node agent also has access to: ` +
-			`\`list_peers\` (discover peers with completion state from space_tasks), ` +
+			`\`list_peers\` (discover peers with completion state from node executions), ` +
 			`\`send_message\` (same string-based targeting), ` +
-			`\`report_done\` (signal task completion), and ` +
+			`\`report_done\` (signal task completion — the end node's call triggers automatic workflow completion), and ` +
 			`\`list_reachable_agents\` (discover reachable agents and cross-node gate status). ` +
 			`Node agents drive their own progression — you do not need to manually route messages between them.`
 	);
@@ -265,10 +259,11 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`a \`human\` gate requires explicit approval (call \`request_human_input\`); ` +
 			`\`condition\` and \`task_result\` gates are evaluated automatically by the system. ` +
 			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
-			`6. **Detect completion** — When \`list_group_members\` shows all members have completed, ` +
-			`collect the Done node agent's result summary (via \`check_node_status\` only if needed). Then call \`report_workflow_done\` with that ` +
-			`summary to mark the workflow run and task as completed. ` +
-			`You may also use \`report_result\` directly for finer-grained status control.\n` +
+			`6. **Automatic workflow completion** — When the end node agent calls \`report_done\`, the ` +
+			`system automatically marks the workflow run and main task as completed. You do not need to ` +
+			`call any completion tool — just wait for the \`[STEP_COMPLETE]\` event from the end node. ` +
+			`Use \`list_group_members\` to verify all agents have finished if needed. ` +
+			`Only call \`report_result\` if you need to cancel or signal an unrecoverable error.\n` +
 			`7. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
 			`\`status: "cancelled"\` and the error details.`
 	);

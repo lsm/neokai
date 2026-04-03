@@ -62,7 +62,7 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	/**
 	 * DaemonHub for subscribing to task completion/failure events emitted by Task Agents.
 	 * When provided, the global Space Agent session receives notification messages when tasks
-	 * complete or fail via `space.task.completed` / `space.task.failed` events.
+	 * complete or fail via `space.task.done` / `space.task.failed` events.
 	 *
 	 * The subscription routes all space task events to the single `spaces:global` session,
 	 * which is intentional: the global agent manages tasks across all spaces. The notification
@@ -194,7 +194,10 @@ export async function provisionGlobalSpacesAgent(
 		_taskEventUnsubs.forEach((unsub) => unsub());
 		_taskEventUnsubs = [];
 
-		const unsubCompleted = daemonHub.on('space.task.completed', (event) => {
+		// space.task.done: emitted by report_result when status === 'done'.
+		// The 'blocked' status is handled by space.task.failed — it is recoverable
+		// (the Task Agent will surface a human gate and resume after human responds).
+		const unsubDone = daemonHub.on('space.task.done', (event) => {
 			const summaryPart = event.summary ? ` Summary: ${event.summary}` : '';
 			const message =
 				`Task '${event.taskTitle}' (taskId: ${event.taskId}, spaceId: ${event.spaceId}) ` +
@@ -203,7 +206,7 @@ export async function provisionGlobalSpacesAgent(
 				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'defer' })
 				.catch((err) => {
 					log.warn(
-						`Failed to inject task.completed notification into ${GLOBAL_SESSION_ID}: ${err instanceof Error ? err.message : String(err)}`
+						`Failed to inject task.done notification into ${GLOBAL_SESSION_ID}: ${err instanceof Error ? err.message : String(err)}`
 					);
 				});
 		});
@@ -223,8 +226,8 @@ export async function provisionGlobalSpacesAgent(
 				});
 		});
 
-		_taskEventUnsubs = [unsubCompleted, unsubFailed];
-		log.info('Subscribed to space.task.completed and space.task.failed events');
+		_taskEventUnsubs = [unsubDone, unsubFailed];
+		log.info('Subscribed to space.task.done and space.task.failed events');
 	}
 
 	log.info('Global spaces agent session provisioned');

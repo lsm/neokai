@@ -449,8 +449,8 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 
 	// Space Task Agent completion events (use 'global' as sessionId)
-	/** Emitted by report_result when a Task Agent marks a task as completed. */
-	'space.task.completed': {
+	/** Emitted by report_result when a Task Agent marks a task as done. */
+	'space.task.done': {
 		sessionId: string;
 		taskId: string;
 		spaceId: string;
