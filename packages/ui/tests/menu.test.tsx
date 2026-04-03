@@ -1069,3 +1069,160 @@ describe('Menu', () => {
 		}
 	});
 });
+
+describe('MenuSection ARIA', () => {
+	it('should set role=group on MenuSection', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuSection>
+						<MenuHeading>Section Heading</MenuHeading>
+						<MenuItem as="button">Item</MenuItem>
+					</MenuSection>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const section = document.querySelector('[role="group"]');
+		expect(section).not.toBeNull();
+	});
+
+	it('should set aria-labelledby on MenuSection pointing to MenuHeading id', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuSection>
+						<MenuHeading>Section Heading</MenuHeading>
+						<MenuItem as="button">Item</MenuItem>
+					</MenuSection>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const section = document.querySelector('[role="group"]');
+		const heading = screen.getByText('Section Heading').closest('header');
+		expect(section?.getAttribute('aria-labelledby')).toBe(heading?.getAttribute('id'));
+	});
+
+	it('should set id on MenuHeading', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuSection>
+						<MenuHeading>Section Heading</MenuHeading>
+						<MenuItem as="button">Item</MenuItem>
+					</MenuSection>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const heading = screen.getByText('Section Heading').closest('header');
+		expect(heading?.getAttribute('id')).toBeTruthy();
+	});
+
+	it('should set role=presentation on MenuHeading', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuSection>
+						<MenuHeading>Section Heading</MenuHeading>
+						<MenuItem as="button">Item</MenuItem>
+					</MenuSection>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const heading = screen.getByText('Section Heading').closest('header');
+		expect(heading?.getAttribute('role')).toBe('presentation');
+	});
+
+	it('should work without MenuHeading (aria-labelledby is null)', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuSection>
+						<MenuItem as="button">Item</MenuItem>
+					</MenuSection>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const section = document.querySelector('[role="group"]');
+		expect(section).not.toBeNull();
+		// aria-labelledby should be null when no MenuHeading
+		expect(section?.getAttribute('aria-labelledby')).toBeNull();
+	});
+
+	it('should work with custom as prop on MenuSection', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuSection as="aside">
+						<MenuHeading>Section</MenuHeading>
+						<MenuItem as="button">Item</MenuItem>
+					</MenuSection>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const section = document.querySelector('aside');
+		expect(section?.getAttribute('role')).toBe('group');
+	});
+});
+
+describe('MenuItem data-* attributes', () => {
+	it('should set data-disabled when disabled', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuItem as="button" disabled>
+						Disabled Item
+					</MenuItem>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const item = screen.getByRole('menuitem');
+		expect(item.getAttribute('data-disabled')).toBe('');
+	});
+
+	it('should not set data-disabled when not disabled', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuItem as="button">Item</MenuItem>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const item = screen.getByRole('menuitem');
+		expect(item.getAttribute('data-disabled')).toBeNull();
+	});
+
+	it('should set data-active when item is active (keyboard navigation)', () => {
+		render(
+			<Menu>
+				<MenuButton>Open Menu</MenuButton>
+				<MenuItems>
+					<MenuItem as="button">Item 1</MenuItem>
+					<MenuItem as="button">Item 2</MenuItem>
+				</MenuItems>
+			</Menu>
+		);
+		fireEvent.click(screen.getByText('Open Menu'));
+		const menuEl = screen.getByRole('menu');
+
+		// Activate first item with ArrowDown
+		fireEvent.keyDown(menuEl, { key: 'ArrowDown' });
+		const items = screen.getAllByRole('menuitem');
+		expect(items[0].getAttribute('data-active')).toBe('');
+	});
+});
