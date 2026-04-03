@@ -103,13 +103,20 @@ test.describe('Neo Settings - Navigation', () => {
 		const neoSection = getNeoSectionLocator(page);
 		await expect(neoSection.locator('text=Security Mode')).toBeVisible();
 		await expect(neoSection.locator('div', { hasText: /^Model$/ })).toBeVisible();
-		await expect(neoSection.locator('text=Clear Session')).toBeVisible();
+		await expect(
+			neoSection.getByRole('button', { name: 'Clear Session', exact: true })
+		).toBeVisible();
 	});
 });
 
 // ─── Security Mode ────────────────────────────────────────────────────────────
 
 test.describe('Neo Settings - Security Mode', () => {
+	// Tests mutate shared global settings (neoSecurityMode).  Running serially
+	// prevents the afterEach cleanup of one test from racing with the body of
+	// another when Playwright distributes tests across workers.
+	test.describe.configure({ mode: 'serial' });
+
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
@@ -166,6 +173,11 @@ test.describe('Neo Settings - Security Mode', () => {
 // ─── Model Selector ───────────────────────────────────────────────────────────
 
 test.describe('Neo Settings - Model Selector', () => {
+	// Tests mutate shared global settings (neoModel).  Running serially prevents
+	// the afterEach cleanup of one test from racing with the body of another when
+	// Playwright distributes tests across workers in fullyParallel mode.
+	test.describe.configure({ mode: 'serial' });
+
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
@@ -189,20 +201,24 @@ test.describe('Neo Settings - Model Selector', () => {
 	});
 
 	test('should persist model selection across page reload', async ({ page }) => {
-		// Pick a target value different from whatever is currently set
+		// Use "haiku" as the test value — it's unambiguous because the getModel() fallback
+		// chain is "neoModel ?? globalModel ?? 'sonnet'".  If we tested with 'sonnet',
+		// a null/missing neoModel would produce the same result (no distinguishable diff).
+		// "haiku" is never a fallback value, so its presence after reload proves persistence.
 		const select = getModelSelect(page);
-		const current = await select.inputValue();
-		const target = current === 'opus' ? 'sonnet' : 'opus';
+		const target = 'haiku';
 
 		await select.selectOption(target);
 		await expect(page.locator('text=Model updated')).toBeVisible({ timeout: 5000 });
+		// Verify select shows the target BEFORE reload to confirm the DB write completed
+		await expect(select).toHaveValue(target);
 
 		// Reload and re-open Neo settings
 		await page.reload();
 		await waitForWebSocketConnected(page);
 		await openNeoSettings(page);
 
-		// Value should be persisted
+		// Value should be persisted across the reload
 		await expect(getModelSelect(page)).toHaveValue(target);
 	});
 
