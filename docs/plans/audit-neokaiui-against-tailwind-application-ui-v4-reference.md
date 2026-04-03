@@ -164,7 +164,7 @@ interface AvatarProps {
 **Preact implementation notes:**
 - Track `loaded`/`errored` state via `useState` with `onLoad`/`onError` on `<img>`
 - Fallback chain: `src` → `initials` → `fallbackIcon` → default user silhouette
-- Status indicator is a positioned `<span>` with `ring-2 ring-white` (or dark equivalent)
+- Status indicator is a positioned `<span>` with a ring/outline visual treatment (styled via `data-status` attribute)
 
 ---
 
@@ -394,7 +394,6 @@ interface StepperStepProps {
 | Change | Details | Backward-Compatible? |
 |---|---|---|
 | Add `ButtonGroup` component | Renders `<div role="group">` with group-level data attributes | Yes (new component) |
-| Fix `CloseButton` crash outside context | Add guard for undefined `close()` | Yes (bug fix) |
 
 ---
 
@@ -579,7 +578,7 @@ The Catalyst UI Kit demonstrates a `TouchTarget` component that expands hit area
 ```
 R1 (Toast variants) ── R6.3 (Notification demo)
                      ── R3 (Improve existing APIs)
-                     ── R4 (ButtonGroup + CloseButton fix)
+                     ── R4 (ButtonGroup)
 
 R2 (New components: Alert, Avatar, Badge, Progress, Stepper)  [independent]
 
@@ -600,7 +599,7 @@ R1, R2, R4, R5, R6.1 can all run in parallel. R3 should run after R1 (Toast vari
 | Pattern | @neokai/ui | Tailwind v4 Reference | Catalyst | Action Needed |
 |---|---|---|---|---|
 | Button | Headless | 12 examples | Styled | Add ButtonGroup (R4) |
-| CloseButton | Headless | (part of Dialog) | (part of Dialog) | Fix crash outside context (R4) |
+| CloseButton | Headless | (part of Dialog) | (part of Dialog) | — |
 | Checkbox | Headless | 6 examples | Styled | — |
 | Combobox | Headless | 8 examples | Styled | — |
 | Dialog | Headless (full-featured) | 15 examples | Styled | — |
