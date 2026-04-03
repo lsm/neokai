@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { ChevronDown, ChevronRight, Sun, Moon } from 'lucide-preact';
 import { ButtonDemo } from './sections/ButtonDemo.tsx';
@@ -258,38 +258,59 @@ const applicationUiCategories: SidebarCategory[] = [
 
 interface CategoryProps {
 	category: SidebarCategory;
-	defaultOpen?: boolean;
+	forceOpen?: boolean;
+	activeSection: string;
+	searchQuery: string;
 }
 
-function Category({ category, defaultOpen = false }: CategoryProps) {
-	const [isOpen, setIsOpen] = useState(defaultOpen);
+function Category({ category, forceOpen, activeSection, searchQuery }: CategoryProps) {
+	const [isOpen, setIsOpen] = useState(false);
+
+	// Determine if this category contains the active section
+	const hasActiveSection = category.sections.some(
+		(s) => `${category.id}-${s.id}` === activeSection
+	);
+
+	// Auto-expand when active section is in this category or when searching
+	const shouldBeOpen = isOpen || hasActiveSection || (forceOpen ?? false);
 
 	return (
 		<li>
 			<button
 				type="button"
-				onClick={() => setIsOpen(!isOpen)}
+				onClick={() => setIsOpen(!shouldBeOpen)}
 				class="flex items-center w-full px-3 py-2 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors cursor-pointer"
 			>
-				{isOpen ? (
+				{shouldBeOpen ? (
 					<ChevronDown class="w-4 h-4 mr-2 flex-shrink-0" />
 				) : (
 					<ChevronRight class="w-4 h-4 mr-2 flex-shrink-0" />
 				)}
 				{category.label}
 			</button>
-			{isOpen && (
+			{shouldBeOpen && (
 				<ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
-					{category.sections.map((section) => (
-						<li key={section.id}>
-							<a
-								href={`#${category.id}-${section.id}`}
-								class="block px-3 py-1.5 text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-2 rounded transition-colors"
-							>
-								{section.label}
-							</a>
-						</li>
-					))}
+					{category.sections.map((section) => {
+						const sectionId = `${category.id}-${section.id}`;
+						const isActive = sectionId === activeSection;
+						const matchesSearch =
+							searchQuery === '' || section.label.toLowerCase().includes(searchQuery.toLowerCase());
+						if (!matchesSearch) return null;
+						return (
+							<li key={section.id}>
+								<a
+									href={`#${sectionId}`}
+									class={`block px-3 py-1.5 text-xs rounded transition-colors ${
+										isActive
+											? 'text-text-primary bg-surface-2 font-medium'
+											: 'text-text-tertiary hover:text-text-primary hover:bg-surface-2'
+									}`}
+								>
+									{section.label}
+								</a>
+							</li>
+						);
+					})}
 				</ul>
 			)}
 		</li>
@@ -298,6 +319,9 @@ function Category({ category, defaultOpen = false }: CategoryProps) {
 
 export function App() {
 	const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+	const [activeSection, setActiveSection] = useState<string>('');
+	const [searchQuery, setSearchQuery] = useState<string>('');
+	const observerRef = useRef<IntersectionObserver | null>(null);
 
 	function toggleTheme() {
 		const next = theme === 'dark' ? 'light' : 'dark';
@@ -309,27 +333,100 @@ export function App() {
 		}
 	}
 
+	useEffect(() => {
+		const visibleSections = new Map<string, number>();
+
+		observerRef.current = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (entry.isIntersecting) {
+						visibleSections.set(entry.target.id, entry.intersectionRatio);
+					} else {
+						visibleSections.delete(entry.target.id);
+					}
+				}
+
+				// Pick the section with the highest intersection ratio
+				let bestId = '';
+				let bestRatio = 0;
+				for (const [id, ratio] of visibleSections) {
+					if (ratio > bestRatio) {
+						bestRatio = ratio;
+						bestId = id;
+					}
+				}
+				if (bestId) {
+					setActiveSection(bestId);
+				}
+			},
+			{ rootMargin: '-20% 0px -70% 0px', threshold: [0, 0.1, 0.5, 1.0] }
+		);
+
+		const sections = document.querySelectorAll('section[id]');
+		for (const section of sections) {
+			observerRef.current.observe(section);
+		}
+
+		return () => {
+			observerRef.current?.disconnect();
+		};
+	}, []);
+
+	// Filter component sections by search query
+	const filteredComponentSections =
+		searchQuery === ''
+			? componentSections
+			: componentSections.filter((s) => s.label.toLowerCase().includes(searchQuery.toLowerCase()));
+
+	// Filter application UI categories by search query
+	const filteredCategories =
+		searchQuery === ''
+			? applicationUiCategories
+			: applicationUiCategories.filter(
+					(cat) =>
+						cat.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+						cat.sections.some((s) => s.label.toLowerCase().includes(searchQuery.toLowerCase()))
+				);
+
 	return (
 		<div class="min-h-screen bg-surface-0 text-text-primary">
 			{/* Sidebar */}
-			<nav class="fixed left-0 top-0 w-64 h-screen overflow-y-auto bg-surface-1 border-r border-surface-border z-10">
-				<div class="p-4">
+			<nav class="fixed left-0 top-0 w-64 h-screen overflow-y-auto bg-surface-1 border-r border-surface-border z-10 flex flex-col">
+				<div class="p-4 flex-1">
+					{/* Search input */}
+					<div class="mb-4">
+						<input
+							type="search"
+							placeholder="Filter..."
+							value={searchQuery}
+							onInput={(e) => setSearchQuery((e.target as HTMLInputElement).value)}
+							class="w-full px-3 py-1.5 text-sm bg-surface-2 border border-surface-border rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-surface-border"
+						/>
+					</div>
+
 					{/* Components section */}
 					<div class="mb-6">
 						<p class="px-3 text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
 							Components
 						</p>
 						<ul class="space-y-0.5">
-							{componentSections.map((s) => (
-								<li key={s.id}>
-									<a
-										href={`#${s.id}`}
-										class="block px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors"
-									>
-										{s.label}
-									</a>
-								</li>
-							))}
+							{filteredComponentSections.map((s) => {
+								const isActive = s.id === activeSection;
+								return (
+									<li key={s.id}>
+										<a
+											href={`#${s.id}`}
+											class={`block px-3 py-1.5 text-sm rounded transition-colors ${
+												isActive
+													? 'text-text-primary bg-surface-2 font-medium'
+													: 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
+											}`}
+										>
+											{s.label}
+										</a>
+									</li>
+								);
+							})}
 						</ul>
 					</div>
 
@@ -339,23 +436,28 @@ export function App() {
 							Application UI
 						</p>
 						<ul class="space-y-1">
-							{applicationUiCategories.map((category) => (
+							{filteredCategories.map((category) => (
 								<Category
 									key={category.id}
 									category={category}
-									defaultOpen={[
-										'application-shells',
-										'elements',
-										'feedback',
-										'forms',
-										'headings',
-										'layout',
-										'page-examples',
-									].includes(category.id)}
+									forceOpen={searchQuery !== ''}
+									activeSection={activeSection}
+									searchQuery={searchQuery}
 								/>
 							))}
 						</ul>
 					</div>
+				</div>
+
+				{/* Scroll to top button */}
+				<div class="p-2 border-t border-surface-border">
+					<button
+						type="button"
+						onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+						class="w-full px-3 py-2 text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-2 rounded transition-colors text-center cursor-pointer"
+					>
+						↑ Scroll to top
+					</button>
 				</div>
 			</nav>
 
@@ -364,17 +466,31 @@ export function App() {
 				{/* Header */}
 				<header class="px-8 pt-10 pb-4 border-b border-surface-border flex items-start justify-between">
 					<div>
-						<h1 class="text-3xl font-bold text-text-primary">@neokai/ui — Kitchen Sink</h1>
-						<p class="mt-2 text-text-tertiary">Visual demo of all headless UI components</p>
+						<h1 class="text-3xl font-bold text-text-primary">
+							@neokai/ui — Component Library & Application UI Reference
+						</h1>
+						<p class="mt-2 text-text-tertiary">
+							364+ Tailwind Application UI examples · headless primitives · design tokens
+						</p>
 					</div>
-					<button
-						type="button"
-						onClick={toggleTheme}
-						title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-						class="mt-2 p-2 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors cursor-pointer"
-					>
-						{theme === 'dark' ? <Sun class="w-5 h-5" /> : <Moon class="w-5 h-5" />}
-					</button>
+					<div class="flex items-center gap-2 mt-2">
+						<a
+							href="https://github.com/lsm/neokai"
+							target="_blank"
+							rel="noopener noreferrer"
+							class="p-2 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors text-sm px-3"
+						>
+							GitHub
+						</a>
+						<button
+							type="button"
+							onClick={toggleTheme}
+							title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+							class="p-2 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors cursor-pointer"
+						>
+							{theme === 'dark' ? <Sun class="w-5 h-5" /> : <Moon class="w-5 h-5" />}
+						</button>
+					</div>
 				</header>
 
 				{/* Main */}
