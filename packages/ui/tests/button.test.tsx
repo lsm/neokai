@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // Import it directly from the button component source.
 import { CloseButton } from '../src/components/button/button.tsx';
 import { CloseContext } from '../src/hooks/use-close.ts';
-import { Button, DataInteractive } from '../src/mod.ts';
+import { Button, ButtonGroup, DataInteractive } from '../src/mod.ts';
 
 afterEach(() => {
 	cleanup();
@@ -494,5 +494,84 @@ describe('DataInteractive', () => {
 	it('should pass through extra props', () => {
 		render(<DataInteractive data-testid="di">content</DataInteractive>);
 		expect(screen.getByTestId('di')).not.toBeNull();
+	});
+});
+
+describe('ButtonGroup', () => {
+	it('should render a div by default', () => {
+		const { container } = render(<ButtonGroup>Group content</ButtonGroup>);
+		expect(container.querySelector('div')).not.toBeNull();
+	});
+
+	it('should have role="group"', () => {
+		const { container } = render(<ButtonGroup>Group</ButtonGroup>);
+		expect(container.querySelector('[role="group"]')).not.toBeNull();
+	});
+
+	it('should render children', () => {
+		render(
+			<ButtonGroup>
+				<button>Button 1</button>
+				<button>Button 2</button>
+			</ButtonGroup>
+		);
+		expect(screen.getByText('Button 1')).not.toBeNull();
+		expect(screen.getByText('Button 2')).not.toBeNull();
+	});
+
+	it('should render multiple buttons as a group', () => {
+		render(
+			<ButtonGroup>
+				<Button>Save</Button>
+				<Button>Cancel</Button>
+				<Button>Delete</Button>
+			</ButtonGroup>
+		);
+		const buttons = screen.getAllByRole('button');
+		expect(buttons).toHaveLength(3);
+		const group = buttons[0].parentElement;
+		expect(group?.getAttribute('role')).toBe('group');
+	});
+
+	it('should have data-slot="button-group"', () => {
+		const { container } = render(<ButtonGroup>Group</ButtonGroup>);
+		expect(container.querySelector('[data-slot="button-group"]')).not.toBeNull();
+	});
+
+	it('should support aria-label for accessibility', () => {
+		const { container } = render(<ButtonGroup aria-label="Button actions">Group</ButtonGroup>);
+		const group = container.querySelector('[role="group"]');
+		expect(group?.getAttribute('aria-label')).toBe('Button actions');
+	});
+
+	it('should render with custom as prop', () => {
+		const { container } = render(<ButtonGroup as="span">Group</ButtonGroup>);
+		expect(container.querySelector('span[role="group"]')).not.toBeNull();
+	});
+
+	it('should pass through extra props', () => {
+		render(<ButtonGroup data-testid="my-group">Group</ButtonGroup>);
+		expect(screen.getByTestId('my-group')).not.toBeNull();
+	});
+
+	it('should render with id attribute', () => {
+		const { container } = render(<ButtonGroup id="actions-group">Group</ButtonGroup>);
+		expect(container.querySelector('#actions-group')).not.toBeNull();
+	});
+
+	it('should render with className', () => {
+		const { container } = render(<ButtonGroup class="flex gap-2">Group</ButtonGroup>);
+		const group = container.querySelector('[role="group"]');
+		expect(group?.className).toContain('flex gap-2');
+	});
+
+	it('should support disabled state via props', () => {
+		render(
+			<ButtonGroup>
+				<Button disabled>Disabled</Button>
+			</ButtonGroup>
+		);
+		const btn = screen.getByRole('button') as HTMLButtonElement;
+		expect(btn.disabled).toBe(true);
 	});
 });
