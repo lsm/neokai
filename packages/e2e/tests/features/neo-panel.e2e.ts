@@ -153,6 +153,11 @@ test.describe('Neo Panel — Core Interaction', () => {
 		await getNeoNavButton(page).click();
 		await waitForPanelOpen(page);
 
+		// Wait for the close button to receive focus (it's focused via requestAnimationFrame
+		// after the panel opens). This ensures the Preact useEffect that registers the
+		// document keydown handler has already run before we press Escape.
+		await expect(page.locator('[data-testid="neo-panel-close"]')).toBeFocused({ timeout: 3000 });
+
 		await page.keyboard.press('Escape');
 		await waitForPanelClosed(page);
 	});
@@ -163,10 +168,14 @@ test.describe('Neo Panel — Core Interaction', () => {
 		await getNeoNavButton(page).click();
 		await waitForPanelOpen(page);
 
-		// Click the backdrop overlay
+		// Click the backdrop overlay at a position that is outside the panel.
+		// The panel is `fixed top-0 left-0 w-96` (384px) at the md breakpoint (1280px viewport).
+		// The backdrop is `fixed inset-0 z-40`; the panel is z-50, so clicks inside the
+		// panel's bounds would be intercepted by the panel itself. Click at x=500 to land
+		// clearly to the right of the panel on the visible backdrop area.
 		const backdrop = getNeoBackdrop(page);
 		await expect(backdrop).toBeVisible({ timeout: 3000 });
-		await backdrop.click({ position: { x: 5, y: 5 } });
+		await backdrop.click({ position: { x: 500, y: 360 } });
 
 		await waitForPanelClosed(page);
 	});
@@ -214,8 +223,13 @@ test.describe('Neo Panel — Core Interaction', () => {
 		await page.keyboard.press(`${modifier}+j`);
 		await waitForPanelOpen(page);
 
-		// Press shortcut again to close (body has focus; panel close button had it — click body first)
-		await page.locator('body').click();
+		// Press shortcut again to close.
+		// NOTE: Do NOT click the body here — when the panel is open the backdrop (z-40,
+		// pointer-events-auto, fixed inset-0) covers the entire viewport outside the panel.
+		// Clicking the body would hit the backdrop and close the panel, then Cmd+J would
+		// re-open it, causing this assertion to fail.
+		// The shortcut guard only blocks INPUT/TEXTAREA/contentEditable, so it works
+		// regardless of whether the close button or body has focus.
 		await page.keyboard.press(`${modifier}+j`);
 		await waitForPanelClosed(page);
 	});
