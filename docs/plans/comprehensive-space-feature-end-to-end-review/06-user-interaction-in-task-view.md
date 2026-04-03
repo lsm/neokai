@@ -40,15 +40,15 @@ Happy path 11 (User interaction in task view).
 **Subtasks:**
 1. Read `packages/daemon/src/lib/space/runtime/channel-router.ts` for message routing logic.
 2. Read `packages/daemon/src/lib/space/runtime/channel-resolver.ts` for channel resolution.
-3. Check if @mention parsing exists in the task message handler or if it needs to be added.
-4. Check existing tests in `packages/daemon/tests/unit/space/channel-router*`.
-5. If @mention routing is not implemented, add it: parse @AgentName from message text, route to the matching agent's session.
-6. Add unit tests for: @mention routes to correct agent, multiple @mentions route to all mentioned agents, invalid @mention is handled gracefully.
+3. Read `packages/daemon/src/lib/rpc-handlers/space-task-message-handlers.ts` for how user messages are processed.
+4. **Scoping check:** Determine if @mention routing already exists anywhere in the message pipeline. If not, assess the complexity: agent names are free-text and not guaranteed unique — name resolution, collision handling, and error recovery all need consideration. If the scoping assessment shows this is > 1 day of work, document the findings and create a separate follow-up ticket rather than implementing inline.
+5. If @mention routing is feasible and in scope: parse `@AgentName` from message text, resolve against space agent list, route to the matching agent's session.
+6. Add unit tests for: @mention routes to correct agent, multiple @mentions route to all mentioned agents, invalid/ambiguous @mention is handled gracefully.
 7. Run tests to verify.
 
 **Acceptance Criteria:**
-- @mention in task thread routes message to the specified agent.
-- Unit tests cover single mention, multiple mentions, and invalid mention cases.
+- @mention in task thread routes message to the specified agent, OR a documented decision to defer @mention to a separate feature ticket with clear rationale.
+- If implemented: unit tests cover single mention, multiple mentions, and invalid mention cases.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Dependencies:** Task 6.1
@@ -71,6 +71,7 @@ Happy path 11 (User interaction in task view).
 **Acceptance Criteria:**
 - Typing `@` in the task thread composer shows an agent autocomplete dropdown.
 - Selecting an agent inserts their name into the message.
+- An E2E test for @mention autocomplete is required as part of this task's acceptance (covered in Task 7.5, which must include it as a mandatory scenario, not optional).
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Dependencies:** Task 6.2

@@ -21,13 +21,15 @@ Happy paths 8 (Canvas mode) and 9 (Artifacts side panel).
 4. Add a toggle button (or segmented control) in the task pane header to switch between thread and canvas views. Only show for tasks with a `workflowRunId`.
 5. When canvas mode is active, render `WorkflowCanvas` with the task's workflow run data instead of the unified thread.
 6. Wire canvas node clicks to open the agent overlay chat (from Task 4.2).
-7. Add Vitest tests: toggle button appears only for workflow tasks, clicking toggle switches view, canvas renders with correct run data.
-8. Run tests to verify.
+7. Add `data-testid="canvas-toggle"` to the toggle button and `data-testid="canvas-view"` to the canvas container for E2E testability.
+8. Add Vitest tests: toggle button appears only for workflow tasks, clicking toggle switches view, canvas renders with correct run data.
+9. Run tests to verify.
 
 **Acceptance Criteria:**
 - Tasks with workflow runs show a canvas/thread toggle.
 - Canvas mode shows the workflow visualization with active node pulsing.
 - Clicking a node in canvas opens the agent overlay chat.
+- New UI elements have `data-testid` attributes for E2E tests.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Dependencies:** Task 4.2
@@ -43,7 +45,7 @@ Happy paths 8 (Canvas mode) and 9 (Artifacts side panel).
 2. Read `packages/web/src/components/space/FileDiffView.tsx` for the diff viewer component.
 3. Read the space store for how gate data and artifacts are fetched.
 4. Create `packages/web/src/components/space/TaskArtifactsPanel.tsx` -- a slide-over panel from the right that aggregates artifacts from all completed gates in the task's workflow run.
-5. Add an "Artifacts" button to the task pane header (only visible for workflow tasks).
+5. Add an "Artifacts" button to the task pane header (only visible for workflow tasks). Add `data-testid="artifacts-toggle"` and `data-testid="artifacts-panel"` for E2E testability.
 6. Panel should list files with +/- line indicators, grouped by gate/node. Clicking a file opens the diff view.
 7. Add Vitest tests: panel renders file list, line counts are displayed, click opens diff.
 8. Run tests to verify.
@@ -52,9 +54,10 @@ Happy paths 8 (Canvas mode) and 9 (Artifacts side panel).
 - Artifacts panel shows all changed files from the task's workflow run.
 - Each file shows +/- line counts.
 - Clicking a file opens a unified diff view.
+- New UI elements have `data-testid` attributes for E2E tests.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
-**Dependencies:** Task 5.1
+**Dependencies:** Task 3.4 (gate data must be available; independent of canvas toggle)
 
 **Agent type:** coder
 

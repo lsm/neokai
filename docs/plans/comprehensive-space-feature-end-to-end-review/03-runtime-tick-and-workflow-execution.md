@@ -17,8 +17,8 @@ Happy path 5 (Task execution via runtime ticks).
 **Subtasks:**
 1. Read `packages/daemon/src/lib/space/runtime/space-runtime.ts` focusing on the tick method and executor management.
 2. Read `packages/daemon/src/lib/space/runtime/workflow-executor.ts` for how executors process workflow runs.
-3. Check existing tests in `packages/daemon/tests/unit/space/space-runtime.test.ts` for tick loop coverage.
-4. Add unit tests for: tick picks up new tasks with workflow runs, tick skips already-running tasks, multiple ticks do not duplicate executors, tick handles executor creation failure gracefully.
+3. Read existing tests in `packages/daemon/tests/unit/space/space-runtime.test.ts` — list which tick loop behaviors are already covered and which are missing.
+4. Add unit tests only for uncovered behaviors: tick picks up new tasks with workflow runs, tick skips already-running tasks, multiple ticks do not duplicate executors, tick handles executor creation failure gracefully.
 5. Run `cd packages/daemon && bun test tests/unit/space/space-runtime*` to verify.
 
 **Acceptance Criteria:**
@@ -38,8 +38,8 @@ Happy path 5 (Task execution via runtime ticks).
 1. Read `packages/daemon/src/lib/space/runtime/workflow-executor.ts` for graph navigation and condition evaluation.
 2. Read `packages/daemon/src/lib/space/runtime/gate-evaluator.ts` and `gate-script-executor.ts`.
 3. Read `packages/daemon/src/lib/space/runtime/completion-detector.ts` for completion model.
-4. Check existing tests in `packages/daemon/tests/unit/space/` for workflow executor coverage.
-5. Add unit tests for: linear node progression, parallel branch execution, gate evaluation (pass/fail), gate script execution, completion detection when all agents done.
+4. Read existing tests in `packages/daemon/tests/unit/space/space-workflow.test.ts` and related files — list which executor behaviors are already covered.
+5. Add unit tests only for uncovered behaviors: linear node progression, parallel branch execution, gate evaluation (pass/fail), gate script execution, completion detection when all agents done.
 6. Run tests to verify.
 
 **Acceptance Criteria:**
@@ -58,8 +58,8 @@ Happy path 5 (Task execution via runtime ticks).
 **Subtasks:**
 1. Read `packages/daemon/src/lib/space/runtime/space-runtime.ts` for rehydration logic.
 2. Read `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` for lifecycle management.
-3. Check existing tests in `packages/daemon/tests/unit/space/space-runtime*` for recovery tests.
-4. Add unit tests for: rehydrate picks up in-progress runs, rehydrate skips completed/cancelled runs, agent sessions are correctly associated after rehydration.
+3. Read existing tests in `packages/daemon/tests/unit/space/space-runtime-edge-cases.test.ts` and `space-runtime.test.ts` — list which recovery behaviors are already covered.
+4. Add unit tests only for uncovered behaviors: rehydrate picks up in-progress runs, rehydrate skips completed/cancelled runs, agent sessions are correctly associated after rehydration.
 5. Run tests to verify.
 
 **Acceptance Criteria:**

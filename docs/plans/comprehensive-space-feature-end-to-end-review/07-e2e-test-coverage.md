@@ -6,7 +6,7 @@ Add Playwright E2E tests covering the gaps identified in milestones 1-6. These t
 
 ## Scope
 
-All 12 happy paths, focusing on the gaps not covered by existing 16 E2E test files.
+All 12 happy paths, focusing on the gaps not covered by existing 17 E2E test files.
 
 ## Tasks
 
@@ -60,13 +60,15 @@ All 12 happy paths, focusing on the gaps not covered by existing 16 E2E test fil
 1. Read existing `space-happy-path-pipeline.e2e.ts` for how workflow runs are set up.
 2. Create `packages/e2e/tests/features/space-canvas-mode.e2e.ts`.
 3. Set up a space with a workflow run via RPC in beforeEach.
-4. Test scenario: Navigate to a workflow task, verify canvas toggle button is visible, click toggle, verify canvas SVG renders with workflow nodes, verify at least the start node is visible.
-5. If overlay chat is implemented (Task 4.2), test clicking a node opens the overlay.
-6. Clean up in afterEach.
-7. Run `make run-e2e TEST=tests/features/space-canvas-mode.e2e.ts` to verify.
+4. **Stability guidance:** Before interacting with new UI elements, wait for their presence: `await page.waitForSelector('[data-testid="canvas-toggle"]')`. This prevents flaky tests when the toggle renders asynchronously.
+5. Test scenario: Navigate to a workflow task, verify canvas toggle button is visible (`[data-testid="canvas-toggle"]`), click toggle, verify canvas view renders (`[data-testid="canvas-view"]`) with workflow nodes, verify at least the start node is visible.
+6. If overlay chat is implemented (Task 4.2), test clicking a node opens the overlay (`[data-testid="agent-overlay-chat"]`).
+7. Clean up in afterEach.
+8. Run `make run-e2e TEST=tests/features/space-canvas-mode.e2e.ts` to verify.
 
 **Acceptance Criteria:**
 - E2E test verifies canvas mode toggle and workflow node rendering.
+- Test uses `data-testid` selectors for new UI elements and waits for stable rendering before assertions.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Dependencies:** Task 5.1, Task 5.3
@@ -80,13 +82,15 @@ All 12 happy paths, focusing on the gaps not covered by existing 16 E2E test fil
 **Subtasks:**
 1. Create `packages/e2e/tests/features/space-artifacts-panel.e2e.ts`.
 2. Set up a space with a completed workflow run that has gate data with file changes (via RPC).
-3. Test scenario: Navigate to the workflow task, click "Artifacts" button, verify the side panel opens, verify file names are listed, verify +/- line counts are shown.
-4. If the diff viewer works, click a file and verify the diff renders.
-5. Clean up in afterEach.
-6. Run `make run-e2e TEST=tests/features/space-artifacts-panel.e2e.ts` to verify.
+3. **Stability guidance:** Wait for `[data-testid="artifacts-toggle"]` before clicking. Wait for `[data-testid="artifacts-panel"]` before asserting panel contents.
+4. Test scenario: Navigate to the workflow task, click "Artifacts" button (`[data-testid="artifacts-toggle"]`), verify the side panel opens (`[data-testid="artifacts-panel"]`), verify file names are listed, verify +/- line counts are shown.
+5. If the diff viewer works, click a file and verify the diff renders.
+6. Clean up in afterEach.
+7. Run `make run-e2e TEST=tests/features/space-artifacts-panel.e2e.ts` to verify.
 
 **Acceptance Criteria:**
 - E2E test verifies artifacts panel shows file changes.
+- Test uses `data-testid` selectors for new UI elements and waits for stable rendering before assertions.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Dependencies:** Task 5.2
@@ -102,7 +106,7 @@ All 12 happy paths, focusing on the gaps not covered by existing 16 E2E test fil
 2. Create `packages/e2e/tests/features/space-task-messaging.e2e.ts`.
 3. Set up a space with a task that has a task agent session (via RPC setup + ensure session).
 4. Test scenario 1: Navigate to task, type a message in the composer, send it, verify message appears in the thread.
-5. Test scenario 2: If @mention autocomplete is implemented, type `@`, verify dropdown appears with agent names, select one, verify name is inserted.
+5. Test scenario 2 (required): Type `@` in the composer, verify autocomplete dropdown appears with agent names, select one, verify name is inserted into the message.
 6. Clean up in afterEach.
 7. Run `make run-e2e TEST=tests/features/space-task-messaging.e2e.ts` to verify.
 

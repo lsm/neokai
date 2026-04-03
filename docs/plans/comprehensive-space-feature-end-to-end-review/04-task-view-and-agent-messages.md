@@ -32,16 +32,18 @@ Happy paths 6 (Task view with agent messages) and 7 (Agent overlay chat).
 
 **Agent type:** coder
 
-### Task 4.2: Implement agent overlay chat panel
+### Task 4.2: Implement agent overlay chat panel ⚠️ NEW FEATURE — CRITICAL PATH
 
 **Description:** Currently clicking an agent name navigates to a full-page `ChatContainer` via `navigateToSpaceSession`. Change this to open an overlay/slide-over panel that shows the agent's messages while keeping the task view visible underneath.
+
+**⚠️ Dependency risk:** This is a new UI feature, not a hardening task. Tasks 5.1, 5.3, 6.3, 7.3, and 7.6 depend on it. If the overlay implementation proves significantly harder than expected (e.g., z-layer conflicts, signal routing complexity), the fallback approach is to improve the existing full-page navigation with a prominent "Back to task" button and breadcrumb navigation — this provides a better UX than the current bare navigation without requiring a new component architecture.
 
 **Subtasks:**
 1. Read `packages/web/src/islands/SpaceIsland.tsx` to understand the current sessionViewId-based full-page navigation.
 2. Read `packages/web/src/components/space/SpaceTaskPane.tsx` for where agent session links are rendered.
 3. Read `packages/web/src/islands/SpaceDetailPanel.tsx` for agent session click handling.
 4. Design an overlay chat component that renders as a slide-over panel from the right side, showing `ChatContainer` content in a constrained width.
-5. Create `packages/web/src/components/space/AgentOverlayChat.tsx` -- a slide-over panel that wraps `ChatContainer` with close button and agent name header.
+5. Create `packages/web/src/components/space/AgentOverlayChat.tsx` — a slide-over panel that wraps `ChatContainer` with close button and agent name header. Add `data-testid="agent-overlay-chat"` and `data-testid="agent-overlay-close"` for E2E testability.
 6. Update `SpaceTaskPane.tsx` and `SpaceDetailPanel.tsx` to open the overlay instead of navigating to a full-page session view.
 7. Add Vitest tests for the new overlay component: renders with session ID, close button works, agent name displayed.
 8. Run tests to verify.

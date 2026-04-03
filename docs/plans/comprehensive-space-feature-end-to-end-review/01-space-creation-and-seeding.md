@@ -12,15 +12,15 @@ Happy paths 1 (Space creation and configuration) and 2 (Pre-seeded space agents 
 
 ### Task 1.1: Audit and harden seed-agents partial failure recovery
 
-**Description:** The `seedPresetAgents` function uses try/catch per agent but the caller (`space.create` handler) does not roll back on partial failure. Audit the creation flow to ensure that if some agents fail to seed, the space is still usable and the user is informed. Add unit tests for partial seed failure scenarios.
+**Description:** The `seedPresetAgents` function uses try/catch per agent but the caller (`space.create` handler) does not roll back on partial failure. Audit the creation flow to ensure that if some agents fail to seed, the space is still usable and the user is informed. **Note:** `packages/daemon/tests/unit/space/seed-agents.test.ts` already has ~22 test cases including idempotent re-seed and partial collision scenarios. Start by reading existing tests to identify only the specific gaps (e.g., caller-side rollback behavior, workflow seeding failures) rather than writing duplicate coverage.
 
 **Subtasks:**
-1. Read `packages/daemon/src/lib/rpc-handlers/space-handlers.ts` to trace how `seedPresetAgents` result is used after `space.create`.
-2. Read `packages/daemon/src/lib/space/agents/seed-agents.ts` to confirm error isolation per agent.
-3. Read `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` to check if `seedBuiltInWorkflows` has similar error handling.
-4. If the caller ignores seed errors silently, add logging and/or return partial-success info to the client.
-5. Add unit tests in `packages/daemon/tests/unit/space/` covering: all agents seed successfully, one agent fails (rest still seed), all agents fail (space still exists), duplicate seed call is idempotent.
-6. Add unit tests for workflow seeding partial failures.
+1. Read `packages/daemon/tests/unit/space/seed-agents.test.ts` to catalog existing coverage (idempotent re-seed, partial collision, etc.).
+2. Read `packages/daemon/src/lib/rpc-handlers/space-handlers.ts` to trace how `seedPresetAgents` result is used after `space.create`.
+3. Read `packages/daemon/src/lib/space/agents/seed-agents.ts` to confirm error isolation per agent.
+4. Read `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` to check if `seedBuiltInWorkflows` has similar error handling.
+5. If the caller ignores seed errors silently, add logging and/or return partial-success info to the client.
+6. Add only the missing unit tests not already covered by the existing test file — focus on: caller-side behavior when seeding partially fails, workflow seeding partial failures.
 7. Run `cd packages/daemon && bun test tests/unit/space/seed-agents*` to verify.
 
 **Acceptance Criteria:**
@@ -55,12 +55,12 @@ Happy paths 1 (Space creation and configuration) and 2 (Pre-seeded space agents 
 
 ### Task 1.3: Verify pre-seeded agents have correct tools and prompts
 
-**Description:** Add unit tests that verify each of the 6 preset agents (Coder, General, Planner, Research, Reviewer, QA) is seeded with the correct tool sets, system prompts, and instructions as defined in `seed-agents.ts`.
+**Description:** Verify each of the 6 preset agents (Coder, General, Planner, Research, Reviewer, QA) is seeded with the correct tool sets, system prompts, and instructions as defined in `seed-agents.ts`. Add only tests for behaviors not already covered.
 
 **Subtasks:**
 1. Read `packages/daemon/src/lib/space/agents/seed-agents.ts` for the PRESET_AGENTS definitions.
-2. Check existing tests in `packages/daemon/tests/unit/space/` for agent seeding verification.
-3. Write unit tests that create a space and verify: all 6 agents exist, each has the correct tool set (CODER_TOOLS, DONE_TOOLS, etc.), each has the correct system prompt and instructions.
+2. Read existing tests in `packages/daemon/tests/unit/space/seed-agents.test.ts` and `space-agent-manager.test.ts` — list which specific agent properties are already asserted.
+3. Add unit tests only for uncovered behaviors: verifying all 6 agents exist with correct tool sets (CODER_TOOLS, DONE_TOOLS, etc.), correct system prompts and instructions.
 4. Verify the ROLE_TOOLS export matches the actual seeded tools.
 5. Run tests to verify.
 
@@ -75,12 +75,12 @@ Happy paths 1 (Space creation and configuration) and 2 (Pre-seeded space agents 
 
 ### Task 1.4: Verify built-in workflows are seeded correctly
 
-**Description:** Add unit tests verifying that the 4 built-in workflow templates are seeded with correct node structures, channels, gates, and agent ID resolution.
+**Description:** Verify that the 4 built-in workflow templates are seeded with correct node structures, channels, gates, and agent ID resolution. Add only tests for behaviors not already covered.
 
 **Subtasks:**
 1. Read `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` for template definitions.
-2. Check existing tests in `packages/daemon/tests/unit/space/space-workflow*` for workflow seeding tests.
-3. Write unit tests that create a space and verify: correct number of workflows seeded, each workflow has expected nodes and channels, agent IDs in nodes resolve to actual seeded SpaceAgent IDs.
+2. Read existing tests in `packages/daemon/tests/unit/space/space-workflow*` — list which workflow seeding behaviors are already asserted.
+3. Add unit tests only for uncovered behaviors: correct number of workflows seeded, each workflow has expected nodes and channels, agent IDs in nodes resolve to actual seeded SpaceAgent IDs.
 4. Run tests to verify.
 
 **Acceptance Criteria:**
