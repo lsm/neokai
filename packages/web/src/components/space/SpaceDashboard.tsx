@@ -1,12 +1,3 @@
-/**
- * SpaceDashboard
- *
- * Task-first overview for a Space.
- * Spaces are designed for parallel task orchestration, so this view focuses on
- * triage and navigation instead of high-level summary cards.
- */
-
-import type { ComponentType } from 'preact';
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
@@ -26,78 +17,6 @@ interface TaskGroupConfig {
 	description: string;
 	tasks: typeof spaceStore.tasks.value;
 	tone: 'default' | 'review' | 'done';
-}
-
-function truncatePath(path: string, maxLen = 64): string {
-	if (path.length <= maxLen) return path;
-	return '…' + path.slice(-(maxLen - 1));
-}
-
-function SparkIcon() {
-	return (
-		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width={2}
-				d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8-5-3.6-5 3.6 1.9-5.8L4 8.8h6.1L12 3z"
-			/>
-		</svg>
-	);
-}
-
-function ActionButton({
-	title,
-	description,
-	icon: Icon,
-	onClick,
-}: {
-	title: string;
-	description: string;
-	icon: ComponentType;
-	onClick?: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			class="w-full rounded-2xl border border-blue-500/40 bg-blue-500/10 px-4 py-4 text-left transition-all hover:bg-blue-500/15"
-		>
-			<div class="flex items-start gap-3">
-				<div class="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/15 text-blue-200">
-					<Icon />
-				</div>
-				<div class="min-w-0">
-					<p class="text-sm font-medium text-blue-50">{title}</p>
-					<p class="mt-1 text-xs leading-5 text-gray-400">{description}</p>
-				</div>
-			</div>
-		</button>
-	);
-}
-
-function SummaryChip({
-	label,
-	count,
-	tone = 'default',
-}: {
-	label: string;
-	count: number;
-	tone?: 'default' | 'review' | 'done';
-}) {
-	const toneClass =
-		tone === 'review'
-			? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
-			: tone === 'done'
-				? 'border-green-500/30 bg-green-500/10 text-green-100'
-				: 'border-blue-500/30 bg-blue-500/10 text-blue-100';
-
-	return (
-		<div class={cn('rounded-xl border px-3 py-2', toneClass)}>
-			<p class="text-[11px] uppercase tracking-[0.18em] text-gray-500">{label}</p>
-			<p class="mt-1 text-xl font-semibold">{count}</p>
-		</div>
-	);
 }
 
 function OverviewTabButton({
@@ -331,13 +250,13 @@ function buildGroups(
 
 export function SpaceDashboard({
 	spaceId: _spaceId,
-	onOpenSpaceAgent,
+	onOpenSpaceAgent: _onOpenSpaceAgent,
 	onSelectTask,
 	compact = false,
 }: SpaceDashboardProps) {
 	const [activeTab, setActiveTab] = useState<OverviewTab>('active');
-	const space = spaceStore.space.value;
 	const loading = spaceStore.loading.value;
+	const space = spaceStore.space.value;
 	const tasks = [...spaceStore.tasks.value].sort((a, b) => b.updatedAt - a.updatedAt);
 
 	if (loading) {
@@ -369,78 +288,42 @@ export function SpaceDashboard({
 		activeTab,
 		activeTab === 'active' ? activeTasks : activeTab === 'review' ? reviewTasks : doneTasks
 	);
-	const description =
-		space.description ||
-		'Use this space to coordinate many tasks in parallel, keep review work visible, and let workflows scale the execution load.';
 
 	return (
 		<div class={cn('flex h-full min-h-0 flex-col overflow-y-auto', compact ? 'p-4' : 'p-6')}>
-			<div class="flex w-full flex-1 min-h-0 flex-col gap-6">
-				<section class="rounded-[28px] border border-dark-700 bg-dark-900/90 px-6 py-6">
-					<div class="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-						<div class="min-w-0">
-							<p class="text-[11px] uppercase tracking-[0.22em] text-gray-600">Overview</p>
-							<h1 class="mt-3 text-3xl font-semibold tracking-tight text-gray-100">{space.name}</h1>
-							<p class="mt-3 max-w-3xl text-sm leading-6 text-gray-400">{description}</p>
-							{space.workspacePath && (
-								<p class="mt-3 font-mono text-[11px] text-gray-600" title={space.workspacePath}>
-									{truncatePath(space.workspacePath)}
-								</p>
-							)}
-						</div>
-						<div class="w-full xl:w-[22rem]">
-							<ActionButton
-								title="Ask Space Agent"
-								description="Use the shared agent thread to reshape scope, create follow-up work, and steer execution across many tasks at once."
-								icon={SparkIcon}
-								onClick={onOpenSpaceAgent}
-							/>
-						</div>
+			<div class="flex w-full flex-1 min-h-0 flex-col">
+				<section class="flex flex-1 min-h-[24rem] flex-col rounded-[28px] border border-dark-700 bg-dark-950/70">
+					<div class="flex items-center gap-6 border-b border-dark-700 px-6">
+						<OverviewTabButton
+							label="Active"
+							count={activeTasks.length}
+							active={activeTab === 'active'}
+							onClick={() => setActiveTab('active')}
+						/>
+						<OverviewTabButton
+							label="Review"
+							count={reviewTasks.length}
+							active={activeTab === 'review'}
+							onClick={() => setActiveTab('review')}
+							tone="review"
+						/>
+						<OverviewTabButton
+							label="Done"
+							count={doneTasks.length}
+							active={activeTab === 'done'}
+							onClick={() => setActiveTab('done')}
+							tone="done"
+						/>
 					</div>
-					<div class="mt-6 grid gap-3 md:grid-cols-3">
-						<SummaryChip label="Active" count={activeTasks.length} />
-						<SummaryChip label="Review" count={reviewTasks.length} tone="review" />
-						<SummaryChip label="Done" count={doneTasks.length} tone="done" />
-					</div>
-				</section>
 
-				{totalTasks === 0 ? (
-					<div class="flex flex-1 min-h-[24rem]">
-						<div class="h-full w-full">
+					<div class="flex-1 overflow-y-auto p-6">
+						{totalTasks === 0 ? (
 							<EmptyState
 								title="This space has no tasks yet."
-								copy="Create the first task or ask the space agent to break the work into parallelizable pieces."
+								copy="Create the first task to start the space."
 								fill
 							/>
-						</div>
-					</div>
-				) : (
-					<section class="flex flex-1 min-h-[24rem] flex-col rounded-[28px] border border-dark-700 bg-dark-950/70">
-						<div class="flex items-center gap-6 border-b border-dark-700 px-6">
-							<OverviewTabButton
-								label="Active"
-								count={activeTasks.length}
-								active={activeTab === 'active'}
-								onClick={() => setActiveTab('active')}
-							/>
-							<OverviewTabButton
-								label="Review"
-								count={reviewTasks.length}
-								active={activeTab === 'review'}
-								onClick={() => setActiveTab('review')}
-								tone="review"
-							/>
-							<OverviewTabButton
-								label="Done"
-								count={doneTasks.length}
-								active={activeTab === 'done'}
-								onClick={() => setActiveTab('done')}
-								tone="done"
-							/>
-						</div>
-
-						<div class="flex-1 overflow-y-auto p-6">
-							{groups.length === 0 ? (
+						) : groups.length === 0 ? (
 								<EmptyTabState tab={activeTab} />
 							) : (
 								<div class="grid gap-4 xl:grid-cols-2">
@@ -449,9 +332,8 @@ export function SpaceDashboard({
 									))}
 								</div>
 							)}
-						</div>
-					</section>
-				)}
+					</div>
+				</section>
 			</div>
 		</div>
 	);

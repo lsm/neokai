@@ -92,35 +92,23 @@ describe('SpaceDashboard', () => {
 		expect(getByText('Space not found')).toBeTruthy();
 	});
 
-	it('renders the space name, description, and workspace path', () => {
+	it('renders the task tabs without the removed overview hero', () => {
 		mockSpace.value = makeSpace({
 			name: 'UI Review Space',
 			description: 'Space created for UI review.',
 			workspacePath: '/tmp/workspace',
 		});
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('UI Review Space')).toBeTruthy();
-		expect(getByText('Space created for UI review.')).toBeTruthy();
-		expect(getByText('/tmp/workspace')).toBeTruthy();
+		const { getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByText('Active')).toBeTruthy();
+		expect(getByText('Review')).toBeTruthy();
+		expect(getByText('Done')).toBeTruthy();
+		expect(queryByText('UI Review Space')).toBeNull();
+		expect(queryByText('Space created for UI review.')).toBeNull();
+		expect(queryByText('/tmp/workspace')).toBeNull();
+		expect(queryByText('Ask Space Agent')).toBeNull();
 	});
 
-	it('renders the primary overview action', () => {
-		mockSpace.value = makeSpace();
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('Ask Space Agent')).toBeTruthy();
-	});
-
-	it('calls onOpenSpaceAgent when Ask Space Agent is clicked', () => {
-		mockSpace.value = makeSpace();
-		const onOpenSpaceAgent = vi.fn();
-		const { getByText } = render(
-			<SpaceDashboard spaceId="space-1" onOpenSpaceAgent={onOpenSpaceAgent} />
-		);
-		fireEvent.click(getByText('Ask Space Agent').closest('button')!);
-		expect(onOpenSpaceAgent).toHaveBeenCalledOnce();
-	});
-
-	it('renders summary chips and grouped active tasks', () => {
+	it('renders the task tabs and grouped active tasks', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [
 			makeTask('t1', 'open'),
@@ -129,10 +117,10 @@ describe('SpaceDashboard', () => {
 			makeTask('t4', 'done'),
 		];
 
-		const { getAllByText, getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getAllByText('Active').length).toBeGreaterThanOrEqual(2);
-		expect(getAllByText('Review').length).toBeGreaterThanOrEqual(2);
-		expect(getAllByText('Done').length).toBeGreaterThanOrEqual(2);
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByText('Active')).toBeTruthy();
+		expect(getByText('Review')).toBeTruthy();
+		expect(getByText('Done')).toBeTruthy();
 		expect(getByText('In Progress')).toBeTruthy();
 		expect(getByText('Queued')).toBeTruthy();
 		expect(getByText('Task t2')).toBeTruthy();
@@ -143,8 +131,8 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'blocked'), makeTask('t2', 'open')];
 
-		const { getAllByText, getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(getAllByText('Review')[1].closest('button')!);
+		const { getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByText('Review').closest('button')!);
 		expect(getByText('Needs Review')).toBeTruthy();
 		expect(getByText('Task t1')).toBeTruthy();
 		expect(queryByText('Task t2')).toBeNull();
@@ -154,8 +142,8 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'done'), makeTask('t2', 'cancelled')];
 
-		const { getAllByText, getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(getAllByText('Done')[1].closest('button')!);
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByText('Done').closest('button')!);
 		expect(getByText('Completed')).toBeTruthy();
 		expect(getByText('Cancelled')).toBeTruthy();
 		expect(getByText('Task t1')).toBeTruthy();
@@ -166,13 +154,14 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = makeSpace();
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
 		expect(getByText('This space has no tasks yet.')).toBeTruthy();
+		expect(getByText('Create the first task to start the space.')).toBeTruthy();
 	});
 
 	it('shows the empty state for a tab with no tasks', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'open')];
-		const { getAllByText, getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(getAllByText('Review')[1].closest('button')!);
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByText('Review').closest('button')!);
 		expect(getByText('No tasks need attention right now.')).toBeTruthy();
 	});
 
@@ -180,9 +169,9 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'done')];
 		const onSelectTask = vi.fn();
-		const { getAllByText } = render(<SpaceDashboard spaceId="space-1" onSelectTask={onSelectTask} />);
-		fireEvent.click(getAllByText('Done')[1].closest('button')!);
-		fireEvent.click(getAllByText('Task t1')[0].closest('button')!);
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" onSelectTask={onSelectTask} />);
+		fireEvent.click(getByText('Done').closest('button')!);
+		fireEvent.click(getByText('Task t1').closest('button')!);
 		expect(onSelectTask).toHaveBeenCalledWith('t1');
 	});
 });
