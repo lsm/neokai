@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { ChevronDown, ChevronRight, Sun, Moon } from 'lucide-preact';
+import { ChevronDown, ChevronRight, ChevronUp, Sun, Moon } from 'lucide-preact';
 import { ButtonDemo } from './sections/ButtonDemo.tsx';
 import { CheckboxDemo } from './sections/CheckboxDemo.tsx';
 import { ComboboxDemo } from './sections/ComboboxDemo.tsx';
@@ -126,10 +126,13 @@ const componentSections = [
 	{ id: 'empty-states', label: 'Empty States' },
 ];
 
-// Application UI subcategories (placeholder sections for future demos)
+// Application UI subcategories
 interface SidebarSection {
 	id: string;
 	label: string;
+	// href overrides the auto-generated `#${category.id}-${section.id}` anchor.
+	// Use when the DemoSection ID uses a plain (non-prefixed) ID shared with the Components section.
+	href?: string;
 }
 
 interface SidebarCategory {
@@ -144,6 +147,7 @@ const applicationUiCategories: SidebarCategory[] = [
 		label: 'Application Shells',
 		sections: [
 			{ id: 'multi-column', label: 'Multi-column' },
+			{ id: 'multi-column-shells', label: 'Multi-column (Headless+Icon)' },
 			{ id: 'sidebar', label: 'Sidebar' },
 			{ id: 'stacked', label: 'Stacked' },
 		],
@@ -153,8 +157,10 @@ const applicationUiCategories: SidebarCategory[] = [
 		label: 'Data Display',
 		sections: [
 			{ id: 'calendars', label: 'Calendars' },
+			{ id: 'calendars-headless', label: 'Calendars (Headless+Icon)' },
 			{ id: 'description-lists', label: 'Description Lists' },
-			{ id: 'stats', label: 'Stats' },
+			// DemoSection uses plain id="stats" (shared with Components section)
+			{ id: 'stats', label: 'Stats', href: 'stats' },
 		],
 	},
 	{
@@ -173,7 +179,8 @@ const applicationUiCategories: SidebarCategory[] = [
 		label: 'Feedback',
 		sections: [
 			{ id: 'alerts', label: 'Alerts' },
-			{ id: 'empty-states', label: 'Empty States' },
+			// DemoSection uses plain id="empty-states" (shared with Components section)
+			{ id: 'empty-states', label: 'Empty States', href: 'empty-states' },
 		],
 	},
 	{
@@ -187,6 +194,7 @@ const applicationUiCategories: SidebarCategory[] = [
 			{ id: 'input-groups', label: 'Input Groups' },
 			{ id: 'radio-groups', label: 'Radio Groups' },
 			{ id: 'select-menus', label: 'Select Menus' },
+			{ id: 'select-menus-headless', label: 'Select Menus (Headless+Icon)' },
 			{ id: 'sign-in-forms', label: 'Sign-in Forms' },
 			{ id: 'textareas', label: 'Textareas' },
 			{ id: 'toggles', label: 'Toggles' },
@@ -215,25 +223,27 @@ const applicationUiCategories: SidebarCategory[] = [
 	{
 		id: 'lists',
 		label: 'Lists',
+		// These DemoSections use plain IDs shared with the Components section
 		sections: [
-			{ id: 'feeds', label: 'Feeds' },
-			{ id: 'grid-lists', label: 'Grid Lists' },
-			{ id: 'stacked-lists', label: 'Stacked Lists' },
-			{ id: 'tables', label: 'Tables' },
+			{ id: 'feeds', label: 'Feeds', href: 'feeds' },
+			{ id: 'grid-lists', label: 'Grid Lists', href: 'grid-lists' },
+			{ id: 'stacked-lists', label: 'Stacked Lists', href: 'stacked-lists' },
+			{ id: 'tables', label: 'Tables', href: 'tables' },
 		],
 	},
 	{
 		id: 'navigation',
 		label: 'Navigation',
 		sections: [
-			{ id: 'breadcrumbs', label: 'Breadcrumbs' },
+			// These DemoSections use plain IDs shared with the Components section
+			{ id: 'breadcrumbs', label: 'Breadcrumbs', href: 'breadcrumbs' },
 			{ id: 'command-palettes', label: 'Command Palettes' },
 			{ id: 'navbars', label: 'Navbars' },
-			{ id: 'pagination', label: 'Pagination' },
-			{ id: 'progress-bars', label: 'Progress Bars' },
-			{ id: 'sidebar-navigation', label: 'Sidebar Navigation' },
-			{ id: 'tabs', label: 'Tabs' },
-			{ id: 'vertical-navigation', label: 'Vertical Navigation' },
+			{ id: 'pagination', label: 'Pagination', href: 'pagination' },
+			{ id: 'progress-bars', label: 'Progress Bars', href: 'progress-bars' },
+			{ id: 'sidebar-navigation', label: 'Sidebar Navigation', href: 'sidebar-navigation' },
+			{ id: 'tabs', label: 'Tabs', href: 'tabs' },
+			{ id: 'vertical-navigation', label: 'Vertical Navigation', href: 'vertical-navigation' },
 		],
 	},
 	{
@@ -265,20 +275,44 @@ interface CategoryProps {
 
 function Category({ category, forceOpen, activeSection, searchQuery }: CategoryProps) {
 	const [isOpen, setIsOpen] = useState(false);
+	// Tracks whether the user has explicitly collapsed this category to prevent auto-reopen
+	const [userCollapsed, setUserCollapsed] = useState(false);
 
-	// Determine if this category contains the active section
-	const hasActiveSection = category.sections.some(
-		(s) => `${category.id}-${s.id}` === activeSection
-	);
+	// Resolve the actual anchor id for a section (uses href override when set)
+	function sectionAnchorId(section: SidebarSection): string {
+		return section.href ?? `${category.id}-${section.id}`;
+	}
 
-	// Auto-expand when active section is in this category or when searching
-	const shouldBeOpen = isOpen || hasActiveSection || (forceOpen ?? false);
+	// This category contains the currently visible section
+	const hasActiveSection = category.sections.some((s) => sectionAnchorId(s) === activeSection);
+
+	// When auto-open conditions go away, clear the user-collapsed flag so the next
+	// time the section becomes active it auto-expands again
+	const autoOpen = hasActiveSection || (forceOpen ?? false);
+	useEffect(() => {
+		if (!autoOpen) {
+			setUserCollapsed(false);
+		}
+	}, [autoOpen]);
+
+	// Open if: explicitly opened by user OR (auto-open AND user hasn't explicitly closed it)
+	const shouldBeOpen = isOpen || (autoOpen && !userCollapsed);
+
+	function toggle() {
+		if (shouldBeOpen) {
+			setIsOpen(false);
+			setUserCollapsed(true);
+		} else {
+			setIsOpen(true);
+			setUserCollapsed(false);
+		}
+	}
 
 	return (
 		<li>
 			<button
 				type="button"
-				onClick={() => setIsOpen(!shouldBeOpen)}
+				onClick={toggle}
 				class="flex items-center w-full px-3 py-2 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors cursor-pointer"
 			>
 				{shouldBeOpen ? (
@@ -291,15 +325,16 @@ function Category({ category, forceOpen, activeSection, searchQuery }: CategoryP
 			{shouldBeOpen && (
 				<ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
 					{category.sections.map((section) => {
-						const sectionId = `${category.id}-${section.id}`;
-						const isActive = sectionId === activeSection;
+						const anchorId = sectionAnchorId(section);
+						const isActive = anchorId === activeSection;
+						// When searching, only show sections whose label matches (not the category name)
 						const matchesSearch =
 							searchQuery === '' || section.label.toLowerCase().includes(searchQuery.toLowerCase());
 						if (!matchesSearch) return null;
 						return (
 							<li key={section.id}>
 								<a
-									href={`#${sectionId}`}
+									href={`#${anchorId}`}
 									class={`block px-3 py-1.5 text-xs rounded transition-colors ${
 										isActive
 											? 'text-text-primary bg-surface-2 font-medium'
@@ -321,7 +356,6 @@ export function App() {
 	const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 	const [activeSection, setActiveSection] = useState<string>('');
 	const [searchQuery, setSearchQuery] = useState<string>('');
-	const observerRef = useRef<IntersectionObserver | null>(null);
 
 	function toggleTheme() {
 		const next = theme === 'dark' ? 'light' : 'dark';
@@ -336,7 +370,8 @@ export function App() {
 	useEffect(() => {
 		const visibleSections = new Map<string, number>();
 
-		observerRef.current = new IntersectionObserver(
+		// Use a local variable — no need for a ref since the cleanup closure captures it
+		const observer = new IntersectionObserver(
 			(entries) => {
 				for (const entry of entries) {
 					if (entry.isIntersecting) {
@@ -355,20 +390,19 @@ export function App() {
 						bestId = id;
 					}
 				}
-				if (bestId) {
-					setActiveSection(bestId);
-				}
+				// Clear highlight when no section is in the reading zone
+				setActiveSection(bestId);
 			},
 			{ rootMargin: '-20% 0px -70% 0px', threshold: [0, 0.1, 0.5, 1.0] }
 		);
 
 		const sections = document.querySelectorAll('section[id]');
 		for (const section of sections) {
-			observerRef.current.observe(section);
+			observer.observe(section);
 		}
 
 		return () => {
-			observerRef.current?.disconnect();
+			observer.disconnect();
 		};
 	}, []);
 
@@ -378,14 +412,13 @@ export function App() {
 			? componentSections
 			: componentSections.filter((s) => s.label.toLowerCase().includes(searchQuery.toLowerCase()));
 
-	// Filter application UI categories by search query
+	// Filter application UI categories by search query.
+	// Only match against section labels — category-name-only matches produce empty section lists.
 	const filteredCategories =
 		searchQuery === ''
 			? applicationUiCategories
-			: applicationUiCategories.filter(
-					(cat) =>
-						cat.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-						cat.sections.some((s) => s.label.toLowerCase().includes(searchQuery.toLowerCase()))
+			: applicationUiCategories.filter((cat) =>
+					cat.sections.some((s) => s.label.toLowerCase().includes(searchQuery.toLowerCase()))
 				);
 
 	return (
@@ -454,9 +487,10 @@ export function App() {
 					<button
 						type="button"
 						onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-						class="w-full px-3 py-2 text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-2 rounded transition-colors text-center cursor-pointer"
+						class="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-2 rounded transition-colors cursor-pointer"
 					>
-						↑ Scroll to top
+						<ChevronUp class="w-3 h-3" />
+						Scroll to top
 					</button>
 				</div>
 			</nav>
@@ -478,7 +512,7 @@ export function App() {
 							href="https://github.com/lsm/neokai"
 							target="_blank"
 							rel="noopener noreferrer"
-							class="p-2 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors text-sm px-3"
+							class="py-2 px-3 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors text-sm"
 						>
 							GitHub
 						</a>
