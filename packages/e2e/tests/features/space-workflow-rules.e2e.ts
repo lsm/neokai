@@ -74,8 +74,9 @@ async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
 async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
 	await page.goto(`/space/${spaceId}`);
 	await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
-	// Wait for SpaceIsland to finish loading — the tab bar appears after space.overview resolves
-	await expect(page.locator('text=Dashboard').first()).toBeVisible({ timeout: 15000 });
+	// Wait for SpaceIsland to finish loading — the space overview container appears after space data resolves.
+	// The space dashboard no longer shows a "Dashboard" tab; use the testid on the overview container.
+	await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 15000 });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
