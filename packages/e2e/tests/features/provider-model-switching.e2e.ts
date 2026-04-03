@@ -47,7 +47,13 @@ async function createSessionViaNewSessionButton(page: Page): Promise<string> {
 	// fully reset component state across tests, the backdrop blocks the "New Session"
 	// button.  The SPA may keep hidden dialog elements in the DOM — use :visible to
 	// only match dialogs that are actually shown.
-	const anyDialog = page.locator('[role="dialog"]:visible');
+	//
+	// IMPORTANT: Exclude the NeoPanel (data-testid="neo-panel") which has role="dialog"
+	// and is permanently in the DOM even when closed (just off-screen via CSS
+	// transform: -translate-x-full).  Playwright considers it "visible" because CSS
+	// transforms do not affect layout boxes; pressing Escape would not close it, so
+	// including it in the stale-dialog check causes a guaranteed toBeHidden() failure.
+	const anyDialog = page.locator('[role="dialog"]:not([data-testid="neo-panel"]):visible');
 	if (await anyDialog.isVisible({ timeout: 500 }).catch(() => false)) {
 		await page.keyboard.press('Escape');
 		await expect(anyDialog).toBeHidden({ timeout: 3000 });
@@ -59,9 +65,9 @@ async function createSessionViaNewSessionButton(page: Page): Promise<string> {
 	await page.locator('button:has-text("New Session")').first().click();
 
 	// Wait for the modal dialog to appear and scope all subsequent lookups to the
-	// VISIBLE dialog.  Using :visible avoids strict-mode violations when the SPA
-	// keeps hidden dialog elements in the DOM from previous renders.
-	const dialog = page.locator('[role="dialog"]:visible');
+	// VISIBLE dialog.  Exclude the NeoPanel (always in DOM with role="dialog") to
+	// avoid strict-mode violations and incorrect element matching.
+	const dialog = page.locator('[role="dialog"]:not([data-testid="neo-panel"]):visible');
 	await expect(dialog).toBeVisible({ timeout: 5000 });
 
 	// Fill in the workspace path — scoped to the visible dialog.
