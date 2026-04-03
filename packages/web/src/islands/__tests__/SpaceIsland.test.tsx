@@ -19,6 +19,7 @@ let mockSpace = signal<Space | null>(null);
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceAgent[]>([]);
 let mockActiveRuns = signal<SpaceWorkflowRun[]>([]);
+let mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 
 const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
 
@@ -55,6 +56,16 @@ vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
 			</div>
 		);
 	},
+}));
+
+vi.mock('../../components/space/WorkflowCanvas', () => ({
+	WorkflowCanvas: (props: { workflowId: string; runId?: string | null; spaceId: string }) => (
+		<div
+			data-testid="workflow-canvas"
+			data-workflow-id={props.workflowId}
+			data-run-id={props.runId ?? ''}
+		/>
+	),
 }));
 
 vi.mock('../../components/space/SpaceDashboard', () => ({
@@ -100,6 +111,7 @@ vi.mock('../../lib/space-store', () => ({
 			workflows: mockWorkflows,
 			agents: mockAgents,
 			activeRuns: mockActiveRuns,
+			workflowRuns: mockWorkflowRuns,
 			selectSpace: mockSelectSpace,
 		};
 	},
@@ -149,6 +161,7 @@ beforeEach(() => {
 	mockWorkflows = signal([makeWorkflow()]);
 	mockAgents = signal([]);
 	mockActiveRuns = signal([]);
+	mockWorkflowRuns = signal([]);
 	capturedVisualEditorProps = {};
 });
 
@@ -157,9 +170,13 @@ afterEach(() => {
 });
 
 describe('SpaceIsland — route-driven views', () => {
-	it('renders the overview view by default', () => {
+	it('renders the overview view with tab bar by default', () => {
 		const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+		// Outer wrapper
 		expect(getByTestId('space-overview-view')).toBeTruthy();
+		// Tab bar is present
+		expect(getByTestId('space-tab-bar')).toBeTruthy();
+		// SpaceDashboard is in the dashboard-fallback (mobile/no-canvas path)
 		expect(getByTestId('space-dashboard')).toBeTruthy();
 	});
 
