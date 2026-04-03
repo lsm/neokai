@@ -52,6 +52,32 @@ export async function deleteSpaceViaRpc(page: Page, spaceId: string): Promise<vo
 }
 
 /**
+ * Create a space task via RPC. For use in beforeEach setup only.
+ * Returns the new task's id.
+ */
+export async function createSpaceTaskViaRpc(
+	page: Page,
+	spaceId: string,
+	title: string
+): Promise<string> {
+	const id = await page.evaluate(
+		async ({ spaceId, title }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+			const task = (await hub.request('spaceTask.create', {
+				spaceId,
+				title,
+				description: '',
+			})) as { id: string };
+			return task.id;
+		},
+		{ spaceId, title }
+	);
+	if (!id) throw new Error('spaceTask.create returned no id');
+	return id;
+}
+
+/**
  * Create a unique workspace subdirectory for a space test.
  *
  * Multiple E2E tests run in parallel and all share the same workspace root.
