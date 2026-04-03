@@ -7,6 +7,8 @@ import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { existsSync, rmSync, readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
+import { randomUUID } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -38,6 +40,38 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
 			const parentDir = dirname(currentDir);
 			if (parentDir === currentDir) break;
 			currentDir = parentDir;
+		}
+	}
+
+	// Compute the E2E workspace path using the same logic as playwright.config.ts.
+	// NOTE: process.env.NEOKAI_WORKSPACE_PATH is NOT available here because
+	// webServer.env only sets variables for the child web server process.
+	// global-setup.ts runs in the Playwright test runner process.
+	const testRunId = `e2e-${Date.now()}-${randomUUID().slice(0, 8)}`;
+	const e2eTempDir = join(tmpdir(), 'neokai-e2e', testRunId);
+	const workspacePath = join(e2eTempDir, 'workspace');
+
+	// Initialize the E2E workspace as a git repo so that task planning worktrees can
+	// be created. Without a .git directory, WorktreeManager.findGitRoot() returns null,
+	// causing "task requires isolation" errors and daemon log spam during tests.
+	if (workspacePath && existsSync(workspacePath)) {
+		console.log(`\n🔧 Initializing workspace as git repo: ${workspacePath}`);
+		try {
+			execSync('git init', { cwd: workspacePath, stdio: 'inherit' });
+			execSync('git config user.email "e2e@neokai.test"', {
+				cwd: workspacePath,
+				stdio: 'inherit',
+			});
+			execSync('git config user.name "NeoKai E2E"', { cwd: workspacePath, stdio: 'inherit' });
+			// Create initial commit so the repo is valid
+			execSync('git commit --allow-empty -m "Initial commit for E2E testing"', {
+				cwd: workspacePath,
+				stdio: 'inherit',
+			});
+			console.log('✅ Workspace initialized as git repo\n');
+		} catch (error) {
+			// Log but don't fail — some tests may not need git functionality
+			console.warn('⚠️  Failed to initialize git repo in workspace (continuing):', error);
 		}
 	}
 
