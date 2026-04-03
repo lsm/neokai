@@ -70,6 +70,9 @@ import { DropdownsDemo } from './sections/elements/dropdowns/DropdownsDemo.tsx';
 import { CalendarsHeadlessDemo } from './sections/data-display/calendars/CalendarsHeadlessDemo.tsx';
 import { DrawersDemo } from './sections/overlays/DrawersDemo.tsx';
 import { ModalDialogsDemo } from './sections/overlays/ModalDialogsDemo.tsx';
+import { DetailScreensDemo } from './sections/DetailScreensDemo.tsx';
+import { HomeScreensDemo } from './sections/HomeScreensDemo.tsx';
+import { SettingsScreensDemo } from './sections/SettingsScreensDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
@@ -347,6 +350,7 @@ export function App() {
 										'forms',
 										'headings',
 										'layout',
+										'page-examples',
 									].includes(category.id)}
 								/>
 							))}
@@ -611,6 +615,17 @@ export function App() {
 					</DemoSection>
 					<DemoSection id="overlays-notifications" title="Overlays / Notifications">
 						<NotificationDemo />
+					</DemoSection>
+
+					{/* Application UI - Page Examples */}
+					<DemoSection id="page-examples-detail-screens" title="Page Examples / Detail Screens">
+						<DetailScreensDemo />
+					</DemoSection>
+					<DemoSection id="page-examples-home-screens" title="Page Examples / Home Screens">
+						<HomeScreensDemo />
+					</DemoSection>
+					<DemoSection id="page-examples-settings-screens" title="Page Examples / Settings Screens">
+						<SettingsScreensDemo />
 					</DemoSection>
 				</main>
 			</div>
