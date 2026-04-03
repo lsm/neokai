@@ -1,6 +1,4 @@
-function classNames(...classes: (string | boolean | undefined | null)[]) {
-	return classes.filter(Boolean).join(' ');
-}
+import { classNames } from '../../src/internal/class-names.ts';
 
 const simpleNavigation = [
 	{ name: 'Dashboard', href: '#', current: true },

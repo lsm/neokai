@@ -1,8 +1,5 @@
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
-
-function classNames(...classes: string[]) {
-	return classes.filter(Boolean).join(' ');
-}
+import { classNames } from '../../src/internal/class-names.ts';
 
 // ============================================================
 // 01 - Simple Table
@@ -269,8 +266,8 @@ export function FullWidthTable() {
 								</tr>
 							</thead>
 							<tbody class="bg-white dark:bg-gray-900">
-								{people1.map((person, idx) => (
-									<tr key={person.email} class={idx % 2 === 1 ? 'even:bg-surface-0' : ''}>
+								{people1.map((person) => (
+									<tr key={person.email} class="even:bg-surface-0">
 										<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-3">
 											{person.name}
 										</td>
@@ -767,7 +764,7 @@ export function HiddenColumnsMobile() {
 										</th>
 									</tr>
 								</thead>
-								<tbody class="divide-y divide-surface-border bg-white">
+								<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
 									{people1.map((person) => (
 										<tr key={person.email}>
 											<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-6">
@@ -823,13 +820,13 @@ export function AvatarsMultiline() {
 			</div>
 			<div class="mt-8 flow-root">
 				<div class="-mx-4 -my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
-					<div class="inline-block min-w-full py-2 align-middle">
+					<div class="inline-block min-w-full py-2 align-middle sm:px-6 lg:px-8">
 						<table class="relative min-w-full divide-y divide-surface-border">
 							<thead>
 								<tr>
 									<th
 										scope="col"
-										class="py-3.5 pr-3 pl-4 text-left text-sm font-semibold text-text-primary sm:pl-6 lg:pl-8"
+										class="py-3.5 pr-3 pl-4 text-left text-sm font-semibold text-text-primary sm:pl-0"
 									>
 										Name
 									</th>
@@ -843,7 +840,7 @@ export function AvatarsMultiline() {
 										scope="col"
 										class="px-3 py-3.5 text-left text-sm font-semibold text-text-primary"
 									>
-										Email
+										Status
 									</th>
 									<th
 										scope="col"
@@ -851,27 +848,42 @@ export function AvatarsMultiline() {
 									>
 										Role
 									</th>
-									<th scope="col" class="py-3.5 pr-4 pl-3 sm:pr-6 lg:pr-8">
+									<th scope="col" class="py-3.5 pr-4 pl-3 sm:pr-0">
 										<span class="sr-only">Edit</span>
 									</th>
 								</tr>
 							</thead>
 							<tbody class="divide-y divide-surface-border bg-white dark:bg-gray-900">
-								{people1.map((person) => (
+								{peopleWithAvatars.map((person) => (
 									<tr key={person.email}>
-										<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-6 lg:pl-8">
-											{person.name}
+										<td class="py-5 pr-3 pl-4 text-sm whitespace-nowrap sm:pl-0">
+											<div class="flex items-center">
+												<div class="size-11 shrink-0">
+													<img
+														alt=""
+														src={person.image}
+														class="size-11 rounded-full dark:outline dark:outline-white/10"
+													/>
+												</div>
+												<div class="ml-4">
+													<div class="font-medium text-text-primary">{person.name}</div>
+													<div class="mt-1 text-text-secondary">{person.email}</div>
+												</div>
+											</div>
 										</td>
-										<td class="px-3 py-4 text-sm whitespace-nowrap text-text-secondary">
-											{person.title}
+										<td class="px-3 py-5 text-sm whitespace-nowrap text-text-secondary">
+											<div class="text-text-primary">{person.title}</div>
+											<div class="mt-1 text-text-secondary">{person.department}</div>
 										</td>
-										<td class="px-3 py-4 text-sm whitespace-nowrap text-text-secondary">
-											{person.email}
+										<td class="px-3 py-5 text-sm whitespace-nowrap text-text-secondary">
+											<span class="inline-flex items-center rounded-md bg-green-500/10 px-2 py-1 text-xs font-medium text-green-400 ring-1 ring-green-500/20 ring-inset">
+												Active
+											</span>
 										</td>
-										<td class="px-3 py-4 text-sm whitespace-nowrap text-text-secondary">
+										<td class="px-3 py-5 text-sm whitespace-nowrap text-text-secondary">
 											{person.role}
 										</td>
-										<td class="py-4 pr-4 pl-3 text-right text-sm font-medium whitespace-nowrap sm:pr-6 lg:pr-8">
+										<td class="py-5 pr-4 pl-3 text-right text-sm font-medium whitespace-nowrap sm:pr-0">
 											<a href="#" class="text-accent-500 hover:text-accent-400">
 												Edit<span class="sr-only">, {person.name}</span>
 											</a>
@@ -1720,13 +1732,10 @@ export function GroupedRows() {
 												{location.name}
 											</th>
 										</tr>
-										{location.people.map((person, personIdx) => (
+										{location.people.map((person) => (
 											<tr
 												key={person.email}
-												class={classNames(
-													personIdx === 0 ? 'border-surface-border' : 'border-surface-border',
-													'border-t'
-												)}
+												class={classNames('border-surface-border', 'border-t')}
 											>
 												<td class="py-4 pr-3 pl-4 text-sm font-medium whitespace-nowrap text-text-primary sm:pl-3">
 													{person.name}

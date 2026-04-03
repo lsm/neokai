@@ -1,6 +1,4 @@
-function classNames(...classes: (string | boolean | undefined | null)[]) {
-	return classes.filter(Boolean).join(' ');
-}
+import { classNames } from '../../src/internal/class-names.ts';
 
 const stats1 = [
 	{ name: 'Revenue', value: '$405,091.00', change: '+4.75%', changeType: 'positive' },
