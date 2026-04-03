@@ -841,7 +841,9 @@ describe('FieldError', () => {
 			</Field>
 		);
 		const input = screen.getByRole('textbox');
-		expect(input.getAttribute('aria-describedby')).toContain('Error text');
+		const error = document.querySelector('p[role="alert"]');
+		const describedBy = input.getAttribute('aria-describedby')?.split(' ') ?? [];
+		expect(describedBy).toContain(error?.getAttribute('id'));
 
 		// Unmount Description - FieldError should still work
 		rerender(
@@ -850,6 +852,7 @@ describe('FieldError', () => {
 				<FieldError>Error text</FieldError>
 			</Field>
 		);
-		expect(input.getAttribute('aria-describedby')).toContain('Error text');
+		const describedByAfter = input.getAttribute('aria-describedby')?.split(' ') ?? [];
+		expect(describedByAfter).toContain(error?.getAttribute('id'));
 	});
 });
