@@ -832,6 +832,36 @@ describe('QueryRunner', () => {
 			const metadata = handleErrorSpy.mock.calls[0][5] as Record<string, unknown>;
 			expect(metadata.startupMaxRetries).toBeUndefined();
 		});
+
+		it('should close queryObject before retrying to prevent MCP "Already connected to a transport" crash', async () => {
+			// Regression test for the race condition where auto-retry after startup timeout
+			// would call runQuery() while the previous query's finally{} block had not yet
+			// run, leaving MCP transports open and causing "Already connected" crashes.
+			//
+			// The fix explicitly closes ctx.queryObject in the catch block BEFORE the
+			// recursive retry call, ensuring MCP transports are released first.
+			let closeCalled = false;
+			const mockQueryObject = {
+				close: () => {
+					closeCalled = true;
+				},
+				[Symbol.asyncIterator]: function* () {},
+			} as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+
+			// Pre-populate queryObject to simulate a lingering open query (e.g. with open
+			// MCP transports) that existed when the startup timeout fired.
+			const ctx = createContext({ queryObject: mockQueryObject });
+			runner = new QueryRunner(ctx);
+
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// close() must have been called on the pre-existing queryObject before the retry.
+			expect(closeCalled).toBe(true);
+			// After the close, queryObject should be null (cleaned up by the fix).
+			// The finally block may re-check it, but it will see null and skip redundant close.
+			expect(ctx.queryObject).toBeNull();
+		});
 	});
 
 	describe('auto-recovery removal regression guards (Task 2.3)', () => {

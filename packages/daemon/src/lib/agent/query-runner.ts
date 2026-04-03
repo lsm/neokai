@@ -359,6 +359,20 @@ export class QueryRunner {
 					'Session startup timed out. Retrying automatically...'
 				);
 				await stateManager.setIdle();
+
+				// Close the current queryObject BEFORE retrying to prevent the
+				// "Already connected to a transport" crash. The finally{} block has not
+				// yet run (we are still in the catch block), so MCP transports are still
+				// open. Explicitly closing here ensures a clean slate for the retry.
+				if (this.ctx.queryObject) {
+					try {
+						this.ctx.queryObject.close();
+					} catch {
+						// Ignore close errors — transport may already be in a broken state
+					}
+					this.ctx.queryObject = null;
+				}
+
 				return this.runQuery(queryGeneration, true);
 			}
 
