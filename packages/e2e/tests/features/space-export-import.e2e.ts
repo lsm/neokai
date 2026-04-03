@@ -34,15 +34,17 @@ async function createTestSpace(page: Page): Promise<{
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Delete any leftover space from a previous failed run (including archived).
+			// Delete ALL leftover spaces from previous failed runs (including archived).
+			// Normalize macOS /private symlink prefix to avoid path mismatch.
+			const norm = (p: string) => p.replace(/^\/private/, '');
 			try {
 				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
 					id: string;
 					workspacePath: string;
 				}>;
-				const existing = list.find((s) => s.workspacePath === workspacePath);
-				if (existing) {
-					await hub.request('space.delete', { id: existing.id });
+				const matches = list.filter((s) => norm(s.workspacePath) === norm(workspacePath));
+				for (const s of matches) {
+					await hub.request('space.delete', { id: s.id });
 				}
 			} catch {
 				// Ignore cleanup errors

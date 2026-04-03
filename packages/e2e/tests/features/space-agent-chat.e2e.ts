@@ -10,63 +10,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
-
-async function createSpaceViaRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	workspacePath: string,
-	name: string
-): Promise<string> {
-	// Pre-creation cleanup: delete any existing space at this path (including archived)
-	try {
-		await page.evaluate(async (path) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			const spaces = (await hub.request('space.list', { includeArchived: true })) as Array<{
-				id: string;
-				workspacePath: string;
-			}>;
-			for (const space of spaces) {
-				if (space.workspacePath === path) {
-					await hub.request('space.delete', { id: space.id });
-				}
-			}
-		}, workspacePath);
-	} catch {
-		// Best-effort cleanup
-	}
-
-	const id = await page.evaluate(
-		async ({ workspacePath, name }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			const space = (await hub.request('space.create', { workspacePath, name })) as {
-				id: string;
-			};
-			return space.id;
-		},
-		{ workspacePath, name }
-	);
-	if (!id) throw new Error('space.create returned no id');
-	return id;
-}
-
-async function deleteSpaceViaRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
-): Promise<void> {
-	if (!spaceId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('space.delete', { id });
-		}, spaceId);
-	} catch {
-		// Best-effort cleanup
-	}
-}
 
 test.describe('Space Agent Chat', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
