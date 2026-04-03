@@ -526,7 +526,10 @@ export function App() {
 					</DemoSection>
 
 					{/* Application UI - Application Shells */}
-					<DemoSection id="application-shells-multi-column" title="Multi-column (Application Shell)">
+					<DemoSection
+						id="application-shells-multi-column"
+						title="Multi-column (Application Shell)"
+					>
 						<MultiColumnDemo />
 					</DemoSection>
 
