@@ -78,7 +78,7 @@ test.describe('Tools Modal - Redesigned', () => {
 		await expect(page.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
 
 		// Setting Sources should also be visible
-		await expect(page.getByText('Setting Sources')).toBeVisible();
+		await expect(page.getByText('Setting Sources').first()).toBeVisible();
 	});
 
 	test('should show scope badges for groups', async ({ page }) => {
