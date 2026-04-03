@@ -2,12 +2,13 @@
 
 ## Goal
 
-Port all ~106 reference files that use BOTH headlessui AND heroicons. This is the most complex batch requiring component API mapping AND icon library usage.
+Port all 106 reference files that use BOTH headlessui AND heroicons. This is the most complex batch requiring component API mapping AND icon library usage.
 
 ## Scope
 
 - ~25 subcategories across 9 top-level categories
-- ~106 reference JSX files
+- 100 reference JSX files covered by M5 tasks (22 + 21 + 57)
+- The remaining 6 "both" files are page-examples covered by M6 (detail-screens, home-screens, settings-screens)
 - Largest and most complex milestone
 
 ## Porting Checklist (per file)
@@ -45,7 +46,7 @@ Everything from M2 + M3 checklists PLUS:
 
 ## Tasks
 
-### Task 5.1: Headless+icon demos -- Overlays (drawers, modal-dialogs, notifications) (28 files)
+### Task 5.1: Headless+icon demos -- Overlays (drawers, modal-dialogs, notifications) (22 files)
 
 **Description**: Port all combined headless+icon reference files from the overlays category. This includes drawers, modal dialogs, and notifications.
 
@@ -55,13 +56,13 @@ Everything from M2 + M3 checklists PLUS:
 
 2. **Create `overlays/modal-dialogs/ModalDialogsDemo.tsx`** (6 files): Centered with single action, centered with wide buttons, simple alert, simple with dismiss button, simple with gray footer, simple with left-aligned buttons. Uses Dialog + Transition. Icons: `ExclamationTriangleIcon`, `XMarkIcon`.
 
-3. **Update `overlays/notifications/NotificationsDemo.tsx`** -- add 4 headless+icon notification variants: simple, condensed, with actions below, with buttons below. These use Dialog/Transition with icons.
+3. **Update `overlays/notifications/NotificationsDemo.tsx`** -- add 4 headless+icon notification variants: simple, condensed, with actions below, with buttons below. These use Dialog/Transition with icons. **Note**: This extends the same file that M4.1 (Task 4.1) creates. M4.1 must complete first so the base notification demos exist before adding icon variants.
 
 4. **Update `packages/ui/demo/App.tsx`** to register new demo sections.
 
 **Acceptance criteria**:
 - 2 new demo section files created (DrawersDemo, ModalDialogsDemo)
-- Existing NotificationDemo extended with 4 more variants
+- Existing NotificationDemo extended with 4 more variants (M4.1 must be merged first)
 - All 22 overlay reference examples render correctly
 - All headlessui imports replaced with @neokai/ui
 - All heroicon imports replaced with lucide-preact
@@ -69,7 +70,7 @@ Everything from M2 + M3 checklists PLUS:
 - Modal dialogs open/close with backdrop
 - `bun run dev` starts without errors
 
-**Depends on**: Task 1.2 (icon-map.ts, sidebar), Task 3.1 (lucide patterns established)
+**Depends on**: Task 1.2 (icon-map.ts, sidebar), Task 3.1 (lucide patterns established), Task 4.1 (base NotificationDemo.tsx must exist before extending with icon variants)
 
 **Agent type**: coder
 
@@ -77,7 +78,7 @@ Everything from M2 + M3 checklists PLUS:
 
 ---
 
-### Task 5.2: Headless+icon demos -- Navigation (command-palettes, navbars, sidebar-navigation) (24 files)
+### Task 5.2: Headless+icon demos -- Navigation (command-palettes, navbars, sidebar-navigation) (21 files)
 
 **Description**: Port all combined headless+icon reference files from the navigation category.
 
@@ -94,7 +95,7 @@ Everything from M2 + M3 checklists PLUS:
 **Acceptance criteria**:
 - 2 new demo section files created (CommandPalettesDemo, NavbarsDemo)
 - Existing SidebarNavigationDemo extended with 2 more variants
-- All 22 navigation reference examples render correctly
+- All 21 navigation reference examples render correctly
 - Command palettes open/close with search functionality
 - Navbar mobile menus toggle correctly
 - Sidebar expandable sections work with Disclosure
@@ -108,7 +109,7 @@ Everything from M2 + M3 checklists PLUS:
 
 ---
 
-### Task 5.3: Headless+icon demos -- Application Shells, Forms, Lists, Data Display, Headings (54 files)
+### Task 5.3: Headless+icon demos -- Application Shells, Forms, Lists, Data Display, Headings (57 files)
 
 **Description**: Port all remaining combined headless+icon reference files from application-shells, forms, lists, data-display, and headings categories.
 
@@ -149,7 +150,7 @@ Everything from M2 + M3 checklists PLUS:
 **Acceptance criteria**:
 - 7 new demo section files created
 - Multiple existing demo files extended
-- All ~54 reference examples render correctly
+- All 57 reference examples render correctly
 - All interactive elements (comboboxes, listboxes, menus, popovers, disclosures) function correctly
 - `bun run dev` starts without errors
 

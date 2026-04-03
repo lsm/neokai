@@ -2,12 +2,12 @@
 
 ## Goal
 
-Port all ~93 reference files that use heroicons but NOT headlessui. These require the lucide-preact icon library and the heroicons-to-lucide name mapping from M1.
+Port all 94 reference files that use heroicons but NOT headlessui. These require the lucide-preact icon library and the heroicons-to-lucide name mapping from M1.
 
 ## Scope
 
 - ~30 subcategories across 8 top-level categories
-- ~93 reference JSX files
+- 94 reference JSX files
 - Depends on `lucide-preact` being installed and `icon-map.ts` being available
 
 ## Porting Checklist (per file)
@@ -42,7 +42,7 @@ Everything from M2 checklist PLUS:
 
 8. **Create `layout/dividers/DividersWithIconsDemo.tsx`** or extend existing -- add 4 icon-only examples: with icon, with button, with title and button, with toolbar.
 
-9. **Create `forms/form-layouts/FormLayoutsDemo.tsx`** (5 files): Stacked, two-column, two-column with cards, labels on left. Uses `EnvelopeIcon`, `PhoneIcon`, `UserCircleIcon`.
+9. **Create `forms/form-layouts/FormLayoutsDemo.tsx`** (4 files): Stacked, two-column, two-column with cards, labels on left. Uses `EnvelopeIcon`, `PhoneIcon`, `UserCircleIcon`.
 
 10. **Update `forms/input-groups/InputGroupsDemo.tsx`** -- add 7 icon-only examples: with validation error, with leading icon, with trailing icon, with inline leading dropdown, with inline leading add-on and trailing dropdown, with leading icon and trailing button, inputs with shared borders. Uses `ExclamationCircleIcon`, `MagnifyingGlassIcon`, `CreditCardIcon`, `ChevronDownIcon`, `PlusIcon`.
 

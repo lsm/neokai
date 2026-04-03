@@ -2,7 +2,7 @@
 
 ## Goal
 
-Set up the infrastructure needed for all subsequent demo porting work: fix missing package exports, install the icon library, create the heroicons-to-lucide name mapping, and refactor the demo App.tsx to support a categorized sidebar with 48+ sections.
+Set up the infrastructure needed for all subsequent demo porting work: fix missing package exports, install the icon library, create the heroicons-to-lucide name mapping, and refactor the demo App.tsx to support a categorized sidebar with 49 sections.
 
 ## Scope
 
@@ -45,13 +45,13 @@ Set up the infrastructure needed for all subsequent demo porting work: fix missi
 
 ### Task 1.2: Create heroicons-to-lucide icon name mapping and refactor demo App.tsx sidebar
 
-**Description**: Create a mapping utility that translates heroicon component names to lucide-preact icon names. Then refactor `packages/ui/demo/App.tsx` to support a categorized sidebar with 11 categories and 48+ sections, replacing the current flat list.
+**Description**: Create a mapping utility that translates heroicon component names to lucide-preact icon names. Then refactor `packages/ui/demo/App.tsx` to support a categorized sidebar with 11 categories and 49 sections, replacing the current flat list.
 
 **Subtasks**:
 
 1. **Create icon mapping file** at `packages/ui/demo/icon-map.ts`:
    - Export a `Record<string, string>` mapping heroicon names to lucide names
-   - Map all 68 unique heroicon names found in the 364 reference files
+   - Map all 66 unique heroicon names found in the 364 reference files (plus any aliases)
    - Key naming convention: heroicon `ChevronDownIcon` maps to lucide `ChevronDown`, `XMarkIcon` maps to `X`, `Bars3Icon` maps to `Menu`, `MagnifyingGlassIcon` maps to `Search`
    - Size variants (16/solid, 20/solid, 24/outline, 24/solid) are NOT needed in the mapping -- lucide icons are size-agnostic via `class="w-N h-N"` and always use the same stroke style
 
@@ -71,7 +71,7 @@ Set up the infrastructure needed for all subsequent demo porting work: fix missi
      Page Examples (detail-screens, home-screens, settings-screens)
      ```
    - Keep the existing 22 "Component" sections in a top-level category
-   - Add a new "Application UI" category with the 48 subcategories (initially empty/placeholder)
+   - Add a new "Application UI" category with the 49 subcategories (initially empty/placeholder)
    - Implement collapsible category headers in the sidebar
    - Use the lucide-preact `ChevronDown` / `ChevronRight` icons for collapse/expand toggles
    - Replace the inline `SunIcon` / `MoonIcon` SVGs with lucide `Sun` / `Moon` icons
@@ -82,7 +82,7 @@ Set up the infrastructure needed for all subsequent demo porting work: fix missi
    - Consider widening the sidebar from `w-56` to `w-64` to accommodate category nesting
 
 **Acceptance criteria**:
-- `packages/ui/demo/icon-map.ts` exports a mapping for all 68 heroicon names
+- `packages/ui/demo/icon-map.ts` exports a mapping for all 66 heroicon names (plus any aliases)
 - App.tsx sidebar shows categories with collapsible sections
 - All 22 existing demo sections still render correctly
 - Theme toggle (dark/light) still works

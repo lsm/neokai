@@ -6,11 +6,11 @@ Port all 364 Tailwind Application UI v4 reference examples as live demo sections
 
 ## High-Level Approach
 
-1. **Foundation** -- Fix package.json exports gap, add `lucide-preact` icon library, refactor demo App.tsx to support a categorized sidebar (48+ sections across 11 categories).
-2. **Pure HTML demos** -- Port the 162 reference files that have zero external dependencies first (no headlessui, no heroicons). These are pure Tailwind markup and are the fastest to port.
-3. **Icon-only demos** -- Port the 93 reference files that use heroicons but not headlessui. Depends on lucide-preact being available and icon name mapping being established.
+1. **Foundation** -- Fix package.json exports gap, add `lucide-preact` icon library, refactor demo App.tsx to support a categorized sidebar (49 sections across 11 categories).
+2. **Pure HTML demos** -- Port 162 reference files that have zero external dependencies first (no headlessui, no heroicons). These are pure Tailwind markup and are the fastest to port.
+3. **Icon-only demos** -- Port 94 reference files that use heroicons but not headlessui. Depends on lucide-preact being available and icon name mapping being established.
 4. **Headless-only demos** -- Port the 2 reference files that use headlessui but not heroicons. These map directly to existing @neokai/ui component APIs. (Very small batch; only notification variants.)
-5. **Combined headless+icon demos** -- Port the 106 reference files that use both headlessui and heroicons. The most complex batch requiring both component API knowledge and icon mapping.
+5. **Combined headless+icon demos** -- Port 106 reference files that use both headlessui and heroicons. 100 are covered by M5 tasks; the remaining 6 page-examples are in M6. The most complex batch requiring both component API knowledge and icon mapping.
 6. **Page-example compositions** -- Port the 6 full-page reference examples (detail-screens, home-screens, settings-screens) that combine multiple categories into cohesive layouts.
 7. **Integration and QA** -- Visual QA pass, sidebar navigation polish, dark/light theme verification, ensure all 364 examples render correctly.
 
@@ -21,13 +21,13 @@ Reference files use `data-closed:` (unbracketed Tailwind v4 syntax). Existing @n
 ## Reference Location
 
 All 364 reference JSX files are at: `/Users/lsm/focus/tmp/tailwind/application-ui-v4/react/`
-- 11 categories, 48 subcategories
+- 11 categories, 49 subcategories
 - Each subcategory has 2-21 JSX files
 
 ## Demo Output Location
 
 All new demo files go to: `packages/ui/demo/sections/`
-- One file per subcategory (48 new demo files)
+- One file per subcategory (49 new demo files)
 - Each file exports a single Preact function component
 
 ## Component Source Location
@@ -55,7 +55,7 @@ M6 can start once enough of M2-M5 are done (it reuses patterns from all prior mi
 
 - **Package**: `lucide-preact` (v0.577.0, official Preact support, tree-shakable)
 - **Install as**: devDependency in `packages/ui/package.json`
-- **Heroicons-to-lucide mapping**: A lookup table mapping 68 heroicon names to their lucide equivalents will be created in M1. Most heroicons have direct lucide counterparts; a few may need `ChevronDown` -> `ChevronDown`, `XMarkIcon` -> `X`, etc.
+- **Heroicons-to-lucide mapping**: A lookup table mapping 66 unique heroicon names (plus any aliases) to their lucide equivalents will be created in M1. Most heroicons have direct lucide counterparts; a few may need `ChevronDown` -> `ChevronDown`, `XMarkIcon` -> `X`, etc.
 - **Usage pattern**: `import { Search, Folder } from 'lucide-preact'` then `<Search class="w-5 h-5" />`
 
 ## Total Estimated Task Count
@@ -65,10 +65,10 @@ M6 can start once enough of M2-M5 are done (it reuses patterns from all prior mi
 | Milestone | Tasks | Reference Files |
 |-----------|-------|-----------------|
 | M1: Foundation | 2 | 0 (infrastructure) |
-| M2: Pure HTML demos | 3 | ~162 |
-| M3: Icon-only demos | 2 | ~93 |
+| M2: Pure HTML demos | 3 | 162 |
+| M3: Icon-only demos | 2 | 94 |
 | M4: Headless-only demos | 1 | 2 |
-| M5: Headless+icon demos | 3 | ~106 |
+| M5: Headless+icon demos | 3 | 100 |
 | M6: Page compositions | 1 | 6 |
 | M7: Integration & QA | 2 | 0 (verification) |
 | **Total** | **16** | **364** |
@@ -77,10 +77,10 @@ M6 can start once enough of M2-M5 are done (it reuses patterns from all prior mi
 
 | Dependency type | File count | Subcategories |
 |----------------|------------|---------------|
-| Pure HTML (no deps) | ~163 | avatars, badges, buttons, button-groups, headings, cards, containers, dividers, list-containers, media-objects, tables, stacked-lists, stats, toggles, checkboxes, radio-groups, input-groups (most), sign-in-forms, textareas (most), action-panels, empty-states (1), form-layouts (0) |
-| Icon-only (heroicons) | ~93 | alerts, empty-states (5), description-lists, calendars (1), stats (2), form-layouts (5), input-groups (7), radio-groups (1), select-menus (1), dividers (5), feeds, grid-lists (5), stacked-lists (8), tables (2), breadcrumbs, pagination (2), progress-bars (5), sidebar-navigation (3), tabs (9), vertical-navigation (4), button-groups (3), buttons (4), headings (5) |
+| Pure HTML (no deps) | 162 | avatars, badges, buttons, button-groups, headings, cards, containers, dividers, list-containers, media-objects, tables, stacked-lists, stats, toggles, checkboxes, radio-groups, input-groups (most), sign-in-forms, textareas (most), action-panels, empty-states (1), form-layouts (0) |
+| Icon-only (heroicons) | 94 | alerts, empty-states (5), description-lists, calendars (1), stats (2), form-layouts (4), input-groups (7), radio-groups (1), select-menus (1), dividers (5), feeds, grid-lists (5), stacked-lists (8), tables (2), breadcrumbs, pagination (2), progress-bars (5), sidebar-navigation (3), tabs (9), vertical-navigation (4), button-groups (3), buttons (4), headings (5) |
 | Headless-only (headlessui) | 2 | notifications (2) |
-| Both (headlessui + heroicons) | ~106 | command-palettes (9), navbars (11), drawers (12), modal-dialogs (6), notifications (4), comboboxes (5), select-menus (6), textareas (3), dropdowns (5), button-groups (1), application-shells (23), calendars (7), stacked-lists (2), feeds (1), grid-lists (1), headings (4), sidebar-navigation (2), page-examples (6) |
+| Both (headlessui + heroicons) | 106 | command-palettes (9), navbars (11), drawers (12), modal-dialogs (6), notifications (4), comboboxes (5), select-menus (6), textareas (3), dropdowns (5), button-groups (1), application-shells (23), calendars (7), stacked-lists (2), feeds (1), grid-lists (1), headings (4), sidebar-navigation (2), page-examples (6) — of these, 100 are in M5, 6 page-examples are in M6 |
 
 ## Milestone File Index
 

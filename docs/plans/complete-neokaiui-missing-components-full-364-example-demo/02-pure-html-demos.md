@@ -2,12 +2,12 @@
 
 ## Goal
 
-Port all ~163 reference files that have zero external dependencies (no headlessui, no heroicons) into demo section files. These are pure Tailwind CSS markup -- the fastest and least complex batch.
+Port all 162 reference files that have zero external dependencies (no headlessui, no heroicons) into demo section files. These are pure Tailwind CSS markup -- the fastest and least complex batch.
 
 ## Scope
 
 - 20 subcategories across 7 top-level categories
-- ~163 reference JSX files total
+- 162 reference JSX files total
 - Each subcategory becomes one demo section file
 
 ## Porting Checklist (per file)
@@ -16,13 +16,13 @@ For every reference file, the coder must:
 1. Convert `className` to `class`
 2. Remove `'use client'` directive (React-specific)
 3. Convert `import { useState } from 'react'` to `import { useState } from 'preact/hooks'` (if present)
-4. Convert unbracketed data attribute variants (`data-closed:`, `data-focus:`, etc.) to bracketed form (`data-[closed]:`, `data-[focus]:`, etc.)
+4. Convert unbracketed data attribute variants (`data-closed:`, `data-focus:`, etc.) to bracketed form (`data-[closed]:`, `data-[focus]:`, etc.). **Exception**: calendar files use custom rendering attributes (`data-is-today:`, `data-is-selected:`, `data-is-current-month:`, `data-first-line:`) that are NOT Tailwind variants -- these should NOT be converted to bracketed form.
 5. Wrap each example in a `<div class="space-y-4">` or similar container with a label/title
 6. Ensure all examples in a subcategory are rendered within the single demo component
 
 ## Tasks
 
-### Task 2.1: Pure HTML demos -- Elements, Headings, Layout (75 files)
+### Task 2.1: Pure HTML demos -- Elements, Headings, Layout (80 files)
 
 **Description**: Port all pure-HTML reference files from the elements, headings, and layout categories.
 
@@ -56,7 +56,7 @@ For every reference file, the coder must:
 
 **Acceptance criteria**:
 - 12 new demo section files created
-- All 75 reference examples render in the demo app
+- All 80 reference examples render in the demo app
 - No `className`, no `'use client'`, no `from 'react'` in any file
 - All data attribute variants use bracketed form
 - Sidebar navigation shows new sections under correct categories
@@ -70,9 +70,9 @@ For every reference file, the coder must:
 
 ---
 
-### Task 2.2: Pure HTML demos -- Forms (67 files)
+### Task 2.2: Pure HTML demos -- Forms (47 files)
 
-**Description**: Port all pure-HTML reference files from the forms category. This is the largest pure-HTML batch.
+**Description**: Port all pure-HTML reference files from the forms category.
 
 **Subtasks**:
 
@@ -108,7 +108,7 @@ For every reference file, the coder must:
 
 ---
 
-### Task 2.3: Pure HTML demos -- Data Display, Lists, Navigation, Feedback (41 files)
+### Task 2.3: Pure HTML demos -- Data Display, Lists, Navigation, Feedback (35 files)
 
 **Description**: Port all remaining pure-HTML reference files from data-display, lists, navigation, and feedback categories.
 
@@ -134,7 +134,7 @@ For every reference file, the coder must:
 
 **Acceptance criteria**:
 - 8 new demo section files created
-- All ~37 reference examples render in the demo app
+- All 35 reference examples render in the demo app
 - No `className`, no `'use client'`, no `from 'react'` in any file
 - All data attribute variants use bracketed form
 - Sidebar navigation shows new sections under correct categories
