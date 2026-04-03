@@ -178,19 +178,71 @@ describe('seedPresetAgents', () => {
 		expect(qa?.tools).toContain('Glob');
 	});
 
-	it('QA agent does not seed a hidden system prompt', async () => {
+	it('all preset agents have a non-empty system prompt', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+
+		for (const agent of seeded) {
+			expect(typeof agent.systemPrompt).toBe('string');
+			expect(agent.systemPrompt?.length ?? 0).toBeGreaterThan(0);
+		}
+	});
+
+	it('all preset agents have non-empty instructions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+
+		for (const agent of seeded) {
+			expect(typeof agent.instructions).toBe('string');
+			expect(agent.instructions?.length ?? 0).toBeGreaterThan(0);
+		}
+	});
+
+	it('Coder system prompt mentions code and PR', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const coder = seeded.find((a) => a.name === 'Coder');
+
+		expect(coder?.systemPrompt).toContain('software engineer');
+		expect(coder?.systemPrompt).toContain('commit');
+		expect(coder?.instructions).toContain('PR');
+	});
+
+	it('Research system prompt mentions investigation and findings', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const research = seeded.find((a) => a.name === 'Research');
+
+		expect(research?.systemPrompt).toContain('research specialist');
+		expect(research?.instructions).toContain('markdown');
+		expect(research?.instructions).toContain('PR');
+	});
+
+	it('Reviewer system prompt mentions code review', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		expect(reviewer?.systemPrompt).toContain('code reviewer');
+		expect(reviewer?.instructions).toContain('report_done');
+	});
+
+	it('Planner system prompt mentions planning', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const planner = seeded.find((a) => a.name === 'Planner');
+
+		expect(planner?.systemPrompt).toContain('project manager');
+		expect(planner?.instructions).toContain('plan');
+	});
+
+	it('QA system prompt mentions quality assurance', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const qa = seeded.find((a) => a.name === 'QA');
 
-		expect(qa).toBeDefined();
-		expect(qa?.systemPrompt).toBeUndefined();
+		expect(qa?.systemPrompt).toContain('quality assurance');
+		expect(qa?.instructions).toContain('test suite');
 	});
 
-	it('General agent does not seed a hidden system prompt', async () => {
+	it('General system prompt mentions summarization', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General');
 
-		expect(general).toBeDefined();
-		expect(general?.systemPrompt).toBeUndefined();
+		expect(general?.systemPrompt).toContain('summarization');
+		expect(general?.instructions).toContain('summary');
 	});
 });

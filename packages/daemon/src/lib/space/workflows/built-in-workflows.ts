@@ -95,7 +95,19 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			id: CODING_CODE_STEP,
 			name: 'Code',
-			agents: [{ agentId: 'Coder', name: 'coder' }],
+			agents: [
+				{
+					agentId: 'Coder',
+					name: 'coder',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are working on a coding task in a Coder→Reviewer iterative workflow. Write code, run tests, ' +
+							'commit all changes, and open a PR. The gate will verify the PR is open and the worktree is clean ' +
+							'before passing to the Reviewer.',
+					},
+				},
+			],
 			instructions:
 				'Implement the task. When done, create a pull request with `gh pr create` ' +
 				'and ensure all changes are committed (clean working tree). The code-ready-gate ' +
@@ -104,7 +116,18 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			id: CODING_REVIEW_STEP,
 			name: 'Review',
-			agents: [{ agentId: 'Reviewer', name: 'reviewer' }],
+			agents: [
+				{
+					agentId: 'Reviewer',
+					name: 'reviewer',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are the final reviewer in a Coder→Reviewer iterative workflow. Review the open PR. Call report_done() ' +
+							'when satisfied. If changes are needed, provide specific feedback — the Coder will be sent back automatically.',
+					},
+				},
+			],
 			instructions:
 				'Review the pull request for correctness and quality. If changes are needed, send feedback to Code. ' +
 				'When satisfied, call report_done() to complete the workflow.',
@@ -208,7 +231,18 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		{
 			id: RESEARCH_STEP,
 			name: 'Research',
-			agents: [{ agentId: 'Research', name: 'research' }],
+			agents: [
+				{
+					agentId: 'Research',
+					name: 'research',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are conducting research in a Research→Reviewer iterative workflow. Investigate thoroughly, write findings ' +
+							'to markdown docs, commit, and open a PR. The gate will verify the PR is open and the worktree is clean.',
+					},
+				},
+			],
 			instructions:
 				'Research the topic thoroughly. When done, commit all findings and open a pull request with `gh pr create`. ' +
 				'The research-ready-gate will verify the PR automatically before advancing to Review.',
@@ -216,7 +250,19 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		{
 			id: RESEARCH_REVIEW_STEP,
 			name: 'Review',
-			agents: [{ agentId: 'Reviewer', name: 'reviewer' }],
+			agents: [
+				{
+					agentId: 'Reviewer',
+					name: 'reviewer',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are the reviewer in a Research→Reviewer iterative workflow. Review the research PR for ' +
+							'completeness and accuracy. Call report_done() when satisfied. If more research is needed, ' +
+							'provide specific feedback.',
+					},
+				},
+			],
 			instructions:
 				'Review the research pull request for completeness and quality. If more research is needed, send feedback to Research. ' +
 				'When satisfied, call report_done() to complete the workflow.',
@@ -318,7 +364,18 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 		{
 			id: REVIEW_REVIEW_STEP,
 			name: 'Review',
-			agents: [{ agentId: 'Reviewer', name: 'reviewer' }],
+			agents: [
+				{
+					agentId: 'Reviewer',
+					name: 'reviewer',
+					systemPrompt: {
+						mode: 'expand',
+						value:
+							'You are the sole reviewer in a single-node review workflow. Review the open PR thoroughly. ' +
+							'Call report_done() when satisfied.',
+					},
+				},
+			],
 		},
 	],
 	startNodeId: REVIEW_REVIEW_STEP,

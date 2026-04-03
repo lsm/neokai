@@ -81,6 +81,8 @@ interface PresetDefinition {
 	name: string;
 	description: string;
 	tools: string[];
+	systemPrompt: string;
+	instructions: string;
 }
 
 const PRESET_AGENTS: PresetDefinition[] = [
@@ -89,6 +91,12 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		description:
 			'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
 		tools: CODER_TOOLS,
+		systemPrompt:
+			'You are an expert software engineer. You write clean, well-tested code following the ' +
+			"project's existing conventions. You always commit your work, keep the working tree clean, " +
+			'and open pull requests for review.',
+		instructions:
+			'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.',
 	},
 	{
 		name: 'General',
@@ -96,30 +104,56 @@ const PRESET_AGENTS: PresetDefinition[] = [
 			'Done node agent. Reads gate data from completed workflow stages and produces a ' +
 			'comprehensive human-readable summary of what was accomplished.',
 		tools: DONE_TOOLS,
+		systemPrompt:
+			'You are a summarization agent. You read completed workflow outputs and gate data, then produce ' +
+			'a clear, human-readable summary of what was accomplished.',
+		instructions:
+			'Read all available gate data and workflow outputs. Write a comprehensive summary of the completed work.',
 	},
 	{
 		name: 'Planner',
 		description:
 			'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
 		tools: PLANNER_TOOLS,
+		systemPrompt:
+			'You are a technical project manager. You analyze goals, break them down into clear actionable ' +
+			'tasks, identify dependencies, and produce structured implementation plans.',
+		instructions:
+			'Produce a concrete plan with clear steps. Write the plan to a file and commit it.',
 	},
 	{
 		name: 'Research',
 		description:
 			'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
 		tools: RESEARCH_TOOLS,
+		systemPrompt:
+			'You are a research specialist. You investigate topics thoroughly using web search and code ' +
+			'exploration, synthesize findings clearly, and document results in well-structured markdown files.',
+		instructions:
+			'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.',
 	},
 	{
 		name: 'Reviewer',
 		description:
 			'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
 		tools: REVIEWER_TOOLS,
+		systemPrompt:
+			'You are an expert code reviewer. You review pull requests for correctness, security, performance, ' +
+			'style, and test coverage. You give specific, actionable feedback.',
+		instructions:
+			'Review the open PR thoroughly. If satisfied, call report_done(). If changes are needed, provide ' +
+			'specific feedback and send back for revision.',
 	},
 	{
 		name: 'QA',
 		description:
 			'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
 		tools: QA_TOOLS,
+		systemPrompt:
+			'You are a quality assurance engineer. You verify test coverage, run test suites, check CI status, ' +
+			'and ensure the codebase meets quality standards before release.',
+		instructions:
+			"Run the full test suite. Write result='passed' or result='failed' to the gate with specific details on any failures.",
 	},
 ];
 
@@ -158,6 +192,8 @@ export async function seedPresetAgents(
 			name: preset.name,
 			description: preset.description,
 			tools: preset.tools,
+			systemPrompt: preset.systemPrompt,
+			instructions: preset.instructions,
 		});
 
 		if (result.ok) {

@@ -204,6 +204,16 @@ describe('CODING_WORKFLOW template', () => {
 	});
 });
 
+test('CODING_WORKFLOW nodes define systemPrompt with mode expand', () => {
+	for (const node of CODING_WORKFLOW.nodes) {
+		for (const agent of node.agents) {
+			expect(agent.systemPrompt).toBeDefined();
+			expect(agent.systemPrompt?.mode).toBe('expand');
+			expect(agent.systemPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
+		}
+	}
+});
+
 describe('RESEARCH_WORKFLOW template', () => {
 	test('has two nodes (Research + Review)', () => {
 		expect(RESEARCH_WORKFLOW.nodes).toHaveLength(2);
@@ -302,6 +312,16 @@ describe('RESEARCH_WORKFLOW template', () => {
 			expect(node.instructions).toBeTruthy();
 		}
 	});
+
+	test('RESEARCH_WORKFLOW nodes define systemPrompt with mode expand', () => {
+		for (const node of RESEARCH_WORKFLOW.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt?.mode).toBe('expand');
+				expect(agent.systemPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
+			}
+		}
+	});
 });
 
 describe('REVIEW_ONLY_WORKFLOW template', () => {
@@ -336,6 +356,13 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 	test('template id and spaceId are empty (not space-specific)', () => {
 		expect(REVIEW_ONLY_WORKFLOW.id).toBe('');
 		expect(REVIEW_ONLY_WORKFLOW.spaceId).toBe('');
+	});
+
+	test('REVIEW_ONLY_WORKFLOW node defines systemPrompt with mode expand', () => {
+		const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
+		expect(agent.systemPrompt).toBeDefined();
+		expect(agent.systemPrompt?.mode).toBe('expand');
+		expect(agent.systemPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
 	});
 });
 
