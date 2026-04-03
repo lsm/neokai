@@ -7,8 +7,13 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
-import { closeMobilePanel } from '../helpers/mobile-helpers';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	waitForAssistantResponse,
+	waitForWebSocketConnected,
+} from '../helpers/wait-helpers';
+import { closeMobilePanel, openMobilePanel } from '../helpers/mobile-helpers';
 
 test.describe('Tablet Responsiveness', () => {
 	let sessionId: string | null = null;
@@ -23,6 +28,7 @@ test.describe('Tablet Responsiveness', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+		await waitForWebSocketConnected(page);
 		sessionId = null;
 	});
 
@@ -55,10 +61,13 @@ test.describe('Tablet Responsiveness', () => {
 	});
 
 	test('should create and use session on tablet', async ({ page }) => {
+		// Open the mobile panel to access the New Session button
+		await openMobilePanel(page);
+
 		// Create a session on tablet
 		sessionId = await createSessionViaUI(page);
 
-		// On tablet, close panel if it's covering the chat area
+		// Close panel to see the chat area
 		await closeMobilePanel(page);
 
 		// Type a message to verify input works on tablet
