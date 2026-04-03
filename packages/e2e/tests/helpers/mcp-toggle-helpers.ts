@@ -29,6 +29,11 @@ export async function openToolsModal(page: Page): Promise<void> {
 
 	// Wait for modal to appear
 	await page.locator('h2:has-text("Tools")').waitFor({ state: 'visible', timeout: 5000 });
+
+	// Wait for async MCP server loading to complete. While mcpLoading === true, the
+	// component renders "Loading servers..." instead of the GroupHeader button, so any
+	// helper that anchors on "Project MCP Servers" button would silently find nothing.
+	await page.locator('text=Loading servers...').waitFor({ state: 'hidden', timeout: 10000 });
 }
 
 /**
