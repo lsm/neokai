@@ -350,13 +350,14 @@ function NotificationWithAvatar() {
 				Show avatar notification
 			</button>
 
+			{/* Fixed overlay container - note: multiple visible notifications will stack at sm:items-end */}
 			<div
 				aria-live="assertive"
 				class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
 			>
 				<div class="flex w-full flex-col items-center space-y-4 sm:items-end">
 					<Transition show={show}>
-						<div class="pointer-events-auto flex w-full max-w-md rounded-lg bg-surface-1 shadow-lg border border-surface-border transition-all duration-300 ease-out data-[closed]:opacity-0 data-[closed]:translate-y-2 dark:bg-gray-800">
+						<div class="pointer-events-auto flex w-full max-w-md rounded-lg bg-surface-1 shadow-lg border border-surface-border transition-all duration-300 ease-out data-[closed]:opacity-0 data-[closed]:translate-y-2">
 							<div class="w-0 flex-1 p-4">
 								<div class="flex items-start">
 									<div class="shrink-0 pt-0.5">
@@ -407,13 +408,14 @@ function NotificationWithSplitButtons() {
 				Show split-button notification
 			</button>
 
+			{/* Fixed overlay container - note: multiple visible notifications will stack at sm:items-end */}
 			<div
 				aria-live="assertive"
 				class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
 			>
 				<div class="flex w-full flex-col items-center space-y-4 sm:items-end">
 					<Transition show={show}>
-						<div class="pointer-events-auto flex w-full max-w-md divide-x divide-surface-border rounded-lg bg-surface-1 shadow-lg border border-surface-border transition-all duration-300 ease-out data-[closed]:opacity-0 data-[closed]:translate-y-2 sm:data-[closed]:translate-x-2 dark:bg-gray-800">
+						<div class="pointer-events-auto flex w-full max-w-md divide-x divide-surface-border rounded-lg bg-surface-1 shadow-lg border border-surface-border transition-all duration-300 ease-out data-[closed]:opacity-0 data-[closed]:translate-y-2 sm:data-[closed]:translate-x-2">
 							<div class="flex w-0 flex-1 items-center p-4">
 								<div class="w-full">
 									<p class="text-sm font-medium text-text-primary">Receive notifications</p>
@@ -490,4 +492,4 @@ function NotificationDemo() {
 	);
 }
 
-export { NotificationDemo };
+export { NotificationDemo, NotificationWithAvatar, NotificationWithSplitButtons };
