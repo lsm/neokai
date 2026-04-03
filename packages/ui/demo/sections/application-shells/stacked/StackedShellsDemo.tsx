@@ -8,6 +8,7 @@ import {
 	MenuItem,
 	MenuItems,
 } from '../../../../src/mod.ts';
+import { classNames } from '../../../../src/internal/class-names.ts';
 import { Menu as MenuIcon, X, Bell, Search } from 'lucide-preact';
 
 const user = {
@@ -28,10 +29,6 @@ const userNavigation = [
 	{ name: 'Settings', href: '#' },
 	{ name: 'Sign out', href: '#' },
 ];
-
-function classNames(...classes: (string | boolean | undefined)[]): string {
-	return classes.filter(Boolean).join(' ');
-}
 
 /* -----------------------------------------------
    Demo 1: Stacked nav with bottom border

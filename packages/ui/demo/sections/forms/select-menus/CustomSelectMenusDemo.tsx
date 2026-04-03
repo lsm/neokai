@@ -6,6 +6,7 @@ import {
 	ListboxOptions,
 	Label,
 } from '../../../../src/mod.ts';
+import { classNames } from '../../../../src/internal/class-names.ts';
 import { ChevronDown, Check } from 'lucide-preact';
 
 const people = [
@@ -111,10 +112,6 @@ const publishingOptions = [
 		current: false,
 	},
 ];
-
-function classNames(...classes: (string | boolean | undefined)[]) {
-	return classes.filter(Boolean).join(' ');
-}
 
 export function CustomSelectMenusDemo() {
 	const [selected, setSelected] = useState(people[3]);

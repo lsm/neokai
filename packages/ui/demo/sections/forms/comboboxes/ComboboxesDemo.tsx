@@ -7,6 +7,7 @@ import {
 	ComboboxOptions,
 	Label,
 } from '../../../../src/mod.ts';
+import { classNames } from '../../../../src/internal/class-names.ts';
 import { ChevronDown, User } from 'lucide-preact';
 
 const people = [
@@ -367,8 +368,4 @@ function SecondaryTextCombobox() {
 			</div>
 		</Combobox>
 	);
-}
-
-function classNames(...classes: (string | boolean | undefined | null)[]): string {
-	return classes.filter(Boolean).join(' ');
 }

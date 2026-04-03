@@ -10,6 +10,7 @@ import {
 	Popover,
 	PopoverPanel,
 } from '../../../../src/mod.ts';
+import { classNames } from '../../../../src/internal/class-names.ts';
 import {
 	X,
 	Home,
@@ -31,10 +32,6 @@ const navigation = [
 	{ name: 'Documents', href: '#', icon: FileText, current: false },
 	{ name: 'Reports', href: '#', icon: PieChart, current: false },
 ];
-
-function classNames(...classes: (string | boolean | undefined)[]): string {
-	return classes.filter(Boolean).join(' ');
-}
 
 // Demo 1: Full-width three column layout
 function Demo1() {
