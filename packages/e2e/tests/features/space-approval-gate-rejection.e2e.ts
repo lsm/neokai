@@ -5,7 +5,7 @@
  * - Proceeding to plan-approval-gate (waiting_human state at run start)
  * - Rejecting via GateArtifactsView (View Artifacts → Reject button)
  * - Rejecting directly from the gate popup (without opening artifacts)
- * - Workflow run transitions to needs_attention state on canvas
+ * - Workflow run transitions to blocked state on canvas
  * - Canvas shows "Workflow paused — awaiting approval" banner
  * - Gate shows blocked state (red lock icon)
  * - Space remains usable after rejection (tabs navigate, canvas visible)
@@ -26,7 +26,7 @@
  * Note: The plan-approval-gate is ALWAYS in `waiting_human` state at the start of a run
  * because its condition is `{ type: 'check', field: 'approved' }` and no gate data has
  * been written yet. Rejection sets approved=false → gate becomes `blocked`, and the run
- * transitions to `needs_attention` with failureReason `humanRejected`.
+ * transitions to `blocked` with failureReason `humanRejected`.
  *
  * Timeout conventions:
  *   - 10000ms: state transitions requiring a server round-trip (gate data load, run status)
@@ -140,7 +140,7 @@ async function rejectViaPopup(page: Page): Promise<void> {
 	// Click Reject in the popup.
 	await page.locator('button:has-text("Reject")').first().click();
 
-	// Wait for the server round-trip: run transitions to needs_attention + gate becomes blocked.
+	// Wait for the server round-trip: run transitions to blocked + gate becomes blocked.
 	await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
 }
 
@@ -172,7 +172,7 @@ test.describe('Approval Gate Rejection', () => {
 
 	// ─── Test 1: Reject via GateArtifactsView closes overlay and transitions run ──
 
-	test('rejecting via GateArtifactsView closes overlay and transitions run to needs_attention', async ({
+	test('rejecting via GateArtifactsView closes overlay and transitions run to blocked', async ({
 		page,
 	}) => {
 		await page.goto(`/space/${spaceId}`);
@@ -226,7 +226,7 @@ test.describe('Approval Gate Rejection', () => {
 		// Overlay must NOT have appeared (we never opened it).
 		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 5000 });
 
-		// Canvas banner should indicate needs_attention.
+		// Canvas banner should indicate blocked (humanRejected) state.
 		await expect(page.locator('text=Workflow paused — awaiting approval')).toBeVisible({
 			timeout: 10000,
 		});
@@ -234,7 +234,7 @@ test.describe('Approval Gate Rejection', () => {
 
 	// ─── Test 3: Canvas shows error/attention state after rejection ───────────
 
-	test('canvas shows needs_attention banner and blocked gate after rejection', async ({ page }) => {
+	test('canvas shows blocked banner and blocked gate after rejection', async ({ page }) => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
