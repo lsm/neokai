@@ -613,3 +613,83 @@ describe('validateSql — DISTINCT queries', () => {
 		expect(result.tableRefs).toEqual(['tasks']);
 	});
 });
+
+// ============ CTE scope validation edge cases ============
+
+describe('validateSql — CTE scope interaction edge cases', () => {
+	test('CTE outer SELECT references only CTE alias — tableRefs contains only inner table', () => {
+		// Critical for scope validation: the CTE alias must NOT appear in tableRefs
+		// so that scope validation only checks the inner table (tasks), not the alias.
+		const result = validateSql(
+			'WITH in_scope_data AS (SELECT * FROM tasks WHERE room_id = ?) SELECT * FROM in_scope_data'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+		expect(result.tableRefs).not.toContain('in_scope_data');
+	});
+
+	test('CTE alias with same name as a real table — alias excluded, inner table extracted', () => {
+		// If a CTE is named 'tasks' but its body references 'goals', the alias 'tasks'
+		// should be excluded from tableRefs and only 'goals' should be returned.
+		// This prevents false positives/negatives in scope validation.
+		const result = validateSql(
+			'WITH tasks AS (SELECT * FROM goals WHERE room_id = ?) SELECT * FROM tasks'
+		);
+		expect(result.valid).toBe(true);
+		// Only 'goals' from the CTE body — the alias 'tasks' is excluded
+		expect(result.tableRefs).toEqual(['goals']);
+		expect(result.tableRefs).not.toContain('tasks');
+	});
+
+	test('multiple CTEs where outer SELECT only references CTE aliases — only inner tables extracted', () => {
+		// Outer SELECT references only t1 and t2 (CTE aliases), never real tables directly.
+		// tableRefs should contain only the real tables referenced inside the CTE bodies.
+		const result = validateSql(
+			'WITH t1 AS (SELECT id FROM tasks), t2 AS (SELECT id FROM goals) SELECT t1.id, t2.id FROM t1 JOIN t2 ON 1=1'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toContain('tasks');
+		expect(result.tableRefs).toContain('goals');
+		expect(result.tableRefs).not.toContain('t1');
+		expect(result.tableRefs).not.toContain('t2');
+	});
+
+	test('CTE body referencing another CTE — only original real table in tableRefs', () => {
+		// t1 body → tasks (real); t2 body → t1 (CTE alias, not real).
+		// tableRefs should only contain 'tasks', not 't1' or 't2'.
+		const result = validateSql(
+			'WITH t1 AS (SELECT * FROM tasks), t2 AS (SELECT * FROM t1 WHERE status = ?) SELECT COUNT(*) AS n FROM t2'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+		expect(result.tableRefs).not.toContain('t1');
+		expect(result.tableRefs).not.toContain('t2');
+	});
+
+	test('CTE with parameterized filter in body — tableRefs extracted correctly', () => {
+		const result = validateSql(
+			'WITH filtered AS (SELECT id, title FROM tasks WHERE status = ? AND priority = ?) SELECT * FROM filtered ORDER BY title'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+		expect(result.tableRefs).not.toContain('filtered');
+	});
+
+	test('aggregate query using CTE alias — tableRefs contains only inner table', () => {
+		const result = validateSql(
+			'WITH pending AS (SELECT * FROM tasks WHERE status = ?) SELECT COUNT(*) AS cnt FROM pending'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+		expect(result.tableRefs).not.toContain('pending');
+	});
+
+	test('CTE with GROUP BY in body — tableRefs extracted correctly', () => {
+		const result = validateSql(
+			'WITH counts AS (SELECT room_id, COUNT(*) AS n FROM tasks GROUP BY room_id) SELECT room_id, n FROM counts ORDER BY n DESC'
+		);
+		expect(result.valid).toBe(true);
+		expect(result.tableRefs).toEqual(['tasks']);
+		expect(result.tableRefs).not.toContain('counts');
+	});
+});

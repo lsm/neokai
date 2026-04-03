@@ -1611,4 +1611,168 @@ describe('db-query tools', () => {
 			server.close();
 		});
 	});
+
+	// ── Edge cases: scope-appropriate JOINs, params, aggregates ─────────────────
+
+	describe('scope-appropriate JOINs with parameterized filters', () => {
+		it('tasks JOIN goals in room scope with parameterized WHERE narrows results', async () => {
+			// Seed rooms+goals first, then add tasks without re-seeding rooms
+			seedGoals(db);
+			db.exec(
+				"INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-1', 'room-1', 'Task 1', 'in_progress', 'high', '{\"maxTokens\":100}', 1000)"
+			);
+			db.exec(
+				"INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-2', 'room-1', 'Task 2', 'pending', 'normal', NULL, 2000)"
+			);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			// Both tables are room-scoped; filter by goals status via parameterized query.
+			// Scope filter for room-1 is applied; only goals with status='active' are joined.
+			const result = await handlers.db_query({
+				sql: 'SELECT tasks.id AS task_id, goals.id AS goal_id FROM tasks JOIN goals ON tasks.room_id = goals.room_id WHERE goals.status = ?',
+				params: ['active'],
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// room-1 tasks: task-1, task-2; room-1 goals with status='active': goal-1
+			// cross join: 2 tasks × 1 active goal = 2 rows
+			expect(parsed.rowCount).toBe(2);
+		});
+
+		it('JOIN of two room-scoped tables isolates rows from other rooms', async () => {
+			// Seed rooms+goals first, then add tasks without re-seeding rooms
+			seedGoals(db);
+			db.exec(
+				"INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-1', 'room-1', 'Task 1', 'in_progress', 'high', NULL, 1000)"
+			);
+			db.exec(
+				"INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-3', 'room-2', 'Task 3', 'completed', 'low', NULL, 3000)"
+			);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-2' },
+				db
+			);
+			const result = await handlers.db_query({
+				// Use SELECT * so columns aren't aliased away by the subquery wrapper
+				sql: 'SELECT * FROM tasks JOIN goals ON tasks.room_id = goals.room_id',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// room-2 has 1 task (task-3) and 1 goal (goal-3): 1×1 = 1 row
+			expect(parsed.rowCount).toBe(1);
+			// Both task and goal data from room-2 should appear in the single row
+			// room_id is duplicated by the JOIN, SQLite names the second one 'room_id:1'
+			expect(parsed.rows[0].room_id).toBe('room-2');
+		});
+	});
+
+	describe('aggregate functions with scope isolation', () => {
+		it('SUM aggregate in room scope sees only in-scope rows', async () => {
+			seedTasks(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			// room-1: task-1 created_at=1000, task-2 created_at=2000 → sum=3000
+			// room-2: task-3 created_at=3000 (excluded)
+			const result = await handlers.db_query({
+				sql: 'SELECT SUM(created_at) AS total FROM tasks',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.rows[0].total).toBe(3000);
+		});
+
+		it('GROUP BY status with COUNT in room scope filters out other rooms', async () => {
+			// Insert extra task in room-2 to ensure isolation
+			seedTasks(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			const result = await handlers.db_query({
+				sql: 'SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status ORDER BY cnt DESC',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// room-1: task-1 (in_progress), task-2 (pending) — 2 status groups
+			expect(parsed.rows).toHaveLength(2);
+			const total = parsed.rows.reduce(
+				(sum: number, r: Record<string, unknown>) => sum + (r.cnt as number),
+				0
+			);
+			// Total count across all statuses = 2 (only room-1 tasks)
+			expect(total).toBe(2);
+		});
+
+		it('ORDER BY with parameterized query returns sorted filtered results', async () => {
+			seedTasks(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			const result = await handlers.db_query({
+				sql: 'SELECT id, title FROM tasks WHERE status != ? ORDER BY created_at DESC',
+				params: ['completed'],
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// room-1 tasks: task-1 (in_progress, 1000) and task-2 (pending, 2000), neither is 'completed'
+			expect(parsed.rows).toHaveLength(2);
+			// ORDER BY created_at DESC: task-2 (2000) first, then task-1 (1000)
+			expect(parsed.rows[0].id).toBe('task-2');
+			expect(parsed.rows[1].id).toBe('task-1');
+		});
+
+		it('LIMIT restricts rows after scope filtering in room scope', async () => {
+			seedTasks(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			// room-1 has 2 tasks; LIMIT 1 should return only the first one
+			const result = await handlers.db_query({
+				sql: 'SELECT id FROM tasks ORDER BY created_at ASC LIMIT 1',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.rows).toHaveLength(1);
+			expect(parsed.rows[0].id).toBe('task-1');
+		});
+
+		it('multiple ? params with scope filter combined work correctly', async () => {
+			seedMissionExecutions(db);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+				db
+			);
+			// Query mission_executions (indirect scope via goals) with two parameterized conditions.
+			// Data from seedMissionExecutions:
+			//   exec-1: goal-1 (room-1), execution_number=1, status='completed'
+			//   exec-2: goal-1 (room-1), execution_number=2, status='running'
+			//   exec-3: goal-2 (room-1), execution_number=1, status='completed'
+			// Scope filter: room-1 → exec-1, exec-2, exec-3
+			// WHERE status='completed' AND execution_number >= 1 → exec-1, exec-3
+			const result = await handlers.db_query({
+				sql: 'SELECT id FROM mission_executions WHERE status = ? AND execution_number >= ?',
+				params: ['completed', 1],
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// exec-1 (completed, n=1) and exec-3 (completed, n=1) both match
+			// exec-2 is running (excluded by WHERE)
+			expect(parsed.rows).toHaveLength(2);
+			const ids = parsed.rows.map((r: Record<string, unknown>) => r.id).sort();
+			expect(ids).toEqual(['exec-1', 'exec-3']);
+		});
+	});
 });
