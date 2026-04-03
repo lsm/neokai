@@ -10,6 +10,7 @@ import { MIN_SCALE, MAX_SCALE } from './VisualCanvas';
 
 export const ZOOM_STEP = 0.25;
 export const FIT_PADDING = 40;
+const MAX_FIT_SCALE = 1;
 
 /**
  * Compute a ViewportState that centers and fits all nodes inside the viewport
@@ -48,7 +49,7 @@ export function computeFitToView(
 
 	const scaleX = availableW > 0 ? availableW / nodesW : 1;
 	const scaleY = availableH > 0 ? availableH / nodesH : 1;
-	const scale = Math.min(scaleX, scaleY, MAX_SCALE);
+	const scale = Math.min(scaleX, scaleY, MAX_FIT_SCALE, MAX_SCALE);
 	const clampedScale = Math.max(MIN_SCALE, scale);
 
 	// Center the nodes in the viewport

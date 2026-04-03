@@ -40,13 +40,14 @@ const V2_QA_STEP = 'tpl-v2-qa';
 const V2_DONE_STEP = 'tpl-v2-done';
 
 const PR_READY_BASH_SCRIPT = [
-	'if [ -n "$(git status --porcelain)" ]; then',
-	'  echo "Working tree has uncommitted changes or untracked files" >&2',
+	'# Single atomic call to avoid state changing between checks',
+	'if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
+	'  echo "Failed to retrieve PR info (not authenticated, no PR, or network error)" >&2',
 	'  exit 1',
 	'fi',
-	'# Single atomic call to avoid state changing between checks',
-	'if ! PR_JSON=$(gh pr view --json state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
-	'  echo "Failed to retrieve PR info (not authenticated, no PR, or network error)" >&2',
+	'PR_URL=$(jq -r \'.url\' <<< "$PR_JSON")',
+	'if [ -z "$PR_URL" ] || [ "$PR_URL" = "null" ]; then',
+	'  echo "No PR URL found for current branch" >&2',
 	'  exit 1',
 	'fi',
 	'PR_STATE=$(jq -r \'.state\' <<< "$PR_JSON")',
@@ -66,7 +67,7 @@ const PR_READY_BASH_SCRIPT = [
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
-	'echo \'{"pr_created": true, "worktree_clean": true}\'',
+	'printf \'{"pr_url":"%s"}\\n\' "$PR_URL"',
 ].join('\n');
 
 const V2_PLANNING_PROMPT =
@@ -107,10 +108,8 @@ const REVIEW_REVIEW_STEP = 'tpl-review-review';
  * Coding Workflow
  *
  * Two-node iterative graph: Code ↔ Review (with cycle).
- * - Code → Review: gated by `code-ready-gate` — a bash script verifies that a PR
- *   exists for the current branch and the working tree is clean. The script
- *   outputs `{"pr_created": true, "worktree_clean": true}` on success; gate
- *   fields validate the output.
+ * - Code → Review: gated by `code-ready-gate` — a bash script verifies that an
+ *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
  * - Review → Code: ungated — Reviewer sends back for changes without any gate.
  *   When satisfied, Reviewer calls `report_done()` on the Review node (endNodeId)
  *   which signals workflow completion.
@@ -133,15 +132,15 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 						mode: 'expand',
 						value:
 							'You are working on a coding task in a Coder→Reviewer iterative workflow. Write code, run tests, ' +
-							'commit all changes, and open a PR. The gate will verify the PR is open and the worktree is clean ' +
+							'commit all changes, and open a PR. The gate will verify the PR is open and mergeable ' +
 							'before passing to the Reviewer.',
 					},
 				},
 			],
 			instructions:
 				'Implement the task. When done, create a pull request with `gh pr create` ' +
-				'and ensure all changes are committed (clean working tree). The code-ready-gate ' +
-				'will verify both conditions automatically before advancing to Review.',
+				'and ensure the PR URL is available from `gh pr view`. The code-ready-gate ' +
+				'will verify this automatically before advancing to Review.',
 		},
 		{
 			id: CODING_REVIEW_STEP,
@@ -171,17 +170,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'code-ready-gate',
-			description: 'Coder has opened a PR and cleaned the worktree',
+			description: 'Coder has opened an active, mergeable pull request',
 			fields: [
 				{
-					name: 'pr_created',
-					type: 'boolean',
-					writers: ['*'],
-					check: { op: 'exists' },
-				},
-				{
-					name: 'worktree_clean',
-					type: 'boolean',
+					name: 'pr_url',
+					type: 'string',
 					writers: ['*'],
 					check: { op: 'exists' },
 				},
@@ -241,7 +234,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 						mode: 'expand',
 						value:
 							'You are conducting research in a Research→Reviewer iterative workflow. Investigate thoroughly, write findings ' +
-							'to markdown docs, commit, and open a PR. The gate will verify the PR is open and the worktree is clean.',
+							'to markdown docs, commit, and open a PR. The gate will verify the PR is open and mergeable.',
 					},
 				},
 			],
@@ -278,17 +271,11 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'research-ready-gate',
-			description: 'Research agent has opened a PR and cleaned the worktree',
+			description: 'Research agent has opened an active, mergeable pull request',
 			fields: [
 				{
-					name: 'pr_created',
-					type: 'boolean',
-					writers: ['*'],
-					check: { op: 'exists' },
-				},
-				{
-					name: 'worktree_clean',
-					type: 'boolean',
+					name: 'pr_url',
+					type: 'string',
 					writers: ['*'],
 					check: { op: 'exists' },
 				},
@@ -540,9 +527,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				'Code has been implemented and a pull request has been opened. ' +
 				'resetOnCycle is false: the same PR is updated across fix cycles — coder pushes ' +
 				'new commits to the existing branch rather than opening a new PR each time.',
-			fields: [
-				{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
-			],
+			fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
 			resetOnCycle: false,
 		},
 		{
@@ -764,8 +749,24 @@ export function seedBuiltInWorkflows(
 			instructions: s.instructions,
 		}));
 
-		const startNodeId = nodeIdMap.get(template.startNodeId)!;
-		const endNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId)! : undefined;
+		const startNodeId = nodeIdMap.get(template.startNodeId);
+		if (!startNodeId) {
+			throw new Error(
+				`seedBuiltInWorkflows: template '${template.name}' has invalid startNodeId '${template.startNodeId}'.`
+			);
+		}
+
+		if (!template.endNodeId) {
+			throw new Error(
+				`seedBuiltInWorkflows: template '${template.name}' is missing required endNodeId.`
+			);
+		}
+		const endNodeId = nodeIdMap.get(template.endNodeId);
+		if (!endNodeId) {
+			throw new Error(
+				`seedBuiltInWorkflows: template '${template.name}' has invalid endNodeId '${template.endNodeId}'.`
+			);
+		}
 
 		workflowManager.createWorkflow({
 			spaceId,

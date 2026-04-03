@@ -136,6 +136,7 @@ function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
 				},
 			],
 			startNodeId: 'c1',
+			endNodeId: 'c2',
 		}),
 		makeWorkflow({
 			id: 'tpl-research',
@@ -165,6 +166,7 @@ function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
 				},
 			],
 			startNodeId: 'r1',
+			endNodeId: 'r2',
 		}),
 		makeWorkflow({
 			id: 'tpl-review-only',
@@ -183,6 +185,7 @@ function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
 				},
 			],
 			startNodeId: 'ro1',
+			endNodeId: 'ro1',
 		}),
 		makeWorkflow({
 			id: 'tpl-full-cycle',
@@ -262,6 +265,7 @@ function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
 				},
 			],
 			startNodeId: 'f1',
+			endNodeId: 'f6',
 			channels: Array.from({ length: 9 }, (_, index) => ({
 				from: `n${index}`,
 				to: `n${index + 1}`,

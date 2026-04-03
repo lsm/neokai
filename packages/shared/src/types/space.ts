@@ -945,7 +945,7 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	startNodeId?: string | null;
 	/**
-	 * Updates the workflow end node. Pass `null` to remove the end node constraint.
+	 * Updates the workflow end node. Pass `null` to reset to the last node.
 	 */
 	endNodeId?: string | null;
 	/**

@@ -105,7 +105,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
 			'comprehensive human-readable summary of what was accomplished.',
 		tools: DONE_TOOLS,
 		systemPrompt:
-			'You are a summarization agent. You read completed workflow outputs and gate data, then produce ' +
+			'You are a summarization agent. You read completed task outputs and gate data, then produce ' +
 			'a clear, human-readable summary of what was accomplished.',
 		instructions:
 			'Read all available gate data and workflow outputs. Write a comprehensive summary of the completed work.',

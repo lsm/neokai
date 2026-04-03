@@ -19,6 +19,7 @@ import type {
 	UpdateSpaceWorkflowParams,
 	WorkflowChannel,
 } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 
 // ---------------------------------------------------------------------------
@@ -62,13 +63,31 @@ export class SpaceWorkflowManager {
 	createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
 		const trimmedName = params.name.trim();
 		this.validateName(params.spaceId, trimmedName, null);
-		const nodes = params.nodes ?? [];
+		const nodes = (params.nodes ?? []).map((node) => ({
+			...node,
+			id: node.id ?? generateUUID(),
+		}));
 		this.validateNodes(params.spaceId, nodes);
-		this.validateEndNodeId(params.endNodeId, nodes);
+
+		const fallbackStartNodeId = nodes[0]?.id ?? '';
+		const fallbackEndNodeId = nodes[nodes.length - 1]?.id ?? '';
+		const startNodeId =
+			params.startNodeId == null ? fallbackStartNodeId : params.startNodeId.trim();
+		const endNodeId = params.endNodeId == null ? fallbackEndNodeId : params.endNodeId.trim();
+
+		this.validateStartNodeId(startNodeId, nodes);
+		this.validateEndNodeId(endNodeId, nodes);
+
 		if (params.channels && params.channels.length > 0) {
 			this.validateChannels(params.channels);
 		}
-		return this.repo.createWorkflow({ ...params, name: trimmedName });
+		return this.repo.createWorkflow({
+			...params,
+			name: trimmedName,
+			nodes,
+			startNodeId,
+			endNodeId,
+		});
 	}
 
 	// -------------------------------------------------------------------------
@@ -96,53 +115,48 @@ export class SpaceWorkflowManager {
 			this.validateName(existing.spaceId, trimmedName, id);
 			params = { ...params, name: trimmedName };
 		}
-		if (params.nodes !== undefined) {
-			const inputs: WorkflowNodeInput[] = (params.nodes ?? []).map(
-				(n): WorkflowNodeInput => ({
-					id: n.id,
-					name: n.name,
-					agents: n.agents,
-					instructions: n.instructions,
-				})
-			);
-			this.validateNodes(existing.spaceId, inputs);
-			this.validateEndNodeId(params.endNodeId, inputs);
-		} else if (params.endNodeId !== undefined) {
-			// endNodeId changed but nodes didn't — validate against existing nodes
-			const existingNodes: WorkflowNodeInput[] = (existing.nodes ?? []).map(
-				(n): WorkflowNodeInput => ({
-					id: n.id,
-					name: n.name,
-					agents: n.agents,
-					instructions: n.instructions,
-				})
-			);
-			this.validateEndNodeId(params.endNodeId, existingNodes);
-		}
+		const effectiveNodes: WorkflowNodeInput[] =
+			params.nodes !== undefined
+				? (params.nodes ?? []).map(
+						(n): WorkflowNodeInput => ({
+							id: n.id,
+							name: n.name,
+							agents: n.agents,
+							instructions: n.instructions,
+						})
+					)
+				: existing.nodes.map(
+						(n): WorkflowNodeInput => ({
+							id: n.id,
+							name: n.name,
+							agents: n.agents,
+							instructions: n.instructions,
+						})
+					);
 
-		// Validate endNodeId against the node list.
-		// Use the incoming nodes if provided, otherwise fall back to existing nodes.
-		if (params.endNodeId !== undefined) {
-			const effectiveNodes =
-				params.nodes !== undefined
-					? (params.nodes ?? []).map(
-							(n): WorkflowNodeInput => ({
-								id: n.id,
-								name: n.name,
-								agents: n.agents,
-								instructions: n.instructions,
-							})
-						)
-					: existing.nodes.map(
-							(n): WorkflowNodeInput => ({
-								id: n.id,
-								name: n.name,
-								agents: n.agents,
-								instructions: n.instructions,
-							})
-						);
-			this.validateEndNodeId(params.endNodeId, effectiveNodes);
-		}
+		this.validateNodes(existing.spaceId, effectiveNodes);
+
+		const fallbackStartNodeId = effectiveNodes[0]?.id ?? '';
+		const fallbackEndNodeId = effectiveNodes[effectiveNodes.length - 1]?.id ?? '';
+		const startNodeIdInput =
+			params.startNodeId === undefined ? existing.startNodeId : params.startNodeId;
+		const endNodeIdInput = params.endNodeId === undefined ? existing.endNodeId : params.endNodeId;
+		const resolvedStartNodeId =
+			startNodeIdInput === null
+				? fallbackStartNodeId
+				: startNodeIdInput === undefined
+					? fallbackStartNodeId
+					: startNodeIdInput.trim();
+		const resolvedEndNodeId =
+			endNodeIdInput === null
+				? fallbackEndNodeId
+				: endNodeIdInput === undefined
+					? fallbackEndNodeId
+					: endNodeIdInput.trim();
+
+		this.validateStartNodeId(resolvedStartNodeId, effectiveNodes);
+		this.validateEndNodeId(resolvedEndNodeId, effectiveNodes);
+		params = { ...params, startNodeId: resolvedStartNodeId, endNodeId: resolvedEndNodeId };
 
 		if (params.channels && params.channels.length > 0) {
 			this.validateChannels(params.channels);
@@ -294,13 +308,21 @@ export class SpaceWorkflowManager {
 		}
 	}
 
-	private validateEndNodeId(
-		endNodeId: string | null | undefined,
-		nodes: WorkflowNodeInput[]
-	): void {
-		if (endNodeId === undefined || endNodeId === null) return;
+	private validateStartNodeId(startNodeId: string, nodes: WorkflowNodeInput[]): void {
+		if (!startNodeId.trim()) {
+			throw new WorkflowValidationError('startNodeId must be a non-empty string');
+		}
+		const nodeIds = new Set(nodes.map((n) => n.id));
+		if (!nodeIds.has(startNodeId)) {
+			throw new WorkflowValidationError(
+				`startNodeId "${startNodeId}" does not match any node in this workflow`
+			);
+		}
+	}
+
+	private validateEndNodeId(endNodeId: string, nodes: WorkflowNodeInput[]): void {
 		if (!endNodeId.trim()) {
-			throw new WorkflowValidationError('endNodeId must be a non-empty string or null');
+			throw new WorkflowValidationError('endNodeId must be a non-empty string');
 		}
 		const nodeIds = new Set(nodes.map((n) => n.id));
 		if (!nodeIds.has(endNodeId)) {

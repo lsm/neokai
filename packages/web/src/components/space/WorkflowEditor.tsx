@@ -40,6 +40,10 @@ const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment']
 export interface WorkflowTemplate {
 	label: string;
 	description: string;
+	/** Template start node name. */
+	startStepName?: string;
+	/** Template end node name. */
+	endStepName?: string;
 	/** Legacy shorthand for single-agent linear templates. */
 	stepRoles?: string[]; // agent role names to look up from agent list
 	/** Rich step definitions for multi-agent templates. */
@@ -187,6 +191,9 @@ function extractInstructionText(
 
 /** Convert a persisted workflow into a template picker entry. */
 export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
+	const startNodeName = workflow.nodes.find((node) => node.id === workflow.startNodeId)?.name;
+	const endNodeName = workflow.nodes.find((node) => node.id === workflow.endNodeId)?.name;
+
 	const steps: WorkflowTemplateStep[] = workflow.nodes.map((node) => {
 		if ((node.agents?.length ?? 0) > 1) {
 			return {
@@ -215,6 +222,8 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 	return {
 		label: workflow.name,
 		description: workflow.description ?? '',
+		startStepName: startNodeName,
+		endStepName: endNodeName,
 		steps,
 		channels: (workflow.channels ?? []).map((channel) => ({
 			...channel,
@@ -232,7 +241,9 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
  * Convert daemon-provided built-in template workflows into editor template entries.
  */
 export function getAvailableTemplates(workflows: SpaceWorkflow[]): WorkflowTemplate[] {
-	return workflows.map((workflow) => workflowToTemplate(workflow));
+	return workflows
+		.map((workflow) => workflowToTemplate(workflow))
+		.filter((template) => Boolean(template.startStepName?.trim() && template.endStepName?.trim()));
 }
 
 /**
@@ -499,8 +510,25 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		const newSteps: NodeDraft[] = buildTemplateNodes(template, agents);
 		if (newSteps.length === 0) return;
 
+		const templateStartName = template.startStepName?.trim();
+		const templateEndName = template.endStepName?.trim();
+		if (!templateStartName || !templateEndName) {
+			setError(`Template "${template.label}" is missing required start/end node metadata.`);
+			return;
+		}
+
+		const resolvedStartLocalId =
+			newSteps.find((step) => step.name === templateStartName)?.localId ?? '';
+		const resolvedEndLocalId =
+			newSteps.find((step) => step.name === templateEndName)?.localId ?? '';
+
+		if (!resolvedStartLocalId || !resolvedEndLocalId) {
+			setError(`Template "${template.label}" is missing required start/end node metadata.`);
+			return;
+		}
+
 		setSteps(newSteps);
-		setEndNodeId(undefined);
+		setEndNodeId(resolvedEndLocalId);
 		setTransitions(newSteps.slice(1).map(() => makeDefaultCondition()));
 		setChannels(
 			(template.channels ?? []).map((channel) => ({
@@ -560,6 +588,12 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		try {
 			// Generate IDs for new steps
 			const stepIds = steps.map((s) => s.id ?? generateUUID());
+			const localIdToPersistedId = new Map(
+				steps.map((step, index) => [step.localId, stepIds[index]])
+			);
+			const resolvedEndNodeId = endNodeId
+				? (localIdToPersistedId.get(endNodeId) ?? endNodeId)
+				: stepIds[stepIds.length - 1];
 
 			const builtNodes = steps.map((s, i) => ({
 				id: stepIds[i],
@@ -579,7 +613,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					description: description.trim() || null,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
-					endNodeId: endNodeId ?? stepIds[stepIds.length - 1],
+					endNodeId: resolvedEndNodeId,
 					tags,
 					channels: channels.length > 0 ? channels : [],
 					gates: gates.length > 0 ? gates : [],
@@ -590,7 +624,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					description: description.trim() || undefined,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
-					endNodeId: endNodeId || stepIds[stepIds.length - 1],
+					endNodeId: resolvedEndNodeId,
 					tags,
 					channels: channels.length > 0 ? channels : undefined,
 					gates: gates.length > 0 ? gates : undefined,

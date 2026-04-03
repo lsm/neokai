@@ -962,7 +962,21 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	function applyTemplate(template: WorkflowTemplate) {
 		const templateSteps = buildTemplateNodes(template, agents);
 		if (templateSteps.length === 0) return;
-		const firstLocalId = templateSteps[0].localId;
+		const templateStartName = template.startStepName?.trim();
+		const templateEndName = template.endStepName?.trim();
+		if (!templateStartName || !templateEndName) {
+			setError(`Template "${template.label}" is missing required start/end node metadata.`);
+			return;
+		}
+		const resolvedStartLocalId =
+			templateSteps.find((step) => step.name === templateStartName)?.localId ?? '';
+		const resolvedEndLocalId =
+			templateSteps.find((step) => step.name === templateEndName)?.localId ?? '';
+
+		if (!resolvedStartLocalId || !resolvedEndLocalId) {
+			setError(`Template "${template.label}" is missing required start/end node metadata.`);
+			return;
+		}
 
 		const newNodes: VisualNode[] = templateSteps.map((step) => ({
 			step: {
@@ -1002,7 +1016,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		const positions = autoLayout(
 			layoutSteps,
 			layoutTransitions,
-			firstLocalId,
+			resolvedStartLocalId,
 			template.channels ?? []
 		);
 
@@ -1038,8 +1052,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (template.tags) {
 			setTags([...template.tags]);
 		}
-		setStartStepId(firstLocalId);
-		setEndNodeId(undefined);
+		setStartStepId(resolvedStartLocalId);
+		setEndNodeId(resolvedEndLocalId);
 		setSelectedNodeId(null);
 		setSelectedEdgeId(null);
 		setShowTemplates(false);
@@ -1049,9 +1063,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				nextNodes,
 				newEdges,
 				nextChannels,
-				firstLocalId,
+				resolvedStartLocalId,
 				nextGates,
-				undefined
+				resolvedEndLocalId
 			)
 		);
 		if (!name) setName(template.label);

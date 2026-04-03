@@ -172,6 +172,7 @@ function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
 				{ id: 'c2', name: 'Review', agents: [{ agentId: 'agent-4', name: 'reviewer' }] },
 			],
 			startNodeId: 'c1',
+			endNodeId: 'c2',
 		}),
 		makeWorkflow({
 			id: 'tpl-research',
@@ -181,12 +182,14 @@ function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
 				{ id: 'r2', name: 'Review', agents: [{ agentId: 'agent-4', name: 'reviewer' }] },
 			],
 			startNodeId: 'r1',
+			endNodeId: 'r2',
 		}),
 		makeWorkflow({
 			id: 'tpl-review-only',
 			name: 'Review-Only Workflow',
 			nodes: [{ id: 'ro1', name: 'Review', agents: [{ agentId: 'agent-4', name: 'reviewer' }] }],
 			startNodeId: 'ro1',
+			endNodeId: 'ro1',
 		}),
 		makeWorkflow({
 			id: 'tpl-full-cycle',
@@ -208,6 +211,7 @@ function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
 				{ id: 'f6', name: 'Done', agents: [{ agentId: 'agent-3', name: 'general' }] },
 			],
 			startNodeId: 'f1',
+			endNodeId: 'f6',
 			channels: [
 				{
 					from: 'Planning',
@@ -304,10 +308,8 @@ function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
 				},
 				{
 					id: 'code-pr-gate',
-					description: 'PR created',
-					fields: [
-						{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
-					],
+					description: 'PR URL captured',
+					fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
 					resetOnCycle: false,
 				},
 				{
@@ -1209,7 +1211,7 @@ describe('VisualWorkflowEditor', () => {
 
 			expect(queryByTestId('channel-relation-config-panel')).toBeNull();
 			const firstChannelHitbox = container.querySelector(
-				'[data-channel-edge="true"] path[stroke="transparent"]'
+				'[data-channel-edge="true"][data-channel-gated="true"] path[stroke="transparent"]'
 			) as SVGPathElement | null;
 			expect(firstChannelHitbox).toBeTruthy();
 			fireEvent.click(firstChannelHitbox!);
@@ -1338,20 +1340,15 @@ describe('VisualWorkflowEditor', () => {
 			);
 
 			const firstChannelHitbox = container.querySelector(
-				'[data-channel-edge="true"] path[stroke="transparent"]'
+				'[data-channel-edge="true"][data-channel-gated="true"] path[stroke="transparent"]'
 			) as SVGPathElement | null;
 			expect(firstChannelHitbox).toBeTruthy();
 			fireEvent.click(firstChannelHitbox!);
 
-			const minInput = getByTestId('channel-edge-gate-select-0-count-min') as HTMLInputElement;
-			expect(minInput.value).toBe('3');
-			fireEvent.input(minInput, { target: { value: '2' } });
+			await waitFor(() => expect(getByTestId('channel-edge-edit-gate-0')).toBeTruthy());
+			fireEvent.click(getByTestId('channel-edge-edit-gate-0'));
 
-			await waitFor(() =>
-				expect(
-					(getByTestId('channel-edge-gate-select-0-count-min') as HTMLInputElement).value
-				).toBe('2')
-			);
+			await waitFor(() => expect(getByTestId('gate-editor-panel')).toBeTruthy());
 		});
 
 		it('node side panel lists channel links that open the nested relation view and back returns to node details', () => {
