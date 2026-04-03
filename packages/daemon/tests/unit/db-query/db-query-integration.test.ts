@@ -931,5 +931,69 @@ describe('db-query integration', () => {
 			// room-int-1 has 2 tasks; room-int-2 has 1 — the CTE must be scoped
 			expect(parsed.rows[0].cnt).toBe(2);
 		});
+
+		it('multi-CTE with cross-scope table is rejected even if outer SELECT only uses safe CTE', async () => {
+			// A CTE that references an out-of-scope table must be rejected,
+			// even if the outer SELECT only uses the other (in-scope) CTE alias.
+			// The SQL validator extracts space_tasks from tableRefs regardless of
+			// which CTE aliases appear in the outer SELECT.
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+				db
+			);
+			const result = await handlers.db_query({
+				sql: 'WITH room_cte AS (SELECT * FROM tasks), space_cte AS (SELECT * FROM space_tasks) SELECT * FROM room_cte',
+			});
+
+			expect(result.isError).toBe(true);
+			// space_tasks referenced inside space_cte body — not accessible in room scope
+			expect(parseResult(result).raw).toContain('not accessible in room scope');
+		});
+	});
+
+	// ── HAVING clause and subquery in SELECT list ────────────────────────────────
+
+	describe('HAVING clause and subqueries in SELECT with full schema', () => {
+		it('HAVING clause filters aggregated groups after scope filter is applied', async () => {
+			seedTasks(db);
+			// Add extra tasks to room-int-1 so one status group has cnt > 1
+			db.exec(
+				"INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, created_at) VALUES ('task-int-4', 'room-int-1', 'Integration Task 4', '', 'pending', 4000)"
+			);
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+				db
+			);
+			// room-int-1 tasks after seeding: task-int-1 (pending), task-int-2 (in_progress), task-int-4 (pending)
+			// GROUP BY status: pending=2, in_progress=1
+			// HAVING cnt > 1 should return only the 'pending' group
+			const result = await handlers.db_query({
+				sql: 'SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status HAVING cnt > 1',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.rows).toHaveLength(1);
+			expect(parsed.rows[0].status).toBe('pending');
+			expect(parsed.rows[0].cnt).toBe(2);
+		});
+
+		it('HAVING clause only sees in-scope rows — room-int-2 tasks excluded', async () => {
+			seedTasks(db);
+			// room-int-2 has task-int-3 (pending=1) — but room-int-1 scope filters it out
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+				db
+			);
+			const result = await handlers.db_query({
+				sql: 'SELECT COUNT(*) AS total FROM tasks HAVING total > 0',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// room-int-1 has 2 tasks — HAVING total > 0 is satisfied
+			expect(parsed.rows).toHaveLength(1);
+			expect(parsed.rows[0].total).toBe(2);
+		});
 	});
 });
