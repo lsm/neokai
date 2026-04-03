@@ -20,17 +20,19 @@ async function createSpaceByRpc(
 	workspacePath: string,
 	name: string
 ): Promise<string> {
-	// Pre-creation cleanup: delete any existing space at this path (including archived)
+	// Pre-creation cleanup: delete ALL existing spaces at this path (including archived).
+	// Normalize macOS /private symlink prefix to avoid path mismatch.
 	try {
 		await page.evaluate(async (path) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) return;
+			const norm = (p: string) => p.replace(/^\/private/, '');
 			const spaces = (await hub.request('space.list', { includeArchived: true })) as Array<{
 				id: string;
 				workspacePath: string;
 			}>;
 			for (const space of spaces) {
-				if (space.workspacePath === path) {
+				if (norm(space.workspacePath) === norm(path)) {
 					await hub.request('space.delete', { id: space.id });
 				}
 			}

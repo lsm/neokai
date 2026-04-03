@@ -61,12 +61,14 @@ async function cleanupExistingSpace(page: Page, workspacePath: string): Promise<
 		await page.evaluate(async (path) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) return;
+			// Normalize macOS /private symlink prefix before comparing
+			const norm = (p: string) => p.replace(/^\/private/, '');
 			const spaces = (await hub.request('space.list', { includeArchived: true })) as Array<{
 				id: string;
 				workspacePath: string;
 			}>;
 			for (const space of spaces) {
-				if (space.workspacePath === path) {
+				if (norm(space.workspacePath) === norm(path)) {
 					await hub.request('space.delete', { id: space.id });
 				}
 			}

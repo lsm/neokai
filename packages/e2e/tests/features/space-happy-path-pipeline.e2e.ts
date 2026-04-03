@@ -28,13 +28,16 @@ async function createSpaceWithRun(
 			if (!hub?.request) throw new Error('MessageHub not available');
 
 			const norm = (p: string) => p.replace(/^\/private/, '');
+			// Delete ALL spaces matching this workspace path to prevent UNIQUE constraint failures
 			try {
 				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
 					id: string;
 					workspacePath: string;
 				}>;
-				const existing = list.find((s) => norm(s.workspacePath) === norm(wsPath));
-				if (existing) await hub.request('space.delete', { id: existing.id });
+				const matches = list.filter((s) => norm(s.workspacePath) === norm(wsPath));
+				for (const s of matches) {
+					await hub.request('space.delete', { id: s.id });
+				}
 			} catch {
 				// best-effort cleanup
 			}

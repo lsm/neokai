@@ -27,8 +27,10 @@ export async function createSpace(page: Page, name: string): Promise<string> {
 					id: string;
 					workspacePath: string;
 				}>;
-				const existing = list.find((s) => norm(s.workspacePath) === norm(wsPath));
-				if (existing) await hub.request('space.delete', { id: existing.id });
+				const matches = list.filter((s) => norm(s.workspacePath) === norm(wsPath));
+				for (const s of matches) {
+					await hub.request('space.delete', { id: s.id });
+				}
 			} catch {
 				// Ignore cleanup errors
 			}
