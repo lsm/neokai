@@ -4,7 +4,7 @@
  * Shared mobile-responsive header for TaskView (V1) and TaskViewV2.
  *
  * Layout (always two separate rows):
- * - **Row 1:** Back arrow, task title (flex-1), progress indicator (arc only), gear
+ * - **Row 1:** Back arrow, task title (flex-1), gear
  * - **Row 2:** Tags (status badge, task type, PR link, mission badge)
  *
  * Responsive behavior:
@@ -19,7 +19,6 @@ import type { NeoTask, RoomGoal } from '@neokai/shared';
 import { TASK_STATUS_COLORS } from '../../../lib/task-constants';
 import { navigateToRoom } from '../../../lib/router';
 import { currentRoomTabSignal } from '../../../lib/signals';
-import { CircularProgressIndicator } from '../../ui/CircularProgressIndicator';
 import { TaskHeaderActions } from './TaskHeaderActions';
 
 export interface TaskHeaderProps {
@@ -50,7 +49,7 @@ export function TaskHeader({
 			class="border-b border-dark-700 bg-dark-850 px-3 sm:px-4 py-2.5 sm:py-3 flex-shrink-0"
 			data-testid="task-header"
 		>
-			{/* Row 1: Back, title, progress, gear */}
+			{/* Row 1: Back, title, gear */}
 			<div class="flex items-center gap-2 sm:gap-3">
 				<button
 					class="text-gray-400 hover:text-gray-200 transition-colors text-sm p-1 min-w-[28px] min-h-[28px] sm:min-w-0 sm:min-h-0 sm:p-0 flex items-center justify-center"
@@ -63,17 +62,6 @@ export function TaskHeader({
 				<div class="flex-1 min-w-0">
 					<h2 class="text-base font-semibold text-gray-100 truncate leading-tight">{task.title}</h2>
 				</div>
-
-				{/* Circular progress indicator (arc only, no percentage text) */}
-				{task.progress != null && task.progress > 0 && (
-					<CircularProgressIndicator
-						progress={task.progress}
-						size={28}
-						showPercentage={false}
-						class="flex-shrink-0"
-						title={`Task progress: ${task.progress}%`}
-					/>
-				)}
 
 				<TaskHeaderActions
 					canReactivate={canReactivate}

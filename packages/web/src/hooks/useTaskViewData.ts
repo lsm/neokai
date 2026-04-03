@@ -26,6 +26,9 @@ export interface TaskGroupInfo {
 	submittedForReview: boolean;
 	createdAt: number;
 	completedAt: number | null;
+	/** Session info bundled with group to avoid separate round-trips (may be null if not available) */
+	workerSession?: SessionInfo | null;
+	leaderSession?: SessionInfo | null;
 }
 
 export interface UseTaskViewDataResult {
@@ -148,18 +151,26 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 			};
 
 			let res = await tryFetch();
-			// Retry once after 1s if the first attempt fails (e.g. daemon just restarted)
+			// Retry once after 200ms if the first attempt fails (e.g. daemon just restarted)
 			if (res === null && !cancelled && seq === fetchGroupSeq) {
-				await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+				await new Promise<void>((resolve) => setTimeout(resolve, 200));
 				if (!cancelled && seq === fetchGroupSeq) {
 					res = await tryFetch();
 				}
 			}
 
 			if (res !== null && !cancelled && seq === fetchGroupSeq) {
-				setGroup(res.group);
-				// Fetch session info for worker and leader
-				void fetchSessionInfo(res.group);
+				const grp = res.group;
+				setGroup(grp);
+				// Use session info bundled in group response if available; fall back to separate fetches
+				if (grp?.workerSession !== undefined || grp?.leaderSession !== undefined) {
+					setWorkerSession(grp?.workerSession ?? null);
+					setLeaderSession(grp?.leaderSession ?? null);
+					currentSessionIds.worker = grp?.workerSession?.id ?? '';
+					currentSessionIds.leader = grp?.leaderSession?.id ?? '';
+				} else {
+					void fetchSessionInfo(grp);
+				}
 			}
 		};
 

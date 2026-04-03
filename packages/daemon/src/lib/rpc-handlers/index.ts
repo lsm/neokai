@@ -271,7 +271,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.db,
 		deps.reactiveDb,
 		undefined,
-		roomRuntimeService
+		roomRuntimeService,
+		deps.sessionManager
 	);
 
 	// Goal handlers (after runtime service — task.approve/task.reject need runtimeService)

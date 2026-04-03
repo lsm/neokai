@@ -183,33 +183,11 @@ describe('TaskHeader', () => {
 		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
 	});
 
-	// --- Progress indicator (arc only, no percentage) ---
+	// --- Progress indicator removed from header (shown in task list / info panel instead) ---
 
-	it('renders circular progress when task.progress > 0', () => {
-		const { getByTestId } = render(
-			<TaskHeader {...defaultProps({ task: makeTask({ progress: 65 }) })} />
-		);
-		expect(getByTestId('circular-progress')).toBeTruthy();
-		expect(getByTestId('circular-progress').getAttribute('data-progress')).toBe('65');
-	});
-
-	it('passes showPercentage=false to progress indicator', () => {
-		const { getByTestId } = render(
-			<TaskHeader {...defaultProps({ task: makeTask({ progress: 65 }) })} />
-		);
-		expect(getByTestId('circular-progress').getAttribute('data-show-percentage')).toBe('false');
-	});
-
-	it('does not render circular progress when task.progress is null', () => {
+	it('does not render circular progress indicator in header', () => {
 		const { queryByTestId } = render(
-			<TaskHeader {...defaultProps({ task: makeTask({ progress: undefined }) })} />
-		);
-		expect(queryByTestId('circular-progress')).toBeNull();
-	});
-
-	it('does not render circular progress when task.progress is 0', () => {
-		const { queryByTestId } = render(
-			<TaskHeader {...defaultProps({ task: makeTask({ progress: 0 }) })} />
+			<TaskHeader {...defaultProps({ task: makeTask({ progress: 65 }) })} />
 		);
 		expect(queryByTestId('circular-progress')).toBeNull();
 	});

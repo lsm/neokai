@@ -25,6 +25,7 @@ import type { Database } from '../../storage/database';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
+import type { SessionManager } from '../session-manager';
 import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { resolveTaskId } from '../id-resolution';
@@ -58,7 +59,8 @@ export function setupTaskHandlers(
 	reactiveDb: ReactiveDatabase,
 	taskManagerFactory: TaskManagerFactory = (d, roomId) =>
 		new TaskManager(d.getDatabase(), roomId, reactiveDb, d.getShortIdAllocator()),
-	runtimeService?: RoomRuntimeService
+	runtimeService?: RoomRuntimeService,
+	sessionManager?: SessionManager
 ): void {
 	const makeGroupRepo = () => new SessionGroupRepository(db.getDatabase(), reactiveDb);
 	const makeTaskRepo = () => new TaskRepository(db.getDatabase(), reactiveDb);
@@ -536,7 +538,8 @@ export function setupTaskHandlers(
 		return { success: true };
 	});
 
-	// task.getGroup - Get the active session group (Craft + Lead sessions) for a task
+	// task.getGroup - Get the active session group (Craft + Lead sessions) for a task.
+	// Also fetches worker and leader session info in parallel to avoid 2 additional round-trips.
 	messageHub.onRequest('task.getGroup', async (data) => {
 		const params = data as { roomId: string; taskId: string };
 
@@ -555,6 +558,18 @@ export function setupTaskHandlers(
 			return { group: null };
 		}
 
+		// Fetch worker and leader session info in parallel (best-effort, non-fatal)
+		const [workerSession, leaderSession] = await Promise.all([
+			sessionManager
+				?.getSessionAsync(group.workerSessionId)
+				.then((s) => s?.getSessionData() ?? null)
+				.catch(() => null) ?? Promise.resolve(null),
+			sessionManager
+				?.getSessionAsync(group.leaderSessionId)
+				.then((s) => s?.getSessionData() ?? null)
+				.catch(() => null) ?? Promise.resolve(null),
+		]);
+
 		return {
 			group: {
 				id: group.id,
@@ -567,6 +582,8 @@ export function setupTaskHandlers(
 				approved: group.approved,
 				createdAt: group.createdAt,
 				completedAt: group.completedAt,
+				workerSession,
+				leaderSession,
 			},
 		};
 	});
