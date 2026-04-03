@@ -1,3 +1,5 @@
+import { EllipsisVertical, Pencil } from 'lucide-preact';
+
 export function PageHeadingsDemo() {
 	return (
 		<div class="space-y-12">
@@ -212,6 +214,66 @@ export function PageHeadingsDemo() {
 								</a>
 							</nav>
 						</div>
+					</div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon-only actions</h3>
+				<div class="md:flex md:items-center md:justify-between">
+					<div class="min-w-0 flex-1">
+						<h2 class="text-2xl/7 font-bold text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight dark:text-white">
+							Projects
+						</h2>
+					</div>
+					<div class="mt-4 flex md:mt-0 md:ml-4">
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">Edit</span>
+							<Pencil class="size-5" />
+						</button>
+						<button
+							type="button"
+							class="ml-2 rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">More options</span>
+							<EllipsisVertical class="size-5" />
+						</button>
+					</div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">
+					With icon-only actions and filters
+				</h3>
+				<div class="md:flex md:items-center md:justify-between">
+					<div class="min-w-0 flex-1">
+						<h2 class="text-2xl/7 font-bold text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight dark:text-white">
+							Team Members
+						</h2>
+					</div>
+					<div class="mt-4 flex gap-2 md:mt-0 md:ml-4">
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">Filter</span>
+							<svg viewBox="0 0 20 20" fill="currentColor" class="size-5">
+								<path
+									fill-rule="evenodd"
+									d="M2.628 1.601C5.028 1.206 7.49 1 10 1s4.973.206 7.372.601a.75.75 0 01.628.74v2.288a2.25 2.25 0 01-.659 1.59l-4.682 4.683a2.25 2.25 0 00-.659 1.59v3.037c0 .684-.31 1.33-.844 1.757l-1.937 1.55A.75.75 0 0113.278 18H6.722a.75.75 0 01-.593-.74c-.05-.057-.1-.115-.148-.173a1.06 1.06 0 00-.147-.173l-1.937-1.55A2.75 2.75 0 011.5 13.307V10.72a2.25 2.25 0 00-.659-1.591L.659 4.428A.75.75 0 011.001 3.137v-.537z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</button>
+						<button
+							type="button"
+							class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+						>
+							<span class="sr-only">More options</span>
+							<EllipsisVertical class="size-5" />
+						</button>
 					</div>
 				</div>
 			</div>

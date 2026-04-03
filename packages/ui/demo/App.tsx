@@ -37,6 +37,7 @@ import { FeedsDemo } from './sections/FeedsDemo.tsx';
 import { CalendarsDemo } from './sections/CalendarsDemo.tsx';
 import { DescriptionListsDemo } from './sections/DescriptionListsDemo.tsx';
 import { MultiColumnDemo } from './sections/MultiColumnDemo.tsx';
+import { AlertsDemo } from './sections/feedback/alerts/AlertsDemo.tsx';
 import { AvatarsDemo } from './sections/elements/avatars/AvatarsDemo.tsx';
 import { BadgesDemo } from './sections/elements/badges/BadgesDemo.tsx';
 import { ButtonsDemo } from './sections/elements/buttons/ButtonsDemo.tsx';
@@ -51,11 +52,13 @@ import { ListContainersDemo } from './sections/layout/list-containers/ListContai
 import { MediaObjectsDemo } from './sections/layout/media-objects/MediaObjectsDemo.tsx';
 import { ActionPanelsDemo } from './sections/ActionPanelsDemo.tsx';
 import { CheckboxesDemo } from './sections/CheckboxesDemo.tsx';
-import { InputGroupsDemo } from './sections/InputGroupsDemo.tsx';
-import { RadioGroupsDemo } from './sections/RadioGroupsDemo.tsx';
+import { InputGroupsDemo } from './sections/forms/input-groups/InputGroupsDemo.tsx';
+import { RadioGroupsDemo } from './sections/forms/radio-groups/RadioGroupsDemo.tsx';
 import { SignInFormsDemo } from './sections/SignInFormsDemo.tsx';
 import { TextareasDemo } from './sections/TextareasDemo.tsx';
 import { TogglesDemo } from './sections/TogglesDemo.tsx';
+import { FormLayoutsDemo } from './sections/forms/form-layouts/FormLayoutsDemo.tsx';
+import { SelectMenusDemo } from './sections/forms/select-menus/SelectMenusDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
@@ -329,9 +332,10 @@ export function App() {
 									defaultOpen={[
 										'application-shells',
 										'elements',
+										'feedback',
+										'forms',
 										'headings',
 										'layout',
-										'forms',
 									].includes(category.id)}
 								/>
 							))}
@@ -459,6 +463,10 @@ export function App() {
 					<DemoSection id="empty-states" title="Empty States">
 						<EmptyStatesDemo />
 					</DemoSection>
+					{/* Application UI - Feedback */}
+					<DemoSection id="feedback-alerts" title="Feedback / Alerts">
+						<AlertsDemo />
+					</DemoSection>
 
 					{/* Application UI - Elements */}
 					<DemoSection id="elements-avatars" title="Elements / Avatars">
@@ -503,17 +511,23 @@ export function App() {
 					</DemoSection>
 
 					{/* Application UI - Forms */}
-					<DemoSection id="forms-action-panels" title="Forms / Action Panels">
-						<ActionPanelsDemo />
-					</DemoSection>
-					<DemoSection id="forms-checkboxes" title="Forms / Checkboxes">
-						<CheckboxesDemo />
+					<DemoSection id="forms-form-layouts" title="Forms / Form Layouts">
+						<FormLayoutsDemo />
 					</DemoSection>
 					<DemoSection id="forms-input-groups" title="Forms / Input Groups">
 						<InputGroupsDemo />
 					</DemoSection>
 					<DemoSection id="forms-radio-groups" title="Forms / Radio Groups">
 						<RadioGroupsDemo />
+					</DemoSection>
+					<DemoSection id="forms-select-menus" title="Forms / Select Menus">
+						<SelectMenusDemo />
+					</DemoSection>
+					<DemoSection id="forms-action-panels" title="Forms / Action Panels">
+						<ActionPanelsDemo />
+					</DemoSection>
+					<DemoSection id="forms-checkboxes" title="Forms / Checkboxes">
+						<CheckboxesDemo />
 					</DemoSection>
 					<DemoSection id="forms-sign-in-forms" title="Forms / Sign-in Forms">
 						<SignInFormsDemo />

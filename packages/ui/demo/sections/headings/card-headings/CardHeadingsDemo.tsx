@@ -1,3 +1,5 @@
+import { EllipsisVertical } from 'lucide-preact';
+
 export function CardHeadingsDemo() {
 	return (
 		<div class="space-y-12">
@@ -95,6 +97,25 @@ export function CardHeadingsDemo() {
 							<span class="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 inset-ring inset-ring-green-600/20 dark:bg-green-500/10 dark:text-green-400 dark:inset-ring-green-500/10">
 								Open
 							</span>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With icon-only actions</h3>
+				<div class="border-b border-gray-200 px-4 py-5 sm:px-6 dark:border-white/10">
+					<div class="-mt-2 -ml-4 flex flex-wrap items-center justify-between sm:flex-nowrap">
+						<div class="mt-2 ml-4">
+							<h3 class="text-base font-semibold text-gray-900 dark:text-white">Team Members</h3>
+						</div>
+						<div class="mt-2 ml-4 shrink-0">
+							<button
+								type="button"
+								class="rounded-full bg-white p-2 text-gray-400 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+							>
+								<span class="sr-only">More options</span>
+								<EllipsisVertical class="size-5" />
+							</button>
 						</div>
 					</div>
 				</div>
