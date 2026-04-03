@@ -1201,6 +1201,87 @@ describe('db-query tools', () => {
 			});
 		});
 
+		describe('aggregate query edge cases', () => {
+			it('correlated subquery with aggregate in SELECT list is not misclassified', async () => {
+				seedGoals(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// This is NOT an aggregate query — the COUNT is in a subquery.
+				// It goes through direct WHERE injection to preserve the subquery.
+				const result = await handlers.db_query({
+					sql: 'SELECT id, title, (SELECT COUNT(*) FROM tasks) AS total FROM goals',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1 has goal-1 and goal-2 — should get 2 rows
+				expect(parsed.rowCount).toBe(2);
+			});
+
+			it('aggregate on indirect-scope table (scopeJoin) works', async () => {
+				seedMissionExecutions(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT COUNT(*) AS n FROM mission_executions',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1: goal-1 → exec-1, exec-2; goal-2 → exec-3 = 3 executions
+				expect(parsed.rows[0].n).toBe(3);
+			});
+
+			it('HAVING clause works in scoped aggregate mode', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status HAVING cnt > 1',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1: in_progress=1, pending=1 — neither > 1, so 0 rows
+				expect(parsed.rowCount).toBe(0);
+			});
+
+			it('aggregate with CTE in scoped mode', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: "WITH pending AS (SELECT * FROM tasks WHERE status = 'pending') SELECT COUNT(*) AS n FROM pending",
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1: task-2 is pending
+				expect(parsed.rows[0].n).toBe(1);
+			});
+
+			it('DISTINCT + ORDER BY combined in scoped mode', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT DISTINCT status FROM tasks ORDER BY status',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1: in_progress, pending — ordered alphabetically
+				expect(parsed.rowCount).toBe(2);
+				expect(parsed.rows[0].status).toBe('in_progress');
+				expect(parsed.rows[1].status).toBe('pending');
+			});
+		});
+
 		describe('SQL LIMIT honored in scoped mode', () => {
 			it('respects SQL LIMIT in room scope', async () => {
 				seedTasks(db);

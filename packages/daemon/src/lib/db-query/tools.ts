@@ -339,18 +339,43 @@ function rewriteSelectToStar(sql: string, options?: { skipOutermost?: boolean })
 		}
 	}
 
+	// Post-processing: skip SELECTs inside column-list subqueries.
+	// A SELECT at depth D is a column-list subquery when its position falls
+	// between another SELECT's selectStart and fromStart at a shallower depth.
+	// Rewriting these would change scalar subqueries to potentially return
+	// multiple columns, breaking the query.
+	const nonSubqueryPairs = pairs.filter((pair) => {
+		for (const other of pairs) {
+			if (other === pair) continue;
+			if (
+				other.depth < pair.depth &&
+				pair.selectStart > other.selectStart &&
+				pair.selectStart < other.fromStart
+			) {
+				return false;
+			}
+		}
+		return true;
+	});
+
 	// Filter out outermost SELECTs when skipOutermost is true (for aggregate/DISTINCT queries)
-	const activePairs = skipOutermost ? pairs.filter((p) => p.depth > 0) : pairs;
+	const activePairs = skipOutermost
+		? nonSubqueryPairs.filter((p) => p.depth > 0)
+		: nonSubqueryPairs;
 	if (activePairs.length === 0) return sql;
 
 	// Replace from right to left to preserve positions. Active pairs are in ascending
 	// order by selectStart (outer loop walks left-to-right), so processing
 	// right-to-left ensures earlier positions remain valid after each replacement.
 	let result = sql;
+	let shift = 0;
 	for (let p = activePairs.length - 1; p >= 0; p--) {
 		const { selectStart, fromStart, hasDistinct } = activePairs[p];
+		const adjFrom = fromStart + shift;
+		const oldLen = adjFrom - selectStart;
 		const replacement = hasDistinct ? 'SELECT DISTINCT * ' : 'SELECT * ';
-		result = `${result.slice(0, selectStart)}${replacement}${result.slice(fromStart)}`;
+		result = `${result.slice(0, selectStart)}${replacement}${result.slice(adjFrom)}`;
+		shift += replacement.length - oldLen;
 	}
 
 	return result;
@@ -409,14 +434,26 @@ function isAggregateOrDistinctQuery(sql: string): boolean {
 		if (/^DISTINCT\b/i.test(afterSelect)) return true;
 	}
 
-	// Check for aggregate functions in the outermost SELECT's column list
-	// (between the top-level SELECT and the top-level FROM)
+	// Find the top-level FROM position (used for subquery and aggregate detection)
 	const fromPos = findTopLevelKeyword(sql, 'FROM');
+
+	// Check for subqueries in the column list. These cannot be handled
+	// by the subquery wrapper (rewriteSelectToStar would destroy them),
+	// so they must go through the direct WHERE injection path.
+	if (selectPos !== -1 && fromPos !== -1) {
+		const columnList = sql.slice(selectPos + 6, fromPos);
+		if (/\(\s*SELECT\b/i.test(columnList)) return true;
+	}
+
+	// Check for aggregate functions in the outermost SELECT's column list
+	// (between the top-level SELECT and the top-level FROM), skipping any
+	// parenthesized subqueries to avoid false positives from correlated
+	// subqueries like: SELECT (SELECT COUNT(*) FROM t) AS cnt FROM ...
 	if (selectPos === -1 || fromPos === -1 || fromPos <= selectPos) return false;
 
-	const columnList = sql.slice(selectPos + 6, fromPos).toUpperCase();
+	const aggColumnList = sql.slice(selectPos + 6, fromPos).toUpperCase();
 	const aggFunctions = ['COUNT(', 'SUM(', 'AVG(', 'MIN(', 'MAX(', 'GROUP_CONCAT(', 'TOTAL('];
-	return aggFunctions.some((fn) => columnList.includes(fn));
+	return aggFunctions.some((fn) => aggColumnList.includes(fn));
 }
 
 /**
@@ -553,6 +590,7 @@ function rewriteScopedQuery(
 
 	// Aggregate/DISTINCT queries: inject scope filter directly into the query.
 	// Rewriting SELECT to * would destroy aggregate/DISTINCT semantics.
+	// ORDER BY is preserved naturally — injectWhereClause inserts before it.
 	if (isAggregateOrDistinctQuery(strippedSql)) {
 		// Rewrite inner SELECTs (CTE bodies, subqueries) to * so scope columns
 		// flow through, but skip the outermost SELECT which contains the aggregate.
