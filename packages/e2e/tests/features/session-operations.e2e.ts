@@ -2,9 +2,10 @@ import { test, expect } from '../../fixtures';
 import {
 	cleanupTestSession,
 	createSessionViaUI,
-	waitForMessageProcessed,
 	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
+
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 /**
  * Session Export E2E Tests
@@ -49,20 +50,22 @@ test.describe('Session Export', () => {
 		await expect(page.locator('text=Export Chat')).toBeVisible();
 	});
 
-	// Skip LLM-dependent tests - these require LLM responses which are not working in CI
-	// TODO: Re-enable when LLM environment issue is resolved
-	test.skip('should export session to Markdown file', async ({ page }) => {
+	test('should export session to Markdown file', async ({ page }) => {
 		// Create a new session
 		sessionId = await createSessionViaUI(page);
 
 		// Send a test message to have content to export
 		const messageText = 'Hello, this is a test message for export.';
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill(messageText);
-		await page.keyboard.press('Enter');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
+		await messageInput.fill(messageText);
+		await sendButton.click();
 
-		// Wait for message to be sent and response to be received
-		await waitForMessageProcessed(page, messageText);
+		// Wait for assistant response (using pattern from message-flow.e2e.ts)
+		// Both mock and non-mock need to wait for any assistant message
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
+		});
 
 		// Setup download listener
 		const downloadPromise = page.waitForEvent('download');
@@ -77,18 +80,22 @@ test.describe('Session Export', () => {
 		expect(download.suggestedFilename()).toContain('.md');
 	});
 
-	test.skip('should include messages in exported Markdown', async ({ page }) => {
+	test('should include messages in exported Markdown', async ({ page }) => {
 		// Create a new session
 		sessionId = await createSessionViaUI(page);
 
 		// Send a test message with unique content
 		const testMessage = 'Unique export test message ' + Date.now();
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill(testMessage);
-		await page.keyboard.press('Enter');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
+		await messageInput.fill(testMessage);
+		await sendButton.click();
 
-		// Wait for message to be sent and response to be received
-		await waitForMessageProcessed(page, testMessage);
+		// Wait for assistant response (using pattern from message-flow.e2e.ts)
+		// Both mock and non-mock need to wait for any assistant message
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
+		});
 
 		// Setup download listener
 		const downloadPromise = page.waitForEvent('download');
@@ -112,18 +119,22 @@ test.describe('Session Export', () => {
 		expect(content).toContain(testMessage);
 	});
 
-	test.skip('should show success toast after export', async ({ page }) => {
+	test('should show success toast after export', async ({ page }) => {
 		// Create a new session
 		sessionId = await createSessionViaUI(page);
 
 		// Send a test message
 		const messageText = 'Test message for toast';
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill(messageText);
-		await page.keyboard.press('Enter');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
+		await messageInput.fill(messageText);
+		await sendButton.click();
 
-		// Wait for message to be sent and response to be received
-		await waitForMessageProcessed(page, messageText);
+		// Wait for assistant response (using pattern from message-flow.e2e.ts)
+		// Both mock and non-mock need to wait for any assistant message
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
+		});
 
 		// Setup download listener (need to handle download to complete export)
 		const downloadPromise = page.waitForEvent('download');
