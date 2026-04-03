@@ -10,10 +10,11 @@ import { VisualWorkflowEditor } from './visual-editor/VisualWorkflowEditor';
 
 type ConfigureTab = 'agents' | 'workflows' | 'settings';
 
-const CONFIGURE_TABS: Array<{ id: ConfigureTab; label: string; count: (args: {
-	agentCount: number;
-	workflowCount: number;
-}) => number }> = [
+const CONFIGURE_TABS: Array<{
+	id: ConfigureTab;
+	label: string;
+	count: (args: { agentCount: number; workflowCount: number }) => number;
+}> = [
 	{ id: 'agents', label: 'Agents', count: ({ agentCount }) => agentCount },
 	{ id: 'workflows', label: 'Workflows', count: ({ workflowCount }) => workflowCount },
 	{ id: 'settings', label: 'Settings', count: () => 1 },

@@ -114,7 +114,13 @@ function TaskRow({
 	);
 }
 
-function TaskGroup({ group, onSelectTask }: { group: TaskGroupConfig; onSelectTask?: (taskId: string) => void }) {
+function TaskGroup({
+	group,
+	onSelectTask,
+}: {
+	group: TaskGroupConfig;
+	onSelectTask?: (taskId: string) => void;
+}) {
 	const headingToneClass =
 		group.tone === 'review'
 			? 'text-amber-200'
@@ -176,20 +182,19 @@ function EmptyTabState({ tab }: { tab: OverviewTab }) {
 			: tab === 'done'
 				? {
 						title: 'No finished tasks yet.',
-						description: 'Completed, cancelled, and archived tasks will build the execution trail here.',
+						description:
+							'Completed, cancelled, and archived tasks will build the execution trail here.',
 					}
 				: {
 						title: 'No active tasks yet.',
-						description: 'Queued and in-progress work will appear here once the space starts moving.',
+						description:
+							'Queued and in-progress work will appear here once the space starts moving.',
 					};
 
 	return <EmptyState title={copy.title} copy={copy.description} fill />;
 }
 
-function buildGroups(
-	tab: OverviewTab,
-	tasks: typeof spaceStore.tasks.value
-): TaskGroupConfig[] {
+function buildGroups(tab: OverviewTab, tasks: typeof spaceStore.tasks.value): TaskGroupConfig[] {
 	if (tab === 'active') {
 		const inProgress = tasks.filter((task) => task.status === 'in_progress');
 		const queued = tasks.filter((task) => task.status === 'open');
@@ -278,7 +283,9 @@ export function SpaceDashboard({
 		);
 	}
 
-	const activeTasks = tasks.filter((task) => task.status === 'open' || task.status === 'in_progress');
+	const activeTasks = tasks.filter(
+		(task) => task.status === 'open' || task.status === 'in_progress'
+	);
 	const reviewTasks = tasks.filter((task) => task.status === 'blocked');
 	const doneTasks = tasks.filter(
 		(task) => task.status === 'done' || task.status === 'cancelled' || task.status === 'archived'
@@ -324,14 +331,14 @@ export function SpaceDashboard({
 								fill
 							/>
 						) : groups.length === 0 ? (
-								<EmptyTabState tab={activeTab} />
-							) : (
-								<div class="grid gap-4 xl:grid-cols-2">
-									{groups.map((group) => (
-										<TaskGroup key={group.id} group={group} onSelectTask={onSelectTask} />
-									))}
-								</div>
-							)}
+							<EmptyTabState tab={activeTab} />
+						) : (
+							<div class="grid gap-4 xl:grid-cols-2">
+								{groups.map((group) => (
+									<TaskGroup key={group.id} group={group} onSelectTask={onSelectTask} />
+								))}
+							</div>
+						)}
 					</div>
 				</section>
 			</div>

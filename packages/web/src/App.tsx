@@ -132,20 +132,20 @@ export function App() {
 							: spaceId && spaceViewMode === 'configure'
 								? createSpaceConfigurePath(spaceId)
 								: spaceId
-								? createSpacePath(spaceId)
-								: roomTaskId && roomId
-									? createRoomTaskPath(roomId, roomTaskId)
-									: isAgentRoute
-										? createRoomAgentPath(roomId)
-										: roomSessionId && roomId
-											? createRoomSessionPath(roomId, roomSessionId)
-											: roomId
-												? createRoomPath(roomId)
-												: navSection === 'spaces'
-													? '/spaces'
-													: navSection === 'chats'
-														? '/sessions'
-														: '/';
+									? createSpacePath(spaceId)
+									: roomTaskId && roomId
+										? createRoomTaskPath(roomId, roomTaskId)
+										: isAgentRoute
+											? createRoomAgentPath(roomId)
+											: roomSessionId && roomId
+												? createRoomSessionPath(roomId, roomSessionId)
+												: roomId
+													? createRoomPath(roomId)
+													: navSection === 'spaces'
+														? '/spaces'
+														: navSection === 'chats'
+															? '/sessions'
+															: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops

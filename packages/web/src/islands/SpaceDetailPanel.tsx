@@ -87,7 +87,9 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	const selectedSessionId = currentSpaceSessionIdSignal.value;
 	const selectedTaskId = currentSpaceTaskIdSignal.value;
-	const selectedTask = selectedTaskId ? (tasks.find((task) => task.id === selectedTaskId) ?? null) : null;
+	const selectedTask = selectedTaskId
+		? (tasks.find((task) => task.id === selectedTaskId) ?? null)
+		: null;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
 	const isOverviewSelected = selectedSessionId === null && selectedTaskId === null;
