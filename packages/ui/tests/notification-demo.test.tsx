@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	NotificationWithAvatar,
 	NotificationWithSplitButtons,
+	SimpleIconNotification,
+	CondensedNotification,
+	NotificationWithActionsBelow,
+	NotificationWithButtonsBelow,
 } from '../demo/sections/NotificationDemo.tsx';
 
 afterEach(() => {
@@ -156,5 +160,144 @@ describe('Notification dismiss behavior', () => {
 
 		// Should be visible again
 		expect(screen.getByText('Receive notifications')).toBeTruthy();
+	});
+});
+
+describe('SimpleIconNotification', () => {
+	it('renders the notification content when component mounts', async () => {
+		render(<SimpleIconNotification />);
+		await act(async () => {});
+
+		// Check that title is visible
+		expect(screen.getByText('Successfully saved!')).toBeTruthy();
+
+		// Check that description is visible
+		expect(screen.getByText('Anyone with a link can now view this file.')).toBeTruthy();
+	});
+
+	it('has a close button', async () => {
+		render(<SimpleIconNotification />);
+		await act(async () => {});
+
+		const closeBtn = screen.getByRole('button', { name: 'Close' });
+		expect(closeBtn).toBeTruthy();
+	});
+
+	it('has aria-live="assertive" on overlay container', async () => {
+		render(<SimpleIconNotification />);
+		await act(async () => {});
+
+		const liveRegion = document.querySelector('[aria-live="assertive"]');
+		expect(liveRegion).toBeTruthy();
+	});
+});
+
+describe('CondensedNotification', () => {
+	it('renders the notification content when component mounts', async () => {
+		render(<CondensedNotification />);
+		await act(async () => {});
+
+		// Check that text is visible
+		expect(screen.getByText('Discussion archived')).toBeTruthy();
+	});
+
+	it('has an Undo button', async () => {
+		render(<CondensedNotification />);
+		await act(async () => {});
+
+		const undoBtn = screen.getByRole('button', { name: 'Undo' });
+		expect(undoBtn).toBeTruthy();
+	});
+
+	it('has a close button', async () => {
+		render(<CondensedNotification />);
+		await act(async () => {});
+
+		const closeBtn = screen.getByRole('button', { name: 'Close' });
+		expect(closeBtn).toBeTruthy();
+	});
+
+	it('has aria-live="assertive" on overlay container', async () => {
+		render(<CondensedNotification />);
+		await act(async () => {});
+
+		const liveRegion = document.querySelector('[aria-live="assertive"]');
+		expect(liveRegion).toBeTruthy();
+	});
+});
+
+describe('NotificationWithActionsBelow', () => {
+	it('renders the notification content when component mounts', async () => {
+		render(<NotificationWithActionsBelow />);
+		await act(async () => {});
+
+		// Check that title is visible
+		expect(screen.getByText('Discussion moved')).toBeTruthy();
+	});
+
+	it('has Undo and Dismiss action buttons', async () => {
+		render(<NotificationWithActionsBelow />);
+		await act(async () => {});
+
+		const undoBtn = screen.getByRole('button', { name: 'Undo' });
+		const dismissBtn = screen.getByRole('button', { name: 'Dismiss' });
+		expect(undoBtn).toBeTruthy();
+		expect(dismissBtn).toBeTruthy();
+	});
+
+	it('has a close button', async () => {
+		render(<NotificationWithActionsBelow />);
+		await act(async () => {});
+
+		const closeBtn = screen.getByRole('button', { name: 'Close' });
+		expect(closeBtn).toBeTruthy();
+	});
+
+	it('has aria-live="assertive" on overlay container', async () => {
+		render(<NotificationWithActionsBelow />);
+		await act(async () => {});
+
+		const liveRegion = document.querySelector('[aria-live="assertive"]');
+		expect(liveRegion).toBeTruthy();
+	});
+});
+
+describe('NotificationWithButtonsBelow', () => {
+	it('renders the notification content when component mounts', async () => {
+		render(<NotificationWithButtonsBelow />);
+		await act(async () => {});
+
+		// Check that name is visible
+		expect(screen.getByText('Emilia Gates')).toBeTruthy();
+
+		// Check that invite text is visible
+		expect(screen.getByText('Sent you an invite to connect.')).toBeTruthy();
+	});
+
+	it('has Accept and Decline buttons', async () => {
+		render(<NotificationWithButtonsBelow />);
+		await act(async () => {});
+
+		const acceptBtn = screen.getByRole('button', { name: 'Accept' });
+		const declineBtn = screen.getByRole('button', { name: 'Decline' });
+		expect(acceptBtn).toBeTruthy();
+		expect(declineBtn).toBeTruthy();
+	});
+
+	it('has avatar image', async () => {
+		render(<NotificationWithButtonsBelow />);
+		await act(async () => {});
+
+		const img = screen.getByRole('img');
+		expect(img).toBeTruthy();
+		expect(img.getAttribute('src')).toContain('images.unsplash.com');
+	});
+
+	it('has aria-live="assertive" on overlay container', async () => {
+		render(<NotificationWithButtonsBelow />);
+		await act(async () => {});
+
+		const liveRegion = document.querySelector('[aria-live="assertive"]');
+		expect(liveRegion).toBeTruthy();
 	});
 });
