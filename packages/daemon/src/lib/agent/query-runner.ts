@@ -355,9 +355,6 @@ export class QueryRunner {
 			// Skip messageQueue.clear() so the user's pending message is preserved for the retry.
 			if (isStartupTimeout && !isRetry && !this.ctx.isCleaningUp()) {
 				logger.warn('Auto-retrying query after startup timeout (1 retry).');
-				await this.displayErrorAsAssistantMessage(
-					'Session startup timed out. Retrying automatically...'
-				);
 				await stateManager.setIdle();
 
 				// Close the current queryObject BEFORE retrying to prevent the
@@ -373,7 +370,10 @@ export class QueryRunner {
 					this.ctx.queryObject = null;
 				}
 
-				return this.runQuery(queryGeneration, true);
+				// Use `return await` so this call's finally{} runs only after the retry
+				// completes. Otherwise finally{} would race the retry and can tear down
+				// shared state (queue/controller/queryObject) while it is still running.
+				return await this.runQuery(queryGeneration, true);
 			}
 
 			// Clear the queue on non-retryable errors so stale messages don't bleed into the next session.

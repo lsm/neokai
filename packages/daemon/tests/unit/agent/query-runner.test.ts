@@ -822,6 +822,27 @@ describe('QueryRunner', () => {
 			expect(setIdleSpy).toHaveBeenCalled();
 		});
 
+		it('should not emit an assistant retry notice for startup-timeout auto-retry', async () => {
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(saveSDKMessageSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					type: 'assistant',
+					message: expect.objectContaining({
+						content: expect.arrayContaining([
+							expect.objectContaining({
+								text: expect.stringContaining('Retrying automatically'),
+							}),
+						]),
+					}),
+				})
+			);
+		});
+
 		it('should NOT pass startupMaxRetries in handleError metadata', async () => {
 			const ctx = createContext();
 			runner = new QueryRunner(ctx);
