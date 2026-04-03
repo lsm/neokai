@@ -26,7 +26,7 @@ export const heroiconToLucide: Record<string, string> = {
 	XCircleIcon: 'XCircle',
 	CheckIcon: 'Check',
 	CheckCircleIcon: 'CheckCircle',
-	CheckBadgeIcon: 'CheckBadge',
+	CheckBadgeIcon: 'BadgeCheck',
 
 	// === Arrows & Navigation ===
 	ArrowRightIcon: 'ArrowRight',
@@ -44,7 +44,7 @@ export const heroiconToLucide: Record<string, string> = {
 	ChevronDownIcon: 'ChevronDown',
 	ChevronLeftIcon: 'ChevronLeft',
 	ChevronRightIcon: 'ChevronRight',
-	ChevronUpDownIcon: 'ChevronUpDown',
+	ChevronUpDownIcon: 'ChevronsUpDown',
 
 	// === Search & Input ===
 	MagnifyingGlassIcon: 'Search',
@@ -60,7 +60,7 @@ export const heroiconToLucide: Record<string, string> = {
 
 	// === Content & Media ===
 	DocumentIcon: 'File',
-	DocumentDuplicateIcon: 'FileCopy',
+	DocumentDuplicateIcon: 'Copy',
 	DocumentPlusIcon: 'FilePlus',
 	PaperClipIcon: 'Paperclip',
 	PhotoIcon: 'Image',
@@ -122,11 +122,11 @@ export const heroiconToLucide: Record<string, string> = {
 	GlobeAmericasIcon: 'Globe',
 	GlobeAltIcon: 'Globe',
 	SignalIcon: 'Signal',
-	FireIcon: 'Fire',
+	FireIcon: 'Flame',
 	LifebuoyIcon: 'LifeBuoy',
 	AcademicCapIcon: 'GraduationCap',
 	BuildingOfficeIcon: 'Building',
-	ToothIcon: 'Tooth',
+	// ToothIcon: 'Tooth', // No equivalent in lucide-preact
 	ArchiveBoxIcon: 'Archive',
 	ViewColumnsIcon: 'Columns3',
 	LinkIcon: 'Link',

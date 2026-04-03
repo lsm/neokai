@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { heroiconToLucide } from '../demo/icon-map.ts';
+import * as lucideIcons from 'lucide-preact';
 
 describe('heroiconToLucide', () => {
 	test('exports a record with string keys and values', () => {
@@ -27,7 +28,7 @@ describe('heroiconToLucide', () => {
 		expect(heroiconToLucide['ChevronDownIcon']).toBe('ChevronDown');
 		expect(heroiconToLucide['ChevronLeftIcon']).toBe('ChevronLeft');
 		expect(heroiconToLucide['ChevronRightIcon']).toBe('ChevronRight');
-		expect(heroiconToLucide['ChevronUpDownIcon']).toBe('ChevronUpDown');
+		expect(heroiconToLucide['ChevronUpDownIcon']).toBe('ChevronsUpDown');
 	});
 
 	test('maps arrow icons', () => {
@@ -72,6 +73,7 @@ describe('heroiconToLucide', () => {
 		expect(heroiconToLucide['QuestionMarkCircleIcon']).toBe('HelpCircle');
 		expect(heroiconToLucide['CheckCircleIcon']).toBe('CheckCircle');
 		expect(heroiconToLucide['XCircleIcon']).toBe('XCircle');
+		expect(heroiconToLucide['CheckBadgeIcon']).toBe('BadgeCheck');
 	});
 
 	test('maps menu and settings icons', () => {
@@ -105,6 +107,7 @@ describe('heroiconToLucide', () => {
 		expect(heroiconToLucide['HandThumbUpIcon']).toBe('ThumbsUp');
 		expect(heroiconToLucide['FlagIcon']).toBe('Flag');
 		expect(heroiconToLucide['StarIcon']).toBe('Star');
+		expect(heroiconToLucide['FireIcon']).toBe('Flame');
 	});
 
 	test('maps lock and security icons', () => {
@@ -173,5 +176,22 @@ describe('heroiconToLucide', () => {
 		for (const icon of coreIcons) {
 			expect(heroiconToLucide).toHaveProperty(icon);
 		}
+	});
+
+	test('all mapped lucide icons exist in lucide-preact', () => {
+		const missingIcons: string[] = [];
+		const availableIconNames = Object.keys(lucideIcons);
+
+		for (const [heroiconName, lucideName] of Object.entries(heroiconToLucide)) {
+			// Check both the base name and the name with Icon suffix
+			const hasBaseName = availableIconNames.includes(lucideName);
+			const hasIconName = availableIconNames.includes(lucideName + 'Icon');
+
+			if (!hasBaseName && !hasIconName) {
+				missingIcons.push(`${heroiconName} -> ${lucideName}`);
+			}
+		}
+
+		expect(missingIcons).toEqual([]);
 	});
 });
