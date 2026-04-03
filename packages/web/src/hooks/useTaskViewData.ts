@@ -26,6 +26,9 @@ export interface TaskGroupInfo {
 	submittedForReview: boolean;
 	createdAt: number;
 	completedAt: number | null;
+	/** Session info bundled with group to avoid separate round-trips (may be null if not available) */
+	workerSession?: SessionInfo | null;
+	leaderSession?: SessionInfo | null;
 }
 
 export interface UseTaskViewDataResult {
@@ -105,34 +108,6 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 		// Track current session IDs for session.updated event subscriptions
 		const currentSessionIds = { worker: '', leader: '' };
 
-		const fetchSessionInfo = async (grp: TaskGroupInfo | null) => {
-			if (!grp) {
-				setWorkerSession(null);
-				setLeaderSession(null);
-				currentSessionIds.worker = '';
-				currentSessionIds.leader = '';
-				return;
-			}
-			try {
-				const [workerRes, leaderRes] = await Promise.all([
-					request<{ session: SessionInfo }>('session.get', {
-						sessionId: grp.workerSessionId,
-					}).catch(() => null),
-					request<{ session: SessionInfo }>('session.get', {
-						sessionId: grp.leaderSessionId,
-					}).catch(() => null),
-				]);
-				if (!cancelled) {
-					setWorkerSession(workerRes?.session ?? null);
-					setLeaderSession(leaderRes?.session ?? null);
-					currentSessionIds.worker = workerRes?.session?.id ?? '';
-					currentSessionIds.leader = leaderRes?.session?.id ?? '';
-				}
-			} catch {
-				// Session fetch failure is non-fatal
-			}
-		};
-
 		const fetchGroup = async () => {
 			const seq = ++fetchGroupSeq;
 
@@ -148,18 +123,23 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 			};
 
 			let res = await tryFetch();
-			// Retry once after 1s if the first attempt fails (e.g. daemon just restarted)
+			// Retry once after 200ms if the first attempt fails (e.g. daemon just restarted)
 			if (res === null && !cancelled && seq === fetchGroupSeq) {
-				await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+				await new Promise<void>((resolve) => setTimeout(resolve, 200));
 				if (!cancelled && seq === fetchGroupSeq) {
 					res = await tryFetch();
 				}
 			}
 
 			if (res !== null && !cancelled && seq === fetchGroupSeq) {
-				setGroup(res.group);
-				// Fetch session info for worker and leader
-				void fetchSessionInfo(res.group);
+				const grp = res.group;
+				setGroup(grp);
+				// Session info is bundled into task.getGroup response by the daemon,
+				// so no extra session.get round-trips are needed.
+				setWorkerSession(grp?.workerSession ?? null);
+				setLeaderSession(grp?.leaderSession ?? null);
+				currentSessionIds.worker = grp?.workerSession?.id ?? '';
+				currentSessionIds.leader = grp?.leaderSession?.id ?? '';
 			}
 		};
 

@@ -2830,7 +2830,7 @@ describe('TaskView — task.getGroup retry on failure', () => {
 		cleanup();
 	});
 
-	it('retries task.getGroup once after 1s if first attempt throws', async () => {
+	it('retries task.getGroup once after 200ms if first attempt throws', async () => {
 		let getGroupCallCount = 0;
 		roomStore.taskStore.applySnapshot([makeTask('task-1', 'review') as unknown as NeoTask]);
 		mockRequest.mockImplementation(async (method) => {
@@ -2849,7 +2849,9 @@ describe('TaskView — task.getGroup retry on failure', () => {
 			await Promise.resolve();
 		});
 
-		// First getGroup call failed — advance the 1s retry delay.
+		// First getGroup call failed — advance past the 200ms retry delay.
+		// Advance by 1000ms so waitFor's internal polling timers (50ms intervals)
+		// also fire enough times for the assertion to be checked.
 		await act(async () => {
 			vi.advanceTimersByTime(1000);
 			await Promise.resolve();

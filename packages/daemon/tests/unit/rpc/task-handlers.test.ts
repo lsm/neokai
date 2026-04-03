@@ -814,3 +814,176 @@ describe('task.sendHumanMessage handler', () => {
 		expect(injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'hello there');
 	});
 });
+
+import type { SessionManager } from '../../../src/lib/session/session-manager';
+
+function createMockSessionManager(sessionData: Record<string, unknown> | null = null): {
+	sessionManager: SessionManager;
+	getSessionAsync: ReturnType<typeof mock>;
+} {
+	const getSessionDataFn = mock(() => sessionData);
+	const agentSession = sessionData ? { getSessionData: getSessionDataFn } : null;
+	const getSessionAsync = mock(async (_sessionId: string) => agentSession);
+	return {
+		sessionManager: { getSessionAsync } as unknown as SessionManager,
+		getSessionAsync,
+	};
+}
+
+describe('task.getGroup', () => {
+	let messageHubData: ReturnType<typeof createMockMessageHub>;
+	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
+	let roomManagerData: ReturnType<typeof createMockRoomManager>;
+
+	beforeEach(() => {
+		messageHubData = createMockMessageHub();
+		daemonHubData = createMockDaemonHub();
+		roomManagerData = createMockRoomManager();
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns { group: null } when no group exists for the task', async () => {
+		const db = createMockDatabase(); // returns null for group row
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager
+		);
+
+		const handler = messageHubData.handlers.get('task.getGroup')!;
+		expect(handler).toBeDefined();
+
+		const result = (await handler({ roomId: 'room-123', taskId: TASK_UUID }, {})) as {
+			group: null;
+		};
+
+		expect(result.group).toBeNull();
+	});
+
+	it('returns group with workerSession and leaderSession when sessionManager is provided and sessions exist', async () => {
+		const mockWorkerData = {
+			id: 'worker-session-123',
+			title: 'Worker Session',
+			status: 'idle',
+			config: { model: 'claude-opus-4-5', provider: 'anthropic' },
+		};
+		const mockLeaderData = {
+			id: 'leader-session-123',
+			title: 'Leader Session',
+			status: 'idle',
+			config: { model: 'claude-opus-4-5', provider: 'anthropic' },
+		};
+
+		// Use separate mocks for worker and leader sessions
+		const getSessionDataWorker = mock(() => mockWorkerData);
+		const getSessionDataLeader = mock(() => mockLeaderData);
+		const workerAgentSession = { getSessionData: getSessionDataWorker };
+		const leaderAgentSession = { getSessionData: getSessionDataLeader };
+
+		const getSessionAsync = mock(async (sessionId: string) => {
+			if (sessionId === 'worker-session-123') return workerAgentSession;
+			if (sessionId === 'leader-session-123') return leaderAgentSession;
+			return null;
+		});
+		const sessionManager = { getSessionAsync } as unknown as SessionManager;
+
+		const db = createMockDatabaseWithGroup('awaiting_leader');
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager,
+			undefined,
+			sessionManager
+		);
+
+		const handler = messageHubData.handlers.get('task.getGroup')!;
+		expect(handler).toBeDefined();
+
+		const result = (await handler({ roomId: 'room-123', taskId: TASK_UUID }, {})) as {
+			group: {
+				id: string;
+				workerSessionId: string;
+				leaderSessionId: string;
+				workerSession: Record<string, unknown> | null;
+				leaderSession: Record<string, unknown> | null;
+			};
+		};
+
+		expect(result.group).not.toBeNull();
+		expect(result.group.id).toBe('group-123');
+		expect(result.group.workerSessionId).toBe('worker-session-123');
+		expect(result.group.leaderSessionId).toBe('leader-session-123');
+		expect(result.group.workerSession).toEqual(mockWorkerData);
+		expect(result.group.leaderSession).toEqual(mockLeaderData);
+	});
+
+	it('returns workerSession: null and leaderSession: null when sessionManager is not provided', async () => {
+		const db = createMockDatabaseWithGroup('awaiting_leader');
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager
+			// no sessionManager
+		);
+
+		const handler = messageHubData.handlers.get('task.getGroup')!;
+		expect(handler).toBeDefined();
+
+		const result = (await handler({ roomId: 'room-123', taskId: TASK_UUID }, {})) as {
+			group: {
+				workerSession: null;
+				leaderSession: null;
+			} | null;
+		};
+
+		expect(result.group).not.toBeNull();
+		expect(result.group!.workerSession).toBeNull();
+		expect(result.group!.leaderSession).toBeNull();
+	});
+
+	it('returns workerSession: null and leaderSession: null when session fetch throws (best-effort)', async () => {
+		const getSessionAsync = mock(async (_sessionId: string) => {
+			throw new Error('Session fetch failed');
+		});
+		const sessionManager = { getSessionAsync } as unknown as SessionManager;
+
+		const db = createMockDatabaseWithGroup('awaiting_leader');
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager,
+			undefined,
+			sessionManager
+		);
+
+		const handler = messageHubData.handlers.get('task.getGroup')!;
+		expect(handler).toBeDefined();
+
+		const result = (await handler({ roomId: 'room-123', taskId: TASK_UUID }, {})) as {
+			group: {
+				workerSession: null;
+				leaderSession: null;
+			} | null;
+		};
+
+		// Should not throw — errors are swallowed as best-effort
+		expect(result.group).not.toBeNull();
+		expect(result.group!.workerSession).toBeNull();
+		expect(result.group!.leaderSession).toBeNull();
+	});
+});
