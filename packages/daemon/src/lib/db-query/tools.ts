@@ -99,6 +99,131 @@ function findTopLevelKeyword(sql: string, keyword: string): number {
 }
 
 /**
+ * Find character ranges of CTE bodies that declare explicit column lists.
+ * SELECTs inside these ranges must NOT be rewritten to * because the
+ * column count must match the declared CTE columns.
+ *
+ * Example:
+ *   WITH t(a, b) AS (SELECT x, y FROM ...) SELECT * FROM t
+ *                    ^^^^^^^^^^^^^^^^^^^^^^^  — this range is excluded
+ *
+ * Returns sorted array of [start, end) half-open ranges (start inclusive, end exclusive).
+ */
+function getCteColumnListRanges(sql: string): Array<[number, number]> {
+	const ranges: Array<[number, number]> = [];
+	const upper = sql.toUpperCase();
+	const len = sql.length;
+
+	// Must start with WITH
+	if (!/^\s*WITH\b/i.test(sql)) return ranges;
+
+	let pos = sql.search(/\bWITH\b/i) + 4;
+
+	// Skip whitespace
+	while (pos < len && /\s/.test(sql[pos])) pos++;
+
+	// Skip optional RECURSIVE
+	if (pos + 8 <= len && upper.slice(pos, pos + 9) === 'RECURSIVE') {
+		pos += 9;
+		while (pos < len && /\s/.test(sql[pos])) pos++;
+	}
+
+	while (pos < len) {
+		// Read CTE name (identifier)
+		const nameStart = pos;
+		while (pos < len && /[\p{L}\p{N}_]/u.test(sql[pos])) pos++;
+		if (pos === nameStart) break;
+
+		// Skip whitespace
+		while (pos < len && /\s/.test(sql[pos])) pos++;
+
+		// Check for optional column list: name(c1, c2) AS (body)
+		let hasColumnList = false;
+		if (pos < len && sql[pos] === '(') {
+			const savedPos = pos;
+			let depth = 1;
+			pos++;
+			while (pos < len && depth > 0) {
+				if (sql[pos] === '(') depth++;
+				else if (sql[pos] === ')') depth--;
+				pos++;
+			}
+			// Skip whitespace after closing paren
+			while (pos < len && /\s/.test(sql[pos])) pos++;
+			// If followed by AS, this was a column list
+			if (pos + 1 < len && upper.slice(pos, pos + 2) === 'AS') {
+				hasColumnList = true;
+			} else {
+				// Not a column list — backtrack
+				pos = savedPos;
+			}
+		}
+
+		// Skip whitespace
+		while (pos < len && /\s/.test(sql[pos])) pos++;
+
+		// Expect AS keyword
+		if (pos + 1 < len && upper.slice(pos, pos + 2) === 'AS') {
+			pos += 2;
+		} else {
+			break;
+		}
+
+		// Skip whitespace
+		while (pos < len && /\s/.test(sql[pos])) pos++;
+
+		// Expect ( for CTE body
+		if (pos < len && sql[pos] === '(') {
+			const bodyStart = pos; // include the opening (
+			let depth = 1;
+			pos++;
+			while (pos < len && depth > 0) {
+				if (sql[pos] === "'") {
+					// Skip string literal, handling '' escaped quotes
+					pos++;
+					while (pos < len) {
+						if (sql[pos] === "'" && pos + 1 < len && sql[pos + 1] === "'") {
+							pos += 2;
+						} else if (sql[pos] === "'") {
+							pos++;
+							break;
+						} else {
+							pos++;
+						}
+					}
+				} else if (sql[pos] === '(') {
+					depth++;
+					pos++;
+				} else if (sql[pos] === ')') {
+					depth--;
+					pos++;
+				} else {
+					pos++;
+				}
+			}
+			const bodyEnd = pos; // after the closing )
+
+			if (hasColumnList) {
+				ranges.push([bodyStart, bodyEnd]);
+			}
+		}
+
+		// Skip whitespace
+		while (pos < len && /\s/.test(sql[pos])) pos++;
+
+		// Check for comma (more CTEs)
+		if (pos < len && sql[pos] === ',') {
+			pos++;
+			while (pos < len && /\s/.test(sql[pos])) pos++;
+		} else {
+			break;
+		}
+	}
+
+	return ranges;
+}
+
+/**
  * Rewrite ALL SELECT column lists to `*` so that all columns
  * (including scope columns needed by the outer filter) are available.
  * This handles both the main SELECT and SELECTs inside CTE bodies,
@@ -111,7 +236,13 @@ function findTopLevelKeyword(sql: string, keyword: string): number {
  * for the right-to-left replacement to be correct.
  */
 function rewriteSelectToStar(sql: string): string {
-	// Collect all SELECT→FROM pairs at any depth (except inside string literals).
+	// Pre-compute ranges of CTE bodies that have explicit column lists.
+	// SELECTs inside these ranges must not be rewritten because the column
+	// count must match the declared CTE columns.
+	const cteRanges = getCteColumnListRanges(sql);
+
+	// Collect all SELECT→FROM pairs at any depth (except inside string literals
+	// and CTE bodies with explicit column lists).
 	// Each pair records selectStart (position of S in SELECT), fromStart
 	// (position of F in FROM), and whether DISTINCT follows SELECT.
 	const pairs: Array<{
@@ -122,6 +253,10 @@ function rewriteSelectToStar(sql: string): string {
 	const upper = sql.toUpperCase();
 	let depth = 0;
 	let inString = false;
+
+	function isInCteRange(pos: number): boolean {
+		return cteRanges.some(([start, end]) => pos >= start && pos < end);
+	}
 
 	for (let i = 0; i < sql.length; i++) {
 		const ch = sql[i];
@@ -194,7 +329,7 @@ function rewriteSelectToStar(sql: string): string {
 						break;
 					}
 				}
-				if (fromStart !== -1) {
+				if (fromStart !== -1 && !isInCteRange(i)) {
 					pairs.push({ selectStart: i, fromStart, hasDistinct });
 				}
 			}
@@ -314,8 +449,9 @@ function rewriteScopedQuery(
 	const combinedWhere = [...scopeFilterSet.keys()].join(' AND ');
 	const scopeParams = [...scopeFilterSet.values()].flat();
 
-	// Strip user's LIMIT
-	const { sql: strippedSql } = stripLimit(sql);
+	// Strip user's LIMIT and honor it alongside the arg-level limit
+	const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
+	const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
 
 	// Rewrite all SELECTs (including CTE bodies) to * for the inner query
 	// so scope columns are available. The outer SELECT also uses * because
@@ -323,9 +459,9 @@ function rewriteScopedQuery(
 	// the subquery wrapper context — only _dbq is a valid table reference.
 	const innerSql = rewriteSelectToStar(strippedSql);
 
-	const wrappedSql = `SELECT * FROM (${innerSql}) AS _dbq WHERE ${combinedWhere} LIMIT ${cappedLimit}`;
+	const wrappedSql = `SELECT * FROM (${innerSql}) AS _dbq WHERE ${combinedWhere} LIMIT ${effectiveLimit}`;
 
-	return { sql: wrappedSql, params: [...userParams, ...scopeParams], cappedLimit };
+	return { sql: wrappedSql, params: [...userParams, ...scopeParams], cappedLimit: effectiveLimit };
 }
 
 /**

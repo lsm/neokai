@@ -984,6 +984,50 @@ describe('db-query tools', () => {
 			});
 		});
 
+		describe('named-column CTEs in scoped mode', () => {
+			it('preserves CTE column list when scope column is included', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'WITH active(id, title, room_id) AS (SELECT id, title, room_id FROM tasks) SELECT * FROM active',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1 has task-1 and task-2
+				expect(parsed.rowCount).toBe(2);
+			});
+
+			it('fails with clear error when CTE omits scope column', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'WITH active(id, title) AS (SELECT id, title FROM tasks) SELECT * FROM active',
+				});
+				expect(result.isError).toBe(true);
+				expect(parseResult(result).raw).toContain('room_id');
+			});
+
+			it('rewrites CTE without column list (backward compat)', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'WITH active AS (SELECT id, title FROM tasks) SELECT * FROM active',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBe(2);
+			});
+		});
+
 		describe('table-less queries in scoped mode', () => {
 			it('SELECT 1 returns result without scope filter', async () => {
 				const handlers = createDbQueryToolHandlers(
@@ -1030,6 +1074,40 @@ describe('db-query tools', () => {
 
 				expect(parsed.isError).toBeFalsy();
 				expect(parsed.rowCount).toBe(2);
+			});
+		});
+
+		describe('SQL LIMIT honored in scoped mode', () => {
+			it('respects SQL LIMIT in room scope', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// room-1 has 2 tasks, SQL LIMIT 1 should return 1
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM tasks LIMIT 1',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBe(1);
+				expect(parsed.truncated).toBe(true);
+			});
+
+			it('uses stricter of arg limit and SQL LIMIT in room scope', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				// SQL has LIMIT 10, arg has limit 1 — should use 1 (stricter)
+				const result = await handlers.db_query({
+					sql: 'SELECT * FROM tasks LIMIT 10',
+					limit: 1,
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				expect(parsed.rowCount).toBe(1);
 			});
 		});
 	});
