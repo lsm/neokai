@@ -558,7 +558,10 @@ export function setupTaskHandlers(
 			return { group: null };
 		}
 
-		// Fetch worker and leader session info in parallel (best-effort, non-fatal)
+		// Fetch worker and leader session info in parallel and bundle with the group response.
+		// This eliminates the 2 extra session.get round-trips the client used to make after
+		// receiving the group. Sessions are almost always in the in-memory cache so this
+		// adds negligible latency. Best-effort: null is returned on any lookup failure.
 		const [workerSession, leaderSession] = await Promise.all([
 			sessionManager
 				?.getSessionAsync(group.workerSessionId)

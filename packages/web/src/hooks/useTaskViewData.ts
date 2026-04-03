@@ -108,34 +108,6 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 		// Track current session IDs for session.updated event subscriptions
 		const currentSessionIds = { worker: '', leader: '' };
 
-		const fetchSessionInfo = async (grp: TaskGroupInfo | null) => {
-			if (!grp) {
-				setWorkerSession(null);
-				setLeaderSession(null);
-				currentSessionIds.worker = '';
-				currentSessionIds.leader = '';
-				return;
-			}
-			try {
-				const [workerRes, leaderRes] = await Promise.all([
-					request<{ session: SessionInfo }>('session.get', {
-						sessionId: grp.workerSessionId,
-					}).catch(() => null),
-					request<{ session: SessionInfo }>('session.get', {
-						sessionId: grp.leaderSessionId,
-					}).catch(() => null),
-				]);
-				if (!cancelled) {
-					setWorkerSession(workerRes?.session ?? null);
-					setLeaderSession(leaderRes?.session ?? null);
-					currentSessionIds.worker = workerRes?.session?.id ?? '';
-					currentSessionIds.leader = leaderRes?.session?.id ?? '';
-				}
-			} catch {
-				// Session fetch failure is non-fatal
-			}
-		};
-
 		const fetchGroup = async () => {
 			const seq = ++fetchGroupSeq;
 
@@ -162,15 +134,12 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 			if (res !== null && !cancelled && seq === fetchGroupSeq) {
 				const grp = res.group;
 				setGroup(grp);
-				// Use session info bundled in group response if available; fall back to separate fetches
-				if (grp?.workerSession !== undefined || grp?.leaderSession !== undefined) {
-					setWorkerSession(grp?.workerSession ?? null);
-					setLeaderSession(grp?.leaderSession ?? null);
-					currentSessionIds.worker = grp?.workerSession?.id ?? '';
-					currentSessionIds.leader = grp?.leaderSession?.id ?? '';
-				} else {
-					void fetchSessionInfo(grp);
-				}
+				// Session info is bundled into task.getGroup response by the daemon,
+				// so no extra session.get round-trips are needed.
+				setWorkerSession(grp?.workerSession ?? null);
+				setLeaderSession(grp?.leaderSession ?? null);
+				currentSessionIds.worker = grp?.workerSession?.id ?? '';
+				currentSessionIds.leader = grp?.leaderSession?.id ?? '';
 			}
 		};
 
