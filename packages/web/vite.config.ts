@@ -83,6 +83,14 @@ export default defineConfig({
 				find: '@neokai/shared',
 				replacement: resolve(__dirname, '../shared/src/mod.ts'),
 			},
+			{
+				find: /^@neokai\/ui\/(.+)$/,
+				replacement: resolve(__dirname, '../ui/src/$1'),
+			},
+			{
+				find: '@neokai/ui',
+				replacement: resolve(__dirname, '../ui/src/mod.ts'),
+			},
 		],
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
 	},

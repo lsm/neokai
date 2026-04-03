@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { Space, SpaceWorkflow } from '@neokai/shared';
+import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 import { SpaceAgentList } from './SpaceAgentList';
@@ -9,77 +10,18 @@ import { VisualWorkflowEditor } from './visual-editor/VisualWorkflowEditor';
 
 type ConfigureTab = 'agents' | 'workflows' | 'settings';
 
-const CONFIGURE_TABS: Array<{
-	id: ConfigureTab;
-	label: string;
-	description: string;
-}> = [
-	{
-		id: 'agents',
-		label: 'Agents',
-		description: 'Define the specialist roles available in this space.',
-	},
-	{
-		id: 'workflows',
-		label: 'Workflows',
-		description: 'Shape the execution graph that fans work out across agents.',
-	},
-	{
-		id: 'settings',
-		label: 'Settings',
-		description: 'Adjust space metadata, export, and lifecycle controls.',
-	},
+const CONFIGURE_TABS: Array<{ id: ConfigureTab; label: string; count: (args: {
+	agentCount: number;
+	workflowCount: number;
+}) => number }> = [
+	{ id: 'agents', label: 'Agents', count: ({ agentCount }) => agentCount },
+	{ id: 'workflows', label: 'Workflows', count: ({ workflowCount }) => workflowCount },
+	{ id: 'settings', label: 'Settings', count: () => 1 },
 ];
 
 interface SpaceConfigurePageProps {
 	space: Space;
 	workflows: SpaceWorkflow[];
-}
-
-function StatPill({
-	label,
-	value,
-}: {
-	label: string;
-	value: string;
-}) {
-	return (
-		<div class="rounded-xl border border-dark-700 bg-dark-900/70 px-3 py-2">
-			<p class="text-[10px] uppercase tracking-[0.18em] text-gray-500">{label}</p>
-			<p class="mt-1 text-sm font-semibold text-gray-100">{value}</p>
-		</div>
-	);
-}
-
-function ConfigureTabButton({
-	id,
-	label,
-	description,
-	active,
-	onClick,
-}: {
-	id: ConfigureTab;
-	label: string;
-	description: string;
-	active: boolean;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			data-testid={`space-configure-tab-${id}`}
-			class={cn(
-				'rounded-2xl border px-4 py-3 text-left transition-colors',
-				active
-					? 'border-blue-500/40 bg-blue-500/10'
-					: 'border-dark-700 bg-dark-900/50 hover:border-dark-600 hover:bg-dark-900'
-			)}
-		>
-			<p class={cn('text-sm font-medium', active ? 'text-blue-50' : 'text-gray-100')}>{label}</p>
-			<p class="mt-1 text-xs leading-5 text-gray-500">{description}</p>
-		</button>
-	);
 }
 
 export function SpaceConfigurePage({ space, workflows }: SpaceConfigurePageProps) {
@@ -94,68 +36,52 @@ export function SpaceConfigurePage({ space, workflows }: SpaceConfigurePageProps
 			: undefined;
 
 	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
-	const workspacePath = space.workspacePath ?? '';
-	const workspaceName = workspacePath
-		? workspacePath.split('/').filter(Boolean).at(-1) ?? workspacePath
-		: 'Not set';
+	const selectedIndex = Math.max(
+		0,
+		CONFIGURE_TABS.findIndex((tab) => tab.id === activeTab)
+	);
 
 	return (
-		<div class="flex h-full flex-col overflow-y-auto p-6">
-			<div class="mx-auto flex w-full max-w-7xl flex-1 min-h-0 flex-col gap-6">
+		<div class="flex h-full flex-col overflow-y-auto p-3 sm:p-4 lg:p-6">
+			<div class="mx-auto flex w-full max-w-7xl min-h-0 flex-1 flex-col gap-3 lg:gap-4">
 				{!showWorkflowEditor && (
-					<section class="rounded-[28px] border border-dark-700 bg-dark-900/90 px-6 py-6">
-						<div class="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-							<div class="min-w-0">
-								<p class="text-[11px] uppercase tracking-[0.22em] text-gray-600">Configure</p>
-								<h1 class="mt-3 text-3xl font-semibold tracking-tight text-gray-100">
-									{space.name} setup
-								</h1>
-								<p class="mt-3 max-w-3xl text-sm leading-6 text-gray-400">
-									Adjust the operator surface behind this space: who can work here, how work
-									fans out, and what controls govern the environment.
-								</p>
-							</div>
-							<div class="grid w-full gap-3 sm:grid-cols-3 xl:w-[32rem]">
-								<StatPill label="Agents" value={String(agents.length)} />
-								<StatPill label="Workflows" value={String(workflows.length)} />
-								<StatPill label="Workspace" value={workspaceName} />
-							</div>
-						</div>
-
-						<div
-							class="mt-6 grid gap-3 lg:grid-cols-3"
+					<TabGroup
+						selectedIndex={selectedIndex}
+						onChange={(index: number) => setActiveTab(CONFIGURE_TABS[index]?.id ?? 'agents')}
+					>
+						<TabList
+							class="flex items-center gap-6 border-b border-dark-700 px-6"
 							data-testid="space-configure-tab-bar"
 						>
 							{CONFIGURE_TABS.map((tab) => (
-								<ConfigureTabButton
+								<Tab
 									key={tab.id}
-									id={tab.id}
-									label={tab.label}
-									description={tab.description}
-									active={activeTab === tab.id}
-									onClick={() => setActiveTab(tab.id)}
-								/>
+									data-testid={`space-configure-tab-${tab.id}`}
+									class={cn(
+										'flex items-center gap-2 border-b-2 px-1 py-3 text-sm font-medium transition-colors',
+										activeTab === tab.id
+											? 'border-blue-400 text-gray-100'
+											: 'border-transparent text-gray-400 hover:text-gray-200'
+									)}
+								>
+									<span>{tab.label}</span>
+									<span class="rounded-full bg-dark-800 px-2 py-0.5 text-xs text-gray-300">
+										{tab.count({
+											agentCount: agents.length,
+											workflowCount: workflows.length,
+										})}
+									</span>
+								</Tab>
 							))}
-						</div>
-					</section>
-				)}
+						</TabList>
 
-				<div class="min-h-0 flex-1 overflow-hidden rounded-[28px] border border-dark-700 bg-dark-950/70">
-					{showWorkflowEditor ? (
-						<VisualWorkflowEditor
-							key={workflowEditId}
-							workflow={editingWorkflow}
-							onSave={() => setWorkflowEditId(null)}
-							onCancel={() => setWorkflowEditId(null)}
-						/>
-					) : (
-						<>
-							{activeTab === 'agents' && (
-								<div class="h-full overflow-y-auto p-6">
+						<TabPanels class="min-h-0 flex-1 overflow-hidden rounded-3xl border border-dark-700 bg-dark-950/70 lg:rounded-[28px]">
+							<TabPanel>
+								<div class="h-full overflow-y-auto p-4 sm:p-5 lg:p-6">
 									<SpaceAgentList />
 								</div>
-							)}
-							{activeTab === 'workflows' && (
+							</TabPanel>
+							<TabPanel>
 								<WorkflowList
 									spaceId={space.id}
 									spaceName={space.name}
@@ -163,11 +89,24 @@ export function SpaceConfigurePage({ space, workflows }: SpaceConfigurePageProps
 									onCreateWorkflow={() => setWorkflowEditId('new')}
 									onEditWorkflow={(id) => setWorkflowEditId(id)}
 								/>
-							)}
-							{activeTab === 'settings' && <SpaceSettings space={space} />}
-						</>
-					)}
-				</div>
+							</TabPanel>
+							<TabPanel>
+								<SpaceSettings space={space} />
+							</TabPanel>
+						</TabPanels>
+					</TabGroup>
+				)}
+
+				{showWorkflowEditor && (
+					<div class="min-h-0 flex-1 overflow-hidden rounded-3xl border border-dark-700 bg-dark-950/70 lg:rounded-[28px]">
+						<VisualWorkflowEditor
+							key={workflowEditId}
+							workflow={editingWorkflow}
+							onSave={() => setWorkflowEditId(null)}
+							onCancel={() => setWorkflowEditId(null)}
+						/>
+					</div>
+				)}
 			</div>
 		</div>
 	);
