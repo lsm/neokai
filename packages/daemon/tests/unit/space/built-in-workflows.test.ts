@@ -830,7 +830,7 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(back!.to).toBe('Research');
 	});
 
-	test('RESEARCH_WORKFLOW seeded correctly — planner + reviewer', async () => {
+	test('RESEARCH_WORKFLOW seeded correctly — research + reviewer', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
 		expect(wf).toBeDefined();
