@@ -11,7 +11,6 @@ import {
 	SpawnNodeAgentSchema,
 	CheckNodeStatusSchema,
 	ReportResultSchema,
-	ReportWorkflowDoneSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
@@ -244,53 +243,18 @@ describe('RequestHumanInputSchema', () => {
 });
 
 // ---------------------------------------------------------------------------
-// report_workflow_done
-// ---------------------------------------------------------------------------
-
-describe('ReportWorkflowDoneSchema', () => {
-	test('accepts empty object (summary is optional)', () => {
-		const result = ReportWorkflowDoneSchema.safeParse({});
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.summary).toBeUndefined();
-		}
-	});
-
-	test('accepts valid input with summary', () => {
-		const result = ReportWorkflowDoneSchema.safeParse({
-			summary: 'All agents completed successfully. PR #42 merged.',
-		});
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.summary).toBe('All agents completed successfully. PR #42 merged.');
-		}
-	});
-
-	test('rejects non-string summary', () => {
-		const result = ReportWorkflowDoneSchema.safeParse({ summary: 123 });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects null summary', () => {
-		const result = ReportWorkflowDoneSchema.safeParse({ summary: null });
-		expect(result.success).toBe(false);
-	});
-});
-
-// ---------------------------------------------------------------------------
 // TASK_AGENT_TOOL_SCHEMAS aggregate
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 6 tool schemas', () => {
+	test('contains all 5 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
 		expect(keys).toContain('spawn_node_agent');
 		expect(keys).toContain('check_node_status');
 		expect(keys).toContain('report_result');
-		expect(keys).toContain('report_workflow_done');
 		expect(keys).toContain('request_human_input');
 		expect(keys).toContain('list_group_members');
-		expect(keys).toHaveLength(6);
+		expect(keys).toHaveLength(5);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {

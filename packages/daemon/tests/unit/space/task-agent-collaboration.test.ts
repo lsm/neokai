@@ -17,11 +17,10 @@
  *
  * 3. Multi-agent node collaboration:
  *    - Multiple agents on the same node can complete independently
- *    - CompletionDetector correctly tracks all-done state
- *    - report_workflow_done only allowed after all agents are terminal
+ *    - Channels are persisted and accessible
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
@@ -35,7 +34,6 @@ import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-work
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
-import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import {
 	createTaskAgentToolHandlers,
@@ -78,35 +76,6 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
 		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
 	).run(agentId, spaceId, name, Date.now(), Date.now());
-}
-
-/**
- * Ensure a node_execution record exists with the given status.
- * If a record with the same (runId, nodeId, agentName) already exists,
- * update its status. Otherwise, create a new record.
- */
-function ensureNodeExec(
-	repo: NodeExecutionRepository,
-	runId: string,
-	nodeId: string,
-	agentName: string,
-	agentId: string | null,
-	status: string
-): void {
-	const existing = repo
-		.listByWorkflowRun(runId)
-		.find((e) => e.workflowNodeId === nodeId && e.agentName === agentName);
-	if (existing) {
-		repo.updateStatus(existing.id, status as import('@neokai/shared').NodeExecutionStatus);
-	} else {
-		repo.createOrIgnore({
-			workflowRunId: runId,
-			workflowNodeId: nodeId,
-			agentName,
-			agentId: agentId ?? null,
-			status: status as import('@neokai/shared').NodeExecutionStatus,
-		});
-	}
 }
 
 function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
@@ -171,29 +140,6 @@ function makeMockSessionFactory(overrides?: {
 		_completionCallbacks: Map<string, () => Promise<void>>;
 		_triggerComplete: (sessionId: string) => Promise<void>;
 	};
-}
-
-// ---------------------------------------------------------------------------
-// Mock DaemonHub helper
-// ---------------------------------------------------------------------------
-
-interface MockDaemonHub {
-	hub: DaemonHub;
-	emittedEvents: Array<{ name: string; payload: Record<string, unknown> }>;
-}
-
-function makeMockDaemonHub(): MockDaemonHub {
-	const emittedEvents: Array<{ name: string; payload: Record<string, unknown> }> = [];
-	const hub = {
-		emit: mock((name: string, payload: Record<string, unknown>) => {
-			emittedEvents.push({ name, payload });
-			return Promise.resolve();
-		}),
-		on: mock(() => () => {}),
-		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
-	return { hub, emittedEvents };
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +223,6 @@ function makeConfig(
 	options?: {
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
 		onSubSessionComplete?: (stepId: string, sessionId: string) => Promise<void>;
-		completionDetector?: CompletionDetector;
 		daemonHub?: DaemonHub;
 	}
 ): TaskAgentToolsConfig {
@@ -294,7 +239,6 @@ function makeConfig(
 		sessionFactory,
 		messageInjector: options?.messageInjector ?? (async () => {}),
 		onSubSessionComplete: options?.onSubSessionComplete ?? (async () => {}),
-		completionDetector: options?.completionDetector,
 		daemonHub: options?.daemonHub,
 	};
 }
@@ -379,247 +323,6 @@ describe('Task Agent — full collaboration flow', () => {
 	afterEach(() => {
 		ctx.db.close();
 		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('single-node workflow: spawn → complete → report_workflow_done succeeds', async () => {
-		const wf = ctx.workflowManager.createWorkflow({
-			spaceId: ctx.spaceId,
-			name: 'Single Node WF',
-			nodes: [{ id: 'code-node', name: 'Code', agentId: ctx.coderAgentId }],
-			transitions: [],
-			startNodeId: 'code-node',
-			rules: [],
-			channels: [],
-		});
-
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
-
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				onSubSessionComplete: async (_stepId) => {
-					// workflowNodeId was removed in M71; use stepTask directly since it's in scope
-					ctx.taskRepo.updateTask(stepTask.id, {
-						status: 'done',
-						completedAt: Date.now(),
-					});
-					// Update node_execution record to 'done' for CompletionDetector.
-					// startWorkflowRun() creates the record with 'pending', so we
-					// must update it here.
-					ensureNodeExec(
-						ctx.nodeExecutionRepo,
-						run.id,
-						wf.nodes[0].id,
-						'Code',
-						ctx.coderAgentId,
-						'done'
-					);
-				},
-				completionDetector: new CompletionDetector(ctx.nodeExecutionRepo),
-			})
-		);
-
-		// 1. Spawn the node agent
-		const spawnResult = await handlers.spawn_node_agent({ step_id: 'code-node' });
-		const spawnParsed = JSON.parse(spawnResult.content[0].text);
-		expect(spawnParsed.success).toBe(true);
-
-		// 2. Trigger completion
-		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(
-			spawnParsed.sessionId
-		);
-
-		// Step task should now be completed
-		const updatedStepTask = ctx.taskRepo.getTask(stepTask.id);
-		expect(updatedStepTask?.status).toBe('done');
-
-		// 3. report_workflow_done should succeed
-		const doneResult = await handlers.report_workflow_done({
-			summary: 'All nodes completed successfully.',
-		});
-		const doneParsed = JSON.parse(doneResult.content[0].text);
-		expect(doneParsed.success).toBe(true);
-
-		// Workflow run should be marked completed
-		const updatedRun = ctx.workflowRunRepo.getRun(run.id);
-		expect(updatedRun?.status).toBe('done');
-
-		// Main task should be closed
-		const finalTask = ctx.taskRepo.getTask(mainTask.id);
-		expect(finalTask?.status).toBe('done');
-	});
-
-	test('multi-node workflow: spawn both agents → both complete → report_workflow_done succeeds', async () => {
-		const node1Id = 'node-code';
-		const node2Id = 'node-review';
-		const wf = ctx.workflowManager.createWorkflow({
-			spaceId: ctx.spaceId,
-			name: 'Multi-Node WF',
-			nodes: [
-				{ id: node1Id, name: 'Code', agentId: ctx.coderAgentId },
-				{ id: node2Id, name: 'Review', agentId: ctx.reviewerAgentId },
-			],
-			transitions: [],
-			startNodeId: node1Id,
-			rules: [],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
-		});
-
-		const { run, mainTask } = await startRun(ctx, wf);
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
-
-		// Manually create a task for node2 (normally done by WorkflowExecutor / lazy activation)
-		// Note: workflowNodeId and customAgentId were removed in M71
-		const reviewTask = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'Review task',
-			description: '',
-			status: 'open',
-			workflowRunId: run.id,
-		});
-
-		const factory = makeMockSessionFactory();
-		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
-
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				onSubSessionComplete: async (_stepId, sessionId) => {
-					// workflowNodeId was removed in M71; find the task by taskAgentSessionId
-					const tasks = ctx.taskRepo.listByWorkflowRun(run.id);
-					const task = tasks.find((t) => t.taskAgentSessionId === sessionId);
-					if (task) {
-						ctx.taskRepo.updateTask(task.id, {
-							status: 'done',
-							completedAt: Date.now(),
-						});
-						// Update existing node_execution record to 'done' for CompletionDetector
-						const nodeExec = wf.nodes.find(
-							(n) => task.title.includes(n.name) || task.title.includes(n.id)
-						);
-						if (nodeExec) {
-							const executions = ctx.nodeExecutionRepo.listByNode(run.id, nodeExec.id);
-							const execution = executions.find(
-								(e) => e.status !== 'done' && e.status !== 'cancelled'
-							);
-							if (execution) {
-								ctx.nodeExecutionRepo.updateStatus(execution.id, 'done');
-							}
-						}
-					}
-				},
-				completionDetector,
-			})
-		);
-
-		// Spawn both agents
-		const spawn1 = await handlers.spawn_node_agent({ step_id: node1Id });
-		const spawn1Parsed = JSON.parse(spawn1.content[0].text);
-		expect(spawn1Parsed.success).toBe(true);
-
-		const spawn2 = await handlers.spawn_node_agent({ step_id: node2Id });
-		const spawn2Parsed = JSON.parse(spawn2.content[0].text);
-		expect(spawn2Parsed.success).toBe(true);
-
-		// Ensure node_execution records exist for both nodes (pending status)
-		// so CompletionDetector sees all nodes and checks their status
-		ensureNodeExec(
-			ctx.nodeExecutionRepo,
-			run.id,
-			node1Id,
-			wf.nodes[0].name,
-			wf.nodes[0].agents[0].agentId,
-			'pending'
-		);
-		ensureNodeExec(
-			ctx.nodeExecutionRepo,
-			run.id,
-			node2Id,
-			wf.nodes[1].name,
-			wf.nodes[1].agents[0].agentId,
-			'pending'
-		);
-
-		// Complete only node1 — report_workflow_done should be blocked
-		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(
-			spawn1Parsed.sessionId
-		);
-
-		const earlyDone = await handlers.report_workflow_done({ summary: 'Too early' });
-		const earlyParsed = JSON.parse(earlyDone.content[0].text);
-		expect(earlyParsed.success).toBe(false);
-		expect(earlyParsed.error).toContain('Not all node agents');
-
-		// Complete node2 — now report_workflow_done should succeed
-		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(
-			spawn2Parsed.sessionId
-		);
-
-		// Both step tasks should be completed
-		// workflowNodeId was removed in M71 — find the first step task (not main task) in the run
-		const runTasks = ctx.taskRepo.listByWorkflowRun(run.id);
-		const stepTasks = runTasks.filter((t) => t.id !== mainTask.id);
-		const reviewTaskUpdated = ctx.taskRepo.getTask(reviewTask.id);
-		expect(stepTasks.every((t) => t.status === 'done')).toBe(true);
-		expect(reviewTaskUpdated?.status).toBe('done');
-
-		const doneFinal = await handlers.report_workflow_done({ summary: 'All done!' });
-		const doneParsed = JSON.parse(doneFinal.content[0].text);
-		expect(doneParsed.success).toBe(true);
-
-		const updatedRun = ctx.workflowRunRepo.getRun(run.id);
-		expect(updatedRun?.status).toBe('done');
-	});
-
-	test('report_workflow_done emits space.task.completed event after full flow', async () => {
-		const wf = ctx.workflowManager.createWorkflow({
-			spaceId: ctx.spaceId,
-			name: 'Event Test WF',
-			nodes: [{ id: 'node-1', name: 'Work', agentId: ctx.coderAgentId }],
-			transitions: [],
-			startNodeId: 'node-1',
-			rules: [],
-			channels: [],
-		});
-
-		const { run, mainTask } = await startRun(ctx, wf);
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
-
-		const factory = makeMockSessionFactory();
-		const { hub, emittedEvents } = makeMockDaemonHub();
-
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				onSubSessionComplete: async (_stepId) => {
-					// workflowNodeId was removed in M71; mark the first active task as done
-					const tasks = ctx.taskRepo
-						.listByWorkflowRun(run.id)
-						.filter((t) => t.status === 'in_progress' || t.status === 'open');
-					if (tasks.length > 0) {
-						ctx.taskRepo.updateTask(tasks[0].id, {
-							status: 'done',
-							completedAt: Date.now(),
-						});
-					}
-				},
-				daemonHub: hub,
-			})
-		);
-
-		const spawn = await handlers.spawn_node_agent({ step_id: 'node-1' });
-		const spawnParsed = JSON.parse(spawn.content[0].text);
-		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(
-			spawnParsed.sessionId
-		);
-
-		await handlers.report_workflow_done({ summary: 'Completed!' });
-
-		const completedEvent = emittedEvents.find((e) => e.name === 'space.task.completed');
-		expect(completedEvent).toBeDefined();
-		expect(completedEvent?.payload.taskId).toBe(mainTask.id);
-		expect(completedEvent?.payload.workflowRunId).toBe(run.id);
-		expect(completedEvent?.payload.status).toBe('done');
-		expect(completedEvent?.payload.summary).toBe('Completed!');
 	});
 
 	test('check_node_status reflects completion after agent finishes', async () => {
@@ -725,66 +428,6 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		expect(updatedTask?.status).toBe('blocked');
 	});
 
-	test('gate-blocked: report_workflow_done blocked while agent is in needs_attention', async () => {
-		const wf = buildHumanGateWorkflow(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
-
-		// Set the step task to done (terminal) with a matching node_execution record
-		// so CompletionDetector considers the workflow complete.
-		const stepTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
-		expect(stepTasks.length).toBeGreaterThan(0);
-		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'done', completedAt: Date.now() });
-
-		// Ensure node_execution record is 'done' — terminal status for CompletionDetector
-		ensureNodeExec(
-			ctx.nodeExecutionRepo,
-			run.id,
-			wf.nodes[0].id,
-			wf.nodes[0].name,
-			wf.nodes[0].agents[0].agentId,
-			'done'
-		);
-
-		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
-		);
-
-		// report_workflow_done should succeed — node execution has terminal status
-		const result = await handlers.report_workflow_done({ summary: 'Should complete' });
-		const parsed = JSON.parse(result.content[0].text);
-		// 'done' is a terminal status — CompletionDetector allows it
-		expect(parsed.success).toBe(true);
-		// Confirm run was marked completed
-		const updatedRun = ctx.workflowRunRepo.getRun(run.id);
-		expect(updatedRun?.status).toBe('done');
-	});
-
-	test('gate-blocked: report_workflow_done blocked while agent is still in_progress', async () => {
-		const wf = buildHumanGateWorkflow(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
-
-		// Set step task to in_progress (not terminal)
-		// workflowNodeId was removed in M71 — filter by tasks that are not the main task
-		const stepTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
-		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'in_progress' });
-
-		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
-		);
-
-		// Task Agent tries to complete before node agent is done — must be blocked
-		const result = await handlers.report_workflow_done({ summary: 'Too early' });
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('Not all node agents have reached a terminal state');
-	});
-
 	test('escalation context is recorded on task error field', async () => {
 		const wf = buildHumanGateWorkflow(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
@@ -819,81 +462,6 @@ describe('Task Agent — multi-agent node collaboration', () => {
 	afterEach(() => {
 		ctx.db.close();
 		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('two agents on same node: both must complete before report_workflow_done', async () => {
-		const nodeId = 'multi-agent-node';
-		const wf = ctx.workflowManager.createWorkflow({
-			spaceId: ctx.spaceId,
-			name: 'Multi-Agent Node WF',
-			nodes: [
-				{
-					id: nodeId,
-					name: 'Parallel Work',
-					agents: [
-						{ agentId: ctx.coderAgentId, name: 'coder-a' },
-						{ agentId: ctx.reviewerAgentId, name: 'reviewer-a' },
-					],
-				},
-			],
-			transitions: [],
-			startNodeId: nodeId,
-			rules: [],
-			channels: [],
-		});
-
-		const { run, mainTask } = await startRun(ctx, wf);
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
-
-		// startRun creates tasks via runtime.startWorkflowRun; expect 2 tasks for multi-agent node
-		// workflowNodeId was removed in M71 — filter all tasks except the main orchestration task
-		const nodeTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
-		expect(nodeTasks).toHaveLength(2);
-
-		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
-		);
-
-		// Spawn both agents (one spawn_node_agent per task)
-		const spawn1 = await handlers.spawn_node_agent({ step_id: nodeId });
-		const spawn1Parsed = JSON.parse(spawn1.content[0].text);
-		expect(spawn1Parsed.success).toBe(true);
-		// Second spawn for same node returns existing session (idempotent)
-		const spawn2 = await handlers.spawn_node_agent({ step_id: nodeId });
-		const spawn2Parsed = JSON.parse(spawn2.content[0].text);
-		expect(spawn2Parsed.success).toBe(true);
-		// Idempotency: second spawn returns the same session (the last-created task)
-		expect(spawn2Parsed.alreadySpawned).toBe(true);
-
-		// Node_execution records are created by startWorkflowRun() with per-agent names.
-
-		// Mark one task completed, one still pending — detector should block
-		ctx.taskRepo.updateTask(nodeTasks[0].id, { status: 'done', completedAt: Date.now() });
-		// Update first agent's node_execution to 'done'
-		const exec1 = ctx.nodeExecutionRepo.listByNode(run.id, nodeId).find((e) => e.status !== 'done');
-		if (exec1) ctx.nodeExecutionRepo.updateStatus(exec1.id, 'done');
-
-		const earlyResult = await handlers.report_workflow_done({ summary: 'Too early' });
-		const earlyParsed = JSON.parse(earlyResult.content[0].text);
-		expect(earlyParsed.success).toBe(false);
-		expect(earlyParsed.error).toContain('Not all node agents');
-
-		// Mark second task completed
-		ctx.taskRepo.updateTask(nodeTasks[1].id, { status: 'done', completedAt: Date.now() });
-		// Update second agent's node_execution to 'done'
-		const exec2 = ctx.nodeExecutionRepo.listByNode(run.id, nodeId).find((e) => e.status !== 'done');
-		if (exec2) ctx.nodeExecutionRepo.updateStatus(exec2.id, 'done');
-
-		const finalResult = await handlers.report_workflow_done({
-			summary: 'All parallel agents done',
-		});
-		const finalParsed = JSON.parse(finalResult.content[0].text);
-		expect(finalParsed.success).toBe(true);
-
-		const updatedRun = ctx.workflowRunRepo.getRun(run.id);
-		expect(updatedRun?.status).toBe('done');
 	});
 
 	test('collaboration workflow with channels: channel map in workflow is persisted and accessible', async () => {

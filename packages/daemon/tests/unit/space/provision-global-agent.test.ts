@@ -697,14 +697,14 @@ describe('createGlobalSpacesMcpServer — MCP instance tool registration', () =>
 });
 
 // ===========================================================================
-// Task 6.2 — space.task.completed / space.task.failed subscription tests
+// Task 6.2 — space.task.done / space.task.failed subscription tests
 // ===========================================================================
 
 /** Build a controllable mock DaemonHub that records subscriptions and allows triggering them. */
 function makeMockDaemonHubForProvision(): {
 	hub: DaemonHub;
 	trigger: (
-		event: 'space.task.completed' | 'space.task.failed',
+		event: 'space.task.done' | 'space.task.failed',
 		payload: Record<string, unknown>
 	) => Promise<void>;
 } {
@@ -727,7 +727,7 @@ function makeMockDaemonHubForProvision(): {
 	} as unknown as DaemonHub;
 
 	async function trigger(
-		event: 'space.task.completed' | 'space.task.failed',
+		event: 'space.task.done' | 'space.task.failed',
 		payload: Record<string, unknown>
 	): Promise<void> {
 		const eventHandlers = handlers.get(event) ?? [];
@@ -739,7 +739,7 @@ function makeMockDaemonHubForProvision(): {
 	return { hub, trigger };
 }
 
-describe('provisionGlobalSpacesAgent — task completion event subscriptions', () => {
+describe('provisionGlobalSpacesAgent — task done/failed event subscriptions', () => {
 	let db: BunDatabase;
 	let dir: string;
 
@@ -760,7 +760,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 		}
 	});
 
-	test('subscribes to space.task.completed and space.task.failed when daemonHub is provided', async () => {
+	test('subscribes to space.task.done and space.task.failed when daemonHub is provided', async () => {
 		const { hub } = makeMockDaemonHubForProvision();
 		const deps = buildDeps(db);
 
@@ -768,7 +768,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 
 		const onMock = hub.on as ReturnType<typeof mock>;
 		const subscribedEvents = onMock.mock.calls.map((call: unknown[]) => call[0] as string);
-		expect(subscribedEvents).toContain('space.task.completed');
+		expect(subscribedEvents).toContain('space.task.done');
 		expect(subscribedEvents).toContain('space.task.failed');
 	});
 
@@ -778,14 +778,14 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 		await expect(provisionGlobalSpacesAgent(deps)).resolves.toBeUndefined();
 	});
 
-	test('injects completed notification into global session when space.task.completed fires', async () => {
+	test('injects completed notification into global session when space.task.done fires', async () => {
 		const sessionFactory = makeMockSessionFactory();
 		const { hub, trigger } = makeMockDaemonHubForProvision();
 		const deps = buildDeps(db, { sessionFactory });
 
 		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub });
 
-		await trigger('space.task.completed', {
+		await trigger('space.task.done', {
 			sessionId: 'global',
 			taskId: 'task-001',
 			spaceId: 'space-001',
@@ -867,7 +867,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 
 		// Should not throw even when injection fails
 		await expect(
-			trigger('space.task.completed', {
+			trigger('space.task.done', {
 				sessionId: 'global',
 				taskId: 'task-004',
 				spaceId: 'space-001',

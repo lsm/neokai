@@ -77,7 +77,6 @@ import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
-import { CompletionDetector } from './completion-detector';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
@@ -631,8 +630,7 @@ export class TaskAgentManager {
 
 			const workflowRunId = workflowRun?.id ?? '';
 
-			// Build shared channel routing and completion detection instances.
-			// Both use the same underlying repositories as the task agent tools.
+			// Build shared channel routing instance.
 			const channelRouter = new ChannelRouter({
 				taskRepo: this.config.taskRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
@@ -643,7 +641,6 @@ export class TaskAgentManager {
 				db: this.config.db.getDatabase(),
 				workspacePath,
 			});
-			const completionDetector = new CompletionDetector(this.config.nodeExecutionRepo);
 
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
@@ -653,6 +650,7 @@ export class TaskAgentManager {
 				workflowManager: this.config.spaceWorkflowManager,
 				taskRepo: this.config.taskRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
+				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				agentManager: this.config.spaceAgentManager,
 				taskManager,
 				sessionFactory: subSessionFactory,
@@ -662,7 +660,6 @@ export class TaskAgentManager {
 					this.handleSubSessionComplete(taskId, stepId, subSessionId),
 				daemonHub: this.config.daemonHub,
 				channelRouter,
-				completionDetector,
 				buildNodeAgentMcpServer: (subSessionId, role, stepTaskId) =>
 					this.buildNodeAgentMcpServerForSession(
 						taskId,
@@ -1529,7 +1526,7 @@ export class TaskAgentManager {
 
 		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
 
-		// Build shared channel routing and completion detection instances for rehydration.
+		// Build shared channel routing instance for rehydration.
 		const rehydrateChannelRouter = new ChannelRouter({
 			taskRepo: this.config.taskRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -1541,7 +1538,6 @@ export class TaskAgentManager {
 			db: this.config.db.getDatabase(),
 			workspacePath: rehydrateWorkspacePath,
 		});
-		const rehydrateCompletionDetector = new CompletionDetector(this.config.nodeExecutionRepo);
 
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,
@@ -1551,6 +1547,7 @@ export class TaskAgentManager {
 			workflowManager: this.config.spaceWorkflowManager,
 			taskRepo: this.config.taskRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
+			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			agentManager: this.config.spaceAgentManager,
 			taskManager,
 			sessionFactory: subSessionFactory,
@@ -1560,7 +1557,6 @@ export class TaskAgentManager {
 				this.handleSubSessionComplete(taskId, stepId, subSessionId),
 			daemonHub: this.config.daemonHub,
 			channelRouter: rehydrateChannelRouter,
-			completionDetector: rehydrateCompletionDetector,
 			buildNodeAgentMcpServer: (subSessionId, role, stepTaskId) =>
 				this.buildNodeAgentMcpServerForSession(
 					taskId,
@@ -1912,6 +1908,7 @@ export class TaskAgentManager {
 			workflowRunId,
 			spaceTaskRepo: this.config.taskRepo,
 			workflowNodeId,
+			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			messageInjector: (targetSessionId, message) =>
 				this.injectSubSessionMessage(targetSessionId, message),
 			taskManager,

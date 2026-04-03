@@ -30,6 +30,7 @@ import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
 import {
 	evaluateGate,
@@ -93,18 +94,24 @@ export interface NodeAgentToolsConfig {
 	 * An empty resolver (no channels) means send_message is unavailable for this session.
 	 */
 	channelResolver: ChannelResolver;
-	/** Workflow run ID — used with spaceTaskRepo to query node completion state. */
+	/** Workflow run ID — used to query node execution state. */
 	workflowRunId: string;
-	/** Space task repository for querying completion state. */
+	/** Space task repository for querying completion state (fallback when nodeExecutionRepo unavailable). */
 	spaceTaskRepo: SpaceTaskRepository;
-	/** Workflow node ID — used to query peer tasks on the same node. */
+	/** Workflow node ID — used to query peer executions on the same node. */
 	workflowNodeId: string;
+	/**
+	 * Node execution repository for report_done, list_peers, and send_message peer resolution.
+	 * When provided, these tools use NodeExecution records instead of SpaceTask records.
+	 * Optional — falls back to SpaceTask-based lookups when absent.
+	 */
+	nodeExecutionRepo?: NodeExecutionRepository;
 	/**
 	 * Injects a message into a peer sub-session as a user turn.
 	 * Used by `send_message` to deliver messages to target sessions.
 	 */
 	messageInjector: (sessionId: string, message: string) => Promise<void>;
-	/** Task manager for validated status transitions. Used by report_done. */
+	/** Task manager for validated status transitions. Used by report_done fallback. */
 	taskManager: SpaceTaskManager;
 	/**
 	 * DaemonHub instance for emitting task update events.
@@ -172,6 +179,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		workflowRunId,
 		spaceTaskRepo,
 		workflowNodeId,
+		nodeExecutionRepo,
 		messageInjector,
 		taskManager,
 		daemonHub,
@@ -186,20 +194,82 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 	return {
 		/**
 		 * List all peers (other group members) with their roles, statuses, session IDs,
-		 * permitted channel connections, and completion state from space_tasks.
+		 * permitted channel connections, and completion state.
 		 *
 		 * Does NOT include self (filtered by `mySessionId`).
 		 * Does NOT include the Task Agent (filtered by role 'task-agent').
 		 *
 		 * Returns permittedTargets: roles this agent can directly send to via send_message.
-		 * Returns completionState per peer: task status, completion summary, and completedAt.
-		 * Returns nodeCompletionState: all tasks on this workflow node with their completion state.
+		 * Returns completionState per peer: execution status, completion summary, and completedAt.
+		 * Returns nodeCompletionState: all executions on this workflow node with their completion state.
+		 *
+		 * Queries NodeExecutionRepository when available; falls back to SpaceTask-based lookup.
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
-			// Load all tasks on this workflow node from the DB
-			const nodeTasks = workflowRunId ? spaceTaskRepo.listByWorkflowRun(workflowRunId) : [];
-
 			const resolver = channelResolver;
+
+			if (nodeExecutionRepo) {
+				// Preferred path: query NodeExecution records for this node
+				const nodeExecs = workflowRunId
+					? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
+					: [];
+
+				// Exclude self (by agentSessionId) and include peers with a session or completed state
+				const peers = nodeExecs
+					.filter(
+						(ne) =>
+							ne.agentSessionId !== mySessionId &&
+							(ne.agentSessionId != null || ne.status === 'done')
+					)
+					.map((ne) => {
+						const execStatus = ne.status;
+						const memberStatus =
+							execStatus === 'done'
+								? ('completed' as const)
+								: execStatus === 'blocked' || execStatus === 'cancelled'
+									? ('failed' as const)
+									: ('active' as const);
+						return {
+							sessionId: ne.agentSessionId ?? null,
+							role: ne.agentName,
+							agentId: ne.agentId ?? null,
+							status: memberStatus,
+							completionState: {
+								agentName: ne.agentName,
+								taskStatus: ne.status,
+								completionSummary: ne.result ?? null,
+								completedAt: ne.completedAt ?? null,
+							},
+						};
+					});
+
+				const nodeCompletionState = nodeExecs.map((ne) => ({
+					agentName: ne.agentName,
+					taskStatus: ne.status,
+					completionSummary: ne.result ?? null,
+					completedAt: ne.completedAt ?? null,
+				}));
+
+				const permittedTargets = resolver.getPermittedTargets(myRole);
+				const channelTopologyDeclared = !resolver.isEmpty();
+
+				return jsonResult({
+					success: true,
+					myRole,
+					peers,
+					nodeCompletionState,
+					permittedTargets,
+					channelTopologyDeclared,
+					message:
+						`Found ${peers.length} peer(s). ` +
+						(channelTopologyDeclared
+							? `Permitted direct targets via send_message: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`
+							: 'No channel topology declared.'),
+				});
+			}
+
+			// Fallback path: query SpaceTask records
+			const nodeTasks = workflowRunId ? spaceTaskRepo.listByWorkflowRun(workflowRunId) : [];
 
 			// Build peers from all node tasks, excluding self and task-agent.
 			// Includes completed tasks (taskAgentSessionId may be null) so callers
@@ -362,13 +432,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				});
 			}
 
-			// Find peer sessions via task repo
-			const legacyNodeTasks = workflowRunId
-				? spaceTaskRepo.listByWorkflowRun(workflowRunId).filter((t) => t.taskAgentSessionId)
-				: [];
-			const peers = legacyNodeTasks
-				.filter((t) => t.taskAgentSessionId !== mySessionId)
-				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.title ?? 'agent' }));
+			// Find peer sessions — prefer NodeExecution, fall back to SpaceTask
+			const peers: Array<{ sessionId: string; role: string }> = nodeExecutionRepo
+				? (workflowRunId ? nodeExecutionRepo.listByWorkflowRun(workflowRunId) : [])
+						.filter((ne) => ne.agentSessionId && ne.agentSessionId !== mySessionId)
+						.map((ne) => ({ sessionId: ne.agentSessionId!, role: ne.agentName }))
+				: (workflowRunId
+						? spaceTaskRepo.listByWorkflowRun(workflowRunId).filter((t) => t.taskAgentSessionId)
+						: []
+					)
+						.filter((t) => t.taskAgentSessionId !== mySessionId)
+						.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.title ?? 'agent' }));
 			const delivered: Array<{ role: string; sessionId: string }> = [];
 			const notFound: string[] = [];
 			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
@@ -781,8 +855,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		/**
 		 * Signal that this node agent has completed its work.
 		 *
-		 * Marks the step's SpaceTask as 'done', persists the optional summary
-		 * as the task result, and emits a `space.task.updated` event for real-time UI.
+		 * When nodeExecutionRepo is available: updates the NodeExecution record for
+		 * this agent (identified by workflowNodeId + myRole) to status 'done' and
+		 * persists the optional summary. SpaceRuntime detects the state change and
+		 * triggers workflow completion checks (end-node short-circuit or
+		 * CompletionDetector safety net).
+		 *
+		 * When nodeExecutionRepo is absent (test/compat fallback): updates the step's
+		 * SpaceTask via taskManager.setTaskStatus().
 		 *
 		 * After calling this tool, the node agent should stop and not perform
 		 * further work — the task lifecycle is closed.
@@ -791,6 +871,39 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const { summary } = args;
 
 			try {
+				if (nodeExecutionRepo) {
+					// Preferred path: update NodeExecution status to 'done'
+					const nodeExecs = workflowRunId
+						? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
+						: [];
+					const myExec = nodeExecs.find((e) => e.agentName === myRole);
+
+					if (!myExec) {
+						return jsonResult({
+							success: false,
+							error:
+								`NodeExecution not found for agent "${myRole}" in node "${workflowNodeId}" ` +
+								`(run: ${workflowRunId}). Cannot mark as done.`,
+						});
+					}
+
+					nodeExecutionRepo.update(myExec.id, {
+						status: 'done',
+						result: summary ?? null,
+					});
+
+					return jsonResult({
+						success: true,
+						executionId: myExec.id,
+						agentName: myRole,
+						summary,
+						message:
+							'Step execution has been marked as completed. ' +
+							'Your work is done — stop here and do not continue.',
+					});
+				}
+
+				// Fallback path: update SpaceTask via taskManager
 				const updatedTask = await taskManager.setTaskStatus(stepTaskId, 'done', {
 					result: summary,
 				});
