@@ -77,7 +77,10 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
  * Coding Workflow
  *
  * Two-node iterative graph: Code ↔ Review (with cycle).
- * - Code → Review: gated — Coder must write `pr_created` and `worktree_clean`.
+ * - Code → Review: gated by `code-ready-gate` — a bash script verifies that a PR
+ *   exists for the current branch and the working tree is clean. The script
+ *   outputs `{"pr_created": true, "worktree_clean": true}` on success; gate
+ *   fields validate the output.
  * - Review → Code: ungated — Reviewer sends back for changes without any gate.
  *   When satisfied, Reviewer calls `report_done()` on the Review node (endNodeId)
  *   which signals workflow completion.
@@ -94,8 +97,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			name: 'Code',
 			agents: [{ agentId: 'Coder', name: 'coder' }],
 			instructions:
-				'Implement the task. When done, open a pull request and ensure the worktree is clean. ' +
-				'Write `pr_created: true` and `worktree_clean: true` to the code-ready-gate to notify the reviewer.',
+				'Implement the task. When done, create a pull request with `gh pr create` ' +
+				'and ensure all changes are committed (clean working tree). The code-ready-gate ' +
+				'will verify both conditions automatically before advancing to Review.',
 		},
 		{
 			id: CODING_REVIEW_STEP,
@@ -116,14 +120,35 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			id: 'code-ready-gate',
 			description: 'Coder has opened a PR and cleaned the worktree',
 			fields: [
-				{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
+				{
+					name: 'pr_created',
+					type: 'boolean',
+					writers: ['*'],
+					check: { op: 'exists' },
+				},
 				{
 					name: 'worktree_clean',
 					type: 'boolean',
-					writers: ['coder'],
+					writers: ['*'],
 					check: { op: 'exists' },
 				},
 			],
+			script: {
+				interpreter: 'bash',
+				source: [
+					'cd "$NEOKAI_WORKSPACE_PATH"',
+					'if ! gh pr view --json number >/dev/null 2>&1; then',
+					'  echo "No open PR found for current branch" >&2',
+					'  exit 1',
+					'fi',
+					'if [ -n "$(git status --porcelain)" ]; then',
+					'  echo "Working tree has uncommitted changes or untracked files" >&2',
+					'  exit 1',
+					'fi',
+					'echo \'{"pr_created": true, "worktree_clean": true}\'',
+				].join('\n'),
+				timeoutMs: 30000,
+			},
 			resetOnCycle: true,
 		},
 	],

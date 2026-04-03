@@ -131,20 +131,31 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.fields).toHaveLength(2);
 	});
 
-	test('code-ready-gate has pr_created exists field with coder writer', () => {
+	test('code-ready-gate has pr_created exists field with wildcard writer', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const prField = gate.fields.find((f) => f.name === 'pr_created')!;
 		expect(prField.type).toBe('boolean');
-		expect(prField.writers).toContain('coder');
+		expect(prField.writers).toEqual(['*']);
 		expect(prField.check.op).toBe('exists');
 	});
 
-	test('code-ready-gate has worktree_clean exists field with coder writer', () => {
+	test('code-ready-gate has worktree_clean exists field with wildcard writer', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const cleanField = gate.fields.find((f) => f.name === 'worktree_clean')!;
 		expect(cleanField.type).toBe('boolean');
-		expect(cleanField.writers).toContain('coder');
+		expect(cleanField.writers).toEqual(['*']);
 		expect(cleanField.check.op).toBe('exists');
+	});
+
+	test('code-ready-gate has a bash script that checks for open PR and clean worktree', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		expect(gate.script).toBeDefined();
+		expect(gate.script!.interpreter).toBe('bash');
+		expect(gate.script!.timeoutMs).toBe(30000);
+		expect(gate.script!.source).toContain('gh pr view');
+		expect(gate.script!.source).toContain('git status --porcelain');
+		expect(gate.script!.source).toContain('pr_created');
+		expect(gate.script!.source).toContain('worktree_clean');
 	});
 
 	test('code-ready-gate resets on cycle', () => {
