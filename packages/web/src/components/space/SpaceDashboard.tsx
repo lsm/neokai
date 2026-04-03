@@ -265,8 +265,11 @@ export function SpaceDashboard({
 	const space = spaceStore.space.value;
 	const tasks = [...spaceStore.tasks.value].sort((a, b) => b.updatedAt - a.updatedAt);
 
-	// Pick the most recent active run (pending or in_progress), falling back to any run
-	const activeRun = spaceStore.activeRuns.value[0] ?? spaceStore.workflowRuns.value[0] ?? null;
+	// Pick the most recent active run (pending or in_progress), falling back to the most
+	// recently updated run so we never accidentally show an older completed run's canvas.
+	const mostRecentRun =
+		[...spaceStore.workflowRuns.value].sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
+	const activeRun = spaceStore.activeRuns.value[0] ?? mostRecentRun;
 
 	if (loading) {
 		return (

@@ -26,7 +26,11 @@ vi.mock('../../../lib/space-store', () => ({
 	},
 }));
 
-// Mock WorkflowCanvas to avoid its heavy dependencies (connectionManager, gate data fetching)
+// Mock WorkflowCanvas to avoid its heavy dependencies (connectionManager, gate data fetching).
+// The stub intentionally reuses data-testid="workflow-canvas-svg" — the same testid the real
+// component renders on its SVG element — so SpaceDashboard unit tests assert the canvas is
+// mounted without depending on the real component's internal rendering. If the real testid
+// changes, update this stub accordingly.
 vi.mock('../WorkflowCanvas', () => ({
 	WorkflowCanvas: ({
 		workflowId,
@@ -241,6 +245,7 @@ describe('SpaceDashboard', () => {
 		const { container } = render(<SpaceDashboard spaceId="space-1" />);
 		const canvas = container.querySelector('[data-testid="workflow-canvas-svg"]');
 		expect(canvas).toBeTruthy();
+		expect(canvas?.getAttribute('data-workflow-id')).toBe('wf-2');
 		expect(canvas?.getAttribute('data-run-id')).toBe('run-2');
 	});
 
