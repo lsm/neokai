@@ -609,6 +609,9 @@ export function App() {
 					<DemoSection id="overlays-modal-dialogs" title="Overlays / Modal Dialogs">
 						<ModalDialogsDemo />
 					</DemoSection>
+					<DemoSection id="overlays-notifications" title="Overlays / Notifications">
+						<NotificationDemo />
+					</DemoSection>
 				</main>
 			</div>
 		</div>

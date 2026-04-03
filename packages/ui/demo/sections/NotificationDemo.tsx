@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import type { VNode } from 'preact';
 import { Transition, Toaster, useToast } from '../../src/mod.ts';
 import type { ToastVariant } from '../../src/mod.ts';
-import { X } from 'lucide-preact';
+import { CheckCircle, Inbox, X } from 'lucide-preact';
 
 interface NotificationItem {
 	id: number;
@@ -717,31 +717,6 @@ function NotificationWithButtonsBelow() {
 				<code class="text-accent-400 font-mono">Transition</code> component.
 			</p>
 		</div>
-	);
-}
-
-// Icon components
-function CheckCircle({ class: className }: { class?: string }) {
-	return (
-		<svg class={className} viewBox="0 0 20 20" fill="currentColor">
-			<path
-				fill-rule="evenodd"
-				d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
-				clip-rule="evenodd"
-			/>
-		</svg>
-	);
-}
-
-function Inbox({ class: className }: { class?: string }) {
-	return (
-		<svg class={className} viewBox="0 0 20 20" fill="currentColor">
-			<path
-				fill-rule="evenodd"
-				d="M10 2C7.79086 2 6 3.79086 6 6V7H5C3.89543 7 3 7.89543 3 9V15C3 16.1046 3.89543 17 5 17H15C16.1046 17 17 16.1046 17 15V9C17 7.89543 16.1046 7 15 7H14V6C14 3.79086 12.2091 2 10 2ZM8 6C8 4.89543 8.89543 4 10 4C11.1046 4 12 4.89543 12 6V7H8V6ZM5 9H15C15.5523 9 16 9.44772 16 10V14H4V10C4 9.44772 4.44772 9 5 9Z"
-				clip-rule="evenodd"
-			/>
-		</svg>
 	);
 }
 

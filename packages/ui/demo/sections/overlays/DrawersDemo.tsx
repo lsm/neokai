@@ -28,7 +28,19 @@ import {
 	MenuItems,
 	TransitionChild,
 } from '../../../src/mod.ts';
-import { Bell, EllipsisVertical, Heart, Link, Pencil, Phone, Plus, Trash, X } from 'lucide-preact';
+import {
+	Bell,
+	EllipsisVertical,
+	File,
+	Heart,
+	Link,
+	MessageCircle,
+	Pencil,
+	Phone,
+	Plus,
+	Trash,
+	X,
+} from 'lucide-preact';
 
 function EmptyDrawer() {
 	const [open, setOpen] = useState(false);
@@ -741,15 +753,15 @@ function WideCreateProjectFormDrawer() {
 												<div class="space-y-6 pt-6 pb-5">
 													<div>
 														<label
-															for="project-name"
+															for="wide-project-name"
 															class="block text-sm/6 font-medium text-gray-900 dark:text-gray-100"
 														>
 															Project name
 														</label>
 														<div class="mt-2">
 															<input
-																id="project-name"
-																name="project-name"
+																id="wide-project-name"
+																name="wide-project-name"
 																type="text"
 																class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 															/>
@@ -757,15 +769,15 @@ function WideCreateProjectFormDrawer() {
 													</div>
 													<div>
 														<label
-															for="project-description"
+															for="wide-project-description"
 															class="block text-sm/6 font-medium text-gray-900 dark:text-gray-100"
 														>
 															Description
 														</label>
 														<div class="mt-2">
 															<textarea
-																id="project-description"
-																name="project-description"
+																id="wide-project-description"
+																name="wide-project-description"
 																rows={3}
 																class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 															/>
@@ -960,12 +972,9 @@ function UserProfileDrawer() {
 								<div class="relative flex h-full flex-col overflow-y-auto bg-white shadow-xl dark:bg-gray-800 dark:after:absolute dark:after:inset-y-0 dark:after:left-0 dark:after:w-px dark:after:bg-white/10">
 									<div class="px-4 py-6 sm:px-6">
 										<div class="flex items-start justify-between">
-											<h2
-												id="slide-over-heading"
-												class="text-base font-semibold text-gray-900 dark:text-white"
-											>
+											<DialogTitle class="text-base font-semibold text-gray-900 dark:text-white">
 												Profile
-											</h2>
+											</DialogTitle>
 											<div class="ml-3 flex h-7 items-center">
 												<button
 													type="button"
@@ -1106,7 +1115,7 @@ function UserProfileDrawer() {
 	);
 }
 
-function WideUserProfileDrawer() {
+function FileDetailsSlideOver() {
 	const [open, setOpen] = useState(false);
 
 	return (
@@ -1498,19 +1507,6 @@ function ContactListDrawer() {
 	);
 }
 
-// Message icon helper
-function MessageCircle({ class: className }: { class?: string }) {
-	return (
-		<svg class={className} viewBox="0 0 20 20" fill="currentColor">
-			<path
-				fill-rule="evenodd"
-				d="M10 3c-3.866 0-7 2.686-7 6 0 1.665.676 3.175 1.772 4.312l-.536 1.98a.5.5 0 00.674.674l1.98-.536a6.97 6.97 0 001.838.192C10.5 15.5 12 16 14 16c3.866 0 7-2.686 7-6s-3.134-6-7-6-7 2.686-7 6c0 1.033.261 2.008.724 2.866l-.724 2.674a.5.5 0 00.674.674l2.674-.724c.858.463 1.833.724 2.866.724 3.866 0 7-2.686 7-6s-3.134-6-7-6-7 2.686-7 6c0 .989.24 1.926.666 2.768l-1.414 1.414a.5.5 0 000 .708l4 4a.5.5 0 00.708 0l1.414-1.414A6.968 6.968 0 0010 3z"
-				clip-rule="evenodd"
-			/>
-		</svg>
-	);
-}
-
 function FileDetailsDrawer() {
 	const [open, setOpen] = useState(false);
 
@@ -1619,19 +1615,6 @@ function FileDetailsDrawer() {
 	);
 }
 
-// File icon helper
-function File({ class: className }: { class?: string }) {
-	return (
-		<svg class={className} viewBox="0 0 20 20" fill="currentColor">
-			<path
-				fill-rule="evenodd"
-				d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
-				clip-rule="evenodd"
-			/>
-		</svg>
-	);
-}
-
 function DrawersDemo() {
 	return (
 		<div class="space-y-12">
@@ -1681,10 +1664,8 @@ function DrawersDemo() {
 			</div>
 
 			<div>
-				<h3 class="text-sm font-medium text-text-tertiary mb-4">
-					Wide user profile (file details)
-				</h3>
-				<WideUserProfileDrawer />
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">Wide file details</h3>
+				<FileDetailsSlideOver />
 			</div>
 
 			<div>
