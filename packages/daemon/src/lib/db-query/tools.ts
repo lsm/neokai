@@ -235,7 +235,7 @@ function getCteColumnListRanges(sql: string): Array<[number, number]> {
  * pairs are in ascending order by selectStart — this invariant is required
  * for the right-to-left replacement to be correct.
  */
-function rewriteSelectToStar(sql: string): string {
+function rewriteSelectToStar(sql: string, options?: { skipOutermost?: boolean }): string {
 	// Pre-compute ranges of CTE bodies that have explicit column lists.
 	// SELECTs inside these ranges must not be rewritten because the column
 	// count must match the declared CTE columns.
@@ -245,10 +245,13 @@ function rewriteSelectToStar(sql: string): string {
 	// and CTE bodies with explicit column lists).
 	// Each pair records selectStart (position of S in SELECT), fromStart
 	// (position of F in FROM), and whether DISTINCT follows SELECT.
+	const { skipOutermost = false } = options ?? {};
+
 	const pairs: Array<{
 		selectStart: number;
 		fromStart: number;
 		hasDistinct: boolean;
+		depth: number;
 	}> = [];
 	const upper = sql.toUpperCase();
 	let depth = 0;
@@ -330,20 +333,22 @@ function rewriteSelectToStar(sql: string): string {
 					}
 				}
 				if (fromStart !== -1 && !isInCteRange(i)) {
-					pairs.push({ selectStart: i, fromStart, hasDistinct });
+					pairs.push({ selectStart: i, fromStart, hasDistinct, depth: targetDepth });
 				}
 			}
 		}
 	}
 
-	if (pairs.length === 0) return sql;
+	// Filter out outermost SELECTs when skipOutermost is true (for aggregate/DISTINCT queries)
+	const activePairs = skipOutermost ? pairs.filter((p) => p.depth > 0) : pairs;
+	if (activePairs.length === 0) return sql;
 
-	// Replace from right to left to preserve positions. Pairs are in ascending
+	// Replace from right to left to preserve positions. Active pairs are in ascending
 	// order by selectStart (outer loop walks left-to-right), so processing
 	// right-to-left ensures earlier positions remain valid after each replacement.
 	let result = sql;
-	for (let p = pairs.length - 1; p >= 0; p--) {
-		const { selectStart, fromStart, hasDistinct } = pairs[p];
+	for (let p = activePairs.length - 1; p >= 0; p--) {
+		const { selectStart, fromStart, hasDistinct } = activePairs[p];
 		const replacement = hasDistinct ? 'SELECT DISTINCT * ' : 'SELECT * ';
 		result = `${result.slice(0, selectStart)}${replacement}${result.slice(fromStart)}`;
 	}
@@ -364,6 +369,97 @@ function stripLimit(sql: string): { sql: string; userLimit?: number } {
 	const userLimit = match ? Number.parseInt(match[1], 10) : undefined;
 
 	return { sql: sql.slice(0, limitPos).trimEnd(), userLimit };
+}
+
+/**
+ * Strip the user's top-level ORDER BY clause from a SQL statement.
+ * Returns the SQL without ORDER BY and the extracted clause (if any).
+ * Only strips ORDER BY at the top level (depth 0), preserving ORDER BY
+ * inside CTE bodies and subqueries.
+ */
+function stripOrderBy(sql: string): { sql: string; orderBy?: string } {
+	const pos = findTopLevelKeyword(sql, 'ORDER BY');
+	if (pos === -1) return { sql };
+
+	const orderBy = sql.slice(pos).trimEnd();
+	return { sql: sql.slice(0, pos).trimEnd(), orderBy };
+}
+
+/**
+ * Detect whether a SQL query is an aggregate or DISTINCT query.
+ * Aggregate queries use GROUP BY, HAVING, or aggregate functions
+ * (COUNT, SUM, AVG, MIN, MAX) in the outermost SELECT's column list.
+ * DISTINCT queries use the DISTINCT keyword in the outermost SELECT.
+ *
+ * These queries cannot use the subquery wrapper approach because
+ * rewriting SELECT columns to * would destroy the aggregate/DISTINCT
+ * semantics. Instead, scope filters are injected directly into the query.
+ */
+function isAggregateOrDistinctQuery(sql: string): boolean {
+	// Check for GROUP BY at top level
+	if (findTopLevelKeyword(sql, 'GROUP BY') !== -1) return true;
+
+	// Check for HAVING at top level
+	if (findTopLevelKeyword(sql, 'HAVING') !== -1) return true;
+
+	// Check for DISTINCT keyword after the top-level SELECT
+	const selectPos = findTopLevelKeyword(sql, 'SELECT');
+	if (selectPos !== -1) {
+		const afterSelect = sql.slice(selectPos + 6).trimStart();
+		if (/^DISTINCT\b/i.test(afterSelect)) return true;
+	}
+
+	// Check for aggregate functions in the outermost SELECT's column list
+	// (between the top-level SELECT and the top-level FROM)
+	const fromPos = findTopLevelKeyword(sql, 'FROM');
+	if (selectPos === -1 || fromPos === -1 || fromPos <= selectPos) return false;
+
+	const columnList = sql.slice(selectPos + 6, fromPos).toUpperCase();
+	const aggFunctions = ['COUNT(', 'SUM(', 'AVG(', 'MIN(', 'MAX(', 'GROUP_CONCAT(', 'TOTAL('];
+	return aggFunctions.some((fn) => columnList.includes(fn));
+}
+
+/**
+ * Find the position of the first top-level clause boundary keyword
+ * (GROUP BY, HAVING, ORDER BY) in the SQL. Returns sql.length if none found.
+ * Used to determine where to insert WHERE clauses.
+ */
+function findTopLevelBoundary(sql: string): number {
+	const keywords = ['GROUP BY', 'HAVING', 'ORDER BY'];
+	let earliest = sql.length;
+
+	for (const kw of keywords) {
+		const pos = findTopLevelKeyword(sql, kw);
+		if (pos !== -1 && pos < earliest) {
+			earliest = pos;
+		}
+	}
+
+	return earliest;
+}
+
+/**
+ * Inject a WHERE clause into a SQL query.
+ * Handles both queries with and without an existing WHERE clause.
+ * The clause is inserted before GROUP BY, HAVING, or ORDER BY (whichever comes first).
+ */
+function injectWhereClause(sql: string, whereClause: string): string {
+	const wherePos = findTopLevelKeyword(sql, 'WHERE');
+
+	if (wherePos !== -1) {
+		// Query has WHERE — append AND before the next boundary keyword
+		const boundary = findTopLevelBoundary(sql);
+		return `${sql.slice(0, boundary)} AND ${whereClause}${sql.slice(boundary)}`;
+	}
+
+	// No WHERE — insert before GROUP BY, HAVING, ORDER BY, or at the end
+	const insertPos = findTopLevelBoundary(sql);
+
+	if (insertPos < sql.length) {
+		return `${sql.slice(0, insertPos)} WHERE ${whereClause} ${sql.slice(insertPos)}`;
+	}
+
+	return `${sql} WHERE ${whereClause}`;
 }
 
 // ============ Scope Filter Builder ============
@@ -402,13 +498,18 @@ function buildPrefixedScopeFilter(
 }
 
 /**
- * Rewrite a validated SELECT query with scope filter injection via subquery wrapping.
+ * Rewrite a validated SELECT query with scope filter injection.
  *
  * Strategy:
  *   - Global scope (no filters): append LIMIT cap to the original SQL.
- *   - Room/Space scope: wrap the user's query as a subquery aliased `_dbq`,
- *     then apply combined scope filters in the outer WHERE clause.
- *     The inner query's SELECT is rewritten to `*` so scope columns are available.
+ *   - Aggregate/DISTINCT queries: inject scope filters directly into the
+ *     query's WHERE clause. Rewriting SELECT to * would destroy aggregate
+ *     or DISTINCT semantics. CTE bodies (without explicit column lists) are
+ *     still rewritten to * so scope columns flow through to the main query.
+ *   - Regular queries in room/space scope: wrap as a subquery aliased `_dbq`,
+ *     then apply combined scope filters in the outer WHERE clause. The inner
+ *     query's SELECT is rewritten to `*` so scope columns are available.
+ *     ORDER BY is moved from the inner query to the outer wrapper.
  */
 function rewriteScopedQuery(
 	sql: string,
@@ -445,21 +546,67 @@ function rewriteScopedQuery(
 		};
 	}
 
-	// Scope-aware wrapping
-	const combinedWhere = [...scopeFilterSet.keys()].join(' AND ');
-	const scopeParams = [...scopeFilterSet.values()].flat();
-
 	// Strip user's LIMIT and honor it alongside the arg-level limit
 	const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
 	const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
+	const scopeParams = [...scopeFilterSet.values()].flat();
+
+	// Aggregate/DISTINCT queries: inject scope filter directly into the query.
+	// Rewriting SELECT to * would destroy aggregate/DISTINCT semantics.
+	if (isAggregateOrDistinctQuery(strippedSql)) {
+		// Rewrite inner SELECTs (CTE bodies, subqueries) to * so scope columns
+		// flow through, but skip the outermost SELECT which contains the aggregate.
+		const innerRewritten = rewriteSelectToStar(strippedSql, { skipOutermost: true });
+
+		// Build direct scope filters (without _dbq. prefix) using unqualified
+		// column names. Deduplicate identical clauses.
+		const directFilters = new Map<string, unknown[]>();
+		for (const config of tableConfigs.values()) {
+			if (config.scopeColumn) {
+				const clause = `${config.scopeColumn} = ?`;
+				if (!directFilters.has(clause)) {
+					directFilters.set(clause, [scopeValue]);
+				}
+			}
+			if (config.scopeJoin) {
+				const join = config.scopeJoin;
+				const clause = `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`;
+				if (!directFilters.has(clause)) {
+					directFilters.set(clause, [scopeValue]);
+				}
+			}
+		}
+
+		let filteredSql = innerRewritten;
+		const directParams: unknown[] = [];
+		if (directFilters.size > 0) {
+			const combinedClause = [...directFilters.keys()].join(' AND ');
+			filteredSql = injectWhereClause(innerRewritten, combinedClause);
+			directParams.push(...[...directFilters.values()].flat());
+		}
+
+		return {
+			sql: `${filteredSql} LIMIT ${effectiveLimit}`,
+			params: [...userParams, ...directParams],
+			cappedLimit: effectiveLimit,
+		};
+	}
+
+	// Regular queries: subquery wrapping approach
+	const combinedWhere = [...scopeFilterSet.keys()].join(' AND ');
+
+	// Strip ORDER BY from the inner query — SQLite does not guarantee ordering
+	// from subqueries, so ORDER BY must be on the outer wrapper.
+	const { sql: noOrderBy, orderBy } = stripOrderBy(strippedSql);
 
 	// Rewrite all SELECTs (including CTE bodies) to * for the inner query
 	// so scope columns are available. The outer SELECT also uses * because
 	// qualified column names (table.column) and aliases become invalid in
 	// the subquery wrapper context — only _dbq is a valid table reference.
-	const innerSql = rewriteSelectToStar(strippedSql);
+	const innerSql = rewriteSelectToStar(noOrderBy);
 
-	const wrappedSql = `SELECT * FROM (${innerSql}) AS _dbq WHERE ${combinedWhere} LIMIT ${effectiveLimit}`;
+	const orderClause = orderBy ? ` ${orderBy}` : '';
+	const wrappedSql = `SELECT * FROM (${innerSql}) AS _dbq WHERE ${combinedWhere}${orderClause} LIMIT ${effectiveLimit}`;
 
 	return { sql: wrappedSql, params: [...userParams, ...scopeParams], cappedLimit: effectiveLimit };
 }

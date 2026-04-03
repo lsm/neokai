@@ -1028,6 +1028,130 @@ describe('db-query tools', () => {
 			});
 		});
 
+		describe('aggregate queries in scoped mode', () => {
+			it('COUNT(*) returns correct count for scoped room', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT COUNT(*) AS cnt FROM tasks',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1 has task-1 and task-2
+				expect(parsed.rowCount).toBe(1);
+				expect(parsed.rows[0].cnt).toBe(2);
+			});
+
+			it('GROUP BY with aggregate works in scoped mode', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1: task-1 (in_progress), task-2 (pending)
+				expect(parsed.rowCount).toBe(2);
+			});
+
+			it('aggregate with existing WHERE adds scope filter with AND', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: "SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'in_progress'",
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1 has 1 in_progress task
+				expect(parsed.rows[0].cnt).toBe(1);
+			});
+
+			it('SUM aggregate works in scoped mode', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT SUM(created_at) AS total FROM tasks',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1: task-1 (1000) + task-2 (2000) = 3000
+				expect(parsed.rows[0].total).toBe(3000);
+			});
+		});
+
+		describe('DISTINCT queries in scoped mode', () => {
+			it('DISTINCT deduplicates on selected columns only', async () => {
+				// Create multiple tasks with same status in room-1
+				seedRooms(db);
+				db.exec(
+					"INSERT INTO tasks (id, room_id, title, status, priority, created_at) VALUES ('t1', 'room-1', 'A', 'active', 'high', 1000)"
+				);
+				db.exec(
+					"INSERT INTO tasks (id, room_id, title, status, priority, created_at) VALUES ('t2', 'room-1', 'B', 'active', 'normal', 2000)"
+				);
+				db.exec(
+					"INSERT INTO tasks (id, room_id, title, status, priority, created_at) VALUES ('t3', 'room-1', 'C', 'pending', 'low', 3000)"
+				);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT DISTINCT status FROM tasks',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// 3 tasks: 2 active, 1 pending → DISTINCT gives 2 rows
+				expect(parsed.rowCount).toBe(2);
+			});
+		});
+
+		describe('ORDER BY in scoped mode', () => {
+			it('ORDER BY is preserved in room scope', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT id, title FROM tasks ORDER BY created_at ASC',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// room-1: task-1 (created_at=1000), task-2 (created_at=2000)
+				expect(parsed.rows[0].id).toBe('task-1');
+				expect(parsed.rows[1].id).toBe('task-2');
+			});
+
+			it('ORDER BY DESC is preserved in room scope', async () => {
+				seedTasks(db);
+				const handlers = createDbQueryToolHandlers(
+					{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
+					db
+				);
+				const result = await handlers.db_query({
+					sql: 'SELECT id, title FROM tasks ORDER BY created_at DESC',
+				});
+				const parsed = parseResult(result);
+				expect(parsed.isError).toBeFalsy();
+				// DESC order: task-2 first, task-1 second
+				expect(parsed.rows[0].id).toBe('task-2');
+				expect(parsed.rows[1].id).toBe('task-1');
+			});
+		});
+
 		describe('table-less queries in scoped mode', () => {
 			it('SELECT 1 returns result without scope filter', async () => {
 				const handlers = createDbQueryToolHandlers(
