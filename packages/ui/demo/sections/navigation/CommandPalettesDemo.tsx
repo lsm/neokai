@@ -1223,7 +1223,6 @@ function WithFooterCommandPalette() {
 										<ComboboxOptions
 											as="div"
 											static
-											hold
 											class="flex transform-gpu divide-x divide-surface-border dark:divide-white/10"
 										>
 											<div

@@ -476,10 +476,6 @@ export function WithSecondaryNavigationSidebarNavigation() {
 		{ name: 'Projects', href: '#', icon: Folder, current: false },
 		{ name: 'Calendar', href: '#', icon: Calendar, current: false },
 	];
-	const _secondaryNavigation = [
-		{ name: 'Support', href: '#' },
-		{ name: 'License', href: '#' },
-	];
 
 	return (
 		<div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-0 px-6 dark:border-white/10 dark:bg-surface-2 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
