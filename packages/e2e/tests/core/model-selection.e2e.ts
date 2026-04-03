@@ -40,35 +40,32 @@ test.describe('Model Selection Persistence', () => {
 		const modelSwitcher = page.locator('button[title*="Switch Model"]').first();
 		await expect(modelSwitcher).toBeVisible({ timeout: 10000 });
 
-		// Get initial model title
-		const initialTitle = await modelSwitcher.getAttribute('title');
-		console.log('Initial model title:', initialTitle);
-		expect(initialTitle).toBeTruthy();
-
-		// Send first message - the model should persist through the round-trip
+		// Get initial model title BEFORE sending any message
 		// This is the critical regression test: model should NOT reset after first message
+		const initialTitle = await modelSwitcher.getAttribute('title');
+		expect(initialTitle).toBeTruthy();
+		console.log('Initial model title:', initialTitle);
+
+		// Send first message
 		await messageInput.fill('Hello');
 		await messageInput.press('Enter');
 
 		// Wait for assistant response
 		await waitForAssistantResponse(page, { timeout: 90000 });
 
-		// Verify model switcher STILL shows the same model after message
+		// CRITICAL: Verify model switcher STILL shows the SAME model after message
+		// This catches the regression where model would reset to default after first message
 		const postMessageTitle = await modelSwitcher.getAttribute('title');
 		console.log('Post-message model title:', postMessageTitle);
-
-		// The model should persist (this is the critical regression test)
-		expect(postMessageTitle).toBeTruthy();
+		expect(postMessageTitle).toEqual(initialTitle);
 	});
 
-	test('should use default model (Sonnet) when no model is selected', async ({ page }) => {
+	test('should use default model and persist after first message', async ({ page }) => {
 		// Navigate to the app
 		await page.goto('/');
 
 		// Create a new session
 		await createSessionViaUI(page);
-
-		// Don't change model - just send a message with default model
 
 		// Wait for input to be ready
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
@@ -76,29 +73,27 @@ test.describe('Model Selection Persistence', () => {
 		await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
 		// Check that model switcher button is visible
-		// The button shows an emoji icon and has a title attribute with the model name
 		const modelSwitcher = page.locator('button[title*="Switch Model"]').first();
 		await expect(modelSwitcher).toBeVisible({ timeout: 10000 });
 
-		// Get the title attribute to check the model name
-		const switcherTitle = await modelSwitcher.getAttribute('title');
-		console.log('Default model switcher title:', switcherTitle);
-
-		// In CI with DEFAULT_MODEL=haiku, it may show Haiku; otherwise it's typically Sonnet
-		// Just verify the title contains a model name
-		expect(switcherTitle).toMatch(/Switch Model/i);
+		// Get initial model title BEFORE sending any message
+		const initialTitle = await modelSwitcher.getAttribute('title');
+		expect(initialTitle).toBeTruthy();
+		expect(initialTitle).toMatch(/Switch Model/i);
+		console.log('Initial model title:', initialTitle);
 
 		// Send first message
 		await messageInput.fill('Hello');
 		await messageInput.press('Enter');
 
-		// Wait for assistant response using the helper (90s timeout for CI reliability)
+		// Wait for assistant response
 		await waitForAssistantResponse(page, { timeout: 90000 });
 
-		// Verify model switcher STILL shows the default model after the message
+		// CRITICAL: Verify model switcher STILL shows the SAME model after message
+		// This catches the regression where model would reset to default after first message
 		const postMessageTitle = await modelSwitcher.getAttribute('title');
 		console.log('Post-message model title:', postMessageTitle);
-		expect(postMessageTitle).toMatch(/Switch Model/i);
+		expect(postMessageTitle).toEqual(initialTitle);
 	});
 });
 
