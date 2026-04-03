@@ -314,14 +314,22 @@ describe('Badge', () => {
 	});
 
 	it('should render remove button when removable is true', () => {
-		render(<Badge removable onRemove={() => {}}>Remove</Badge>);
+		render(
+			<Badge removable onRemove={() => {}}>
+				Remove
+			</Badge>
+		);
 		const removeBtn = document.querySelector('button[aria-label="Remove"]');
 		expect(removeBtn).not.toBeNull();
 	});
 
 	it('should call onRemove when remove button is clicked', () => {
 		const onRemove = vi.fn();
-		render(<Badge removable onRemove={onRemove}>Remove Me</Badge>);
+		render(
+			<Badge removable onRemove={onRemove}>
+				Remove Me
+			</Badge>
+		);
 		const removeBtn = document.querySelector('button[aria-label="Remove"]');
 		fireEvent.click(removeBtn!);
 		expect(onRemove).toHaveBeenCalledTimes(1);

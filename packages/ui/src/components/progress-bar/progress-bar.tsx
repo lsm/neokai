@@ -7,7 +7,7 @@ import type { ElementType } from '../../internal/types.ts';
 type ProgressBarSize = 'sm' | 'md' | 'lg';
 
 interface ProgressBarProps {
-	value: number;
+	value: number | null | undefined;
 	min?: number;
 	max?: number;
 	label?: string;
@@ -31,10 +31,12 @@ function ProgressBarFn({
 	children,
 	...rest
 }: ProgressBarProps) {
-	// Calculate percentage, clamped between 0 and 100
-	const percentage = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
-
 	const isIndeterminate = value === null || value === undefined;
+
+	// Calculate percentage only if not indeterminate, clamped between 0 and 100
+	const percentage = isIndeterminate
+		? 0
+		: Math.min(100, Math.max(0, ((value! - min) / (max - min)) * 100));
 
 	const slot = { value, percentage, indeterminate: isIndeterminate };
 
@@ -45,25 +47,28 @@ function ProgressBarFn({
 		'aria-valuemax': max,
 		'aria-valuetext': isIndeterminate ? undefined : `${Math.round(percentage)}%`,
 		'aria-label': label,
-		'data-value': value,
+		'data-value': value ?? undefined,
 		'data-min': min,
 		'data-max': max,
 		'data-size': size,
-		'data-indeterminate': isIndeterminate || undefined,
+		'data-indeterminate': isIndeterminate ? '' : undefined,
 	};
 
-	const fillStyle = color
-		? { width: `${percentage}%`, backgroundColor: color }
-		: { width: `${percentage}%` };
+	const fillStyle = isIndeterminate
+		? { width: '100%' }
+		: color
+			? { width: `${percentage}%`, backgroundColor: color }
+			: { width: `${percentage}%` };
 
 	const fillElement = createElement('div', {
 		'data-progress-fill': true,
 		style: fillStyle,
 	});
 
-	const labelElement = showValue
-		? createElement('span', { 'data-progress-value': true }, `${Math.round(percentage)}%`)
-		: null;
+	const labelElement =
+		showValue && !isIndeterminate
+			? createElement('span', { 'data-progress-value': true }, `${Math.round(percentage)}%`)
+			: null;
 
 	const content = [fillElement, labelElement, children].filter(Boolean);
 

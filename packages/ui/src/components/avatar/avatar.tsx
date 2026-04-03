@@ -54,7 +54,6 @@ function useAvatarGroupContext(component: string): AvatarGroupContextValue {
 interface AvatarProps {
 	src?: string;
 	alt?: string;
-	fallback?: string;
 	size?: AvatarSize;
 	shape?: AvatarShape;
 	status?: AvatarStatus;
@@ -217,7 +216,7 @@ function AvatarImageFn({ src, alt, onLoad, onError, as: Tag = 'img', ...rest }: 
 		onError?.();
 	}, [onError]);
 
-	const { size: _size } = useAvatarContext('AvatarImage');
+	useAvatarContext('AvatarImage');
 
 	const ourProps: Record<string, unknown> = {
 		src,
@@ -251,7 +250,7 @@ interface AvatarFallbackProps {
 }
 
 function AvatarFallbackFn({ as: Tag = 'span', children, ...rest }: AvatarFallbackProps) {
-	const { size: _size } = useAvatarContext('AvatarFallback');
+	useAvatarContext('AvatarFallback');
 
 	const [visible, setVisible] = useState(false);
 
@@ -286,7 +285,7 @@ interface AvatarStatusProps {
 }
 
 function AvatarStatusFn({ status, as: Tag = 'span', ...rest }: AvatarStatusProps) {
-	const { size: _size, shape: _shape } = useAvatarContext('AvatarStatus');
+	useAvatarContext('AvatarStatus');
 
 	const slot = {};
 
@@ -305,6 +304,3 @@ function AvatarStatusFn({ status, as: Tag = 'span', ...rest }: AvatarStatusProps
 
 AvatarStatusFn.displayName = 'AvatarStatus';
 export const AvatarStatus = AvatarStatusFn;
-
-// Needed to suppress unused import warning
-void createElement;

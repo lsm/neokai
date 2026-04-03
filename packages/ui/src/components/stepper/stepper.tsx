@@ -13,10 +13,10 @@ interface StepperContextValue {
 const StepperContext = createContext<StepperContextValue | null>(null);
 StepperContext.displayName = 'StepperContext';
 
-function useStepperContext(): StepperContextValue {
+function useStepperContext(componentName: string): StepperContextValue {
 	const ctx = useContext(StepperContext);
 	if (ctx === null) {
-		throw new Error('<StepperContext> must be used within a <Stepper>');
+		throw new Error(`<${componentName}> must be used within a <Stepper>`);
 	}
 	return ctx;
 }
@@ -75,7 +75,7 @@ interface StepperStepProps {
 }
 
 function StepperStepFn({ status, as: Tag = 'div', children, ...rest }: StepperStepProps) {
-	const { currentStep, orientation } = useStepperContext();
+	const { currentStep, orientation } = useStepperContext('StepperStep');
 
 	const slot = { status, currentStep, orientation };
 
@@ -101,6 +101,7 @@ export const StepperStep = StepperStepFn;
 // --- StepperIcon ---
 
 interface StepperIconProps {
+	stepIndex: number;
 	status?: StepStatus;
 	as?: ElementType;
 	children?: unknown;
@@ -108,14 +109,13 @@ interface StepperIconProps {
 }
 
 function StepperIconFn({
+	stepIndex,
 	status = 'upcoming',
 	as: Tag = 'span',
 	children,
 	...rest
 }: StepperIconProps) {
-	const { currentStep } = useStepperContext();
-
-	const slot = { status, currentStep };
+	const slot = { status, stepIndex };
 
 	// For complete status, show checkmark
 	const checkmarkSvg = createElement('svg', {
@@ -129,8 +129,8 @@ function StepperIconFn({
 		}),
 	});
 
-	// For current/upcoming, show step number
-	const numberContent = String(currentStep + 1);
+	// Show step number (1-indexed)
+	const numberContent = String(stepIndex + 1);
 
 	const iconContent =
 		children ??
@@ -213,7 +213,7 @@ interface StepperSeparatorProps {
 }
 
 function StepperSeparatorFn({ as: Tag = 'div', children, ...rest }: StepperSeparatorProps) {
-	const { orientation } = useStepperContext();
+	const { orientation } = useStepperContext('StepperSeparator');
 
 	const slot = { orientation };
 
