@@ -5,8 +5,6 @@ import {
 	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
 
-const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
-
 /**
  * Session Export E2E Tests
  *
@@ -61,8 +59,12 @@ test.describe('Session Export', () => {
 		await messageInput.fill(messageText);
 		await sendButton.click();
 
-		// Wait for assistant response (using pattern from message-flow.e2e.ts)
-		// Both mock and non-mock need to wait for any assistant message
+		// Verify user message was sent (fail fast if send didn't work)
+		await expect(page.locator(`text="${messageText}"`).first()).toBeVisible({
+			timeout: 5000,
+		});
+
+		// Wait for assistant response
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
 			timeout: 60000,
 		});
@@ -91,8 +93,12 @@ test.describe('Session Export', () => {
 		await messageInput.fill(testMessage);
 		await sendButton.click();
 
-		// Wait for assistant response (using pattern from message-flow.e2e.ts)
-		// Both mock and non-mock need to wait for any assistant message
+		// Verify user message was sent (fail fast if send didn't work)
+		await expect(page.locator(`text="${testMessage}"`).first()).toBeVisible({
+			timeout: 5000,
+		});
+
+		// Wait for assistant response
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
 			timeout: 60000,
 		});
@@ -130,8 +136,12 @@ test.describe('Session Export', () => {
 		await messageInput.fill(messageText);
 		await sendButton.click();
 
-		// Wait for assistant response (using pattern from message-flow.e2e.ts)
-		// Both mock and non-mock need to wait for any assistant message
+		// Verify user message was sent (fail fast if send didn't work)
+		await expect(page.locator(`text="${messageText}"`).first()).toBeVisible({
+			timeout: 5000,
+		});
+
+		// Wait for assistant response
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
 			timeout: 60000,
 		});
