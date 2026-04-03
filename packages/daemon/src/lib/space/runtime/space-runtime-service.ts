@@ -30,11 +30,15 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { Logger } from '../../logger';
+import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 
 const log = new Logger('space-runtime-service');
 
 export interface SpaceRuntimeServiceConfig {
 	db: BunDatabase;
+	/** Absolute path to the SQLite database file. When provided, a db-query MCP server
+	 * with space scope is attached to each space chat session. */
+	dbPath?: string;
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
 	spaceWorkflowManager: SpaceWorkflowManager;
@@ -83,6 +87,8 @@ export class SpaceRuntimeService {
 	private taskAgentManager: TaskAgentManager | null = null;
 	/** Resolved nodeExecutionRepo — created from db if not provided in config. */
 	private readonly nodeExecutionRepo: NodeExecutionRepository;
+	/** Stores db-query server instances per space for cleanup on stop. */
+	private readonly spaceDbQueryServers = new Map<string, DbQueryMcpServer>();
 
 	constructor(private readonly config: SpaceRuntimeServiceConfig) {
 		// Ensure nodeExecutionRepo is available — create from db if not provided.
@@ -124,6 +130,17 @@ export class SpaceRuntimeService {
 			unsub();
 		}
 		this.unsubscribers.length = 0;
+
+		// Close all db-query server connections to release read-only SQLite handles.
+		for (const [spaceId, server] of this.spaceDbQueryServers) {
+			try {
+				server.close();
+			} catch (error) {
+				log.warn(`Failed to close db-query server for space ${spaceId}:`, error);
+			}
+		}
+		this.spaceDbQueryServers.clear();
+
 		log.info('SpaceRuntimeService stopped');
 	}
 
@@ -221,9 +238,31 @@ export class SpaceRuntimeService {
 			taskAgentManager: this.taskAgentManager,
 		});
 
-		session.setRuntimeMcpServers({
+		// Create a space-scoped db-query server if dbPath is configured.
+		// Close any existing instance for this space to prevent connection leaks on re-setup.
+		const existingDbQueryServer = this.spaceDbQueryServers.get(space.id);
+		if (existingDbQueryServer) {
+			try {
+				existingDbQueryServer.close();
+			} catch (err) {
+				log.warn(`Failed to close stale db-query server for space ${space.id}:`, err);
+			}
+		}
+
+		const mcpServers: Record<string, McpServerConfig> = {
 			'space-agent-tools': mcpServer as unknown as McpServerConfig,
-		});
+		};
+		if (this.config.dbPath) {
+			const dbQueryServer = createDbQueryMcpServer({
+				dbPath: this.config.dbPath,
+				scopeType: 'space',
+				scopeValue: space.id,
+			});
+			this.spaceDbQueryServers.set(space.id, dbQueryServer);
+			mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
+		}
+
+		session.setRuntimeMcpServers(mcpServers);
 
 		session.setRuntimeSystemPrompt(
 			buildSpaceChatSystemPrompt({

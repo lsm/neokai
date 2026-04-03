@@ -25,6 +25,7 @@ import {
 	type NeoToolsConfig,
 	type NeoActionToolsConfig,
 } from './tools/neo-tools-server';
+import { createDbQueryMcpServer, type DbQueryMcpServer } from '../db-query/tools';
 
 export const NEO_SESSION_ID = 'neo:global';
 const NEO_SESSION_TITLE = 'Neo';
@@ -60,6 +61,8 @@ export class NeoAgentManager {
 	private actionToolsConfig: NeoActionToolsConfig | null = null;
 	private appMcpManager: NeoAppMcpManager | null = null;
 	private activityLogger: NeoActivityLogger | null = null;
+	private dbPath: string | null = null;
+	private dbQueryServer: DbQueryMcpServer | null = null;
 
 	constructor(
 		private readonly sessionManager: NeoSessionManager,
@@ -182,6 +185,23 @@ export class NeoAgentManager {
 	}
 
 	/**
+	 * Wire in the database path for the db-query MCP server.
+	 *
+	 * Must be called before `provision()`. When set, `attachTools()` will create a
+	 * read-only db-query MCP server with global scope (all non-sensitive tables, no
+	 * WHERE filter injection) and attach it to the Neo session alongside the neo-query
+	 * and neo-action servers.
+	 *
+	 * Follows the same order-independent wiring pattern as setToolsConfig() and
+	 * setActivityLogger().
+	 *
+	 * @param dbPath  Absolute path to the SQLite database file.
+	 */
+	setDbPath(dbPath: string): void {
+		this.dbPath = dbPath;
+	}
+
+	/**
 	 * Health-check the Neo session.
 	 *
 	 * Detects:
@@ -252,7 +272,8 @@ export class NeoAgentManager {
 	/**
 	 * Gracefully shut down the Neo session.
 	 *
-	 * Called during daemon shutdown. Delegates to AgentSession.cleanup().
+	 * Called during daemon shutdown. Delegates to AgentSession.cleanup() and
+	 * closes the db-query MCP server's read-only SQLite connection.
 	 */
 	async cleanup(): Promise<void> {
 		if (!this.session) return;
@@ -264,6 +285,14 @@ export class NeoAgentManager {
 			this.logger.error('Error during Neo session cleanup:', error);
 		}
 		this.session = null;
+
+		// Close the db-query server's read-only connection.
+		try {
+			this.dbQueryServer?.close();
+		} catch (error) {
+			this.logger.warn('Error closing db-query server during Neo cleanup:', error);
+		}
+		this.dbQueryServer = null;
 	}
 
 	// ============================================================================
@@ -379,6 +408,16 @@ export class NeoAgentManager {
 	private attachTools(): void {
 		if (!this.session || !this.toolsConfig) return;
 
+		// Close any existing db-query server instance before creating a new one.
+		// This prevents connection leaks when attachTools() is called multiple times
+		// during mid-lifecycle resets (e.g., destroyAndRecreate(), clearSession()).
+		try {
+			this.dbQueryServer?.close();
+		} catch (error) {
+			this.logger.warn('Error closing stale db-query server in attachTools():', error);
+		}
+		this.dbQueryServer = null;
+
 		const inProcessServers = createNeoToolsMcpServers(
 			this.toolsConfig,
 			this.actionToolsConfig ?? undefined
@@ -394,9 +433,22 @@ export class NeoAgentManager {
 			}
 		}
 
+		// Create the db-query MCP server with global scope (no WHERE filter injection).
+		// Placed last in the merge map so it wins on key collision.
+		const dbQueryServers: Record<string, McpServerConfig> = {};
+		if (this.dbPath) {
+			this.dbQueryServer = createDbQueryMcpServer({
+				dbPath: this.dbPath,
+				scopeType: 'global',
+				scopeValue: '',
+			});
+			dbQueryServers['db-query'] = this.dbQueryServer as unknown as McpServerConfig;
+		}
+
 		this.session.setRuntimeMcpServers({
 			...registryMcpServers,
 			...inProcessServers,
+			...dbQueryServers,
 		});
 	}
 }
