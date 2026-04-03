@@ -9,6 +9,7 @@
  */
 
 import { expect, type Page, type Locator } from '@playwright/test';
+import { CHAT_INPUT_SELECTOR } from './selectors';
 
 /**
  * Wait for WebSocket connection to be established
@@ -125,12 +126,6 @@ export async function createSessionViaUI(page: Page): Promise<string> {
 
 /**
  * Wait for session to be created and loaded
- *
- * Uses more specific selectors to avoid matching Neo panel elements:
- * - Checks for h2 NOT containing "Neo Lobby"
- * - Checks for textarea with placeholder containing "Ask" but NOT "Neo"
- *   (session textareas have "Ask or make anything..." while Neo panel has "Ask Neo…")
- * - Verifies URL contains session path to ensure proper navigation
  */
 export async function waitForSessionCreated(page: Page): Promise<string> {
 	// Wait for session to be created and loaded
@@ -142,18 +137,9 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 		{ timeout: 10000 }
 	);
 
-	// Verify URL contains session path
-	const url = page.url();
-	if (!url.includes('/session/')) {
-		throw new Error(`Expected to be on session page, but URL is: ${url}`);
-	}
-
-	// Verify we're in a chat view (message input should be visible)
-	// Use more specific selector to avoid matching Neo panel textbox
-	// Session textareas have "Ask" in placeholder, but Neo panel has "Ask Neo…"
-	const messageInput = page
-		.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
-		.first();
+	// Verify we're in a chat view (message input should be visible).
+	// Uses CHAT_INPUT_SELECTOR to match room coordinator or standalone session textareas.
+	const messageInput = page.locator(CHAT_INPUT_SELECTOR).first();
 	await expect(messageInput).toBeVisible({ timeout: 15000 });
 	await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
@@ -245,10 +231,8 @@ export async function waitForAssistantResponse(
 	}
 
 	// Wait for input to be enabled again (processing complete)
-	// Use specific selector to avoid matching Neo panel textbox
-	const messageInput = page
-		.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
-		.first();
+	// Uses CHAT_INPUT_SELECTOR to match room coordinator or standalone session textareas.
+	const messageInput = page.locator(CHAT_INPUT_SELECTOR).first();
 	await expect(messageInput).toBeEnabled({ timeout: 20000 });
 }
 
