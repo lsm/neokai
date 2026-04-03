@@ -23,6 +23,7 @@ import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
@@ -185,6 +186,7 @@ function buildManager(opts: {
 	const gateDataRepo = new GateDataRepository(bunDb);
 	const spaceManager = new SpaceManager(bunDb);
 	const taskManager = new SpaceTaskManager(bunDb, spaceId);
+	const nodeExecutionRepo = new NodeExecutionRepository(bunDb);
 	const runtime = new SpaceRuntime({
 		db: bunDb,
 		spaceManager,
@@ -192,6 +194,7 @@ function buildManager(opts: {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 	const daemonHub = new TestDaemonHub();
 	const space = makeSpace(spaceId);
@@ -269,6 +272,7 @@ function buildManager(opts: {
 		appMcpManager: appMcpManager as never,
 		skillsManager: mockSkillsManager,
 		appMcpServerRepo: mockAppMcpServerRepo,
+		nodeExecutionRepo,
 	});
 
 	return {

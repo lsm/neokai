@@ -36,6 +36,7 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import {
 	createTaskAgentToolHandlers,
 	type SubSessionFactory,
@@ -77,6 +78,35 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
 		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
 	).run(agentId, spaceId, name, Date.now(), Date.now());
+}
+
+/**
+ * Ensure a node_execution record exists with the given status.
+ * If a record with the same (runId, nodeId, agentName) already exists,
+ * update its status. Otherwise, create a new record.
+ */
+function ensureNodeExec(
+	repo: NodeExecutionRepository,
+	runId: string,
+	nodeId: string,
+	agentName: string,
+	agentId: string | null,
+	status: string
+): void {
+	const existing = repo
+		.listByWorkflowRun(runId)
+		.find((e) => e.workflowNodeId === nodeId && e.agentName === agentName);
+	if (existing) {
+		repo.updateStatus(existing.id, status as import('@neokai/shared').NodeExecutionStatus);
+	} else {
+		repo.createOrIgnore({
+			workflowRunId: runId,
+			workflowNodeId: nodeId,
+			agentName,
+			agentId: agentId ?? null,
+			status: status as import('@neokai/shared').NodeExecutionStatus,
+		});
+	}
 }
 
 function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
@@ -180,6 +210,7 @@ interface TestCtx {
 	workflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
@@ -205,6 +236,7 @@ function makeCtx(): TestCtx {
 
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
 
@@ -215,6 +247,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 
 	const space = makeSpace(spaceId, workspacePath);
@@ -229,6 +262,7 @@ function makeCtx(): TestCtx {
 		workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 		taskManager,
 		agentManager,
 		runtime,
@@ -370,8 +404,19 @@ describe('Task Agent — full collaboration flow', () => {
 						status: 'done',
 						completedAt: Date.now(),
 					});
+					// Update node_execution record to 'done' for CompletionDetector.
+					// startWorkflowRun() creates the record with 'pending', so we
+					// must update it here.
+					ensureNodeExec(
+						ctx.nodeExecutionRepo,
+						run.id,
+						wf.nodes[0].id,
+						'Code',
+						ctx.coderAgentId,
+						'done'
+					);
 				},
-				completionDetector: new CompletionDetector(ctx.taskRepo),
+				completionDetector: new CompletionDetector(ctx.nodeExecutionRepo),
 			})
 		);
 
@@ -435,7 +480,7 @@ describe('Task Agent — full collaboration flow', () => {
 		});
 
 		const factory = makeMockSessionFactory();
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, {
@@ -448,6 +493,19 @@ describe('Task Agent — full collaboration flow', () => {
 							status: 'done',
 							completedAt: Date.now(),
 						});
+						// Update existing node_execution record to 'done' for CompletionDetector
+						const nodeExec = wf.nodes.find(
+							(n) => task.title.includes(n.name) || task.title.includes(n.id)
+						);
+						if (nodeExec) {
+							const executions = ctx.nodeExecutionRepo.listByNode(run.id, nodeExec.id);
+							const execution = executions.find(
+								(e) => e.status !== 'done' && e.status !== 'cancelled'
+							);
+							if (execution) {
+								ctx.nodeExecutionRepo.updateStatus(execution.id, 'done');
+							}
+						}
 					}
 				},
 				completionDetector,
@@ -462,6 +520,25 @@ describe('Task Agent — full collaboration flow', () => {
 		const spawn2 = await handlers.spawn_node_agent({ step_id: node2Id });
 		const spawn2Parsed = JSON.parse(spawn2.content[0].text);
 		expect(spawn2Parsed.success).toBe(true);
+
+		// Ensure node_execution records exist for both nodes (pending status)
+		// so CompletionDetector sees all nodes and checks their status
+		ensureNodeExec(
+			ctx.nodeExecutionRepo,
+			run.id,
+			node1Id,
+			wf.nodes[0].name,
+			wf.nodes[0].agents[0].agentId,
+			'pending'
+		);
+		ensureNodeExec(
+			ctx.nodeExecutionRepo,
+			run.id,
+			node2Id,
+			wf.nodes[1].name,
+			wf.nodes[1].agents[0].agentId,
+			'pending'
+		);
 
 		// Complete only node1 — report_workflow_done should be blocked
 		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(
@@ -653,24 +730,32 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		const { run, mainTask } = await startRun(ctx, wf);
 		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
 
-		// Set the step task to needs_attention (blocked by gate, non-terminal for CompletionDetector)
-		// workflowNodeId was removed in M71 — filter by tasks that are not the main task
+		// Set the step task to done (terminal) with a matching node_execution record
+		// so CompletionDetector considers the workflow complete.
 		const stepTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
 		expect(stepTasks.length).toBeGreaterThan(0);
-		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'blocked' });
+		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'done', completedAt: Date.now() });
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		// Ensure node_execution record is 'done' — terminal status for CompletionDetector
+		ensureNodeExec(
+			ctx.nodeExecutionRepo,
+			run.id,
+			wf.nodes[0].id,
+			wf.nodes[0].name,
+			wf.nodes[0].agents[0].agentId,
+			'done'
+		);
+
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
 		);
 
-		// report_workflow_done should be blocked — node agent is in needs_attention which
-		// is terminal for CompletionDetector (gate-blocked = terminal from detector perspective)
-		// NOTE: needs_attention IS terminal for CompletionDetector
+		// report_workflow_done should succeed — node execution has terminal status
 		const result = await handlers.report_workflow_done({ summary: 'Should complete' });
 		const parsed = JSON.parse(result.content[0].text);
-		// needs_attention is a terminal status — CompletionDetector allows it
+		// 'done' is a terminal status — CompletionDetector allows it
 		expect(parsed.success).toBe(true);
 		// Confirm run was marked completed
 		const updatedRun = ctx.workflowRunRepo.getRun(run.id);
@@ -687,7 +772,7 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		const stepTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
 		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'in_progress' });
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
@@ -765,7 +850,7 @@ describe('Task Agent — multi-agent node collaboration', () => {
 		const nodeTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
 		expect(nodeTasks).toHaveLength(2);
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, { completionDetector })
@@ -782,8 +867,13 @@ describe('Task Agent — multi-agent node collaboration', () => {
 		// Idempotency: second spawn returns the same session (the last-created task)
 		expect(spawn2Parsed.alreadySpawned).toBe(true);
 
+		// Node_execution records are created by startWorkflowRun() with per-agent names.
+
 		// Mark one task completed, one still pending — detector should block
 		ctx.taskRepo.updateTask(nodeTasks[0].id, { status: 'done', completedAt: Date.now() });
+		// Update first agent's node_execution to 'done'
+		const exec1 = ctx.nodeExecutionRepo.listByNode(run.id, nodeId).find((e) => e.status !== 'done');
+		if (exec1) ctx.nodeExecutionRepo.updateStatus(exec1.id, 'done');
 
 		const earlyResult = await handlers.report_workflow_done({ summary: 'Too early' });
 		const earlyParsed = JSON.parse(earlyResult.content[0].text);
@@ -792,6 +882,9 @@ describe('Task Agent — multi-agent node collaboration', () => {
 
 		// Mark second task completed
 		ctx.taskRepo.updateTask(nodeTasks[1].id, { status: 'done', completedAt: Date.now() });
+		// Update second agent's node_execution to 'done'
+		const exec2 = ctx.nodeExecutionRepo.listByNode(run.id, nodeId).find((e) => e.status !== 'done');
+		if (exec2) ctx.nodeExecutionRepo.updateStatus(exec2.id, 'done');
 
 		const finalResult = await handlers.report_workflow_done({
 			summary: 'All parallel agents done',

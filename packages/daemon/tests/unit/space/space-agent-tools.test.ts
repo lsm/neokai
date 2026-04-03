@@ -131,6 +131,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 
 	const taskManager = new SpaceTaskManager(db, spaceId);
@@ -277,7 +278,9 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.run.id).toBe(runId);
 		expect(parsed.run.status).toBe('in_progress');
-		expect(parsed.executions).toHaveLength(0);
+		// startWorkflowRun() now creates a node_execution record for the start node
+		expect(parsed.executions).toHaveLength(1);
+		expect(parsed.executions[0].status).toBe('pending');
 	});
 
 	test('returns error when run not found', async () => {

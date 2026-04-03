@@ -370,7 +370,7 @@ export interface CreateNodeExecutionParams {
 	workflowRunId: string;
 	workflowNodeId: string;
 	agentName: string;
-	agentId: string;
+	agentId?: string | null;
 	/** Initial status — defaults to 'pending' */
 	status?: NodeExecutionStatus;
 	/** Agent sub-session ID when the session is already known at creation time */

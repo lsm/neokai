@@ -23,6 +23,7 @@ import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -354,6 +355,7 @@ function makeCtx(): TestCtx {
 
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const spaceManager = new SpaceManager(db);
 
 	const runtime = new SpaceRuntime({
@@ -363,6 +365,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 
 	return {

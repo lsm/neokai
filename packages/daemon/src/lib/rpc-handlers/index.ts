@@ -48,6 +48,7 @@ import { setupDialogHandlers } from './dialog-handlers';
 import { setupSpaceHandlers } from './space-handlers';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
+import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
 import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import { setupSpaceWorkflowHandlers } from './space-workflow-handlers';
@@ -59,7 +60,6 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
-import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
@@ -353,7 +353,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
-	const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
@@ -417,6 +416,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// after gate data is written externally (e.g. approveGate RPC, writeGateData RPC).
 	// sessionManager and daemonHub are injected so space:chat:${spaceId} sessions are
 	// provisioned with MCP tools and system prompts on startup and on space.created.
+	const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		spaceManager: deps.spaceManager,
@@ -424,10 +424,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowManager,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
+		nodeExecutionRepo,
 		reactiveDb: deps.reactiveDb,
 		gateDataRepo,
 		channelCycleRepo,
-		nodeExecutionRepo,
 		sessionManager: deps.sessionManager,
 		daemonHub: deps.daemonHub,
 	});
@@ -474,6 +474,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		worktreeManager: spaceWorktreeManager,
 		skillsManager: deps.skillsManager,
 		appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
+		nodeExecutionRepo,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
@@ -517,8 +518,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 				runtime: spaceRuntimeService.getSharedRuntime(),
 				workflowManager: spaceWorkflowManager,
 				taskRepo: spaceTaskRepo,
-				workflowRunRepo: spaceWorkflowRunRepo,
 				nodeExecutionRepo,
+				workflowRunRepo: spaceWorkflowRunRepo,
 				db: deps.db.getDatabase(),
 			},
 			neoSpacesState
@@ -670,8 +671,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			spaceRuntimeService,
 			sessionFactory: globalSessionFactory,
 			taskRepo: spaceTaskRepo,
-			workflowRunRepo: spaceWorkflowRunRepo,
 			nodeExecutionRepo,
+			workflowRunRepo: spaceWorkflowRunRepo,
 			db: deps.db.getDatabase(),
 			state: globalSpacesState,
 			daemonHub: deps.daemonHub,

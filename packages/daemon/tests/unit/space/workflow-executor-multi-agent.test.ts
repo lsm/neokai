@@ -17,6 +17,7 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
@@ -123,6 +124,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
+			nodeExecutionRepo: new NodeExecutionRepository(db),
 		};
 		runtime = new SpaceRuntime(config);
 	});
@@ -725,6 +727,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
+			nodeExecutionRepo: new NodeExecutionRepository(db),
 		};
 		runtime = new SpaceRuntime(config);
 	});

@@ -77,6 +77,7 @@ import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { CompletionDetector } from './completion-detector';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
@@ -187,6 +188,8 @@ export interface TaskAgentManagerConfig {
 	 * (maps `AppSkill.config.appMcpServerId` → `AppMcpServer` entry for the SDK config).
 	 */
 	appMcpServerRepo: AppMcpServerRepository;
+	/** Node execution repository — for CompletionDetector to query workflow-internal execution state */
+	nodeExecutionRepo: NodeExecutionRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -618,11 +621,12 @@ export class TaskAgentManager {
 				workflowRunRepo: this.config.workflowRunRepo,
 				workflowManager: this.config.spaceWorkflowManager,
 				agentManager: this.config.spaceAgentManager,
+				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				gateDataRepo: this.config.gateDataRepo,
 				db: this.config.db.getDatabase(),
 				workspacePath,
 			});
-			const completionDetector = new CompletionDetector(this.config.taskRepo);
+			const completionDetector = new CompletionDetector(this.config.nodeExecutionRepo);
 
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
@@ -1436,12 +1440,13 @@ export class TaskAgentManager {
 			workflowRunRepo: this.config.workflowRunRepo,
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
+			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
 			workspacePath: rehydrateWorkspacePath,
 		});
-		const rehydrateCompletionDetector = new CompletionDetector(this.config.taskRepo);
+		const rehydrateCompletionDetector = new CompletionDetector(this.config.nodeExecutionRepo);
 
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,
@@ -1754,6 +1759,7 @@ export class TaskAgentManager {
 			workflowRunRepo: this.config.workflowRunRepo,
 			workflowManager: this.config.spaceWorkflowManager,
 			agentManager: this.config.spaceAgentManager,
+			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),

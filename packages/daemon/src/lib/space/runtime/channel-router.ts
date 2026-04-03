@@ -41,6 +41,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
@@ -140,6 +141,12 @@ export interface ChannelRouterConfig {
 	workflowManager: SpaceWorkflowManager;
 	/** Agent manager for resolving agent roles → task types */
 	agentManager: SpaceAgentManager;
+	/**
+	 * Node execution repository for creating node_execution records.
+	 * activateNode() creates a node_execution record for each SpaceTask,
+	 * enabling CompletionDetector to track workflow completion.
+	 */
+	nodeExecutionRepo: NodeExecutionRepository;
 	/**
 	 * Gate data repository for reading/writing gate runtime data.
 	 * Required when workflows use the new separated Channel+Gate architecture
@@ -302,6 +309,19 @@ export class ChannelRouter {
 					err
 				);
 			}
+		}
+
+		// Create node_execution records for each created task.
+		// Uses createOrIgnore for idempotency: if a concurrent activateNode()
+		// already created these records, the existing ones are returned.
+		for (const agentEntry of agents) {
+			this.config.nodeExecutionRepo.createOrIgnore({
+				workflowRunId: runId,
+				workflowNodeId: nodeId,
+				agentName: isMultiAgent ? agentEntry.name : node.name,
+				agentId: agentEntry.agentId ?? null,
+				status: 'pending',
+			});
 		}
 
 		return tasks;

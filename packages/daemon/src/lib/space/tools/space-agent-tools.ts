@@ -26,8 +26,8 @@ import type { SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
@@ -48,6 +48,8 @@ export interface SpaceAgentToolsConfig {
 	workflowManager: SpaceWorkflowManager;
 	/** Task repository for read queries (list/filter). */
 	taskRepo: SpaceTaskRepository;
+	/** Node execution repository for workflow run node execution queries. */
+	nodeExecutionRepo: NodeExecutionRepository;
 	/** Workflow run repository for listing and updating runs. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Task manager for create/retry/cancel/reassign operations. */
@@ -59,8 +61,6 @@ export interface SpaceAgentToolsConfig {
 	 * Optional — when not provided, send_message_to_task returns an error.
 	 */
 	taskAgentManager?: TaskAgentManager | null;
-	/** Node execution repository for querying node execution records. */
-	nodeExecutionRepo: NodeExecutionRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,11 +77,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		runtime,
 		workflowManager,
 		taskRepo,
+		nodeExecutionRepo,
 		workflowRunRepo,
 		taskManager,
 		spaceAgentManager,
 		taskAgentManager,
-		nodeExecutionRepo,
 	} = config;
 
 	return {
@@ -631,7 +631,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'get_task_detail',
-			'Get the full detail of a task by its numeric ID (e.g. task #5) or UUID. Includes error, result, PR URL, PR number, and current step.',
+			'Retrieve detailed information about a specific task including its status, result, and metadata.',
 			{
 				task_id: z.string().optional().describe('UUID of the task to retrieve'),
 				task_number: z
@@ -643,7 +643,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'retry_task',
-			'Retry a failed (blocked) or cancelled task by resetting it to pending. Optionally provide an updated description.',
+			'Retry a failed or cancelled task. Optionally update the task description for the retry attempt.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
 				description: z

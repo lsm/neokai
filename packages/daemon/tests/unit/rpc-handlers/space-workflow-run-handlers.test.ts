@@ -385,6 +385,7 @@ describe('space-workflow-run-handlers', () => {
 				title: 'Goal Run',
 				goalId: 'goal-rpc-123',
 			});
+			// goalId is no longer forwarded — handler calls with 4 args
 			expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
 				'space-1',
 				'workflow-1',

@@ -81,6 +81,7 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { CompletionDetector } from '../../../src/lib/space/runtime/completion-detector.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import {
 	createTaskAgentToolHandlers,
 	createTaskAgentMcpServer,
@@ -294,6 +295,7 @@ interface TestCtx {
 	workflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
@@ -317,6 +319,7 @@ function makeCtx(): TestCtx {
 
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
 
@@ -327,6 +330,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 
 	const space = makeSpace(spaceId, workspacePath);
@@ -340,6 +344,7 @@ function makeCtx(): TestCtx {
 		workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 		taskManager,
 		agentManager,
 		runtime,
@@ -1774,16 +1779,17 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		// The executor creates two tasks for this step (one per agent slot)
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Verify two step tasks were created (both have title = step name; mainTask is the 3rd)
+		// Verify two step tasks were created (one per agent slot; mainTask is the 3rd).
+		// Multi-agent start nodes use agentEntry.name as task title (per-agent titles).
 		const allRunTasks = ctx.taskRepo
 			.listByWorkflowRun(run.id)
 			.sort((a, b) => a.createdAt - b.createdAt);
-		// Filter to only step tasks (those with title matching the step node name)
-		const stepTasks = allRunTasks.filter((t) => t.title === 'Dual Instance Step');
+		// Filter to only step tasks (those with agent slot names as titles)
+		const slotNames = new Set(['strict-reviewer', 'quick-reviewer']);
+		const stepTasks = allRunTasks.filter((t) => slotNames.has(t.title));
 		expect(stepTasks).toHaveLength(2);
-		// Both tasks have the same title (the step name), since agentName was removed in M71
-		expect(stepTasks[0]?.title).toBe('Dual Instance Step');
-		expect(stepTasks[1]?.title).toBe('Dual Instance Step');
+		expect(slotNames.has(stepTasks[0]?.title ?? '')).toBe(true);
+		expect(slotNames.has(stepTasks[1]?.title ?? '')).toBe(true);
 
 		// spawn_node_agent picks the last matching task
 		const factory = makeMockSessionFactory();
@@ -2019,7 +2025,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
 
 		// The step task is still 'pending' — not terminal
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
@@ -2041,7 +2047,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		const stepTask = ctx.taskRepo.listByWorkflowRun(run.id)[0];
 		ctx.taskRepo.updateTask(stepTask!.id, { status: 'in_progress' });
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
@@ -2062,6 +2068,12 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		// Mark the step task as terminal (bypass state machine)
 		ctx.taskRepo.updateTask(stepTask.id, { status: 'done' });
 
+		// Update the existing node_execution record (created by startWorkflowRun)
+		// to terminal status so CompletionDetector sees it as complete.
+		const executions = ctx.nodeExecutionRepo.listByWorkflowRun(run.id);
+		expect(executions).toHaveLength(1);
+		ctx.nodeExecutionRepo.updateStatus(executions[0].id, 'done');
+
 		// Create the orchestration (main) task WITHOUT workflowRunId so the
 		// CompletionDetector does not see it and only checks step tasks.
 		const mainTask = ctx.taskRepo.createTask({
@@ -2071,7 +2083,7 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 			status: 'in_progress',
 		});
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
@@ -2085,13 +2097,19 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 		expect(updatedRun?.status).toBe('done');
 	});
 
-	test('allows completion when step task has needs_attention status (terminal)', async () => {
+	test('allows completion when step task has cancelled status (terminal for NodeExecution)', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Test run');
 		const stepTask = tasks[0];
 
-		// blocked is a terminal status for the CompletionDetector (bypass state machine)
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'blocked' });
+		// cancelled is a terminal status for NodeExecution (done + cancelled)
+		ctx.taskRepo.updateTask(stepTask.id, { status: 'cancelled' });
+
+		// Update the existing node_execution record to terminal status.
+		// 'cancelled' is a terminal status for NodeExecution.
+		const executions = ctx.nodeExecutionRepo.listByWorkflowRun(run.id);
+		expect(executions).toHaveLength(1);
+		ctx.nodeExecutionRepo.updateStatus(executions[0].id, 'cancelled');
 
 		// Create orchestration task WITHOUT workflowRunId (excluded from detector)
 		const mainTask = ctx.taskRepo.createTask({
@@ -2101,12 +2119,12 @@ describe('createTaskAgentToolHandlers — report_workflow_done with CompletionDe
 			status: 'in_progress',
 		});
 
-		const completionDetector = new CompletionDetector(ctx.taskRepo);
+		const completionDetector = new CompletionDetector(ctx.nodeExecutionRepo);
 		const factory = makeMockSessionFactory();
 		const config = makeConfig(ctx, mainTask.id, run.id, factory);
 		const handlers = createTaskAgentToolHandlers({ ...config, completionDetector });
 
-		const result = await handlers.report_workflow_done({ summary: 'Attention needed but done' });
+		const result = await handlers.report_workflow_done({ summary: 'Agent cancelled but done' });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);

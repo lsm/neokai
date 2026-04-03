@@ -26,8 +26,8 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
@@ -43,9 +43,8 @@ export interface GlobalSpacesToolsConfig {
 	runtime: SpaceRuntime;
 	workflowManager: SpaceWorkflowManager;
 	taskRepo: SpaceTaskRepository;
-	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** Node execution repository for querying node execution records. */
 	nodeExecutionRepo: NodeExecutionRepository;
+	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Database instance used to create SpaceTaskManager instances on demand. */
 	db: BunDatabase;
 }
@@ -87,8 +86,8 @@ export function createGlobalSpacesToolHandlers(
 		runtime,
 		workflowManager,
 		taskRepo,
-		workflowRunRepo,
 		nodeExecutionRepo,
+		workflowRunRepo,
 		db,
 	} = config;
 
@@ -608,7 +607,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'get_workflow_run',
-			'Check the status of a workflow run including current step and associated tasks.',
+			'Check the status of a workflow run including node executions.',
 			{
 				run_id: z.string().describe('ID of the workflow run'),
 			},
@@ -709,7 +708,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'retry_task',
-			'Reset a failed (blocked) or cancelled task back to pending so it can be picked up again. Optionally update the description before retry.',
+			'Retry a failed or cancelled task. Optionally update the task description for the retry attempt.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
 				space_id: z
