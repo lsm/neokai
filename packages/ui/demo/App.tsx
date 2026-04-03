@@ -32,6 +32,8 @@ import { ProgressBarsDemo } from './sections/ProgressBarsDemo.tsx';
 import { VerticalNavigationDemo } from './sections/VerticalNavigationDemo.tsx';
 import { BreadcrumbsDemo } from './sections/BreadcrumbsDemo.tsx';
 import { SidebarNavigationDemo } from './sections/SidebarNavigationDemo.tsx';
+import { CommandPalettesDemo } from './sections/navigation/CommandPalettesDemo.tsx';
+import { NavbarsDemo } from './sections/navigation/NavbarsDemo.tsx';
 import { EmptyStatesDemo } from './sections/EmptyStatesDemo.tsx';
 import { FeedsDemo } from './sections/FeedsDemo.tsx';
 import { CalendarsDemo } from './sections/CalendarsDemo.tsx';
@@ -545,6 +547,14 @@ export function App() {
 						title="Multi-column (Application Shell)"
 					>
 						<MultiColumnDemo />
+					</DemoSection>
+
+					{/* Application UI - Navigation */}
+					<DemoSection id="navigation-command-palettes" title="Command Palettes (Navigation)">
+						<CommandPalettesDemo />
+					</DemoSection>
+					<DemoSection id="navigation-navbars" title="Navbars (Navigation)">
+						<NavbarsDemo />
 					</DemoSection>
 
 					{/* Application UI - Data Display */}
