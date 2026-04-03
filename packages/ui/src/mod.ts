@@ -76,6 +76,23 @@ export {
 	AvatarImage,
 	AvatarStatus,
 } from './components/avatar/avatar.tsx';
+export {
+	Alert,
+	AlertActions,
+	AlertDescription,
+	AlertIcon,
+	AlertTitle,
+} from './components/alert/alert.tsx';
+export { Badge } from './components/badge/badge.tsx';
+export { ProgressBar } from './components/progress-bar/progress-bar.tsx';
+export {
+	Stepper,
+	StepperDescription,
+	StepperIcon,
+	StepperLabel,
+	StepperSeparator,
+	StepperStep,
+} from './components/stepper/stepper.tsx';
 export { IconButton } from './components/icon-button/icon-button.tsx';
 export { Skeleton } from './components/skeleton/skeleton.tsx';
 export { Spinner } from './components/spinner/spinner.tsx';
