@@ -793,6 +793,30 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
+	test('CODING_WORKFLOW seeding preserves node system prompts with mode expand', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
+		expect(wf).toBeDefined();
+		for (const node of wf!.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt?.mode).toBe('expand');
+				expect((agent.systemPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
+			}
+		}
+	});
+
+	test('RESEARCH_WORKFLOW seeding preserves node system prompts with mode expand', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
+		expect(wf).toBeDefined();
+		for (const node of wf!.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt?.mode).toBe('expand');
+				expect((agent.systemPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
+			}
+		}
+	});
+
 	test('CODING_WORKFLOW seeded correctly — two nodes with real agent IDs', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);

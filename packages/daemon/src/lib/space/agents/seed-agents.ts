@@ -1,7 +1,7 @@
 /**
  * Space Preset Agent Seeding
  *
- * Seeds the five default SpaceAgent records when a new Space is created.
+ * Seeds the six default SpaceAgent records when a new Space is created.
  * Preset agents are regular SpaceAgent rows — fully editable by users — that
  * have sensible defaults for tools and model.
  * SpaceRuntime resolves all agents by ID at runtime; there is no special
