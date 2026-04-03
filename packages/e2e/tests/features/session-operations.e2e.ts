@@ -3,6 +3,7 @@ import {
 	cleanupTestSession,
 	createSessionViaUI,
 	waitForMessageProcessed,
+	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
 
 /**
@@ -20,7 +21,7 @@ test.describe('Session Export', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
+		await waitForWebSocketConnected(page);
 		sessionId = null;
 	});
 
