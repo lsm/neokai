@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	Description,
 	Field,
+	FieldError,
 	Fieldset,
 	Input,
 	Label,
@@ -338,6 +339,74 @@ describe('Input', () => {
 		});
 		expect(input).not.toBeNull();
 	});
+
+	it('should set data-hover on mouseenter', async () => {
+		render(<Input />);
+		const input = screen.getByRole('textbox');
+		await act(async () => {
+			fireEvent.mouseEnter(input);
+		});
+		expect(input.getAttribute('data-hover')).toBe('');
+	});
+
+	it('should clear data-hover on mouseleave', async () => {
+		render(<Input />);
+		const input = screen.getByRole('textbox');
+		await act(async () => {
+			fireEvent.mouseEnter(input);
+		});
+		expect(input.getAttribute('data-hover')).toBe('');
+		await act(async () => {
+			fireEvent.mouseLeave(input);
+		});
+		expect(input.getAttribute('data-hover')).toBeNull();
+	});
+
+	it('should set data-focus on focus', async () => {
+		render(<Input />);
+		const input = screen.getByRole('textbox');
+		await act(async () => {
+			input.focus();
+		});
+		expect(input.getAttribute('data-focus')).toBe('');
+	});
+
+	it('should clear data-focus on blur', async () => {
+		render(<Input />);
+		const input = screen.getByRole('textbox');
+		await act(async () => {
+			input.focus();
+		});
+		expect(input.getAttribute('data-focus')).toBe('');
+		await act(async () => {
+			input.blur();
+		});
+		expect(input.getAttribute('data-focus')).toBeNull();
+	});
+
+	it('should set data-disabled when disabled', () => {
+		render(<Input disabled />);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('data-disabled')).toBe('');
+	});
+
+	it('should not set data-disabled when not disabled', () => {
+		render(<Input />);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('data-disabled')).toBeNull();
+	});
+
+	it('should set data-invalid when invalid=true', () => {
+		render(<Input invalid />);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('data-invalid')).toBe('');
+	});
+
+	it('should not set data-invalid when invalid=false', () => {
+		render(<Input />);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('data-invalid')).toBeNull();
+	});
 });
 
 describe('Textarea', () => {
@@ -580,5 +649,210 @@ describe('Field + Fieldset combined', () => {
 			fireEvent.click(label);
 		});
 		expect(label).not.toBeNull();
+	});
+});
+
+describe('FieldError', () => {
+	it('should render a p by default', () => {
+		const { container } = render(
+			<Field>
+				<Input />
+				<FieldError>Error message</FieldError>
+			</Field>
+		);
+		expect(container.querySelector('p')).not.toBeNull();
+	});
+
+	it('should render children', () => {
+		render(
+			<Field>
+				<FieldError>Error text</FieldError>
+			</Field>
+		);
+		expect(screen.getByText('Error text')).not.toBeNull();
+	});
+
+	it('should set role=alert', () => {
+		const { container } = render(
+			<Field>
+				<Input />
+				<FieldError>Error</FieldError>
+			</Field>
+		);
+		const error = container.querySelector('p');
+		expect(error?.getAttribute('role')).toBe('alert');
+	});
+
+	it('should set aria-describedby on Input from FieldError id', () => {
+		const { container } = render(
+			<Field>
+				<Input />
+				<FieldError>Error message</FieldError>
+			</Field>
+		);
+		const error = container.querySelector('p');
+		const input = container.querySelector('input');
+		expect(input?.getAttribute('aria-describedby')).toBe(error?.getAttribute('id'));
+	});
+
+	it('should set aria-invalid on Input when FieldError is present', () => {
+		render(
+			<Field>
+				<Input />
+				<FieldError>Error</FieldError>
+			</Field>
+		);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('aria-invalid')).toBe('true');
+	});
+
+	it('should not set aria-invalid when no FieldError', () => {
+		render(
+			<Field>
+				<Input />
+			</Field>
+		);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('aria-invalid')).toBeNull();
+	});
+
+	it('should clear aria-invalid when FieldError is unmounted', () => {
+		const { rerender } = render(
+			<Field>
+				<Input />
+				<FieldError>Error</FieldError>
+			</Field>
+		);
+		const input = screen.getByRole('textbox') as HTMLInputElement;
+		expect(input.getAttribute('aria-invalid')).toBe('true');
+
+		rerender(
+			<Field>
+				<Input />
+			</Field>
+		);
+		expect(input.getAttribute('aria-invalid')).toBeNull();
+	});
+
+	it('should render with custom as prop', () => {
+		const { container } = render(
+			<Field>
+				<FieldError as="span">Error</FieldError>
+			</Field>
+		);
+		const error = container.querySelector('span');
+		expect(error?.getAttribute('role')).toBe('alert');
+	});
+
+	it('should render without Field context (standalone)', () => {
+		render(<FieldError>Standalone error</FieldError>);
+		expect(screen.getByText('Standalone error')).not.toBeNull();
+	});
+
+	it('should work with Textarea', () => {
+		render(
+			<Field>
+				<Textarea />
+				<FieldError>Textarea error</FieldError>
+			</Field>
+		);
+		const ta = screen.getByRole('textbox');
+		expect(ta.getAttribute('aria-invalid')).toBe('true');
+	});
+
+	it('should work with Select', () => {
+		render(
+			<Field>
+				<Select>
+					<option>A</option>
+				</Select>
+				<FieldError>Select error</FieldError>
+			</Field>
+		);
+		const sel = screen.getByRole('combobox');
+		expect(sel.getAttribute('aria-invalid')).toBe('true');
+	});
+
+	it('should set data-invalid on Input when FieldError is present', () => {
+		render(
+			<Field>
+				<Input />
+				<FieldError>Error</FieldError>
+			</Field>
+		);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('data-invalid')).toBe('');
+	});
+
+	it('should work with both Description and FieldError (no clobbering)', () => {
+		const { container } = render(
+			<Field>
+				<Label>Name</Label>
+				<Input />
+				<Description>Help text</Description>
+				<FieldError>Error text</FieldError>
+			</Field>
+		);
+		const input = container.querySelector('input');
+		const desc = container.querySelector('p[id]');
+		const error = container.querySelector('p[role="alert"]');
+
+		// Both description IDs should be in aria-describedby
+		const describedBy = input?.getAttribute('aria-describedby')?.split(' ') ?? [];
+		expect(describedBy).toContain(desc?.getAttribute('id'));
+		expect(describedBy).toContain(error?.getAttribute('id'));
+	});
+
+	it('should keep aria-describedby working after one FieldError unmounts (counter pattern)', () => {
+		const { rerender } = render(
+			<Field>
+				<Input />
+				<FieldError>Error 1</FieldError>
+				<FieldError>Error 2</FieldError>
+			</Field>
+		);
+		const input = screen.getByRole('textbox');
+		expect(input.getAttribute('aria-invalid')).toBe('true');
+
+		// Unmount one FieldError - aria-invalid should remain true
+		rerender(
+			<Field>
+				<Input />
+				<FieldError>Error 1</FieldError>
+			</Field>
+		);
+		expect(input.getAttribute('aria-invalid')).toBe('true');
+
+		// Unmount the last FieldError - aria-invalid should now be false
+		rerender(
+			<Field>
+				<Input />
+			</Field>
+		);
+		expect(input.getAttribute('aria-invalid')).toBeNull();
+	});
+
+	it('should keep aria-describedby working after Description unmounts (no clobbering)', () => {
+		const { rerender } = render(
+			<Field>
+				<Input />
+				<Description>Help text</Description>
+				<FieldError>Error text</FieldError>
+			</Field>
+		);
+		const input = screen.getByRole('textbox');
+		const error = document.querySelector('p[role="alert"]');
+		const describedBy = input.getAttribute('aria-describedby')?.split(' ') ?? [];
+		expect(describedBy).toContain(error?.getAttribute('id'));
+
+		// Unmount Description - FieldError should still work
+		rerender(
+			<Field>
+				<Input />
+				<FieldError>Error text</FieldError>
+			</Field>
+		);
+		const describedByAfter = input.getAttribute('aria-describedby')?.split(' ') ?? [];
+		expect(describedByAfter).toContain(error?.getAttribute('id'));
 	});
 });
