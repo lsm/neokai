@@ -314,6 +314,91 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			expect(typeof row.content).toBe('string');
 			expect((row.content as string).includes('_taskMeta')).toBe(true);
 		});
+
+		test('Leg 2 (node_agents): returns node agent activity via node_executions', () => {
+			const orchestrationSessionId = 'space:test-space:task:orch-1';
+			const nodeSessionId = 'node-agent-session-1';
+			const workflowRunId = 'wr-node-agent-test';
+			const workflowNodeId = 'node-coder-1';
+			const agentName = 'coder';
+
+			// Insert the orchestration task (target_task) — this is the Task Agent's own task.
+			// It has a different session ID from the node agent sub-session.
+			const taskId = insertSpaceTask({
+				id: 'orch-task-1',
+				taskAgentSessionId: orchestrationSessionId,
+				workflowRunId,
+				status: 'in_progress',
+			});
+
+			// Insert a separate step task for the node agent (different from the orchestration task).
+			db.exec(`
+				INSERT INTO space_tasks (
+					id, space_id, task_number, title, description, status, priority, assigned_agent,
+					agent_name, workflow_run_id, workflow_node_id, task_agent_session_id, depends_on,
+					created_at, updated_at
+				) VALUES (
+					'step-task-1', '${spaceId}', 2, '${agentName}', 'Code the feature', 'in_progress',
+					'normal', NULL, '${agentName}',
+					'${workflowRunId}', '${workflowNodeId}', '${nodeSessionId}',
+					'[]', ${now}, ${now}
+				)
+			`);
+
+			// Insert a matching node_execution record with agent_session_id
+			db.exec(`
+				INSERT INTO node_executions (
+					id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+					agent_session_id, status, result, created_at, started_at,
+					completed_at, updated_at
+				) VALUES (
+					'ne-1', '${workflowRunId}', '${workflowNodeId}', '${agentName}', NULL,
+					'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now},
+					NULL, ${now}
+				)
+			`);
+
+			// Insert session and SDK messages for the node agent
+			insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing","phase":"coding"}');
+			insertSdkMessage('sdk-node-1', nodeSessionId);
+			insertSdkMessage('sdk-node-2', nodeSessionId);
+
+			const rows = queryAndMap(taskId);
+			// Should return the orchestration row (Leg 1) and the node agent row (Leg 2)
+			const nodeAgentRow = rows.find((r) => r.kind === 'node_agent');
+			expect(nodeAgentRow).toBeDefined();
+			expect(nodeAgentRow!.label).toBeTruthy(); // COALESCE(sa.name, ne.agent_name, 'agent')
+			expect(nodeAgentRow!.role).toBe('coder');
+			expect(nodeAgentRow!.state).toBe('active');
+			expect(nodeAgentRow!.processingStatus).toBe('processing');
+			expect(nodeAgentRow!.processingPhase).toBe('coding');
+			expect(nodeAgentRow!.messageCount).toBe(2);
+			expect(nodeAgentRow!.sessionId).toBe(nodeSessionId);
+			expect(nodeAgentRow!.workflowNodeId).toBe(workflowNodeId);
+			expect(nodeAgentRow!.agentName).toBe('coder');
+		});
+
+		test('Leg 2 (node_agents): skips rows without agent_session_id', () => {
+			const workflowRunId = 'wr-no-session-test';
+			const taskId = insertSpaceTask({ workflowRunId, status: 'in_progress' });
+
+			// Insert node_execution WITHOUT agent_session_id
+			db.exec(`
+				INSERT INTO node_executions (
+					id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+					agent_session_id, status, result, created_at, started_at,
+					completed_at, updated_at
+				) VALUES (
+					'ne-no-sess', '${workflowRunId}', 'node-1', 'agent', NULL,
+					NULL, 'pending', NULL, ${now}, NULL,
+					NULL, ${now}
+				)
+			`);
+
+			const rows = queryAndMap(taskId);
+			const nodeAgentRows = rows.filter((r) => r.kind === 'node_agent');
+			expect(nodeAgentRows).toHaveLength(0);
+		});
 	});
 
 	// -------------------------------------------------------------------------

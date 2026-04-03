@@ -622,6 +622,7 @@ node_agents AS (
    AND ne.workflow_run_id = tt.workflow_run_id
   JOIN space_tasks st
     ON st.task_agent_session_id = ne.agent_session_id
+   AND st.id != tt.id  -- Exclude orchestration task (covered by Leg 1)
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
   WHERE ne.agent_session_id IS NOT NULL
     AND st.status != 'archived'
@@ -632,13 +633,17 @@ all_sessions AS (
   UNION ALL
   SELECT * FROM node_agents
 ),
+-- Deduplicate session IDs to prevent fan-out in message_stats JOIN
+unique_session_ids AS (
+  SELECT DISTINCT session_id FROM all_sessions
+),
 message_stats AS (
   SELECT
     sm.session_id,
     COUNT(*) AS messageCount,
     MAX(CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER)) AS lastMessageAt
   FROM sdk_messages sm
-  JOIN all_sessions ase ON ase.session_id = sm.session_id
+  JOIN unique_session_ids usi ON usi.session_id = sm.session_id
   GROUP BY sm.session_id
 )
 SELECT

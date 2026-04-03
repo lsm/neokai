@@ -285,6 +285,9 @@ export class ChannelRouter {
 				const task = this.config.taskRepo.createTask({
 					spaceId: run.spaceId,
 					title: isMultiAgent ? agentEntry.name : node.name,
+					// Use only the agent-slot instructions for the task description.
+					// Node-level instructions are not carried into task descriptions —
+					// they belong to the workflow definition, not the task card UI.
 					description: agentEntry.instructions?.value ?? '',
 					workflowRunId: runId,
 					status: 'open',

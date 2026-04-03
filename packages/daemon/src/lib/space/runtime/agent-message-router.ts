@@ -87,6 +87,10 @@ export interface AgentMessageResult {
 	notFoundRoles?: string[];
 }
 
+import { Logger } from '../../logger';
+
+const log = new Logger('agent-message-router');
+
 export class AgentMessageRouter {
 	constructor(private readonly config: AgentMessageRouterConfig) {}
 
@@ -136,6 +140,12 @@ export class AgentMessageRouter {
 			const executions = nodeExecutionRepo
 				.listByWorkflowRun(workflowRunId)
 				.filter((e) => e.agentSessionId);
+			if (executions.length === 0) {
+				log.warn(
+					`[AgentMessageRouter] nodeExecutionRepo returned no sessions with agentSessionId for run ${workflowRunId} — ` +
+						`peers will be empty. Check that NodeExecution.agentSessionId is being written at spawn time.`
+				);
+			}
 			peers = executions
 				.filter((e) => e.agentSessionId !== fromSessionId)
 				.map((e) => ({ sessionId: e.agentSessionId!, role: e.agentName }));

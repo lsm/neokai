@@ -38,7 +38,6 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { TaskAgentManager } from './task-agent-manager';
-import type { DaemonHub } from '../../daemon-hub';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
@@ -126,12 +125,6 @@ export interface SpaceRuntimeConfig {
 	 * Defaults to `new CompletionDetector(nodeExecutionRepo)` if not provided.
 	 */
 	completionDetector?: CompletionDetector;
-	/**
-	 * DaemonHub event bus for emitting task-level events (e.g. space.task.updated).
-	 * Used by the sibling cleanup logic to cancel in-progress node agent sessions
-	 * when the workflow run completes via end-node short-circuit.
-	 */
-	daemonHub?: DaemonHub;
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +398,9 @@ export class SpaceRuntime {
 			for (const agentEntry of startAgents) {
 				const task = await taskManager.createTask({
 					title: isMultiAgentStart ? agentEntry.name : startStep.name,
+					// Use only the agent-slot instructions for the task description.
+					// Node-level instructions are not carried into task descriptions —
+					// they belong to the workflow definition, not the task card UI.
 					description: agentEntry.instructions?.value ?? '',
 					workflowRunId: run.id,
 					status: 'open',
@@ -690,24 +686,27 @@ export class SpaceRuntime {
 		}
 
 		// Timeout detection: check in_progress tasks against Space.config.taskTimeoutMs.
+		// Skip when end-node bypass is active — the run is completing imminently.
 		const space = await this.config.spaceManager.getSpace(meta.spaceId);
-		const taskTimeoutMs = space?.config?.taskTimeoutMs;
-		if (taskTimeoutMs !== undefined) {
-			const now = Date.now();
-			for (const task of allRunTasks) {
-				if (task.status !== 'in_progress' || !task.startedAt) continue;
-				const elapsedMs = now - task.startedAt;
-				if (elapsedMs > taskTimeoutMs) {
-					const dedupKey = `${task.id}:timeout`;
-					if (!this.notifiedTaskSet.has(dedupKey)) {
-						this.notifiedTaskSet.add(dedupKey);
-						await this.safeNotify({
-							kind: 'task_timeout',
-							spaceId: meta.spaceId,
-							taskId: task.id,
-							elapsedMs,
-							timestamp: new Date().toISOString(),
-						});
+		if (!endNodeBypass) {
+			const taskTimeoutMs = space?.config?.taskTimeoutMs;
+			if (taskTimeoutMs !== undefined) {
+				const now = Date.now();
+				for (const task of allRunTasks) {
+					if (task.status !== 'in_progress' || !task.startedAt) continue;
+					const elapsedMs = now - task.startedAt;
+					if (elapsedMs > taskTimeoutMs) {
+						const dedupKey = `${task.id}:timeout`;
+						if (!this.notifiedTaskSet.has(dedupKey)) {
+							this.notifiedTaskSet.add(dedupKey);
+							await this.safeNotify({
+								kind: 'task_timeout',
+								spaceId: meta.spaceId,
+								taskId: task.id,
+								elapsedMs,
+								timestamp: new Date().toISOString(),
+							});
+						}
 					}
 				}
 			}
