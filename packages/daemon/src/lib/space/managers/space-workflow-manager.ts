@@ -142,17 +142,8 @@ export class SpaceWorkflowManager {
 			params.startNodeId === undefined ? existing.startNodeId : params.startNodeId;
 		const endNodeIdInput = params.endNodeId === undefined ? existing.endNodeId : params.endNodeId;
 		const resolvedStartNodeId =
-			startNodeIdInput === null
-				? fallbackStartNodeId
-				: startNodeIdInput === undefined
-					? fallbackStartNodeId
-					: startNodeIdInput.trim();
-		const resolvedEndNodeId =
-			endNodeIdInput === null
-				? fallbackEndNodeId
-				: endNodeIdInput === undefined
-					? fallbackEndNodeId
-					: endNodeIdInput.trim();
+			startNodeIdInput == null ? fallbackStartNodeId : startNodeIdInput.trim();
+		const resolvedEndNodeId = endNodeIdInput == null ? fallbackEndNodeId : endNodeIdInput.trim();
 
 		this.validateStartNodeId(resolvedStartNodeId, effectiveNodes);
 		this.validateEndNodeId(resolvedEndNodeId, effectiveNodes);

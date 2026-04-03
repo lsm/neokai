@@ -405,7 +405,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	);
 
 	// Space agent handlers
-	setupSpaceAgentHandlers(deps.messageHub, deps.daemonHub, deps.spaceAgentManager);
+	setupSpaceAgentHandlers(
+		deps.messageHub,
+		deps.daemonHub,
+		deps.spaceAgentManager,
+		deps.spaceManager
+	);
 
 	setupSpaceWorkflowHandlers(
 		deps.messageHub,

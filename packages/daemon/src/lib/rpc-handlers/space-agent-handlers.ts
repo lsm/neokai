@@ -13,6 +13,7 @@
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
+import type { SpaceManager } from '../space/managers/space-manager';
 import { getPresetAgentTemplates } from '../space/agents/seed-agents';
 import { Logger } from '../logger';
 
@@ -21,12 +22,17 @@ const log = new Logger('space-agent-handlers');
 export function setupSpaceAgentHandlers(
 	messageHub: MessageHub,
 	daemonHub: DaemonHub,
-	spaceAgentManager: SpaceAgentManager
+	spaceAgentManager: SpaceAgentManager,
+	spaceManager: SpaceManager
 ): void {
 	// spaceAgent.listBuiltInTemplates — return built-in templates from seeding source
 	messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
 		const params = data as { spaceId: string };
 		if (!params.spaceId) throw new Error('spaceId is required');
+
+		// Keep validation consistent with spaceWorkflow.listBuiltInTemplates.
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
 		return { templates: getPresetAgentTemplates() };
 	});

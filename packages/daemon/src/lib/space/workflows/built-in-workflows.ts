@@ -67,7 +67,7 @@ const PR_READY_BASH_SCRIPT = [
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
-	'printf \'{"pr_url":"%s"}\\n\' "$PR_URL"',
+	'jq -n --arg url "$PR_URL" \'{"pr_url":$url}\'',
 ].join('\n');
 
 const V2_PLANNING_PROMPT =

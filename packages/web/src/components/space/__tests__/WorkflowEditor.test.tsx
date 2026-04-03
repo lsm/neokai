@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import { makeBuiltInTemplateWorkflows } from './fixtures/builtInTemplateWorkflows';
 
 // ---- Mocks ----
 // Signals are initialized immediately so vi.mock's lazy getter can reference them safely.
@@ -105,176 +106,6 @@ const defaultProps = {
 	onCancel: vi.fn(),
 };
 
-function makeBuiltInTemplateWorkflows(): SpaceWorkflow[] {
-	return [
-		makeWorkflow({
-			id: 'tpl-coding',
-			name: 'Coding Workflow',
-			description: 'Coding desc',
-			nodes: [
-				{
-					id: 'c1',
-					name: 'Code',
-					agents: [
-						{
-							agentId: 'agent-2',
-							name: 'coder',
-							systemPrompt: { mode: 'override', value: 'Code.' },
-						},
-					],
-				},
-				{
-					id: 'c2',
-					name: 'Review',
-					agents: [
-						{
-							agentId: 'agent-4',
-							name: 'reviewer',
-							systemPrompt: { mode: 'override', value: 'Review.' },
-						},
-					],
-				},
-			],
-			startNodeId: 'c1',
-			endNodeId: 'c2',
-		}),
-		makeWorkflow({
-			id: 'tpl-research',
-			name: 'Research Workflow',
-			nodes: [
-				{
-					id: 'r1',
-					name: 'Research',
-					agents: [
-						{
-							agentId: 'agent-5',
-							name: 'research',
-							systemPrompt: { mode: 'override', value: 'Research.' },
-						},
-					],
-				},
-				{
-					id: 'r2',
-					name: 'Review',
-					agents: [
-						{
-							agentId: 'agent-4',
-							name: 'reviewer',
-							systemPrompt: { mode: 'override', value: 'Review.' },
-						},
-					],
-				},
-			],
-			startNodeId: 'r1',
-			endNodeId: 'r2',
-		}),
-		makeWorkflow({
-			id: 'tpl-review-only',
-			name: 'Review-Only Workflow',
-			nodes: [
-				{
-					id: 'ro1',
-					name: 'Review',
-					agents: [
-						{
-							agentId: 'agent-4',
-							name: 'reviewer',
-							systemPrompt: { mode: 'override', value: 'Review.' },
-						},
-					],
-				},
-			],
-			startNodeId: 'ro1',
-			endNodeId: 'ro1',
-		}),
-		makeWorkflow({
-			id: 'tpl-full-cycle',
-			name: 'Full-Cycle Coding Workflow',
-			nodes: [
-				{
-					id: 'f1',
-					name: 'Planning',
-					agents: [
-						{
-							agentId: 'agent-1',
-							name: 'planner',
-							systemPrompt: { mode: 'override', value: 'Plan.' },
-						},
-					],
-				},
-				{
-					id: 'f2',
-					name: 'Plan Review',
-					agents: [
-						{
-							agentId: 'agent-4',
-							name: 'reviewer',
-							systemPrompt: { mode: 'override', value: 'Plan review.' },
-						},
-					],
-				},
-				{
-					id: 'f3',
-					name: 'Coding',
-					agents: [
-						{
-							agentId: 'agent-2',
-							name: 'coder',
-							systemPrompt: { mode: 'override', value: 'Code.' },
-						},
-					],
-				},
-				{
-					id: 'f4',
-					name: 'Code Review',
-					agents: [
-						{
-							agentId: 'agent-4',
-							name: 'Reviewer 1',
-							systemPrompt: { mode: 'override', value: 'Review 1.' },
-						},
-						{
-							agentId: 'agent-4',
-							name: 'Reviewer 2',
-							systemPrompt: { mode: 'override', value: 'Review 2.' },
-						},
-						{
-							agentId: 'agent-4',
-							name: 'Reviewer 3',
-							systemPrompt: { mode: 'override', value: 'Review 3.' },
-						},
-					],
-				},
-				{
-					id: 'f5',
-					name: 'QA',
-					agents: [
-						{ agentId: 'agent-6', name: 'qa', systemPrompt: { mode: 'override', value: 'QA.' } },
-					],
-				},
-				{
-					id: 'f6',
-					name: 'Done',
-					agents: [
-						{
-							agentId: 'agent-3',
-							name: 'general',
-							systemPrompt: { mode: 'override', value: 'Done.' },
-						},
-					],
-				},
-			],
-			startNodeId: 'f1',
-			endNodeId: 'f6',
-			channels: Array.from({ length: 9 }, (_, index) => ({
-				from: `n${index}`,
-				to: `n${index + 1}`,
-				direction: 'one-way' as const,
-			})),
-		}),
-	];
-}
-
 /** Select an agent on the currently-expanded step card */
 function selectAgent(container: Element, agentId: string) {
 	const agentSelect = container.querySelectorAll('select')[0] as HTMLSelectElement;
@@ -294,7 +125,7 @@ describe('WorkflowEditor', () => {
 			makeAgent('agent-leader', 'leader', 'leader'),
 		];
 		mockWorkflows.value = [];
-		mockWorkflowTemplates.value = makeBuiltInTemplateWorkflows();
+		mockWorkflowTemplates.value = makeBuiltInTemplateWorkflows({ includeSystemPrompts: true });
 		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], tags: [] });
 		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
 		mockCreateWorkflow.mockClear();
@@ -620,7 +451,9 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('prefers built-in workflows from store as template source', () => {
-			const templates = getAvailableTemplates(makeBuiltInTemplateWorkflows());
+			const templates = getAvailableTemplates(
+				makeBuiltInTemplateWorkflows({ includeSystemPrompts: true })
+			);
 			expect(templates.map((template) => template.label)).toEqual([
 				'Coding Workflow',
 				'Research Workflow',
