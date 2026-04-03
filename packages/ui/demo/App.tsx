@@ -31,6 +31,18 @@ import { PaginationDemo } from './sections/PaginationDemo.tsx';
 import { ProgressBarsDemo } from './sections/ProgressBarsDemo.tsx';
 import { VerticalNavigationDemo } from './sections/VerticalNavigationDemo.tsx';
 import { EmptyStatesDemo } from './sections/EmptyStatesDemo.tsx';
+import { AvatarsDemo } from './sections/elements/avatars/AvatarsDemo.tsx';
+import { BadgesDemo } from './sections/elements/badges/BadgesDemo.tsx';
+import { ButtonsDemo } from './sections/elements/buttons/ButtonsDemo.tsx';
+import { ButtonGroupsDemo } from './sections/elements/button-groups/ButtonGroupsDemo.tsx';
+import { CardHeadingsDemo } from './sections/headings/card-headings/CardHeadingsDemo.tsx';
+import { PageHeadingsDemo } from './sections/headings/page-headings/PageHeadingsDemo.tsx';
+import { SectionHeadingsDemo } from './sections/headings/section-headings/SectionHeadingsDemo.tsx';
+import { CardsDemo } from './sections/layout/cards/CardsDemo.tsx';
+import { ContainersDemo } from './sections/layout/containers/ContainersDemo.tsx';
+import { DividersDemo } from './sections/layout/dividers/DividersDemo.tsx';
+import { ListContainersDemo } from './sections/layout/list-containers/ListContainersDemo.tsx';
+import { MediaObjectsDemo } from './sections/layout/media-objects/MediaObjectsDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
@@ -298,7 +310,9 @@ export function App() {
 								<Category
 									key={category.id}
 									category={category}
-									defaultOpen={category.id === 'application-shells'}
+									defaultOpen={['application-shells', 'elements', 'headings', 'layout'].includes(
+										category.id
+									)}
 								/>
 							))}
 						</ul>
@@ -415,6 +429,42 @@ export function App() {
 					</DemoSection>
 					<DemoSection id="empty-states" title="Empty States">
 						<EmptyStatesDemo />
+					</DemoSection>
+					<DemoSection id="elements-avatars" title="Elements / Avatars">
+						<AvatarsDemo />
+					</DemoSection>
+					<DemoSection id="elements-badges" title="Elements / Badges">
+						<BadgesDemo />
+					</DemoSection>
+					<DemoSection id="elements-buttons" title="Elements / Buttons">
+						<ButtonsDemo />
+					</DemoSection>
+					<DemoSection id="elements-button-groups" title="Elements / Button Groups">
+						<ButtonGroupsDemo />
+					</DemoSection>
+					<DemoSection id="headings-card-headings" title="Headings / Card Headings">
+						<CardHeadingsDemo />
+					</DemoSection>
+					<DemoSection id="headings-page-headings" title="Headings / Page Headings">
+						<PageHeadingsDemo />
+					</DemoSection>
+					<DemoSection id="headings-section-headings" title="Headings / Section Headings">
+						<SectionHeadingsDemo />
+					</DemoSection>
+					<DemoSection id="layout-cards" title="Layout / Cards">
+						<CardsDemo />
+					</DemoSection>
+					<DemoSection id="layout-containers" title="Layout / Containers">
+						<ContainersDemo />
+					</DemoSection>
+					<DemoSection id="layout-dividers" title="Layout / Dividers">
+						<DividersDemo />
+					</DemoSection>
+					<DemoSection id="layout-list-containers" title="Layout / List Containers">
+						<ListContainersDemo />
+					</DemoSection>
+					<DemoSection id="layout-media-objects" title="Layout / Media Objects">
+						<MediaObjectsDemo />
 					</DemoSection>
 				</main>
 			</div>
