@@ -13,19 +13,42 @@ import { expect, type Page, type Locator } from '@playwright/test';
 /**
  * Wait for WebSocket connection to be established
  * @param page - Playwright page
- * @param timeout - Optional timeout in ms (default 10000)
+ * @param timeout - Optional timeout in ms (default 60000 for CI, 10000 for local)
  */
-export async function waitForWebSocketConnected(
-	page: Page,
-	timeout: number = 10000
-): Promise<void> {
-	await page.waitForFunction(
-		() => {
+export async function waitForWebSocketConnected(page: Page, timeout?: number): Promise<void> {
+	// Use longer timeout in CI (60s) vs local (10s) since CI environments
+	// can be slower to establish WebSocket connections
+	const isCI = process.env.CI === 'true';
+	const effectiveTimeout = timeout ?? (isCI ? 60000 : 10000);
+
+	try {
+		await page.waitForFunction(
+			() => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				return hub?.getState && hub.getState() === 'connected';
+			},
+			{ timeout: effectiveTimeout }
+		);
+	} catch (error) {
+		// Log diagnostic information to help debug connection failures
+		const diagnostic = await page.evaluate(() => {
 			const hub = window.__messageHub || window.appState?.messageHub;
-			return hub?.getState && hub.getState() === 'connected';
-		},
-		{ timeout }
-	);
+			return {
+				hasHub: !!hub,
+				hubType: hub?.constructor?.name,
+				state: hub?.getState?.(),
+				hasWindowMessageHub: !!window.__messageHub,
+				windowMessageHubReady: window.__messageHubReady,
+				hasConnectionManager: !!(window as any).connectionManager,
+				connectionManagerState: (window as any).connectionManager?.getConnectionState?.(),
+				hasAppState: !!window.appState,
+				connectionState: (window as any).connectionState?.value,
+				locationHref: window.location.href,
+			};
+		});
+		console.error('WebSocket connection failed. Diagnostic info:', diagnostic);
+		throw error;
+	}
 }
 
 /**
