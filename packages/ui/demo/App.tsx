@@ -30,7 +30,13 @@ import { TablesDemo } from './sections/TablesDemo.tsx';
 import { PaginationDemo } from './sections/PaginationDemo.tsx';
 import { ProgressBarsDemo } from './sections/ProgressBarsDemo.tsx';
 import { VerticalNavigationDemo } from './sections/VerticalNavigationDemo.tsx';
+import { BreadcrumbsDemo } from './sections/BreadcrumbsDemo.tsx';
+import { SidebarNavigationDemo } from './sections/SidebarNavigationDemo.tsx';
 import { EmptyStatesDemo } from './sections/EmptyStatesDemo.tsx';
+import { FeedsDemo } from './sections/FeedsDemo.tsx';
+import { CalendarsDemo } from './sections/CalendarsDemo.tsx';
+import { DescriptionListsDemo } from './sections/DescriptionListsDemo.tsx';
+import { MultiColumnDemo } from './sections/MultiColumnDemo.tsx';
 import { AvatarsDemo } from './sections/elements/avatars/AvatarsDemo.tsx';
 import { BadgesDemo } from './sections/elements/badges/BadgesDemo.tsx';
 import { ButtonsDemo } from './sections/elements/buttons/ButtonsDemo.tsx';
@@ -97,6 +103,9 @@ const componentSections = [
 	{ id: 'pagination', label: 'Pagination' },
 	{ id: 'progress-bars', label: 'Progress Bars' },
 	{ id: 'vertical-navigation', label: 'Vertical Navigation' },
+	{ id: 'breadcrumbs', label: 'Breadcrumbs' },
+	{ id: 'sidebar-navigation', label: 'Sidebar Navigation' },
+	{ id: 'feeds', label: 'Feeds' },
 	{ id: 'empty-states', label: 'Empty States' },
 ];
 
@@ -438,9 +447,20 @@ export function App() {
 					<DemoSection id="vertical-navigation" title="Vertical Navigation">
 						<VerticalNavigationDemo />
 					</DemoSection>
+					<DemoSection id="breadcrumbs" title="Breadcrumbs">
+						<BreadcrumbsDemo />
+					</DemoSection>
+					<DemoSection id="sidebar-navigation" title="Sidebar Navigation">
+						<SidebarNavigationDemo />
+					</DemoSection>
+					<DemoSection id="feeds" title="Feeds">
+						<FeedsDemo />
+					</DemoSection>
 					<DemoSection id="empty-states" title="Empty States">
 						<EmptyStatesDemo />
 					</DemoSection>
+
+					{/* Application UI - Elements */}
 					<DemoSection id="elements-avatars" title="Elements / Avatars">
 						<AvatarsDemo />
 					</DemoSection>
@@ -453,6 +473,8 @@ export function App() {
 					<DemoSection id="elements-button-groups" title="Elements / Button Groups">
 						<ButtonGroupsDemo />
 					</DemoSection>
+
+					{/* Application UI - Headings */}
 					<DemoSection id="headings-card-headings" title="Headings / Card Headings">
 						<CardHeadingsDemo />
 					</DemoSection>
@@ -462,6 +484,8 @@ export function App() {
 					<DemoSection id="headings-section-headings" title="Headings / Section Headings">
 						<SectionHeadingsDemo />
 					</DemoSection>
+
+					{/* Application UI - Layout */}
 					<DemoSection id="layout-cards" title="Layout / Cards">
 						<CardsDemo />
 					</DemoSection>
@@ -499,6 +523,19 @@ export function App() {
 					</DemoSection>
 					<DemoSection id="forms-toggles" title="Forms / Toggles">
 						<TogglesDemo />
+					</DemoSection>
+
+					{/* Application UI - Application Shells */}
+					<DemoSection id="application-shells-multi-column" title="Multi-column (Application Shell)">
+						<MultiColumnDemo />
+					</DemoSection>
+
+					{/* Application UI - Data Display */}
+					<DemoSection id="data-display-calendars" title="Calendars (Data Display)">
+						<CalendarsDemo />
+					</DemoSection>
+					<DemoSection id="data-display-description-lists" title="Description Lists (Data Display)">
+						<DescriptionListsDemo />
 					</DemoSection>
 				</main>
 			</div>
