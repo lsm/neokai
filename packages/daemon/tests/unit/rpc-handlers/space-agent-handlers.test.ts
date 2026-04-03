@@ -112,6 +112,41 @@ describe('Space Agent RPC Handlers', () => {
 
 	// ── spaceAgent.create ────────────────────────────────────────────────────
 
+	describe('spaceAgent.listBuiltInTemplates', () => {
+		it('registers the handler', () => {
+			expect(hubData.handlers.has('spaceAgent.listBuiltInTemplates')).toBe(true);
+		});
+
+		it('returns built-in agent templates from seeding source', async () => {
+			const result = await call<{
+				templates: Array<{ name: string; tools: string[]; systemPrompt: string }>;
+			}>(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {
+				spaceId: 'space-1',
+			});
+
+			expect(Array.isArray(result.templates)).toBe(true);
+			expect(result.templates).toHaveLength(6);
+			expect(result.templates.map((template) => template.name).sort()).toEqual([
+				'Coder',
+				'General',
+				'Planner',
+				'QA',
+				'Research',
+				'Reviewer',
+			]);
+			for (const template of result.templates) {
+				expect(template.tools.length).toBeGreaterThan(0);
+				expect(template.systemPrompt.length).toBeGreaterThan(0);
+			}
+		});
+
+		it('throws when spaceId is missing', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {})).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+	});
+
 	describe('spaceAgent.create', () => {
 		it('registers the handler', () => {
 			expect(hubData.handlers.has('spaceAgent.create')).toBe(true);

@@ -13,6 +13,7 @@
  * - tasks: SpaceTask list for the space
  * - workflowRuns: SpaceWorkflowRun list for the space
  * - agents: SpaceAgent list for the space
+ * - agentTemplates: Built-in agent templates from daemon seeding source
  * - workflows: SpaceWorkflow list for the space
  * - workflowTemplates: Built-in workflow templates from daemon seeding source
  * - runtimeState: Runtime state (running/paused/stopped)
@@ -54,6 +55,14 @@ export interface SpaceWithTasks extends Space {
 	tasks: SpaceTask[];
 }
 
+export interface SpaceAgentTemplate {
+	name: string;
+	description: string;
+	tools: string[];
+	systemPrompt: string;
+	instructions: string;
+}
+
 class SpaceStore {
 	// ========================================
 	// Core Signals
@@ -85,6 +94,9 @@ class SpaceStore {
 
 	/** Agents configured for this space */
 	readonly agents = signal<SpaceAgent[]>([]);
+
+	/** Built-in agent templates sourced from daemon seeding definitions */
+	readonly agentTemplates = signal<SpaceAgentTemplate[]>([]);
 
 	/** Workflow definitions for this space */
 	readonly workflows = signal<SpaceWorkflow[]>([]);
@@ -402,6 +414,7 @@ class SpaceStore {
 		this.tasks.value = [];
 		this.workflowRuns.value = [];
 		this.agents.value = [];
+		this.agentTemplates.value = [];
 		this.workflows.value = [];
 		this.workflowTemplates.value = [];
 		this.nodeExecutions.value = [];
@@ -693,6 +706,7 @@ class SpaceStore {
 		// Fetch agents, workflows, and node executions in parallel
 		await Promise.all([
 			this.fetchAgents(hub, resolvedId),
+			this.fetchAgentTemplates(hub, resolvedId),
 			this.fetchWorkflows(hub, resolvedId),
 			this.fetchWorkflowTemplates(hub, resolvedId),
 			this.fetchNodeExecutions(hub, resolvedId),
@@ -718,6 +732,27 @@ class SpaceStore {
 			this.agents.value = result?.agents ?? [];
 		} catch (err) {
 			logger.error('Failed to fetch agents:', err);
+		}
+	}
+
+	/**
+	 * Fetch built-in agent templates from daemon seeding source.
+	 */
+	private async fetchAgentTemplates(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): Promise<void> {
+		try {
+			const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+				'spaceAgent.listBuiltInTemplates',
+				{
+					spaceId,
+				}
+			);
+			this.agentTemplates.value = result?.templates ?? [];
+		} catch (err) {
+			logger.error('Failed to fetch agent templates:', err);
+			this.agentTemplates.value = [];
 		}
 	}
 

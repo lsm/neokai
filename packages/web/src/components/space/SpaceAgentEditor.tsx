@@ -4,11 +4,10 @@
  * Modal form for creating or editing a custom agent in a Space.
  *
  * Fields:
+ * - From Template (built-in seeded templates)
  * - Name (required, unique within space)
  * - Description (optional)
- * - Role (radio: worker / reviewer / orchestrator, with tooltips)
- * - Model (text input — model ID override)
- * - Provider (text input — auto-detect or manual)
+ * - Model (dropdown override)
  * - Tools (multi-select checkboxes from KNOWN_TOOLS)
  * - System Prompt (monospace textarea with line numbers)
  *
@@ -23,31 +22,14 @@ import { Button } from '../ui/Button';
 import { spaceStore } from '../../lib/space-store';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgentTemplate } from '../../lib/space-store';
+import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 type ToolName = (typeof KNOWN_TOOLS)[number];
-
-/** Available roles with display labels and tooltip descriptions */
-const AGENT_ROLES = [
-	{
-		value: 'worker',
-		label: 'Worker',
-		tooltip: 'Executes coding tasks — writes code, runs tests, opens PRs.',
-	},
-	{
-		value: 'reviewer',
-		label: 'Reviewer',
-		tooltip: 'Reviews code changes, checks quality, and provides feedback.',
-	},
-	{
-		value: 'orchestrator',
-		label: 'Orchestrator',
-		tooltip: 'Plans and coordinates tasks across multiple agents in a workflow.',
-	},
-] as const;
 
 /** Tool presets map preset name → tool selection */
 const TOOL_PRESETS: Record<string, ToolName[]> = {
@@ -73,33 +55,6 @@ function detectPreset(toolList: string[] | undefined): string {
 // ============================================================================
 // Sub-components
 // ============================================================================
-
-interface TooltipProps {
-	text: string;
-}
-
-function InfoTooltip({ text }: TooltipProps) {
-	return (
-		<span class="relative group inline-flex items-center">
-			<svg
-				class="w-3.5 h-3.5 text-gray-600 hover:text-gray-400 cursor-help transition-colors"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-				/>
-			</svg>
-			<span class="absolute left-5 bottom-0 z-50 w-52 p-2 text-xs text-gray-200 bg-dark-700 border border-dark-600 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-				{text}
-			</span>
-		</span>
-	);
-}
 
 interface LineNumberedTextareaProps {
 	value: string;
@@ -168,16 +123,16 @@ export function SpaceAgentEditor({
 	onCancel,
 }: SpaceAgentEditorProps) {
 	const isEdit = agent !== null;
+	const builtInTemplates = spaceStore.agentTemplates.value;
 
 	// Form state
 	const [name, setName] = useState(agent?.name ?? '');
 	const [description, setDescription] = useState(agent?.description ?? '');
-	const [role, setRole] = useState<string>('worker');
 	const [model, setModel] = useState(agent?.model ?? '');
-	const [provider, setProvider] = useState(agent?.provider ?? '');
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
 	const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt ?? '');
 	const [activePreset, setActivePreset] = useState<string>(() => detectPreset(agent?.tools));
+	const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
 
 	// UI state
 	const [saving, setSaving] = useState(false);
@@ -189,6 +144,18 @@ export function SpaceAgentEditor({
 		if (presetName in TOOL_PRESETS) {
 			setTools([...TOOL_PRESETS[presetName]]);
 		}
+	};
+
+	const applyTemplate = (template: SpaceAgentTemplate) => {
+		if (!isEdit && !name.trim()) {
+			setName(template.name);
+		}
+		setDescription(template.description ?? '');
+		setSystemPrompt(template.systemPrompt ?? '');
+		setTools([...template.tools]);
+		setActivePreset(detectPreset(template.tools));
+		setErrors((prev) => ({ ...prev, tools: '', name: '', model: '' }));
+		setSaveError(null);
 	};
 
 	const toggleTool = (tool: string) => {
@@ -235,10 +202,8 @@ export function SpaceAgentEditor({
 		try {
 			const params = {
 				name: name.trim(),
-				role,
 				description: description.trim() || undefined,
 				model: model.trim(),
-				provider: provider.trim() || undefined,
 				systemPrompt: systemPrompt || undefined,
 				tools: tools.length > 0 ? tools : undefined,
 			};
@@ -268,6 +233,36 @@ export function SpaceAgentEditor({
 						{saveError}
 					</div>
 				)}
+
+				{/* Template selector */}
+				<div>
+					<label class="block text-sm font-medium text-gray-200 mb-1.5" for="agent-template-select">
+						From Template
+					</label>
+					<select
+						id="agent-template-select"
+						value={selectedTemplateName}
+						onChange={(e) => {
+							const templateName = (e.target as HTMLSelectElement).value;
+							setSelectedTemplateName(templateName);
+							const template = builtInTemplates.find((item) => item.name === templateName);
+							if (template) applyTemplate(template);
+						}}
+						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500"
+					>
+						<option value="">Select a built-in template...</option>
+						{builtInTemplates.map((template) => (
+							<option key={template.name} value={template.name}>
+								{template.name}
+							</option>
+						))}
+					</select>
+					{builtInTemplates.length === 0 && (
+						<p class="mt-1 text-xs text-gray-500">
+							No built-in templates are available for this space.
+						</p>
+					)}
+				</div>
 
 				{/* Name */}
 				<div>
@@ -306,71 +301,24 @@ export function SpaceAgentEditor({
 					/>
 				</div>
 
-				{/* Role */}
+				{/* Model */}
 				<div>
-					<label class="block text-sm font-medium text-gray-200 mb-2">
-						Role
+					<label class="block text-sm font-medium text-gray-200 mb-1.5">
+						Model
 						<span class="text-red-400 ml-1">*</span>
 					</label>
-					<div class="flex gap-3">
-						{AGENT_ROLES.map(({ value, label, tooltip }) => (
-							<label
-								key={value}
-								class={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors flex-1 ${
-									role === value
-										? 'border-blue-600 bg-blue-900/20 text-gray-100'
-										: 'border-dark-600 bg-dark-800 text-gray-400 hover:border-dark-500 hover:text-gray-200'
-								}`}
-							>
-								<input
-									type="radio"
-									name="role"
-									value={value}
-									checked={role === value}
-									onChange={() => setRole(value)}
-									class="sr-only"
-								/>
-								<span class="text-sm font-medium">{label}</span>
-								<InfoTooltip text={tooltip} />
-							</label>
-						))}
-					</div>
-				</div>
-
-				{/* Model + Provider row */}
-				<div class="grid grid-cols-2 gap-4">
-					<div>
-						<label class="block text-sm font-medium text-gray-200 mb-1.5">
-							Model
-							<span class="text-red-400 ml-1">*</span>
-						</label>
-						<input
-							type="text"
-							value={model}
-							onInput={(e) => {
-								setModel((e.target as HTMLInputElement).value);
-								if (errors['model']) setErrors((prev) => ({ ...prev, model: '' }));
-							}}
-							placeholder="e.g., claude-sonnet-4-6"
-							class={`w-full bg-dark-800 border rounded-lg px-4 py-2.5 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono text-sm ${
-								errors['model'] ? 'border-red-700' : 'border-dark-600'
-							}`}
-						/>
-						{errors['model'] && <p class="mt-1 text-xs text-red-400">{errors['model']}</p>}
-					</div>
-					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-1.5">
-							Provider
-							<span class="text-gray-500 text-xs ml-2">(auto-detect)</span>
-						</label>
-						<input
-							type="text"
-							value={provider}
-							onInput={(e) => setProvider((e.target as HTMLInputElement).value)}
-							placeholder="e.g., anthropic"
-							class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono text-sm"
-						/>
-					</div>
+					<WorkflowModelSelect
+						value={model || undefined}
+						onChange={(value) => {
+							setModel(value ?? '');
+							if (errors['model']) setErrors((prev) => ({ ...prev, model: '' }));
+						}}
+						testId="space-agent-model-select"
+						className={`w-full bg-dark-800 border rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500 font-mono text-sm ${
+							errors['model'] ? 'border-red-700' : 'border-dark-600'
+						}`}
+					/>
+					{errors['model'] && <p class="mt-1 text-xs text-red-400">{errors['model']}</p>}
 				</div>
 
 				{/* Tools */}

@@ -157,6 +157,19 @@ const PRESET_AGENTS: PresetDefinition[] = [
 	},
 ];
 
+export type PresetAgentTemplate = PresetDefinition;
+
+/**
+ * Returns canonical preset agent templates from the same source used by seeding.
+ * The result is cloned so callers can safely mutate without affecting globals.
+ */
+export function getPresetAgentTemplates(): PresetAgentTemplate[] {
+	return PRESET_AGENTS.map((preset) => ({
+		...preset,
+		tools: [...preset.tools],
+	}));
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------

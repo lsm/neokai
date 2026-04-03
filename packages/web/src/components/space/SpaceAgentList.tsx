@@ -2,7 +2,7 @@
  * SpaceAgentList Component
  *
  * Displays all agents configured for a Space.
- * - Agent cards: name, role badge, model, description preview
+ * - Agent cards: name, model, description preview
  * - "Create Agent" button to open the editor
  * - Empty state: "No custom agents yet. Create one to get started."
  * - Subscribes to spaceAgent.* events via SpaceStore
@@ -19,20 +19,6 @@ import { Modal } from '../ui/Modal';
 import type { SpaceAgent } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 
-function RoleBadge({ role }: { role?: string }) {
-	if (!role) return null;
-	const colorMap: Record<string, string> = {
-		worker: 'bg-blue-900/40 text-blue-300 border-blue-800/60',
-		reviewer: 'bg-purple-900/40 text-purple-300 border-purple-800/60',
-		orchestrator: 'bg-amber-900/40 text-amber-300 border-amber-800/60',
-		coder: 'bg-blue-900/40 text-blue-300 border-blue-800/60',
-		planner: 'bg-amber-900/40 text-amber-300 border-amber-800/60',
-		general: 'bg-gray-800 text-gray-400 border-gray-700',
-	};
-	const colorClass = colorMap[role.toLowerCase()] ?? 'bg-gray-800 text-gray-400 border-gray-700';
-	return <span class={`text-xs px-2 py-0.5 rounded border font-medium ${colorClass}`}>{role}</span>;
-}
-
 interface AgentCardProps {
 	agent: SpaceAgent;
 	onEdit: (agent: SpaceAgent) => void;
@@ -46,7 +32,6 @@ function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-2 flex-wrap">
 						<span class="text-sm font-medium text-gray-100">{agent.name}</span>
-						<RoleBadge role={agent.description} />
 						{agent.model && <span class="text-xs text-gray-500 font-mono">{agent.model}</span>}
 					</div>
 					{agent.description && (
