@@ -12,8 +12,6 @@ import { test, expect, devices } from '../../fixtures';
 import {
 	cleanupTestSession,
 	createSessionViaUI,
-	waitForAssistantResponse,
-	waitForWebSocketConnected,
 	waitForWebSocketConnectedMobile,
 } from '../helpers/wait-helpers';
 import { createRoom, deleteRoom } from '../helpers/room-helpers';
@@ -206,7 +204,7 @@ test.describe('Mobile Messages', () => {
 		}
 	});
 
-	test('should display messages correctly on narrow screen', async ({ page }) => {
+	test('should have usable input on narrow screen', async ({ page }) => {
 		// Open the mobile panel to access the New Session button
 		await openMobilePanel(page);
 
@@ -217,7 +215,7 @@ test.describe('Mobile Messages', () => {
 		await closeMobilePanel(page);
 
 		// Use specific selector to avoid matching Neo panel textbox
-		// Session textareas have "Ask me anything" placeholder, not "Ask Neo…"
+		// Session textareas have "Ask or make anything..." placeholder, not "Ask Neo…"
 		const textarea = page.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])').first();
 		await expect(textarea).toBeVisible({ timeout: 10000 });
 

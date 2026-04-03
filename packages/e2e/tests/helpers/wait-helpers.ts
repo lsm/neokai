@@ -12,14 +12,19 @@ import { expect, type Page, type Locator } from '@playwright/test';
 
 /**
  * Wait for WebSocket connection to be established
+ * @param page - Playwright page
+ * @param timeout - Optional timeout in ms (default 10000)
  */
-export async function waitForWebSocketConnected(page: Page): Promise<void> {
+export async function waitForWebSocketConnected(
+	page: Page,
+	timeout: number = 10000
+): Promise<void> {
 	await page.waitForFunction(
 		() => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			return hub?.getState && hub.getState() === 'connected';
 		},
-		{ timeout: 10000 }
+		{ timeout }
 	);
 }
 
@@ -31,16 +36,10 @@ export async function waitForWebSocketConnected(page: Page): Promise<void> {
  * - Additional hydration/rendering steps for responsive layouts
  * - Potential CSS/JS loading differences
  *
- * Uses 30s timeout instead of 10s for better reliability in CI.
+ * Uses 30s timeout for better reliability in CI.
  */
 export async function waitForWebSocketConnectedMobile(page: Page): Promise<void> {
-	await page.waitForFunction(
-		() => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			return hub?.getState && hub.getState() === 'connected';
-		},
-		{ timeout: 30000 }
-	);
+	await waitForWebSocketConnected(page, 30000);
 }
 
 /**
@@ -68,14 +67,10 @@ export async function getWorkspaceRoot(page: Page): Promise<string> {
  * Create a new session through the UI modal
  * This helper uses RPC directly to create sessions for reliability,
  * then navigates to the session via URL.
- *
- * Uses waitForWebSocketConnectedMobile for better reliability in mobile CI environments
- * where WebSocket connections may take longer to establish.
  */
 export async function createSessionViaUI(page: Page): Promise<string> {
 	// Ensure WebSocket is connected before making RPC calls
-	// Use mobile timeout for reliability in all environments
-	await waitForWebSocketConnectedMobile(page);
+	await waitForWebSocketConnected(page);
 
 	// Get the workspace root path
 	const workspaceRoot = await getWorkspaceRoot(page);
@@ -111,7 +106,7 @@ export async function createSessionViaUI(page: Page): Promise<string> {
  * Uses more specific selectors to avoid matching Neo panel elements:
  * - Checks for h2 NOT containing "Neo Lobby"
  * - Checks for textarea with placeholder containing "Ask" but NOT "Neo"
- *   (session textareas have "Ask me anything" while Neo panel has "Ask Neo…")
+ *   (session textareas have "Ask or make anything..." while Neo panel has "Ask Neo…")
  * - Verifies URL contains session path to ensure proper navigation
  */
 export async function waitForSessionCreated(page: Page): Promise<string> {
@@ -227,7 +222,10 @@ export async function waitForAssistantResponse(
 	}
 
 	// Wait for input to be enabled again (processing complete)
-	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+	// Use specific selector to avoid matching Neo panel textbox
+	const messageInput = page
+		.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
+		.first();
 	await expect(messageInput).toBeEnabled({ timeout: 20000 });
 }
 
