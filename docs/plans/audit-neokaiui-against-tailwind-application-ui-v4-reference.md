@@ -2,11 +2,11 @@
 
 ## Executive Summary
 
-This audit compares the `@neokai/ui` headless component library (v0.8.0) against the Tailwind Application UI v4 React examples (364 files across 11 categories) and the Tailwind Catalyst UI Kit (27 styled components). The goal is to identify missing components, API improvements, and design system gaps that would benefit NeoKai's UI/UX work.
+This audit compares the `@neokai/ui` headless component library (v0.8.0) against the Tailwind Application UI v4 React examples (364 files across 11 categories) and the Tailwind Catalyst UI Kit (27 styled components). The goal is to identify specific improvements and additions for `packages/ui` itself.
 
-**Key finding:** `@neokai/ui` is a well-built headless library with 64 named exports (20 export statements) across 19 component families and comprehensive test coverage (18 component test files + 9 internal utility test files = 27 test files), but it is **not used anywhere** in the NeoKai web application. The web app has 20 parallel UI component implementations in `packages/web/src/components/ui/` with **92 migration-relevant imports** (components that have @neokai/ui equivalents: 31 Button, 19 Modal, 9 Spinner, 8 Tooltip, 8 ConfirmModal, 7 IconButton, 4 Skeleton, 3 RejectModal, 2 Dropdown, 1 Toast) — duplicating functionality with weaker accessibility and positioning. This duplication is the most impactful gap to address.
+**Key finding:** `@neokai/ui` is a well-built headless library with 64 named exports (20 export statements) across 19 component families and 27 test files. The Tailwind v4 reference demonstrates 6 new headless primitives that should be added (Alert, Avatar, AvatarGroup, Badge, Progress, Stepper), 5 existing components that need API improvements (Toast, Field, Input, Menu, Button), and 3 composable patterns (Command Palette, Drawer, Notification variants) that can be built from existing primitives.
 
-**Secondary finding:** The Tailwind v4 reference demonstrates patterns across data display, navigation, feedback, layout, and application shells that @neokai/ui lacks entirely. While the headless primitives for interactive components (Dialog, Menu, Combobox, etc.) are solid, there is no styled/pre-themed component layer and no shared design token system between the UI library and the web app. The design token unification (R1) is a prerequisite for any migration work.
+**Secondary finding:** The reference also demonstrates Catalyst-style CSS custom property theming (`--btn-bg`, `--btn-border`) and a TouchTarget accessibility pattern that @neokai/ui should adopt.
 
 ---
 
@@ -47,7 +47,7 @@ Plus one hook: `useClose`.
 - **Polymorphic `as` prop**: Every component accepts `as` to render as any HTML element.
 - **Stack machine**: Dialog, Menu, and Popover share a `stackMachines` singleton for proper z-ordering of nested overlays.
 - **Floating UI integration**: Menu and Popover use `@floating-ui/dom` v1.7.6 for robust positioned panels with collision detection.
-- **Transition system**: RAF-based `data-enter` / `data-leave` / `data-closed` / `data-transition` attributes enable pure CSS transitions. Uses `CSSTransition` via `getAnimations()` API.
+- **Transition system**: RAF-based `data-enter` / `data-leave` / `data-closed` attributes enable pure CSS transitions. Uses `CSSTransition` via `getAnimations()` API.
 - **Full WAI-ARIA support**: Focus trapping, scroll locking, inert tree handling, `aria-labelledby`, `aria-describedby`, `aria-expanded`, `aria-selected`.
 - **Comprehensive tests**: 27 test files (18 component test files + 9 internal utility test files) covering all component families plus internal utilities.
 
@@ -57,15 +57,11 @@ Plus one hook: `useClose`.
 - `preact` v10.29.0 (latest in 10.x)
 - Dev: `tailwindcss` v4.2.2, `vitest` v4.1.2
 
-### 1.4 Adoption Status
-
-**@neokai/ui is not imported by any package in the monorepo** other than its own demo. The web app (`packages/web/`) has zero imports of `@neokai/ui`. The library exists in isolation.
-
 ---
 
 ## 2. Tailwind Application UI v4 Reference Overview
 
-The reference contains **364 JSX example files** across **11 categories** (verified from a local checkout of the Tailwind CSS Application UI v4 examples):
+The reference contains **364 JSX example files** across **11 categories**:
 
 | Category | Subcategories | Files |
 |---|---|---|
@@ -85,352 +81,554 @@ The reference uses `@headlessui/react` for interactive patterns -- the React equ
 
 ---
 
-## 3. Gap Analysis: Missing Components
+## 3. Gap Analysis: New Components to Add
 
-### 3.1 Components That Should Be Added to @neokai/ui
+### 3.1 Alert (6 reference examples, 1 new component family)
 
-These are headless primitives that the Tailwind v4 reference demonstrates as interactive patterns requiring state management, keyboard navigation, or accessibility behavior beyond what plain HTML provides.
+**Reference files:** `feedback/alerts/01-with-description` through `06-with-dismiss-button`
 
-| Component | Reference Examples | Priority | Notes |
-|---|---|---|---|
-| **Avatar** | 11 examples (circular, rounded, groups, notifications, initials) | Medium | Needs image loading states, fallback rendering, group stacking with overflow count. Not truly headless -- could be a styled component instead. |
-| **Badge** | 18 examples (bordered, flat, pill, dot indicators, removable) | Medium | Primarily visual -- could be a styled component with `data-variant` attributes. |
-| **Alert** | 6 examples (with description, list, actions, accent border, dismiss) | Medium | Needs dismiss behavior, ARIA `role="alert"`, icon slot. Headless variant with `onDismiss` callback. |
-| **Command Palette** | 9 examples (simple, with preview, grouped, with footer) | Low | Composable from existing `Dialog` + `Combobox`. No new primitive needed -- instead, create a styled recipe/pattern. |
-| **Drawer** | 9 examples (empty, overlay, branded header, sticky footer) | Low | Achievable by styling `Dialog` with slide-in transition (reference itself uses `Dialog` + `DialogPanel` with `data-closed:translate-x-full`). No new component needed. |
-| **Notification/Toast variants** | 6 examples (simple, condensed, with actions, with avatar, split buttons) | High | @neokai/ui's `Toast` lacks variant types (success/error/warning/info), icon slots, and progress bar. The web app's `ToastItem` has all of these. |
+**Why a headless primitive:** Alerts need `role="alert"`, dismissible state management, and an icon slot -- these go beyond plain HTML.
 
-### 3.2 Patterns That Are Purely Styled (No Headless Primitive Needed)
+**Props API:**
 
-These patterns from the Tailwind v4 reference are visual layouts that can be built with Tailwind utility classes and existing headless primitives. They do not require new @neokai/ui components:
+```typescript
+// <Alert>
+interface AlertProps {
+  variant?: 'info' | 'success' | 'warning' | 'error'  // default: 'info'
+  style?: 'soft' | 'outline'                           // default: 'soft'
+  dismissible?: boolean                                // renders CloseButton
+  open?: boolean                                       // controlled
+  defaultOpen?: boolean                                // uncontrolled (default: true)
+  onClose?: () => void
+  icon?: ComponentChildren                              // custom icon element
+  as?: ElementType
+  children?: ComponentChildren
+}
 
-| Pattern | Reference Examples | Implementation Approach |
+// Sub-components: AlertTitle, AlertDescription, AlertActions
+// Dismiss uses existing CloseButton from dialog module
+```
+
+**ARIA requirements:**
+- Root: `role="alert"` (implicit `aria-live="assertive"`)
+- Icon: `aria-hidden="true"`
+- Dismiss button: sr-only "Dismiss" label
+
+**Data attributes:** `data-variant`, `data-style`, `data-dismissible`, `data-open`/`data-closed`
+
+**Preact implementation notes:**
+- Use existing `useOpenClosed()` internal hook (same pattern as Dialog/Menu)
+- Compose with existing `CloseButton` for dismiss functionality
+- Render-prop children for maximum flexibility
+
+---
+
+### 3.2 Avatar (11 reference examples, 1 new component family)
+
+**Reference files:** `elements/avatars/01-circular` through `11-with-text`
+
+**Why a headless primitive:** Avatars need image load/error state tracking, fallback chain (image → initials → placeholder icon), and status indicators -- these require state management.
+
+**Props API:**
+
+```typescript
+// <Avatar>
+interface AvatarProps {
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl'  // default: 'md'
+  shape?: 'circle' | 'rounded'                        // default: 'circle'
+  src?: string
+  alt?: string                                          // default: ''
+  initials?: string                                     // e.g. "TW"
+  fallbackIcon?: ComponentChildren
+  status?: 'online' | 'offline' | 'busy' | 'away'
+  statusPosition?: 'top-right' | 'bottom-right'        // default: 'top-right'
+  onError?: () => void
+  as?: ElementType
+  children?: ComponentChildren
+}
+
+// Size mapping: xs=24px, sm=32px, md=40px, lg=48px, xl=56px, 2xl=64px
+```
+
+**ARIA requirements:**
+- `<img>`: consumer-provided `alt` text
+- Status indicator dot: `aria-hidden="true"`
+- Placeholder icon: `aria-hidden="true"`
+
+**Data attributes:** `data-size`, `data-shape`, `data-loaded`, `data-errored`, `data-status`, `data-status-position`
+
+**Preact implementation notes:**
+- Track `loaded`/`errored` state via `useState` with `onLoad`/`onError` on `<img>`
+- Fallback chain: `src` → `initials` → `fallbackIcon` → default user silhouette
+- Status indicator is a positioned `<span>` with `ring-2 ring-white` (or dark equivalent)
+
+---
+
+### 3.3 AvatarGroup (2 reference examples, part of Avatar family)
+
+**Props API:**
+
+```typescript
+// <AvatarGroup>
+interface AvatarGroupProps {
+  max?: number                                        // overflow threshold
+  stack?: 'bottom-to-top' | 'top-to-bottom'          // default: 'bottom-to-top'
+  spacing?: 'tight' | 'normal'                        // default: 'normal'
+  'aria-label'?: string                               // e.g. "Team members: 5 people"
+  as?: ElementType
+  children?: ComponentChildren
+}
+
+// <AvatarGroupOverflow> — renders "+N" indicator
+interface AvatarGroupOverflowProps {
+  count: number
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl'
+  shape?: 'circle' | 'rounded'
+}
+```
+
+**Data attributes:** `data-stack`, `data-spacing`, `data-overflow`
+
+**Preact implementation notes:**
+- Top-to-bottom stacking uses `isolate` on container + descending `z-N` values
+- Bottom-to-top uses negative `-space-x-N` with DOM order determining paint order
+- Count `Avatar` children vs `max`, render `AvatarGroupOverflow` for remainder
+
+---
+
+### 3.4 Badge (16 reference examples, 1 new component family)
+
+**Why a headless primitive:** Badges need removable state, dot indicators, and multiple variant axes -- these benefit from a structured API.
+
+**Props API:**
+
+```typescript
+interface BadgeProps {
+  color?: 'gray' | 'red' | 'yellow' | 'green' | 'blue' | 'indigo' | 'purple' | 'pink'
+  shape?: 'rounded' | 'pill'                         // default: 'rounded'
+  fill?: 'filled' | 'flat'                            // default: 'filled'
+  size?: 'default' | 'small'                          // default: 'default'
+  dot?: boolean                                       // colored dot indicator
+  dotColor?: string                                   // independent dot color (for flat variant)
+  removable?: boolean
+  onRemove?: () => void
+  as?: ElementType                                     // default: 'span'
+  children?: ComponentChildren
+}
+```
+
+**ARIA requirements:**
+- Dot SVG: `aria-hidden="true"`
+- Remove button: sr-only "Remove" text via `<span class="sr-only">`
+
+**Data attributes:** `data-color`, `data-shape`, `data-fill`, `data-size`, `data-dot`, `data-removable`
+
+**Preact implementation notes:**
+- Remove button uses existing `DataInteractive` pattern for hover/focus tracking
+- Hit area expansion via nested `<span class="absolute -inset-1" />`
+- Four independent variant axes (color × shape × fill × size) + optional dot/removable
+
+---
+
+### 3.5 Progress (1 reference example + 7 stepper examples, 1 new component family)
+
+The reference has two distinct patterns under "progress-bars":
+
+#### 3.5a. ProgressBar (1 example — determinate bar)
+
+**Props API:**
+
+```typescript
+interface ProgressBarProps {
+  value: number           // 0-100
+  min?: number            // default: 0
+  max?: number            // default: 100
+  label?: string          // accessible label
+  as?: ElementType        // default: 'div'
+  children?: ComponentChildren
+}
+```
+
+**ARIA requirements:** `role="progressbar"`, `aria-valuenow`, `aria-valuemin`, `aria-valuemax`, `aria-label`
+
+**Data attributes:** `data-progress`
+
+**Preact implementation notes:**
+- Simple value-clamping wrapper around a track/indicator slot pattern
+- No animation needed — the reference uses static `style={{ width: '37.5%' }}`
+- The `label` prop sets `aria-label` (and optionally renders an `sr-only` heading)
+
+#### 3.5b. Stepper (7 examples — multi-step indicator)
+
+**Props API:**
+
+```typescript
+interface Step {
+  id?: string
+  name: string
+  href?: string
+  description?: string
+}
+
+// <Stepper>
+interface StepperProps {
+  steps: Step[]
+  currentStep: number           // zero-based index
+  orientation?: 'horizontal' | 'vertical'
+  as?: ElementType              // default: 'nav'
+  children?: ComponentChildren
+}
+
+// <StepperStep> — per-step renderer
+interface StepperStepProps {
+  step: Step
+  index: number
+  isCurrent: boolean
+  isComplete: boolean
+  as?: ElementType
+  children?: ComponentChildren
+}
+```
+
+**ARIA requirements:**
+- Root: `<nav aria-label="Progress">`
+- List: `<ol role="list">`
+- Current step: `aria-current="step"`
+- Decorative elements: `aria-hidden="true"`
+
+**Data attributes:** `data-step-status="complete|current|upcoming"`, `data-step-orientation`
+
+**Preact implementation notes:**
+- Derive each step's status from `currentStep` index comparison
+- Connector elements are purely visual (CSS borders/lines between steps)
+- Responsive layouts: horizontal on `md:`, vertical on mobile (per reference pattern)
+
+---
+
+## 4. Gap Analysis: Existing Components to Improve
+
+### 4.1 Toast — Add Variant Types (HIGH)
+
+**Current API:** `ToastOptions { id?, title?, description?, duration? }` — no variant support.
+
+**What the reference does (6 notification examples):**
+- Typed variants: `success` (green + checkmark), `error` (red + X), `warning` (yellow + triangle), `info` (blue + info circle)
+- Icon slot before title
+- Progress bar showing remaining duration
+
+**Changes needed:**
+
+| Change | Details | Backward-Compatible? |
 |---|---|---|
-| **Application Shells** | 23 (sidebar, multi-column, stacked) | Layout primitives with CSS Grid/Flexbox. Could be styled recipes. |
-| **Cards** | 8+ examples | Tailwind classes. No component needed. |
-| **Dividers** | 8 examples | `<hr>` with Tailwind or a simple styled `Divider` component. |
-| **Tables** | 19 examples | HTML `<table>` with Tailwind. No headless primitive needed. |
-| **Description Lists** | 8 examples | HTML `<dl>` with Tailwind. No headless primitive needed. |
-| **Media Objects** | 8 examples | Flex layout pattern. No component needed. |
-| **Stats** | 8 examples | Layout pattern with typography. No component needed. |
-| **Empty States** | 6 examples | Layout pattern with illustration slot. |
-| **Breadcrumb** | 6 examples | Nav landmark + list. Could be a simple styled component. |
-| **Pagination** | 3 examples | Nav landmark + buttons. Could be a simple styled component. |
-| **Progress Bar** | 8 examples | Could benefit from a headless primitive with `value`, `max`, animation support, and ARIA `role="progressbar"`. |
-| **Feeds** | 15 examples | Layout pattern. No component needed. |
-| **Headings** | 25 examples (page, section, card) | Typography/layout patterns. No component needed. |
-| **Form Layouts** | 5 examples | Grid/Flex layout patterns. |
-| **Input Groups** | 21 examples | Wrapper around existing `Input` with addons. Could be a styled composition. |
+| Add `variant` to `ToastOptions` | `'info' \| 'success' \| 'warning' \| 'error'`, default `'info'` | Yes |
+| Add `icon` to `ToastOptions` | `ComponentChildren` — consumer provides variant-appropriate icon | Yes |
+| Add `ToastProgress` component | Renders CSS-animated bar using remaining duration | Yes (new component) |
+| Update `Toaster` auto-render | Conditionally render icon when provided in options | Yes |
+
+**Data attributes to add:** `data-variant="info|success|warning|error"` on `Toast`
 
 ---
 
-## 4. Web App Duplication Analysis
+### 4.2 Field — Add Input Group Support (MEDIUM)
 
-### 4.1 Component Mapping
+**Current API:** `Field` is a pure context provider with no `data-*` attributes.
 
-The web app has **20 UI component files** in `packages/web/src/components/ui/` (including 1 test file and 1 internal `__tests__` directory). These are the duplicates and their @neokai/ui equivalents:
+**What the reference does (21 input-group examples):**
+- Inputs with leading/trailing add-ons (`$` prefix, `.00` suffix)
+- Icon add-ons (search magnifying glass, envelope)
+- Button add-ons (search button appended to input)
 
-| Web App Component | @neokai/ui Equivalent | Gap Assessment |
+**Changes needed:**
+
+| Change | Details | Backward-Compatible? |
 |---|---|---|
-| `Button.tsx` | `Button` | Web's Button is simpler but functional. @neokai/ui provides hover/focus/active data attributes. |
-| `Modal.tsx` | `Dialog` + `DialogPanel` + `DialogBackdrop` | **Significant gap.** Web's Modal has basic focus trapping and escape handling (verified from source). It sets `document.body.style.overflow = 'hidden'` but lacks: scroll lock utility (no body padding compensation), inert tree handling for accessibility, transition support, dedicated backdrop component, nested dialog support (no stack machine), `aria-labelledby`/`aria-describedby` auto-linking, `alertdialog` role support, and drawer rendering capability. @neokai/ui's Dialog has all of these. |
-| `Toast.tsx` | `Toast` + `Toaster` + `useToast` | **Bidirectional gap.** Web's `ToastItem` has features missing from @neokai/ui: typed variants (success/error/warning/info) with distinct colors and icons, a progress bar showing remaining duration, and an exit animation. @neokai/ui's Toast has features missing from web: proper `role="status"`, `aria-labelledby`/`aria-describedby`, transition integration via `Transition` component, and a `Toaster` container with positioning. |
-| `Dropdown.tsx` | `Menu` + `MenuButton` + `MenuItems` + `MenuItem` | **Significant gap.** Web's Dropdown implements manual viewport-aware positioning with `getBoundingClientRect()` calculations (~80 lines of positioning logic, verified from source). It also has manual click-outside detection, manual keyboard navigation (ArrowUp/Down/Enter/Space), and manual escape handling. @neokai/ui's Menu handles all of this via @floating-ui with proper collision detection and flip/shift strategies. |
-| `Tooltip.tsx` | `Tooltip` + `TooltipPanel` + `TooltipTrigger` | **Significant gap.** Web's Tooltip uses CSS `absolute` positioning with `translate` transforms (verified from source). It has no collision detection -- tooltips can overflow the viewport. @neokai/ui's Tooltip uses @floating-ui for robust positioning with viewport boundary detection. However, web's Tooltip has a configurable delay (default 500ms) which @neokai/ui's should verify. |
-| `Spinner.tsx` | `Spinner` | Similar. Both are headless with sr-only label. |
-| `Skeleton.tsx` | `Skeleton` | Similar. Both are headless with animation variant. |
-| `IconButton.tsx` | `IconButton` | Similar. @neokai/ui exposes hover/focus/active data attributes. |
-| `Dropdown.tsx` (also) | `Popover` + `PopoverButton` + `PopoverPanel` | Web's Dropdown with `customContent` prop is essentially a Popover. |
-| `Collapsible.tsx` | `Disclosure` | Similar patterns. Web's uses CSS max-height animation. |
-| `ConfirmModal.tsx` | `Dialog` with `role="alertdialog"` | Web wraps Modal in a confirmation pattern. @neokai/ui's Dialog supports `role="alertdialog"` natively. |
-| `RejectModal.tsx` | `Dialog` | Another Modal wrapper. |
-| `ActionBar.tsx` | None | Web-specific action bar pattern. |
-| `ContentContainer.tsx` | None | Layout wrapper. |
-| `CopyButton.tsx` | None | Copy-to-clipboard with feedback. |
-| `CircularProgressIndicator.tsx` | None | Circular progress. |
-| `InboxBadge.tsx` | None | Notification badge. |
-| `MobileMenuButton.tsx` | None | Hamburger menu trigger. |
-| `NavIconButton.tsx` | None | Navigation icon button. |
-| `Portal.tsx` | Internal `Portal` | Both implement portal rendering. Web's is public, @neokai/ui's is internal. |
+| Add `InputGroup` component | Wrapper providing group-level focus/hover state propagation | Yes (new component) |
+| Add `InputAddon` component | Renders add-on content (text, icon, or button) | Yes (new component) |
+| Add `data-disabled` to `Field` | Currently emits no data attributes | Yes |
+| Add `FieldError` component | Error text variant with `role="alert"`, sets `aria-invalid` on input | Yes (new component) |
 
-### 4.2 Where Web App UI Components Are Used
-
-Web UI components have **92 migration-relevant imports** (components with @neokai/ui equivalents) across **9 island files** and **30+ component files**. An additional 21 imports are for web-only components (MobileMenuButton, NavIconButton, InboxBadge, ContentContainer, CopyButton, CircularProgressIndicator, ActionBar, Collapsible) that have no @neokai/ui equivalent and are out of scope for migration.
-
-**Migration-relevant imports by component** (sorted by import count):
-- `Button` — 31 imports (heaviest consumer across islands and components)
-- `Modal` — 19 imports (islands + many dialog components)
-- `Spinner` — 9 imports
-- `Tooltip` — 8 imports
-- `ConfirmModal` — 8 imports
-- `IconButton` — 7 imports
-- `Skeleton` — 4 imports
-- `RejectModal` — 3 imports
-- `Dropdown` — 2 imports
-- `Toast` — 1 import
-
-**Key observation:** Wrapper components like `ConfirmModal` (8 imports) and `RejectModal` (3 imports) add indirect dependencies — any migration must account for the types and behavioral contracts these wrappers expose to their consumers (e.g., `ConfirmModal`'s `onConfirm`/`onCancel` callbacks, `Dropdown`'s `setTimeout` delay on close).
+**Data attributes to add:** `data-disabled` on `Field`, `data-focus`/`data-hover` on `InputGroup`
 
 ---
 
-## 5. Design System and Token Alignment
+### 4.3 Input — Add Data Attributes (MEDIUM)
 
-### 5.1 Token Divergence (Verified)
+**Current API:** Slot object contains `{ disabled, invalid, hover, focus, autofocus }` but these may not be emitted as `data-*` attributes on the DOM element (depends on `render()` utility behavior).
 
-The @neokai/ui demo and the web app use **completely different design token systems**.
+**Changes needed:**
 
-**@neokai/ui demo** (`packages/ui/demo/styles.css`):
-- Semantic tokens: `--surface-0` through `--surface-3`, `--text-primary` through `--text-muted`
-- Light/dark mode via `:root` / `.dark` CSS custom properties
-- Tailwind v4 `@theme` block mapping to `--color-surface-*`, `--color-text-*`
-- Accent color: `--color-accent-500: #6366f1` (indigo)
-- Legacy `dark-*` tokens for backward compatibility
-
-**Web app** (`packages/web/src/lib/design-tokens.ts`):
-- TypeScript constants, not CSS custom properties
-- Message-specific tokens: `messageSpacing`, `messageColors` (iMessage-inspired)
-- Structural tokens: `borderColors.ui.*`, `borderColors.tool.*`, `borderColors.semantic.*`
-- Uses Tailwind class strings directly (e.g., `'bg-dark-800'`, `'border-dark-700'`)
-- No light mode support (dark-only design)
-- Accent: `bg-indigo-500` in the unified `tokens` object
-
-**Impact:** These two systems cannot coexist without a unified token layer. Any migration of the web app to @neokai/ui requires first establishing a shared token system.
-
-### 5.2 Catalyst UI Kit Theming Pattern (Reference)
-
-The Catalyst UI Kit demonstrates an elegant theming approach worth studying:
-
-- CSS custom properties per component: `--btn-bg`, `--btn-border`, `--btn-hover-overlay`, `--btn-icon`
-- Runtime theming without JavaScript: `bg-(--btn-bg)`, `text-(--btn-icon)`
-- Style objects merged with `clsx`: `styles.base`, `styles.solid`, `styles.colors.dark/zinc`
-- `TouchTarget` component expanding hit area to 44x44px on touch devices
-- Optical border technique using `before:` pseudo-element for border+shadow composition
-
-**Recommendation:** Adopt the CSS custom property per-component pattern for the styled layer. This enables runtime theming (e.g., brand color changes, dark/light mode) without JavaScript re-renders.
+| Change | Details | Backward-Compatible? |
+|---|---|---|
+| Verify `data-*` emission | Confirm `render()` translates slot booleans to `data-hover`, `data-focus`, `data-disabled`, `data-invalid` on the DOM | N/A (verification) |
+| Add missing data attributes | If not already emitted, add `data-hover`, `data-focus`, `data-disabled`, `data-invalid` to `ourProps` | Yes |
 
 ---
 
-## 6. Recommendations
+### 4.4 Menu — Improve Section Accessibility (MEDIUM)
+
+**Current API:** `MenuSection` renders as bare `<div>` with no ARIA attributes. `MenuHeading` has no `id`.
+
+**Changes needed:**
+
+| Change | Details | Backward-Compatible? |
+|---|---|---|
+| Add `role="group"` to `MenuSection` | Required by WAI-ARIA menu pattern | Yes |
+| Add `aria-labelledby` to `MenuSection` | Must reference `MenuHeading` id | Yes |
+| Generate `id` on `MenuHeading` | So `MenuSection` can reference it | Yes |
+
+---
+
+### 4.5 Button — Add ButtonGroup (LOW)
+
+**Current API:** No `ButtonGroup` export. Button groups are a purely visual pattern (12 reference examples) — shared borders, no border-radius on interior sides.
+
+**Changes needed:**
+
+| Change | Details | Backward-Compatible? |
+|---|---|---|
+| Add `ButtonGroup` component | Renders `<div role="group">` with group-level data attributes | Yes (new component) |
+| Fix `CloseButton` crash outside context | Add guard for undefined `close()` | Yes (bug fix) |
+
+---
+
+### 4.6 Tooltip — No Changes Needed
+
+Tooltip already supports configurable `showDelay` (default 500ms) and `hideDelay` (default 0ms). No gaps found relative to the reference.
+
+---
+
+## 5. Composable Patterns (No New Primitives)
+
+These patterns from the reference can be built entirely from existing @neokai/ui primitives. They need **convenience wrappers or demo examples**, not new headless components.
+
+### 5.1 Command Palette (9 reference examples)
+
+**Composition:** `Dialog` + `Combobox`
+
+The reference nests a `Combobox` inside a `DialogPanel` with these key settings:
+- `ComboboxOptions` uses `static` prop (Dialog handles mount/unmount)
+- `ComboboxInput` uses `autoFocus`
+- `Dialog.onClose` resets both open state and query state
+- Grouped results via `reduce()` on a `category` field
+- Footer with keyboard shortcut hints via `<kbd>` elements
+- Empty state when no results match
+
+**@neokai/ui readiness:** All required primitives exist. No new code needed in `packages/ui` — this is a consumer-side composition pattern. A demo example in the @neokai/ui demo app would be valuable.
+
+### 5.2 Drawer / Slide-over (9 reference examples)
+
+**Composition:** `Dialog` + `DialogPanel` with slide-in transition
+
+The reference uses this exact CSS transition on `DialogPanel`:
+```css
+transition duration-500 ease-in-out data-closed:translate-x-full sm:duration-700
+```
+
+Variants: overlay vs. no overlay, sizes (`max-w-md` through `max-w-2xl`), branded header, sticky footer.
+
+**@neokai/ui readiness:** All required primitives exist. The `Transition` system already provides `data-closed` / `data-enter` / `data-leave` attributes. A demo example is all that's needed. However, a thin `DrawerPanel` convenience wrapper could provide the correct default CSS class structure and size presets.
+
+**One gap:** `TransitionChild` (for animating arbitrary children within a transitioning component, e.g., the outside close button in drawer file 03) exists in the source but is **not exported from `mod.ts`**. Exporting it would enable more complex composition patterns.
+
+### 5.3 Notification with Typed Variants (6 reference examples)
+
+**Composition:** `Toast` + `ToastAction` + variant styling
+
+Requires R1 (Toast variant types) first. After that, styled notifications are a consumer-side pattern using `data-variant` for variant-specific styling.
+
+---
+
+## 6. Cross-Cutting Improvements
+
+### 6.1 Export TransitionChild (LOW)
+
+`TransitionChild` exists in `packages/ui/src/components/transition/transition.tsx` (line 849) but is **not re-exported from `mod.ts`**. Only `Transition` is exported. Exporting `TransitionChild` enables:
+- Animating arbitrary children within a transitioning parent (e.g., drawer close button)
+- More complex composition patterns like the reference's drawer with outside close button
+
+**Change:** Add `export { Transition, TransitionChild }` to `mod.ts` line 60.
+
+### 6.2 Adopt TouchTarget Pattern (LOW)
+
+The Catalyst UI Kit demonstrates a `TouchTarget` component that expands hit areas to 44x44px minimum on touch devices (WCAG 2.2 Success Criterion 2.5.8). This is a single `<span>` with `absolute inset-0` and `pointer-fine:hidden`.
+
+**Implementation:** ~10 lines of code, zero dependencies. Wrap inside `Button` and `IconButton` by default.
+
+---
+
+## 7. Recommendations
 
 > **Note:** Effort estimates use "sessions" = one focused AGI coding session (~2-4 hours of agent work). Actual calendar time may vary.
 
 ### HIGH IMPACT
 
-#### R1. Establish a Shared Design Token System
+#### R1. Add Toast Variant Types
 
-**Why (prerequisite):** @neokai/ui and the web app use incompatible token systems. Without unification, adopting @neokai/ui in the web app requires duplicating or translating tokens. This must come first — R2 (migration) depends on it.
-
-**Task breakdown:**
-
-| # | Task | Acceptance Criteria |
-|---|---|---|
-| 1.1 | Define canonical CSS custom properties in `packages/ui/src/tokens.css` | File exists with `:root` and `.dark` blocks. Semantic tokens cover: surface (4 levels), text (primary/secondary/muted), accent (full scale), border (3 levels), feedback (success/warning/error/info). All tokens use `--color-*` naming. |
-| 1.2 | Create a `useTokens()` hook or export the CSS file for import in any Preact app | The tokens CSS file can be imported in both `packages/ui/demo` and `packages/web`. A single `@import '@neokai/ui/tokens.css'` activates all tokens. |
-| 1.3 | Adopt Catalyst-style per-component CSS custom properties | At minimum: `--btn-bg`, `--btn-border`, `--btn-hover-overlay`, `--dialog-bg`, `--dialog-border`, `--tooltip-bg`. Each maps to a semantic token by default. |
-| 1.4 | Migrate web app's `design-tokens.ts` to consume shared tokens | `packages/web/src/lib/design-tokens.ts` references CSS custom properties instead of hardcoded Tailwind class strings. No visual regressions. |
-
-**Estimated effort:** 1-2 sessions.
-
-**Rollback strategy:** The shared tokens are additive — they don't remove the web app's existing tokens. If issues arise, the web app can revert to its hardcoded tokens while the shared layer is refined.
-
-#### R2. Migrate Web App to @neokai/ui for Overlay Components
-
-**Why:** The web app's Modal, Dropdown, and Tooltip have significant accessibility and positioning gaps compared to @neokai/ui's Dialog, Menu, and Tooltip. The web's Dropdown alone has ~80 lines of manual positioning code that @floating-ui handles automatically.
-
-**Depends on:** R1 (shared design tokens must exist first).
-
-**Migration surface analysis** (verified from source — 92 migration-relevant import occurrences):
-
-| Web Component | Import Count | @neokai/ui Target | API Change Required |
-|---|---|---|---|
-| Modal | 19 | Dialog + DialogPanel + DialogBackdrop | **Significant.** Web's `Modal` uses props API (`title`, `size`, `showCloseButton`). @neokai/ui's `Dialog` uses composition (`DialogTitle`, `DialogPanel`, `DialogBackdrop` as children). Requires: (a) a styled adapter component that wraps Dialog with NeoKai's Modal-like props API, or (b) updating all 19 call sites to composition pattern. Also gains: inert tree, nested dialog support, transitions, proper ARIA. |
-| ConfirmModal | 8 | Dialog with `role="alertdialog"` | **Medium.** ConfirmModal wraps Modal with confirmation UI. Adapter needed or call sites updated. |
-| RejectModal | 3 | Dialog | **Medium.** Similar to ConfirmModal — a Modal wrapper with rejection UI. |
-| Button | 31 | Button | **Low.** Web's Button is a simple styled `<button>`. @neokai/ui's Button provides `data-hover`, `data-focus`, `data-active` states. Mostly a styling change. |
-| Tooltip | 8 | Tooltip + TooltipPanel + TooltipTrigger | **Medium.** Web's Tooltip uses CSS absolute positioning with configurable delay. @neokai/ui's uses @floating-ui (gains: collision detection). API differs: web uses `content` prop, @neokai/ui uses composition. |
-| Dropdown | 2 | Menu + MenuButton + MenuItems + MenuItem | **Significant.** Web's Dropdown accepts `items: DropdownMenuItem[]` with `icon`, `danger`, `disabled` fields. @neokai/ui's Menu uses JSX children composition. Requires adapter or call site migration. Gains: @floating-ui positioning, collision detection. |
-| Spinner | 9 | Spinner | **Low.** Both are headless with sr-only label. |
-| Skeleton | 4 | Skeleton | **Low.** Both are headless with animation variant. |
-| IconButton | 7 | IconButton | **Low.** @neokai/ui adds data-attribute states. |
-| Toast | 1 | Toast + Toaster + useToast | **Medium.** See R3 for variant enhancement first. |
+**Why:** 6 reference notification examples all use typed variants. Current Toast has no variant support.
 
 **Task breakdown:**
 
 | # | Task | Acceptance Criteria |
 |---|---|---|
-| 2.1 | Create a styled adapter component `NeoModal` that wraps @neokai/ui `Dialog` with the web app's props API (`title`, `size`, `showCloseButton`) | Component accepts the same props as current `Modal.tsx`. Uses `Dialog` + `DialogPanel` + `DialogBackdrop` internally. Styled with shared tokens from R1. All 19 Modal call sites work unchanged when importing NeoModal. |
-| 2.2 | Create a styled adapter `NeoDropdown` wrapping @neokai/ui `Menu` | Accepts `items: MenuItem[]` prop for backward compatibility. Internally renders `Menu` + `MenuItems` + `MenuItem`. Uses @floating-ui positioning. |
-| 2.3 | Create a styled adapter `NeoTooltip` wrapping @neokai/ui `Tooltip` | Accepts `content` and `delay` props for backward compatibility. Uses @floating-ui positioning with collision detection. |
-| 2.4 | Migrate Modal imports (19 occurrences) to use `NeoModal` adapter | All 19 `Modal` import sites in `packages/web/src/` updated to import from the adapter. No functional regressions. |
-| 2.5 | Migrate ConfirmModal imports (8 occurrences) to use `Dialog` with `role="alertdialog"` | All 8 `ConfirmModal` import sites updated. Adapter preserves `onConfirm`/`onCancel` callback API. |
-| 2.6 | Migrate RejectModal imports (3 occurrences) to use `Dialog` | All 3 `RejectModal` import sites updated. Adapter preserves rejection callback API. |
-| 2.7 | Migrate Tooltip imports (8 occurrences) to use `NeoTooltip` adapter | All 8 `Tooltip` import sites updated. Configurable delay preserved. |
-| 2.8 | Migrate Dropdown imports (2 occurrences) to use `NeoDropdown` adapter | Both `Dropdown` import sites updated. `items` prop API preserved via adapter. |
-| 2.9 | Migrate Button imports (31 occurrences) to use @neokai/ui `Button` | All 31 `Button` import sites updated. Styling preserved via shared tokens. |
-| 2.10 | Migrate remaining imports (Spinner: 9, IconButton: 7, Skeleton: 4, Toast: 1 = 21 total) | All remaining migration-relevant import sites updated. |
-| 2.11 | Delete old web app UI component files (`Modal.tsx`, `Dropdown.tsx`, `Tooltip.tsx`, `ConfirmModal.tsx`, `RejectModal.tsx`, `Button.tsx`) | Files removed. No remaining imports. Knip reports no dead exports. |
-
-**Estimated effort:** 3-4 sessions (higher than initially estimated due to the 92-import migration surface and API adapter requirements).
-
-**Rollback strategy:** The styled adapters are new files — they don't modify @neokai/ui's headless primitives. If migration issues arise, revert the import changes and keep the old components. The adapters can be iterated on independently.
-
-#### R3. Add Toast Variant Types to @neokai/ui
-
-**Why:** The web app's ToastItem has success/error/warning/info variants with distinct colors, icons, and progress bars. @neokai/ui's Toast is variant-agnostic. The Tailwind v4 reference's notification examples (6 files) all use typed variants.
-
-**Task breakdown:**
-
-| # | Task | Acceptance Criteria |
-|---|---|---|
-| 3.1 | Add `variant` field to `ToastOptions`: `'info' \| 'success' \| 'warning' \| 'error'` | Type is added. Default is `'info'`. Backward-compatible — consumers without variant continue to work. |
-| 3.2 | Add `icon` slot to Toast | A render prop or named slot that renders an icon before the title. Optional — defaults to no icon. |
-| 3.3 | Add optional progress bar support | Controlled via `showProgress` boolean. Renders a CSS-animated bar showing remaining duration. |
-| 3.4 | Add unit tests for all new Toast features | Tests cover: variant rendering, icon slot, progress bar, backward compatibility with no variant. |
+| 1.1 | Add `variant` field to `ToastOptions`: `'info' \| 'success' \| 'warning' \| 'error'` | Type added. Default `'info'`. `data-variant` emitted on Toast DOM. Backward-compatible. |
+| 1.2 | Add `icon` field to `ToastOptions` | Optional `ComponentChildren`. Rendered before title when provided. Backward-compatible. |
+| 1.3 | Add `ToastProgress` component | CSS-animated bar showing remaining duration. Controlled via `showProgress` in `ToastOptions`. |
+| 1.4 | Update `Toaster` auto-render | Conditionally render icon when provided. No visual changes for existing consumers. |
+| 1.5 | Add unit tests | Tests cover: variant rendering, icon slot, progress bar, backward compatibility. |
 
 **Estimated effort:** 1 session.
 
-### MEDIUM IMPACT
+---
 
-#### R4. Create a Styled Component Layer
+#### R2. Add New Headless Components
 
-**Why:** @neokai/ui is purely headless -- every consumer must write their own Tailwind classes. This creates inconsistency and slows development. The Catalyst UI Kit demonstrates the pattern: styled wrappers that compose headless primitives with pre-defined design tokens.
-
-**Task breakdown:**
-
-| # | Task | Acceptance Criteria |
-|---|---|---|
-| 4.1 | Create `packages/ui/src/styled/` directory with styled wrappers for Button, Dialog, Menu, Tooltip, Toast | Each wrapper applies the project's design tokens as default Tailwind classes. Supports `className` overrides for customization. |
-| 4.2 | Export both headless and styled versions from `mod.ts` | Styled exports use a `Styled*` prefix or a separate entry point. No naming conflicts with headless exports. |
-| 4.3 | Add visual regression tests or Storybook-style snapshots for styled components | Each styled component has a demo page in the @neokai/ui demo app showing all variants. |
-
-**Estimated effort:** 2-3 sessions.
-
-#### R5. Add Headless Primitives for Missing Interactive Patterns
-
-**Why:** Some patterns in the Tailwind v4 reference require state management or keyboard navigation that plain HTML does not provide.
-
-**Components to add:**
-- **Alert**: `role="alert"`, dismissible state, icon slot, accent border variant. 6 reference examples.
-- **Progress**: `role="progressbar"`, `value`/`max` props, `indeterminate` state, animation support. 8 reference examples. This is the one "missing headless primitive" that genuinely needs to exist.
-- **Badge**: Primarily visual, but a `data-variant` approach with removable variant would be useful. 18 reference examples.
+**Why:** 6 component families in the reference provide interactive patterns that need state management or ARIA behavior beyond plain HTML.
 
 **Task breakdown:**
 
 | # | Task | Acceptance Criteria |
 |---|---|---|
-| 5.1 | Implement `Alert` headless component | Exports `Alert`, `AlertTitle`, `AlertDescription`. Supports `role="alert"`, `onDismiss` callback, `dismissible` state. Unit tests for accessibility and keyboard interaction. |
-| 5.2 | Implement `Progress` headless component | Exports `Progress`. Supports `value`, `max`, `indeterminate` props. Sets `role="progressbar"` and `aria-valuenow`/`aria-valuemin`/`aria-valuemax`. Unit tests for ARIA attributes. |
-| 5.3 | Implement `Badge` headless component | Exports `Badge`. Supports `data-variant` attribute for styling. Optional `onRemove` callback for removable variant. Unit tests for ARIA. |
+| 2.1 | Implement `Alert` + `AlertTitle` + `AlertDescription` + `AlertActions` | Compound component pattern. `role="alert"`, dismissible state, `variant`/`style` props. Data attributes for styling. Unit tests. |
+| 2.2 | Implement `Avatar` + `AvatarGroup` + `AvatarGroupOverflow` | Image load/error state, fallback chain, status indicators, group stacking with overflow count. Data attributes. Unit tests. |
+| 2.3 | Implement `Badge` | Four variant axes (color × shape × fill × size), dot indicator, removable state. Data attributes. Unit tests. |
+| 2.4 | Implement `ProgressBar` | `role="progressbar"`, `value`/`max`/`min`, `aria-valuenow`/`aria-valuemin`/`aria-valuemax`. Data attributes. Unit tests. |
+| 2.5 | Implement `Stepper` + `StepperStep` | Multi-step state, `aria-current="step"`, connector rendering, horizontal/vertical orientation. Data attributes. Unit tests. |
+| 2.6 | Export all new components from `mod.ts` | Clean barrel exports. Knip reports no dead exports. |
 
-**Estimated effort:** 2 sessions (1 for Progress, 1 for Alert + Badge).
+**Estimated effort:** 3-4 sessions.
 
-#### R6. Adopt TouchTarget Pattern
-
-**Why:** Catalyst's `TouchTarget` expands hit areas to 44x44px minimum on touch devices. This is an accessibility improvement per WCAG 2.2 Success Criterion 2.5.8. It is a simple, framework-agnostic pattern (a single `pointer-fine:hidden` span).
-
-**Task breakdown:**
-
-| # | Task | Acceptance Criteria |
-|---|---|---|
-| 6.1 | Add `TouchTarget` component to @neokai/ui | Exported from `mod.ts`. Renders a `<span>` with `absolute inset-0` and `pointer-fine:hidden` styles. Expands parent hit area to 44x44px minimum. |
-| 6.2 | Wrap TouchTarget inside Button and IconButton in the styled layer (R4) | Styled Button and IconButton include TouchTarget by default. |
-
-**Estimated effort:** Minimal (part of R4).
+---
 
 ### MEDIUM IMPACT
 
-#### R7. Add Missing Styled Layout Components
+#### R3. Improve Existing Component APIs
 
-**Why:** The web app implements layout patterns inline (35+ reference examples across Divider, Breadcrumb, Pagination, Empty State). Creating reusable styled layout components would improve consistency and is arguably medium impact given the pervasiveness of these patterns.
+**Why:** Several existing components have accessibility gaps or missing features compared to the reference.
 
 **Task breakdown:**
 
 | # | Task | Acceptance Criteria |
 |---|---|---|
-| 7.1 | Create `Divider` styled component | Simple `<hr>` wrapper with design token defaults. Supports `orientation="horizontal|vertical"`. |
-| 7.2 | Create `Breadcrumb` styled component | Renders as `<nav>` landmark with `<ol>`. Accepts `items` prop with `label` and `href`. |
-| 7.3 | Create `EmptyState` styled component | Layout with illustration slot, heading, description, and action slot. |
-| 7.4 | Create `Pagination` styled component | Renders as `<nav>` landmark with page buttons. Accepts `current`, `total`, `onPageChange`. |
+| 3.1 | Add `InputGroup` + `InputAddon` to Field family | New components. `InputGroup` propagates focus/hover to wrapper. `InputAddon` renders add-on content. Unit tests. |
+| 3.2 | Add `FieldError` component | Error text variant with `role="alert"`. Sets `aria-invalid` on associated input via Field context. Unit tests. |
+| 3.3 | Add `data-disabled` to `Field` | `data-disabled` emitted when `isDisabled` is true. Unit test verifies attribute presence. |
+| 3.4 | Fix `MenuSection` ARIA: add `role="group"` + `aria-labelledby` | `MenuSection` emits `role="group"` and `aria-labelledby` pointing to `MenuHeading` id. `MenuHeading` generates an id. Unit tests verify ARIA attributes. |
+| 3.5 | Verify/fix `data-*` emission on Input, Button, MenuItem | Confirm `render()` utility translates slot booleans to `data-hover`, `data-focus`, `data-disabled`, `data-invalid` on DOM. Fix if missing. Unit tests verify attributes. |
 
-**Estimated effort:** 1-2 sessions.
+**Estimated effort:** 2 sessions.
+
+---
+
+#### R4. Add ButtonGroup + Fix CloseButton
+
+**Why:** Button groups are a pervasive visual pattern (12 reference examples). CloseButton has a crash bug.
+
+**Task breakdown:**
+
+| # | Task | Acceptance Criteria |
+|---|---|---|
+| 4.1 | Add `ButtonGroup` component | Renders `<div role="group">`. Group-level data attributes. Unit tests. |
+| 4.2 | Fix `CloseButton` crash outside context | Add guard: if `close` is undefined, no-op instead of throw. Unit test verifies no crash when used standalone. |
+
+**Estimated effort:** 1 session.
+
+---
 
 ### LOW IMPACT
 
-#### R8. Create Composable Patterns (Not New Components)
+#### R5. Export TransitionChild + Add TouchTarget
 
-**Why:** Several Tailwind v4 reference patterns can be composed from existing @neokai/ui primitives without creating new components.
-
-**Patterns to document/create as recipes:**
-- **Command Palette**: `Dialog` + `Combobox` + `Transition`. 9 reference examples.
-- **Drawer/Slide-over**: `Dialog` + `DialogPanel` with `data-closed:translate-x-full` transition. 9 reference examples.
-- **Notification with actions**: `Toast` + `ToastAction` + variant styling. 6 reference examples.
+**Why:** `TransitionChild` enables complex composition patterns (drawer close button animation). TouchTarget improves accessibility per WCAG 2.2.
 
 **Task breakdown:**
 
 | # | Task | Acceptance Criteria |
 |---|---|---|
-| 8.1 | Create Command Palette example in @neokai/ui demo app | Demonstrates `Dialog` + `Combobox` composition. Includes keyboard shortcut registration, search filtering, and grouped results. |
-| 8.2 | Create Drawer example in @neokai/ui demo app | Demonstrates `Dialog` + `DialogPanel` with slide-in transition. Shows overlay and inline variants. |
-| 8.3 | Create typed Notification example in @neokai/ui demo app | Demonstrates `Toast` with variant styling after R3 is implemented. |
+| 5.1 | Export `TransitionChild` from `mod.ts` | Add to existing `Transition` export statement. Knip confirms export is used. |
+| 5.2 | Add `TouchTarget` component | `<span>` with `absolute inset-0` + `pointer-fine:hidden`. Exported from `mod.ts`. Unit test. |
 
-**Estimated effort:** 1 session.
+**Estimated effort:** Minimal (< 1 session).
+
+---
+
+#### R6. Create Demo Examples for Composable Patterns
+
+**Why:** Command Palette, Drawer, and typed Notifications demonstrate the power of composing existing @neokai/ui primitives.
+
+**Task breakdown:**
+
+| # | Task | Acceptance Criteria |
+|---|---|---|
+| 6.1 | Create Command Palette demo in @neokai/ui demo app | `Dialog` + `Combobox` composition. Search filtering, grouped results, footer. |
+| 6.2 | Create Drawer demo in @neokai/ui demo app | `Dialog` + `DialogPanel` with `data-closed:translate-x-full` transition. Overlay and inline variants. |
+| 6.3 | Create typed Notification demo | `Toast` with variant styling from R1. |
+
+**Estimated effort:** 1 session. Depends on R1 for task 6.3.
+
+---
 
 ### Execution Order and Dependencies
 
 ```
-R1 (Tokens) ──┬── R2 (Migrate Overlays) ── R4 (Styled Layer)
-              │                              ── R5 (New Primitives)
-              │                              ── R6 (TouchTarget, part of R4)
-              │                              ── R7 (Layout Components)
-              │
-              └── R3 (Toast Variants) ── R4
-                                     ── R8 (Composable Patterns)
+R1 (Toast variants) ── R6.3 (Notification demo)
+                     ── R3 (Improve existing APIs)
+                     ── R4 (ButtonGroup + CloseButton fix)
+
+R2 (New components: Alert, Avatar, Badge, Progress, Stepper)  [independent]
+
+R5 (TransitionChild export + TouchTarget)                     [independent]
+
+R6.1 (Command Palette demo)                                   [independent]
+R6.2 (Drawer demo)          ── depends on R5 (TransitionChild)
 ```
 
-R1 is the prerequisite for all subsequent work. R2 and R3 can run in parallel after R1. R4, R5, R6, R7 can run in parallel after R2. R8 depends on R3 (typed Notification example requires Toast variants).
+R1, R2, R4, R5, R6.1 can all run in parallel. R3 should run after R1 (Toast variants establish the pattern for other variant additions). R6.2 depends on R5 (needs `TransitionChild`). R6.3 depends on R1.
 
 ---
 
-## 7. Appendix: Component Comparison Matrix
+## 8. Appendix: Component Comparison Matrix
 
 ### @neokai/ui vs Tailwind v4 Reference vs Catalyst UI Kit
 
-| Pattern | @neokai/ui | Tailwind v4 Reference | Catalyst | Web App |
+| Pattern | @neokai/ui | Tailwind v4 Reference | Catalyst | Action Needed |
 |---|---|---|---|---|
-| Button | Headless | 12 examples | Styled (solid/outline/plain + colors) | Styled |
-| CloseButton | Headless | (part of Dialog) | (part of Dialog) | Inline SVG |
-| Checkbox | Headless | 6 examples | Styled | None |
-| Combobox | Headless | 8 examples | Styled | None |
-| Dialog | Headless (full-featured) | 15 examples | Styled | Modal (basic) |
-| Disclosure | Headless | None | None | Collapsible |
-| Field/Label | Headless | (part of forms) | Fieldset | None |
-| Input/Textarea/Select | Headless (native HTML) | 74 examples total | Styled | None |
-| Listbox | Headless | None | Styled | None |
-| Menu | Headless + @floating-ui | 9 dropdown examples | Dropdown | Dropdown (manual) |
-| Popover | Headless + @floating-ui | None | None | None |
-| Tooltip | Headless + @floating-ui | None | None | CSS-only |
-| RadioGroup | Headless | 5 examples | Styled | None |
-| Switch | Headless | 6 examples | Styled | None |
-| Tabs | Headless | 4 examples | None | None |
-| Transition | Headless (CSSTransition) | (used throughout) | (used throughout) | CSS animations |
-| TransitionChild | Internal only (not exported) | N/A | N/A | N/A |
-| Toast | Headless + Toaster | 6 examples | None | Styled (typed variants) |
-| IconButton | Headless | None | None | Styled |
-| Skeleton | Headless | None | None | Styled |
-| Spinner | Headless | None | None | Styled |
-| Avatar | **Missing** | 11 examples | Styled | None |
-| Badge | **Missing** | 18 examples | Styled | InboxBadge |
-| Alert | **Missing** | 6 examples | Styled | None |
-| Command Palette | **Missing** (composable) | 9 examples | None | None |
-| Drawer | **Missing** (composable) | 9 examples | None | None |
-| Progress | **Missing** | 8 examples | None | CircularProgressIndicator |
-| Table | N/A (HTML) | 19 examples | Styled | None |
-| Description List | N/A (HTML) | 8 examples | Styled | None |
-| Divider | N/A (HTML) | 8 examples | Styled | None |
-| Pagination | N/A (HTML) | 3 examples | Styled | None |
-| Breadcrumb | N/A (HTML) | 6 examples | None | None |
-| Sidebar Layout | N/A (CSS) | 23 examples | Styled | NavRail |
-| App Shell | N/A (CSS) | 23 examples | SidebarLayout/StackedLayout | None |
+| Button | Headless | 12 examples | Styled | Add ButtonGroup (R4) |
+| CloseButton | Headless | (part of Dialog) | (part of Dialog) | Fix crash outside context (R4) |
+| Checkbox | Headless | 6 examples | Styled | — |
+| Combobox | Headless | 8 examples | Styled | — |
+| Dialog | Headless (full-featured) | 15 examples | Styled | — |
+| Disclosure | Headless | None | None | — |
+| Field/Label | Headless | (part of forms) | Fieldset | Add InputGroup, FieldError (R3) |
+| Input/Textarea/Select | Headless (native HTML) | 74 examples total | Styled | Verify data-* emission (R3) |
+| Listbox | Headless | None | Styled | — |
+| Menu | Headless + @floating-ui | 9 dropdown examples | Dropdown | Fix MenuSection ARIA (R3) |
+| Popover | Headless + @floating-ui | None | None | — |
+| Tooltip | Headless + @floating-ui | None | None | — |
+| RadioGroup | Headless | 5 examples | Styled | — |
+| Switch | Headless | 6 examples | Styled | — |
+| Tabs | Headless | 4 examples | None | — |
+| Transition | Headless (CSSTransition) | (used throughout) | (used throughout) | Export TransitionChild (R5) |
+| TransitionChild | Internal only | N/A | N/A | Export from mod.ts (R5) |
+| Toast | Headless + Toaster | 6 examples | None | Add variants, icon, progress (R1) |
+| IconButton | Headless | None | None | — |
+| Skeleton | Headless | None | None | — |
+| Spinner | Headless | None | None | — |
+| Avatar | **Missing** | 11 examples | Styled | Add (R2) |
+| AvatarGroup | **Missing** | 2 examples | None | Add (R2) |
+| Badge | **Missing** | 16 examples | Styled | Add (R2) |
+| Alert | **Missing** | 6 examples | Styled | Add (R2) |
+| Progress | **Missing** | 1 example | None | Add (R2) |
+| Stepper | **Missing** | 7 examples | None | Add (R2) |
+| Command Palette | **Missing** (composable) | 9 examples | None | Demo example (R6) |
+| Drawer | **Missing** (composable) | 9 examples | None | Demo example (R6) |
+| ButtonGroup | **Missing** | 12 examples | None | Add (R4) |
+| TouchTarget | **Missing** | None | Styled | Add (R5) |
+| Table | N/A (HTML) | 19 examples | Styled | — |
+| Description List | N/A (HTML) | 8 examples | Styled | — |
+| Divider | N/A (HTML) | 8 examples | Styled | — |
+| Pagination | N/A (HTML) | 3 examples | Styled | — |
+| Breadcrumb | N/A (HTML) | 6 examples | None | — |
+| App Shell | N/A (CSS) | 23 examples | SidebarLayout | — |
 
 ### Data Attribute Coverage
 
@@ -445,4 +643,4 @@ R1 is the prerequisite for all subsequent work. R2 and R3 can run in parallel af
 | `data-selected` | Yes | Yes | |
 | `data-enter` | Yes | Yes | |
 | `data-leave` | Yes | Yes | |
-| `data-transition` | Yes (custom) | Not in current docs | @neokai/ui sets `data-transition` whenever `data-enter` OR `data-leave` is active. This is a convenience attribute not documented in Headless UI v2.2.x. |
+| `data-transition` | Yes (custom) | Not in current docs | @neokai/ui convenience attribute not in Headless UI v2.2.x |
