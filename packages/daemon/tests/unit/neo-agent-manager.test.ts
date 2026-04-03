@@ -12,12 +12,36 @@
  * - cleanup(): delegates to AgentSession.cleanup()
  * - getSecurityMode(): reads from settings, defaults to 'balanced'
  * - getModel(): reads neoModel, falls back to model, then 'sonnet'
+ * - setDbPath(): wires db-query server into setRuntimeMcpServers
+ * - cleanup(): closes db-query server
+ * - destroyAndRecreate(): closes old db-query server and creates new one
  */
 
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Database } from 'bun:sqlite';
 import { NeoAgentManager, NEO_SESSION_ID } from '../../src/lib/neo/neo-agent-manager';
 import type { NeoSessionManager, NeoSettingsManager } from '../../src/lib/neo/neo-agent-manager';
 import type { AgentSession } from '../../src/lib/agent/agent-session';
+import type { McpServerConfig } from '@neokai/shared';
+import type {
+	NeoToolsConfig,
+	NeoQueryRoomManager,
+	NeoQueryGoalRepository,
+	NeoQueryTaskRepository,
+	NeoQuerySessionManager,
+	NeoQuerySettingsManager,
+	NeoQueryAuthManager,
+	NeoQueryMcpServerRepository,
+	NeoQuerySkillsManager,
+	NeoQuerySpaceManager,
+	NeoQuerySpaceAgentManager,
+	NeoQuerySpaceWorkflowManager,
+	NeoQueryWorkflowRunRepository,
+	NeoQuerySpaceTaskRepository,
+} from '../../src/lib/neo/tools/neo-query-tools';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -439,5 +463,266 @@ describe('NeoAgentManager', () => {
 			const prompt = calls[0][0] as string;
 			expect(prompt).toContain('Balanced');
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Helpers for db-query integration tests
+// ---------------------------------------------------------------------------
+
+function makeMinimalQueryConfig(): NeoToolsConfig {
+	const noopRoomManager: NeoQueryRoomManager = {
+		listRooms: () => [],
+		getRoom: () => null,
+		getRoomOverview: () => null,
+	};
+	const noopGoalRepo: NeoQueryGoalRepository = {
+		listGoals: () => [],
+		getGoal: () => null,
+		listExecutions: () => [],
+	};
+	const noopTaskRepo: NeoQueryTaskRepository = {
+		listTasks: () => [],
+		getTask: () => null,
+	};
+	const noopSessionManager: NeoQuerySessionManager = {
+		getActiveSessions: () => 0,
+		listSessions: () => [],
+	};
+	const noopSettingsManager: NeoQuerySettingsManager = {
+		getGlobalSettings: () =>
+			({
+				settingSources: [],
+				model: 'sonnet',
+				permissionMode: 'default',
+				thinkingLevel: 'none',
+				autoScroll: true,
+				coordinatorMode: false,
+				maxConcurrentWorkers: 3,
+				neoSecurityMode: 'balanced',
+				neoModel: null,
+				showArchived: false,
+				fallbackModels: [],
+				disabledMcpServers: [],
+			}) as ReturnType<NeoQuerySettingsManager['getGlobalSettings']>,
+	};
+	const noopAuthManager: NeoQueryAuthManager = {
+		getAuthStatus: async () => ({
+			isAuthenticated: false,
+			method: 'none',
+			source: 'env' as const,
+		}),
+	};
+	const noopMcpRepo: NeoQueryMcpServerRepository = {
+		list: () => [],
+		get: () => null,
+	};
+	const noopSkillsManager: NeoQuerySkillsManager = {
+		listSkills: () => [],
+		getSkill: () => null,
+	};
+	const noopSpaceManager: NeoQuerySpaceManager = {
+		listSpaces: () => [],
+		getSpace: () => null,
+	};
+	const noopSpaceAgentManager: NeoQuerySpaceAgentManager = {
+		listBySpaceId: () => [],
+	};
+	const noopSpaceWorkflowManager: NeoQuerySpaceWorkflowManager = {
+		listWorkflows: () => [],
+	};
+	const noopWorkflowRunRepo: NeoQueryWorkflowRunRepository = {
+		listBySpace: () => [],
+	};
+	const noopSpaceTaskRepo: NeoQuerySpaceTaskRepository = {
+		listBySpace: () => [],
+		listByStatus: () => [],
+	};
+
+	return {
+		roomManager: noopRoomManager,
+		goalRepository: noopGoalRepo,
+		taskRepository: noopTaskRepo,
+		sessionManager: noopSessionManager,
+		settingsManager: noopSettingsManager,
+		authManager: noopAuthManager,
+		mcpServerRepository: noopMcpRepo,
+		skillsManager: noopSkillsManager,
+		workspaceRoot: '/workspace',
+		appVersion: '0.1.1',
+		startedAt: Date.now() - 1_000,
+		spaceManager: noopSpaceManager,
+		spaceAgentManager: noopSpaceAgentManager,
+		spaceWorkflowManager: noopSpaceWorkflowManager,
+		workflowRunRepository: noopWorkflowRunRepo,
+		spaceTaskRepository: noopSpaceTaskRepo,
+	};
+}
+
+function makeDbSessionManager(
+	opts: { createdSession?: AgentSession | null } = {}
+): NeoSessionManager & { _createCalls: number } {
+	const sessions = new Map<string, AgentSession | null>();
+	let getCallCount = 0;
+	const sessionQueue: Array<AgentSession | null> =
+		opts.createdSession !== undefined ? [opts.createdSession] : [];
+
+	const sm = {
+		_createCalls: 0,
+
+		createSession: mock(async () => {
+			sm._createCalls++;
+			const next = sessionQueue.length > 0 ? sessionQueue.shift()! : makeSession();
+			sessions.set(NEO_SESSION_ID, next);
+			return NEO_SESSION_ID;
+		}),
+
+		getSessionAsync: mock(async (_id: string): Promise<AgentSession | null> => {
+			if (getCallCount === 0) {
+				getCallCount++;
+			}
+			return sessions.get(NEO_SESSION_ID) ?? null;
+		}),
+
+		deleteSession: mock(async (_id: string) => {
+			sessions.delete(NEO_SESSION_ID);
+		}),
+
+		unregisterSession: mock((_id: string) => {}),
+	};
+
+	return sm;
+}
+
+// ---------------------------------------------------------------------------
+// db-query MCP server integration tests
+// ---------------------------------------------------------------------------
+
+describe('NeoAgentManager — setDbPath() / db-query server', () => {
+	let tmpDir: string;
+	let dbPath: string;
+
+	beforeEach(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), 'neokai-test-'));
+		dbPath = join(tmpDir, 'test.db');
+		// Create a minimal SQLite database so createDbQueryMcpServer can open it.
+		const initDb = new Database(dbPath);
+		initDb.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
+		initDb.close();
+	});
+
+	afterEach(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	test('when setDbPath() is called and toolsConfig is set, db-query key appears in setRuntimeMcpServers', async () => {
+		const session = makeSession();
+		const sm = makeDbSessionManager({ createdSession: session });
+		const mgr = new NeoAgentManager(sm, makeSettingsManager());
+		mgr.setToolsConfig(makeMinimalQueryConfig());
+		mgr.setDbPath(dbPath);
+
+		await mgr.provision();
+
+		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		expect(calls.length).toBe(1);
+		const servers = calls[0][0] as Record<string, McpServerConfig>;
+		expect('db-query' in servers).toBe(true);
+	});
+
+	test('when setDbPath() is NOT called, db-query key is absent from setRuntimeMcpServers', async () => {
+		const session = makeSession();
+		const sm = makeDbSessionManager({ createdSession: session });
+		const mgr = new NeoAgentManager(sm, makeSettingsManager());
+		mgr.setToolsConfig(makeMinimalQueryConfig());
+		// No setDbPath() call
+
+		await mgr.provision();
+
+		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		expect(calls.length).toBe(1);
+		const servers = calls[0][0] as Record<string, McpServerConfig>;
+		expect('db-query' in servers).toBe(false);
+	});
+
+	test('cleanup() closes the db-query server (no error)', async () => {
+		const session = makeSession();
+		const sm = makeDbSessionManager({ createdSession: session });
+		const mgr = new NeoAgentManager(sm, makeSettingsManager());
+		mgr.setToolsConfig(makeMinimalQueryConfig());
+		mgr.setDbPath(dbPath);
+
+		await mgr.provision();
+
+		// cleanup() should not throw even though db-query server holds an open connection.
+		await expect(mgr.cleanup()).resolves.toBeUndefined();
+		// Session should be cleared after cleanup.
+		expect(mgr.getSession()).toBeNull();
+	});
+
+	test('destroyAndRecreate via clearSession() closes old db-query server and creates a new one', async () => {
+		const firstSession = makeSession();
+		const secondSession = makeSession();
+		// Use the makeSessionManager that supports multiple sessions in order.
+		const sessions = new Map<string, AgentSession | null>();
+		let getCallCount = 0;
+		const sessionQueue = [firstSession, secondSession];
+		const sm: NeoSessionManager = {
+			createSession: mock(async () => {
+				const next = sessionQueue.shift() ?? makeSession();
+				sessions.set(NEO_SESSION_ID, next);
+				return NEO_SESSION_ID;
+			}),
+			getSessionAsync: mock(async () => {
+				if (getCallCount === 0) {
+					getCallCount++;
+					return null; // first call → no existing session → create
+				}
+				return sessions.get(NEO_SESSION_ID) ?? null;
+			}),
+			deleteSession: mock(async () => {
+				sessions.delete(NEO_SESSION_ID);
+			}),
+			unregisterSession: mock(() => {}),
+		};
+
+		const mgr = new NeoAgentManager(sm, makeSettingsManager());
+		mgr.setToolsConfig(makeMinimalQueryConfig());
+		mgr.setDbPath(dbPath);
+
+		// Provision creates firstSession with a db-query server.
+		await mgr.provision();
+		expect(mgr.getSession()).toBe(firstSession);
+
+		const firstCalls = (firstSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		expect(firstCalls.length).toBe(1);
+		const firstServers = firstCalls[0][0] as Record<string, McpServerConfig>;
+		expect('db-query' in firstServers).toBe(true);
+
+		// clearSession() destroys firstSession and provisions secondSession with a fresh db-query server.
+		await mgr.clearSession();
+		expect(mgr.getSession()).toBe(secondSession);
+
+		const secondCalls = (secondSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		expect(secondCalls.length).toBe(1);
+		const secondServers = secondCalls[0][0] as Record<string, McpServerConfig>;
+		expect('db-query' in secondServers).toBe(true);
+
+		// Cleanup should not throw (old server is already closed, new one gets closed now).
+		await expect(mgr.cleanup()).resolves.toBeUndefined();
+	});
+
+	test('when toolsConfig is not set, setDbPath() alone does NOT call setRuntimeMcpServers', async () => {
+		const session = makeSession();
+		const sm = makeDbSessionManager({ createdSession: session });
+		const mgr = new NeoAgentManager(sm, makeSettingsManager());
+		// Only setDbPath(), no setToolsConfig()
+		mgr.setDbPath(dbPath);
+
+		await mgr.provision();
+
+		// attachTools() is a no-op when toolsConfig is null, so setRuntimeMcpServers is never called.
+		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		expect(calls.length).toBe(0);
 	});
 });
