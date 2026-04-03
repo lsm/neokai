@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
+import { WorkflowCanvas } from './WorkflowCanvas';
 
 interface SpaceDashboardProps {
 	spaceId: string;
@@ -254,7 +255,7 @@ function buildGroups(tab: OverviewTab, tasks: typeof spaceStore.tasks.value): Ta
 }
 
 export function SpaceDashboard({
-	spaceId: _spaceId,
+	spaceId,
 	onOpenSpaceAgent: _onOpenSpaceAgent,
 	onSelectTask,
 	compact = false,
@@ -263,6 +264,9 @@ export function SpaceDashboard({
 	const loading = spaceStore.loading.value;
 	const space = spaceStore.space.value;
 	const tasks = [...spaceStore.tasks.value].sort((a, b) => b.updatedAt - a.updatedAt);
+
+	// Pick the most recent active run (pending or in_progress), falling back to any run
+	const activeRun = spaceStore.activeRuns.value[0] ?? spaceStore.workflowRuns.value[0] ?? null;
 
 	if (loading) {
 		return (
@@ -298,7 +302,16 @@ export function SpaceDashboard({
 
 	return (
 		<div class={cn('flex h-full min-h-0 flex-col overflow-y-auto', compact ? 'p-4' : 'p-6')}>
-			<div class="flex w-full flex-1 min-h-0 flex-col">
+			<div class="flex w-full flex-1 min-h-0 flex-col gap-6">
+				{activeRun && (
+					<section class="rounded-[28px] border border-dark-700 bg-dark-950/70 overflow-hidden">
+						<WorkflowCanvas
+							workflowId={activeRun.workflowId}
+							runId={activeRun.id}
+							spaceId={spaceId}
+						/>
+					</section>
+				)}
 				<section class="flex flex-1 min-h-[24rem] flex-col rounded-[28px] border border-dark-700 bg-dark-950/70">
 					<div class="flex items-center gap-6 border-b border-dark-700 px-6">
 						<OverviewTabButton
