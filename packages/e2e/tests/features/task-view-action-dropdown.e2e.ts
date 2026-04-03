@@ -13,7 +13,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getModal } from '../helpers/wait-helpers';
 import { deleteRoom } from '../helpers/room-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -150,11 +150,8 @@ test.describe('Task Action Dropdown', () => {
 		const completeAction = page.locator('[data-testid="task-action-complete"]');
 		await completeAction.click();
 
-		// Complete dialog should appear — filter to avoid matching SlideOutPanel which
-		// also has role="dialog" in DOM when TaskViewV2 is active (strict mode violation)
-		const completeDialog = page
-			.locator('[role="dialog"]')
-			.filter({ has: page.locator('[data-testid="complete-task-confirm"]') });
+		// Complete dialog should appear
+		const completeDialog = getModal(page);
 		await expect(completeDialog.locator('[data-testid="complete-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -172,11 +169,8 @@ test.describe('Task Action Dropdown', () => {
 		const cancelBtn = page.locator('[data-testid="task-cancel-button"]');
 		await cancelBtn.click();
 
-		// Cancel dialog should appear — filter to avoid matching SlideOutPanel which
-		// also has role="dialog" in DOM when TaskViewV2 is active (strict mode violation)
-		const cancelDialog = page
-			.locator('[role="dialog"]')
-			.filter({ has: page.locator('[data-testid="cancel-task-confirm"]') });
+		// Cancel dialog should appear
+		const cancelDialog = getModal(page);
 		await expect(cancelDialog.locator('[data-testid="cancel-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -211,11 +205,8 @@ test.describe('Task Action Dropdown', () => {
 		const completeAction = page.locator('[data-testid="task-action-complete"]');
 		await completeAction.click();
 
-		// Dropdown should be closed - complete dialog is open — filter to avoid matching
-		// SlideOutPanel which also has role="dialog" in DOM (strict mode violation)
-		const completeDialog = page
-			.locator('[role="dialog"]')
-			.filter({ has: page.locator('[data-testid="complete-task-confirm"]') });
+		// Dropdown should be closed - complete dialog is open
+		const completeDialog = getModal(page);
 		await expect(completeDialog).toBeVisible({ timeout: 5000 });
 	});
 
