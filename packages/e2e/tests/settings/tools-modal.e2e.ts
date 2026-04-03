@@ -68,7 +68,7 @@ test.describe('Tools Modal - Redesigned', () => {
 		await expect(page.getByRole('button', { name: /Advanced/i })).toBeVisible();
 
 		// Claude Code Preset should NOT be visible initially (hidden in Advanced)
-		await expect(page.getByText('Claude Code Preset')).not.toBeVisible();
+		await expect(page.getByText('Claude Code Preset').first()).not.toBeVisible();
 	});
 
 	test('should expand Advanced section and show Claude Code Preset', async ({ page }) => {
@@ -80,7 +80,7 @@ test.describe('Tools Modal - Redesigned', () => {
 		await page.getByRole('button', { name: /Advanced/i }).click();
 
 		// Claude Code Preset should now be visible
-		await expect(page.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
+		await expect(page.getByText('Claude Code Preset').first()).toBeVisible({ timeout: 2000 });
 
 		// Setting Sources should also be visible.
 		// .first() is required: getByText matches both the <h4> element and its parent <div>
@@ -159,9 +159,9 @@ test.describe('Tools Modal - Redesigned', () => {
 		await openToolsModal(page);
 
 		// NeoKai Tools group should be expanded showing Memory
-		await expect(page.getByText('NeoKai Tools')).toBeVisible();
-		await expect(page.getByText('Memory')).toBeVisible();
-		await expect(page.getByText('Persistent key-value storage')).toBeVisible();
+		await expect(page.getByText('NeoKai Tools').first()).toBeVisible();
+		await expect(page.getByText('Memory').first()).toBeVisible();
+		await expect(page.getByText('Persistent key-value storage').first()).toBeVisible();
 	});
 
 	test('should enable Save button when session-local setting is toggled', async ({ page }) => {
