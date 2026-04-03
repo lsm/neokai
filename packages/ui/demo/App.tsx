@@ -59,11 +59,6 @@ import { TextareasDemo } from './sections/TextareasDemo.tsx';
 import { TogglesDemo } from './sections/TogglesDemo.tsx';
 import { FormLayoutsDemo } from './sections/forms/form-layouts/FormLayoutsDemo.tsx';
 import { SelectMenusDemo } from './sections/forms/select-menus/SelectMenusDemo.tsx';
-import { ActionPanelsDemo } from './sections/ActionPanelsDemo.tsx';
-import { CheckboxesDemo } from './sections/CheckboxesDemo.tsx';
-import { SignInFormsDemo } from './sections/SignInFormsDemo.tsx';
-import { TextareasDemo } from './sections/TextareasDemo.tsx';
-import { TogglesDemo } from './sections/TogglesDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
