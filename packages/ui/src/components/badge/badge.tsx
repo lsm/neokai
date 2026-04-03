@@ -50,8 +50,8 @@ function BadgeFn({
 		'data-color': color,
 		'data-size': size,
 		'data-shape': shape,
-		'data-dot': dot || undefined,
-		'data-removable': removable || undefined,
+		'data-dot': dot ? '' : undefined,
+		'data-removable': removable ? '' : undefined,
 		// Interaction state handlers
 		onMouseEnter: () => setHover(true),
 		onMouseLeave: () => setHover(false),
