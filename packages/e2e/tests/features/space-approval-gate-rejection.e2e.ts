@@ -258,8 +258,8 @@ test.describe('Approval Gate Rejection', () => {
 		await page.locator('button:has-text("Workflows")').click();
 		await expect(page.locator('text=Full-Cycle Coding Workflow')).toBeVisible({ timeout: 5000 });
 
-		// Navigate back to Dashboard — canvas should still be visible with the blocked state.
-		await page.locator('button:has-text("Dashboard")').click();
+		// Navigate back to Overview — canvas should still be visible with the blocked state.
+		await page.locator('[data-testid="space-detail-dashboard"]').click();
 		await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 5000 });
 

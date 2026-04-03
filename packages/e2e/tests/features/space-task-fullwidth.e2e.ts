@@ -41,8 +41,8 @@ test.describe('Space Task Full-Width View', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Wait for the Dashboard tab to be visible
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		// Wait for the Overview button to be visible (confirms SpaceDashboard is loaded)
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 	});
@@ -70,7 +70,7 @@ test.describe('Space Task Full-Width View', () => {
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
 		// Tab bar should be visible before clicking a task
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
 
 		// Click the task title link in SpaceDetailPanel (context panel) or SpaceDashboard
 		// The task title appears as a clickable element in the context panel's task list
@@ -83,7 +83,7 @@ test.describe('Space Task Full-Width View', () => {
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 3000 });
 
 		// Tab bar should be hidden (full-width task view replaced the tab layout)
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible();
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).not.toBeVisible();
 		await expect(page.getByRole('button', { name: 'Agents', exact: true })).not.toBeVisible();
 	});
 
@@ -112,7 +112,7 @@ test.describe('Space Task Full-Width View', () => {
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 5000 });
 
 		// Tab bar should be visible again
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
 			timeout: 3000,
 		});
 
