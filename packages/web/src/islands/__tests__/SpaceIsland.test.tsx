@@ -154,6 +154,21 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 	};
 }
 
+function makeRun(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkflowRun {
+	return {
+		id: 'run-1',
+		spaceId: 'space-1',
+		workflowId: 'wf-existing',
+		title: 'Test Run',
+		status: 'in_progress',
+		createdAt: 1000,
+		startedAt: 1000,
+		updatedAt: 1000,
+		completedAt: null,
+		...overrides,
+	};
+}
+
 beforeEach(() => {
 	mockLoading = signal(false);
 	mockError = signal(null);
@@ -191,6 +206,61 @@ describe('SpaceIsland — route-driven views', () => {
 		const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
 		fireEvent.click(getByTestId('quick-open-space-agent'));
 		expect(router.navigateToSpaceAgent).toHaveBeenCalledWith('space-1');
+	});
+});
+
+describe('SpaceIsland — dashboard canvas rendering', () => {
+	it('renders canvas-panel and workflow-canvas when workflows exist (no run)', () => {
+		// Default beforeEach has mockWorkflows = [makeWorkflow()], so showCanvas = true
+		const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+		// canvas-panel is in DOM (md:flex hides it visually on narrow viewports, but it is rendered)
+		expect(getByTestId('canvas-panel')).toBeTruthy();
+		expect(getByTestId('workflow-canvas')).toBeTruthy();
+		// In template mode (no run), run-id attribute is empty
+		expect(getByTestId('workflow-canvas').getAttribute('data-run-id')).toBe('');
+	});
+
+	it('renders canvas in runtime mode when an active run is present', () => {
+		const run = makeRun({ id: 'run-active', status: 'in_progress' });
+		mockActiveRuns = signal([run]);
+		mockWorkflowRuns = signal([run]);
+		const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+		expect(getByTestId('workflow-canvas').getAttribute('data-run-id')).toBe('run-active');
+	});
+
+	it('still renders canvas with blocked run after run transitions to blocked', () => {
+		// Simulates post-rejection state: run is blocked (not in activeRuns)
+		const run = makeRun({ id: 'run-blocked', status: 'blocked', updatedAt: 2000 });
+		mockActiveRuns = signal([]); // blocked run is NOT in activeRuns
+		mockWorkflowRuns = signal([run]);
+		const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+		// Canvas still shows the blocked run via the displayRun fallback
+		expect(getByTestId('workflow-canvas').getAttribute('data-run-id')).toBe('run-blocked');
+	});
+
+	it('hides canvas-panel and shows only dashboard-fallback when no workflows configured', () => {
+		mockWorkflows = signal([]); // no workflows → showCanvas = false
+		mockWorkflowRuns = signal([]);
+		mockActiveRuns = signal([]);
+		const { getByTestId, queryByTestId } = render(
+			<SpaceIsland spaceId="space-1" viewMode="overview" />
+		);
+		expect(queryByTestId('canvas-panel')).toBeNull();
+		expect(queryByTestId('workflow-canvas')).toBeNull();
+		expect(getByTestId('dashboard-fallback')).toBeTruthy();
+		expect(getByTestId('space-dashboard')).toBeTruthy();
+	});
+
+	it('hides the tab bar when workflow editor is open', () => {
+		const { getByTestId, queryByTestId } = render(
+			<SpaceIsland spaceId="space-1" viewMode="overview" />
+		);
+		// Switch to Workflows tab and open the editor
+		fireEvent.click(getByTestId('space-tab-bar').querySelector('button:nth-child(3)'));
+		fireEvent.click(getByTestId('create-workflow-btn'));
+		// Tab bar should be hidden when editor is active
+		expect(queryByTestId('space-tab-bar')).toBeNull();
+		expect(getByTestId('visual-workflow-editor')).toBeTruthy();
 	});
 });
 
