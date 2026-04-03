@@ -53,6 +53,33 @@ export async function deleteSpaceViaRpc(page: Page, spaceId: string): Promise<vo
 }
 
 /**
+ * Create a standalone task in a space via RPC. For use in test setup only.
+ * Returns the new task's id.
+ */
+export async function createSpaceTaskViaRpc(
+	page: Page,
+	spaceId: string,
+	title: string,
+	description = ''
+): Promise<string> {
+	const id = await page.evaluate(
+		async ({ spaceId, title, description }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+			const task = (await hub.request('spaceTask.create', {
+				spaceId,
+				title,
+				description,
+			})) as { id: string };
+			return task.id;
+		},
+		{ spaceId, title, description }
+	);
+	if (!id) throw new Error('spaceTask.create returned no id');
+	return id;
+}
+
+/**
  * Delete any existing space at the given workspace path (including archived ones).
  * Prevents UNIQUE constraint violations when tests reuse the same workspace path.
  */
