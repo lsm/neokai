@@ -164,6 +164,18 @@ describe('buildRestrictedEnv', () => {
 		expect(buildRestrictedEnv(CTX)['TMPDIR']).toBe('/tmp');
 	});
 
+	test('allows GH_TOKEN in env (GitHub CLI auth)', () => {
+		expect(buildRestrictedEnv(CTX)['GH_TOKEN']).toBe('ghp-test-token');
+	});
+
+	test('allows GITHUB_TOKEN in env (GitHub Actions auth)', () => {
+		expect(buildRestrictedEnv(CTX)['GITHUB_TOKEN']).toBe('gho-test-token');
+	});
+
+	test('allows GH_HOST in env (GitHub Enterprise)', () => {
+		expect(buildRestrictedEnv(CTX)['GH_HOST']).toBe('github.com');
+	});
+
 	test('allows non-restricted env vars', () => {
 		const env = buildRestrictedEnv(CTX);
 		expect(env['MY_OTHER_VAR']).toBe('safe-value');
