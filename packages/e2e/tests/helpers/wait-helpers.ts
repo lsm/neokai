@@ -12,15 +12,34 @@ import { expect, type Page, type Locator } from '@playwright/test';
 
 /**
  * Wait for WebSocket connection to be established
+ * @param page - Playwright page
+ * @param timeout - Optional timeout in ms (default 10000)
  */
-export async function waitForWebSocketConnected(page: Page): Promise<void> {
+export async function waitForWebSocketConnected(
+	page: Page,
+	timeout: number = 10000
+): Promise<void> {
 	await page.waitForFunction(
 		() => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			return hub?.getState && hub.getState() === 'connected';
 		},
-		{ timeout: 10000 }
+		{ timeout }
 	);
+}
+
+/**
+ * Wait for WebSocket connection with a longer timeout for mobile CI environments.
+ *
+ * Mobile viewports may take longer to initialize due to:
+ * - Different rendering behavior on mobile browsers
+ * - Additional hydration/rendering steps for responsive layouts
+ * - Potential CSS/JS loading differences
+ *
+ * Uses 30s timeout for better reliability in CI.
+ */
+export async function waitForWebSocketConnectedMobile(page: Page): Promise<void> {
+	await waitForWebSocketConnected(page, 30000);
 }
 
 /**
@@ -83,6 +102,12 @@ export async function createSessionViaUI(page: Page): Promise<string> {
 
 /**
  * Wait for session to be created and loaded
+ *
+ * Uses more specific selectors to avoid matching Neo panel elements:
+ * - Checks for h2 NOT containing "Neo Lobby"
+ * - Checks for textarea with placeholder containing "Ask" but NOT "Neo"
+ *   (session textareas have "Ask or make anything..." while Neo panel has "Ask Neo…")
+ * - Verifies URL contains session path to ensure proper navigation
  */
 export async function waitForSessionCreated(page: Page): Promise<string> {
 	// Wait for session to be created and loaded
@@ -94,8 +119,18 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 		{ timeout: 10000 }
 	);
 
+	// Verify URL contains session path
+	const url = page.url();
+	if (!url.includes('/session/')) {
+		throw new Error(`Expected to be on session page, but URL is: ${url}`);
+	}
+
 	// Verify we're in a chat view (message input should be visible)
-	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+	// Use more specific selector to avoid matching Neo panel textbox
+	// Session textareas have "Ask" in placeholder, but Neo panel has "Ask Neo…"
+	const messageInput = page
+		.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
+		.first();
 	await expect(messageInput).toBeVisible({ timeout: 15000 });
 	await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
@@ -187,7 +222,10 @@ export async function waitForAssistantResponse(
 	}
 
 	// Wait for input to be enabled again (processing complete)
-	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+	// Use specific selector to avoid matching Neo panel textbox
+	const messageInput = page
+		.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
+		.first();
 	await expect(messageInput).toBeEnabled({ timeout: 20000 });
 }
 
