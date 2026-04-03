@@ -51,10 +51,10 @@ async function createSpaceWithRun(
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Clean up any leftover space at this workspace path.
+			// Clean up any leftover space at this workspace path (including archived).
 			const norm = (p: string) => p.replace(/^\/private/, '');
 			try {
-				const list = (await hub.request('space.list', {})) as Array<{
+				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
 					id: string;
 					workspacePath: string;
 				}>;
