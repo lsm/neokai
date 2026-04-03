@@ -209,7 +209,7 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.nodes).toHaveLength(2);
 	});
 
-	test('first node uses Planner agent', () => {
+	test('first node uses Research agent', () => {
 		expect(RESEARCH_WORKFLOW.nodes[0].agents[0]?.name).toBe('research');
 		expect(RESEARCH_WORKFLOW.nodes[0].name).toBe('Research');
 	});
@@ -309,7 +309,7 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 		expect(REVIEW_ONLY_WORKFLOW.nodes).toHaveLength(1);
 	});
 
-	test('step agentId placeholder is coder', () => {
+	test('step agentId placeholder is reviewer', () => {
 		expect(REVIEW_ONLY_WORKFLOW.nodes[0].agents[0]?.name).toBe('reviewer');
 	});
 
@@ -317,11 +317,11 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 		expect(REVIEW_ONLY_WORKFLOW.channels ?? []).toHaveLength(0);
 	});
 
-	test('startNodeId points to the coder step', () => {
+	test('startNodeId points to the Review step', () => {
 		expect(REVIEW_ONLY_WORKFLOW.startNodeId).toBe(REVIEW_ONLY_WORKFLOW.nodes[0].id);
 	});
 
-	test('endNodeId points to the coder step (same as startNodeId)', () => {
+	test('endNodeId points to the Review step (same as startNodeId)', () => {
 		expect(REVIEW_ONLY_WORKFLOW.endNodeId).toBe(REVIEW_ONLY_WORKFLOW.nodes[0].id);
 	});
 

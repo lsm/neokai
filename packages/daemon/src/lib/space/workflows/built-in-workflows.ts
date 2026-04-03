@@ -194,7 +194,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  *   Research → Review (gated by research-ready-gate: PR opened and mergeable)
  *   Review → Research (ungated back-channel, max 5 cycles)
  *
- * Planner agent researches thoroughly, commits findings, opens a PR.
+ * Research agent researches thoroughly, commits findings, opens a PR.
  * Reviewer agent reviews the research PR; calls report_done() if satisfied,
  * or sends back for more research via the back-channel.
  */
@@ -323,7 +323,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	],
 	startNodeId: REVIEW_REVIEW_STEP,
 	endNodeId: REVIEW_REVIEW_STEP,
-	tags: ['coding', 'review'],
+	tags: ['review'],
 	createdAt: 0,
 	updatedAt: 0,
 };

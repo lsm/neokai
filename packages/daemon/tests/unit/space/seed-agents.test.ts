@@ -83,6 +83,16 @@ describe('seedPresetAgents', () => {
 		expect(coder?.tools).toContain('Bash');
 	});
 
+	it('research agent has full coding toolset (Write + Edit for committing findings)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const research = seeded.find((a) => a.name === 'Research');
+
+		expect(research?.tools).toContain('Read');
+		expect(research?.tools).toContain('Write');
+		expect(research?.tools).toContain('Edit');
+		expect(research?.tools).toContain('Bash');
+	});
+
 	it('sets descriptions on all preset agents', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
