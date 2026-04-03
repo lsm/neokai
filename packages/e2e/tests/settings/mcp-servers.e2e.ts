@@ -99,8 +99,8 @@ test.describe('MCP Toggle - Tools Modal', () => {
 	test('should show MCP servers section with servers from settings', async ({ page }) => {
 		await openToolsModal(page);
 
-		// Find MCP Servers section
-		const mcpSection = page.locator('h3:has-text("MCP Servers")');
+		// Find Project MCP Servers section (GroupHeader renders a button, not an h3)
+		const mcpSection = page.locator('button:has-text("Project MCP Servers")');
 		await expect(mcpSection).toBeVisible();
 
 		// Get MCP servers displayed

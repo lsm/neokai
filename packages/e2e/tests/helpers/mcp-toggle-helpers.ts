@@ -61,26 +61,41 @@ export async function saveToolsModal(page: Page): Promise<void> {
 }
 
 /**
- * Get the list of MCP server names displayed in the modal
+ * Locator for the expanded content area of the "Project MCP Servers" group.
+ * GroupHeader renders: outer-div > GroupHeader-div > button
+ * Content area is a sibling of GroupHeader-div inside the outer-div.
+ * Uses XPath to navigate up two levels from the button then find the ml-5 content div.
+ */
+function getProjectMcpContent(page: Page) {
+	return page
+		.locator('button:has-text("Project MCP Servers")')
+		.locator('xpath=../../div[contains(@class,"ml-5")]');
+}
+
+/**
+ * Locator for individual server labels inside the Project MCP Servers content.
+ * Individual server labels have class "p-2 rounded-lg" to distinguish them from
+ * source-group toggle labels (which use "gap-1.5") in the same content area.
+ */
+function getServerLabels(page: Page) {
+	return getProjectMcpContent(page).locator('label[class*="p-2 rounded-lg"]');
+}
+
+/**
+ * Get the list of MCP server names displayed in the Project MCP Servers section
  */
 export async function getMcpServerNames(page: Page): Promise<string[]> {
-	// MCP servers section contains server labels with checkbox inputs
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const serverNames: string[] = [];
-
-	// Get all labels that contain server checkboxes
-	const labels = mcpSection.locator('label:has(input[type="checkbox"])');
+	const labels = getServerLabels(page);
 	const count = await labels.count();
+	const serverNames: string[] = [];
 
 	for (let i = 0; i < count; i++) {
 		const label = labels.nth(i);
-		// Server name is usually in a span or div with text
-		const nameElement = label.locator('span, div').first();
+		// Server name is in a div with class text-sm inside the label
+		const nameElement = label.locator('div.text-sm').first();
 		const name = await nameElement.textContent();
 		if (name) {
-			// Extract just the server name (remove "bunx" suffix if present)
-			const serverName = name.trim().split(/\s+/)[0];
-			serverNames.push(serverName);
+			serverNames.push(name.trim());
 		}
 	}
 
@@ -91,9 +106,7 @@ export async function getMcpServerNames(page: Page): Promise<string[]> {
  * Check if a specific MCP server is enabled (checkbox checked)
  */
 export async function isMcpServerEnabled(page: Page, serverName: string): Promise<boolean> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	// Find checkbox by looking for label containing server name
-	const labels = mcpSection.locator('label');
+	const labels = getServerLabels(page);
 	const count = await labels.count();
 
 	for (let i = 0; i < count; i++) {
@@ -112,8 +125,7 @@ export async function isMcpServerEnabled(page: Page, serverName: string): Promis
  * Toggle a specific MCP server by clicking its checkbox
  */
 export async function toggleMcpServer(page: Page, serverName: string): Promise<void> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const labels = mcpSection.locator('label');
+	const labels = getServerLabels(page);
 	const count = await labels.count();
 
 	for (let i = 0; i < count; i++) {
@@ -130,11 +142,10 @@ export async function toggleMcpServer(page: Page, serverName: string): Promise<v
 }
 
 /**
- * Enable all MCP servers
+ * Enable all MCP servers in the Project MCP Servers section
  */
 export async function enableAllMcpServers(page: Page): Promise<void> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const checkboxes = mcpSection.locator('input[type="checkbox"]');
+	const checkboxes = getServerLabels(page).locator('input[type="checkbox"]');
 
 	const count = await checkboxes.count();
 	for (let i = 0; i < count; i++) {
@@ -147,11 +158,10 @@ export async function enableAllMcpServers(page: Page): Promise<void> {
 }
 
 /**
- * Disable all MCP servers
+ * Disable all MCP servers in the Project MCP Servers section
  */
 export async function disableAllMcpServers(page: Page): Promise<void> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const checkboxes = mcpSection.locator('input[type="checkbox"]');
+	const checkboxes = getServerLabels(page).locator('input[type="checkbox"]');
 
 	const count = await checkboxes.count();
 	for (let i = 0; i < count; i++) {
@@ -164,11 +174,10 @@ export async function disableAllMcpServers(page: Page): Promise<void> {
 }
 
 /**
- * Get the count of enabled MCP servers
+ * Get the count of enabled MCP servers in the Project MCP Servers section
  */
 export async function getEnabledMcpServerCount(page: Page): Promise<number> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const checkboxes = mcpSection.locator('input[type="checkbox"]');
+	const checkboxes = getServerLabels(page).locator('input[type="checkbox"]');
 
 	const count = await checkboxes.count();
 	let enabledCount = 0;

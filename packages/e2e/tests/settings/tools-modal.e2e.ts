@@ -48,10 +48,10 @@ test.describe('Tools Modal - Redesigned', () => {
 
 		await openToolsModal(page);
 
-		// Should show the group section headers
-		await expect(page.getByText('App MCP Servers')).toBeVisible();
-		await expect(page.getByText('Project MCP Servers')).toBeVisible();
-		await expect(page.getByText('NeoKai Tools')).toBeVisible();
+		// Should show the group section headers (GroupHeader renders a <button> containing a <span>)
+		await expect(page.locator('button:has-text("App MCP Servers")')).toBeVisible();
+		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
+		await expect(page.locator('button:has-text("NeoKai Tools")')).toBeVisible();
 	});
 
 	test('should show Advanced section collapsed by default', async ({ page }) => {
