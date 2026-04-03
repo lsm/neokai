@@ -84,7 +84,7 @@ Everything from M2 + M3 checklists PLUS:
 
 **Subtasks**:
 
-1. **Create `navigation/command-palettes/CommandPalettesDemo.tsx`** (9 files): Simple, simple with padding, with preview, with images and descriptions, with icons, semi-transparent with icons, with groups, with footer. Uses Dialog + Combobox composition. Icons: `MagnifyingGlassIcon`, `FaceFrownIcon`, `CodeBracketIcon`, `CommandLineIcon`, etc.
+1. **Create `navigation/command-palettes/CommandPalettesDemo.tsx`** (8 files): Simple, simple with padding, with preview, with images and descriptions, with icons, semi-transparent with icons, with groups, with footer. Uses Dialog + Combobox composition. Icons: `MagnifyingGlassIcon`, `FaceFrownIcon`, `CodeBracketIcon`, `CommandLineIcon`, etc.
 
 2. **Create `navigation/navbars/NavbarsDemo.tsx`** (11 files): Simple dark with menu button on left, dark with quick action, simple dark, simple with menu button on left, simple, with quick action, dark with search, with search, dark with centered search, with centered search, with search in column layout. Uses Dialog + Transition for mobile menu, Popover for dropdowns. Icons: `Bars3Icon`, `MagnifyingGlassIcon`, `XMarkIcon`, `BellIcon`, `PlusIcon`.
 
@@ -121,7 +121,7 @@ Everything from M2 + M3 checklists PLUS:
 
 3. **Create `application-shells/stacked/StackedShellsDemo.tsx`** (9 files): With bottom border, on subtle background, with lighter page header, branded nav with compact lighter page header, with overlap, brand nav with overlap, brand nav with lighter page header, with compact lighter page header, two-row navigation with overlap. Uses Popover, Disclosure. Icons: various.
 
-4. **Create `forms/comboboxes/ComboboxesDemo.tsx`** (5 files): Simple, with status indicator, with avatar, with secondary text. Uses Combobox from @neokai/ui. Icons: `CheckIcon`, `ChevronUpDownIcon`.
+4. **Create `forms/comboboxes/ComboboxesDemo.tsx`** (4 files): Simple, with status indicator, with avatar, with secondary text. Uses Combobox from @neokai/ui. Icons: `CheckIcon`, `ChevronUpDownIcon`.
 
 5. **Create `forms/select-menus/CustomSelectMenusDemo.tsx`** (6 files): Simple custom, custom with check on left, custom with status indicator, custom with avatar, with secondary text, branded with supporting text. Uses Listbox from @neokai/ui. Icons: `CheckIcon`, `ChevronUpDownIcon`.
 

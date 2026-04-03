@@ -26,7 +26,7 @@ Everything from M2 checklist PLUS:
 
 **Subtasks**:
 
-1. **Update `elements/buttons/ButtonsDemo.tsx`** -- add 4 icon-only button examples: buttons with leading icon, with trailing icon, circular buttons. (Already created in M2 with pure-HTML examples; extend it.)
+1. **Update `elements/buttons/ButtonsDemo.tsx`** -- add 3 icon-only button examples: buttons with leading icon, with trailing icon, circular buttons. (Already created in M2 with pure-HTML examples; extend it.)
 
 2. **Update `elements/button-groups/ButtonGroupsDemo.tsx`** -- add 3 icon-only examples: icon-only button group, with stat, with checkbox and dropdown.
 
@@ -34,13 +34,13 @@ Everything from M2 checklist PLUS:
 
 4. **Update `feedback/empty-states/EmptyStatesDemo.tsx`** -- add 5 icon-only examples: simple, with starting points, with recommendations, with templates, with recommendations grid. Uses various heroicons.
 
-5. **Create `headings/card-headings/CardHeadingsWithIconsDemo.tsx`** or extend existing -- add 1 icon-only example: with avatar and actions.
+5. **Extend `headings/card-headings/CardHeadingsDemo.tsx`** -- add 1 icon-only example: with avatar and actions. (Already created in M2 with pure-HTML examples.)
 
-6. **Create `headings/page-headings/PageHeadingsWithIconsDemo.tsx`** or extend existing -- add 3 icon-only examples: with actions and breadcrumbs, with banner image, with filters and action.
+6. **Extend `headings/page-headings/PageHeadingsDemo.tsx`** -- add 3 icon-only examples: with actions and breadcrumbs, with banner image, with filters and action. (Already created in M2 with pure-HTML examples.)
 
-7. **Create `headings/section-headings/SectionHeadingsWithIconsDemo.tsx`** or extend existing -- add 3 icon-only examples: with input group, with tabs, with actions and tabs.
+7. **Extend `headings/section-headings/SectionHeadingsDemo.tsx`** -- add 3 icon-only examples: with input group, with tabs, with actions and tabs. (Already created in M2 with pure-HTML examples.)
 
-8. **Create `layout/dividers/DividersWithIconsDemo.tsx`** or extend existing -- add 4 icon-only examples: with icon, with button, with title and button, with toolbar.
+8. **Extend `layout/dividers/DividersDemo.tsx`** -- add 4 icon-only examples: with icon, with button, with title and button, with toolbar. (Already created in M2 with pure-HTML examples.)
 
 9. **Create `forms/form-layouts/FormLayoutsDemo.tsx`** (4 files): Stacked, two-column, two-column with cards, labels on left. Uses `EnvelopeIcon`, `PhoneIcon`, `UserCircleIcon`.
 
@@ -53,7 +53,7 @@ Everything from M2 checklist PLUS:
 13. **Update `packages/ui/demo/App.tsx`** to register any new demo sections.
 
 **Acceptance criteria**:
-- All ~40 icon-only reference examples render correctly
+- All 41 icon-only reference examples render correctly
 - All heroicon imports replaced with lucide-preact imports
 - Icon sizing preserved via `class="w-N h-N"` attributes
 - No `@heroicons` imports remain in any file
@@ -67,7 +67,7 @@ Everything from M2 checklist PLUS:
 
 ---
 
-### Task 3.2: Icon-only demos -- Lists, Navigation, Data Display, Application Shells (52 files)
+### Task 3.2: Icon-only demos -- Lists, Navigation, Data Display, Application Shells (53 files)
 
 **Description**: Port icon-only reference files from lists, navigation, data-display, and application-shells categories.
 
@@ -104,7 +104,7 @@ Everything from M2 checklist PLUS:
 15. **Update `packages/ui/demo/App.tsx`** to register all new demo sections.
 
 **Acceptance criteria**:
-- All ~52 icon-only reference examples render correctly
+- All 53 icon-only reference examples render correctly
 - All heroicon imports replaced with lucide-preact imports
 - Icon sizing preserved via `class="w-N h-N"` attributes
 - No `@heroicons` imports remain in any file

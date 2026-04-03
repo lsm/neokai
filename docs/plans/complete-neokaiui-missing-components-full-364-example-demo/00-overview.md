@@ -75,12 +75,12 @@ M6 can start once enough of M2-M5 are done (it reuses patterns from all prior mi
 
 ## Dependency Breakdown by Reference File
 
-| Dependency type | File count | Subcategories |
+| Dependency type | File count | Subcategories (with per-subcategory counts) |
 |----------------|------------|---------------|
-| Pure HTML (no deps) | 162 | avatars, badges, buttons, button-groups, headings, cards, containers, dividers, list-containers, media-objects, tables, stacked-lists, stats, toggles, checkboxes, radio-groups, input-groups (most), sign-in-forms, textareas (most), action-panels, empty-states (1), form-layouts (0) |
-| Icon-only (heroicons) | 94 | alerts, empty-states (5), description-lists, calendars (1), stats (2), form-layouts (4), input-groups (7), radio-groups (1), select-menus (1), dividers (5), feeds, grid-lists (5), stacked-lists (8), tables (2), breadcrumbs, pagination (2), progress-bars (5), sidebar-navigation (3), tabs (9), vertical-navigation (4), button-groups (3), buttons (4), headings (5) |
+| Pure HTML (no deps) | 162 | avatars (11), badges (16), buttons (5), button-groups (1), card-headings (4), page-headings (3), section-headings (6), cards (10), containers (5), dividers (4), list-containers (7), media-objects (8), tables (17), stacked-lists (6), stats (3), toggles (5), checkboxes (4), radio-groups (11), input-groups (14), sign-in-forms (4), textareas (1), action-panels (8), empty-states (1), pagination (1), progress-bars (3), vertical-navigation (2) |
+| Icon-only (heroicons) | 94 | alerts (6), empty-states (5), description-lists (6), calendars (1), stats (2), form-layouts (4), input-groups (7), radio-groups (1), select-menus (1), dividers (4), feeds (2), grid-lists (4), stacked-lists (7), tables (2), breadcrumbs (4), pagination (2), progress-bars (5), sidebar-navigation (3), tabs (9), vertical-navigation (4), button-groups (3), buttons (3), card-headings (1), page-headings (3), section-headings (3), multi-column (2) |
 | Headless-only (headlessui) | 2 | notifications (2) |
-| Both (headlessui + heroicons) | 106 | command-palettes (9), navbars (11), drawers (12), modal-dialogs (6), notifications (4), comboboxes (5), select-menus (6), textareas (3), dropdowns (5), button-groups (1), application-shells (23), calendars (7), stacked-lists (2), feeds (1), grid-lists (1), headings (4), sidebar-navigation (2), page-examples (6) — of these, 100 are in M5, 6 page-examples are in M6 |
+| Both (headlessui + heroicons) | 106 | command-palettes (8), navbars (11), drawers (12), modal-dialogs (6), notifications (4), comboboxes (4), select-menus (6), textareas (4), dropdowns (5), button-groups (1), multi-column (4), sidebar (8), stacked (9), calendars (7), stacked-lists (2), feeds (1), grid-lists (1), card-headings (1), page-headings (3), section-headings (1), sidebar-navigation (2), page-examples (6) — of these, 100 are in M5, 6 page-examples are in M6 |
 
 ## Milestone File Index
 
