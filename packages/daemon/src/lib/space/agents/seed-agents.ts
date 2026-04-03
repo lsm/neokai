@@ -11,6 +11,7 @@
  *   - Coder    — implementation worker
  *   - General  — general-purpose worker (Done node agent)
  *   - Planner  — planning/orchestration worker
+ *   - Research — research specialist (investigates topics, writes findings, opens PRs)
  *   - Reviewer — code review specialist
  *   - QA       — quality assurance specialist
  */
@@ -51,6 +52,9 @@ const DONE_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSe
 /** Planner uses the same toolset as coder (orchestration patterns reserved for future) */
 const PLANNER_TOOLS = CODER_TOOLS;
 
+/** Research uses the same toolset as coder (needs write access to commit findings and open PRs) */
+const RESEARCH_TOOLS = CODER_TOOLS;
+
 /** Reviewers read-only — no Write or Edit */
 const REVIEWER_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
 
@@ -64,6 +68,7 @@ export const ROLE_TOOLS: Record<string, string[]> = {
 	coder: CODER_TOOLS,
 	general: DONE_TOOLS,
 	planner: PLANNER_TOOLS,
+	research: RESEARCH_TOOLS,
 	reviewer: REVIEWER_TOOLS,
 	qa: QA_TOOLS,
 };
@@ -99,6 +104,12 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		tools: PLANNER_TOOLS,
 	},
 	{
+		name: 'Research',
+		description:
+			'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
+		tools: RESEARCH_TOOLS,
+	},
+	{
 		name: 'Reviewer',
 		description:
 			'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
@@ -124,7 +135,7 @@ export interface SeedPresetAgentsResult {
 }
 
 /**
- * Seed the five preset SpaceAgents for a newly-created Space.
+ * Seed the six preset SpaceAgents for a newly-created Space.
  *
  * Idempotent by design: if a preset name is already taken in this Space
  * (e.g. because this was called twice), the error is recorded but does not

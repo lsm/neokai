@@ -62,7 +62,14 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
 }
 
 /** Valid builtin roles — 'leader' must NOT appear in any template step. */
-const VALID_BUILTIN_ROLES = new Set<string>(['planner', 'coder', 'general', 'reviewer', 'qa']);
+const VALID_BUILTIN_ROLES = new Set<string>([
+	'planner',
+	'coder',
+	'general',
+	'research',
+	'reviewer',
+	'qa',
+]);
 
 /**
  * Returns true if any step in the workflow has 'leader' as its agentId or name placeholder.
@@ -203,7 +210,7 @@ describe('RESEARCH_WORKFLOW template', () => {
 	});
 
 	test('first node uses Planner agent', () => {
-		expect(RESEARCH_WORKFLOW.nodes[0].agents[0]?.name).toBe('planner');
+		expect(RESEARCH_WORKFLOW.nodes[0].agents[0]?.name).toBe('research');
 		expect(RESEARCH_WORKFLOW.nodes[0].name).toBe('Research');
 	});
 
@@ -303,7 +310,7 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 	});
 
 	test('step agentId placeholder is coder', () => {
-		expect(REVIEW_ONLY_WORKFLOW.nodes[0].agents[0]?.name).toBe('coder');
+		expect(REVIEW_ONLY_WORKFLOW.nodes[0].agents[0]?.name).toBe('reviewer');
 	});
 
 	test('has no channels (single-node workflow needs no inter-agent channels)', () => {
@@ -686,6 +693,7 @@ describe('seedBuiltInWorkflows()', () => {
 	const PLANNER_ID = 'agent-planner-uuid';
 	const CODER_ID = 'agent-coder-uuid';
 	const GENERAL_ID = 'agent-general-uuid';
+	const RESEARCH_ID = 'agent-research-uuid';
 	const REVIEWER_ID = 'agent-reviewer-uuid';
 
 	// Role resolver — mirrors what the real call site does
@@ -694,6 +702,7 @@ describe('seedBuiltInWorkflows()', () => {
 		planner: PLANNER_ID,
 		coder: CODER_ID,
 		general: GENERAL_ID,
+		research: RESEARCH_ID,
 		reviewer: REVIEWER_ID,
 		qa: QA_ID,
 	};
@@ -706,6 +715,7 @@ describe('seedBuiltInWorkflows()', () => {
 		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner');
 		seedAgent(db, CODER_ID, SPACE_ID, 'Coder');
 		seedAgent(db, GENERAL_ID, SPACE_ID, 'General');
+		seedAgent(db, RESEARCH_ID, SPACE_ID, 'Research');
 		seedAgent(db, REVIEWER_ID, SPACE_ID, 'Reviewer');
 		seedAgent(db, QA_ID, SPACE_ID, 'QA');
 
@@ -825,7 +835,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.nodes).toHaveLength(2);
-		expect(wf!.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID);
+		expect(wf!.nodes[0].agents[0]?.agentId).toBe(RESEARCH_ID);
 		expect(wf!.nodes[1].agents[0]?.agentId).toBe(REVIEWER_ID);
 	});
 
@@ -846,12 +856,12 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf.channels ?? []).toHaveLength(0);
 	});
 
-	test('REVIEW_ONLY_WORKFLOW seeded correctly — single coder step', async () => {
+	test('REVIEW_ONLY_WORKFLOW seeded correctly — single reviewer step', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.nodes).toHaveLength(1);
-		expect(wf!.nodes[0].agents[0]?.agentId).toBe(CODER_ID);
+		expect(wf!.nodes[0].agents[0]?.agentId).toBe(REVIEWER_ID);
 	});
 
 	test('FULL_CYCLE_CODING_WORKFLOW seeded correctly — six nodes with code-review agents[]', async () => {
@@ -1065,10 +1075,12 @@ describe('Coding Workflow export/import round-trip', () => {
 	const CODER_ID = 'agent-coder-uuid';
 	const GENERAL_ID = 'agent-general-uuid';
 	const QA_ID = 'agent-qa-uuid';
+	const RESEARCH_ID = 'agent-research-uuid';
 
 	const REVIEWER_ID = 'agent-reviewer-uuid';
 	const roleMap: Record<string, string> = {
 		planner: PLANNER_ID,
+		research: RESEARCH_ID,
 		coder: CODER_ID,
 		general: GENERAL_ID,
 		reviewer: REVIEWER_ID,
@@ -1083,6 +1095,19 @@ describe('Coding Workflow export/import round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Coder',
 			role: 'coder',
+			description: '',
+			model: null,
+			tools: [],
+			systemPrompt: '',
+			config: null,
+			createdAt: 0,
+			updatedAt: 0,
+		},
+		{
+			id: RESEARCH_ID,
+			spaceId: SPACE_ID,
+			name: 'Research',
+			role: 'research',
 			description: '',
 			model: null,
 			tools: [],

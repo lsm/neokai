@@ -1,7 +1,7 @@
 /**
  * seedPresetAgents Unit Tests
  *
- * Verifies that the five preset SpaceAgent records are created with correct
+ * Verifies that the six preset SpaceAgent records are created with correct
  * defaults (role, tools, description) and that seeding is idempotent (errors
  * on name collision are captured but do not abort remaining seeds).
  */
@@ -32,10 +32,10 @@ describe('seedPresetAgents', () => {
 		setModelsCache(new Map());
 	});
 
-	it('creates exactly five preset agents', async () => {
+	it('creates exactly six preset agents', async () => {
 		const result = await seedPresetAgents('space-1', manager);
 
-		expect(result.seeded).toHaveLength(5);
+		expect(result.seeded).toHaveLength(6);
 		expect(result.errors).toHaveLength(0);
 	});
 
@@ -43,14 +43,14 @@ describe('seedPresetAgents', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const names = seeded.map((a) => a.name.toLowerCase()).sort();
-		expect(names).toEqual(['coder', 'general', 'planner', 'qa', 'reviewer']);
+		expect(names).toEqual(['coder', 'general', 'planner', 'qa', 'research', 'reviewer']);
 	});
 
 	it('creates agents with correct names', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const names = seeded.map((a) => a.name).sort();
-		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Reviewer']);
+		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
 	});
 
 	it('sets tools on each preset agent', async () => {
@@ -104,11 +104,11 @@ describe('seedPresetAgents', () => {
 		// Seed once
 		await seedPresetAgents('space-1', manager);
 
-		// Seed again — all four names are now taken
+		// Seed again — all six names are now taken
 		const second = await seedPresetAgents('space-1', manager);
 
 		expect(second.seeded).toHaveLength(0);
-		expect(second.errors).toHaveLength(5);
+		expect(second.errors).toHaveLength(6);
 		for (const err of second.errors) {
 			expect(err.error).toMatch(/already exists/i);
 		}
@@ -120,8 +120,8 @@ describe('seedPresetAgents', () => {
 		const r1 = await seedPresetAgents('space-1', manager);
 		const r2 = await seedPresetAgents('space-2', manager);
 
-		expect(r1.seeded).toHaveLength(5);
-		expect(r2.seeded).toHaveLength(5);
+		expect(r1.seeded).toHaveLength(6);
+		expect(r2.seeded).toHaveLength(6);
 		expect(r1.errors).toHaveLength(0);
 		expect(r2.errors).toHaveLength(0);
 
@@ -137,7 +137,7 @@ describe('seedPresetAgents', () => {
 		const result = await seedPresetAgents('space-1', manager);
 
 		// Coder fails, others succeed
-		expect(result.seeded).toHaveLength(4);
+		expect(result.seeded).toHaveLength(5);
 		expect(result.errors).toHaveLength(1);
 		expect(result.errors[0].name).toBe('Coder');
 	});

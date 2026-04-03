@@ -67,7 +67,7 @@ const V2_DONE_PROMPT =
 const RESEARCH_STEP = 'tpl-research-research';
 const RESEARCH_REVIEW_STEP = 'tpl-research-review';
 
-const REVIEW_CODER_STEP = 'tpl-review-coder';
+const REVIEW_REVIEW_STEP = 'tpl-review-review';
 
 // ---------------------------------------------------------------------------
 // Built-in templates
@@ -203,12 +203,12 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	spaceId: '',
 	name: 'Research Workflow',
 	description:
-		'Iterative research workflow with gated PR verification. Planner researches and opens a PR; Reviewer evaluates findings and requests revisions if needed.',
+		'Iterative research workflow with gated PR verification. Research agent investigates and opens a PR; Reviewer evaluates findings and requests revisions if needed.',
 	nodes: [
 		{
 			id: RESEARCH_STEP,
 			name: 'Research',
-			agents: [{ agentId: 'Planner', name: 'planner' }],
+			agents: [{ agentId: 'Research', name: 'research' }],
 			instructions:
 				'Research the topic thoroughly. When done, commit all findings and open a pull request with `gh pr create`. ' +
 				'The research-ready-gate will verify the PR automatically before advancing to Review.',
@@ -230,7 +230,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'research-ready-gate',
-			description: 'Planner has opened a PR and cleaned the worktree',
+			description: 'Research agent has opened a PR and cleaned the worktree',
 			fields: [
 				{
 					name: 'pr_created',
@@ -301,10 +301,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 /**
  * Review-Only Workflow
  *
- * Single-node graph: Coder only (terminal step).
+ * Single-node graph: Reviewer only (terminal step).
  * No planning phase — used when the task is well-defined and only
- * implementation is needed. The run completes immediately when advance()
- * is called from the Coder step.
+ * review is needed. The run completes immediately when advance()
+ * is called from the Review step.
  *
  * startNodeId and endNodeId point to the same node (single-node workflow).
  */
@@ -313,16 +313,16 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	spaceId: '',
 	name: 'Review-Only Workflow',
 	description:
-		'Single-step coding workflow with no planning phase. Coder implements directly; the run completes when done.',
+		'Single-step review workflow with no planning phase. Reviewer evaluates directly; the run completes when done.',
 	nodes: [
 		{
-			id: REVIEW_CODER_STEP,
-			name: 'Code',
-			agents: [{ agentId: 'Coder', name: 'coder' }],
+			id: REVIEW_REVIEW_STEP,
+			name: 'Review',
+			agents: [{ agentId: 'Reviewer', name: 'reviewer' }],
 		},
 	],
-	startNodeId: REVIEW_CODER_STEP,
-	endNodeId: REVIEW_CODER_STEP,
+	startNodeId: REVIEW_REVIEW_STEP,
+	endNodeId: REVIEW_REVIEW_STEP,
 	tags: ['coding', 'review'],
 	createdAt: 0,
 	updatedAt: 0,

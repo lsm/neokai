@@ -142,6 +142,9 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 		await expect(page.getByText('Planner', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Coder', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('General', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText('Research', { exact: true }).first()).toBeVisible({
+			timeout: 5000,
+		});
 		await expect(page.getByText('Reviewer', { exact: true }).first()).toBeVisible({
 			timeout: 5000,
 		});
