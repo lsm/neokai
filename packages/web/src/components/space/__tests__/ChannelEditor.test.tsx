@@ -371,4 +371,49 @@ describe('ChannelEditor — gate condition', () => {
 		const badge = getByTestId('gate-badge');
 		expect(badge.textContent).toBe('Custom Condition');
 	});
+
+	it('selecting "task_result" sets gateId to "task-result"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'task_result' } });
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gateId).toBe('task-result');
+	});
+
+	it('gate badge shows "Task Result" for task-result gate', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gateId: 'task-result' })];
+		const { getByTestId } = render(<ChannelEditor channels={channels} onChange={onChange} />);
+		const badge = getByTestId('gate-badge');
+		expect(badge.textContent).toBe('Task Result');
+	});
+
+	it('condition gate round-trips: gateId "custom-condition" → select shows "condition"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gateId: 'custom-condition' })];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		const select = getByTestId('channel-gate-select-0') as HTMLSelectElement;
+		expect(select.value).toBe('condition');
+	});
+
+	it('selecting "condition" sets gateId to "custom-condition"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'condition' } });
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gateId).toBe('custom-condition');
+	});
 });

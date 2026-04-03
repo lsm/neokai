@@ -178,8 +178,8 @@ export async function openWorkflowForEdit(page: Page, workflowName: string): Pro
  * Postcondition: agents-list has 2 agent-entry items.
  *
  * @param panel - Locator scoped to the `node-config-panel` element
- * @param agentAOption - Exact option label for the first agent (e.g. "Coder Agent (coder)")
- * @param agentBOption - Exact option label for the second agent (e.g. "Reviewer Agent (reviewer)")
+ * @param agentAOption - Exact option label for the first agent (e.g. "coder" when agent name === role)
+ * @param agentBOption - Exact option label for the second agent (e.g. "reviewer" when agent name === role)
  */
 export async function setupMultiAgentStep(
 	panel: Locator,
