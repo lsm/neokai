@@ -2,11 +2,7 @@
  * SpaceDetailPanel
  *
  * Space-specific context panel for the three-column layout.
- * Mirrors RoomContextPanel's visual structure for a space:
- * 1. Space activity header (no status counters)
- * 2. Pinned items: Dashboard, Space Agent
- * 3. Tasks section (single task list with active/review filters)
- * 4. Sessions section (collapsible, default collapsed)
+ * Prioritizes fast access to overview, review work, and sessions.
  */
 
 import { useMemo, useState } from 'preact/hooks';
@@ -21,19 +17,15 @@ import {
 import { currentSpaceSessionIdSignal, currentSpaceTaskIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
 
-type OrphanTab = 'active' | 'review';
+type TaskTab = 'active' | 'review';
 
 const taskStatusColors: Record<string, string> = {
-	draft: 'bg-gray-500',
-	pending: 'bg-yellow-500',
+	open: 'bg-gray-500',
 	in_progress: 'bg-blue-500',
-	review: 'bg-purple-500',
-	needs_attention: 'bg-orange-500',
-	completed: 'bg-green-500',
+	blocked: 'bg-amber-500',
+	done: 'bg-green-500',
 	cancelled: 'bg-gray-600',
-	archived: 'bg-gray-600',
-	rate_limited: 'bg-orange-500',
-	usage_limited: 'bg-orange-600',
+	archived: 'bg-gray-700',
 };
 
 function TaskStatusDot({ status }: { status: string }) {
@@ -49,16 +41,38 @@ interface SpaceDetailPanelProps {
 	onNavigate?: () => void;
 }
 
+function TaskTabButton({
+	label,
+	count,
+	active,
+	onClick,
+}: {
+	label: string;
+	count: number;
+	active: boolean;
+	onClick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			class={cn(
+				'flex items-center gap-1.5 rounded px-2 py-0.5 text-xs transition-colors',
+				active ? 'bg-dark-600 text-gray-200' : 'text-gray-500 hover:text-gray-300'
+			)}
+		>
+			<span>{label}</span>
+			<span class="rounded-full bg-dark-800 px-1.5 py-px text-[10px] text-gray-400">{count}</span>
+		</button>
+	);
+}
+
 export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps) {
-	// Read signal values directly for Preact Signals auto-tracking
 	const isLoading = spaceStore.loading.value;
 	const loadedSpaceId = spaceStore.spaceId.value;
 	const tasks = spaceStore.tasks.value;
 	const space = spaceStore.space.value;
 
-	// Show a loading state when the store hasn't loaded data for this space yet.
-	// spaceStore.selectSpace() is called by SpaceIsland; the ContextPanel may render
-	// before that call completes (e.g. on cold navigation before SpaceIsland mounts).
 	const isReady = !isLoading && loadedSpaceId === spaceId;
 
 	if (!isReady) {
@@ -69,66 +83,63 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		);
 	}
 
-	const [taskTab, setTaskTab] = useState<OrphanTab>('active');
+	const [taskTab, setTaskTab] = useState<TaskTab>('review');
 
-	// Selection state
 	const selectedSessionId = currentSpaceSessionIdSignal.value;
 	const selectedTaskId = currentSpaceTaskIdSignal.value;
-	const selectedTask = selectedTaskId ? (tasks.find((t) => t.id === selectedTaskId) ?? null) : null;
+	const selectedTask = selectedTaskId ? (tasks.find((task) => task.id === selectedTaskId) ?? null) : null;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
-	const isDashboardSelected = selectedSessionId === null && selectedTaskId === null;
+	const isOverviewSelected = selectedSessionId === null && selectedTaskId === null;
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 
-	// Tasks filtered by tab.
-	// rate_limited/usage_limited are grouped with active.
+	const activeCount = tasks.filter(
+		(task) => task.status === 'open' || task.status === 'in_progress'
+	).length;
+	const reviewCount = tasks.filter((task) => task.status === 'blocked').length;
+
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
 		let filtered: typeof sorted;
-		if (taskTab === 'active') {
-			filtered = sorted.filter((t) => t.status === 'open' || t.status === 'in_progress');
+
+		if (taskTab === 'review') {
+			filtered = sorted.filter((task) => task.status === 'blocked');
 		} else {
-			filtered = sorted.filter((t) => t.status === 'blocked');
+			filtered = sorted.filter((task) => task.status === 'open' || task.status === 'in_progress');
 		}
 
-		// Keep the currently open task visible even if the tab filter would hide it.
-		// This avoids "No tasks" in the list while the user is actively viewing a task.
-		if (selectedTaskId && !filtered.some((t) => t.id === selectedTaskId)) {
-			const selected = sorted.find((t) => t.id === selectedTaskId);
+		if (selectedTaskId && !filtered.some((task) => task.id === selectedTaskId)) {
+			const selected = sorted.find((task) => task.id === selectedTaskId);
 			if (selected) {
 				filtered = [selected, ...filtered];
 			}
 		}
+
 		return filtered;
 	}, [tasks, taskTab, selectedTaskId]);
 
-	// Sessions list: only manually created sessions from space.sessionIds.
-	// Excludes built-in Space Agent + task/workflow orchestration sessions.
 	const sessions = useMemo(() => {
 		const list: { id: string; title: string }[] = [];
 		const seen = new Set<string>();
-		const isSystemSpaceSession = (sid: string): boolean =>
-			sid === spaceAgentSessionId ||
-			sid.startsWith(`space:${spaceId}:task:`) ||
-			sid.startsWith(`space:${spaceId}:workflow:`);
+		const isSystemSpaceSession = (sessionId: string): boolean =>
+			sessionId === spaceAgentSessionId ||
+			sessionId.startsWith(`space:${spaceId}:task:`) ||
+			sessionId.startsWith(`space:${spaceId}:workflow:`);
 
 		if (space?.sessionIds) {
-			for (const sid of space.sessionIds) {
-				if (isSystemSpaceSession(sid)) {
+			for (const sessionId of space.sessionIds) {
+				if (isSystemSpaceSession(sessionId) || seen.has(sessionId)) {
 					continue;
 				}
-				if (!seen.has(sid)) {
-					list.push({ id: sid, title: sid.slice(0, 8) });
-					seen.add(sid);
-				}
+				list.push({ id: sessionId, title: sessionId.slice(0, 8) });
+				seen.add(sessionId);
 			}
 		}
 
 		return list;
 	}, [space, spaceAgentSessionId, spaceId]);
 
-	// Navigation handlers
-	const handleDashboardClick = () => {
+	const handleOverviewClick = () => {
 		navigateToSpace(spaceId);
 		onNavigate?.();
 	};
@@ -150,28 +161,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
-			<div class="px-3 pt-3 pb-2 space-y-3 border-b border-dark-800">
-				<div class="space-y-1 px-1 pb-1">
-					<p class="text-[11px] uppercase tracking-[0.18em] text-gray-600">Space Activity</p>
-					<p class="text-xs text-gray-500">
-						{tasks.length === 0
-							? 'No tasks yet.'
-							: 'Use Tasks and Space Agent to monitor and steer ongoing work.'}
-					</p>
-					{space?.workspacePath && (
-						<p class="truncate font-mono text-[11px] text-gray-600">{space.workspacePath}</p>
-					)}
-				</div>
-			</div>
-
-			{/* Pinned items */}
 			<button
-				onClick={handleDashboardClick}
+				onClick={handleOverviewClick}
 				data-testid="space-detail-dashboard"
-				data-active={isDashboardSelected ? 'true' : 'false'}
+				data-active={isOverviewSelected ? 'true' : 'false'}
 				class={cn(
 					'mx-3 mt-3 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
-					isDashboardSelected
+					isOverviewSelected
 						? 'bg-dark-700 border-dark-600'
 						: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
 				)}
@@ -191,7 +187,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 						/>
 					</svg>
 				</div>
-				<span class="flex-1 text-sm text-gray-200 text-left truncate">Dashboard</span>
+				<span class="flex-1 text-sm text-gray-200 text-left truncate">Overview</span>
 			</button>
 
 			<button
@@ -223,29 +219,23 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 				<span class="flex-1 text-sm text-gray-200 text-left truncate">Space Agent</span>
 			</button>
 
-			{/* Visual divider after pinned items */}
 			<div class="border-t border-dark-700 mx-3 my-3" />
 
-			{/* Scrollable sections */}
 			<div class="flex-1 overflow-y-auto">
-				{/* Tasks section */}
 				<CollapsibleSection title="Tasks">
-					{/* Tab bar */}
 					<div class="flex items-center gap-1 px-3 py-1.5">
-						{(['active', 'review'] as const).map((tab) => (
-							<button
-								key={tab}
-								onClick={() => setTaskTab(tab)}
-								class={cn(
-									'px-2 py-0.5 text-xs rounded transition-colors capitalize',
-									taskTab === tab
-										? 'bg-dark-600 text-gray-200'
-										: 'text-gray-500 hover:text-gray-300'
-								)}
-							>
-								{tab}
-							</button>
-						))}
+						<TaskTabButton
+							label="Active"
+							count={activeCount}
+							active={taskTab === 'active'}
+							onClick={() => setTaskTab('active')}
+						/>
+						<TaskTabButton
+							label="Review"
+							count={reviewCount}
+							active={taskTab === 'review'}
+							onClick={() => setTaskTab('review')}
+						/>
 					</div>
 					{tasksForTab.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No tasks</div>
@@ -265,9 +255,9 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 									<span class="block text-[11px] uppercase tracking-[0.14em] text-gray-600">
 										{task.workflowRunId ? 'Workflow task' : 'Standalone task'}
 										{selectedTask?.id === task.id &&
-											selectedTask.status !== 'open' &&
-											selectedTask.status !== 'in_progress' &&
-											` · ${selectedTask.status.replace('_', ' ')}`}
+											task.status !== 'open' &&
+											task.status !== 'in_progress' &&
+											` · ${task.status.replace('_', ' ')}`}
 									</span>
 								</div>
 							</button>
@@ -275,32 +265,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					)}
 				</CollapsibleSection>
 
-				{/* Sessions section */}
-				<CollapsibleSection
-					title="Sessions"
-					count={sessions.length}
-					defaultExpanded={false}
-					headerRight={
-						<button
-							onClick={(e: MouseEvent) => {
-								e.stopPropagation();
-							}}
-							disabled
-							class="text-gray-600 cursor-not-allowed p-0.5"
-							aria-label="Create session"
-							title="Session creation coming soon"
-						>
-							<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M12 4v16m8-8H4"
-								/>
-							</svg>
-						</button>
-					}
-				>
+				<CollapsibleSection title="Sessions" count={sessions.length} defaultExpanded={true}>
 					{sessions.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No sessions</div>
 					) : (

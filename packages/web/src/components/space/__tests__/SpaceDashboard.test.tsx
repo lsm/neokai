@@ -1,29 +1,16 @@
 // @ts-nocheck
 /**
- * Unit tests for SpaceDashboard
- *
- * Tests:
- * - Loading state renders spinner
- * - No space renders "Space not found"
- * - Space name and workspace path rendered
- * - Description shown when present
- * - Primary dashboard action renders
- * - onOpenSpaceAgent callback fires
- * - Overview stats render for active/review/completed tasks
- * - Attention, in-progress, and recent sections render task rows
- * - Empty state renders when there are no tasks
+ * Unit tests for SpaceDashboard.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import { signal, computed } from '@preact/signals';
+import { signal } from '@preact/signals';
 import type { Space, SpaceTask } from '@neokai/shared';
 
-// Mock signals
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
-let mockActiveRuns: ReturnType<typeof computed<unknown[]>>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -31,16 +18,13 @@ vi.mock('../../../lib/space-store', () => ({
 			space: mockSpace,
 			loading: mockLoading,
 			tasks: mockTasks,
-			activeRuns: mockActiveRuns,
 		};
 	},
 }));
 
-// Initialize signals before component import
 mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
-mockActiveRuns = computed(() => []);
 
 import { SpaceDashboard } from '../SpaceDashboard';
 
@@ -60,17 +44,28 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 	};
 }
 
-function makeTask(id: string, status: SpaceTask['status'] = 'open'): SpaceTask {
+function makeTask(
+	id: string,
+	status: SpaceTask['status'] = 'open',
+	overrides: Partial<SpaceTask> = {}
+): SpaceTask {
 	return {
 		id,
 		spaceId: 'space-1',
+		taskNumber: Number(id.replace(/\D/g, '')) || 1,
 		title: `Task ${id}`,
 		description: '',
 		status,
 		priority: 'normal',
+		labels: [],
 		dependsOn: [],
+		result: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
+		startedAt: null,
+		completedAt: null,
+		archivedAt: null,
+		...overrides,
 	};
 }
 
@@ -97,98 +92,97 @@ describe('SpaceDashboard', () => {
 		expect(getByText('Space not found')).toBeTruthy();
 	});
 
-	it('renders space name', () => {
-		mockSpace.value = makeSpace({ name: 'Awesome Project' });
+	it('renders the space name, description, and workspace path', () => {
+		mockSpace.value = makeSpace({
+			name: 'UI Review Space',
+			description: 'Space created for UI review.',
+			workspacePath: '/tmp/workspace',
+		});
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('Awesome Project')).toBeTruthy();
+		expect(getByText('UI Review Space')).toBeTruthy();
+		expect(getByText('Space created for UI review.')).toBeTruthy();
+		expect(getByText('/tmp/workspace')).toBeTruthy();
 	});
 
-	it('renders workspace path', () => {
-		mockSpace.value = makeSpace({ workspacePath: '/home/user/projects/test' });
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('/home/user/projects/test')).toBeTruthy();
-	});
-
-	it('renders description when provided', () => {
-		mockSpace.value = makeSpace({ description: 'A cool project description' });
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('A cool project description')).toBeTruthy();
-	});
-
-	it('renders the primary dashboard action', () => {
+	it('renders the primary overview action', () => {
 		mockSpace.value = makeSpace();
-		const { getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
 		expect(getByText('Ask Space Agent')).toBeTruthy();
-		expect(queryByText('Create Task')).toBeNull();
-		expect(queryByText('Run Workflow')).toBeNull();
 	});
 
-	it('calls onOpenSpaceAgent when "Ask Space Agent" is clicked', () => {
+	it('calls onOpenSpaceAgent when Ask Space Agent is clicked', () => {
 		mockSpace.value = makeSpace();
 		const onOpenSpaceAgent = vi.fn();
 		const { getByText } = render(
 			<SpaceDashboard spaceId="space-1" onOpenSpaceAgent={onOpenSpaceAgent} />
 		);
 		fireEvent.click(getByText('Ask Space Agent').closest('button')!);
-		expect(onOpenSpaceAgent).toHaveBeenCalled();
+		expect(onOpenSpaceAgent).toHaveBeenCalledOnce();
 	});
 
-	it('shows active, attention, and completed stats', () => {
+	it('renders summary chips and grouped active tasks', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [
-			makeTask('t1', 'in_progress'),
-			makeTask('t2', 'blocked'),
-			makeTask('t3', 'done'),
+			makeTask('t1', 'open'),
+			makeTask('t2', 'in_progress'),
+			makeTask('t3', 'blocked'),
+			makeTask('t4', 'done'),
 		];
-		const { getByText, getAllByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getAllByText('Active').length).toBeGreaterThanOrEqual(1);
-		expect(getAllByText('Needs Attention').length).toBeGreaterThanOrEqual(1);
-		expect(getAllByText('Completed').length).toBeGreaterThanOrEqual(1);
-		expect(getAllByText('1').length).toBeGreaterThanOrEqual(3);
+
+		const { getAllByText, getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getAllByText('Active').length).toBeGreaterThanOrEqual(2);
+		expect(getAllByText('Review').length).toBeGreaterThanOrEqual(2);
+		expect(getAllByText('Done').length).toBeGreaterThanOrEqual(2);
+		expect(getByText('In Progress')).toBeTruthy();
+		expect(getByText('Queued')).toBeTruthy();
+		expect(getByText('Task t2')).toBeTruthy();
+		expect(getByText('Task t1')).toBeTruthy();
 	});
 
-	it('shows attention, in-progress, and recent sections for tasks', () => {
+	it('switches to the Review tab and shows blocked tasks', () => {
 		mockSpace.value = makeSpace();
-		mockTasks.value = [
-			makeTask('attention', 'blocked'),
-			makeTask('active', 'in_progress'),
-			makeTask('done', 'done'),
-		];
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('Attention Queue')).toBeTruthy();
-		expect(getByText('Active Queue')).toBeTruthy();
-		expect(getByText('Recent Activity')).toBeTruthy();
-		expect(getByText('Task attention')).toBeTruthy();
-		expect(getByText('Task active')).toBeTruthy();
-		expect(getByText('Task done')).toBeTruthy();
+		mockTasks.value = [makeTask('t1', 'blocked'), makeTask('t2', 'open')];
+
+		const { getAllByText, getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getAllByText('Review')[1].closest('button')!);
+		expect(getByText('Needs Review')).toBeTruthy();
+		expect(getByText('Task t1')).toBeTruthy();
+		expect(queryByText('Task t2')).toBeNull();
 	});
 
-	it('shows empty-state guidance when there are no tasks', () => {
+	it('switches to the Done tab and shows terminal tasks', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'done'), makeTask('t2', 'cancelled')];
+
+		const { getAllByText, getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getAllByText('Done')[1].closest('button')!);
+		expect(getByText('Completed')).toBeTruthy();
+		expect(getByText('Cancelled')).toBeTruthy();
+		expect(getByText('Task t1')).toBeTruthy();
+		expect(getByText('Task t2')).toBeTruthy();
+	});
+
+	it('shows the empty-state guidance when there are no tasks', () => {
 		mockSpace.value = makeSpace();
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
 		expect(getByText('This space has no tasks yet.')).toBeTruthy();
-		expect(
-			getByText(
-				'Create the first task or ask the space agent to help you shape the work before reaching for a workflow.'
-			)
-		).toBeTruthy();
 	});
 
-	it('truncates long workspace paths', () => {
-		const longPath = '/very/long/path/to/some/deeply/nested/project/directory/my-project';
-		mockSpace.value = makeSpace({ workspacePath: longPath });
-		const { container } = render(<SpaceDashboard spaceId="space-1" />);
-		const pathEl = container.querySelector('.font-mono');
-		// Path should be truncated (starts with ellipsis)
-		expect(pathEl?.textContent?.startsWith('…')).toBe(true);
+	it('shows the empty state for a tab with no tasks', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'open')];
+		const { getAllByText, getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getAllByText('Review')[1].closest('button')!);
+		expect(getByText('No tasks need attention right now.')).toBeTruthy();
 	});
 
-	it('calls onSelectTask when a recent task row is clicked', () => {
+	it('calls onSelectTask when a task row is clicked', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'done')];
 		const onSelectTask = vi.fn();
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" onSelectTask={onSelectTask} />);
-		fireEvent.click(getByText('Task t1').closest('button')!);
+		const { getAllByText } = render(<SpaceDashboard spaceId="space-1" onSelectTask={onSelectTask} />);
+		fireEvent.click(getAllByText('Done')[1].closest('button')!);
+		fireEvent.click(getAllByText('Task t1')[0].closest('button')!);
 		expect(onSelectTask).toHaveBeenCalledWith('t1');
 	});
 });
