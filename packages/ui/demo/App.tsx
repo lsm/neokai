@@ -23,6 +23,14 @@ import { TransitionDemo } from './sections/TransitionDemo.tsx';
 import { CommandPaletteDemo } from './sections/CommandPaletteDemo.tsx';
 import { DrawerDemo } from './sections/DrawerDemo.tsx';
 import { NotificationDemo } from './sections/NotificationDemo.tsx';
+import { StatsDemo } from './sections/StatsDemo.tsx';
+import { GridListsDemo } from './sections/GridListsDemo.tsx';
+import { StackedListsDemo } from './sections/StackedListsDemo.tsx';
+import { TablesDemo } from './sections/TablesDemo.tsx';
+import { PaginationDemo } from './sections/PaginationDemo.tsx';
+import { ProgressBarsDemo } from './sections/ProgressBarsDemo.tsx';
+import { VerticalNavigationDemo } from './sections/VerticalNavigationDemo.tsx';
+import { EmptyStatesDemo } from './sections/EmptyStatesDemo.tsx';
 
 interface DemoSectionProps {
 	id: string;
@@ -63,6 +71,14 @@ const componentSections = [
 	{ id: 'transition', label: 'Transition' },
 	{ id: 'spinner', label: 'Spinner' },
 	{ id: 'skeleton', label: 'Skeleton' },
+	{ id: 'stats', label: 'Stats' },
+	{ id: 'grid-lists', label: 'Grid Lists' },
+	{ id: 'stacked-lists', label: 'Stacked Lists' },
+	{ id: 'tables', label: 'Tables' },
+	{ id: 'pagination', label: 'Pagination' },
+	{ id: 'progress-bars', label: 'Progress Bars' },
+	{ id: 'vertical-navigation', label: 'Vertical Navigation' },
+	{ id: 'empty-states', label: 'Empty States' },
 ];
 
 // Application UI subcategories (placeholder sections for future demos)
@@ -375,6 +391,30 @@ export function App() {
 					</DemoSection>
 					<DemoSection id="skeleton" title="Skeleton">
 						<SkeletonDemo />
+					</DemoSection>
+					<DemoSection id="stats" title="Stats">
+						<StatsDemo />
+					</DemoSection>
+					<DemoSection id="grid-lists" title="Grid Lists">
+						<GridListsDemo />
+					</DemoSection>
+					<DemoSection id="stacked-lists" title="Stacked Lists">
+						<StackedListsDemo />
+					</DemoSection>
+					<DemoSection id="tables" title="Tables">
+						<TablesDemo />
+					</DemoSection>
+					<DemoSection id="pagination" title="Pagination">
+						<PaginationDemo />
+					</DemoSection>
+					<DemoSection id="progress-bars" title="Progress Bars">
+						<ProgressBarsDemo />
+					</DemoSection>
+					<DemoSection id="vertical-navigation" title="Vertical Navigation">
+						<VerticalNavigationDemo />
+					</DemoSection>
+					<DemoSection id="empty-states" title="Empty States">
+						<EmptyStatesDemo />
 					</DemoSection>
 				</main>
 			</div>
