@@ -30,7 +30,7 @@ For every reference file, the coder must:
 
 1. **Create `elements/avatars/AvatarsDemo.tsx`** (11 files): Circular/rounded avatars, with notifications (top/bottom), with placeholder icon/initials, avatar groups, with text.
 
-2. **Create `elements/badges/BadgesDemo.tsx`** (18 files): With border, with dot, pill variants, flat variants, with remove button, small variants.
+2. **Create `elements/badges/BadgesDemo.tsx`** (16 files): With border, with dot, pill variants, flat variants, with remove button, small variants.
 
 3. **Create `elements/buttons/ButtonsDemo.tsx`** (5 files): Primary, secondary, soft, rounded primary, rounded secondary. Note: some button files are in the icon-only or headless batches; only port the 5 pure-HTML ones.
 
@@ -40,13 +40,13 @@ For every reference file, the coder must:
 
 6. **Create `headings/page-headings/PageHeadingsDemo.tsx`** (3 files): With actions, with avatar and actions, card with avatar and stats.
 
-7. **Create `headings/section-headings/SectionHeadingsDemo.tsx`** (5 files): Simple, with description, with actions, with action, with inline tabs, with label.
+7. **Create `headings/section-headings/SectionHeadingsDemo.tsx`** (6 files): Simple, with description, with actions, with action, with inline tabs, with label.
 
 8. **Create `layout/cards/CardsDemo.tsx`** (10 files): Basic card, edge-to-edge on mobile, with header, with footer, with header and footer, gray footer, gray body, well variants.
 
 9. **Create `layout/containers/ContainersDemo.tsx`** (5 files): Full-width on mobile constrained, constrained with padded content, narrow constrained.
 
-10. **Create `layout/dividers/DividersDemo.tsx`** (3 files): With label, with label on left, with title, with title on left. Note: some divider files are in the icon-only batch.
+10. **Create `layout/dividers/DividersDemo.tsx`** (4 files): With label, with label on left, with title, with title on left. Note: some divider files are in the icon-only batch.
 
 11. **Create `layout/list-containers/ListContainersDemo.tsx`** (7 files): Simple with dividers, card with dividers, separate cards, flat card, full-width on mobile variants.
 
@@ -80,9 +80,9 @@ For every reference file, the coder must:
 
 2. **Create `forms/checkboxes/CheckboxesDemo.tsx`** (4 files): List with description, inline description, checkbox on right, simple list with heading.
 
-3. **Create `forms/input-groups/InputGroupsDemo.tsx`** (13 files): Input with label, with label and help text, disabled state, hidden label, corner hint, with add-on, inline add-on, inline leading and trailing add-ons, inset label, overlapping label, pill shape, gray background, keyboard shortcut. Note: some input-group files are in icon-only or headless batches.
+3. **Create `forms/input-groups/InputGroupsDemo.tsx`** (14 files): Input with label, with label and help text, disabled state, hidden label, corner hint, with add-on, inline add-on, inline leading and trailing add-ons, inset label, inputs with inset labels and shared borders, overlapping label, pill shape, gray background, keyboard shortcut. Note: some input-group files are in icon-only or headless batches.
 
-4. **Create `forms/radio-groups/RadioGroupsDemo.tsx`** (12 files): Simple list, inline list, with description, inline description, radio on right, simple table, descriptions in panel, color picker, small cards, stacked cards.
+4. **Create `forms/radio-groups/RadioGroupsDemo.tsx`** (11 files): Simple list, inline list, with description, inline description, radio on right, simple list with radio on right, simple table, descriptions in panel, color picker, small cards, stacked cards.
 
 5. **Create `forms/sign-in-forms/SignInFormsDemo.tsx`** (4 files): Simple, simple no labels, split screen, simple card.
 
@@ -120,11 +120,11 @@ For every reference file, the coder must:
 
 3. **Create `lists/stacked-lists/StackedListsDemo.tsx`** (6 files): Simple, narrow, narrow with sticky headings, narrow with actions, narrow with truncated content, narrow with small avatars. Note: many stacked-list files are in icon/headless batches.
 
-4. **Create `lists/tables/TablesDemo.tsx`** (18 files): Simple, simple in card, full-width, striped rows, uppercase headings, stacked columns on mobile, hidden columns, avatars with multiline content, sticky header, vertical lines, condensed, grouped rows, summary rows, with border, with checkboxes, full-width with avatars. Note: 2 table files are in icon-only batch.
+4. **Create `lists/tables/TablesDemo.tsx`** (17 files): Simple, simple in card, full-width, striped rows, uppercase headings, stacked columns on mobile, hidden columns, avatars with multiline content, sticky header, vertical lines, condensed, grouped rows, summary rows, with border, with checkboxes, full-width with avatars. Note: 2 table files are in icon-only batch.
 
 5. **Create `navigation/pagination/PaginationDemo.tsx`** (1 file): Simple card footer. Note: 2 pagination files are in icon-only batch.
 
-6. **Create `navigation/progress-bars/ProgressBarsDemo.tsx`** (4 files): Simple, bullets, progress bar. Note: 5 progress-bar files are in icon-only batch.
+6. **Create `navigation/progress-bars/ProgressBarsDemo.tsx`** (3 files): Simple, bullets, progress bar. Note: 5 progress-bar files are in icon-only batch.
 
 7. **Create `navigation/vertical-navigation/VerticalNavigationDemo.tsx`** (2 files): Simple, with badges. Note: 4 vertical-navigation files are in icon-only batch.
 
