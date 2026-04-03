@@ -859,14 +859,11 @@
 			}
 		},
 		{
+			"comment": "Context plugin response (non-beta) - uses bodyFragment for precise substring matching",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages",
 				"method": "POST",
-				"body": {
-					"matcher": ".JsonContains",
-					"key": "messages",
-					"value": "/context"
-				}
+				"bodyFragment": "/context"
 			},
 			"response": {
 				"statusCode": 200,
@@ -971,14 +968,11 @@
 			}
 		},
 		{
+			"comment": "Context plugin response - uses bodyFragment for precise substring matching",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
-				"body": {
-					"matcher": ".JsonContains",
-					"key": "messages",
-					"value": "/context"
-				}
+				"bodyFragment": "/context"
 			},
 			"response": {
 				"statusCode": 200,
